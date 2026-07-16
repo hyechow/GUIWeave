@@ -15,14 +15,17 @@ from llm.structured import get_llm_call_count, get_llm_token_usage
 
 from gui_agent.core.config import resolve_llm_config
 from gui_agent.core.run.action_signals import build_action_signal
-from gui_agent.core.run.context import extract_checker, extract_plan, extract_replan
+from gui_agent.core.run.context import (
+    extract_action_plan,
+    extract_transition,
+)
 from gui_agent.core.run.result import print_timings, print_turn_stats
 from gui_agent.core.schemas import (
     AtomicRole,
     PolicyContext,
     PolicyTurn,
-    ProgressTraceInfo,
-    RuntimeConstraintInfo,
+    StatementOutcome,
+    StatementOutcomeEvent,
     StatementRuntimeSnapshot,
     SupervisorStep,
     TargetBinding,
@@ -52,43 +55,16 @@ def snapshot_statement_runtime(supervisor: Any) -> StatementRuntimeSnapshot | No
     """Project the active logical runtime into a replay payload.
 
     This is captured inside the turn event, after the policy decision and before the runtime is
-    destroyed. Volatile screenshot/acquisition caches are deliberately restarted on resume.
+    destroyed. Decision memory itself is rebuilt from Journal turns.
     """
     rt = getattr(supervisor, "_statement_rt", None)
     if rt is None:
         return None
-    monitor = rt.monitor
     return StatementRuntimeSnapshot(
         contract=rt.contract,
-        retry_count=rt.retry_count,
-        early_feasibility_probed=rt.early_feasibility_probed,
-        scroll_count=rt.scroll_count,
         execution_scope=rt.execution_scope,
-        last_page_identity=rt.last_page_identity,
-        skip_initial_check=rt.skip_initial_check,
         statement_info_emitted=rt.statement_info_emitted,
         task_type=rt.task_type,
-        constraints=[
-            RuntimeConstraintInfo(
-                text=entry.text,
-                scope=entry.scope,
-                source=entry.source,
-            )
-            for entry in rt.constraint_ledger.entries
-        ],
-        progress_trace=[
-            ProgressTraceInfo(
-                index=trace.index,
-                state=trace.state,
-                decision=trace.decision,
-                interaction_state=trace.interaction_state,
-                scope=trace.scope,
-            )
-            for trace in monitor.turns
-        ],
-        progress_values=list(monitor._progress_values),
-        last_url=monitor._last_url,
-        last_dom_state=monitor._last_dom_state,
         initial_filters=getattr(supervisor, "_initial_filters", None),
     )
 
@@ -101,9 +77,8 @@ def make_interactive_turn(
     surface_id: str = "",
     supervisor_step: SupervisorStep,
     action_decision: Any = None,
-    checker: dict | None = None,
-    planner: dict | None = None,
-    replan: dict | None = None,
+    action_plan: dict | None = None,
+    transition: dict | None = None,
     executed: bool = False,
     action_role: AtomicRole | None = None,
     action_key: str = "",
@@ -141,9 +116,8 @@ def make_interactive_turn(
         observation_url=observation_url,
         supervisor=supervisor_step.model_copy(update={"effect_signal": None}),
         action_decision=action_decision,
-        checker=checker,
-        planner=planner,
-        replan=replan,
+        action_plan=action_plan,
+        transition=transition,
         executed=executed,
         action_signal=action_signal,
         effect_signal=supervisor_step.effect_signal,
@@ -162,61 +136,59 @@ def make_interactive_turn(
     )
 
 
-def make_verdict_turn(
+def make_statement_outcome_event(
     *,
-    index: int,
+    after_turn: int,
     observation_source: str,
     observation_url: str = "",
-    surface_id: str = "",
     supervisor_step: SupervisorStep,
     supervisor: Any,
+    outcome: StatementOutcome,
     llm_calls: int = 0,
     input_tokens: int = 0,
     output_tokens: int = 0,
     llm_context: list[dict] | None = None,
-    observation_only: bool = False,
     statement: Any = None,
     statement_instance_id: str = "",
-    outcome_override: Any = None,
-) -> PolicyTurn:
-    """Build an action-less UI verdict turn from the current supervisor state.
-
-    ``outcome_override`` replaces the raw ``supervisor_step.outcome`` on the recorded turn —
-    used by the terminal observation path to persist the FILLED outcome (reads/rows added by
-    the loop) rather than the raw native outcome.
-    """
-    turn = make_interactive_turn(
-        index=index,
+) -> StatementOutcomeEvent:
+    """Build the terminal journal fact while statement-local runtime is live."""
+    statement_id = str(
+        supervisor_step.statement_id
+        or getattr(statement, "id", "")
+        or ""
+    )
+    if not statement_instance_id or not statement_id:
+        raise ValueError(
+            "StatementOutcomeEvent requires statement_instance_id and statement_id"
+        )
+    return StatementOutcomeEvent(
+        after_turn=after_turn,
         observation_source=observation_source,
         observation_url=observation_url,
-        surface_id=surface_id,
-        supervisor_step=supervisor_step,
-        action_decision=None,
-        checker=extract_checker(supervisor),
-        planner=extract_plan(supervisor),
-        replan=extract_replan(supervisor),
-        executed=False,
+        statement=statement,
+        statement_instance_id=statement_instance_id,
+        statement_id=statement_id,
+        statement_kind=supervisor_step.statement_kind,
+        execution_scope=supervisor_step.execution_scope,
+        outcome=outcome,
+        transition=extract_transition(supervisor),
+        effect_signal=supervisor_step.effect_signal,
+        pre_existing=supervisor_step.pre_existing,
+        collection_summary=supervisor_step.collection_summary,
         llm_calls=llm_calls,
         input_tokens=input_tokens,
         output_tokens=output_tokens,
-        timings=getattr(supervisor, "_timings", {}),
-        token_usage=getattr(supervisor, "_token_usage", {}),
-        sections_loaded=list(getattr(supervisor, "_last_sections_loaded", []) or []),
+        timings=getattr(supervisor, "_timings", {}) or {},
+        token_usage=getattr(supervisor, "_token_usage", {}) or {},
+        sections_loaded=list(
+            getattr(supervisor, "_last_sections_loaded", []) or []
+        ),
         llm_context=list(
             llm_context
             if llm_context is not None
             else getattr(supervisor, "_context_reports", []) or []
         ),
-        statement=statement,
-        statement_instance_id=statement_instance_id,
-        runtime_state=snapshot_statement_runtime(supervisor),
     )
-    if outcome_override is not None:
-        turn.supervisor = turn.supervisor.model_copy(update={"outcome": outcome_override})
-    if observation_only:
-        turn.operation_mode = "observation"
-        turn.action_signal = None
-    return turn
 
 
 def emit_statement_fields(supervisor: Any) -> tuple[Any, str]:
@@ -224,7 +196,7 @@ def emit_statement_fields(supervisor: Any) -> tuple[Any, str]:
 
     The StatementInfo is emitted ONCE per invocation — on the first turn that calls this —
     and the ``statement_info_emitted`` flag flips so subsequent turns (and the terminal
-    observation turn) carry ``statement=None`` but the SAME ``instance_id``. MUST be called
+    outcome event) carry ``statement=None`` but the SAME ``instance_id``. MUST be called
     while the statement runtime is live (before ``end_statement``); returns ``(None, "")``
     when no statement is active.
     """
@@ -234,52 +206,11 @@ def emit_statement_fields(supervisor: Any) -> tuple[Any, str]:
     instance_id = getattr(rt, "instance_id", "") or ""
     if getattr(rt, "statement_info_emitted", False):
         return (None, instance_id)
-    info = getattr(rt, "statement_info", None)
+    from gui_agent.core.run.interactive import statement_info_from_contract
+
+    info = statement_info_from_contract(rt.contract)
     rt.statement_info_emitted = True
     return (info, instance_id)
-
-
-class SupervisorTimingCarry:
-    """Carry same-turn handoff supervisor timing/token data across step() calls."""
-
-    def __init__(self) -> None:
-        self.timings: dict[str, float] = {}
-        self.order: list[str] = []
-        self.token_usage: dict[str, dict[str, int]] = {}
-        self.context_reports: list[dict] = []
-
-    def __bool__(self) -> bool:
-        return bool(self.timings or self.context_reports)
-
-    def collect(self, supervisor: Any) -> None:
-        """Accumulate the supervisor timing/token state from a completed handoff step."""
-        self._add_timings(getattr(supervisor, "_timings", {}) or {})
-        self._add_tokens(getattr(supervisor, "_token_usage", {}) or {})
-        self.context_reports.extend(list(getattr(supervisor, "_context_reports", []) or []))
-
-    def merge_into(self, supervisor: Any) -> None:
-        """Merge carried handoff timings into the supervisor's final step state."""
-        if not self.timings and not self.context_reports:
-            return
-        self._add_timings(getattr(supervisor, "_timings", {}) or {})
-        self._add_tokens(getattr(supervisor, "_token_usage", {}) or {})
-        self.context_reports.extend(list(getattr(supervisor, "_context_reports", []) or []))
-        supervisor._timings = self.timings
-        supervisor._timings_order = self.order
-        supervisor._token_usage = self.token_usage
-        supervisor._context_reports = self.context_reports
-
-    def _add_timings(self, timings: dict[str, float]) -> None:
-        for key, value in timings.items():
-            if key not in self.timings:
-                self.order.append(key)
-            self.timings[key] = self.timings.get(key, 0) + value
-
-    def _add_tokens(self, token_usage: dict[str, dict[str, int]]) -> None:
-        for key, usage in token_usage.items():
-            current = self.token_usage.setdefault(key, {"input": 0, "output": 0})
-            current["input"] += (usage or {}).get("input", 0)
-            current["output"] += (usage or {}).get("output", 0)
 
 
 def sync_turn_metadata(
@@ -342,9 +273,8 @@ def record_interactive_turn(
         surface_id=surface_id,
         supervisor_step=supervisor_step,
         action_decision=action_decision,
-        checker=extract_checker(supervisor),
-        planner=extract_plan(supervisor),
-        replan=extract_replan(supervisor),
+        action_plan=extract_action_plan(supervisor),
+        transition=extract_transition(supervisor),
         executed=executed,
         action_role=action_role,
         action_key=action_key,
@@ -405,7 +335,6 @@ def make_immediate_statement_turn(
     sql: str = "",
     data_scope: str = "complete",
     reads: dict[str, str] | None = None,
-    completed: bool = True,
     observation_url: str = "",
     started_at: float | None = None,
     llm_calls: int = 0,
@@ -414,29 +343,15 @@ def make_immediate_statement_turn(
     llm_context: list[dict] | None = None,
     statement: Any = None,
     statement_instance_id: str = "",
-    outcome: Any = None,
+    executed: bool = True,
 ) -> PolicyTurn:
-    """Record a statement completed without an interactive decision loop.
+    """Record execution of a primitive outside the interactive decision loop.
 
-    The persisted ``operation_mode=non_interactive`` value is a compatibility/budget label: it
-    means no supervisor turn was consumed, not that every statement is free of GUI side effects.
+    Terminal status is recorded separately as ``StatementOutcomeEvent``. This
+    turn keeps only the primitive execution facts and does not mirror completed
+    or failed booleans.
     """
-    from gui_agent.core.schemas import StatementOutcome
-
     elapsed = max(0.0, time.perf_counter() - started_at) if started_at is not None else 0.0
-    if outcome is None:
-        outcome = (
-            StatementOutcome.completed(summary, verification="confirmed", reads=dict(reads or {}))
-            if completed
-            else StatementOutcome.failed(summary, reads=dict(reads or {}))
-        )
-    elif getattr(outcome, "observation", None) is not None:
-        # The persisted turn keeps ``observation_url`` (a file path) as its screenshot
-        # reference. Raw ``png_bytes`` must never enter the saved context: pydantic
-        # json-dumps ``bytes`` as UTF-8, so non-text bytes (a PNG) raise UnicodeDecodeError
-        # on save_context.model_dump(mode="json"). Strip the live observation here; nothing
-        # downstream reads persisted-outcome bytes (only observation_url / outcome.reads).
-        outcome = outcome.model_copy(update={"observation": None})
     return PolicyTurn(
         index=index,
         operation_mode="non_interactive",
@@ -451,7 +366,6 @@ def make_immediate_statement_turn(
             statement_id=statement_id,
             statement_kind=kind if kind in {"navigation", "filter", "action", "collection", "verification"} else "collection",
             completion_strategy="read_once",
-            outcome=outcome,
         ),
         action_decision=None,
         non_ui={
@@ -464,11 +378,9 @@ def make_immediate_statement_turn(
             "data_scope": data_scope,
             "reads": dict(reads or {}),
             "summary": summary,
-            "completed": completed,
-            "failed": not completed,
             "observation_url": observation_url,
         },
-        executed=completed,
+        executed=executed,
         llm_calls=llm_calls,
         input_tokens=input_tokens,
         output_tokens=output_tokens,

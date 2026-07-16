@@ -41,12 +41,16 @@ class StatementView:
     kickback: str = ""
     reads: dict[str, str] = field(default_factory=dict)
     checklist: list[dict] = field(default_factory=list)
-    done_check: dict = field(default_factory=dict)
+    acceptance: dict = field(default_factory=dict)
     pre_existing: bool = False
     collection_summary: str = ""
-    retry_count: int = 0
     last_summary: str = ""
     turn_indices: list[int] = field(default_factory=list)
+    verification_url: str = ""
+    outcome_after_turn: int = 0
+    outcome_timings: dict[str, float] = field(default_factory=dict)
+    outcome_token_usage: dict[str, dict[str, int]] = field(default_factory=dict)
+    outcome_context: list[dict] = field(default_factory=list)
 
 
 def _upsert_checklist(
@@ -74,19 +78,19 @@ def _upsert_checklist(
     existing.source = source
 
 
-def fold_checklist_from_checker(
+def fold_checklist_from_verdict(
     *,
     success_condition: str,
     fallback: str,
-    checker: dict,
+    verdict: dict,
     items: dict[str, ChecklistItemView] | None = None,
 ) -> dict[str, ChecklistItemView]:
-    """Fold one checker dict into checklist items (pure; no context writes)."""
+    """Fold one Outcome/Transition verdict into checklist items."""
     items = items if items is not None else {}
-    status = str(checker.get("status") or "")
-    reason = str(checker.get("reason") or "")
-    visible = [str(v) for v in (checker.get("visible_evidence") or []) if str(v)]
-    missing = [str(v) for v in (checker.get("missing_evidence") or []) if str(v)]
+    status = str(verdict.get("status") or "")
+    reason = str(verdict.get("reason") or "")
+    visible = [str(v) for v in (verdict.get("visible_evidence") or []) if str(v)]
+    missing = [str(v) for v in (verdict.get("missing_evidence") or []) if str(v)]
 
     if status == "done":
         item_status = "done"
@@ -97,7 +101,7 @@ def fold_checklist_from_checker(
 
     evidence = visible or ([reason] if reason else [])
     verdicts: dict[int, dict] = {}
-    for v in (checker.get("item_verdicts") or []):
+    for v in (verdict.get("item_verdicts") or []):
         if isinstance(v, dict) and isinstance(v.get("index"), int):
             verdicts[v["index"]] = v
 
@@ -112,11 +116,11 @@ def fold_checklist_from_checker(
             )
             ev = str(v.get("evidence") or "").strip()
             item_evidence_i = [ev] if ev else (evidence if not met else [])
-            source_i = "checker:item_verdict"
+            source_i = "verdict:item"
         else:
             item_status_i = item_status
             item_evidence_i = evidence
-            source_i = "checker:success_condition"
+            source_i = "verdict:success_condition"
         _upsert_checklist(
             items,
             item_id=_checklist_item_id("accept", text),
@@ -134,13 +138,13 @@ def fold_checklist_from_checker(
             text=text,
             status=missing_status,
             evidence=[reason] if reason else [],
-            source="checker:missing_evidence",
+            source="verdict:missing_evidence",
         )
     return items
 
 
 class StatementReportReducer:
-    """Reduce journal turns into per-invocation statement views."""
+    """Reduce turn and statement-outcome events into per-invocation views."""
 
     def reduce(
         self,
@@ -163,20 +167,31 @@ class StatementReportReducer:
                 view.statement_id = statement_id
             return view
 
-        for turn in events or []:
-            if not isinstance(turn, dict):
+        for event in events or []:
+            if not isinstance(event, dict):
                 continue
-            sv = turn.get("supervisor") if isinstance(turn.get("supervisor"), dict) else {}
-            instance_id = str(turn.get("statement_instance_id") or "")
+            event_type = str(event.get("event_type") or "turn")
+            is_outcome = event_type == "statement_outcome"
+            sv = (
+                event.get("supervisor")
+                if isinstance(event.get("supervisor"), dict)
+                else {}
+            )
+            instance_id = str(event.get("statement_instance_id") or "")
             if not instance_id:
                 continue
-            mid = str(sv.get("statement_id") or "")
+            mid = str(
+                event.get("statement_id")
+                if is_outcome
+                else sv.get("statement_id")
+                or ""
+            )
             view = ensure(instance_id, mid)
-            idx = turn.get("index")
-            if isinstance(idx, int):
+            idx = event.get("index")
+            if event_type == "turn" and isinstance(idx, int):
                 view.turn_indices.append(idx)
 
-            info = turn.get("statement")
+            info = event.get("statement")
             if isinstance(info, dict):
                 view.statement_id = str(info.get("id") or view.statement_id)
                 view.name = str(info.get("name") or view.name)
@@ -187,18 +202,44 @@ class StatementReportReducer:
                 )
 
             if not view.name:
-                view.name = str(sv.get("summary") or view.statement_id)
+                view.name = str(
+                    sv.get("summary")
+                    or (
+                        (event.get("outcome") or {}).get("summary")
+                        if is_outcome and isinstance(event.get("outcome"), dict)
+                        else ""
+                    )
+                    or view.statement_id
+                )
             if not view.kind:
-                view.kind = str(sv.get("statement_kind") or "")
+                view.kind = str(
+                    event.get("statement_kind")
+                    if is_outcome
+                    else sv.get("statement_kind")
+                    or ""
+                )
 
-            if sv.get("summary"):
+            if not is_outcome and sv.get("summary"):
                 view.last_summary = str(sv["summary"])
-            if sv.get("pre_existing"):
+            if (
+                event.get("pre_existing")
+                if is_outcome
+                else sv.get("pre_existing")
+            ):
                 view.pre_existing = True
-            if sv.get("collection_summary"):
-                view.collection_summary = str(sv["collection_summary"])
+            collection_summary = (
+                event.get("collection_summary")
+                if is_outcome
+                else sv.get("collection_summary")
+            )
+            if collection_summary:
+                view.collection_summary = str(collection_summary)
 
-            outcome = sv.get("outcome") if isinstance(sv.get("outcome"), dict) else None
+            outcome = (
+                event.get("outcome")
+                if is_outcome and isinstance(event.get("outcome"), dict)
+                else None
+            )
             if outcome:
                 view.phase = str(outcome.get("phase") or view.phase)
                 view.verification = str(outcome.get("verification") or view.verification)
@@ -210,20 +251,79 @@ class StatementReportReducer:
                     view.status = "done"
                 elif view.phase in {"failed", "exhausted", "infeasible", "interrupted"}:
                     view.status = "failed"
+                view.last_summary = str(
+                    outcome.get("summary") or view.last_summary
+                )
+                view.verification_url = str(
+                    event.get("observation_url") or view.verification_url
+                )
+                view.outcome_after_turn = int(
+                    event.get("after_turn") or view.outcome_after_turn
+                )
+                view.outcome_timings = dict(event.get("timings") or {})
+                view.outcome_token_usage = dict(event.get("token_usage") or {})
+                view.outcome_context = list(event.get("llm_context") or [])
 
-            checker = turn.get("checker")
-            if isinstance(checker, dict) and checker:
-                view.done_check = dict(checker)
-                cmap = checklist_maps.setdefault(instance_id, {})
-                fold_checklist_from_checker(
+                # A structural Guard may complete before invoking Transition. Reports still
+                # need an acceptance projection, but it is derived from the terminal Outcome
+                # instead of resurrecting a mutable completion state.
+                terminal_check = {
+                    "status": "done" if view.phase == "completed" else "stuck",
+                    "reason": str(outcome.get("summary") or ""),
+                    "summary": str(outcome.get("summary") or ""),
+                    "effect_status": (
+                        "confirmed" if view.phase == "completed" else "unverified"
+                    ),
+                    "visible_evidence": [
+                        str(item)
+                        for item in (outcome.get("evidence") or [])
+                        if str(item)
+                    ],
+                }
+                view.acceptance = terminal_check
+                fold_checklist_from_verdict(
                     success_condition=view.success_condition,
                     fallback=view.name or view.statement_id,
-                    checker=checker,
-                    items=cmap,
+                    verdict=terminal_check,
+                    items=checklist_maps.setdefault(instance_id, {}),
                 )
 
-            if turn.get("replan"):
-                view.retry_count += 1
+            transition = event.get("transition")
+            proposal = (
+                transition.get("proposal")
+                if isinstance(transition, dict)
+                and isinstance(transition.get("proposal"), dict)
+                else None
+            )
+            if proposal:
+                kind = str(proposal.get("kind") or "")
+                evidence = [
+                    str(item.get("claim") or "")
+                    for item in (proposal.get("evidence") or [])
+                    if isinstance(item, dict) and str(item.get("claim") or "")
+                ]
+                transition_check = {
+                    "status": (
+                        "done" if kind == "complete"
+                        else "stuck" if kind == "infeasible"
+                        else "in_progress"
+                    ),
+                    "reason": str(proposal.get("reason") or ""),
+                    "summary": str(proposal.get("summary") or ""),
+                    "effect_status": "confirmed" if kind == "complete" else "unverified",
+                    "visible_evidence": evidence,
+                    "missing_evidence": list(
+                        transition.get("guard_rejections") or []
+                    ),
+                }
+                if kind in {"complete", "infeasible"}:
+                    view.acceptance = transition_check
+                fold_checklist_from_verdict(
+                    success_condition=view.success_condition,
+                    fallback=view.name or view.statement_id,
+                    verdict=transition_check,
+                    items=checklist_maps.setdefault(instance_id, {}),
+                )
 
         for view in views.values():
             cm = checklist_maps.get(view.instance_id) or {}

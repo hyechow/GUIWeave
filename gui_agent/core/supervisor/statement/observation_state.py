@@ -11,7 +11,7 @@ from gui_agent.core.schemas import StatementContract
 # A `filter` statement's job is to APPLY a filter; its success is "the intended filter is in
 # effect" — which the adapter reports authoritatively through Observation.applied_filters
 # (whatever platform-native evidence channel produced it), NOT by re-reading row/cell values.
-# Decouples action-applied from effect-judgment so the checker can't reject a correctly-applied
+# Decouples action-applied from effect judgment so a semantic proposal cannot reject a correctly-applied
 # filter on display-column grounds.
 
 @dataclass(frozen=True)

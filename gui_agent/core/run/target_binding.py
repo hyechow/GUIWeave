@@ -30,11 +30,7 @@ def _visual_binding(
     return TargetBinding(
         status="bound",
         source="visual",
-        unit_id=(
-            step.mutation_authorization.subject_ref
-            if step.mutation_authorization is not None
-            else ""
-        ),
+        unit_id=step.execution_scope or "visual",
         reason="bound to the concrete visual action point",
     )
 

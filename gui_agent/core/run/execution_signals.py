@@ -9,7 +9,7 @@ precedence only inside the domains for which they are authoritative.
 from __future__ import annotations
 
 import re
-from dataclasses import dataclass, field
+from dataclasses import dataclass
 from typing import Iterable, Literal
 
 from gui_agent.core.schemas import EffectMode, StatementContract, PersistenceMode
@@ -120,7 +120,7 @@ def action_requires_mutation_evidence(
 
 @dataclass(frozen=True)
 class EvidenceClaim:
-    """One typed assertion from an adapter, runtime ledger, or checker."""
+    """One typed assertion from an adapter, runtime ledger, or Transition."""
 
     domain: ClaimDomain
     value: ClaimValue
@@ -139,52 +139,13 @@ class EvidenceClaim:
 
 @dataclass(frozen=True)
 class CompletionEvaluation:
+    """Runtime's evidence-only answer to a model completion proposal."""
+
     status: CompletionStatus
     reason: str
     completion_status: Literal[
         "confirmed", "accepted_unverified", "failed", "in_progress"
     ] = "in_progress"
-    next: Literal["complete", "act", "commit", "observe", "recover"] = "act"
-
-
-@dataclass(frozen=True)
-class ConstraintEntry:
-    text: str
-    scope: str
-    source: str = "runtime"
-
-
-@dataclass
-class ConstraintLedger:
-    """Typed runtime constraints whose lifetime is explicit.
-
-    Static task constraints use ``scope='task'``.  Runtime loop/no-effect facts should use the
-    current statement or row scope and therefore cannot poison a later execution context.
-    """
-
-    entries: list[ConstraintEntry] = field(default_factory=list)
-
-    def add(self, text: str, *, scope: str, source: str = "runtime") -> None:
-        entry = ConstraintEntry(text=text, scope=scope, source=source)
-        if entry not in self.entries:
-            self.entries.append(entry)
-
-    def visible(self, scope: str) -> list[str]:
-        return [entry.text for entry in self.entries if entry.scope in {"task", scope}]
-
-    def clear_scope(self, scope: str) -> None:
-        self.entries = [entry for entry in self.entries if entry.scope != scope]
-
-    def remove_sources(self, scope: str, sources: Iterable[str]) -> int:
-        """Remove scoped transient constraints from selected producers."""
-        selected = set(sources)
-        before = len(self.entries)
-        self.entries = [
-            entry
-            for entry in self.entries
-            if not (entry.scope == scope and entry.source in selected)
-        ]
-        return before - len(self.entries)
 
 
 def claim(
@@ -213,12 +174,14 @@ def claim(
     )
 
 
-class ExecutionCoordinator:
-    """Reduce action, effect, and persistence evidence into one control decision.
+class CompletionReducer:
+    """Reduce action, effect, and persistence evidence for terminal validation.
 
     The three assessments remain independent.  In particular, dispatch does not prove the
-    business effect and a visible draft value does not prove persistence.  This coordinator is
-    the only component that combines those facts into ``complete/act/commit/observe/recover``.
+    business effect and a visible draft value does not prove persistence.
+
+    This reducer has no route vocabulary and cannot choose the next action. Semantic flow belongs
+    to the LLM; this component answers only whether cited facts support a terminal outcome.
     """
 
     @staticmethod
@@ -273,11 +236,7 @@ class ExecutionCoordinator:
         effect_claim = self._best(
             item
             for item in self._claims(scoped, "effect.state", scope)
-            if (
-                item.value == "contradicted"
-                and item.source_type == "checker.rejected"
-            )
-            or covers_expected_subject(item)
+            if covers_expected_subject(item)
         )
         target = self._best(self._claims(scoped, "action.target", scope))
         filter_state = self._best(self._claims(scoped, "filter.state", scope))
@@ -304,23 +263,22 @@ class ExecutionCoordinator:
             else "unknown"
         )
 
-        # An authoritative reading of the declared controls can disprove a probabilistic checker
-        # diagnosis.  This precedence is local to effect assessment; it cannot prove dispatch or
-        # persistence.
+        # An authoritative reading of the declared controls can disprove a non-authoritative
+        # semantic diagnosis. This precedence cannot prove dispatch or persistence.
         outcome_contradicted = bool(
             effect_claim is not None
             and effect_claim.value == "contradicted"
             and action_delivery == "delivered"
         )
-        pending_checker_unmet = bool(
+        pending_semantic_unmet = bool(
             outcome_contradicted
             and effect_claim is not None
             and not effect_claim.authoritative
-            and effect_claim.source_type != "checker.rejected"
+            and effect_claim.source_type != "transition.rejected"
             and persistence_assessment is not None
             and persistence_assessment.status == "pending"
         )
-        if pending_checker_unmet:
+        if pending_semantic_unmet:
             outcome_contradicted = False
         if (
             outcome_contradicted
@@ -336,7 +294,7 @@ class ExecutionCoordinator:
                 "contradicted"
             )
             effect_evidence = effect_claim.evidence if effect_claim is not None else ""
-        elif pending_checker_unmet or (
+        elif pending_semantic_unmet or (
             effect_claim is not None and effect_claim.value == "unmet"
         ) or (
             control_state is not None
@@ -346,7 +304,7 @@ class ExecutionCoordinator:
             effect_evidence = (
                 effect_claim.evidence
                 if effect_claim is not None
-                and (pending_checker_unmet or effect_claim.value == "unmet")
+                and (pending_semantic_unmet or effect_claim.value == "unmet")
                 else control_state.evidence if control_state is not None else ""
             )
         elif (
@@ -386,19 +344,16 @@ class ExecutionCoordinator:
         if action_delivery == "failed":
             return CompletionEvaluation(
                 "contradicted", "动作派发已被明确证伪", "failed",
-                next="recover",
             )
         if action_targeting == "contradicted" and effect_status != "satisfied":
             return CompletionEvaluation(
                 "contradicted", "动作命中了错误目标", "failed",
-                next="recover",
             )
         if effect_status == "contradicted":
             return CompletionEvaluation(
                 "contradicted",
                 effect_evidence or "动作后的业务状态已被明确证伪",
                 "failed",
-                next="recover",
             )
 
         if contract.completion_mode == "filter_state_with_result":
@@ -409,9 +364,8 @@ class ExecutionCoordinator:
                     status="satisfied",
                     completion_status="confirmed",
                     reason=filter_state.evidence or "目标筛选状态已权威确认",
-                    next="complete",
                 )
-            return CompletionEvaluation("pending", "筛选状态尚未权威确认", next="act")
+            return CompletionEvaluation("pending", "筛选状态尚未权威确认")
 
         if contract.completion_mode == "filter_state":
             if filter_state is not None and filter_state.value == "confirmed":
@@ -419,34 +373,35 @@ class ExecutionCoordinator:
                     "satisfied",
                     filter_state.evidence or "目标筛选状态已权威确认",
                     "confirmed",
-                    next="complete",
                 )
-            return CompletionEvaluation("pending", "筛选状态尚未权威确认", next="act")
+            return CompletionEvaluation("pending", "筛选状态尚未权威确认")
 
         if contract.completion_mode == "arrival":
-            if not (action_delivery == "delivered" and effect_status == "satisfied"):
+            if effect_status != "satisfied":
                 return CompletionEvaluation(
-                    "pending", "导航动作或目标页面确认尚不完整", next="act"
+                    "pending", "目标页面确认尚不完整"
                 )
             return CompletionEvaluation(
                 "satisfied", effect_claim.evidence if effect_claim else "目标页面状态已确认",
-                "confirmed", next="complete",
+                "confirmed" if effect_authoritative else "accepted_unverified",
             )
 
         if contract.completion_mode == "read":
             if (
                 collection_coverage is not None
                 and collection_coverage.value == "complete"
-                and collection_coverage.authoritative
             ):
                 return CompletionEvaluation(
                     "satisfied",
                     collection_coverage.evidence or "集合遍历已完成",
-                    "confirmed",
-                    next="complete",
+                    (
+                        "confirmed"
+                        if collection_coverage.authoritative
+                        else "accepted_unverified"
+                    ),
                 )
             return CompletionEvaluation(
-                "pending", "集合遍历尚未达到可验证边界", next="act"
+                "pending", "集合遍历尚未达到可验证边界"
             )
 
         if contract.completion_mode == "mutation":
@@ -462,18 +417,12 @@ class ExecutionCoordinator:
                     "satisfied",
                     "声明的副作用动作已可靠派发，业务效果没有独立反馈通道",
                     "accepted_unverified",
-                    next="complete",
                 )
             if effect_status == "unmet":
                 if persistence.status == "pending":
                     return CompletionEvaluation(
                         "pending",
                         effect_evidence or "目标状态尚未越过持久化边界",
-                        next=(
-                            "observe"
-                            if persistence.terminal_turn is not None
-                            else "commit" if persistence.terminal_ready else "act"
-                        ),
                     )
                 if (
                     persistence.status == "submitted"
@@ -483,18 +432,15 @@ class ExecutionCoordinator:
                         "contradicted",
                         effect_evidence or "提交后的业务状态仍未达到声明目标",
                         "failed",
-                        next="recover",
                     )
                 if persistence.status == "submitted":
                     return CompletionEvaluation(
                         "satisfied",
                         "终端提交已可靠派发，非权威验收尚未确认目标状态",
                         "accepted_unverified",
-                        next="complete",
                     )
                 return CompletionEvaluation(
                     "pending", effect_evidence or "目标字段尚未达到声明值",
-                    next="act",
                 )
             if (
                 effect_status == "satisfied"
@@ -506,7 +452,6 @@ class ExecutionCoordinator:
                 return CompletionEvaluation(
                     "pending",
                     "声明的业务状态已确认，等待本次调用越过显式持久化边界",
-                    next="commit",
                 )
             if (
                 persistence.orphan_commit
@@ -518,7 +463,6 @@ class ExecutionCoordinator:
                     "contradicted",
                     "提交已派发，但当前执行作用域没有目标写入",
                     "failed",
-                    next="recover",
                 )
             if persistence.status == "pending":
                 if (
@@ -528,8 +472,11 @@ class ExecutionCoordinator:
                     return CompletionEvaluation(
                         "satisfied",
                         effect_evidence or "提交后的业务状态已确认",
-                        "confirmed",
-                        next="complete",
+                        (
+                            "confirmed"
+                            if effect_authoritative
+                            else "accepted_unverified"
+                        ),
                     )
                 return CompletionEvaluation(
                     "pending",
@@ -538,44 +485,37 @@ class ExecutionCoordinator:
                         if persistence.terminal_turn is not None
                         else "目标写入已完成，但显式持久化边界尚未提交"
                     ),
-                    next=(
-                        "observe"
-                        if persistence.terminal_turn is not None
-                        else "commit" if persistence.terminal_ready else "act"
-                    ),
                 )
             if persistence.status == "submitted":
                 if effect_status == "satisfied":
                     return CompletionEvaluation(
                         "satisfied",
                         effect_evidence or "业务状态及终端提交已确认",
-                        "confirmed",
-                        next="complete",
+                        "confirmed" if effect_authoritative else "accepted_unverified",
                     )
                 return CompletionEvaluation(
                     "satisfied",
                     "终端提交已可靠派发，完成帧未出现反证",
                     "accepted_unverified",
-                    next="complete",
                 )
             if contract.effect_mode == "ensure" and effect_status == "satisfied":
                 return CompletionEvaluation(
-                    "satisfied", effect_evidence or "幂等目标状态已满足",
-                    "confirmed", next="complete",
+                    "satisfied",
+                    effect_evidence or "幂等目标状态已满足",
+                    "confirmed" if effect_authoritative else "accepted_unverified",
                 )
             return CompletionEvaluation(
                 "pending", "动作结果尚未形成可完成的业务状态",
-                next="act",
             )
 
         if effect_status == "satisfied":
             return CompletionEvaluation(
-                "satisfied", effect_evidence or "验收状态已确认", "confirmed",
-                next="complete",
+                "satisfied",
+                effect_evidence or "验收状态已确认",
+                "confirmed" if effect_authoritative else "accepted_unverified",
             )
         return CompletionEvaluation(
             "pending", "当前证据不足以完成执行单元",
-            next="act",
         )
 
 

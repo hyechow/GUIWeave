@@ -5,10 +5,13 @@ platform-neutral. Site facts belong in knowledge; platform mechanics belong in a
 
 ## Modules
 
-- `policy.py`: owns statement state transitions. It may consume typed evidence, request one
-  proposal, advance, recover, or fail. It must not classify instruction prose or implement a
-  platform control mechanism.
-- `../../run/action_exec.py`: grounds, authorizes, and dispatches one concrete primitive. The
+- `policy.py`: builds Memory/evidence inputs, invokes one LLM Transition, and applies
+  hard Guard vetoes. It must not choose a business route from deterministic phases.
+- `../../run/statement_memory.py`: projects the active instance's Journal facts into bounded,
+  read-only LLM context. It stores no phase and writes no parallel ledger.
+- `../../run/statement_transition.py`: validates completion, infeasible, and evidence-reference
+  boundaries. It never chooses a fallback action.
+- `../../run/action_exec.py`: grounds and dispatches one concrete primitive. The
   concrete lifecycle role and semantic action key are fixed here, never reconstructed by history.
 - `../../run/action_signals.py`: is the only runtime writer of persisted action delivery, target,
   and response facts. Sensors submit raw facts; this module cannot infer effects or transitions.
@@ -17,23 +20,17 @@ platform-neutral. Site facts belong in knowledge; platform mechanics belong in a
 - `evidence.py`: converts observations and receipts into `EvidenceClaim` values. It never changes
   statement state or reads transient monitor state. Statement scope and evidence subject/resource
   are separate dimensions.
-- `../../run/execution_signals.py`: `ExecutionCoordinator` is the sole reducer of action, effect,
-  and persistence claims into a completion recommendation. `policy.py` alone applies that
-  recommendation and may escalate an ordinary `act` to recovery from typed progress evidence.
+- `../../run/execution_signals.py`: `CompletionReducer` reduces action, effect, and persistence
+  claims into `satisfied/pending/contradicted` terminal evidence. It has no route output.
 - `../../run/persistence.py`: projects write/commit receipts into `clean/pending/submitted`; it
   does not judge the requested business state.
-- `../../run/progress_monitor.py`: emits advancing/stalled/exhausted trajectory evidence. It
-  cannot call recovery or reinterpret an unmet target as rejection.
 - `execution_scope.py`: isolates history by observable resource identity or statement identity.
   It does not know application routes or entity names.
 - `observation_state.py`: interprets normalized filter and target-unit state without planning or
   state transitions.
-- `acquisition.py`: derives deterministic section, affordance, and target-write proposals from the
-  neutral `Observation` contract.
-- `model_io.py`: assembles checker/planner/selector model calls; it owns no execution transition.
-- `runtime.py`: small timing and collection-loop utilities.
-- `decomposition.py`: translates a goal into statement contracts.
-- `stuck.py`: recovery support based on progress evidence; it does not own completion.
+- `model_io.py`: assembles the single Transition model call; it owns no facts or runtime state.
+- `runtime.py`: small timing and collection-budget utilities.
+- `action_normalization.py`: keeps picker action metadata internally consistent; it owns no flow.
 
 ## Admission Rules
 
@@ -41,13 +38,18 @@ Core execution code may depend on:
 
 1. Program and statement contracts.
 2. Adapter-normalized observations.
-3. Structured planner metadata and executor receipts.
-4. Generic progress and completion evidence.
+3. Structured Transition action metadata and executor receipts.
+4. Generic completion and hard-budget evidence.
+
+Every dispatched action remains a Journal-backed Memory receipt. Narrative history may be
+compacted, but receipts, effects, failures, and constraints remain addressable by `turn:N`.
+Visual semantic completion is explicitly `accepted_unverified`; only authoritative adapter or
+Journal evidence may produce `confirmed`.
 
 Core execution code must not contain:
 
 1. Benchmark, site, page, product, or task identifiers.
-2. Regex or stopword classifiers over planner/checker prose that alter control flow.
+2. Regex or stopword classifiers over Transition prose that alter control flow.
 3. Browser-, Android-, or iPhone-specific control operations.
 4. A second path that can mark a statement done outside `policy.py`.
 
@@ -63,9 +65,9 @@ contradiction. A missing optional structural capability may fall back to visual 
 structural ambiguity never does. A unique concrete point may derive its structural unit directly;
 an explicit unit is required only when the point itself cannot distinguish multiple candidates.
 
-Binding authorizes one write dispatch only. It does not mark a statement complete, choose a
-recovery route, or maintain a second execution ledger. Completion remains owned by `policy.py`
-and must be supported by post-action evidence associated with the same binding token.
+Binding records where one write dispatch landed. It does not authorize a route, mark a statement
+complete, choose recovery, or maintain a second execution ledger. Completion remains owned by
+the `Transition → Guard` boundary and must be supported by post-action evidence.
 
 ## Mutation Progress
 
@@ -74,10 +76,10 @@ identity is fallback evidence: the first observed surface is an entry hint and a
 on another surface is non-terminal. A URL response alone never manufactures a persistence
 boundary. Workflows whose only final submit occurs on a child surface must declare immediate
 persistence instead of relying on a navigation heuristic. Platforms without surface identity rely
-on structured roles, receipts, and completion evidence.
+on action roles, receipts, and completion evidence.
 
 A nested in-place commit leaves persistence clean without a write receipt and pending after a
-write; it never establishes terminal persistence by itself. Before the child flow returns to the
-entry surface, forward preparation remains legal. Once that return makes persistence
-`terminal_ready`, only a root commit may be dispatched; repeated non-commit proposals are dropped.
-There is deliberately no second text-derived "closed preparation" state machine.
+write; it never establishes terminal persistence by itself. `terminal_ready` is exposed to the
+LLM as a fact, not converted into a commit-only phase. Guard rejects writes outside the declared
+contract and unsupported terminal proposals; Memory lets the LLM avoid repeating irreversible
+effects without introducing a second repeat-state machine.

@@ -5,19 +5,11 @@ construct the browser session (Chrome over CDP), executor, perception, action
 policy and supervisor. Core orchestration receives the neutral bundle and never
 imports these classes directly. Mirrors ``adapters/iphone/factory.py``.
 
-SCROLL-COLLECT
+READ STITCHING
 --------------
-The scroll/stitch bundle fields back the runner's scroll-collect / stitching branch
-(reached when the statement supervisor plans completion_strategy='scroll_until_boundary'
-for information-gathering goals). Browser collection IS implemented:
-  - ``make_stitch_accumulator`` / ``robust_shift`` / ``gray_u8`` reuse the NEUTRAL
-    ``gui_agent.core.vision.stitch`` algos with the browser content band (whole frame, no
-    device-frame mask).
-  - ``make_scroll_probe`` / ``apply_scroll_profile`` use the trivial
-    ``adapters/browser/scroll_probe.py`` (browser wheel scroll is deterministic, so
-    the probe just scrolls once and verifies vertical progress).
-⚠️ DRAFT: validated on simple lists; the stitch tuning (chunk size / overlap / shift
-thresholds) inherits iphone defaults and may need browser A/B tuning on long pages.
+Browser collection reuses the neutral stitch accumulator with the whole frame as
+the content band. Scrolling itself remains an ordinary, journalled LLM action;
+the adapter does not probe, retry, or cache scroll actions behind the runtime.
 The status reporter is a translucent HUD floating over the Chrome window (the
 neutral core AgentHUD; macOS-host only), enabled by the --hud flag.
 
@@ -67,14 +59,12 @@ def _build_supervisor(name: str) -> "SupervisorPolicy":
     from gui_agent.adapters.browser.target_binding import (
         active_choice_controls,
         active_surface_id,
-        active_target_aliases,
     )
 
     if name == StatementSupervisorPolicy.name:
         return StatementSupervisorPolicy(
             prompts=BROWSER_STATEMENT_PROMPTS,
             surface_resolver=active_surface_id,
-            active_target_resolver=active_target_aliases,
             mutation_control_resolver=active_choice_controls,
         )
     raise ValueError(f"未知监督者 {name!r}，可选：{StatementSupervisorPolicy.name}")
@@ -85,21 +75,6 @@ def _build_supervisor(name: str) -> "SupervisorPolicy":
 _BROWSER_CONTENT_TOP, _BROWSER_CONTENT_BOT = 0.0, 1.0
 
 
-def _apply_scroll_profile(action: object, profile: object) -> object:
-    """Pin a fresh scroll action to a verified scroll point (runner cached path)."""
-    from gui_agent.adapters.browser.scroll_probe import apply_profile
-
-    return apply_profile(action, profile)
-
-
-def _make_scroll_probe(session: object, executor: object, log_dir: object) -> object:
-    """Trivial browser scroll-probe (wheel scroll is deterministic — one scroll +
-    shift check). See adapters/browser/scroll_probe.py."""
-    from gui_agent.adapters.browser.scroll_probe import BrowserScrollProbe
-
-    return BrowserScrollProbe(session, executor, log_dir)
-
-
 def _make_stitch_accumulator(*args: object, **kwargs: object) -> object:
     """Neutral core StitchAccumulator with the browser content band (whole frame)."""
     from gui_agent.core.vision.stitch import StitchAccumulator
@@ -108,19 +83,6 @@ def _make_stitch_accumulator(*args: object, **kwargs: object) -> object:
     kwargs.setdefault("content_bot", _BROWSER_CONTENT_BOT)
     kwargs.setdefault("frame_mask", None)
     return StitchAccumulator(*args, **kwargs)
-
-
-def _robust_shift(*args: object, **kwargs: object) -> object:
-    """Vertical shift on full-frame browser screenshots (whole-frame band, no mask)."""
-    from gui_agent.adapters.browser.scroll_probe import browser_robust_shift
-
-    return browser_robust_shift(*args, **kwargs)
-
-
-def _gray_u8(png_bytes: bytes) -> object:
-    from gui_agent.core.vision.stitch import _gray_u8 as _impl
-
-    return _impl(png_bytes)
 
 
 def _prepare_vision_prompt_png(png_bytes: bytes) -> bytes:
@@ -257,11 +219,7 @@ def build_browser_bundle(
         make_supervisor=_build_supervisor,
         make_status_reporter=lambda enabled: (_make_browser_hud() if enabled else None),
         make_action_visualizer=_make_action_visualizer,
-        make_scroll_probe=_make_scroll_probe,
-        apply_scroll_profile=_apply_scroll_profile,
         make_stitch_accumulator=_make_stitch_accumulator,
-        robust_shift=_robust_shift,
-        gray_u8=_gray_u8,
         prepare_vision_prompt_png=_prepare_vision_prompt_png,
         default_action_policy="browser_vision",
         default_supervisor="statement",

@@ -146,7 +146,6 @@ def start_statement(
     run: Run,
     index: int,
     *,
-    fresh_advance: bool = False,
     instance_id: str = "",
 ) -> StatementContract:
     """Compile and begin one interactive statement."""
@@ -156,7 +155,6 @@ def start_statement(
         contract,
         instance_id=iid,
         task_type=task_type_for_run(run),
-        fresh_advance=fresh_advance,
     )
     return contract
 

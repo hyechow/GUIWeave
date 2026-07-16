@@ -57,13 +57,13 @@ def rendered_target_evidence(
     """
     if action_family not in {"input", "select"}:
         return ""
-    if not target_control or not target_group_id:
+    if not target_control:
         return ""
     candidates = [
         control
         for control in controls or []
         if isinstance(control, dict)
-        and _in_group(control, target_group_id)
+        and (not target_group_id or _in_group(control, target_group_id))
         and matches_target_control(control, target_control)
     ]
     if len(candidates) != 1:
@@ -87,7 +87,8 @@ def rendered_target_evidence(
     viewport = "" if in_viewport is None else f"; in_viewport={str(bool(in_viewport)).lower()}"
     return (
         "## 结构化目标证据（浏览器 DOM，字段身份与当前值优先于截图文字邻接）\n"
-        f"- declared_target={target_control!r}; group={target_group_id!r}; "
+        f"- declared_target={target_control!r}; "
+        f"group={(target_group_id or 'unique-on-frame')!r}; "
         f"matched_control={display_name!r}; kind={kind!r}{center}{viewport}\n"
         f"- current_value={current!r}; requested_value={str(target_value)!r}\n"
         "只判断 matched_control 自身是否达到 requested_value；相邻字段出现相同文本不代表该目标完成。"
@@ -112,7 +113,7 @@ def resolve_native_control_action(
     """
     if action_family != "select":
         return None
-    if not target_control or not target_value or not target_group_id:
+    if not target_control or not target_value:
         return None
 
     candidates: list[dict] = []
@@ -177,7 +178,7 @@ def ground_rendered_action(
         return decision
     if action_family != "input" or action.action_type != "type":
         return decision
-    if not target_control or not target_value or not target_group_id:
+    if not target_control or not target_value:
         return decision
     if str(action.text or "") != str(target_value):
         return decision
@@ -186,7 +187,7 @@ def ground_rendered_action(
     for control in controls or []:
         if not isinstance(control, dict):
             continue
-        if not _in_group(control, target_group_id):
+        if target_group_id and not _in_group(control, target_group_id):
             continue
         if not matches_target_control(control, target_control):
             continue

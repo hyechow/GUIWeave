@@ -1,14 +1,19 @@
 # Signal-Source Architecture — typed observation + scoped authority + model arbitration
 
 本文只描述 observation/context 进入模型时的来源与权威域。运行时动作事实另由
-`core/run/action_signals.py` 统一归档，typed claim 由 statement `evidence.py` 投影，完成建议由
-`ExecutionCoordinator` 归约；模型输出本身不是运行时状态转移权限。
+`core/run/action_signals.py` 统一归档，typed claim 由 statement `evidence.py` 投影，终态证据由
+`CompletionReducer` 归约。LLM 拥有 statement 内的语义下一步；它不能发明事实，终态提议仍受
+合同与证据 Guard 否决。
 
 ## 为什么
 
-GUI agent 里判断"当前状态"的逻辑正在以**特判**堆叠:checker.md 里散落着"DOM current 优先于截图/窄框以 current 为准/native_select 展开即已选"等局部规则;policy.py 里 dispatch/filter gate 用 url_changed / active-filters chip **确定性判 done、跳过 LLM**。这些都是"我们替模型硬编码地整合不同信号源"。
+GUI agent 若让 checker、planner 和 policy 各自解释 DOM、截图、URL 与回执，很快就会形成互相
+冲突的隐式状态机。当前实现把信号先投影成有来源和权威域的 facts，再让同一个 Transition 结合
+StatementMemory 与当前帧决定下一步；Runtime 只验证终态和合同边界。
 
-本架构把它收敛成一套统一协议:**每条信号标注来源(source_type)+ 它对哪个 claim/domain 权威(authoritative_for)+ 新鲜度 + 覆盖度**,模型按一条冲突协议自己裁决。不是"把所有确定性交给 LLM"——确定性快路仍合理,只是它应读**同一套信号**,而不是散成特殊规则。
+协议是：**每条信号标注来源（source_type）+ 它对哪个 claim/domain 权威
+（authoritative_for）+ 新鲜度 + 覆盖度**。模型按同一冲突协议作语义判断；确定性代码只处理
+可验证事实、动作 grounding、硬预算与终态否决，不绕过 Transition 选择业务流转。
 
 ## 源类(source_type)—— 观测 vs 判断 vs 命令,三分,不混成一个排序
 
@@ -47,16 +52,15 @@ GUI agent 里判断"当前状态"的逻辑正在以**特判**堆叠:checker.md �
 1. **先识别当前要判断的维度**:控件值 / 筛选是否生效 / 页面布局 / 动作效果 / 历史诊断……
 2. **只采信对该维度标 `authoritative_for` 的 fresh 源**。
 3. **非权威源只能补充解释,不能反驳权威源**(如:截图里"下拉仍展开"不能推翻 DOM 的"已选中"——`control.selected` 归 `obs.dom`)。
-4. **同一维度多个权威源冲突**:不硬猜;按 `freshness` / `coverage` 排序;仍冲突 → 判 `in_progress` 或请求补观察。
+4. **同一维度多个权威源冲突**:不硬猜;按 `freshness` / `coverage` 排序;仍冲突 → 选择一个可执行验证动作，不能输出无因等待。
 - 特例:`rt.judgment` 与 fresh `obs.*` 冲突时,一律视为**过时**,不得放大上轮误判。
 
-## 迁移边界(分阶段)
+## 当前边界
 
-- **P1(本步)**:`ContextBlock` 加 `authoritative_for` / `not_authoritative_for` / `freshness` / `coverage` + render header 暴露;checker/planner 加 4-rule 协议;**只迁 3 个高价值块**:`form_controls` / `applied_filters` / `last_action_response`。**不动 gate bypass。**
-- **P2**:其余 obs 块分源(grid_status / url / title / 截图 vision 元信息)。
-- **P3**:多选(入口案例)——`control.selected` 由 `obs.dom` 权威,模型裁决,修 native multiselect 循环。
-- **P4**:dispatch / filter gate **降级**为 `obs.effect` / `obs.dom` 信号块;**保留 deterministic fast path 作为"同一信号协议下的安全快路"**(读同一套信号),仅当 eval 证明 checker 在无 fast path 时稳定后,再逐个移除 bypass。
-- **P5**:清理散落特判,checker.md 的局部"DOM 优先"规则收敛进协议。
+- `form_controls`、`applied_filters`、动作回执和 EffectSignal 以来源/权威域进入统一 Transition；
+- 没有 checker/planner/filter-gate 三条完成路径，所有语义完成都先由 Transition 提议；
+- `CompletionReducer` 只回答证据是否支持终态，不输出下一动作；
+- Guard 否决后同帧最多重决策一次，再失败即 `exhausted`，不写空 running turn。
 
 ## 不变量
 

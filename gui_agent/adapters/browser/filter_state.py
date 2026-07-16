@@ -75,35 +75,6 @@ def applied_filters_js() -> str:
     return JSON.stringify({filters: out, meta});
   }
 
-  const legacy = (() => {
-    const m = location.href.match(/\/filter\/([^/?#]*)/);
-    if (!m) return null;
-    const token = m[1] || '';
-    if (!token) return {};
-    try {
-      let b64 = token.replace(/-/g, '+').replace(/_/g, '/');
-      while (b64.length % 4) b64 += '=';
-      const decoded = decodeURIComponent(atob(b64));
-      const params = new URLSearchParams(decoded);
-      const obj = {};
-      for (const [k, v] of params.entries()) {
-        if (!v) continue;
-        if (/\[locale\]$/.test(k)) continue;
-        obj[k] = v;
-      }
-      return obj;
-    } catch (_e) {
-      meta.fallback_channel = 'read_failed';
-      meta.legacy_grid = 'read_failed';
-      return null;
-    }
-  })();
-  if (legacy === null) {
-    return JSON.stringify({filters: {}, meta});
-  }
-  meta.fallback_channel = 'present';
-  meta.legacy_grid = 'present';
-
   const rendered = (el) => {
     const r = el.getBoundingClientRect();
     const st = getComputedStyle(el);
@@ -130,18 +101,101 @@ def applied_filters_js() -> str:
     candidates.sort((a, b) => b.r.bottom - a.r.bottom);
     return candidates[0] ? candidates[0].text : '';
   };
-  const legacyOut = {};
-  const controls = Array.from(document.querySelectorAll('input,select,textarea')).filter(rendered);
-  for (const [key, value] of Object.entries(legacy || {})) {
-    const control = controls.find(el => {
-      const name = el.getAttribute('name') || '';
-      const id = el.id || '';
-      return name === key || id === key || name.endsWith('[' + key + ']') || id.endsWith('_' + key);
-    });
-    const label = control ? (headerLabelFor(control) || clean(control.getAttribute('aria-label') || control.getAttribute('title'))) : '';
-    legacyOut[label || key] = value;
+  const legacyTables = Array.from(document.querySelectorAll('table')).filter(table => {
+    if (!rendered(table)) return false;
+    const id = table.id || '';
+    const staticGrid = Boolean(table.closest('.admin__data-grid-wrap-static'));
+    const filterControl = table.querySelector(
+      'input[id*="_filter_"], select[id*="_filter_"], textarea[id*="_filter_"]'
+    );
+    return Boolean(filterControl && (staticGrid || /_table$/.test(id)));
+  });
+
+  const legacy = (() => {
+    const m = location.href.match(/\/filter\/([^/?#]*)/);
+    if (!m) return null;
+    const token = m[1] || '';
+    if (!token) return {};
+    try {
+      let b64 = token.replace(/-/g, '+').replace(/_/g, '/');
+      while (b64.length % 4) b64 += '=';
+      const decoded = decodeURIComponent(atob(b64));
+      const params = new URLSearchParams(decoded);
+      const obj = {};
+      for (const [k, v] of params.entries()) {
+        if (!v) continue;
+        if (/\[locale\]$/.test(k)) continue;
+        obj[k] = v;
+      }
+      return obj;
+    } catch (_e) {
+      meta.fallback_channel = 'read_failed';
+      meta.legacy_grid = 'read_failed';
+      return null;
+    }
+  })();
+  if (legacy === null && !legacyTables.length) {
+    return JSON.stringify({filters: {}, meta});
   }
-  if (Object.keys(legacyOut).length) meta.source = 'legacy_grid';
+  meta.fallback_channel = 'present';
+  meta.legacy_grid = 'present';
+
+  const legacyOut = {};
+  const allControls = Array.from(
+    document.querySelectorAll('input,select,textarea')
+  ).filter(rendered);
+  if (legacy !== null) {
+    for (const [key, value] of Object.entries(legacy || {})) {
+      const control = allControls.find(el => {
+        const name = el.getAttribute('name') || '';
+        const id = el.id || '';
+        return name === key || id === key || name.endsWith('[' + key + ']') || id.endsWith('_' + key);
+      });
+      const label = control ? (headerLabelFor(control) || clean(control.getAttribute('aria-label') || control.getAttribute('title'))) : '';
+      legacyOut[label || key] = value;
+    }
+  } else {
+    // Some Magento legacy grids persist filters in the server session and render the filtered
+    // page at the plain grid URL.  In that shape there is no chip and no `/filter/<token>` URL.
+    // A server-rendered control is distinguishable from an unsent local edit because its current
+    // value still equals the HTML defaultValue/defaultSelected state.  Only those pristine,
+    // non-empty controls are promoted to applied state; locally typed but unsubmitted values are
+    // deliberately ignored until Search/Apply causes a fresh server render.
+    const renderedFilters = legacyTables.flatMap(table =>
+      Array.from(table.querySelectorAll(
+        'input[id*="_filter_"], select[id*="_filter_"], textarea[id*="_filter_"]'
+      )).filter(rendered)
+    );
+    const pairs = [];
+    for (const control of renderedFilters) {
+      const tag = control.tagName.toLowerCase();
+      const value = tag === 'select'
+        ? Array.from(control.selectedOptions || [])
+            .map(o => clean(o.textContent || o.label || o.value))
+            .filter(Boolean)
+            .join(', ')
+        : clean(control.value);
+      if (!value) continue;
+      const pristine = tag === 'select'
+        ? Array.from(control.options || []).every(o => o.selected === o.defaultSelected)
+        : control.value === control.defaultValue;
+      if (!pristine) continue;
+      const label = headerLabelFor(control)
+        || clean(control.getAttribute('aria-label') || control.getAttribute('title'));
+      if (label) pairs.push([label, value]);
+    }
+    const counts = pairs.reduce((acc, [label]) => {
+      acc[label] = (acc[label] || 0) + 1;
+      return acc;
+    }, {});
+    for (const [label, value] of pairs) {
+      // Multiple controls under one header usually encode a range. Without an explicit encoded
+      // state channel, do not guess how those values compose.
+      if (counts[label] === 1) legacyOut[label] = value;
+    }
+    if (Object.keys(legacyOut).length) meta.source = 'legacy_rendered';
+  }
+  if (legacy !== null && Object.keys(legacyOut).length) meta.source = 'legacy_grid';
   return JSON.stringify({filters: legacyOut, meta});
 })()
 """

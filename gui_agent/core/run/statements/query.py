@@ -40,10 +40,11 @@ def _recent_ui_context(context: PolicyContext, *, limit: int = 6) -> str:
             summary = getattr(supervisor, "summary", "") or ""
             if summary:
                 lines.append(summary)
-        checker = getattr(turn, "checker", None)
-        if checker is not None:
-            reason = getattr(checker, "reason", "") or ""
-            summary = getattr(checker, "summary", "") or ""
+        transition = getattr(turn, "transition", None) or {}
+        proposal = transition.get("proposal") if isinstance(transition, dict) else None
+        if isinstance(proposal, dict):
+            reason = str(proposal.get("reason") or "")
+            summary = str(proposal.get("summary") or "")
             if reason:
                 lines.append(reason)
             elif summary:

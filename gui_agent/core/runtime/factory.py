@@ -75,13 +75,9 @@ class PlatformBundle:
     #            (post-snap coords + all-path coverage); see adapters/iphone/factory.
     #   android: None (TBD).
     make_action_visualizer: Callable[["PerceptionSession"], "Optional[ActionVisualizer]"]
-    # Scroll-collect helpers the agent loop needs (iphone-specific objects today,
-    # typed as object so this neutral signature carries no adapter type).
-    make_scroll_probe: Callable[["PerceptionSession", object, "Path"], object]
-    apply_scroll_profile: Callable[[object, object], object]
+    # Read-only stitching used to aggregate frames after explicit scroll actions.
+    # It observes journalled actions; it never dispatches actions itself.
     make_stitch_accumulator: Callable[..., object]
-    robust_shift: Callable[..., object]
-    gray_u8: Callable[[bytes], object]
     # Platform-specific image normalization for shared vision-LLM prompts. iPhone
     # screenshots are Retina-sized and should be downsampled to logical pixels;
     # browser/android observations are already in their reasoning coordinate space.

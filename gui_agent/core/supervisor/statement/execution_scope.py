@@ -4,7 +4,6 @@ from __future__ import annotations
 
 import re
 
-from gui_agent.core.run.progress_monitor import canonical_url
 from gui_agent.core.schemas import StatementContract, Observation, PolicyTurn
 from gui_agent.core.self_learning.progressive import _norm as _norm_page
 
@@ -14,6 +13,19 @@ _UNKNOWN_PAGE_MARKERS = (
 )
 _URL_TEXT_RE = re.compile(r"https?://[^\s「」'\"<>]+")
 _IDENTITY_TOKEN_RE = re.compile(r"[A-Za-z0-9_.:-]+")
+_VOLATILE_URL_SEGMENT = re.compile(
+    r"/(filter|form_key|key|uenc|back|isAjax|sort|dir|limit|page)/[^/]*"
+)
+
+
+def canonical_url(url: str | None) -> str:
+    """Canonical route identity with volatile filter/session segments removed."""
+    if not url:
+        return ""
+    path = re.sub(r"^https?://[^/]+", "", url)
+    path = _VOLATILE_URL_SEGMENT.sub("", path)
+    path = path.split("?", 1)[0].rstrip("/")
+    return path or "/"
 
 
 def page_known(page_identity: str) -> bool:

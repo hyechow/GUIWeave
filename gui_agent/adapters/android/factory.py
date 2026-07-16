@@ -5,14 +5,10 @@ the android session (phone over adb), executor, perception, action policy and
 supervisor. Core orchestration receives the neutral bundle and never imports these
 classes directly. Mirrors ``adapters/browser/factory.py``.
 
-SCROLL-COLLECT NOT YET SUPPORTED
+READ STITCHING NOT YET SUPPORTED
 --------------------------------
-The iphone-shaped scroll/stitch bundle fields back the runner's scroll-collect /
-stitching branch, which the android adapter does NOT implement yet:
-  - ``apply_scroll_profile`` is the identity (no per-platform scroll profiles).
-  - ``make_scroll_probe`` / ``make_stitch_accumulator`` / ``robust_shift`` /
-    ``gray_u8`` raise ``NotImplementedError``.
-That branch is reached when the statement supervisor plans
+The Android adapter does not yet provide a stitch accumulator. That read path is
+reached when the statement supervisor plans
 completion_strategy='scroll_until_boundary' (e.g. "read all items on this page"),
 so such a goal raises mid-run. Until android collection is built, restrict the
 android platform to direct-action goals.
@@ -58,11 +54,6 @@ def _build_supervisor(name: str) -> "SupervisorPolicy":
     raise ValueError(f"未知监督者 {name!r}，可选：{StatementSupervisorPolicy.name}")
 
 
-def _apply_scroll_profile(action: object, profile: object) -> object:
-    """Identity: android has no per-platform scroll profiles (no-op pass-through)."""
-    return action
-
-
 _SCROLL_COLLECT_MSG = (
     "android scroll-collect not yet supported (the statement supervisor planned "
     "completion_strategy='scroll_until_boundary'). Use a direct-action goal. See the "
@@ -70,22 +61,7 @@ _SCROLL_COLLECT_MSG = (
 )
 
 
-def _make_scroll_probe(session: object, executor: object, log_dir: object) -> object:
-    """Raised if a scroll_until_boundary statement reaches the runner's collection branch (android collection not yet supported)."""
-    raise NotImplementedError(_SCROLL_COLLECT_MSG)
-
-
 def _make_stitch_accumulator(*args: object, **kwargs: object) -> object:
-    """Raised if a scroll_until_boundary statement reaches the runner's collection branch (android collection not yet supported)."""
-    raise NotImplementedError(_SCROLL_COLLECT_MSG)
-
-
-def _robust_shift(*args: object, **kwargs: object) -> object:
-    """Raised if a scroll_until_boundary statement reaches the runner's collection branch (android collection not yet supported)."""
-    raise NotImplementedError(_SCROLL_COLLECT_MSG)
-
-
-def _gray_u8(png_bytes: bytes) -> object:
     """Raised if a scroll_until_boundary statement reaches the runner's collection branch (android collection not yet supported)."""
     raise NotImplementedError(_SCROLL_COLLECT_MSG)
 
@@ -251,11 +227,7 @@ def build_android_bundle(
         make_supervisor=_build_supervisor,
         make_status_reporter=lambda enabled: (_make_android_hud() if enabled else None),
         make_action_visualizer=_make_action_visualizer,
-        make_scroll_probe=_make_scroll_probe,
-        apply_scroll_profile=_apply_scroll_profile,
         make_stitch_accumulator=_make_stitch_accumulator,
-        robust_shift=_robust_shift,
-        gray_u8=_gray_u8,
         prepare_vision_prompt_png=_prepare_vision_prompt_png,
         default_action_policy="android_vision",
         default_supervisor="statement",

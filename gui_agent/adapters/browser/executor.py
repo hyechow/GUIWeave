@@ -195,7 +195,7 @@ class BrowserExecutor(VisionExecutor):
         return super().execute(decision, app_name, png_bytes, is_home_screen)
 
     def execute_scroll(self, action, *, ticks: int = 0, delta_px: int = 0) -> None:
-        """Resolve omitted browser wheel coordinates before the cached-scroll path dispatches."""
+        """Resolve omitted browser wheel coordinates before dispatch."""
         self._prepare_scroll_anchor(action)
         super().execute_scroll(action, ticks=ticks, delta_px=delta_px)
 

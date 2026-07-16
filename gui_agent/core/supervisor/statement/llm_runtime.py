@@ -1,233 +1,63 @@
-"""LLM-facing checker, selector, planner, and replanner bridge for statement execution.
-
-The mixin owns prompt assembly and model invocation only. Execution state transitions,
-completion arbitration, and recovery remain in ``policy.py``.
-"""
+"""LLM-facing semantic transition bridge for one Statement turn."""
 
 from __future__ import annotations
 
-from typing import Optional
-
-from langchain_openai import ChatOpenAI
-
-from gui_agent.context.runtime import (
-    constraints_block,
-    extra_instruction_block,
-    form_controls_block,
-    history_block,
-    knowledge_block,
-    loop_frame_summary_block,
-    statement_block,
-    replan_state_block,
-    tried_instructions_block,
-)
-from gui_agent.core.run.execution_signals import ConstraintLedger
+from gui_agent.core.run.statement_memory import StatementMemoryView, build_memory_view
 from gui_agent.core.schemas import StatementContract, Observation, PolicyTurn
-from gui_agent.core.self_learning.progressive import _norm as _norm_page
-from llm.structured import invoke_structured
 
-from .execution_scope import execution_scope_for, page_known, route_identity_evidence
+from .execution_scope import execution_scope_for
 from .evidence import resolved_filter_intent
-from .model_io import (
-    _make_llm,
-    assemble_messages,
-    run_checker,
-    run_loop_check,
-    run_planner,
-    run_selector,
-)
-from .runtime import _Timer
-from .schemas import _LoopFrameResult, _PlanResult, _ReplanResult, _SingleCheckResult
+from .model_io import run_statement_transition
+from .schemas import _StatementTransitionResult
 
 
 class StatementLLMRuntimeMixin:
     """Prompt/model bridge mixed into ``StatementSupervisorPolicy``."""
 
-    _constraint_ledger: ConstraintLedger
+    def _memory_view_for(
+        self,
+        statement: StatementContract,
+        history: list[PolicyTurn],
+        observation: Observation | None = None,
+    ) -> StatementMemoryView:
+        """Project the active invocation's Journal turns into decision context."""
+        return build_memory_view(
+            instance_id=str(getattr(self, "_active_instance_id", "") or ""),
+            contract=statement,
+            history=history,
+            observation=observation,
+        )
 
-    def _single_check(
+    def _invoke_statement_transition(
         self,
         statement: StatementContract,
         observation: Observation,
         history: list[PolicyTurn],
-        extra: str = "",
-        execution_scope: str = "",
-        response_history: Optional[list[PolicyTurn]] = None,
-    ) -> _SingleCheckResult:
-        app_name = self._app_name
-        if not app_name:
-            for turn in reversed(history):
-                if turn.supervisor and turn.supervisor.app_name:
-                    app_name = turn.supervisor.app_name
-                    break
-        identity_evidence = route_identity_evidence(statement, observation)
-        if identity_evidence:
-            extra = f"{extra}\n{identity_evidence}".strip()
-        runtime_filter = resolved_filter_intent(
-            statement,
-            observation,
-            history,
-            scope=execution_scope or execution_scope_for(
-                statement,
-                observation,
-                instance_id=getattr(self, "_active_instance_id", ""),
-            ),
-        )
-        return run_checker(
-            statement,
-            observation,
-            history,
-            app_name=app_name,
-            task_type=self.task_type,
-            constraints=self._constraints_for_scope(execution_scope),
-            extra=extra,
-            prompts=self._prompts,
-            check_knowledge=self._check_knowledge,
-            context_reports=self._context_reports,
-            state_trace_text=self._monitor.render(scope=execution_scope),
-            last_action_response=self._last_action_response_text(
-                response_history or history
-            ),
-            initial_filters=self._initial_filters,
-            runtime_filter=runtime_filter,
-        )
-
-    def _loop_check(
-        self,
-        statement: StatementContract,
-        observation: Observation,
-        history: list[PolicyTurn],
-    ) -> _LoopFrameResult:
-        return run_loop_check(
-            statement,
-            observation,
-            history,
-            constraints=self._constraints_for_scope(),
-            prompts=self._prompts,
-            context_reports=self._context_reports,
-        )
-
-    def _select_sections(self, statement: StatementContract, check: _SingleCheckResult) -> list[str]:
-        """Select focused knowledge sections, with deterministic fallback and page cache."""
-        if self._pk is None:
-            return []
-        page_id = check.page_identity or ""
-        is_known_page = page_known(page_id)
-        key = (statement.id, _norm_page(page_id))
-        if is_known_page and key in self._selector_cache:
-            stems = self._selector_cache[key]
-            self._record_selector_report(
-                statement=statement,
-                page_identity=page_id,
-                page_known=is_known_page,
-                cache="hit",
-                sections=stems,
-                cached=True,
-            )
-            return stems
-        signals = [page_id, statement.name, statement.success_condition]
-        try:
-            with _Timer(self._timings, self._timings_order, "selector", self._token_usage):
-                selection = run_selector(
-                    self._goal,
-                    statement,
-                    page_id,
-                    self._pk.selector_manifest(),
-                    prompts=self._prompts,
-                    context_reports=self._context_reports,
-                )
-            stems = self._pk.by_ids(selection.section_ids)
-            selected_stems = list(stems)
-            stems = self._pk.augment_with_signals(stems, signals)
-            fallback_triggered = stems != selected_stems
-            fallback_reason = ""
-            if fallback_triggered:
-                fallback_reason = (
-                    "empty_selector" if not selected_stems else "deterministic_augmentation"
-                )
-            if stems or selection.section_ids:
-                names = "、".join(stems) if stems else "（ID 未命中）"
-                print(
-                    f"  [Selector] {names}"
-                    + (f" — {selection.reason}" if selection.reason else "")
-                )
-            if is_known_page:
-                self._selector_cache[key] = stems
-            self._record_selector_report(
-                statement=statement,
-                page_identity=page_id,
-                page_known=is_known_page,
-                cache="miss",
-                section_ids=list(selection.section_ids or []),
-                sections=stems,
-                fallback_triggered=fallback_triggered,
-                fallback_reason=fallback_reason,
-                cached=is_known_page,
-                reason=selection.reason,
-            )
-            return stems
-        except Exception as exc:  # noqa: BLE001 - selector must never block the planner
-            print(f"  [Selector] 调用失败，回退确定性模糊匹配：{exc}")
-            stems = self._pk.match_signals(signals)
-            self._record_selector_report(
-                statement=statement,
-                page_identity=page_id,
-                page_known=is_known_page,
-                cache="miss",
-                sections=stems,
-                fallback_triggered=bool(stems),
-                fallback_reason="selector_error",
-                cached=False,
-                error=str(exc),
-            )
-            return stems
-
-    def _record_selector_report(
-        self,
         *,
-        statement: StatementContract,
-        page_identity: str,
-        page_known: bool,
-        cache: str,
-        section_ids: list[str] | None = None,
-        sections: list[str] | None = None,
-        fallback_triggered: bool = False,
-        fallback_reason: str = "",
-        cached: bool = False,
-        reason: str = "",
-        error: str = "",
-    ) -> None:
-        self._context_reports.append({
-            "kind": "selector",
-            "label": "knowledge.selector",
-            "statement_id": statement.id,
-            "page_identity": page_identity,
-            "page_known": page_known,
-            "cache": cache,
-            "section_ids": list(section_ids or []),
-            "sections": list(sections or []),
-            "fallback_triggered": fallback_triggered,
-            "fallback_reason": fallback_reason,
-            "cached": cached,
-            "reason": reason,
-            "error": error,
-        })
-
-    def _elements_for(self, statement: StatementContract, check: _SingleCheckResult) -> Optional[str]:
-        if self._pk:
-            self._last_sections_loaded = self._select_sections(statement, check)
-            return self._pk.bodies(self._last_sections_loaded)
-        return self._elements_knowledge
-
-    def _invoke_planner(
-        self,
-        statement: StatementContract,
-        check: _SingleCheckResult,
-        observation: Observation,
-        history: list[PolicyTurn],
+        memory_view: StatementMemoryView | None = None,
+        evaluation_reason: str = "",
+        evaluation_status: str = "",
+        evaluation_verification: str = "",
+        persistence_summary: str = "",
         extra: str = "",
-    ) -> _PlanResult:
-        elements = self._elements_for(statement, check)
+    ) -> _StatementTransitionResult:
+        """Unified LLM decision (Agentic pivot primary path)."""
+        memory = memory_view if memory_view is not None else self._memory_view_for(
+            statement, history, observation,
+        )
+        elements = self._elements_knowledge
+        if self._pk is not None:
+            # Select from deterministic current route/title/statement signals. This is retrieval
+            # only, never another LLM or control transition.
+            signals = [
+                str(observation.title or ""),
+                str(observation.url or ""),
+                statement.name,
+                statement.success_condition,
+            ]
+            stems = self._pk.match_signals(signals)
+            self._last_sections_loaded = stems
+            elements = self._pk.bodies(stems)
         runtime_filter = resolved_filter_intent(
             statement,
             observation,
@@ -238,112 +68,24 @@ class StatementLLMRuntimeMixin:
                 instance_id=getattr(self, "_active_instance_id", ""),
             ),
         )
-        return run_planner(
+        return run_statement_transition(
             statement,
-            check,
             observation,
-            history,
-            constraints=self._constraints_for_scope(),
+            memory_view=memory,
+            constraints=list(self._static_constraints),
             extra=extra,
-            app_knowledge=self._app_knowledge,
-            elements_knowledge=elements,
             prompts=self._prompts,
             context_reports=self._context_reports,
+            evaluation_reason=evaluation_reason,
+            evaluation_status=evaluation_status,
+            evaluation_verification=evaluation_verification or "",
+            persistence_summary=persistence_summary,
+            app_knowledge=self._app_knowledge,
+            acceptance_knowledge=self._check_knowledge,
+            elements_knowledge=elements,
             initial_filters=self._initial_filters,
             runtime_filter=runtime_filter,
         )
-
-    def _invoke_loop_scroll(
-        self,
-        statement: StatementContract,
-        frame: _LoopFrameResult,
-        observation: Observation,
-    ) -> _PlanResult:
-        prompt = self._prompts.loop_scroll
-        plan_schema = self._prompts.plan_result_schema or _PlanResult
-        return invoke_structured(
-            self._llm(),
-            assemble_messages(
-                prompt,
-                observation,
-                system_blocks=[
-                    statement_block(statement),
-                    constraints_block(self._constraints_for_scope()),
-                    loop_frame_summary_block(frame.summary),
-                ],
-                image_resize=self._prompts.image_resize,
-                label="loop_scroll",
-                context_reports=self._context_reports,
-            ),
-            plan_schema,
-            trace_sink=self._context_reports,
-            trace_label="loop_scroll",
-        )
-
-    def _invoke_replanner(
-        self,
-        statement: StatementContract,
-        check: _SingleCheckResult,
-        observation: Observation,
-        history: list[PolicyTurn],
-        extra: str = "",
-    ) -> _ReplanResult:
-        tried = sorted({
-            turn.supervisor.instruction
-            for turn in history
-            if turn.supervisor
-            and turn.supervisor.instruction
-            and turn.supervisor.statement_id == statement.id
-        })
-        messages = assemble_messages(
-            self._prompts.replan,
-            observation,
-            system_blocks=[
-                statement_block(statement),
-                replan_state_block(
-                    check,
-                    retry_count=getattr(self, "_rt", None).retry_count
-                    if getattr(self, "_statement_rt", None) is not None
-                    else 0,
-                    failure_hints=statement.failure_hints,
-                ),
-                constraints_block(self._constraints_for_scope()),
-                history_block(history, current_statement_id=statement.id),
-                tried_instructions_block(tried),
-                extra_instruction_block(extra, source="replanner_guard"),
-            ],
-            human_blocks=[
-                knowledge_block("app_navigation", self._app_knowledge),
-                knowledge_block("page_elements", self._elements_for(statement, check)),
-                form_controls_block(
-                    getattr(observation, "form_controls", None),
-                    getattr(observation, "form_controls_meta", None),
-                ),
-            ],
-            image_resize=self._prompts.image_resize,
-            label="replanner",
-            context_reports=self._context_reports,
-        )
-        result = invoke_structured(
-            self._llm(),
-            messages,
-            _ReplanResult,
-            trace_sink=self._context_reports,
-            trace_label="replanner",
-        )
-        if self._is_sequence(result.instruction):
-            print("  [Replan] 多步序列，重试...")
-            result = self._invoke_replanner(
-                statement,
-                check,
-                observation,
-                history,
-                extra="你刚才输出了多个步骤，请只返回一个原子操作。",
-            )
-        return result
-
-    def _llm(self) -> ChatOpenAI:
-        return _make_llm()
 
 
 __all__ = ["StatementLLMRuntimeMixin"]

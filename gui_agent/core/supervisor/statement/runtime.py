@@ -8,13 +8,6 @@ from typing import Optional
 from llm.structured import get_llm_token_usage
 from gui_agent.core.schemas import StatementContract, PolicyTurn
 
-MAX_RETRIES = 3
-# Consult the Feasibility Guard ONCE this early (before the MAX_RETRIES give-up): a statement that
-# is already stuck twice is worth an infeasibility check now, not after it exhausts all retries. The
-# judge is conservative-toward-feasible, so an early probe that says "feasible" just continues.
-EARLY_FEASIBILITY_AT = 2
-MAX_SCROLL_PER_STATEMENT = 3
-
 class _Timer:
     """Context manager: time a named section and optionally record token deltas."""
 
@@ -48,24 +41,6 @@ class _Timer:
             slot = self._tokens.setdefault(self._n, {"input": 0, "output": 0})
             slot["input"] += inp - self._tok0[0]
             slot["output"] += out - self._tok0[1]
-
-
-def _is_loop(statement: StatementContract) -> bool:
-    return (
-        statement.kind == "collection"
-        and statement.completion_strategy == "scroll_until_boundary"
-    )
-
-
-def _last_scroll_was_for(history: list[PolicyTurn], statement_id: str) -> bool:
-    return bool(
-        history
-        and history[-1].supervisor.statement_id == statement_id
-        and history[-1].action_decision
-        and history[-1].action_decision.action
-        and history[-1].action_decision.action.action_type == "scroll"
-        and history[-1].executed
-    )
 
 
 def _has_successful_scroll_for(history: list[PolicyTurn], statement_id: str) -> bool:

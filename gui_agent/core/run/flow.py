@@ -50,88 +50,48 @@ def handle_loading_frame(
 
 @dataclass
 class ProgressDecision:
-    noop_count: int
-    prev_statement_id: str | None
-    continue_loop: bool = False
     stop_reason: str | None = None
-    message: str | None = None
     stop_message: str | None = None
 
 
 def evaluate_turn_progress(
     *,
-    noop_count: int,
-    prev_statement_id: str | None,
     sv_step: SupervisorStep,
     executed: bool,
     action_decision: Any,
-    probe_failed: bool,
     suppressed_reason: str = "",
 ) -> ProgressDecision:
-    """Update noop accounting and decide whether the loop should continue or stop."""
+    """Enforce the minimal kernel invariant: a running turn must dispatch an action."""
     if not executed and sv_step.should_act:
         if suppressed_reason:
-            return _increment_or_stop(
-                noop_count,
-                stop_kind="动作被执行协议抑制",
-                continue_message="动作被执行协议抑制，重新观察并调整计划",
-            )
-        if probe_failed:
-            return _increment_or_stop(
-                noop_count,
-                stop_kind="滚动探测失败",
-                continue_message="滚动探测失败，进入下一轮重新规划",
+            reason = f"动作被执行协议抑制：{suppressed_reason}"
+            return ProgressDecision(
+                stop_reason=reason,
+                stop_message=f"\n{reason}，agent-loop 停止",
             )
         if action_decision and action_decision.not_found_reason:
-            return _increment_or_stop(noop_count, stop_kind="无动作")
+            reason = f"动作目标未找到：{action_decision.not_found_reason}"
+            return ProgressDecision(
+                stop_reason=reason,
+                stop_message=f"\n{reason}，agent-loop 停止",
+            )
         if action_decision is not None and getattr(action_decision, "action", None) is not None:
-            return _increment_or_stop(
-                noop_count,
-                stop_kind="动作执行失败",
-                continue_message="动作执行失败，进入下一轮重新规划",
+            reason = "动作执行失败"
+            return ProgressDecision(
+                stop_reason=reason,
+                stop_message=f"\n{reason}，agent-loop 停止",
             )
         return ProgressDecision(
-            noop_count=noop_count,
-            prev_statement_id=prev_statement_id,
             stop_reason="动作未执行，agent-loop 停止",
         )
 
-    if sv_step.statement_id != prev_statement_id:
-        noop_count = 0
-    prev_statement_id = sv_step.statement_id
-
     if not sv_step.should_act:
-        return _increment_or_stop(
-            noop_count,
-            prev_statement_id=prev_statement_id,
-            stop_kind="无动作",
-        )
-
-    return ProgressDecision(noop_count=0, prev_statement_id=prev_statement_id)
-
-
-def _increment_or_stop(
-    noop_count: int,
-    *,
-    stop_kind: str,
-    prev_statement_id: str | None = None,
-    continue_message: str | None = None,
-) -> ProgressDecision:
-    next_count = noop_count + 1
-    if next_count >= 3:
-        reason = f"连续 {next_count} 轮{stop_kind}"
         return ProgressDecision(
-            noop_count=next_count,
-            prev_statement_id=prev_statement_id,
-            stop_reason=reason,
-            stop_message=f"\n{reason}，agent-loop 停止",
+            stop_reason="运行中的 Statement 未产生动作或终态",
+            stop_message="\n运行中的 Statement 未产生动作或终态，agent-loop 停止",
         )
-    return ProgressDecision(
-        noop_count=next_count,
-        prev_statement_id=prev_statement_id,
-        continue_loop=True,
-        message=continue_message,
-    )
+
+    return ProgressDecision()
 
 
 def finish_terminal_step(

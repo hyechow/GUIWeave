@@ -616,7 +616,8 @@ def _run_evidence_text(context_path: Path | None) -> str:
     ]
     for turn in turns[-6:]:
         supervisor = turn.get("supervisor") or {}
-        checker = turn.get("checker") or {}
+        transition = turn.get("transition") or {}
+        proposal = transition.get("proposal") or {}
         parts = [
             f"turn={turn.get('index')}",
             "statement="
@@ -626,16 +627,20 @@ def _run_evidence_text(context_path: Path | None) -> str:
         ]
         if supervisor.get("summary"):
             parts.append(f"supervisor_summary={supervisor.get('summary')}")
-        if checker:
+        if proposal:
             parts.append(
-                "checker="
-                f"{checker.get('status')}: "
-                f"{checker.get('summary') or checker.get('reason') or ''}"
+                "transition="
+                f"{proposal.get('kind')}: "
+                f"{proposal.get('summary') or proposal.get('reason') or ''}"
             )
-            evidence = checker.get("visible_evidence") or []
+            evidence = [
+                item.get("claim")
+                for item in (proposal.get("evidence") or [])
+                if isinstance(item, dict) and item.get("claim")
+            ]
             if evidence:
                 parts.append("visible_evidence=" + "; ".join(map(str, evidence[:4])))
-            missing = checker.get("missing_evidence") or []
+            missing = transition.get("guard_rejections") or []
             if missing:
                 parts.append("missing_evidence=" + "; ".join(map(str, missing[:4])))
         lines.append(" | ".join(parts))

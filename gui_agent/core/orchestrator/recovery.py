@@ -233,6 +233,23 @@ class KickbackDirective:
         return bool(self.dead_route or self.required_route)
 
 
+def compose_kickback_directive(
+    *,
+    dead_route: str = "",
+    required_route: str = "",
+    directive: str = "",
+) -> str:
+    """Serialize Transition's route evidence into the one kickback wire channel."""
+    lines: list[str] = []
+    if dead_route.strip():
+        lines.append(f"{DEAD_ROUTE_MARKER}{dead_route.strip()}")
+    if required_route.strip():
+        lines.append(f"{REQUIRED_ROUTE_MARKER}{required_route.strip()}")
+    if directive.strip():
+        lines.append(directive.strip())
+    return "\n".join(lines)
+
+
 def parse_kickback_directive(directive: str) -> KickbackDirective:
     """Parse structured route markers from a recovery directive."""
     text = str(directive or "")

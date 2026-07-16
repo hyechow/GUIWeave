@@ -63,25 +63,17 @@ def load_observation_snapshot(path: Path) -> Observation:
     )
 
 
-def extract_checker(supervisor: object) -> dict | None:
-    check = getattr(supervisor, "_last_check", None)
-    if check is None:
+def extract_action_plan(supervisor: object) -> dict | None:
+    action_plan = getattr(supervisor, "_last_action_plan", None)
+    if action_plan is None:
         return None
-    return check.model_dump(exclude_none=True)
+    return action_plan.model_dump(exclude_none=True)
 
 
-def extract_plan(supervisor: object) -> dict | None:
-    plan = getattr(supervisor, "_last_plan", None)
-    if plan is None:
-        return None
-    return plan.model_dump(exclude_none=True)
-
-
-def extract_replan(supervisor: object) -> dict | None:
-    replan = getattr(supervisor, "_last_replan", None)
-    if replan is None:
-        return None
-    return replan.model_dump(exclude_none=True)
+def extract_transition(supervisor: object) -> dict | None:
+    """Return the final validated Transition record for this turn, if any."""
+    record = getattr(supervisor, "_last_transition_record", None)
+    return dict(record) if isinstance(record, dict) else None
 
 
 def load_context(

@@ -536,12 +536,7 @@ document.addEventListener('keydown', function(event) {{
 
 TIMING_COLORS: dict[str, str] = {
     "decompose": "#6366f1",
-    "checker": "#f59e0b",
-    "planner": "#3b82f6",
-    "replanner": "#ef4444",
-    "loop_check": "#8b5cf6",
-    "loop_scroll": "#06b6d4",
-    "selector": "#0891b2",
+    "transition": "#3b82f6",
     "action_policy": "#22c55e",
     "read": "#0f766e",
 }
@@ -627,8 +622,6 @@ def _step_diagnostic_flags(step: ReportStep) -> list[tuple[str, str]]:
         flags.append(("warn", "重复 " + ", ".join(repeated[:2])))
     if step.no_effect:
         flags.append(("warn", "no_effect"))
-    if step.replan or "replanner" in (step.timings or {}):
-        flags.append(("warn", "replan"))
     if "✗" in step.status:
         flags.append(("error", "failed"))
     if step.operation_mode == "non_interactive":
@@ -699,25 +692,6 @@ def _render_context_decisions_html(reports: list[dict]) -> str:
                     f'{block.get("estimated_chars", 0)} chars/{block.get("estimated_tokens", 0)} tok · '
                     f'{_safe(str(block.get("truncation_reason") or block.get("reason") or ""))}</div>'
                 )
-        elif kind == "selector":
-            cache = _safe(str(report.get("cache") or ""))
-            sections = report.get("sections") or []
-            ids = report.get("section_ids") or []
-            fallback = "yes" if report.get("fallback_triggered") else "no"
-            summaries.append(f"{label}: cache={cache}, fallback={fallback}")
-            rows.append(
-                f'<div class="ctx-row"><strong>{label}</strong> cache={cache} '
-                f'page_known={str(bool(report.get("page_known"))).lower()} '
-                f'cached={str(bool(report.get("cached"))).lower()} '
-                f'ids={_safe(", ".join(str(i) for i in ids) or "-")} '
-                f'sections={_safe(", ".join(str(s) for s in sections) or "-")} '
-                f'fallback={fallback}:{_safe(str(report.get("fallback_reason") or ""))}</div>'
-            )
-            if report.get("error") or report.get("reason"):
-                rows.append(
-                    f'<div class="ctx-row">  reason={_safe(str(report.get("reason") or ""))} '
-                    f'error={_safe(str(report.get("error") or ""))}</div>'
-                )
     summary = _safe(" · ".join(summaries[:4]) + (" ..." if len(summaries) > 4 else ""))
     return (
         f'<details class="ctx-detail"><summary>上下文决策 · {summary}</summary>'
@@ -785,28 +759,14 @@ def _render_step_detail(step: ReportStep, detail_id: str, prev_timestamp: str = 
             f'{dist}</div>'
         )
 
-    # Progressive knowledge injected into the planner this turn. cyan = sections injected;
-    # amber = the planner ran and the checker flagged sections, but none matched (a fuzzy-match
-    # miss worth surfacing). Silent when no planner ran (replan/done turns) or no knowledge.
+    # Progressive knowledge injected into the unified Transition this turn.
     sections_html = ""
     loaded = step.sections_loaded
-    requested = step.relevant_sections
     if loaded:
         names = "、".join(_safe(s.replace("_", " ")) for s in loaded)
-        extra = (
-            f' <span style="color:#94a3b8">(checker 请求 {len(requested)})</span>'
-            if requested and len(requested) != len(loaded) else ""
-        )
         sections_html = (
             f'<div class="detail-instruction">'
-            f'<span style="color:#0891b2;font-weight:600">📖 注入知识 {len(loaded)} 章节</span>：{names}{extra}'
-            f'</div>'
-        )
-    elif requested and "planner" in (step.timings or {}):
-        names = "、".join(_safe(s.replace("_", " ")) for s in requested)
-        sections_html = (
-            f'<div class="detail-instruction">'
-            f'<span style="color:#f59e0b;font-weight:600">📖 checker 请求 {len(requested)} 章节但未命中</span>：{names}'
+            f'<span style="color:#0891b2;font-weight:600">📖 注入知识 {len(loaded)} 章节</span>：{names}'
             f'</div>'
         )
 
@@ -1258,6 +1218,8 @@ def generate_html(data: ReportData, grid: bool = False) -> str:
         # render its banner there (the new plan = the statements that follow; the banner doesn't
         # re-list them, just marks the transition + trigger directive).
         _pturn_set = {s.index for s in page.steps}
+        if page.verify_outcome:
+            _pturn_set.add(page.outcome_after_turn)
         rd_banner = ""
         for _rd in redecomps:
             _n = _rd.get("kickback_n")
@@ -1269,6 +1231,10 @@ def generate_html(data: ReportData, grid: bool = False) -> str:
         ms_in = sum(_sum_tokens(s.token_usage)[0] for s in page.steps)
         ms_out = sum(_sum_tokens(s.token_usage)[1] for s in page.steps)
         ms_cost = sum(_token_cost(s.token_usage) for s in page.steps)
+        outcome_in, outcome_out = _sum_tokens(page.outcome_token_usage)
+        ms_in += outcome_in
+        ms_out += outcome_out
+        ms_cost += _token_cost(page.outcome_token_usage)
         ms_tok_html = (
             f' · {_fmt_tokens(ms_in)}/{_fmt_tokens(ms_out)} tok · ≈{pricing_currency()}{ms_cost:.4f}'
             if (ms_in or ms_out) else ""
@@ -1317,24 +1283,15 @@ def generate_html(data: ReportData, grid: bool = False) -> str:
                     f'</div>'
                 )
 
-            # This turn's check judged the statement infeasible → that verdict is THIS turn's
-            # conclusion (the kick-back), so render it in the turn's own detail, not at statement level.
-            _step_extra = ""
-            if step.outcome_phase == "infeasible":
-                _kr = _safe(step.outcome_summary or step.summary)
-                _kd = _safe(step.kickback)
-                _verdict = ("statement 判定<b>不可行 → 踢回重编排</b>" if _triggered_rd
-                            else "statement 判定<b>不可行</b>；已达重编排上限、未能再重规划 → <b>本步失败</b>")
-                _step_extra = (
-                    '<div class="statement-sc" style="border-left:3px solid #dc2626;background:#fef2f2;'
-                    f'color:#991b1b;margin-top:8px">⚠️ 验收：{_verdict}。{_kr}'
-                    + (f'<div style="margin-top:4px;color:#7f1d1d">↳ 重规划指令：{_kd}</div>' if _kd else "")
-                    + '</div>'
-                )
             # Detail panel (hidden until clicked)
-            details_html += _render_step_detail(step, detail_id, prev_timestamp=prev_ts, extra_html=_step_extra)
+            details_html += _render_step_detail(
+                step,
+                detail_id,
+                prev_timestamp=prev_ts,
+            )
             if step.timestamp:
                 prev_ts = step.timestamp
+        ms_elapsed += sum(float(v or 0.0) for v in page.outcome_timings.values())
 
         # The decomposer often sets description == name; don't render the title twice.
         desc_html = (
@@ -1373,7 +1330,7 @@ def generate_html(data: ReportData, grid: bool = False) -> str:
                 f'{_vt_label}'
                 f'</div>'
             )
-            ck = page.verify_checker
+            ck = page.verify_outcome
             ck_status = ck.get("status", "")
             ck_reason = ck.get("reason", "")
             ck_identity = ck.get("page_identity", "")
@@ -1387,6 +1344,15 @@ def generate_html(data: ReportData, grid: bool = False) -> str:
             identity_html = f'<span style="font-size:11px;color:#64748b;margin-left:6px">{_safe(ck_identity)}</span>' if ck_identity else ""
             reason_html = f'<div class="detail-instruction" style="margin-top:4px">{_safe(ck_reason)}</div>' if ck_reason else ""
             summary_html = f'<div class="detail-summary">{_safe(ck_summary)}</div>' if ck_summary and ck_summary != ck_reason else ""
+            kickback_html = ""
+            if page.kickback:
+                directive = _safe(str(page.kickback.get("directive") or ""))
+                if directive:
+                    kickback_html = (
+                        '<div class="statement-sc" style="border-left:3px solid #dc2626;'
+                        'background:#fef2f2;color:#991b1b;margin-top:8px">'
+                        f'↳ 重规划指令：{directive}</div>'
+                    )
             verify_detail = (
                 f'<div class="detail" id="{vd_id}">'
                 f'<div class="detail-ss"><img src="{page.verify_url}" onclick="zoomImg(this.src)" alt="验收截图"></div>'
@@ -1397,6 +1363,9 @@ def generate_html(data: ReportData, grid: bool = False) -> str:
                 f'</div>'
                 f'{reason_html}'
                 f'{summary_html}'
+                f'{kickback_html}'
+                f'{_render_module_io_html(page.outcome_context, page.outcome_token_usage)}'
+                f'{_render_timing_html(page.outcome_timings)}'
                 f'{rd_banner}'  # a re-decompose triggered here IS this statement's 验收结果 — inside the box
                 f'</div>'
                 f'</div>'

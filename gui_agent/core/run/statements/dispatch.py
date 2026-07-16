@@ -149,6 +149,8 @@ def drain_immediate_statements(
             tokens_before=tokens_before,
             statement_instance_id=instance_id,
         )
+        # The terminal fact must be durable before advancing the interpreter.
+        save_context()
         if outcome.failure_evidence:
             failure_evidence = outcome.failure_evidence
 

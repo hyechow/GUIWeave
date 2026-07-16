@@ -66,7 +66,7 @@ CompletionStatus = Literal["confirmed", "accepted_unverified", "failed", "in_pro
 StatementPhase = Literal["completed", "failed", "exhausted", "infeasible", "interrupted"]
 Verification = Literal["confirmed", "accepted_unverified"]
 BindingSource = Literal["visual", "structural"]
-BindingStatus = Literal["bound", "unresolved", "contradicted"]
+BindingStatus = Literal["bound", "unresolved"]
 TargetValue = str | list[str]
 
 
@@ -120,18 +120,8 @@ class TargetBinding(BaseModel):
     reason: str = ""
 
 
-class MutationAuthorization(BaseModel):
-    """One-shot permission to write one desired field on one resolved subject."""
-
-    statement_id: str
-    subject_ref: str
-    field: str
-    desired_value: str
-    source: BindingSource
-
-
 class MutationReceipt(BaseModel):
-    """Immutable proof that one authorized mutation write crossed the UI boundary.
+    """Immutable proof that one bound mutation write crossed the UI boundary.
 
     Post-action state is deliberately absent: effects belong to observations, while this
     receipt records dispatch provenance only.
@@ -667,14 +657,6 @@ class SupervisorStep(BaseModel):
         default="",
         description="本轮写入/选择的结构化目标值；为空时由平台策略按原有路径决策。",
     )
-    mutation_authorization: Optional[MutationAuthorization] = Field(
-        default=None,
-        description="执行层生成的一次性 mutation 写授权；不属于 planner/DSL 输出。",
-    )
-    requires_mutation_authorization: bool = Field(
-        default=False,
-        description="当前 write 是否必须持有系统生成的 mutation authorization。",
-    )
     collection_scope: Optional[CollectionScope] = Field(default=None, description="当前内容采集范围")
     pre_existing: bool = Field(
         default=False,
@@ -880,52 +862,19 @@ class StatementInfo(BaseModel):
     data_scope: str = ""
 
 
-class RuntimeConstraintInfo(BaseModel):
-    """Serializable statement-local constraint fact."""
-
-    model_config = ConfigDict(frozen=True, extra="forbid")
-
-    text: str
-    scope: str
-    source: str = "runtime"
-
-
-class ProgressTraceInfo(BaseModel):
-    """Serializable progress trace fact used to rebuild loop detection."""
-
-    model_config = ConfigDict(frozen=True, extra="forbid")
-
-    index: int
-    state: str
-    decision: str
-    interaction_state: str = ""
-    scope: str = ""
-
-
 class StatementRuntimeSnapshot(BaseModel):
-    """Replay payload captured on every turn of an active statement.
+    """Minimal replay identity for an active statement invocation.
 
-    Screenshots, target-acquisition probes, and other disposable controller caches are
-    intentionally excluded. Everything that affects logical retry, constraint, and progress
-    decisions is captured so a fresh executor can resume the invocation from journal facts.
+    Decision memory is rebuilt from Journal turns. No progress, constraint, or controller copy
+    is checkpointed alongside the fact stream.
     """
 
     model_config = ConfigDict(frozen=True, extra="forbid")
 
     contract: StatementContract
-    retry_count: int = 0
-    early_feasibility_probed: bool = False
-    scroll_count: int = 0
     execution_scope: str = ""
-    last_page_identity: str = ""
-    skip_initial_check: bool = False
     statement_info_emitted: bool = False
     task_type: TaskType = "action"
-    constraints: list[RuntimeConstraintInfo] = Field(default_factory=list)
-    progress_trace: list[ProgressTraceInfo] = Field(default_factory=list)
-    progress_values: list[str] = Field(default_factory=list)
-    last_url: Optional[str] = None
-    last_dom_state: Optional[str] = None
     initial_filters: Optional[dict[str, str]] = None
 
 
@@ -970,9 +919,16 @@ class PolicyTurn(BaseModel):
         default=None,
         description="非 UI primitive 执行明细：kind/sql/returns/reads/completed 等；interactive turn 留空",
     )
-    checker: Optional[dict] = Field(default=None, description="Checker 原始结果：status, reason, summary, missing_evidence 等")
-    planner: Optional[dict] = Field(default=None, description="Planner 原始结果：instruction, summary, direction, drag_column")
-    replan: Optional[dict] = Field(default=None, description="Replan 原始结果：diagnosis, strategy, instruction")
+    action_plan: Optional[dict] = Field(
+        default=None,
+        description="Transition 已选动作的运行时物化结果：instruction、target 与手势参数。",
+    )
+    transition: Optional[dict[str, Any]] = Field(
+        default=None,
+        description=(
+            "统一 Statement Transition 的最终提议及 Guard rejection。"
+        ),
+    )
     executed: bool = False
     action_signal: Optional[ActionSignal] = Field(
         default=None,
@@ -988,13 +944,13 @@ class PolicyTurn(BaseModel):
     read_added_content: bool = False
     read_note_hash: Optional[str] = None
     target_verify: Optional[TargetVerify] = Field(default=None, description="动作后落点校验：on_target, actual_element")
-    timings: dict[str, float] = Field(default_factory=dict, description="各模块耗时(秒)，如 {checker: 1.2, planner: 2.3}")
-    token_usage: dict[str, dict[str, int]] = Field(default_factory=dict, description="各模块 token 用量，如 {checker: {input: 2284, output: 114}, planner: {...}}")
+    timings: dict[str, float] = Field(default_factory=dict, description="各模块耗时(秒)，如 {transition: 1.2, action_policy: 2.3}")
+    token_usage: dict[str, dict[str, int]] = Field(default_factory=dict, description="各模块 token 用量，如 {transition: {input: 2284, output: 114}}")
     settle_s: Optional[float] = Field(default=None, description="本轮动作后 settle 等待时长(秒)，等屏幕变过且停稳")
     no_effect: bool = Field(default=False, description="tap 类动作 settle 跑满上限且全程零变化：这一击对屏幕无效果（如重点已高亮 tab）")
     sections_loaded: list[str] = Field(
         default_factory=list,
-        description="本轮 planner 实际注入的渐进知识章节名（KnowledgeSelector 按 (statement, page) 选定并缓存）；无渐进知识或未选中则为空",
+        description="本轮 Transition 实际注入的渐进知识章节名；无渐进知识或未选中则为空",
     )
     llm_context: list[dict[str, Any]] = Field(
         default_factory=list,
@@ -1008,6 +964,11 @@ class PolicyTurn(BaseModel):
     @model_validator(mode="after")
     def _normalize_no_action_signal(self) -> "PolicyTurn":
         """A turn without a physical action cannot contain dispatch evidence."""
+        if self.supervisor.outcome is not None:
+            raise ValueError(
+                "PolicyTurn cannot persist a terminal StatementOutcome; "
+                "append StatementOutcomeEvent instead"
+            )
         if self.action_decision is None or self.action_decision.action is not None:
             return self
         self.executed = False
@@ -1019,6 +980,61 @@ class PolicyTurn(BaseModel):
             self.action_signal.response_channels.clear()
             self.effect_signal = None
         return self
+
+
+class StatementOutcomeEvent(BaseModel):
+    """Immutable terminal fact for exactly one statement invocation.
+
+    A terminal verdict is not an observe-decide-act turn. Keeping it as its own
+    journal event lets the next statement act on the same physical frame without
+    creating an action-less turn or consuming turn/no-op budgets.
+    """
+
+    model_config = ConfigDict(frozen=True, extra="forbid")
+
+    event_type: Literal["statement_outcome"] = "statement_outcome"
+    after_turn: int = Field(
+        default=0,
+        ge=0,
+        description="Number of persisted turns preceding this terminal fact.",
+    )
+    timestamp: str = Field(default_factory=lambda: datetime.now().isoformat(timespec="seconds"))
+    observation_source: str = ""
+    observation_url: str = ""
+    statement: Optional[StatementInfo] = None
+    statement_instance_id: str
+    statement_id: str
+    statement_kind: Optional[StatementKind] = None
+    execution_scope: str = ""
+    outcome: StatementOutcome
+    transition: Optional[dict[str, Any]] = None
+    effect_signal: Optional[EffectSignal] = None
+    pre_existing: bool = False
+    collection_summary: Optional[str] = None
+    llm_calls: int = 0
+    input_tokens: int = 0
+    output_tokens: int = 0
+    timings: dict[str, float] = Field(default_factory=dict)
+    token_usage: dict[str, dict[str, int]] = Field(default_factory=dict)
+    sections_loaded: list[str] = Field(default_factory=list)
+    llm_context: list[dict[str, Any]] = Field(default_factory=list)
+
+    @model_validator(mode="before")
+    @classmethod
+    def _strip_live_observation(cls, value: object) -> object:
+        """Persist only the observation path, never raw screenshot bytes."""
+        if not isinstance(value, dict):
+            return value
+        data = dict(value)
+        outcome = data.get("outcome")
+        if isinstance(outcome, StatementOutcome):
+            if outcome.observation is not None:
+                data["outcome"] = outcome.model_copy(update={"observation": None})
+        elif isinstance(outcome, dict) and outcome.get("observation") is not None:
+            serialized = dict(outcome)
+            serialized["observation"] = None
+            data["outcome"] = serialized
+        return data
 
 
 class ProgramRevisionEvent(BaseModel):
@@ -1060,7 +1076,13 @@ class RecoveryJournalEvent(BaseModel):
 
 
 JournalEvent = Annotated[
-    Union[PolicyTurn, ProgramRevisionEvent, ContentNoteEvent, RecoveryJournalEvent],
+    Union[
+        PolicyTurn,
+        StatementOutcomeEvent,
+        ProgramRevisionEvent,
+        ContentNoteEvent,
+        RecoveryJournalEvent,
+    ],
     Field(discriminator="event_type"),
 ]
 
@@ -1068,15 +1090,16 @@ JournalEvent = Annotated[
 class EventJournal(BaseModel):
     """The single ordered fact stream for one Program execution.
 
-    Turns, Program revisions, recovered content, and recovery mechanisms share one ordered log.
+    Turns, statement outcomes, Program revisions, recovered content, and recovery mechanisms
+    share one ordered log.
     Post-dispatch sensors may finalize delivery fields on an existing PolicyTurn only through
-    ``run.action_signals``; they never create a parallel ledger or rewrite terminal outcomes.
+    ``run.action_signals``; they never create a parallel ledger or rewrite outcome events.
     Runtime state and reports are rebuilt as projections from this persisted shape.
     """
 
     model_config = ConfigDict(extra="forbid")
 
-    schema_version: Literal[2] = 2
+    schema_version: Literal[3] = 3
     events: list[JournalEvent] = Field(default_factory=list)
 
     @property
@@ -1097,7 +1120,32 @@ class EventJournal(BaseModel):
     def recovery_events(self) -> list[RecoveryJournalEvent]:
         return [event for event in self.events if isinstance(event, RecoveryJournalEvent)]
 
+    @property
+    def statement_outcomes(self) -> list[StatementOutcomeEvent]:
+        return [
+            event for event in self.events
+            if isinstance(event, StatementOutcomeEvent)
+        ]
+
     def append_turn(self, event: PolicyTurn) -> PolicyTurn:
+        self.events.append(event)
+        return event
+
+    def append_statement_outcome(
+        self,
+        event: StatementOutcomeEvent,
+    ) -> StatementOutcomeEvent:
+        if event.after_turn != len(self.turns):
+            raise ValueError(
+                "StatementOutcomeEvent.after_turn must equal the current turn count"
+            )
+        if any(
+            existing.statement_instance_id == event.statement_instance_id
+            for existing in self.statement_outcomes
+        ):
+            raise ValueError(
+                f"duplicate terminal outcome for {event.statement_instance_id!r}"
+            )
         self.events.append(event)
         return event
 

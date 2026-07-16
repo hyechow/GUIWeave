@@ -23,10 +23,6 @@ class ReportStep:
     statement_kind: str = ""
     instruction: str = ""
     summary: str = ""
-    outcome_phase: str = ""
-    verification: str = ""
-    kickback: str = ""
-    outcome_summary: str = ""
     timings: dict[str, float] = field(default_factory=dict)
     token_usage: dict[str, dict[str, int]] = field(default_factory=dict)  # per-module {input, output}
     llm_calls: int = 0
@@ -35,13 +31,11 @@ class ReportStep:
     action_to_x: float | None = None
     action_to_y: float | None = None
     snap: dict | None = None
-    sections_loaded: list[str] = field(default_factory=list)    # progressive knowledge injected into the planner this turn
-    relevant_sections: list[str] = field(default_factory=list)  # sections the checker flagged relevant (requested)
-    llm_context: list[dict] = field(default_factory=list)       # context budget + selector decisions for this turn
+    sections_loaded: list[str] = field(default_factory=list)  # knowledge injected into Transition
+    llm_context: list[dict] = field(default_factory=list)  # prompt snapshots + context budgets
     operation_mode: str = "interactive"  # interactive | observation | non_interactive
     non_ui: dict | None = None
     no_effect: bool = False
-    replan: dict | None = None
 
 
 @dataclass
@@ -56,8 +50,12 @@ class ReportPage:
     success_condition: str = ""
     checklist: list[dict] = field(default_factory=list)
     verify_url: str = ""  # verification screenshot (first turn of next statement)
-    verify_checker: dict = field(default_factory=dict)  # checker result from the last turn (done/in_progress)
+    verify_outcome: dict = field(default_factory=dict)  # terminal Outcome/Transition projection
     kickback: dict = field(default_factory=dict)  # Feasibility kick-back terminal state {reason, directive} — the "验收" for an abandoned-as-infeasible statement
+    outcome_after_turn: int = 0
+    outcome_timings: dict[str, float] = field(default_factory=dict)
+    outcome_token_usage: dict[str, dict[str, int]] = field(default_factory=dict)
+    outcome_context: list[dict] = field(default_factory=list)
 
 
 @dataclass

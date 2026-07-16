@@ -304,8 +304,8 @@ def main(
                     },
                     "llm_calls": get_llm_call_count() - orch_calls_before,
                 }
-                # The config must ALSO reach the execution-time planner deterministically — the
-                # supervisor's task-level constraints flow to every statement planner
+                # The config must ALSO reach execution-time Transition deterministically — the
+                # supervisor's task-level constraints flow to every statement decision
                 # them (LLM distillation of config into constraints proved unstable).
                 print(f"Orchestrator: 分解为 {len(program.statements)} 条语句")
 

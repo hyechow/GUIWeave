@@ -30,7 +30,7 @@ from gui_agent.core.run.result import (
     orchestration_result as _orch_result,
 )
 from gui_agent.core.run.action_exec import (
-    ActionExecutionState,
+    ActionExecutor,
     finalize_auto_continue_turn,
     submit_target_verify,
 )
@@ -59,11 +59,12 @@ from gui_agent.core.run.interactive import (
     extract_run_returns,
     start_statement,
     statement_id_for_run,
+    statement_info_for_run,
 )
 from gui_agent.core.run.turns import (
     emit_statement_fields,
     interactive_turn_count as _interactive_turn_count,
-    make_verdict_turn,
+    make_statement_outcome_event,
     record_interactive_turn,
     sync_turn_metadata,
 )
@@ -122,10 +123,10 @@ _VERIFY_POOL = ThreadPoolExecutor(max_workers=1, thread_name_prefix="verify")
 _PREP_POOL = ThreadPoolExecutor(max_workers=1, thread_name_prefix="prep")
 
 # Stitched-chunk reader (~1.8s LLM read) runs here so it overlaps the action +
-# settle + next turn's loop_check. Result is drained at the next turn's read
+# settle + next turn's Transition. Result is drained at the next turn's read
 # block (read_added_content is set inline from the cheap stitch feed, so the
 # supervisor's boundary check never waits on the reader). 1 worker keeps
-# content_notes ordering. Stitch feed (robust_shift, ~25ms) stays inline: it
+# content_notes ordering. Stitch feed stays inline: it
 # produces read_added_content which the turn record needs synchronously.
 _READER_POOL = ThreadPoolExecutor(max_workers=1, thread_name_prefix="reader")
 
@@ -260,14 +261,12 @@ def run_agent_loop(
     if hud is not None and hasattr(hud, "set_goal"):
         hud.set_goal(context.goal)
 
-    action_state = ActionExecutionState()
+    action_executor = ActionExecutor()
     original_goal = context.goal
-    noop_count = 0
     loading_streak = 0
-    prev_statement_id: str | None = None
 
     # The platform bundle is the single seam through which the agent loop obtains
-    # the session, executor, perception and scroll/stitch helpers — no adapter
+    # the session, executor, perception and read-stitch helper — no adapter
     # class is referenced directly here.
     bundle = build_platform(backend=backend)
     reader = ContentReader(prepare_vision_prompt_png=bundle.prepare_vision_prompt_png)
@@ -439,10 +438,6 @@ def run_agent_loop(
                     supervisor,
                     rt.current,
                     rt.index,
-                    fresh_advance=(
-                        observation_for_statements is not None
-                        and not bool(getattr(rt.current, "returns", None))
-                    ),
                     instance_id=iid,
                 )
                 rt.mark_notes(len(context.journal.content_notes))
@@ -481,31 +476,36 @@ def run_agent_loop(
                 updates["rows"] = rows
             return outcome.model_copy(update=updates) if updates else outcome
 
-        def _record_terminal_observation(sv_step, outcome) -> None:
-            """Record ONE operation_mode="observation" terminal turn for a completed/exhausted
-            statement. Must run BEFORE send_outcome/end_statement so extract_checker reads the
-            live runtime, and so emit_statement_fields can stamp StatementInfo/instance_id. The
-            turn carries the FILLED outcome (reads/rows), not the raw native outcome."""
+        def _record_statement_outcome(sv_step, outcome) -> None:
+            """Persist one terminal fact before Program advance/runtime teardown.
+
+            The verdict frame is referenced by the event but does not become an
+            action-less PolicyTurn. Resetting the LLM marks here also attributes a
+            same-frame next-statement decision to the next real turn.
+            """
             nonlocal _record_llm_mark, _record_token_mark
             calls_after = get_llm_call_count()
             tokens_after = get_llm_token_usage()
             _info, _iid = emit_statement_fields(supervisor)
-            context.journal.append_turn(make_verdict_turn(
-                index=len(context.journal.turns) + 1,
+            if not _iid and rt.current is not None:
+                _info = statement_info_for_run(rt.current, rt.index)
+                _iid = rt.current_instance_id
+            context.journal.append_statement_outcome(make_statement_outcome_event(
+                after_turn=len(context.journal.turns),
                 observation_source=observation.source,
                 observation_url=observation_url_for_turn,
                 supervisor_step=sv_step,
                 supervisor=supervisor,
+                outcome=outcome,
                 llm_calls=calls_after - _record_llm_mark,
                 input_tokens=tokens_after[0] - _record_token_mark[0],
                 output_tokens=tokens_after[1] - _record_token_mark[1],
-                observation_only=True,
                 statement=_info,
                 statement_instance_id=_iid,
-                outcome_override=outcome,
             ))
             _record_llm_mark = calls_after
             _record_token_mark = tokens_after
+            _save_ctx()
 
         _orchestrator_reports = list(orchestrator_context_reports or [])
         _orchestrator_metrics = next(
@@ -644,7 +644,7 @@ def run_agent_loop(
                 detail=directive[:160], outcome="replanned",
             )
             # Close the infeasible statement's runtime BEFORE hot-swapping the program — the
-            # infeasible step was already recorded as an interactive turn (checker captured), and
+            # infeasible step was already recorded as an interactive turn (Transition captured), and
             # the new program's first statement is begun by _drain_immediate below. Ending here
             # prevents the begin_statement guard from rejecting the implicit overwrite.
             if terminal_outcome is not None:
@@ -750,10 +750,8 @@ def run_agent_loop(
             _did_loading = False
             _did_kickback_replan = False
             _did_return_recovery = False
-            # Same-turn hand-offs call supervisor.step() multiple times; each step() clears its own
-            # _timings, so the completion check that detected the prior statement done would be lost
-            # from this turn's breakdown. Carry each handed-off step's timings here and merge them
-            # back after the loop, so the report shows the checker call that ran on the hand-off.
+            # Each completed step writes its own timing/token diagnostics into the
+            # OutcomeEvent before the next same-frame step clears supervisor state.
             while True:
                 _status(turn_no, f"使用 {supervisor.name} supervisor 决策中…")
                 _say("监督决策中...")
@@ -832,9 +830,7 @@ def run_agent_loop(
                             "返回值合同未满足：" + _contract.describe(),
                             reads=_reads,
                         )
-                        # Record the terminal observation turn BEFORE send/end so the live
-                        # checker + StatementInfo/instance_id are captured with the FILLED outcome.
-                        _record_terminal_observation(sv_step, _outcome)
+                        _record_statement_outcome(sv_step, _outcome)
                         try:
                             rt.send_outcome(_outcome)
                         finally:
@@ -858,11 +854,7 @@ def run_agent_loop(
                     rows=_rows,
                 )
                 assert _outcome is not None and _outcome.is_completed
-                # Record the terminal observation turn BEFORE send/end (live checker +
-                # StatementInfo/instance_id + FILLED outcome). This replaces the old query-only
-                # verdict turn and the post-loop program-end verdict workaround — every completed
-                # statement now owns exactly one observation terminal turn, budget-free.
-                _record_terminal_observation(sv_step, _outcome)
+                _record_statement_outcome(sv_step, _outcome)
                 try:
                     rt.send_outcome(_outcome)
                 finally:
@@ -885,8 +877,8 @@ def run_agent_loop(
                 )
 
             # The program ended on a hand-off (last actionable statement done → read / finish).
-            # Every completed statement already recorded its own terminal observation turn inside
-            # the loop above, so no separate program-end verdict is needed here.
+            # Every completed statement already recorded its own terminal event inside the
+            # loop above, so no separate program-end verdict is needed here.
             if _orch_reply is not None:
                 read_state.drain_pending(say=_say)
                 # Feasibility Guard query kick-back: the program ended because a data_query failed with a
@@ -915,34 +907,23 @@ def run_agent_loop(
                         continue
                 return _finish(_orch_result(context, rt.interpreter, _orch_reply))
 
-            if _budget_reconcile:
+            if _budget_reconcile and not _did_loading:
                 _budget_outcome = _outcome_from_step(sv_step)
-                # Terminal observation turn (runtime still live: reconcile broke out of the inner
-                # loop on a non-completed outcome, so end_statement has not run). Carries the
-                # filled outcome + StatementInfo/instance_id before _finish_statement sends/ends.
-                _record_terminal_observation(sv_step, _budget_outcome)
-                _save_ctx()
-                if _budget_outcome is not None:
-                    return _finish_statement(
-                        turn_no=turn_no,
-                        outcome=_budget_outcome,
+                if _budget_outcome is None:
+                    raise RuntimeError(
+                        "terminal-only reconciliation returned a running step"
                     )
-                reason = (
-                    f"达到最大轮数 {max_turns}；末次动作已派发并完成最终观察，"
-                    f"但当前执行单元仍未完成：{sv_step.summary}"
+                _record_statement_outcome(sv_step, _budget_outcome)
+                return _finish_statement(
+                    turn_no=turn_no,
+                    outcome=_budget_outcome,
                 )
-                _say(f"\n{reason}")
-                return _finish(_orch_result(
-                    context, rt.interpreter, reason, current=rt.current,
-                ))
 
             if _did_kickback_replan or _did_return_recovery:
                 continue
 
             # 页面未稳定（白屏/加载中）：等待并重新观察，本帧不写入 context.journal.turns、不消耗
-            # max_turns、不累加 noop_count。加载是 App 渲染延迟、不是 agent 的一步操作。
-            # 连续加载设上限，防页面永挂导致死循环（旧行为：loading 帧既占轮数，又会因
-            # should_act=False 累加 noop_count，连续 3 帧就误判"连续无动作"终止 agent）。
+            # Loading is an adapter fact, not a model no-op: wait without writing a turn.
             if _did_loading:
                 loading = handle_loading_frame(
                     loading_streak=loading_streak, max_loading_frames=MAX_LOADING_FRAMES,
@@ -960,6 +941,34 @@ def run_agent_loop(
             interrupted = _stop_after_esc(turn_no)
             if interrupted is not None:
                 return interrupted
+
+            # A terminal verdict is a journal fact, not an action-less PolicyTurn.
+            # Persist it before recovery/program advancement while statement-local
+            # Transition and identity are still available.
+            _turn_outcome = _outcome_from_step(sv_step)
+            if _turn_outcome is not None:
+                _record_statement_outcome(sv_step, _turn_outcome)
+                _terminal_decision = recovery_router.route_statement(
+                    _turn_outcome,
+                    can_redecompose=callable(redecompose),
+                )
+                if _terminal_decision.action == "kickback":
+                    assert _terminal_decision.recovery_class is not None
+                    _say("\n[Kickback] statement 判定不可行 → 重规划")
+                    _handled, _reply = _perform_replan(
+                        _turn_outcome.kickback or "",
+                        observation,
+                        cls=_terminal_decision.recovery_class,
+                        terminal_outcome=_turn_outcome,
+                    )
+                    if _handled and _reply is not None:
+                        return _finish(_orch_result(context, rt.interpreter, _reply))
+                    if _handled:
+                        continue
+                return _finish_statement(
+                    turn_no=turn_no,
+                    outcome=_turn_outcome,
+                )
 
             sync_turn_metadata(
                 context=context,
@@ -980,15 +989,12 @@ def run_agent_loop(
             read_added_content = read_result.added_content
             read_note_hash = read_result.note_hash
 
-            action_result = action_state.run(
+            action_result = action_executor.run(
                 sv_step=sv_step,
                 observation=observation,
                 action_policy=action_policy,
                 supervisor=supervisor,
-                history=context.journal.turns,
                 executor=executor,
-                bundle=bundle,
-                platform=platform,
                 prep_future=prep_future,
                 log_dir=log_dir,
                 turn_no=turn_no,
@@ -999,8 +1005,6 @@ def run_agent_loop(
             )
             action_decision = action_result.action_decision
             executed = action_result.executed
-            probe_failed = action_result.probe_failed
-            branch_settle_s = action_result.branch_settle_s
 
             # Post-action targeting verify: did the snapped tap land on target?
             # Submit now so it runs concurrently with the settle below; resolved
@@ -1012,20 +1016,6 @@ def run_agent_loop(
                 observation_png=observation.png_bytes,
                 pool=_VERIFY_POOL,
             )
-
-            # Fold the just-dispatched concrete action into StatementRuntime BEFORE the turn
-            # snapshot is built and persisted. Otherwise a resumed process would forget the
-            # latest loop-guard trace (and any constraint it emitted) even though the action turn
-            # itself was already durable in the journal.
-            note_executed_action = getattr(supervisor, "note_executed_action", None)
-            if callable(note_executed_action):
-                note_executed_action(
-                    index=len(context.journal.turns) + 1,
-                    observation=observation,
-                    supervisor_step=sv_step,
-                    action_decision=action_decision,
-                    executed=executed,
-                )
 
             _stmt_info, _stmt_iid = emit_statement_fields(supervisor)
             turn = record_interactive_turn(
@@ -1057,53 +1047,17 @@ def run_agent_loop(
                 statement_instance_id=_stmt_iid,
             )
 
-            # Terminal StatementOutcome from this turn's supervisor decision.
-            _turn_outcome = _outcome_from_step(sv_step)
-            # Feasibility kickback: infeasible outcome → ProgramRuntime replan.
-            _terminal_decision = (
-                recovery_router.route_statement(
-                    _turn_outcome,
-                    can_redecompose=callable(redecompose),
-                )
-                if _turn_outcome is not None
-                else None
-            )
-            if _terminal_decision is not None and _terminal_decision.action == "kickback":
-                assert _terminal_decision.recovery_class is not None
-                _say("\n[Kickback] statement 判定不可行 → 重规划")
-                _handled, _reply = _perform_replan(
-                    _turn_outcome.kickback or "",
-                    observation,
-                    cls=_terminal_decision.recovery_class,
-                    terminal_outcome=_turn_outcome,
-                )
-                if _handled and _reply is not None:
-                    return _finish(_orch_result(context, rt.interpreter, _reply))
-                if _handled:
-                    continue
-
-            if _turn_outcome is not None:
-                return _finish_statement(
-                    turn_no=turn_no,
-                    outcome=_turn_outcome,
-                )
-
             if not (executed and auto_continue):
                 interrupted = _stop_after_esc(turn_no)
                 if interrupted is not None:
                     return interrupted
 
             progress = evaluate_turn_progress(
-                noop_count=noop_count,
-                prev_statement_id=prev_statement_id,
                 sv_step=sv_step,
                 executed=executed,
                 action_decision=action_decision,
-                probe_failed=probe_failed,
                 suppressed_reason=action_result.suppressed_reason,
             )
-            noop_count = progress.noop_count
-            prev_statement_id = progress.prev_statement_id
             if progress.stop_reason:
                 if progress.stop_message:
                     _say(progress.stop_message)
@@ -1113,15 +1067,9 @@ def run_agent_loop(
                     progress.stop_reason,
                     current=rt.current,
                 ))
-            if progress.message:
-                _say(progress.message)
-            if progress.continue_loop:
-                continue
-
             if auto_continue:
                 finalize_auto_continue_turn(
                     turn=turn,
-                    branch_settle_s=branch_settle_s,
                     action_decision=action_decision,
                     platform=platform,
                     observation_png=observation.png_bytes,

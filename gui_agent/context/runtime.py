@@ -2,13 +2,11 @@
 
 from __future__ import annotations
 
-import json
 import os
 from datetime import datetime
-from typing import Any, Callable, Iterable, MutableSequence
+from typing import Any, Callable, Iterable, MutableSequence  # Any: memory block duck-typing
 
 from gui_agent.context.blocks import ContextBlock, ContextBudgeter
-from gui_agent.core.schemas import StatementContract, PolicyTurn, target_value_options
 
 # Hard char ceiling for the dynamic context blocks assembled around a prompt. Generous by
 # default (insurance against runaway inflation — knowledge blobs + history + @file refs piling
@@ -30,76 +28,29 @@ def current_date_block(now: datetime | None = None) -> ContextBlock:
     )
 
 
-def history_block(
-    history: list[PolicyTurn],
-    *,
-    limit: int = 8,
-    current_statement_id: str | None = None,
-    recent_n: int = 6,
-) -> ContextBlock:
+def statement_memory_block(memory: Any | None) -> ContextBlock | None:
+    """Inject the Journal-projected StatementMemoryView into Transition."""
+    if memory is None:
+        return None
+    render = getattr(memory, "render_prompt_section", None)
+    if not callable(render):
+        return None
+    text = str(render() or "").strip()
+    if not text:
+        return None
     return ContextBlock(
-        id="runtime.history.recent_actions",
-        budget="medium",
-        source_type="runtime_state",
-        source="policy_history",
-        ttl="session",
-        priority=40,
-        metadata={"limit": limit, "statement_id": current_statement_id or ""},
-        content=(
-            "## 历史操作记录\n"
-            + format_history_text(
-                history, limit=limit, current_statement_id=current_statement_id, recent_n=recent_n
-            )
-        ),
-    )
-
-
-def statement_block(
-    statement: StatementContract,
-    *,
-    task_type: str | None = None,
-    scroll_stop_condition: str | None = None,
-    retry_count: int | None = None,
-) -> ContextBlock:
-    """Current statement/task state shared by checker/planner/replanner/loop prompts."""
-    lines = [
-        "## 当前子目标",
-        f"- 名称：{statement.name}",
-        f"- 描述：{statement.description}",
-    ]
-    if statement.success_condition:
-        lines.append(f"- 验收条件：{statement.success_condition}")
-    if scroll_stop_condition:
-        lines.append(f"- 停止条件：{scroll_stop_condition}")
-    if statement.kind:
-        lines.append(f"- 子目标类型：{statement.kind}")
-    if statement.completion_strategy:
-        lines.append(f"- 完成策略：{statement.completion_strategy}")
-    if statement.kind == "action" and statement.effect_mode:
-        lines.append(f"- Effect mode：{statement.effect_mode}")
-    if statement.persistence == "explicit_commit":
-        lines.append("- 持久化边界：需要显式 commit 动作并验证后置状态")
-    if statement.target_controls:
-        lines.append(f"- 目标控件/能力：{', '.join(statement.target_controls)}")
-    if statement.target_values:
-        rendered_targets = ", ".join(
-            f"{field}={','.join(target_value_options(value))}"
-            for field, value in statement.target_values.items()
-        )
-        lines.append(f"- 目标字段终态：{rendered_targets}")
-    if task_type:
-        lines.append(f"- 任务类型：{task_type}")
-    if retry_count is not None:
-        lines.append(f"- 已重试次数：{retry_count}")
-    return ContextBlock(
-        id="runtime.statement.current",
+        id="runtime.statement_memory",
         budget="required",
         source_type="runtime_state",
-        source="statement",
+        source="statement_memory_view",
         ttl="turn",
-        priority=20,
-        metadata={"statement_id": statement.id, "kind": statement.kind},
-        content="\n".join(lines),
+        priority=22,
+        metadata={
+            "instance_id": str(getattr(memory, "instance_id", "") or ""),
+            "statement_id": str(getattr(memory, "statement_id", "") or ""),
+            "durable_count": len(getattr(memory, "durable_facts", ()) or ()),
+        },
+        content=text,
     )
 
 
@@ -117,190 +68,6 @@ def constraints_block(constraints: Iterable[str] | None) -> ContextBlock | None:
         metadata={"count": len(items)},
         content="## 全局约束\n" + "\n".join(f"- {item}" for item in items),
     )
-
-
-def app_identity_block(app_name: str) -> ContextBlock | None:
-    if not app_name:
-        return None
-    return ContextBlock(
-        id="runtime.app.identity_hint",
-        budget="high",
-        source_type="runtime_state",
-        source="app_binding",
-        ttl="task",
-        priority=25,
-        content=(
-            "## 应用身份辅助\n"
-            f"任务目标涉及「{app_name}」应用；页面/界面识别仍必须以当前可见内容为准，"
-            "不要预设当前就在目标应用内。"
-        ),
-    )
-
-
-def checker_kind_rules_block(kind_section: str) -> ContextBlock | None:
-    if not kind_section:
-        return None
-    return ContextBlock(
-        id="prompt.statement.check_kind_rules",
-        budget="required",
-        source_type="prompt_context",
-        source="statement.check_kind_sections",
-        ttl="turn",
-        priority=35,
-        content=kind_section,
-    )
-
-
-def checker_result_block(check: Any) -> ContextBlock:
-    issues = getattr(check, "issues", None) or []
-    missing = getattr(check, "missing_evidence", None) or []
-    visible = getattr(check, "visible_evidence", None) or []
-    lines = [
-        "## 当前验收结果",
-        f"- status：{getattr(check, 'status', '')}",
-        f"- reason：{getattr(check, 'reason', '')}",
-        f"- issues：{json_text(issues)}",
-        f"- missing_evidence：{json_text(missing)}",
-        f"- visible_evidence：{json_text(visible)}",
-        f"- page_identity：{getattr(check, 'page_identity', '')}",
-        f"- 当前屏幕摘要：{getattr(check, 'summary', '')}",
-    ]
-    return ContextBlock(
-        id="runtime.checker.result",
-        budget="required",
-        source_type="runtime_state",
-        source="checker",
-        ttl="turn",
-        priority=25,
-        content="\n".join(lines),
-    )
-
-
-def replan_state_block(
-    check: Any,
-    *,
-    retry_count: int,
-    failure_hints: Iterable[str] | None = None,
-) -> ContextBlock:
-    issues = getattr(check, "issues", None) or []
-    lines = [
-        "## 重规划状态",
-        f"- 未达成原因：{getattr(check, 'stuck_reason', '') or getattr(check, 'reason', '')}",
-        f"- 具体问题：{json_text(issues)}",
-        f"- 已重试次数：{retry_count}",
-        f"- 可能未达成原因提示：{json_text(list(failure_hints or []))}",
-    ]
-    return ContextBlock(
-        id="runtime.replan.state",
-        budget="required",
-        source_type="runtime_state",
-        source="replanner",
-        ttl="turn",
-        priority=25,
-        content="\n".join(lines),
-    )
-
-
-def format_history_text(
-    history: list[PolicyTurn],
-    *,
-    limit: int = 8,
-    current_statement_id: str | None = None,
-    recent_n: int = 6,
-) -> str:
-    """Render policy history for a prompt.
-
-    Default (current_statement_id=None): the legacy flat last-``limit`` window — kept so
-    reports / tests / no-statement callers are unchanged.
-
-    Relevant-history (current_statement_id set): the current statement's last ``recent_n`` turns
-    in full detail, preceded by ONE compressed state line per earlier statement (its last known
-    summary = its done-summary). This keeps the immediately useful detail while collapsing old
-    action-by-action history that bloats long runs. Failure/dead-end signal is handled separately
-    by the planner's tried-instructions + replan-diagnosis injection, so it is not duplicated here."""
-    if not history:
-        return "（无历史记录，这是第一轮）"
-    if current_statement_id is None:
-        return _render_turn_lines(history[-limit:])
-
-    current = [t for t in history if t.supervisor.statement_id == current_statement_id]
-    prior = [t for t in history if t.supervisor.statement_id != current_statement_id]
-    detail_turns = (current or history)[-recent_n:]
-
-    parts: list[str] = []
-    prior_summary = _completed_statements_text(prior)
-    if prior_summary:
-        parts.append("已完成/早前子目标进展（每子目标压成一行）：\n" + prior_summary)
-        parts.append("当前子目标最近操作：\n" + _render_turn_lines(detail_turns))
-    else:
-        parts.append(_render_turn_lines(detail_turns))
-    return "\n".join(parts)
-
-
-def _completed_statements_text(turns: list[PolicyTurn]) -> str:
-    """One compressed line per earlier statement (in first-seen order): its last known summary
-    (collection_summary preferred). Collapses old turn-by-turn history into statement state."""
-    last_by_mid: dict[str, PolicyTurn] = {}
-    order: list[str] = []
-    for t in turns:
-        mid = t.supervisor.statement_id or "?"
-        if mid not in last_by_mid:
-            order.append(mid)
-        last_by_mid[mid] = t
-    lines = []
-    for mid in order:
-        sv = last_by_mid[mid].supervisor
-        summary = (sv.collection_summary or sv.summary or "").strip()
-        lines.append(f"- [{mid}] {summary}".rstrip())
-    return "\n".join(lines)
-
-
-def _render_turn_lines(turns: list[PolicyTurn]) -> str:
-    lines = []
-    for turn in turns:
-        sv = turn.supervisor
-        signal = turn.action_signal
-        lifecycle = ""
-        if signal is not None:
-            channels = ",".join(signal.response_channels) or "none"
-            lifecycle = (
-                f" | role={signal.role}; execution={signal.execution}; "
-                f"target={signal.target}; response={signal.response}({channels})"
-            )
-            if signal.target_control:
-                lifecycle += f"; target_control={signal.target_control}"
-            if signal.target_value:
-                lifecycle += f"; target_value={signal.target_value}"
-            if signal.suppressed_reason:
-                lifecycle += f"; suppressed={signal.suppressed_reason}"
-            if signal.binding:
-                lifecycle += f"; binding={signal.binding.status}"
-            if turn.effect_signal is not None:
-                lifecycle += (
-                    f"; effect={turn.effect_signal.status}"
-                    f"({turn.effect_signal.freshness})"
-                )
-        decision = turn.action_decision
-        action = decision.action if decision is not None else None
-        if action is not None and turn.executed:
-            lines.append(
-                f"{turn.index}. 指令=「{sv.instruction}」"
-                f" → [{action.action_type}] {action.description}"
-                f"{lifecycle}"
-            )
-        elif action is not None:
-            lines.append(
-                f"{turn.index}. 指令=「{sv.instruction}」 → [未执行] "
-                f"[{action.action_type}] {action.description}{lifecycle}"
-            )
-        elif decision is not None:
-            reason = decision.not_found_reason or "未产生可派发动作"
-            lines.append(
-                f"{turn.index}. 指令=「{sv.instruction}」 → [未派发] {reason}{lifecycle}"
-            )
-        else:
-            lines.append(f"{turn.index}. [无动作] {sv.summary}{lifecycle}")
-    return "\n".join(lines)
 
 
 def extra_instruction_block(extra: str, *, source: str = "guard") -> ContextBlock | None:
@@ -378,11 +145,11 @@ def knowledge_block(kind: str, content: str | None, *, source: str = "knowledge_
 
 
 def grid_status_block(tables: list[dict] | None) -> ContextBlock | None:
-    """Inject DOM-derived grid record count into the checker context.
+    """Inject DOM-derived grid record count into Transition context.
 
-    Checker LLMs sometimes hallucinate "count unchanged / filter not applied" when the screenshot
+    Vision models may hallucinate "count unchanged / filter not applied" when the screenshot
     lacks a familiar filter-state indicator. Passing the DOM-authoritative total_records as
-    structured text gives the checker an unambiguous textual signal — no screenshot reading
+    structured text gives Transition an unambiguous textual signal — no screenshot reading
     required.
     """
     if not tables:
@@ -417,12 +184,12 @@ def grid_status_block(tables: list[dict] | None) -> ContextBlock | None:
 
 
 def active_filters_block(form_controls: list[dict] | None) -> ContextBlock | None:
-    """Inject DOM-authoritative active filter state into planner + checker context.
+    """Inject populated filter inputs without claiming that they were submitted.
 
     Reads ``is_filter=True`` entries from form_controls (set by form_reader.js when the
     input is inside a grid filter area or its ID matches ``*_filter_*``).  Only entries
-    with a non-empty value are included — these represent currently-active filters that
-    the next task statement may need to clear before applying its own constraints.
+    with a non-empty value are included. Their DOM values are authoritative input facts,
+    but unlike ``Observation.applied_filters`` they do not prove post-Apply state.
 
     Parallel to ``grid_status_block``: both replace screenshot-vision with DOM facts.
     """
@@ -445,9 +212,11 @@ def active_filters_block(form_controls: list[dict] | None) -> ContextBlock | Non
     if not lines:
         return None
     content = (
-        "## 当前活跃网格筛选（DOM 权威值，非视觉推断）\n"
-        "以下 filter 输入框**当前有非空值**，说明页面存在持久化的筛选条件。"
-        "若本步骤不需要这些筛选，应在应用本步骤要求的筛选前，先清除这些与本步无关的残留筛选。\n"
+        "## 当前已填充的网格筛选输入（DOM 当前值，非视觉推断）\n"
+        "以下 filter 输入框当前有非空值；这只证明输入框里已经有值，"
+        "**不单独证明 Search/Apply 已提交或结果网格已刷新**。"
+        "是否已经生效以“当前已生效筛选”或 Journal 中的提交回执为准。"
+        "若值符合本步骤目标但尚无已生效证据，应提交当前筛选，而不是重复输入同一值。\n"
         + "\n".join(lines)
     )
     return ContextBlock(
@@ -472,7 +241,7 @@ def applied_filter_state_block(
     residuals to clear): this is the post-Apply state — the authoritative answer to "which
     filters are in EFFECT right now". Adapter-specific evidence may be a status indicator,
     encoded navigation state, filter-row state, or another platform-native mechanism. Whether the
-    filtered field equals its target is what this state already encodes. So the checker must judge a filter
+    filtered field equals its target is what this state already encodes. Transition must judge a filter
     statement's progress from this state, NOT by re-reading a table display column (e.g. a display
     column derived from the filtered field, or a same-named neighbor computed on a different basis,
     which is a SEPARATE column)."""
@@ -509,7 +278,7 @@ def applied_filter_state_block(
     # State-attribution annotation (deterministic run-level ledger): a chip present in the run's
     # FIRST applied-filters snapshot is the environment's INITIAL STATE — an observed fact with no
     # claim about where it came from; a chip that appeared DURING this run was established by this
-    # task's own earlier steps — deliberate task scope. Without this fact the checker/planner
+    # task's own earlier steps — deliberate task scope. Without this fact the model may
     # free-guess which chips are "unrelated" and clear upstream scope every step (live run
     # 20260708_195215). No hygiene framing: the desired filter state is DEFINED by the current
     # statement; initial-state chips get reconciled to it, never "cleaned" for their own sake.
@@ -655,7 +424,7 @@ def format_form_controls_text(
             bits.append("group(" + ", ".join(group_bits) + ")")
         if kind == "native_select":
             # A native <select> (incl. <select multiple>): its SELECTION is DOM-authoritative and
-            # is what the checker must judge on — say so explicitly so the model doesn't read the
+            # is what Transition must judge on — say so explicitly so the model doesn't read the
             # still-visible option list as "not chosen yet". Empty = nothing selected.
             sel = str(item.get("selected_text") or "").strip()
             bits.append(f'已选中(DOM权威)="{sel}"' if sel else '已选中(DOM权威)=""(当前无选中项)')
@@ -797,22 +566,6 @@ def tried_instructions_block(instructions: Iterable[str]) -> ContextBlock:
         metadata={"count": len(items)},
         content="## 已尝试但尚未达成的指令\n" + content,
     )
-
-
-def loop_frame_summary_block(summary: str) -> ContextBlock:
-    return ContextBlock(
-        id="runtime.loop.frame_summary",
-        budget="required",
-        source_type="runtime_state",
-        source="loop_checker",
-        ttl="turn",
-        priority=30,
-        content="## 当前屏幕状态\n" + (summary or "（无当前屏幕摘要）"),
-    )
-
-
-def json_text(value: Any) -> str:
-    return json.dumps(value, ensure_ascii=False)
 
 
 def render_prompt_context(

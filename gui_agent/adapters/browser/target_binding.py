@@ -34,15 +34,6 @@ def _point_matches(control: dict, action: object) -> bool:
     )
 
 
-def _in_declared_unit(control: dict, unit_hint: str) -> bool:
-    if not unit_hint:
-        return True
-    actual = str(control.get("group_id") or "").strip()
-    if unit_hint == "__form__":
-        return not actual
-    return actual == unit_hint
-
-
 _SELECT_CONTROL_KINDS = {"native_select", "select", "listbox", "combobox"}
 
 
@@ -84,11 +75,8 @@ class BrowserTargetBinder:
     """Upgrade a visual proposal only when a rendered control uniquely owns its point.
 
     Control identity is resolved from the adapter control inventory (a control's own
-    label / name / options / group), NOT from mutation authorization: the authorization only
-    filters candidates to an authorized subject for mutation writes and is checked separately
-    at dispatch time. A point that is owned but not recognized is an identity GAP
-    (``unresolved`` → the caller fails open), never a ``contradicted`` verdict — the latter is
-    reserved for positive evidence of a *different* declared control.
+    label / name / options / group) and the concrete action point. A point that is owned but
+    not recognized is an identity gap (``unresolved`` → the caller fails open).
     """
 
     def bind(
@@ -100,18 +88,11 @@ class BrowserTargetBinder:
         controls = getattr(observation, "form_controls", None)
         if not controls:
             return None
-        authorization = step.mutation_authorization
-        unit_hint = (
-            authorization.subject_ref
-            if authorization is not None and authorization.source == "structural"
-            else ""
-        )
         semantic = [
             item
             for item in controls
             if isinstance(item, dict)
             and matches_target_control(item, step.target_control)
-            and _in_declared_unit(item, unit_hint)
         ]
         point_owners = [
             item
@@ -133,30 +114,12 @@ class BrowserTargetBinder:
                 return _binding(select_owners[0])
 
         # The point lands on a rendered control but identity does not confirm the declared
-        # target. Two sub-cases:
-        #  - contradicted: the point matches the declared control NAME but lands in a
-        #    different authorized unit/subject (a real subject mismatch for a mutation).
-        #    This IS positive evidence of a different identified control.
-        #  - unresolved (default): the point's name cannot be confirmed. That is an identity
+        # target. The point's name cannot be confirmed, so this is an identity
         #    GAP, not a contradiction — adapter labels can be wrong (log 20260715_215953:
         #    the Type select was labeled 'notice-EV92REG'), so a name-mismatch must fail
         #    open rather than suppress a possibly-correct action. Mutation safety is still
-        #    enforced downstream by the authorization check.
+        #    recorded by the actual dispatch and subsequent observation.
         if point_owners:
-            if unit_hint:
-                by_name = [
-                    item
-                    for item in controls
-                    if isinstance(item, dict) and matches_target_control(item, step.target_control)
-                ]
-                if any(
-                    item in by_name and not _in_declared_unit(item, unit_hint)
-                    for item in point_owners
-                ):
-                    return TargetBinding(
-                        status="contradicted",
-                        reason="the action point matches the declared control in a different unit/subject",
-                    )
             return TargetBinding(
                 status="unresolved",
                 reason=(
@@ -214,26 +177,6 @@ def active_surface_id(observation: Observation) -> str:
         "",
     )
     return f"document:{path}:{heading}" if path or heading else ""
-
-
-def active_target_aliases(observation: Observation) -> set[str]:
-    """Translate browser DOM/AX inventory into platform-neutral active-target aliases."""
-    aliases: set[str] = set()
-    surface_nodes = _active_surface_nodes(observation)
-    has_dialog = bool(surface_nodes and surface_nodes[0].get("role") == "dialog")
-    sources = (surface_nodes,) if has_dialog else (
-        observation.form_controls or [],
-        surface_nodes,
-    )
-    for items in sources:
-        for item in items:
-            if not isinstance(item, dict):
-                continue
-            for field in ("key", "label", "name", "id", "group_field"):
-                value = str(item.get(field) or "").strip()
-                if value:
-                    aliases.add(value)
-    return aliases
 
 
 def _semantic_key(value: object) -> str:
@@ -346,5 +289,4 @@ __all__ = [
     "active_choice_controls",
     "BrowserTargetBinder",
     "active_surface_id",
-    "active_target_aliases",
 ]

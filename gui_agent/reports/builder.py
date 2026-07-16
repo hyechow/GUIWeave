@@ -417,13 +417,14 @@ class RunnerReportBuilder:
 
         ctx = json.loads(ctx_path.read_text(encoding="utf-8"))
         journal = ctx.get("journal") or {}
+        journal_events = list(journal.get("events") or [])
         turns = [
             event
-            for event in (journal.get("events") or [])
+            for event in journal_events
             if event.get("event_type") == "turn"
         ]
         statement_views = StatementReportReducer().reduce(
-            events=turns,
+            events=journal_events,
         )
         # Title is the user's ORIGINAL input; the resolved goal is shown as provenance.
         # Old logs without raw_input fall back to the goal.
@@ -460,7 +461,7 @@ class RunnerReportBuilder:
 
         data.settle_s_total = sum((t.get("settle_s") or 0) for t in turns)
 
-        # Sections injected into the planner at least once this run (ordered by first appearance),
+        # Sections injected into Transition at least once this run (ordered by first appearance),
         # with bodies read from the knowledge dir so the sidebar can show them on click.
         loaded_order: list[str] = []
         _seen_sec: set[str] = set()
@@ -548,8 +549,6 @@ class RunnerReportBuilder:
             if atype == "none":
                 status = "— skip"
 
-            outcome = sup.get("outcome") if isinstance(sup.get("outcome"), dict) else {}
-
             all_steps.append(ReportStep(
                 label=f"Turn {idx}",
                 action_type=atype,
@@ -568,10 +567,6 @@ class RunnerReportBuilder:
                 statement_kind=sup.get("statement_kind", ""),
                 instruction=sup.get("instruction", ""),
                 summary=summary,
-                outcome_phase=outcome.get("phase") or "",
-                verification=outcome.get("verification") or "",
-                kickback=outcome.get("kickback") or "",
-                outcome_summary=outcome.get("summary") or "",
                 timings=turn.get("timings", {}),
                 token_usage=turn.get("token_usage", {}),
                 llm_calls=turn.get("llm_calls", 0),
@@ -581,12 +576,10 @@ class RunnerReportBuilder:
                 action_to_y=action.get("to_y"),
                 snap=action.get("snap"),
                 sections_loaded=turn.get("sections_loaded") or [],
-                relevant_sections=(turn.get("checker") or {}).get("relevant_sections") or [],
                 llm_context=turn.get("llm_context") or [],
                 operation_mode=operation_mode,
                 non_ui=non_ui,
                 no_effect=bool(turn.get("no_effect")),
-                replan=turn.get("replan") if isinstance(turn.get("replan"), dict) else None,
             ))
 
         # Build statement lookup from recorded statement invocations.
@@ -602,8 +595,7 @@ class RunnerReportBuilder:
                 "kind": view.kind,
                 "success_condition": view.success_condition,
                 "status": view.status,
-                "retry_count": view.retry_count,
-                "done_check": view.done_check,
+                "acceptance": view.acceptance,
                 "checklist": view.checklist,
                 "reads": view.reads,
                 "last_summary": view.last_summary,
@@ -612,6 +604,11 @@ class RunnerReportBuilder:
                 "phase": view.phase,
                 "verification": view.verification,
                 "kickback": view.kickback,
+                "verification_url": view.verification_url,
+                "outcome_after_turn": view.outcome_after_turn,
+                "outcome_timings": view.outcome_timings,
+                "outcome_token_usage": view.outcome_token_usage,
+                "outcome_context": view.outcome_context,
             }
             statements_static.append(ms_lookup[key])
 
@@ -633,6 +630,13 @@ class RunnerReportBuilder:
                 si, so = _sum_tokens(s.token_usage)
                 ms_in += si
                 ms_out += so
+            for k, v in (ms_state.get("outcome_timings") or {}).items():
+                ms_timings[k] = ms_timings.get(k, 0) + v
+            outcome_in, outcome_out = _sum_tokens(
+                ms_state.get("outcome_token_usage") or {}
+            )
+            ms_in += outcome_in
+            ms_out += outcome_out
             statements_info.append({
                 "id": page.statement_id,
                 "instance_id": page.instance_id,
@@ -641,7 +645,6 @@ class RunnerReportBuilder:
                 "description": page.statement_description,
                 "success_condition": page.success_condition,
                 "status": ms_state.get("status", ""),
-                "retry_count": ms_state.get("retry_count", 0),
                 "reads": ms_state.get("reads", {}),
                 "checklist": ms_state.get("checklist", []),
                 "turns": (
@@ -652,27 +655,40 @@ class RunnerReportBuilder:
                 "timings": ms_timings,
                 "input_tokens": ms_in,
                 "output_tokens": ms_out,
-                "cost": sum(_token_cost(s.token_usage) for s in ms_steps),
+                "cost": (
+                    sum(_token_cost(s.token_usage) for s in ms_steps)
+                    + _token_cost(ms_state.get("outcome_token_usage") or {})
+                ),
             })
 
-        # Set verification screenshot + checker: screenshot from next statement's first turn;
-        # checker from ms_lookup[id].done_check (saved by runner when statement completes).
+        # Set the verification screenshot and terminal acceptance projection.
         for i, page in enumerate(pages):
-            if i + 1 < len(pages):
+            ms_state = ms_lookup.get(page.instance_id, {})
+            page.verify_url = str(ms_state.get("verification_url") or "")
+            if not page.verify_url and i + 1 < len(pages):
                 next_first = pages[i + 1].steps[0] if pages[i + 1].steps else None
                 if next_first and next_first.raw_screenshot_url:
                     page.verify_url = next_first.raw_screenshot_url
-            page.verify_checker = ms_lookup.get(page.instance_id, {}).get("done_check", {})
-            # A statement abandoned as INFEASIBLE never produces a done_check, so its 验收 slot is
+            page.verify_outcome = ms_state.get("acceptance", {})
+            page.outcome_after_turn = int(ms_state.get("outcome_after_turn") or 0)
+            page.outcome_timings = dict(ms_state.get("outcome_timings") or {})
+            page.outcome_token_usage = dict(
+                ms_state.get("outcome_token_usage") or {}
+            )
+            page.outcome_context = list(ms_state.get("outcome_context") or [])
+            # A statement abandoned as INFEASIBLE may not produce a completed acceptance, so its 验收 slot is
             # blank. Surface the Feasibility kick-back verdict (why + the re-decompose directive) as
             # that statement's terminal acceptance instead.
-            kb = next((s for s in page.steps if s.outcome_phase == "infeasible"), None)
-            if kb is not None:
+            if ms_state.get("phase") == "infeasible":
                 # Acceptance display only — this statement was judged infeasible. (The inline #0↻N
                 # program card is placed separately, by the re-decompose's at_turn, in runner_html.)
                 page.kickback = {
-                    "reason": kb.outcome_summary or kb.summary,
-                    "directive": kb.kickback,
+                    "reason": (
+                        (ms_state.get("acceptance") or {}).get("reason")
+                        or ms_state.get("last_summary")
+                        or ""
+                    ),
+                    "directive": ms_state.get("kickback") or "",
                 }
 
         data.pages = pages

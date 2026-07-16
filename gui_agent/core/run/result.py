@@ -10,9 +10,11 @@ from pydantic import BaseModel, ConfigDict, Field, model_validator
 from typing_extensions import NotRequired, TypedDict
 
 from gui_agent.core.schemas import (
+    PolicyTurn,
     PolicyContext,
     ProgramOutcome,
     ProgramPhase,
+    StatementOutcomeEvent,
     StatementPhase,
     Verification,
 )
@@ -109,17 +111,42 @@ def make_result(
     phase: ProgramPhase = "stopped",
     verification: Verification | None = None,
 ) -> AgentResult:
-    last_summary = context.journal.turns[-1].supervisor.summary if context.journal.turns else summary
+    last_summary = summary
+    for event in reversed(context.journal.events):
+        if isinstance(event, StatementOutcomeEvent):
+            last_summary = event.outcome.summary
+            break
+        if isinstance(event, PolicyTurn):
+            last_summary = event.supervisor.summary
+            break
+
+    terminal_by_instance = {
+        event.statement_instance_id: event.outcome
+        for event in context.journal.statement_outcomes
+    }
+    last_turn_by_instance = {
+        turn.statement_instance_id: turn.index
+        for turn in context.journal.turns
+        if turn.statement_instance_id
+    }
     turns_detail: list[AgentTurnDetail] = []
     for t in context.journal.turns:
+        terminal = (
+            terminal_by_instance.get(t.statement_instance_id)
+            if (
+                t.statement_instance_id
+                and last_turn_by_instance.get(t.statement_instance_id) == t.index
+            )
+            else None
+        )
         turn_phase: ReportTurnPhase = (
-            t.supervisor.outcome.phase
-            if t.supervisor.outcome is not None
+            terminal.phase
+            if terminal is not None
             else "running"
         )
         turn_verification = (
-            t.supervisor.outcome.verification
-            if t.supervisor.outcome is not None
+            terminal.verification
+            if terminal is not None
             else None
         )
         entry: AgentTurnDetail = {

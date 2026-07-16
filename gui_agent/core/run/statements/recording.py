@@ -8,7 +8,7 @@ from gui_agent.core.orchestrator.program import RunLike
 from gui_agent.core.run.interactive import statement_id_for_run, statement_info_for_run
 from gui_agent.core.run.program_runtime import ProgramRuntime
 from gui_agent.core.run.turns import make_immediate_statement_turn
-from gui_agent.core.schemas import PolicyContext
+from gui_agent.core.schemas import PolicyContext, StatementOutcomeEvent
 
 from .outcome import StatementOutcome
 
@@ -40,6 +40,8 @@ def record_statement_outcome(
     iid = statement_instance_id or f"imm-{statement_index}:{statement_id}"
 
     observation = outcome.observation
+    calls_after = get_llm_call_count()
+    tokens_after_now = get_llm_token_usage()
     context.journal.append_turn(make_immediate_statement_turn(
         index=len(context.journal.turns) + 1,
         observation_source=(
@@ -57,14 +59,31 @@ def record_statement_outcome(
         sql=outcome.executed_sql,
         data_scope=getattr(statement, "data_scope", "complete"),
         reads=dict(outcome.reads),
-        completed=outcome.is_completed,
         observation_url=outcome.observation_url or "",
         started_at=started_at,
-        llm_calls=get_llm_call_count() - llm_calls_before,
-        input_tokens=get_llm_token_usage()[0] - tokens_before[0],
-        output_tokens=get_llm_token_usage()[1] - tokens_before[1],
+        llm_calls=calls_after - llm_calls_before,
+        input_tokens=tokens_after_now[0] - tokens_before[0],
+        output_tokens=tokens_after_now[1] - tokens_before[1],
         llm_context=outcome.context_reports,
         statement=info,
         statement_instance_id=iid,
+        executed=outcome.is_completed,
+    ))
+    context.journal.append_statement_outcome(StatementOutcomeEvent(
+        after_turn=len(context.journal.turns),
+        observation_source=(
+            getattr(observation, "source", "non_ui")
+            if observation is not None
+            else "non_ui"
+        ),
+        observation_url=outcome.observation_url or "",
+        statement_instance_id=iid,
+        statement_id=statement_id,
+        statement_kind=(
+            statement.kind
+            if statement.kind
+            in {"navigation", "filter", "action", "collection", "verification"}
+            else "collection"
+        ),
         outcome=outcome,
     ))

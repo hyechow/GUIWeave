@@ -96,9 +96,7 @@ def semantic_action_key(step: SupervisorStep, action: Any) -> str:
     prefix = f"{step.execution_scope or ''}|{step.statement_id or ''}|{role}"
     if role == "commit":
         return prefix
-    authorization = step.mutation_authorization
-    group = authorization.subject_ref if authorization is not None else ""
-    return f"{prefix}{f'|group:{group}' if group else ''}|{action_signature(action)}"
+    return f"{prefix}|{action_signature(action)}"
 
 
 def build_action_signal(
@@ -125,18 +123,26 @@ def build_action_signal(
         and not suppressed_reason
         else "not_attempted"
     )
-    authorization = step.mutation_authorization
+    bound_subject = (
+        binding.unit_id
+        if binding is not None and binding.status == "bound"
+        else ""
+    )
     receipt = (
         MutationReceipt(
-            statement_id=authorization.statement_id,
-            subject_ref=authorization.subject_ref,
-            field=authorization.field,
-            intended_value=authorization.desired_value,
-            source=authorization.source,
+            statement_id=step.statement_id or "",
+            subject_ref=bound_subject,
+            field=step.target_control,
+            intended_value=step.target_value,
+            source=binding.source or "visual",
         )
         if role == "write"
         and execution == "dispatched"
-        and authorization is not None
+        and bound_subject
+        and binding is not None
+        and binding.source is not None
+        and step.target_control
+        and step.target_value
         else None
     )
     return ActionSignal(
@@ -144,7 +150,11 @@ def build_action_signal(
         role=role,
         surface_id=surface_id,
         target_control=step.target_control,
-        target_value=(str(getattr(action, "text", "") or "") if role == "write" else ""),
+        target_value=(
+            step.target_value or str(getattr(action, "text", "") or "")
+            if role == "write"
+            else ""
+        ),
         mutation_receipt=receipt,
         binding=binding,
         execution=execution,

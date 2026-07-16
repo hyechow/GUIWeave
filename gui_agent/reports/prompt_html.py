@@ -15,7 +15,7 @@ def _render_module_io_html(reports: list[dict], token_usage: dict | None = None)
     calls = _collect_module_calls(reports)
     if not calls:
         if reports:
-            return '<div class="compat-row"><span class="compat-chip">旧日志缺 prompt snapshot</span></div>'
+            return '<div class="compat-row"><span class="compat-chip">本次运行未记录 prompt snapshot</span></div>'
         return ""
 
     token_usage = token_usage if isinstance(token_usage, dict) else {}
@@ -44,13 +44,6 @@ def _render_module_io_html(reports: list[dict], token_usage: dict | None = None)
                 f'</section>'
             )
         output_html = _render_output_html(output)
-        if not roles_html and output.get("mode") == "selector_report":
-            roles_html.append(
-                f'<section class="prompt-role prompt-output-missing">'
-                f'<div class="prompt-role-title">input</div>'
-                f'<div class="prompt-empty">（旧日志只记录 selector 决策摘要，缺 prompt snapshot；新日志会记录实际 prompt）</div>'
-                f'</section>'
-            )
         summary = _render_call_summary(label_text, output)
         search_index = _attr(
             " ".join(
@@ -220,47 +213,7 @@ def _collect_module_calls(reports: list[dict]) -> list[dict]:
                 calls.append({"label": label, "prompt": None, "output": report})
             else:
                 target["output"] = report
-        elif kind == "selector":
-            if _has_selector_call(calls):
-                continue
-            calls.append(_selector_report_call(report))
     return calls
-
-
-def _has_selector_call(calls: list[dict]) -> bool:
-    return any(
-        "selector" in str(call.get("label") or "").lower()
-        for call in calls
-    )
-
-
-def _selector_report_call(report: dict) -> dict:
-    parsed = {
-        "cache": report.get("cache") or "",
-        "page_identity": report.get("page_identity") or "",
-        "page_known": bool(report.get("page_known")),
-        "section_ids": list(report.get("section_ids") or []),
-        "sections": list(report.get("sections") or []),
-        "fallback_triggered": bool(report.get("fallback_triggered")),
-        "fallback_reason": report.get("fallback_reason") or "",
-        "cached": bool(report.get("cached")),
-        "reason": report.get("reason") or "",
-        "error": report.get("error") or "",
-    }
-    raw = json.dumps(parsed, ensure_ascii=False, indent=2)
-    return {
-        "label": "selector",
-        "prompt": None,
-        "output": {
-            "kind": "llm_output",
-            "label": "selector",
-            "schema": "_SelectorResult",
-            "mode": "selector_report",
-            "raw_output": raw,
-            "parsed": parsed,
-            "chars": len(raw),
-        },
-    }
 
 
 def _render_call_summary(label: str, output: dict) -> str:
@@ -286,26 +239,10 @@ def _call_summary_text(label: str, output: dict) -> str:
     if not isinstance(parsed, dict):
         return _shorten(str(output.get("raw_output") or ""))
     lname = label.lower()
-    if "checker" in lname or "loop_check" in lname:
-        status = str(parsed.get("status") or "unknown")
+    if "transition" in lname:
+        kind = str(parsed.get("kind") or "unknown")
         reason = str(parsed.get("reason") or parsed.get("summary") or "")
-        return _join_bits([status, _shorten(reason, 110)])
-    if "planner" in lname or "replanner" in lname or "loop_scroll" in lname:
-        instruction = str(parsed.get("instruction") or parsed.get("summary") or "")
-        return _shorten(instruction, 130)
-    if "selector" in lname:
-        cache = str(parsed.get("cache") or "")
-        sections = [str(s) for s in (parsed.get("sections") or []) if str(s)]
-        section_ids = [str(s) for s in (parsed.get("section_ids") or []) if str(s)]
-        reason = str(parsed.get("reason") or parsed.get("fallback_reason") or parsed.get("error") or "")
-        picked = ", ".join(sections[:2] or section_ids[:3])
-        fallback = "fallback" if parsed.get("fallback_triggered") else ""
-        return _join_bits([
-            f"cache={cache}" if cache else "",
-            picked,
-            fallback,
-            _shorten(reason, 90),
-        ])
+        return _join_bits([kind, _shorten(reason, 110)])
     if "action_policy" in lname:
         action = parsed.get("action") if isinstance(parsed.get("action"), dict) else parsed
         atype = str(action.get("action_type") or action.get("type") or "action")
@@ -382,7 +319,7 @@ def _render_output_html(output: dict) -> str:
         parsed_text = json.dumps(parsed, ensure_ascii=False, indent=2)
     schema = _safe(str(output.get("schema") or ""))
     mode = _safe(str(output.get("mode") or ""))
-    raw_label = "selector_report" if output.get("mode") == "selector_report" else "raw_output"
+    raw_label = "raw_output"
     chars = int(output.get("chars") or len(str(output.get("raw_output") or "")))
     meta = " · ".join(bit for bit in [schema, mode, f"{chars} chars"] if bit)
     parsed_html = (

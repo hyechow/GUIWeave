@@ -27,6 +27,7 @@ from gui_agent.core.schemas import (
     RecoveryJournalEvent,
     StatementContract,
     StatementOutcome,
+    StatementOutcomeEvent,
 )
 
 
@@ -210,6 +211,25 @@ class ProgramRuntime:
             if event.event_type == "content_note":
                 note_count += 1
                 continue
+            if isinstance(event, StatementOutcomeEvent):
+                match = re.match(r"i(\d+):", event.statement_instance_id or "")
+                if match:
+                    runtime._instance_seq = max(
+                        runtime._instance_seq,
+                        int(match.group(1)),
+                    )
+                if pending_terminal is not None:
+                    apply_terminal()
+                pending_terminal = (
+                    event.outcome,
+                    event.statement_instance_id,
+                )
+                active_instance_id = ""
+                # Notes written after the terminal fact belong to the next
+                # invocation even when no PolicyTurn separates two immediate
+                # statements.
+                next_instance_notes_mark = note_count
+                continue
             if not isinstance(event, PolicyTurn):
                 continue
             match = re.match(r"i(\d+):", event.statement_instance_id or "")
@@ -217,17 +237,7 @@ class ProgramRuntime:
                 runtime._instance_seq = max(runtime._instance_seq, int(match.group(1)))
             if pending_terminal is not None:
                 apply_terminal()
-            if event.supervisor.outcome is not None:
-                pending_terminal = (
-                    event.supervisor.outcome,
-                    event.statement_instance_id,
-                )
-                active_instance_id = ""
-                # This terminal event closes the note interval for its invocation. Notes written
-                # after it belong to the next statement even when they precede that statement's
-                # first PolicyTurn, so retain the boundary instead of deriving it at first turn.
-                next_instance_notes_mark = note_count
-            elif event.statement_instance_id:
+            if event.statement_instance_id:
                 if event.statement_instance_id != active_instance_id:
                     active_instance_id = event.statement_instance_id
                     active_notes_mark = next_instance_notes_mark

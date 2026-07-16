@@ -4,9 +4,8 @@ The stitching ALGORITHM is platform-neutral and now lives in ``gui_agent.core.vi
 This module injects the iPhone-specific bits — the device-frame mask (rounded corners
 / 灵动岛 excluded from ORB feature detection) and the historical content band
 (0.10..0.97, dropping the iOS status bar / bottom chrome) — and re-exports the same
-names (``StitchAccumulator`` / ``robust_shift`` / ``_gray_u8``) so existing iphone
-callers (factory, scroll_probe, runner type hints) are unchanged and behavior is
-byte-identical to before the move.
+names (``StitchAccumulator`` / ``robust_shift`` / ``_gray_u8``) for the read-only
+stitch accumulator.
 """
 
 from __future__ import annotations

@@ -23,18 +23,7 @@ from .observation_state import (
     filter_state_satisfies_target,
     observed_filter_intent,
 )
-from .schemas import _SingleCheckResult
-
-
-def execution_contract_for(
-    statement: StatementContract,
-    configured: ExecutionContract | None,
-) -> ExecutionContract:
-    """Return the configured contract or derive it from the statement."""
-    contract = configured
-    if contract is None or contract.statement_id != statement.id:
-        contract = ExecutionContract.from_statement(statement)
-    return contract
+from .schemas import _StatementTransitionResult
 
 
 def action_lifecycle_claims(
@@ -52,14 +41,19 @@ def action_lifecycle_claims(
             if turn.effect_signal is not None
             and turn.effect_signal.statement_id == statement.id
             and turn.effect_signal.authoritative
-            and turn.effect_signal.status == "satisfied"
+            and turn.effect_signal.status != "unknown"
         ),
         None,
     )
     if persisted_effect is not None:
+        effect_value = {
+            "satisfied": "confirmed",
+            "unmet": "unmet",
+            "contradicted": "contradicted",
+        }[persisted_effect.status]
         claims.append(claim(
             "effect.state",
-            "confirmed",
+            effect_value,
             source_type=f"journal.{persisted_effect.source_type}",
             scope=scope,
             subject_scope=persisted_effect.subject_ref,
@@ -179,7 +173,7 @@ def target_value_claims(
             authoritative=True,
             coverage="resolved_subject",
         ))
-    elif state.status in {"preparing", "writable", "absent"}:
+    elif state.status in {"writable", "absent"}:
         claims.append(claim(
             "control.state",
             "unmet",
@@ -225,28 +219,25 @@ def observed_effect_signal(
     )
 
 
-def checker_claim(
-    check: _SingleCheckResult,
+def transition_claim(
+    decision: _StatementTransitionResult,
     *,
     scope: str,
-    subject_scope: str = "",
 ) -> EvidenceClaim:
-    """Translate a probabilistic checker result without granting it control-flow authority."""
-    if check.effect_status == "rejected":
-        value = "contradicted"
-    elif check.effect_status == "unmet":
-        value = "unmet"
-    elif check.effect_status == "confirmed":
-        value = "confirmed"
-    else:
-        value = "unverified"
+    """Translate a model completion proposal without granting it fact authority."""
+    evidence = "; ".join(
+        f"{item.event_ref + ': ' if item.event_ref else ''}{item.claim}"
+        for item in decision.evidence
+    )
     return claim(
         "effect.state",
-        value,
-        source_type=("checker.rejected" if check.effect_status == "rejected" else "checker"),
+        "confirmed",
+        source_type="transition",
         scope=scope,
-        subject_scope=subject_scope or scope,
-        evidence=check.reason or check.summary,
+        # A semantic completion proposal does not establish a mutation subject identity. Leaving
+        # it unbound lets persistence receipts own subject provenance across redirects.
+        subject_scope="",
+        evidence=evidence or decision.reason or decision.summary,
         coverage="visible_frame",
     )
 
@@ -340,11 +331,10 @@ def observation_state_claims(
 
 __all__ = [
     "action_lifecycle_claims",
-    "checker_claim",
-    "execution_contract_for",
     "observed_effect_signal",
     "observation_state_claims",
     "resolved_filter_intent",
     "runtime_filter_intent",
     "target_value_claims",
+    "transition_claim",
 ]

@@ -8,11 +8,9 @@ from gui_agent.core.config import model_price
 # Different modules may run different models (e.g. action_policy=35b, output=flash),
 # so cost is summed module-by-module rather than from one flat rate.
 
-# _Timer module name → llm config key. checker/planner/replanner/loop_* all share the
-# supervisor model; decompose and action_policy have their own keys.
+# _Timer module name → llm config key.
 _MODULE_CFG: dict[str, str] = {
-    "checker": "supervisor", "planner": "supervisor", "replanner": "supervisor",
-    "loop_check": "supervisor", "loop_scroll": "supervisor", "selector": "supervisor",
+    "transition": "supervisor",
     "decompose": "supervisor.decompose", "orchestrator.decompose": "supervisor.decompose",
     "action_policy": "action_policy",
 }

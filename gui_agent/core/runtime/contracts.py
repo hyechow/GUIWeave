@@ -350,7 +350,7 @@ class ActionVisualizer(Protocol):
                  make_action_visualizer returns None BY DESIGN. The device layer is
                  the only place with post-snap coords (OCR/YOLO snap runs inside the
                  executor, after show_action) AND coverage of every runner path
-                 (main / scroll-probe / cached-scroll). Routing it here would regress
+                 through the device layer. Routing it here would regress
                  both. See adapters/iphone/factory.py.
       - android: TBD.
 
