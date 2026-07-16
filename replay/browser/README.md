@@ -15,7 +15,7 @@ A current replay directory contains:
 - `observation_turn_N.json`: structured adapter evidence for that frame.
 - `replay_expectation.json`: the expected decision contract.
 
-The screenshot is excluded from version control by the repo-wide `evals/**/*.png`
+The screenshot is excluded from version control by the repo-wide `replay/**/*.png`
 ignore rule, so a freshly checked-out fixture is missing it; drop a `screenshot_turn_N.png`
 in place (or regenerate one from a live run) before replaying — `load_observation_snapshot`
 refuses to load an observation whose adjacent PNG is absent.
@@ -23,7 +23,7 @@ refuses to load an observation whose adjacent PNG is absent.
 Replay a current run with:
 
 ```bash
-uv run python scripts/replay_supervisor_turn.py \
+uv run python -m replay \
   logs/gui_agent/webarena/browser/<run-id> --turn <N>
 ```
 

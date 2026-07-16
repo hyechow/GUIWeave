@@ -10,7 +10,7 @@ from gui_agent.core.run.context import (
 )
 from gui_agent.core.schemas import Observation
 from gui_agent.adapters.browser.actions import BrowserAction, BrowserActionDecision
-from scripts.replay_supervisor_turn import _action_expectation_failures
+from replay.run import _action_expectation_failures
 
 
 def test_observation_snapshot_round_trips_structured_signals_and_adjacent_png(tmp_path):
