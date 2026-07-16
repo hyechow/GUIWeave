@@ -125,6 +125,26 @@ SAMPLES: dict[str, Program] = {
         ),
         Finish(message="操作结束"),
     ]),
+    "SPLIT_PERSISTENCE_BOUNDARY": Program(goal="更新现有记录", statements=[
+        Run(
+            statement_id="edit",
+            name="填写目标字段",
+            kind="action",
+            success_condition="目标字段已填写",
+            effect_mode="transform",
+            persistence="explicit_commit",
+            target_values={"Status": "Active"},
+        ),
+        Run(
+            statement_id="save",
+            name="保存记录",
+            kind="action",
+            success_condition="保存已派发",
+            from_state="目标字段已填写",
+            effect_mode="dispatch",
+            persistence="explicit_commit",
+        ),
+    ]),
     "FILTER_RESULT_WITHOUT_TARGET_STATE": Program(statements=[
         Run(
             var="f",
@@ -178,6 +198,14 @@ SAMPLES: dict[str, Program] = {
     ]),
     "SQL_QUOTED_DISPLAY_IDENTIFIER": Program(statements=[
         Query(var="q", name="查询",  returns=["a"], sql='SELECT "Customer Email" FROM data'),
+    ]),
+    "SQL_BARE_BOOLEAN_LITERAL": Program(statements=[
+        Query(
+            var="q",
+            name="查询",
+            returns=["n"],
+            sql="SELECT COUNT(*) AS n FROM data WHERE active = False",
+        ),
     ]),
     "RANK_QUERY_DROPS_TIES": Program(goal="完成订单数第二多的客户", statements=[
         Query(var="q", name="查询第二多",  returns=["email"],
@@ -337,6 +365,67 @@ def test_every_code_has_triggering_sample(code):
 def test_textual_fallback_validator_codes_are_registered_and_sampled():
     assert TEXTUAL_FALLBACK_VALIDATOR_CODES <= set(ALL_CODES)
     assert TEXTUAL_FALLBACK_VALIDATOR_CODES <= set(SAMPLES)
+
+
+def test_split_persistence_boundary_is_rejected_inside_branch() -> None:
+    """Regression for live 20260716_142025: fill-options + standalone Save."""
+    program = Program(statements=[
+        _read(var="gate", returns=("match_count",)),
+        If(
+            cond=Cond(var="gate", field="match_count", cmp="==", value="1"),
+            then=[
+                Run(
+                    statement_id="s4",
+                    name="add values 30 and 31",
+                    kind="action",
+                    success_condition="both values are present in the option fields",
+                    effect_mode="transform",
+                    persistence="explicit_commit",
+                    target_values={"Admin Description": ["30", "31"]},
+                ),
+                Run(
+                    statement_id="s5",
+                    name="persist the edited resource",
+                    kind="action",
+                    success_condition="the persistence action was dispatched",
+                    from_state="both values are present in the option fields",
+                    effect_mode="dispatch",
+                    persistence="explicit_commit",
+                ),
+            ],
+        ),
+    ])
+
+    issues = validate_program(program)
+
+    assert any(issue.code == "SPLIT_PERSISTENCE_BOUNDARY" for issue in issues)
+
+
+def test_distinct_targeted_mutations_keep_separate_persistence_boundaries() -> None:
+    program = Program(statements=[
+        Run(
+            name="update resource A",
+            kind="action",
+            success_condition="resource A is saved",
+            effect_mode="transform",
+            persistence="explicit_commit",
+            target_values={"A": "one"},
+        ),
+        Run(
+            name="update resource B",
+            kind="action",
+            success_condition="resource B is saved",
+            from_state="resource A is saved",
+            effect_mode="transform",
+            persistence="explicit_commit",
+            target_values={"B": "two"},
+        ),
+    ])
+
+    assert not any(
+        issue.code == "SPLIT_PERSISTENCE_BOUNDARY"
+        for issue in validate_program(program)
+    )
 
 
 def test_foreach_row_url_policy_checks_runs_inside_if():
@@ -634,6 +723,44 @@ def test_sql_function_like_tokens_are_not_required_foreach_fields():
     codes = _codes(program)
     assert "FOREACH_DQ_DETAIL_FIELD_MISSING" not in codes
     assert "FOREACH_DQ_GRID_FIELD_MISSING" not in codes
+
+
+def test_foreach_text_boolean_requires_quoted_sql_value():
+    base = ForEach(
+        var="row",
+        into="attr_rows",
+        row_fields=["detail_url"],
+        body=[
+            Run(
+                kind="navigation",
+                name="打开 {row[detail_url]}",
+                returns=["has_30"],
+                read_spec="has_30：存在返回 true，否则 false",
+            ),
+        ],
+    )
+    bad = Program(statements=[
+        base,
+        Query(
+            var="q",
+            name="统计缺失值",
+            returns=["count"],
+            sql="SELECT COUNT(*) AS count FROM attr_rows WHERE has_30 = False",
+        ),
+    ])
+    good = Program(statements=[
+        base,
+        Query(
+            var="q",
+            name="统计缺失值",
+            returns=["count"],
+            sql="SELECT COUNT(*) AS count FROM attr_rows WHERE lower(has_30) = 'false'",
+        ),
+    ])
+
+    assert "SQL_BARE_BOOLEAN_LITERAL" in _codes(bad)
+    assert "FOREACH_DQ_DETAIL_FIELD_MISSING" not in _codes(bad)
+    assert "SQL_BARE_BOOLEAN_LITERAL" not in _codes(good)
 
 
 def test_mutate_goal_without_action_shapes():

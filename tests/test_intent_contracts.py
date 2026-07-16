@@ -430,6 +430,31 @@ def test_intent_contract_requires_every_multi_value_member_to_be_consumed():
     assert validate_intent_contracts(complete, resolution) == []
 
 
+def test_intent_contract_rejects_partial_actions_beside_complete_target_group():
+    resolution = IntentResolution(entities=[
+        EntityRef(
+            mention="30 and 31",
+            role="target_value",
+            value_members=["30", "31"],
+            match_mode="exact",
+        ),
+    ])
+    program = Program(statements=[
+        Run(
+            kind="action",
+            name="单独添加 30",
+            target_values={"Size": "30"},
+        ),
+        Run(
+            kind="action",
+            name="保存完整尺寸组合",
+            target_values={"Size": ["30", "31"]},
+        ),
+    ])
+
+    assert "ROUTER_MULTI_VALUE_SPLIT" in _codes(program, resolution)
+
+
 def test_intent_contract_blocks_redefining_selection_only_values():
     resolution = IntentResolution(entities=[
         EntityRef(
