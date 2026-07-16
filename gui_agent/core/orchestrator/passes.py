@@ -3,9 +3,10 @@
 The orchestrator is a compiler frontend (decomposer) → these deterministic passes (compiler
 middle-end) → validator/preflight (type-check/lint). Each pass takes a Program and returns a NEW
 Program (inputs untouched); all are idempotent. Run order lives in decomposer.to_program:
-collapse_foreach_enrichment_passes → insert_loop_entry_arrivals → normalize_confirm_read_gates /
-normalize_precondition_gates → chain_from_states. Marshalling into the executor's StatementContract format
-is NOT here — interactive execution belongs to core/run/interactive.py.
+collapse_foreach_enrichment_passes → bind_singleton_query_urls → insert_loop_entry_arrivals →
+normalize_confirm_read_gates / normalize_precondition_gates → chain_from_states. Marshalling into
+the executor's StatementContract format is NOT here — interactive execution belongs to
+core/run/interactive.py.
 """
 
 from __future__ import annotations
@@ -386,6 +387,97 @@ def collapse_foreach_enrichment_passes(program: Program) -> Program:
     """
 
     return program.model_copy(update={"statements": _collapse_foreach_stmts(program.statements)})
+
+
+# Structured output can omit a URL template that its reasoning already declared. Repair only the
+# unambiguous typed shape: one URL result, `count == 1`, then a leading navigation. Everything else
+# remains a validator error.
+_URL_RESULT_FIELD_RE = re.compile(r"(?:url|href|link|链接|网址)", re.IGNORECASE)
+
+
+def _is_count_result_field(field: str) -> bool:
+    key = str(field or "").casefold()
+    return "count" in key or any(token in key for token in ("数量", "条数", "计数"))
+
+
+def _bind_query_url_to_guard(query: Query, guard: If) -> If:
+    if not query.var or guard.cond.var != query.var:
+        return guard
+
+    url_fields = [field for field in query.returns if _URL_RESULT_FIELD_RE.search(field)]
+    if len(url_fields) != 1:
+        return guard
+    if (
+        guard.cond.cmp != "=="
+        or guard.cond.value.strip() != "1"
+        or guard.cond.field not in query.returns
+        or not _is_count_result_field(guard.cond.field)
+    ):
+        return guard
+    if not guard.then or not isinstance(guard.then[0], Run) or guard.then[0].kind != "navigation":
+        return guard
+
+    navigation = guard.then[0]
+    url_field = url_fields[0]
+    expected_ref = (query.var, url_field)
+    name_refs = {
+        (var, field.strip().strip("'\""))
+        for var, field in TEMPLATE_RE.findall(navigation.name or "")
+        if _URL_RESULT_FIELD_RE.search(field)
+    }
+    if expected_ref in name_refs:
+        return guard
+    if name_refs or "http://" in navigation.name.casefold() or "https://" in navigation.name.casefold():
+        return guard
+
+    bound_navigation = navigation.model_copy(
+        update={"name": f"{{{query.var}[{url_field}]}}；{navigation.name}"}
+    )
+    return guard.model_copy(update={"then": [bound_navigation, *guard.then[1:]]})
+
+
+def _bind_singleton_query_urls_in_block(stmts: list[Stmt]) -> list[Stmt]:
+    nested: list[Stmt] = []
+    for stmt in stmts:
+        if isinstance(stmt, If):
+            nested.append(
+                stmt.model_copy(
+                    update={
+                        "then": _bind_singleton_query_urls_in_block(stmt.then),
+                        "otherwise": _bind_singleton_query_urls_in_block(stmt.otherwise),
+                    }
+                )
+            )
+        elif isinstance(stmt, ForEach):
+            nested.append(
+                stmt.model_copy(update={"body": _bind_singleton_query_urls_in_block(stmt.body)})
+            )
+        else:
+            nested.append(stmt)
+
+    out = list(nested)
+    for index, stmt in enumerate(out[:-1]):
+        following = out[index + 1]
+        if isinstance(stmt, Query) and isinstance(following, If):
+            out[index + 1] = _bind_query_url_to_guard(stmt, following)
+    return out
+
+
+def bind_singleton_query_urls(program: Program) -> Program:
+    """Materialize one structurally proven query-URL dependency; never choose among targets."""
+
+    new_functions = [
+        function.model_copy(
+            update={"body": _bind_singleton_query_urls_in_block(function.body)}
+        )
+        for function in program.functions
+    ]
+    return program.model_copy(
+        update={
+            "statements": _bind_singleton_query_urls_in_block(program.statements),
+            "functions": new_functions,
+        }
+    )
 
 
 # A loop/function body that STARTS by acting on a list page (filter/action) and then drills INTO a

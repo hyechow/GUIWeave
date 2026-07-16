@@ -443,10 +443,19 @@ def _to_functions(drafts: list["_FunctionDraft"]) -> list[FunctionDef]:
 
 def to_program(draft: _PlanDraft, goal: str) -> Program:
     """Draft -> AST + structural passes."""
-    from ..passes import chain_from_states, collapse_foreach_enrichment_passes, insert_loop_entry_arrivals
+    from ..passes import (
+        bind_singleton_query_urls,
+        chain_from_states,
+        collapse_foreach_enrichment_passes,
+        insert_loop_entry_arrivals,
+    )
 
-    return assign_statement_ids(chain_from_states(insert_loop_entry_arrivals(collapse_foreach_enrichment_passes(Program(
+    program = Program(
         goal=draft.goal or goal,
         statements=_to_stmts(draft.steps),
         functions=_to_functions(getattr(draft, "functions", []) or []),
-    )))))
+    )
+    program = collapse_foreach_enrichment_passes(program)
+    program = bind_singleton_query_urls(program)
+    program = insert_loop_entry_arrivals(program)
+    return assign_statement_ids(chain_from_states(program))
