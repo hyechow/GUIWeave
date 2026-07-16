@@ -1,3 +1,4 @@
+from gui_agent.core.schemas import ActionIntent
 from gui_agent.core.schemas import (
     BaseAction,
     BaseActionDecision,
@@ -36,13 +37,7 @@ def _row_turn(index: int, product_id: str) -> PolicyTurn:
         index=index,
         observation_source="browser",
         statement_instance_id="test:scope",
-        supervisor=SupervisorStep(
-            should_act=True,
-            instruction="在 Price 字段输入 64.88",
-            summary="",
-            statement_id="price_action",
-            execution_scope=f"row:admin/catalog/product/edit/id/{product_id}",
-        ),
+        supervisor=SupervisorStep(action_intent=ActionIntent(instruction='在 Price 字段输入 64.88'), summary='', statement_id='price_action', execution_scope=f'row:admin/catalog/product/edit/id/{product_id}'),
         action_decision=BaseActionDecision(action=action),
         executed=True,
     )
@@ -96,11 +91,7 @@ def _inst_turn(
         index=index,
         observation_source="browser",
         statement_instance_id=instance_id,
-        supervisor=SupervisorStep(
-            should_act=True, instruction=f"step {index}", summary="",
-            statement_id=statement_id,
-            execution_scope=execution_scope or f"{instance_id}/statement",
-        ),
+        supervisor=SupervisorStep(action_intent=ActionIntent(instruction=f'step {index}'), summary='', statement_id=statement_id, execution_scope=execution_scope or f'{instance_id}/statement'),
         executed=True,
     )
 

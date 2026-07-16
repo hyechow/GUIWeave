@@ -1,3 +1,4 @@
+from gui_agent.core.schemas import ActionIntent
 import pytest
 
 from gui_agent.core.run.mutation import resolve_mutation
@@ -215,14 +216,7 @@ def _write_turn(receipt: MutationReceipt | None, *, no_effect: bool = False) -> 
     return PolicyTurn(
         index=1,
         observation_source="browser",
-        supervisor=SupervisorStep(
-            should_act=True,
-            instruction="write target",
-            summary="",
-            statement_id="m",
-            statement_kind="action",
-            atomic_role="write",
-        ),
+        supervisor=SupervisorStep(action_intent=ActionIntent(instruction='write target', role='write'), summary='', statement_id='m', statement_kind='action'),
         executed=True,
         no_effect=no_effect,
         action_signal=ActionSignal(

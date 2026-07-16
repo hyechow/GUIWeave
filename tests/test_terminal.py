@@ -47,12 +47,7 @@ def _runtime() -> ProgramRuntime:
 
 
 def test_finish_terminal_step_flushes_and_returns_goal_result(monkeypatch):
-    step = SupervisorStep(
-        should_act=False,
-        outcome=StatementOutcome.completed("任务完成"),
-        summary="已经完成",
-        collection_summary="采集完成",
-    )
+    step = SupervisorStep(outcome=StatementOutcome.completed('任务完成'), summary='已经完成', collection_summary='采集完成')
     read_state = _ReadState()
     messages = []
     rt = _runtime()
@@ -80,11 +75,7 @@ def test_finish_terminal_step_flushes_and_returns_goal_result(monkeypatch):
 
 
 def test_finish_terminal_step_flushes_and_returns_stop_result(monkeypatch):
-    step = SupervisorStep(
-        should_act=False,
-        outcome=StatementOutcome.failed("用户停止"),
-        summary="未完成",
-    )
+    step = SupervisorStep(outcome=StatementOutcome.failed('用户停止'), summary='未完成')
     read_state = _ReadState()
     messages = []
     rt = _runtime()
@@ -112,11 +103,7 @@ def test_finish_terminal_step_flushes_and_returns_stop_result(monkeypatch):
 
 
 def test_base_result_does_not_promote_one_completed_statement_to_program_success():
-    step = SupervisorStep(
-        should_act=False,
-        outcome=StatementOutcome.completed("第一步完成"),
-        summary="第一步完成",
-    )
+    step = SupervisorStep(outcome=StatementOutcome.completed('第一步完成'), summary='第一步完成')
 
     result = make_result(_context(step), "用户中途退出")
 

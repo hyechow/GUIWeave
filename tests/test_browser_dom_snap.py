@@ -59,6 +59,20 @@ def test_tap_snap_failure_falls_back_to_original():
     assert c.clicked == (342, 616)
 
 
+def test_unresolved_typed_target_does_not_create_an_executor_protocol():
+    c = _FakeClient((342.0, 616.0, None))
+    dec = BrowserActionDecision(action=BrowserAction(
+        action_type="tap",
+        x=342,
+        y=616,
+        description="Click the 'Add Swatch' button.",
+    ))
+
+    assert _exec(c).execute(dec, target_control="Add Swatch") is True
+    assert c.seen_target == "Add Swatch"
+    assert c.clicked == (342, 616)
+
+
 def test_execute_records_dom_snap_normalized():
     # viewport 1000x1000 → pixels == normalized, easy to assert
     c = _FakeClient((635.0, 620.0, "div 666x28"), viewport=(1000, 1000))
@@ -78,50 +92,11 @@ def test_execute_no_snap_leaves_action_snap_none():
     assert dec.action.snap is None
 
 
-# ── Text retarget (the OCR-snap analogue; regression 20260612_114219 误点删除×3) ──
-
-def test_quoted_label_extraction():
-    from gui_agent.adapters.browser.executor import _quoted_label
-
-    # 最后一个短引号标签是动作目标(前面的引号是上下文)
-    assert _quoted_label("点击「lucas-10002」所在行下拉菜单中的「操作」") == "操作"
-    assert _quoted_label("点击弹窗中的「取消」按钮") == "取消"
-    assert _quoted_label("点击'编辑'链接") == "编辑"
-    # 超过 8 字的引号内容不当标签(下拉选项长值等,本就唯一,不需要文本重定向)
-    assert _quoted_label("点击下拉列表中的'交管测试专用地图_1楼'选项") == ""
-    assert _quoted_label("没有引号的指令") == ""
-
-
-def test_target_label_extracts_unquoted_browser_menu_labels():
-    from gui_agent.adapters.browser.executor import _target_label
-
-    assert _target_label("点击左侧导航栏 Sales 菜单下的 Orders 选项") == "Orders"
-    # 子菜单项 suffix: 子-prefixed forms must be matched so text-retarget can rescue an adjacent-menu
-    # miss (live 185: "Catalog 菜单下的 Products 子菜单项" snapped to the neighbouring Categories link).
-    assert _target_label("点击左侧导航栏 Catalog 菜单下的 Products 子菜单项") == "Products"
-    assert _target_label("点击左侧导航栏中的 Sales 菜单") == "Sales"
-    assert _target_label("点击 Filters 按钮以展开筛选条件区域") == "Filters"
-    assert _target_label("点击弹窗中的「取消」按钮") == "取消"
-    assert _target_label("点击虚拟机器人列表中「lucas-10002」所在行操作列下拉菜单中的「操作」") == "操作"
-    assert _target_label("Click the 'Products' link in the expanded Catalog submenu.") == "Products"
-    assert _target_label("点击左侧导航栏的销售菜单") == ""
-
-
-def test_target_label_does_not_treat_filter_value_as_click_label():
-    from gui_agent.adapters.browser.executor import _target_label
-
-    assert _target_label("点击搜索框右侧的放大镜图标以应用'Olivia'筛选条件") == ""
-    assert _target_label("点击搜索按钮搜索'Olivia'") == ""
-
-
-def test_composite_instruction_does_not_retarget_first_click_to_later_label():
-    from gui_agent.adapters.browser.executor import _target_label
-
+def test_action_description_does_not_create_a_target():
     description = (
         "Click 'CATALOG' in the sidebar, then click 'Products' "
         "to navigate to the Products List page."
     )
-    assert _target_label(description) == ""
 
     c = _FakeClient((-46.0, 114.0, "text 238x44"), viewport=(1281, 963))
     dec = BrowserActionDecision(action=BrowserAction(
@@ -157,9 +132,7 @@ def test_executor_rejects_any_dom_snap_coordinate_outside_viewport():
     assert dec.action.snap is None
 
 
-def test_row_identity_is_left_to_dom_semantics_not_instruction_vocabulary():
-    from gui_agent.adapters.browser.executor import _target_label
-
+def test_typed_row_identity_is_passed_without_parsing_instruction():
     class StructurallyGuardedClient(_FakeClient):
         def dom_snap(self, x, y, target_text=""):
             self.seen_target = target_text
@@ -168,7 +141,6 @@ def test_row_identity_is_left_to_dom_semantics_not_instruction_vocabulary():
             return x, y, None
 
     description = "Click the 'size' row in the grid to open the Edit Attribute form."
-    assert _target_label(description) == "size"
     c = StructurallyGuardedClient(None, viewport=(1281, 963))
     dec = BrowserActionDecision(action=BrowserAction(
         action_type="tap",
@@ -177,7 +149,7 @@ def test_row_identity_is_left_to_dom_semantics_not_instruction_vocabulary():
         description=description,
     ))
 
-    _exec(c).execute(dec)
+    _exec(c).execute(dec, target_control="size")
 
     assert c.seen_target == "size"
     assert c.clicked is not None
@@ -186,25 +158,25 @@ def test_row_identity_is_left_to_dom_semantics_not_instruction_vocabulary():
     assert dec.action.snap is None
 
 
-def test_execute_passes_quoted_label_to_dom_snap():
+def test_execute_passes_typed_target_to_dom_snap():
     c = _FakeClient((966.0, 210.0, "text 44x28"), viewport=(1000, 1000))
     dec = BrowserActionDecision(action=BrowserAction(
         action_type="tap", x=967, y=245,
         description="点击虚拟机器人列表中「lucas-10002」所在行操作列下拉菜单中的「操作」",
     ))
-    _exec(c).execute(dec)
+    _exec(c).execute(dec, target_control="操作")
     assert c.seen_target == "操作"            # 标签传到了 dom_snap
     assert c.clicked == (966.0, 210.0)        # 点击落在重定向后的位置
     assert dec.action.snap is not None and "text" in dec.action.snap["info"]
 
 
-def test_execute_passes_unquoted_menu_label_to_dom_snap():
+def test_execute_passes_typed_menu_target_to_dom_snap():
     c = _FakeClient((222.0, 114.0, "text 238x44"), viewport=(1000, 1000))
     dec = BrowserActionDecision(action=BrowserAction(
         action_type="tap", x=175, y=260,
         description="点击左侧导航栏 Sales 菜单下的 Orders 选项",
     ))
-    _exec(c).execute(dec)
+    _exec(c).execute(dec, target_control="Orders")
     assert c.seen_target == "Orders"
     assert c.clicked == (222.0, 114.0)
 
@@ -236,12 +208,7 @@ def test_text_retarget_radius_covers_sidebar_menu_row_misses():
     assert TEXT_RETARGET_RADIUS_PX <= 260
 
 
-def test_type_focus_tap_does_not_text_retarget():
-    # A `type` focus-tap must NOT pass the quoted value as a label: dom_snap matches inputs by
-    # .value, so typing 'admin' would retarget onto an already-filled account field whose value
-    # is 'admin' (run 20260613_193023: password box never filled → login stuck). Only genuine
-    # tap/click should text-retarget; for a PLAIN type (no from/to/min/max qualifier) we pass
-    # target_text="" → plain elementFromPoint.
+def test_type_focus_tap_uses_no_inferred_target():
     c = _FakeClient((250.0, 487.0, "text 302x20"), viewport=(1000, 1000))
     ex = _exec(c)
     ex._cur_action = BrowserAction(
@@ -249,57 +216,17 @@ def test_type_focus_tap_does_not_text_retarget():
         description="在密码输入框中输入 'admin'",
     )
     ex._tap(248, 560)
-    assert c.seen_target == ""                 # 'admin' 没被当标签传给 dom_snap
+    assert c.seen_target == ""
 
 
-# ── Range-filter From/To fill: type focus-tap retargets by FIELD LABEL, not pixel ──
-# A numeric range filter renders two visually-identical adjacent inputs (qty[from]/qty[to]);
-# vision returns near-identical coords for both, so the focus-tap collapses onto one box
-# (WebArena 186: "fill To" landed in From). The fix: pass the planner-named field label so
-# dom_snap disambiguates by DOM identity + from/to role. The value stays in action.text.
-
-def test_range_field_label_extraction():
-    from gui_agent.adapters.browser.executor import _range_field_label
-
-    assert _range_field_label("在 Quantity to 输入框填入 3") == "Quantity to"
-    assert _range_field_label("把 Quantity from 设为 2") == "Quantity from"
-    assert _range_field_label("Price max 设置为 100") == "Price max"
-    assert _range_field_label("Weight min 填 0.5") == "Weight min"
-    assert _range_field_label("set Quantity to 5") == "Quantity to"   # 动词不被吞进 label
-    # 普通 type:无 from/to/min/max 限定词 → 不重定向(尤其 'admin' 的尾 'min' 不算)
-    assert _range_field_label("在搜索框输入 admin") == ""
-    assert _range_field_label("输入 tomato 到搜索框") == ""
-    assert _range_field_label("点击 Filters 按钮") == ""
-
-
-def test_type_range_fill_passes_field_label_to_dom_snap():
-    # The focus-tap for a range fill carries the field label so dom_snap can pick the right
-    # of two adjacent From/To inputs by identity — NOT the typed value (which stays in text).
+def test_type_uses_typed_field_identity_for_dom_snap():
     c = _FakeClient((565.0, 409.0, "text 120x24"), viewport=(1000, 1000))
     ex = _exec(c)
     ex._cur_action = BrowserAction(
         action_type="type", x=656, y=420, text="3",
         description="在 Quantity to 输入框填入 3",
     )
+    ex._cur_target_control = "Quantity to"
     ex._tap(656, 420)
-    assert c.seen_target == "Quantity to"      # 字段标签传给 dom_snap
-    assert c.clicked == (565.0, 409.0)         # 落在身份重定向后的 To 框
-
-
-def test_postprocess_carries_range_fill_instruction_into_description():
-    # policies._postprocess: a range-fill instruction names the field only in the planner
-    # instruction (the vision description is just "执行type并输入3"); carry it into the type
-    # action's description so the executor can extract the field label.
-    from gui_agent.adapters.browser.executor import _range_field_label
-    from gui_agent.adapters.browser.policies import BrowserActionPolicy
-
-    pol = BrowserActionPolicy.__new__(BrowserActionPolicy)
-    act = BrowserAction(action_type="type", x=656, y=420, text="3", description="执行type并输入3")
-    out = pol._postprocess(BrowserActionDecision(action=act), "在 Quantity to 输入框填入 3")
-    assert out.action.action_type == "type"                       # 不改动作类型
-    assert _range_field_label(out.action.description) == "Quantity to"
-
-    # 普通 type 指令不被改写(description 原样保留)
-    act2 = BrowserAction(action_type="type", x=300, y=120, text="admin", description="在搜索框输入admin")
-    out2 = pol._postprocess(BrowserActionDecision(action=act2), "在搜索框输入 admin")
-    assert out2.action.description == "在搜索框输入admin"
+    assert c.seen_target == "Quantity to"
+    assert c.clicked == (565.0, 409.0)

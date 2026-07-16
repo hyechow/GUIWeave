@@ -6,6 +6,8 @@ finish without reopening the editor.
 
 from __future__ import annotations
 
+from gui_agent.core.schemas import ActionIntent
+
 from gui_agent.core.run.execution_signals import (
     CompletionReducer,
     ExecutionContract,
@@ -64,14 +66,7 @@ def _turn(
         index=index,
         observation_source="browser",
         statement_instance_id=instance_id,
-        supervisor=SupervisorStep(
-            should_act=True,
-            instruction=instruction,
-            summary=instruction,
-            statement_id=statement_id,
-            atomic_role=role,
-            execution_scope=scope,
-        ),
+        supervisor=SupervisorStep(action_intent=ActionIntent(instruction=instruction, role=role), summary=instruction, statement_id=statement_id, execution_scope=scope),
         executed=True,
         action_decision=BaseActionDecision(
             action=BaseAction(
@@ -230,5 +225,5 @@ def test_policy_completes_post_save_from_memory_without_reopen(monkeypatch) -> N
 
     assert step.outcome is not None
     assert step.outcome.phase == "completed"
-    assert step.should_act is False
+    assert step.action_intent is None
     assert step.outcome.verification in {"confirmed", "accepted_unverified"}

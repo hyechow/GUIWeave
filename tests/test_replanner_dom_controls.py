@@ -107,7 +107,7 @@ def test_transition_preserves_atomic_execution_contract(monkeypatch):
         history=[],
     )
 
-    assert step.instruction == "点击展开菜单中的 Products 链接"
-    assert step.atomic_role == "prepare"
-    assert step.action_family == "navigate"
-    assert step.target_control == "Products"
+    assert step.action_intent.instruction == "Open the visible 'Products' entry."
+    assert step.action_intent.role == "prepare"
+    assert step.action_intent.family == "navigate"
+    assert step.action_intent.target_control == "Products"

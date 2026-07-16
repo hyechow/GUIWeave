@@ -3,6 +3,7 @@ from gui_agent.adapters.browser.control_grounding import (
     ground_rendered_action,
     rendered_target_evidence,
     resolve_native_control_action,
+    semantic_target_evidence,
 )
 
 
@@ -117,6 +118,21 @@ def test_offscreen_rendered_target_does_not_synthesize_scroll() -> None:
     )
 
     assert decision is visual
+
+
+def test_unique_semantic_action_target_is_exposed_to_visual_policy() -> None:
+    evidence = semantic_target_evidence(
+        [
+            {"role": "button", "key": "Add New Attribute"},
+            {"role": "button", "key": "Search"},
+        ],
+        target_control="Search",
+        action_family="activate",
+    )
+
+    assert "matched_document_target='Search'" in evidence
+    assert "不证明它在截图视口内" in evidence
+    assert "不得用其他可见按钮" in evidence
 
 
 def test_native_select_can_bypass_visual_policy() -> None:

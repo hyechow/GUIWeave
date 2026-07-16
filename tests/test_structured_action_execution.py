@@ -1,3 +1,4 @@
+from gui_agent.core.schemas import ActionIntent
 from gui_agent.adapters.browser.actions import BrowserAction, BrowserActionDecision
 from gui_agent.adapters.browser.control_grounding import (
     ground_rendered_action,
@@ -58,16 +59,7 @@ def test_action_execution_grounds_rendered_input_after_vision(monkeypatch, tmp_p
             "rect": {"x": 578, "y": 668},
         }],
     )
-    step = SupervisorStep(
-        should_act=True,
-        instruction="在 Admin Description 输入 XXXL",
-        summary="typed write",
-        statement_id="size-option",
-        atomic_role="write",
-        action_family="input",
-        target_control="Admin Description",
-        target_value="XXXL",
-    )
+    step = SupervisorStep(action_intent=ActionIntent(instruction='在 Admin Description 输入 XXXL', role='write', family='input', target_control='Admin Description', target_value='XXXL'), summary='typed write', statement_id='size-option')
     monkeypatch.setattr(action_exec_module, "print_decision", lambda *_args, **_kwargs: None)
 
     decision = ActionExecutor()._decide_action(
@@ -101,16 +93,7 @@ def test_native_select_skips_vision_policy(monkeypatch, tmp_path) -> None:
             "rect": {"x": 700, "y": 400},
         }],
     )
-    step = SupervisorStep(
-        should_act=True,
-        instruction="将 Status 设为 Complete",
-        summary="native select",
-        statement_id="status",
-        atomic_role="write",
-        action_family="select",
-        target_control="Status",
-        target_value="Complete",
-    )
+    step = SupervisorStep(action_intent=ActionIntent(instruction='将 Status 设为 Complete', role='write', family='select', target_control='Status', target_value='Complete'), summary='native select', statement_id='status')
     monkeypatch.setattr(action_exec_module, "print_decision", lambda *_args, **_kwargs: None)
 
     decision = ActionExecutor()._decide_action(
@@ -167,16 +150,7 @@ def test_action_policy_grounding_failure_is_not_reinterpreted(monkeypatch, tmp_p
             },
         ],
     )
-    step = SupervisorStep(
-        should_act=True,
-        instruction="在 Admin Swatch 输入 XXXL",
-        summary="typed write",
-        statement_id="size-option",
-        atomic_role="write",
-        action_family="input",
-        target_control="Admin Swatch",
-        target_value="XXXL",
-    )
+    step = SupervisorStep(action_intent=ActionIntent(instruction='在 Admin Swatch 输入 XXXL', role='write', family='input', target_control='Admin Swatch', target_value='XXXL'), summary='typed write', statement_id='size-option')
     messages: list[str] = []
     monkeypatch.setattr(action_exec_module, "print_decision", lambda *_args, **_kwargs: None)
 

@@ -61,8 +61,9 @@
           "initial_filters": {"status": "open"}
         },
         "supervisor": {
-          "should_act": true,
-          "instruction": "type ready",
+          "action_intent": {
+            "instruction": "type ready"
+          },
           "summary": "editing",
           "statement_id": "s1",
           "execution_scope": "i1:s1/statement"

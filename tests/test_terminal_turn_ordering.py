@@ -44,13 +44,7 @@ def test_terminal_event_carries_live_transition_and_filled_outcome():
     event = make_statement_outcome_event(
         after_turn=0,
         observation_source="test",
-        supervisor_step=SupervisorStep(
-            should_act=False,
-            statement_id="s1",
-            statement_kind="navigation",
-            summary="done",
-            outcome=StatementOutcome.completed("done"),
-        ),
+        supervisor_step=SupervisorStep(statement_id='s1', statement_kind='navigation', summary='done', outcome=StatementOutcome.completed('done')),
         supervisor=policy,
         statement=info,
         statement_instance_id=instance_id,

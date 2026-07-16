@@ -25,12 +25,14 @@ def test_guard_true_when_all_conditions_met():
     assert decision.recovery_class == "infeasible_route"
 
 
-def test_guard_false_without_directive():
-    decision = RecoveryRouter.route_statement(
+def test_non_infeasible_failure_does_not_trigger_program_redecompose():
+    for outcome in (
         StatementOutcome.failed("blocked"),
-        can_redecompose=True,
-    )
-    assert decision.action == "fail_or_escalate"
+        StatementOutcome.exhausted("statement-local replan failed"),
+    ):
+        decision = RecoveryRouter.route_statement(outcome, can_redecompose=True)
+        assert decision.action == "fail_or_escalate"
+        assert decision.recovery_class is None
 
 
 def test_guard_false_without_redecompose_callable():

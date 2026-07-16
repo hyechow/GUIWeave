@@ -2,6 +2,8 @@
 
 from __future__ import annotations
 
+from gui_agent.core.schemas import ActionIntent
+
 import io
 
 from PIL import Image
@@ -47,15 +49,7 @@ def _scroll_turn(*, read_added: bool = False) -> PolicyTurn:
         index=1,
         observation_source="eval",
         statement_instance_id="test:collection",
-        supervisor=SupervisorStep(
-            should_act=True,
-            instruction="向上滚动",
-            summary="",
-            statement_id="5",
-            execution_scope="test:collection/statement",
-            atomic_role="iterate",
-            action_family="iterate",
-        ),
+        supervisor=SupervisorStep(action_intent=ActionIntent(instruction='向上滚动', role='iterate', family='iterate'), summary='', statement_id='5', execution_scope='test:collection/statement'),
         action_decision=ActionDecision(
             action=Action(
                 action_type="scroll",
@@ -113,8 +107,8 @@ def test_zero_traversal_complete_proposal_is_vetoed_then_llm_selects_forward(mon
         [],
     )
 
-    assert step.should_act and step.outcome is None
-    assert step.atomic_role == "iterate"
+    assert step.action_intent is not None and step.outcome is None
+    assert step.action_intent.role == "iterate"
     assert any("集合遍历" in extra or "collection" in extra for extra in extras[1:])
 
 
@@ -137,7 +131,7 @@ def test_adapter_boundary_without_prior_move_is_not_authoritative(monkeypatch):
         [],
     )
 
-    assert step.should_act and step.outcome is None
+    assert step.action_intent is not None and step.outcome is None
 
 
 def test_adapter_boundary_after_dispatched_move_validates_llm_completion(monkeypatch):
@@ -185,7 +179,7 @@ def test_collection_strategy_change_is_an_ordinary_action(monkeypatch):
         [_scroll_turn()],
     )
 
-    assert step.should_act and step.outcome is None
+    assert step.action_intent is not None and step.outcome is None
 
 
 def test_deterministic_loading_frame_waits_without_transition(monkeypatch):
@@ -208,4 +202,4 @@ def test_deterministic_loading_frame_waits_without_transition(monkeypatch):
         [_scroll_turn()],
     )
 
-    assert step.is_loading and not step.should_act and step.outcome is None
+    assert step.is_loading and not step.action_intent is not None and step.outcome is None

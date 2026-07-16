@@ -1,5 +1,7 @@
 from __future__ import annotations
 
+from gui_agent.core.schemas import ActionIntent
+
 from gui_agent.core.orchestrator.program import Finish, Program, Run
 from gui_agent.core.orchestrator.runner import Interpreter, RunRecord
 from gui_agent.core.run.statements.outcome import StatementOutcome
@@ -35,15 +37,7 @@ def _step(
     role: str = "commit",
     kind: str | None = "action",
 ) -> SupervisorStep:
-    return SupervisorStep(
-        should_act=True,
-        instruction="点击 Save",
-        summary="",
-        statement_id="m1",
-        execution_scope=scope,
-        statement_kind=kind,
-        atomic_role=role,
-    )
+    return SupervisorStep(action_intent=ActionIntent(instruction='点击 Save', role=role), summary='', statement_id='m1', execution_scope=scope, statement_kind=kind)
 
 
 def _decision(x: float = 500) -> BaseActionDecision:
@@ -59,7 +53,7 @@ def _turn(
     role: str | None = None,
 ) -> PolicyTurn:
     decision = _decision()
-    signal_role = role or step.atomic_role
+    signal_role = role or step.action_intent.role
     key = semantic_action_key(step, decision.action)
     return PolicyTurn(
         index=index,
@@ -105,18 +99,7 @@ def test_ensure_draft_fields_require_commit_before_statement_advance(monkeypatch
     resource_url = "http://x/admin/catalog/product_attribute/edit/attribute_id/144"
 
     def write_turn(index: int, control: str) -> PolicyTurn:
-        step = SupervisorStep(
-            should_act=True,
-            instruction=f"write {control}",
-            summary="",
-            statement_id="m1",
-            statement_kind="action",
-            execution_scope=scope,
-            atomic_role="write",
-            action_family="input",
-            target_control=control,
-            target_value="XXXL",
-        )
+        step = SupervisorStep(action_intent=ActionIntent(instruction=f'write {control}', role='write', family='input', target_control=control, target_value='XXXL'), summary='', statement_id='m1', statement_kind='action', execution_scope=scope)
         decision = BaseActionDecision(action=BaseAction(
             action_type="type",
             x=500,
@@ -189,10 +172,10 @@ def test_ensure_draft_fields_require_commit_before_statement_advance(monkeypatch
 
     assert transition_calls == [1]
     assert step.outcome is None
-    assert step.should_act is True
-    assert step.atomic_role == "commit"
-    assert step.action_family == "activate"
-    assert step.target_control == "Save"
+    assert step.action_intent is not None
+    assert step.action_intent.role == "commit"
+    assert step.action_intent.family == "activate"
+    assert step.action_intent.target_control == "Save"
 
 
 def test_concrete_scroll_cannot_consume_commit_slot():
@@ -235,8 +218,14 @@ def test_make_turn_records_execution_separately_from_outcome():
 
 
 def test_make_turn_records_concrete_write_value():
-    step = _step(role="write", kind="filter")
-    step.target_control = "Search by keyword"
+    step = _step(role="write", kind="filter").model_copy(update={
+        "action_intent": ActionIntent(
+            instruction="type exact search",
+            role="write",
+            family="input",
+            target_control="Search by keyword",
+        )
+    })
     decision = BaseActionDecision(action=BaseAction(
         action_type="type",
         x=300,
@@ -293,7 +282,7 @@ def test_reconcile_vetoes_transition_action_for_incomplete_statement(monkeypatch
         [],
     )
 
-    assert step.should_act is False
+    assert step.action_intent is None
     assert step.outcome is not None
     assert step.outcome.phase == "exhausted"
     assert len(decisions) == 2
@@ -376,7 +365,7 @@ def test_terminal_dispatch_without_persistence_response_can_choose_an_action(mon
     )
 
     assert result.outcome is None
-    assert result.should_act is True
+    assert result.action_intent is not None
 
 
 def test_redirected_commit_uses_success_contract_and_is_not_preexisting(monkeypatch):

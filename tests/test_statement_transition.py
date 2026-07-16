@@ -12,7 +12,9 @@ from gui_agent.core.run.statement_transition import (
     guard_evidence_references,
     guard_infeasible,
 )
+from gui_agent.core.supervisor.statement.policy import StatementSupervisorPolicy
 from gui_agent.core.supervisor.statement.schemas import (
+    _ActionDraft,
     _StatementTransitionResult,
     _TransitionAction,
     _TransitionEvidence,
@@ -58,7 +60,32 @@ def test_transition_action_requires_one_instruction() -> None:
         _TransitionAction()
 
 
-def test_complete_requires_cited_evidence() -> None:
+def test_typed_action_renders_one_canonical_instruction() -> None:
+    instruction = StatementSupervisorPolicy._canonical_instruction(
+        _ActionDraft(
+            instruction="input size and click Search",
+            summary="filter",
+            atomic_role="write",
+            action_family="input",
+            target_control="Attribute Code",
+            target_value="size",
+        )
+    )
+
+    assert instruction == "Input 'size' into the visible 'Attribute Code' control."
+
+
+def test_structured_target_role_prefix_is_normalized_without_prose_parsing() -> None:
+    action = _TransitionAction(
+        instruction="open the store menu",
+        action_family="activate",
+        target_control="link: STORES",
+    )
+
+    assert action.target_control == "STORES"
+
+
+def test_complete_evidence_is_enforced_by_runtime_guard() -> None:
     decision = _StatementTransitionResult(
         kind="complete",
         reason="目标已出现",
@@ -70,29 +97,44 @@ def test_complete_requires_cited_evidence() -> None:
         ],
     )
     assert decision.kind == "complete"
-    with pytest.raises(ValidationError):
-        _StatementTransitionResult(
-            kind="complete",
-            reason="looks done",
-        )
+    missing = _StatementTransitionResult(
+        kind="complete",
+        reason="looks done",
+    )
+    assert not guard_evidence_references(
+        missing.evidence,
+        available_refs=set(),
+    ).allowed
 
 
-def test_complete_drops_stray_action_before_runtime_guard() -> None:
+def test_complete_discriminator_discards_redundant_action() -> None:
     decision = _StatementTransitionResult.model_validate({
         "kind": "complete",
-        "reason": "目标已满足",
-        "evidence": [
-            {"source": "current_observation", "claim": "目标字段可见且已填写"}
-        ],
+        "reason": "目标已经满足",
         "action": {
-            "instruction": "点击 Save Attribute",
-            "atomic_role": "commit",
-            "action_family": "activate",
+            "instruction": "点击 Catalog",
+            "atomic_role": "prepare",
+            "action_family": "navigate",
+            "target_control": "Catalog",
         },
     })
 
     assert decision.kind == "complete"
     assert decision.action is None
+
+
+def test_act_with_complete_action_can_fill_missing_report_reason() -> None:
+    decision = _StatementTransitionResult.model_validate({
+        "kind": "act",
+        "action": {
+            "instruction": "点击 Catalog",
+            "atomic_role": "prepare",
+            "action_family": "navigate",
+            "target_control": "Catalog",
+        },
+    })
+
+    assert decision.reason == "点击 Catalog"
 
 
 def test_act_drops_unreferenced_journal_explanation() -> None:
@@ -161,16 +203,22 @@ def test_act_requires_one_atomic_action() -> None:
 
 
 def test_infeasible_guard_requires_structure_or_exhausted_recovery() -> None:
+    kickback = compose_kickback_directive(
+        dead_route="继续寻找缺失入口",
+        required_route="使用可验证的新入口",
+    )
     denied = guard_infeasible(
         evidence_valid=True,
         structure_complete=False,
         reason="入口未见",
+        kickback=kickback,
     )
     assert not denied.allowed
     assert guard_infeasible(
         evidence_valid=True,
         structure_complete=True,
         reason="完整控件清单没有入口",
+        kickback=kickback,
     ).allowed
 
 
@@ -178,19 +226,29 @@ def test_infeasible_transition_requires_kickback_directive() -> None:
     evidence = [
         _TransitionEvidence(source="current_observation", claim="完整清单中无目标控件")
     ]
-    with pytest.raises(ValidationError):
-        _StatementTransitionResult(
-            kind="infeasible",
-            reason="目标控件不存在",
-            evidence=evidence,
-        )
-    with pytest.raises(ValidationError):
-        _StatementTransitionResult(
-            kind="infeasible",
-            reason="目标控件不存在",
-            kickback="换一个方法",
-            evidence=evidence,
-        )
+    missing = _StatementTransitionResult(
+        kind="infeasible",
+        reason="目标控件不存在",
+        evidence=evidence,
+    )
+    assert not guard_infeasible(
+        evidence_valid=True,
+        structure_complete=True,
+        reason=missing.reason,
+        kickback=missing.kickback,
+    ).allowed
+    malformed = _StatementTransitionResult(
+        kind="infeasible",
+        reason="目标控件不存在",
+        kickback="换一个方法",
+        evidence=evidence,
+    )
+    assert not guard_infeasible(
+        evidence_valid=True,
+        structure_complete=True,
+        reason=malformed.reason,
+        kickback=malformed.kickback,
+    ).allowed
     decision = _StatementTransitionResult(
         kind="infeasible",
         reason="目标控件不存在",

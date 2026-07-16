@@ -92,11 +92,14 @@ def _terminal_event_for_observation(
     raw: dict[str, Any],
     *,
     turn: int,
+    statement_id: str = "",
 ) -> dict[str, Any] | None:
     screenshot = f"screenshot_turn_{turn}.png"
     fallback = None
     for event in reversed((raw.get("journal") or {}).get("events") or []):
         if event.get("event_type") != "statement_outcome":
+            continue
+        if statement_id and event.get("statement_id") != statement_id:
             continue
         if event.get("observation_url") == screenshot:
             return event
@@ -145,14 +148,15 @@ def _expectation_failures(
 ) -> list[str]:
     failures: list[str] = []
     outcome = decision.outcome
+    intent = decision.action_intent
     actuals = {
-        "should_act": decision.should_act,
+        "should_act": intent is not None,
         "phase": outcome.phase if outcome is not None else "running",
         "verification": outcome.verification if outcome is not None else None,
-        "atomic_role": decision.atomic_role,
-        "action_family": decision.action_family,
-        "target_control": decision.target_control,
-        "direction": decision.direction,
+        "atomic_role": intent.role if intent is not None else "prepare",
+        "action_family": intent.family if intent is not None else "unknown",
+        "target_control": intent.target_control if intent is not None else "",
+        "direction": intent.direction if intent is not None else None,
     }
     checks = (
         ("should_act", expectation.get("should_act")),
@@ -170,9 +174,9 @@ def _expectation_failures(
                 f"expected {field}={expected!r}, got {actual!r}"
             )
     rejected = expectation.get("reject_target_controls") or []
-    if getattr(decision, "target_control", None) in rejected:
+    if intent is not None and intent.target_control in rejected:
         failures.append(
-            f"rejected target_control was proposed: {decision.target_control!r}"
+            f"rejected target_control was proposed: {intent.target_control!r}"
         )
     if expectation.get("retry_count") is not None:
         failures.append(
@@ -211,41 +215,44 @@ def _decide_action_without_dispatch(
     observation: Any,
     decision: Any,
 ) -> Any:
+    intent = decision.action_intent
+    if intent is None:
+        raise ValueError("action replay requires ActionIntent")
     action_policy = _build_action_policy(context.action_policy_name)
     target_group_id = ""
     native = action_policy.resolve_native_action(
         observation,
-        target_control=decision.target_control,
-        target_value=decision.target_value,
+        target_control=intent.target_control,
+        target_value=intent.target_value,
         target_group_id=target_group_id,
-        action_family=decision.action_family,
-        instruction=decision.instruction or "",
+        action_family=intent.family,
+        instruction=intent.instruction,
     )
     if native is not None:
         return native
     evidence = action_policy.action_evidence_context(
         observation,
-        target_control=decision.target_control,
-        target_value=decision.target_value,
+        target_control=intent.target_control,
+        target_value=intent.target_value,
         target_group_id=target_group_id,
-        action_family=decision.action_family,
+        action_family=intent.family,
     )
     proposed = action_policy.decide(
         observation,
-        decision.instruction or "",
-        direction=decision.direction,
-        drag_column=decision.drag_column,
-        drag_steps=decision.drag_steps,
+        intent.instruction,
+        direction=intent.direction,
+        drag_column=intent.drag_column,
+        drag_steps=intent.drag_steps,
         evidence_context=evidence,
         verbose=False,
     )
     return action_policy.ground_rendered_action(
         proposed,
         observation,
-        target_control=decision.target_control,
-        target_value=decision.target_value,
+        target_control=intent.target_control,
+        target_value=intent.target_value,
         target_group_id=target_group_id,
-        action_family=decision.action_family,
+        action_family=intent.family,
     )
 
 
@@ -258,6 +265,13 @@ def main() -> int:
         "--turn",
         type=int,
         help="observation/decision turn; defaults to replay_expectation.json",
+    )
+    parser.add_argument(
+        "--statement-id",
+        help=(
+            "replay this StatementOutcome on the selected observation even when the same "
+            "physical turn also recorded the next statement's action"
+        ),
     )
     parser.add_argument("--expect-role", choices=("prepare", "write", "commit", "iterate"))
     parser.add_argument(
@@ -273,7 +287,7 @@ def main() -> int:
     )
     parser.add_argument(
         "--expect-binding",
-        choices=("bound", "unresolved"),
+        choices=("bound", "contradicted", "unresolved"),
         help="also replay the pre-dispatch target binding and require this verdict",
     )
     parser.add_argument(
@@ -310,11 +324,23 @@ def main() -> int:
     context = PolicyContext.model_validate(raw)
     target_turn = next((turn for turn in context.journal.turns if turn.index == target_index), None)
     warnings: list[str] = []
-    if target_turn is not None:
+    terminal_event = (
+        _terminal_event_for_observation(
+            raw,
+            turn=target_index,
+            statement_id=args.statement_id,
+        )
+        if args.statement_id
+        else None
+    )
+    if target_turn is not None and terminal_event is None:
         statement_instance_id = target_turn.statement_instance_id
         statement = _statement_for_turn(raw, target_turn)
     else:
-        terminal_event = _terminal_event_for_observation(raw, turn=target_index)
+        terminal_event = terminal_event or _terminal_event_for_observation(
+            raw,
+            turn=target_index,
+        )
         if terminal_event is None:
             raise ValueError(
                 f"turn {target_index} and its terminal observation are absent from "
@@ -324,13 +350,15 @@ def main() -> int:
         statement_id = str(terminal_event.get("statement_id") or "")
         if not statement_instance_id or not statement_id:
             raise ValueError(f"terminal observation {target_index} lacks statement identity")
-        statement = _statement_for_terminal_observation(
-            raw,
-            statement_id=statement_id,
+        statement_info = terminal_event.get("statement")
+        statement = (
+            StatementContract.model_validate(statement_info)
+            if isinstance(statement_info, dict)
+            else _statement_for_terminal_observation(raw, statement_id=statement_id)
         )
         warnings.append(
-            "replaying a terminal observation that has no PolicyTurn; statement identity "
-            "was recovered from StatementOutcomeEvent + Program"
+            "replaying the selected StatementOutcome on this observation; statement identity "
+            "was recovered from the terminal event"
         )
     if (context.platform or "browser") != "browser":
         raise ValueError("this replay runner currently supports the browser supervisor only")
@@ -380,7 +408,7 @@ def main() -> int:
     action_decision = None
     target_binding = None
     if args.with_action_policy or expectation.get("action") or expectation.get("binding_status"):
-        if not decision.should_act or not decision.instruction:
+        if decision.action_intent is None:
             failures.append("action policy requested but supervisor returned no action")
         else:
             action_decision = _decide_action_without_dispatch(
@@ -422,12 +450,28 @@ def main() -> int:
                 "turn": target_index,
                 "checker_status": getattr(checker, "status", None),
                 "checker_effect": getattr(checker, "effect_status", None),
-                "instruction": decision.instruction,
-                "should_act": decision.should_act,
+                "instruction": (
+                    decision.action_intent.instruction
+                    if decision.action_intent is not None
+                    else None
+                ),
+                "should_act": decision.action_intent is not None,
                 "outcome": decision.outcome.model_dump(mode="json") if decision.outcome else None,
-                "atomic_role": decision.atomic_role,
-                "action_family": decision.action_family,
-                "target_control": decision.target_control,
+                "atomic_role": (
+                    decision.action_intent.role
+                    if decision.action_intent is not None
+                    else "prepare"
+                ),
+                "action_family": (
+                    decision.action_intent.family
+                    if decision.action_intent is not None
+                    else "unknown"
+                ),
+                "target_control": (
+                    decision.action_intent.target_control
+                    if decision.action_intent is not None
+                    else ""
+                ),
                 "action": result["action_decision"],
                 "target_binding": (
                     target_binding.model_dump(mode="json") if target_binding is not None else None

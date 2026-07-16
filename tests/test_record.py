@@ -1,5 +1,7 @@
 from __future__ import annotations
 
+from gui_agent.core.schemas import ActionIntent
+
 from types import SimpleNamespace
 
 from gui_agent.core.run import turns
@@ -13,7 +15,6 @@ def test_record_interactive_turn_appends_saves_and_emits_callback(monkeypatch):
         action_policy_name="browser",
     )
     supervisor = SimpleNamespace(
-        _last_action_plan=None,
         _last_transition_record=None,
         _timings={"checker": 1.0},
         _timings_order=["checker"],
@@ -21,11 +22,7 @@ def test_record_interactive_turn_appends_saves_and_emits_callback(monkeypatch):
         _last_sections_loaded=["orders"],
         runtime_state_snapshot=lambda: {},
     )
-    step = SupervisorStep(
-        should_act=True,
-        instruction="点击订单",
-        summary="准备点击",
-    )
+    step = SupervisorStep(action_intent=ActionIntent(instruction='点击订单'), summary='准备点击')
     action = BaseAction(action_type="tap", x=1, y=2, description="点订单")
     decision = BaseActionDecision(action=action)
     saves = []

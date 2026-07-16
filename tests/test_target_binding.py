@@ -1,5 +1,7 @@
 from __future__ import annotations
 
+from gui_agent.core.schemas import ActionIntent
+
 from gui_agent.adapters.browser.actions import BrowserAction, BrowserActionDecision
 from gui_agent.adapters.browser.target_binding import (
     BrowserTargetBinder,
@@ -16,18 +18,28 @@ from gui_agent.core.schemas import (
 
 
 def _step(**updates) -> SupervisorStep:
-    step = SupervisorStep(
-        should_act=True,
-        instruction="set Amount to 42",
-        summary="write the declared field",
-        statement_id="m1",
-        execution_scope="record:1",
-        statement_kind="action",
-        atomic_role="write",
-        action_family="input",
-        target_control="Amount",
-        target_value="42",
-    )
+    step = SupervisorStep(action_intent=ActionIntent(instruction='set Amount to 42', role='write', family='input', target_control='Amount', target_value='42'), summary='write the declared field', statement_id='m1', execution_scope='record:1', statement_kind='action')
+    intent_updates = {
+        {
+            "atomic_role": "role",
+            "action_family": "family",
+        }.get(key, key): updates.pop(key)
+        for key in list(updates)
+        if key in {
+            "atomic_role",
+            "action_family",
+            "target_control",
+            "target_value",
+            "direction",
+            "drag_column",
+            "drag_steps",
+            "instruction",
+        }
+    }
+    if intent_updates:
+        updates["action_intent"] = step.action_intent.model_copy(
+            update=intent_updates
+        )
     return step.model_copy(update=updates)
 
 
@@ -160,6 +172,44 @@ def test_identity_gap_is_unresolved_not_contradicted() -> None:
     assert binding.status == "unresolved"
 
 
+def test_activate_point_on_a_different_control_is_contradicted() -> None:
+    observation = Observation(
+        png_bytes=b"frame",
+        source="browser",
+        form_controls=[{
+            "kind": "native_select",
+            "label": "Visible",
+            "group_field": "Visible",
+            "group_id": "attributeGrid_table:1",
+            "rect": {"x": 543, "y": 406},
+        }],
+    )
+    step = SupervisorStep(
+        action_intent=ActionIntent(
+            instruction="open the size row",
+            role="prepare",
+            family="activate",
+            target_control="Attribute Code: size (row in grid)",
+        ),
+        summary="open row",
+        statement_id="s3",
+        execution_scope="i3:s3/statement",
+        statement_kind="navigation",
+    )
+    decision = BrowserActionDecision(action=BrowserAction(
+        action_type="tap",
+        x=543,
+        y=406,
+        description="open the size row",
+    ))
+
+    binding = BrowserTargetBinder().bind(step, observation, decision)
+
+    assert binding is not None
+    assert binding.status == "contradicted"
+    assert "Visible" in binding.reason
+
+
 class _Future:
     def result(self):
         return None
@@ -172,6 +222,11 @@ class _Executor:
     def execute(self, *_args, **_kwargs) -> bool:
         self.calls += 1
         return True
+
+
+class _BrowserBindingPolicy:
+    def bind(self, step, observation, action_decision):
+        return BrowserTargetBinder().bind(step, observation, action_decision)
 
 
 def _run_action(tmp_path, step: SupervisorStep):
@@ -190,6 +245,71 @@ def _run_action(tmp_path, step: SupervisorStep):
         say=lambda _message: None,
     )
     return result, executor
+
+
+def test_contradicted_activation_is_recorded_without_dispatch(tmp_path) -> None:
+    step = SupervisorStep(
+        action_intent=ActionIntent(
+            instruction="open the size row",
+            role="prepare",
+            family="activate",
+            target_control="Attribute Code: size (row in grid)",
+        ),
+        summary="open row",
+        preformed_action=BrowserActionDecision(action=BrowserAction(
+            action_type="tap",
+            x=543,
+            y=406,
+            description="open the size row",
+        )),
+        statement_id="s3",
+        execution_scope="i3:s3/statement",
+        statement_kind="navigation",
+    )
+    observation = Observation(
+        png_bytes=b"frame",
+        source="browser",
+        form_controls=[{
+            "kind": "native_select",
+            "label": "Visible",
+            "group_field": "Visible",
+            "group_id": "attributeGrid_table:1",
+            "rect": {"x": 543, "y": 406},
+        }],
+    )
+    executor = _Executor()
+
+    result = ActionExecutor().run(
+        sv_step=step,
+        observation=observation,
+        action_policy=_BrowserBindingPolicy(),
+        supervisor=object(),
+        executor=executor,
+        prep_future=_Future(),
+        log_dir=tmp_path,
+        turn_no=5,
+        flash=lambda _action: None,
+        status=lambda _turn, _message: None,
+        say=lambda _message: None,
+    )
+
+    assert result.executed is False
+    assert executor.calls == 0
+    assert result.binding is not None
+    assert result.binding.status == "contradicted"
+    turn = make_interactive_turn(
+        index=5,
+        observation_source="browser",
+        supervisor_step=step,
+        action_decision=result.action_decision,
+        executed=False,
+        suppressed_reason=result.suppressed_reason,
+        binding=result.binding,
+        statement_instance_id="i3:s3",
+    )
+    assert turn.action_signal is not None
+    assert turn.action_signal.execution == "not_attempted"
+    assert turn.action_signal.target == "off_target"
 
 
 def test_write_binding_is_recorded_only_after_a_dispatchable_target(tmp_path) -> None:

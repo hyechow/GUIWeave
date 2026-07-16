@@ -8,6 +8,8 @@ guard that keeps subclass fields through model_dump_json (context.json).
 
 from __future__ import annotations
 
+from gui_agent.core.schemas import ActionIntent
+
 from typing import get_args
 
 import pytest
@@ -127,7 +129,7 @@ def test_serialization_preserves_subclass_fields():
         action_type="drag", target_area="picker_left", value_direction="increase", description="调大"))
     br = BrowserActionDecision(action=BrowserAction(
         action_type="navigate", url="example.com", description="打开"))
-    sv = SupervisorStep(should_act=True, summary="x")
+    sv = SupervisorStep(action_intent=ActionIntent(instruction='test action'), summary='x')
     ctx = PolicyContext(
         goal="g", supervisor_policy_name="statement", action_policy_name="x",
         journal={"events": [
@@ -156,6 +158,18 @@ def test_action_decision_unwraps_flat_fields():
     # action fields at the top level, no wrapper at all
     d = IPhoneActionDecision.model_validate({"action_type": "tap", "x": 1, "y": 2, "description": "x"})
     assert d.action.action_type == "tap" and d.action.x == 1
+
+
+def test_browser_pointer_coordinates_must_stay_inside_normalized_viewport():
+    with pytest.raises(Exception, match="outside the normalized browser viewport"):
+        BrowserActionDecision.model_validate({
+            "action": {
+                "action_type": "tap",
+                "x": 896,
+                "y": 1052,
+                "description": "Click the off-screen target",
+            }
+        })
 
 
 def test_legacy_stop_decision_is_migrated_to_grounding_failure():

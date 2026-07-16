@@ -2,6 +2,8 @@
 
 from __future__ import annotations
 
+from gui_agent.core.schemas import ActionIntent
+
 import base64
 import io
 
@@ -23,7 +25,7 @@ from gui_agent.core.run.interactive import contract_for_run
 from gui_agent.core.supervisor.statement.model_io import _build_msgs
 from gui_agent.core.supervisor.statement.policy import StatementSupervisorPolicy
 from gui_agent.core.supervisor.statement.schemas import (
-    _ActionPlan,
+    _ActionDraft,
     _StatementTransitionResult,
     _TransitionAction,
 )
@@ -235,7 +237,7 @@ def test_android_picker_postprocess_does_not_rewrite_plain_scroll_with_time_text
 
 
 def test_android_picker_drag_steps_use_circular_minute_direction():
-    plan = _ActionPlan(
+    plan = _ActionDraft(
         instruction="在分钟列滚动，把 58 分钟调到 02 分钟",
         summary="x",
         drag_column="minute",
@@ -248,7 +250,7 @@ def test_android_picker_drag_steps_use_circular_minute_direction():
 
 
 def test_android_picker_drag_steps_use_shortest_hour_direction():
-    plan = _ActionPlan(
+    plan = _ActionDraft(
         instruction="在小时列滚动，把 9 点调到 6 点",
         summary="x",
         drag_column="hour",
@@ -315,9 +317,9 @@ def test_zero_step_picker_transition_is_redecided_before_action(monkeypatch):
         [],
     )
 
-    assert step.instruction == "点击右上角的保存按钮"
-    assert step.drag_column is None
-    assert step.drag_steps is None
+    assert step.action_intent.instruction == "点击右上角的保存按钮"
+    assert step.action_intent.drag_column is None
+    assert step.action_intent.drag_steps is None
     assert any("already at its target" in extra for extra in extras)
 
 
@@ -409,12 +411,7 @@ def test_iterative_statement_strategy_change_is_chosen_by_transition(monkeypatch
                 index=1,
                 observation_source="eval",
                 statement_instance_id="i1",
-                supervisor=SupervisorStep(
-                should_act=True,
-                instruction="在分钟列滚动，把 51 分钟调到 30 分钟",
-                summary="",
-                statement_id="m2",
-            ),
+                supervisor=SupervisorStep(action_intent=ActionIntent(instruction='在分钟列滚动，把 51 分钟调到 30 分钟'), summary='', statement_id='m2'),
             action_decision=AndroidActionDecision(
                 action=AndroidAction(
                     action_type="scroll",
@@ -453,5 +450,5 @@ def test_iterative_statement_strategy_change_is_chosen_by_transition(monkeypatch
     step = policy._run_single_turn(statement, Observation(png_bytes=_png(), source="eval"), history)
 
     assert step.outcome is None
-    assert step.should_act is True
+    assert step.action_intent is not None
     assert any("51 分钟调到 30" in section for section in memory_sections)

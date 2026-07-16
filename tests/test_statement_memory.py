@@ -2,6 +2,8 @@
 
 from __future__ import annotations
 
+from gui_agent.core.schemas import ActionIntent
+
 from gui_agent.core.run.statement_memory import (
     available_event_refs,
     build_memory_view,
@@ -49,13 +51,7 @@ def _turn(
         index=index,
         observation_source="test",
         statement_instance_id=instance_id,
-        supervisor=SupervisorStep(
-            should_act=True,
-            instruction=instruction,
-            summary=summary or instruction,
-            statement_id=statement_id,
-            atomic_role=role,
-        ),
+        supervisor=SupervisorStep(action_intent=ActionIntent(instruction=instruction, role=role), summary=summary or instruction, statement_id=statement_id),
         executed=executed,
         action_signal=signal,
         effect_signal=effect,

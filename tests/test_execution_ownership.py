@@ -1,5 +1,7 @@
 from __future__ import annotations
 
+from gui_agent.core.schemas import ActionIntent
+
 import inspect
 import re
 from pathlib import Path
@@ -9,7 +11,7 @@ from gui_agent.core.run import action_signals, turns
 from gui_agent.core.run.execution_signals import CompletionReducer
 from gui_agent.core.supervisor.statement.policy import StatementSupervisorPolicy
 from gui_agent.core.supervisor.statement import evidence, observation_state
-from gui_agent.core.supervisor.statement.schemas import _ActionPlan
+from gui_agent.core.supervisor.statement.schemas import _ActionDraft
 
 
 def test_statement_policy_is_the_only_component_with_control_flow_authority() -> None:
@@ -110,7 +112,7 @@ def test_mutation_subject_has_one_runtime_owner() -> None:
     assert not hasattr(observation_state, "required_group_field_gaps")
     assert "resolve_mutation" not in policy_source
     assert "_validate_declared_write" in policy_source
-    assert "target_group_id" not in _ActionPlan.model_fields
+    assert "target_group_id" not in _ActionDraft.model_fields
 
 
 def test_completion_reducer_has_one_public_decision_api() -> None:
@@ -267,11 +269,7 @@ def test_statement_outcome_is_terminal_only_and_not_a_second_state_machine() -> 
         "replan_directive",
     }.isdisjoint(SupervisorStep.model_fields)
 
-    mid = SupervisorStep(
-        summary="go",
-        should_act=True,
-        instruction="tap",
-    )
+    mid = SupervisorStep(summary='go', action_intent=ActionIntent(instruction='tap'))
     assert mid.outcome is None
 
 

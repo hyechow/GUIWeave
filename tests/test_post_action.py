@@ -1,5 +1,7 @@
 from __future__ import annotations
 
+from gui_agent.core.schemas import ActionIntent
+
 from types import SimpleNamespace
 
 from gui_agent.core.run import action_exec
@@ -42,11 +44,7 @@ class _Future:
 
 
 def _step() -> SupervisorStep:
-    return SupervisorStep(
-        should_act=True,
-        instruction="点击确认按钮",
-        summary="需要点击",
-    )
+    return SupervisorStep(action_intent=ActionIntent(instruction='点击确认按钮'), summary='需要点击')
 
 
 def test_submit_target_verify_uses_tap_point():

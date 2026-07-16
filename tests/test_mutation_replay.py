@@ -152,6 +152,6 @@ def test_real_205258_completed_choice_set_keeps_intermediate_transition_prepare(
 
     assert rejection == "" and step is not None
     assert subject.status == "complete"
-    assert step.should_act is True
-    assert step.atomic_role == "prepare"
-    assert step.target_control == "Next"
+    assert step.action_intent is not None
+    assert step.action_intent.role == "prepare"
+    assert step.action_intent.target_control == "Next"

@@ -1,5 +1,7 @@
 from __future__ import annotations
 
+from gui_agent.core.schemas import ActionIntent
+
 from gui_agent.core.run.action_exec import ActionExecutor
 from gui_agent.core.schemas import BaseAction, BaseActionDecision, Observation, SupervisorStep
 
@@ -16,23 +18,41 @@ class _Executor:
     def __init__(self) -> None:
         self.calls: list[dict] = []
 
-    def execute(self, action_decision, *, app_name="", png_bytes=None, is_home_screen=False):
+    def execute(
+        self,
+        action_decision,
+        *,
+        app_name="",
+        png_bytes=None,
+        is_home_screen=False,
+        target_control="",
+    ):
         self.calls.append({
             "decision": action_decision,
             "app_name": app_name,
             "png_bytes": png_bytes,
             "is_home_screen": is_home_screen,
+            "target_control": target_control,
         })
         return True
 
 
 class _SnappingExecutor(_Executor):
-    def execute(self, action_decision, *, app_name="", png_bytes=None, is_home_screen=False):
+    def execute(
+        self,
+        action_decision,
+        *,
+        app_name="",
+        png_bytes=None,
+        is_home_screen=False,
+        target_control="",
+    ):
         ok = super().execute(
             action_decision,
             app_name=app_name,
             png_bytes=png_bytes,
             is_home_screen=is_home_screen,
+            target_control=target_control,
         )
         action_decision.action.snap = {
             "method": "dom",
@@ -48,14 +68,7 @@ class _DenyingSupervisor:
 
 
 def _step(decision: BaseActionDecision) -> SupervisorStep:
-    return SupervisorStep(
-        should_act=True,
-        instruction="点击确认按钮",
-        summary="需要点击",
-        preformed_action=decision,
-        app_name="Settings",
-        is_home_screen=True,
-    )
+    return SupervisorStep(action_intent=ActionIntent(instruction='点击确认按钮'), summary='需要点击', preformed_action=decision, app_name='Settings', is_home_screen=True)
 
 
 def test_preformed_action_waits_for_prep_and_executes(tmp_path):
@@ -90,6 +103,7 @@ def test_preformed_action_waits_for_prep_and_executes(tmp_path):
         "app_name": "Settings",
         "png_bytes": b"png",
         "is_home_screen": True,
+        "target_control": "",
     }]
 
 
@@ -156,9 +170,12 @@ def test_not_found_waits_for_prep_and_skips_execute(tmp_path):
 def test_executor_does_not_apply_legacy_commit_suppression(tmp_path):
     action = BaseAction(action_type="tap", x=10, y=20, description="点击保存")
     decision = BaseActionDecision(action=action)
-    step = _step(decision).model_copy(
-        update={"atomic_role": "commit", "statement_id": "m1"}
-    )
+    step = _step(decision).model_copy(update={
+        "action_intent": _step(decision).action_intent.model_copy(
+            update={"role": "commit"}
+        ),
+        "statement_id": "m1",
+    })
     executor = _Executor()
 
     result = ActionExecutor().run(
@@ -187,7 +204,11 @@ def test_action_family_is_advisory_after_grounding(tmp_path):
     decision = BaseActionDecision(
         action=BaseAction(action_type="tap", x=10, y=20, description="点击输入框")
     )
-    step = _step(decision).model_copy(update={"action_family": "input"})
+    step = _step(decision).model_copy(update={
+        "action_intent": _step(decision).action_intent.model_copy(
+            update={"family": "input"}
+        )
+    })
     executor = _Executor()
 
     result = ActionExecutor().run(
@@ -219,12 +240,15 @@ def test_target_directed_iterate_scroll_dispatches_exactly_once(tmp_path):
     )
     decision = BaseActionDecision(action=action)
     step = _step(decision).model_copy(update={
+        "action_intent": ActionIntent(
+            instruction="滚动到目标",
+            role="iterate",
+            family="iterate",
+            target_control="Details",
+            direction="down",
+        ),
         "statement_id": "m-acquire",
         "execution_scope": "row:42",
-        "atomic_role": "iterate",
-        "action_family": "iterate",
-        "target_control": "Details",
-        "direction": "down",
         "completion_strategy": "visible_once",
     })
     executor = _Executor()

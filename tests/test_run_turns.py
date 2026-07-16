@@ -9,6 +9,7 @@ from gui_agent.core.run.turns import (
     make_statement_outcome_event,
 )
 from gui_agent.core.schemas import (
+    ActionIntent,
     BaseActionDecision,
     Observation,
     PolicyContext,
@@ -18,16 +19,11 @@ from gui_agent.core.schemas import (
 
 
 def _step() -> SupervisorStep:
-    return SupervisorStep(
-        should_act=False,
-        outcome=StatementOutcome.completed("完成"),
-        summary="完成",
-    )
+    return SupervisorStep(outcome=StatementOutcome.completed('完成'), summary='完成')
 
 
 def test_make_statement_outcome_event_captures_supervisor_state():
     supervisor = SimpleNamespace(
-        _last_action_plan=None,
         _last_transition_record={
             "proposal": {
                 "kind": "complete",
@@ -68,7 +64,10 @@ def test_make_statement_outcome_event_captures_supervisor_state():
 
 
 def test_grounding_failure_is_recorded_without_dispatch_evidence():
-    step = _step().model_copy(update={"should_act": True, "outcome": None})
+    step = _step().model_copy(update={
+        "action_intent": ActionIntent(instruction="find target"),
+        "outcome": None,
+    })
     decision = BaseActionDecision(action=None, not_found_reason="当前帧找不到目标")
 
     turn = make_interactive_turn(
@@ -88,11 +87,7 @@ def test_grounding_failure_is_recorded_without_dispatch_evidence():
 def test_agent_loop_first_turn_has_no_deferred_loading_state(monkeypatch, tmp_path):
     observation = Observation(png_bytes=b"", source="test")
     def step(*_args):
-        return SupervisorStep(
-            should_act=False,
-            outcome=StatementOutcome.failed("test complete"),
-            summary="first observation completed",
-        )
+        return SupervisorStep(outcome=StatementOutcome.failed('test complete'), summary='first observation completed')
     supervisor = SimpleNamespace(
         name="test",
         step=step,

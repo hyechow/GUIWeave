@@ -15,11 +15,7 @@ def _context() -> PolicyContext:
 
 
 def _step(scope: CollectionScope | None = None) -> SupervisorStep:
-    return SupervisorStep(
-        should_act=False,
-        summary="s",
-        collection_scope=scope,
-    )
+    return SupervisorStep(summary='s', collection_scope=scope)
 
 
 def test_sync_turn_metadata_records_models_statements_and_task_type(monkeypatch):

@@ -2,6 +2,8 @@
 
 from __future__ import annotations
 
+from gui_agent.core.schemas import ActionIntent
+
 import pytest
 
 from gui_agent.core.orchestrator.program import Finish, ForEach, Program, Run
@@ -171,13 +173,7 @@ def test_program_and_statement_runtime_resume_from_minimal_turn_snapshot():
             observation_source="test",
             statement_instance_id=instance_id,
             runtime_state=snapshot,
-            supervisor=SupervisorStep(
-                should_act=True,
-                instruction="tap Save",
-                summary="still running",
-                statement_id=run.statement_id,
-                execution_scope=scope,
-            ),
+            supervisor=SupervisorStep(action_intent=ActionIntent(instruction='tap Save'), summary='still running', statement_id=run.statement_id, execution_scope=scope),
         )
     )
 

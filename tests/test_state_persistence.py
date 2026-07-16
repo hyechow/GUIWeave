@@ -45,12 +45,7 @@ def test_policy_turn_rejects_terminal_outcome_mirror():
         PolicyTurn(
             index=1,
             observation_source="browser",
-            supervisor=SupervisorStep(
-                should_act=False,
-                summary="done",
-                statement_id="s1",
-                outcome=StatementOutcome.completed("done"),
-            ),
+            supervisor=SupervisorStep(summary='done', statement_id='s1', outcome=StatementOutcome.completed('done')),
         )
 
 
@@ -97,7 +92,7 @@ def test_immediate_outcome_event_strips_raw_observation_bytes_before_persist():
 
 def test_content_notes_and_dedupe_are_rebuilt_only_from_journal_events():
     context = _context()
-    step = SupervisorStep(should_act=False, summary="read", statement_id="s1")
+    step = SupervisorStep(summary='read', statement_id='s1')
     seen_rows: set[str] = set()
     assert store_chunk_note(
         "row one\nrow two",

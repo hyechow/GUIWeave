@@ -1,17 +1,20 @@
 from __future__ import annotations
 
+from gui_agent.core.schemas import ActionIntent
+
 from types import SimpleNamespace
 
 from gui_agent.core.run.flow import evaluate_turn_progress
-from gui_agent.core.schemas import BaseAction, BaseActionDecision, SupervisorStep
+from gui_agent.core.schemas import (
+    BaseAction,
+    BaseActionDecision,
+    SupervisorStep,
+    TargetBinding,
+)
 
 
 def _step(*, should_act: bool = True, statement_id: str | None = "m1") -> SupervisorStep:
-    return SupervisorStep(
-        should_act=should_act,
-        summary="s",
-        statement_id=statement_id,
-    )
+    return SupervisorStep(action_intent=ActionIntent(instruction='test action') if should_act else None, summary='s', statement_id=statement_id)
 
 
 def _decision(*, not_found: bool = False):
@@ -49,6 +52,22 @@ def test_protocol_suppression_is_not_reported_as_executor_failure():
         suppressed_reason="commit already dispatched",
     )
     assert decision.stop_reason == "动作被执行协议抑制：commit already dispatched"
+
+
+def test_structural_target_contradiction_is_recoverable():
+    decision = evaluate_turn_progress(
+        sv_step=_step(),
+        executed=False,
+        action_decision=_decision(),
+        suppressed_reason="point belongs to Visible",
+        binding=TargetBinding(
+            status="contradicted",
+            source="structural",
+            reason="point belongs to Visible",
+        ),
+    )
+
+    assert decision.stop_reason is None
 
 
 def test_successful_action_continues():

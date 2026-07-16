@@ -105,7 +105,47 @@ def test_partial_inventory_vetoes_infeasible_then_redecides(monkeypatch):
         [],
     )
 
-    assert step.outcome is None and step.should_act
+    assert step.outcome is None and step.action_intent is not None
+
+
+def test_missing_infeasible_evidence_is_rejected_without_parse_fallback(monkeypatch):
+    statement = _statement()
+    policy = _policy(statement)
+    decisions = iter([
+        _StatementTransitionResult(
+            kind="infeasible",
+            reason="当前页面没有目标字段",
+            kickback=compose_kickback_directive(
+                dead_route="继续当前页面",
+                required_route="返回目标列表",
+            ),
+        ),
+        _act(),
+    ])
+    retry_inputs: list[str] = []
+
+    def decide(*_args, **kwargs):
+        retry_inputs.append(kwargs.get("extra", ""))
+        return next(decisions)
+
+    monkeypatch.setattr(policy, "_invoke_statement_transition", decide)
+    monkeypatch.setattr(
+        "gui_agent.core.supervisor.statement.policy.is_loading_frame",
+        lambda _observation: False,
+    )
+
+    step = policy._run_single_turn(
+        statement,
+        Observation(
+            png_bytes=b"x",
+            source="browser",
+            form_controls_meta={"coverage": "complete"},
+        ),
+        [],
+    )
+
+    assert step.action_intent is not None
+    assert "lacks valid evidence" in retry_inputs[1]
 
 
 def test_visual_only_infeasible_is_vetoed_without_structural_absence(monkeypatch):
@@ -152,4 +192,4 @@ def test_navigation_form_inventory_cannot_prove_link_absence(monkeypatch):
         [],
     )
 
-    assert step.outcome is None and step.should_act
+    assert step.outcome is None and step.action_intent is not None

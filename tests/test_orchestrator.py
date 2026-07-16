@@ -653,7 +653,7 @@ def test_transform_effect_blocks_preexisting_done(monkeypatch):
     )
     step = p._run_single_turn(ms, Observation(png_bytes=_png_bytes(), source="test"), [])
 
-    assert step.should_act is True
+    assert step.action_intent is not None
     assert step.outcome is None
     assert p._active_statement is ms
 

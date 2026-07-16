@@ -12,8 +12,9 @@ best-effort recovery. A hopeless payload still raises (no silent empty object).
 from __future__ import annotations
 
 import pytest
-from pydantic import BaseModel
+from pydantic import BaseModel, ValidationError
 
+from gui_agent.core.supervisor.statement.schemas import _StatementTransitionResult
 from llm.structured import _parse_structured_response, _repair_json_object
 
 
@@ -64,6 +65,32 @@ def test_code_fenced_malformed_json_is_repaired():
     )
     plan = _parse_structured_response(broken, _Plan)
     assert "done" in plan.goal
+
+
+def test_truncated_transition_reason_keeps_action_emitted_first():
+    broken = (
+        '{"kind":"act",'
+        '"action":{"instruction":"Input Diana Tights",'
+        '"atomic_role":"write","action_family":"input",'
+        '"target_control":"frontend_label","target_value":"Diana Tights"},'
+        '"reason":"DOM list shows `name="'
+    )
+
+    decision = _parse_structured_response(broken, _StatementTransitionResult)
+
+    assert decision.kind == "act"
+    assert decision.action is not None
+    assert decision.action.target_control == "frontend_label"
+    assert decision.action.target_value == "Diana Tights"
+
+
+def test_repair_is_not_reported_successful_when_schema_is_incomplete(capsys):
+    broken = '{"kind":"act","reason":"DOM list shows `name="'
+
+    with pytest.raises(ValidationError, match="act transition requires one action"):
+        _parse_structured_response(broken, _StatementTransitionResult)
+
+    assert "恢复并通过 schema 校验" not in capsys.readouterr().out
 
 
 def test_hopeless_payload_still_raises_not_silently_empty():

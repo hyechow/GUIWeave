@@ -1,3 +1,4 @@
+from gui_agent.core.schemas import ActionIntent
 """Unit tests for the filter "action-applied" gate building blocks.
 
 Covers the deterministic decoupling of "did the filter ACTION take effect" (the applied chips)
@@ -243,18 +244,7 @@ def test_commit_receipt_carries_filter_intent_when_control_was_prepopulated():
         target_values={"Name": "Minerva"},
     )
     scope = f"statement:{statement.id}"
-    step = SupervisorStep(
-        should_act=True,
-        instruction="按回车键提交",
-        summary="submit populated filter",
-        statement_id=statement.id,
-        execution_scope=scope,
-        statement_kind="filter",
-        atomic_role="commit",
-        action_family="input",
-        target_control="Search by keyword",
-        target_value="Minerva",
-    )
+    step = SupervisorStep(action_intent=ActionIntent(instruction='按回车键提交', role='commit', family='input', target_control='Search by keyword', target_value='Minerva'), summary='submit populated filter', statement_id=statement.id, execution_scope=scope, statement_kind='filter')
     turn = make_interactive_turn(
         index=1,
         observation_source="browser",
@@ -311,17 +301,7 @@ def test_runtime_write_intent_zero_result_completes_before_checker(monkeypatch):
         target_values={"Name": "Minerva LumaTech V-Tee"},
     )
     statement = statement.model_copy(update={"returns": ["match_count"]})
-    write_step = SupervisorStep(
-        should_act=True,
-        instruction="type exact value",
-        summary="write",
-        statement_id=statement.id,
-        execution_scope=f"statement:{statement.id}",
-        statement_kind="filter",
-        atomic_role="write",
-        action_family="input",
-        target_control="Search by keyword",
-    )
+    write_step = SupervisorStep(action_intent=ActionIntent(instruction='type exact value', role='write', family='input', target_control='Search by keyword'), summary='write', statement_id=statement.id, execution_scope=f'statement:{statement.id}', statement_kind='filter')
     write_turn = make_interactive_turn(
         index=13,
         observation_source="browser",
@@ -642,9 +622,7 @@ def test_policy_captures_first_applied_filters_snapshot(monkeypatch):
         "kind": "navigation",
     })
     pol.begin_statement(ms, instance_id="test:filter")
-    monkeypatch.setattr(pol, "_run_single_turn", lambda *a, **k: SupervisorStep(
-        should_act=False, instruction=None, summary="", statement_id="m1",
-    ))
+    monkeypatch.setattr(pol, "_run_single_turn", lambda *a, **k: SupervisorStep(summary='', statement_id='m1'))
     # Turn 1: no applied-filters channel (dashboard) → baseline not captured.
     pol.step(Observation(png_bytes=b"x", source="browser"), goal="g", history=[])
     assert pol._initial_filters is None
@@ -730,10 +708,10 @@ def test_guard_rejection_requests_a_new_direct_action(monkeypatch):
     )
 
     assert len(calls) == 2
-    assert step.should_act is True
-    assert step.atomic_role == "commit"
-    assert step.target_control == "Search"
-    assert step.instruction == "激活「Search」以提交当前已填充的筛选条件"
+    assert step.action_intent is not None
+    assert step.action_intent.role == "commit"
+    assert step.action_intent.target_control == "Search"
+    assert step.action_intent.instruction == "Activate the visible 'Search' control."
     assert policy._last_transition_record is not None
     rejections = policy._last_transition_record["guard_rejections"]
     assert len(rejections) == 1
