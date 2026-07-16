@@ -1,59 +1,79 @@
-"""Element knowledge routing (_elements_for).
-
-The planner and replanner both generate instructions, so both should inject the SAME
-focused element knowledge: the per-section bodies the KnowledgeSelector picked for the
-current (statement, page), not the whole _elements.md blob. _elements.md remains only the
-fallback for apps that have no per-section knowledge. (Decompose injects no element
-knowledge at all — it only needs navigation/flow structure.)
-"""
+"""Transition receives focused element knowledge without a selector control decision."""
 
 from __future__ import annotations
 
-from gui_agent.core.schemas import StatementContract
-from gui_agent.core.supervisor.statement.schemas import _SingleCheckResult
+from gui_agent.core.run.statement_memory import build_memory_view
+from gui_agent.core.schemas import Observation, StatementContract
+from gui_agent.core.supervisor.statement import llm_runtime as runtime_module
 from gui_agent.core.supervisor.statement.policy import StatementSupervisorPolicy
+from gui_agent.core.supervisor.statement.schemas import (
+    _StatementTransitionResult,
+    _TransitionAction,
+)
 
 
-def _ms():
-    return StatementContract.model_validate(
-        {"id": "x", "name": "配置", "description": "d", "success_condition": "s", "kind": "action"}
+def _statement(name: str = "创建订单") -> StatementContract:
+    return StatementContract(
+        id="x",
+        name=name,
+        description="配置当前业务对象",
+        success_condition="目标配置已完成",
+        kind="action",
     )
 
 
-def _check():
-    return _SingleCheckResult.model_validate(
-        {
-            "status": "in_progress",
-            "effect_status": "unverified",
-            "reason": "r",
-            "summary": "s",
-            "page_identity": "订单页",
-        }
+def _captured_elements(monkeypatch, policy: StatementSupervisorPolicy, statement: StatementContract):
+    captured: dict = {}
+
+    def fake_transition(*args, **kwargs):
+        captured.update(kwargs)
+        return _StatementTransitionResult(
+            kind="act",
+            reason="continue",
+            action=_TransitionAction(instruction="open the visible target"),
+        )
+
+    monkeypatch.setattr(runtime_module, "run_statement_transition", fake_transition)
+    policy.begin_statement(statement, instance_id="i1")
+    observation = Observation(png_bytes=b"x", source="test", title=statement.name)
+    policy._invoke_statement_transition(
+        statement,
+        observation,
+        [],
+        memory_view=build_memory_view(
+            instance_id="i1",
+            contract=statement,
+            history=[],
+        ),
     )
+    return captured.get("elements_knowledge")
 
 
-def test_elements_for_uses_progressive_sections_when_present(monkeypatch):
-    p = StatementSupervisorPolicy()
-    p.set_app_knowledge(
-        "nav", elements="FULL_ELEMENTS_BLOB",
+def test_transition_uses_deterministically_matched_sections(monkeypatch):
+    policy = StatementSupervisorPolicy()
+    policy.set_app_knowledge(
+        "nav",
+        elements="FULL_ELEMENTS_BLOB",
         sections={"创建订单": "点快速建单", "连通性": "点检测"},
     )
-    # stub the KnowledgeSelector micro-decision (no LLM in a unit test)
-    monkeypatch.setattr(p, "_select_sections", lambda m, c: ["创建订单"])
-    out = p._elements_for(_ms(), _check())
+
+    out = _captured_elements(monkeypatch, policy, _statement())
+
     assert out is not None
-    assert "点快速建单" in out            # body of the selected section
-    assert "点检测" not in out             # unselected section excluded
-    assert "FULL_ELEMENTS_BLOB" not in out  # NOT the whole _elements.md blob
+    assert "点快速建单" in out
+    assert "点检测" not in out
+    assert "FULL_ELEMENTS_BLOB" not in out
 
 
-def test_elements_for_falls_back_to_full_blob_without_sections():
-    p = StatementSupervisorPolicy()
-    p.set_app_knowledge("nav", elements="FULL_ELEMENTS_BLOB", sections=None)
-    assert p._elements_for(_ms(), _check()) == "FULL_ELEMENTS_BLOB"
+def test_transition_falls_back_to_full_blob_without_sections(monkeypatch):
+    policy = StatementSupervisorPolicy()
+    policy.set_app_knowledge("nav", elements="FULL_ELEMENTS_BLOB", sections=None)
+
+    assert _captured_elements(monkeypatch, policy, _statement()) == "FULL_ELEMENTS_BLOB"
 
 
-def test_elements_for_none_when_no_knowledge():
-    p = StatementSupervisorPolicy()
-    p.set_app_knowledge("nav", elements="", sections=None)
-    assert p._elements_for(_ms(), _check()) is None
+def test_transition_uses_none_when_no_element_knowledge(monkeypatch):
+    policy = StatementSupervisorPolicy()
+    policy.set_app_knowledge("nav", elements="", sections=None)
+
+    assert _captured_elements(monkeypatch, policy, _statement()) is None

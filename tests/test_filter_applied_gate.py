@@ -22,6 +22,11 @@ from gui_agent.core.schemas import (
 from gui_agent.core.run.turns import make_interactive_turn
 from gui_agent.core.supervisor.statement.evidence import runtime_filter_intent
 from gui_agent.core.supervisor.statement.execution_scope import execution_scope_for
+from gui_agent.core.supervisor.statement.schemas import (
+    _StatementTransitionResult,
+    _TransitionAction,
+    _TransitionEvidence,
+)
 from gui_agent.core.supervisor.statement.observation_state import (
     filter_chips_clean,
     filter_residual_labels,
@@ -29,7 +34,7 @@ from gui_agent.core.supervisor.statement.observation_state import (
     observed_filter_intent,
     RuntimeFilterIntent,
 )
-from gui_agent.context.runtime import applied_filter_state_block
+from gui_agent.context.runtime import active_filters_block, applied_filter_state_block
 
 
 def _filter_ms(
@@ -91,6 +96,41 @@ def test_applied_filters_js_targets_active_filter_chips():
     assert 'data-bind*=\\"label\\"' in js or "data-bind*=" in js
     assert "button" in js  # the Remove button is stripped from the value
     assert "filter" in js and "legacy_grid" in js  # legacy Mage_Adminhtml grid fallback
+    assert "defaultValue" in js and "defaultSelected" in js
+    assert "legacy_rendered" in js
+
+
+def test_normalize_server_rendered_legacy_state():
+    filters, meta = normalize_applied_filter_state({
+        "filters": {"Attribute Code": "size"},
+        "meta": {
+            "source": "legacy_rendered",
+            "indicator_channel": "absent",
+            "fallback_channel": "present",
+            "chip_container": "absent",
+            "legacy_grid": "present",
+        },
+    })
+
+    assert filters == {"Attribute Code": "size"}
+    assert meta["source"] == "legacy_rendered"
+    assert meta["fallback_channel"] == "present"
+
+
+def test_populated_filter_inputs_do_not_claim_applied_state():
+    block = active_filters_block([{
+        "kind": "text_input",
+        "label": "Attribute Code",
+        "name": "attribute_code",
+        "value": "size",
+        "is_filter": True,
+    }])
+
+    assert block is not None
+    text = block.render()
+    assert "当前已填充的网格筛选输入" in text
+    assert "不单独证明" in text
+    assert "已提交或结果网格已刷新" in text
 
 
 def test_runtime_write_intent_matches_actual_keyword_route_without_text_parser():
@@ -295,16 +335,23 @@ def test_runtime_write_intent_zero_result_completes_before_checker(monkeypatch):
         )),
         executed=True,
     )
-    checker_calls: list[int] = []
+    transition_calls: list[int] = []
 
-    def _spy_run_checker(*_args, **_kwargs):
-        checker_calls.append(1)
-        raise _CheckerReached()
+    def _spy_transition(*_args, **_kwargs):
+        transition_calls.append(1)
+        return _StatementTransitionResult(
+            kind="complete",
+            reason="the exact applied filter is an authoritative observation",
+            evidence=[_TransitionEvidence(
+                source="current_observation",
+                claim="the exact applied filter is visible",
+            )],
+        )
 
-    monkeypatch.setattr(policy_mod, "run_checker", _spy_run_checker)
     monkeypatch.setattr(supervisor_policy_mod, "is_loading_frame", lambda _obs: False)
     policy = supervisor_policy_mod.StatementSupervisorPolicy()
     policy.begin_statement(statement, instance_id="test:filter")
+    monkeypatch.setattr(policy, "_invoke_statement_transition", _spy_transition)
     observation = Observation(
         png_bytes=b"x",
         source="browser",
@@ -324,7 +371,7 @@ def test_runtime_write_intent_zero_result_completes_before_checker(monkeypatch):
         history=[write_turn],
     )
 
-    assert checker_calls == []
+    assert transition_calls == [1]
     assert step.outcome is not None
     assert step.outcome.verification == "confirmed"
 
@@ -335,17 +382,24 @@ def test_zero_result_exact_search_can_finish_before_explicit_fallback(monkeypatc
         "精确筛选已应用，records-found 计数可读",
         target_values={"Keyword": "Minerva LumaTech V-Tee"},
     )
-    checker_calls: list[int] = []
+    transition_calls: list[int] = []
 
-    def _spy_run_checker(*_args, **_kwargs):
-        checker_calls.append(1)
-        raise _CheckerReached()
+    def _spy_transition(*_args, **_kwargs):
+        transition_calls.append(1)
+        return _StatementTransitionResult(
+            kind="complete",
+            reason="the exact applied filter is an authoritative observation",
+            evidence=[_TransitionEvidence(
+                source="current_observation",
+                claim="the exact applied filter is visible",
+            )],
+        )
 
-    monkeypatch.setattr(policy_mod, "run_checker", _spy_run_checker)
     monkeypatch.setattr(supervisor_policy_mod, "is_loading_frame", lambda _obs: False)
 
     policy = supervisor_policy_mod.StatementSupervisorPolicy()
     policy.begin_statement(statement, instance_id="test:filter")
+    monkeypatch.setattr(policy, "_invoke_statement_transition", _spy_transition)
     step = policy.step(
         Observation(
             png_bytes=b"x",
@@ -357,7 +411,7 @@ def test_zero_result_exact_search_can_finish_before_explicit_fallback(monkeypatc
         history=[],
     )
 
-    assert checker_calls == []
+    assert transition_calls == [1]
     assert step is not None and step.outcome is not None and step.outcome.phase == "completed"
     assert step.outcome is not None and step.outcome.phase == "completed"
 
@@ -438,7 +492,6 @@ def test_chips_not_clean_with_leaked_residual():
 
 
 # ── strong-path integration: the gate fires in the real policy.step(), no LLM ───
-import gui_agent.core.supervisor.statement.llm_runtime as policy_mod  # noqa: E402
 import gui_agent.core.supervisor.statement.policy as supervisor_policy_mod  # noqa: E402
 from gui_agent.core.schemas import Observation  # noqa: E402
 
@@ -457,45 +510,50 @@ def _qty3_filter_statement() -> StatementContract:
 
 
 def _run_step(monkeypatch, applied_filters):
-    """Drive a real StatementSupervisorPolicy.step() for the qty=3 filter statement with the given
-    applied_filters. Spies on run_checker: it must NOT be called when the gate fires (the gate is
-    authoritative and skips the LLM checker), and MUST be called when it doesn't."""
+    """Drive a real Statement transition with deterministic filter evidence available."""
     import os
 
     png = open(_FIXTURE_PNG, "rb").read() if os.path.exists(_FIXTURE_PNG) else b"\x89PNG\r\n\x1a\n"
-    checker_calls: list[int] = []
+    transition_calls: list[int] = []
 
-    def _spy_run_checker(*a, **k):
-        checker_calls.append(1)
-        raise _CheckerReached()
+    def _spy_transition(*a, **k):
+        transition_calls.append(1)
+        return _StatementTransitionResult(
+            kind="complete",
+            reason="the exact applied filter is visible",
+            evidence=[_TransitionEvidence(
+                source="current_observation",
+                claim="the declared filter chip is visible",
+            )],
+        )
 
-    monkeypatch.setattr(policy_mod, "run_checker", _spy_run_checker)
     monkeypatch.setattr(supervisor_policy_mod, "is_loading_frame", lambda _obs: False)
 
     pol = supervisor_policy_mod.StatementSupervisorPolicy()
     ms = _qty3_filter_statement()
     pol.begin_statement(ms, instance_id="test:filter")
+    monkeypatch.setattr(pol, "_invoke_statement_transition", _spy_transition)
     obs = Observation(png_bytes=png, source="test", applied_filters=applied_filters)
     step = None
     try:
         step = pol.step(obs, goal="material of products with 3 units left", history=[])
-    except _CheckerReached:
+    except _TransitionReached:
         pass
-    return ms, step, checker_calls
+    return ms, step, transition_calls
 
 
-class _CheckerReached(Exception):
+class _TransitionReached(Exception):
     pass
 
 
-def test_strong_gate_fires_done_without_invoking_checker(monkeypatch):
-    ms, step, checker_calls = _run_step(monkeypatch, {"Quantity": "3 - 3"})
-    assert checker_calls == [], "FilterGate must bypass the LLM checker when target chip is present"
+def test_strong_filter_evidence_confirms_transition_completion(monkeypatch):
+    ms, step, transition_calls = _run_step(monkeypatch, {"Quantity": "3 - 3"})
+    assert transition_calls == [1]
     assert step is not None and step.outcome is not None
     assert step.outcome.phase == "completed"
 
 
-def test_legacy_product_filter_gate_fires_without_invoking_checker(monkeypatch):
+def test_legacy_product_filter_evidence_confirms_transition_completion(monkeypatch):
     ms = _filter_ms(
         "清除精确值筛选，在产品/Product列使用关键词'Olivia'进行筛选",
         "可见筛选状态显示已应用 Product包含'Olivia'筛选，列表已刷新且非0条记录",
@@ -504,17 +562,24 @@ def test_legacy_product_filter_gate_fires_without_invoking_checker(monkeypatch):
     import os
 
     png = open(_FIXTURE_PNG, "rb").read() if os.path.exists(_FIXTURE_PNG) else b"\x89PNG\r\n\x1a\n"
-    checker_calls: list[int] = []
+    transition_calls: list[int] = []
 
-    def _spy_run_checker(*a, **k):
-        checker_calls.append(1)
-        raise _CheckerReached()
+    def _spy_transition(*a, **k):
+        transition_calls.append(1)
+        return _StatementTransitionResult(
+            kind="complete",
+            reason="the exact applied filter is visible",
+            evidence=[_TransitionEvidence(
+                source="current_observation",
+                claim="Product=Olivia is applied",
+            )],
+        )
 
-    monkeypatch.setattr(policy_mod, "run_checker", _spy_run_checker)
     monkeypatch.setattr(supervisor_policy_mod, "is_loading_frame", lambda _obs: False)
 
     pol = supervisor_policy_mod.StatementSupervisorPolicy()
     pol.begin_statement(ms, instance_id="test:filter")
+    monkeypatch.setattr(pol, "_invoke_statement_transition", _spy_transition)
     obs = Observation(
         png_bytes=png,
         source="test",
@@ -522,7 +587,7 @@ def test_legacy_product_filter_gate_fires_without_invoking_checker(monkeypatch):
         applied_filter_meta={"source": "legacy_grid", "indicator_channel": "absent", "fallback_channel": "present"},
     )
     step = pol.step(obs, goal="reviews for Olivia zip jacket", history=[])
-    assert checker_calls == []
+    assert transition_calls == [1]
     assert step is not None and step.outcome is not None and step.outcome.phase == "completed"
     assert step.outcome is not None and step.outcome.phase == "completed"
 
@@ -598,15 +663,89 @@ def test_policy_captures_first_applied_filters_snapshot(monkeypatch):
 
 
 def test_no_chips_falls_through_to_checker(monkeypatch):
-    # No applied_filters signal from any adapter mechanism → gate cannot fire → checker runs.
-    _ms, _step, checker_calls = _run_step(monkeypatch, None)
-    assert checker_calls == [1], "without applied_filters the gate must not fire; checker runs"
+    # Without the cited adapter fact, Runtime vetoes completion and requests one same-frame
+    # redecision instead of advancing.
+    _ms, step, transition_calls = _run_step(monkeypatch, None)
+    assert transition_calls == [1, 1]
+    assert step is not None and step.outcome is not None
+    assert step.outcome.phase == "exhausted"
+
+
+def test_guard_rejection_requests_a_new_direct_action(monkeypatch):
+    """Replay the 20260716_120342 evidence gap without invoking a live model."""
+    monkeypatch.setattr(supervisor_policy_mod, "is_loading_frame", lambda _obs: False)
+    statement = _filter_ms(
+        "在 Attribute Code 列用精确值'size'筛选",
+        "Attribute Code 精确筛选已应用，records-found 计数可读",
+        target_values={"Attribute Code": "size"},
+    )
+    policy = supervisor_policy_mod.StatementSupervisorPolicy()
+    policy.begin_statement(statement, instance_id="replay:20260716_120342")
+
+    calls: list[str] = []
+
+    def _transition(*_args, **kwargs):
+        calls.append(kwargs.get("extra", ""))
+        if len(calls) == 1:
+            return _StatementTransitionResult(
+                kind="complete",
+                reason="输入值和结果计数看起来已经满足合同",
+                evidence=[_TransitionEvidence(
+                    source="current_observation",
+                    claim="Attribute Code=size and one record is visible",
+                )],
+            )
+        assert "Runtime Guard 否决" in kwargs.get("extra", "")
+        return _StatementTransitionResult(
+            kind="act",
+            reason="提交已填充的筛选以获得权威 applied-state 证据",
+            action=_TransitionAction(
+                instruction="激活「Search」以提交当前已填充的筛选条件",
+                atomic_role="commit",
+                action_family="activate",
+                target_control="Search",
+            ),
+        )
+
+    monkeypatch.setattr(policy, "_invoke_statement_transition", _transition)
+    step = policy.step(
+        Observation(
+            png_bytes=b"x",
+            source="browser",
+            form_controls=[{
+                "kind": "text_input",
+                "label": "Attribute Code",
+                "name": "attribute_code",
+                "id": "attributeGrid_filter_attribute_code",
+                "value": "size",
+                "is_filter": True,
+                "group_field": "Attribute Code",
+            }],
+            form_controls_meta={"coverage": "complete"},
+            semantic_tree=[{"role": "button", "key": "Search"}],
+            tables=[{"row_count": 1, "total_records": 1}],
+        ),
+        goal="find the size product attribute",
+        history=[],
+    )
+
+    assert len(calls) == 2
+    assert step.should_act is True
+    assert step.atomic_role == "commit"
+    assert step.target_control == "Search"
+    assert step.instruction == "激活「Search」以提交当前已填充的筛选条件"
+    assert policy._last_transition_record is not None
+    rejections = policy._last_transition_record["guard_rejections"]
+    assert len(rejections) == 1
+    assert "筛选状态尚未权威确认" in rejections[0]
 
 
 def test_wrong_range_chip_falls_through_to_checker(monkeypatch):
-    # A 2-3 chip does not satisfy a 3-3 target → gate must not fire → checker runs.
-    _ms, _step, checker_calls = _run_step(monkeypatch, {"Quantity": "2 - 3"})
-    assert checker_calls == [1]
+    # A 2-3 chip cannot validate a 3-3 completion proposal.
+    _ms, step, transition_calls = _run_step(monkeypatch, {"Quantity": "2 - 3"})
+    assert transition_calls == [1, 1]
+    assert step is not None and step.outcome is not None
+    assert step.outcome.phase == "exhausted"
 
 
 # ── filter_residual_labels (runtime state-diff: clear only unrelated residuals) ──

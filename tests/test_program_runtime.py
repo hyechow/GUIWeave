@@ -14,6 +14,7 @@ from gui_agent.core.schemas import (
     Observation,
     PolicyTurn,
     StatementOutcome,
+    StatementOutcomeEvent,
     SupervisorStep,
 )
 
@@ -88,24 +89,21 @@ def test_program_runtime_stamps_body_record_before_foreach_aggregate():
     assert aggregate_record.instance_id == ""
 
 
-def test_program_runtime_replays_terminal_turn_into_next_statement():
+def test_program_runtime_replays_terminal_event_into_next_statement():
     first = Run(statement_id="s1", name="one", kind="action", var="a")
     second = Run(statement_id="s2", name="two", kind="action", var="b")
     program = Program(goal="g", statements=[first, second, Finish(message="done")])
     journal = EventJournal()
     live = ProgramRuntime.start(program, journal=journal)
     instance_id = live.next_instance_id(first.statement_id)
-    journal.append_turn(
-        PolicyTurn(
-            index=1,
+    journal.append_statement_outcome(
+        StatementOutcomeEvent(
+            after_turn=0,
             observation_source="test",
             statement_instance_id=instance_id,
-            supervisor=SupervisorStep(
-                should_act=False,
-                summary="one completed",
-                statement_id=first.statement_id,
-                outcome=StatementOutcome.completed("one completed"),
-            ),
+            statement_id=first.statement_id,
+            statement_kind="action",
+            outcome=StatementOutcome.completed("one completed"),
         )
     )
 
@@ -118,7 +116,39 @@ def test_program_runtime_replays_terminal_turn_into_next_statement():
     assert resumed.interpreter.run_log[0].result.phase == "completed"
 
 
-def test_program_and_statement_runtime_resume_from_latest_turn_snapshot():
+def test_program_runtime_replays_consecutive_outcomes_without_turns():
+    first = Run(statement_id="s1", name="one", kind="action")
+    second = Run(statement_id="s2", name="two", kind="action")
+    program = Program(goal="g", statements=[first, second, Finish(message="done")])
+    journal = EventJournal()
+    ProgramRuntime.start(program, journal=journal)
+    journal.append_statement_outcome(StatementOutcomeEvent(
+        after_turn=0,
+        statement_instance_id="i1:s1",
+        statement_id="s1",
+        statement_kind="action",
+        outcome=StatementOutcome.completed("one completed"),
+    ))
+    journal.append_statement_outcome(StatementOutcomeEvent(
+        after_turn=0,
+        statement_instance_id="i2:s2",
+        statement_id="s2",
+        statement_kind="action",
+        outcome=StatementOutcome.completed("two completed"),
+    ))
+
+    resumed = ProgramRuntime.resume(program, journal)
+
+    assert resumed.finished
+    assert resumed.reply == "done"
+    assert journal.turns == []
+    assert [record.instance_id for record in resumed.interpreter.run_log] == [
+        "i1:s1",
+        "i2:s2",
+    ]
+
+
+def test_program_and_statement_runtime_resume_from_minimal_turn_snapshot():
     run = Run(statement_id="s1", name="one", kind="action")
     program = Program(goal="g", statements=[run, Finish(message="done")])
     journal = EventJournal()
@@ -128,20 +158,7 @@ def test_program_and_statement_runtime_resume_from_latest_turn_snapshot():
     policy = StatementSupervisorPolicy()
     policy.begin_statement(contract, instance_id=instance_id)
     scope = policy._rt.execution_scope
-    policy._rt.retry_count = 2
-    policy._rt.early_feasibility_probed = True
-    policy._rt.scroll_count = 3
-    policy._rt.last_page_identity = "detail"
     policy._rt.statement_info_emitted = True
-    policy._rt.constraint_ledger.add(
-        "avoid the stale route",
-        scope=scope,
-        source="loop_guard",
-    )
-    policy._rt.monitor.note(7, "/detail", "tap Save", scope=scope)
-    policy._rt.monitor._progress_values = ["draft"]
-    policy._rt.monitor._last_url = "https://example.test/detail"
-    policy._rt.monitor._last_dom_state = "status=draft"
     policy._initial_filters = {"status": "open"}
     snapshot = snapshot_statement_runtime(policy)
     assert snapshot is not None
@@ -175,18 +192,7 @@ def test_program_and_statement_runtime_resume_from_latest_turn_snapshot():
 
     assert resumed.current_instance_id == instance_id
     assert resumed.notes_mark == 0
-    assert restored_policy._rt.retry_count == 2
-    assert restored_policy._rt.early_feasibility_probed is True
-    assert restored_policy._rt.scroll_count == 3
-    assert restored_policy._rt.last_page_identity == "detail"
     assert restored_policy._rt.statement_info_emitted is True
-    assert restored_policy._rt.constraint_ledger.visible(scope) == [
-        "avoid the stale route"
-    ]
-    assert restored_policy._rt.monitor.turns[0].decision == "tapsave"
-    assert restored_policy._rt.monitor._progress_values == ["draft"]
-    assert restored_policy._rt.monitor._last_url == "https://example.test/detail"
-    assert restored_policy._rt.monitor._last_dom_state == "status=draft"
     assert restored_policy._initial_filters == {"status": "open"}
 
 
@@ -198,19 +204,16 @@ def test_program_runtime_replays_abandoned_kickback_replacement():
     journal = EventJournal()
     live = ProgramRuntime.start(old_program, journal=journal)
     instance_id = live.next_instance_id(old_run.statement_id)
-    journal.append_turn(
-        PolicyTurn(
-            index=1,
+    journal.append_statement_outcome(
+        StatementOutcomeEvent(
+            after_turn=0,
             observation_source="test",
             statement_instance_id=instance_id,
-            supervisor=SupervisorStep(
-                should_act=False,
-                summary="route infeasible",
-                statement_id=old_run.statement_id,
-                outcome=StatementOutcome.infeasible(
-                    "route infeasible",
-                    kickback="use the feasible route",
-                ),
+            statement_id=old_run.statement_id,
+            statement_kind="navigation",
+            outcome=StatementOutcome.infeasible(
+                "route infeasible",
+                kickback="use the feasible route",
             ),
         )
     )
@@ -255,11 +258,9 @@ def test_supervisor_reseed_then_complete_does_not_walk_next_statement():
         status="satisfied",
         reason="ok",
         completion_status="confirmed",
-        next="complete",
     )
     step = policy._advance(
         first,
-        Observation(png_bytes=b"x", source="t"),
         [],
         decision=decision,
     )

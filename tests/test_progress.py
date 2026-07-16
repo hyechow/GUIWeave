@@ -21,122 +21,61 @@ def _decision(*, not_found: bool = False):
     return BaseActionDecision(action=action)
 
 
-def test_probe_failure_continues_until_third_failure():
-    first = evaluate_turn_progress(
-        noop_count=0,
-        prev_statement_id="m1",
-        sv_step=_step(),
-        executed=False,
-        action_decision=_decision(),
-        probe_failed=True,
-    )
-    third = evaluate_turn_progress(
-        noop_count=2,
-        prev_statement_id="m1",
-        sv_step=_step(),
-        executed=False,
-        action_decision=_decision(),
-        probe_failed=True,
-    )
-
-    assert first.noop_count == 1
-    assert first.continue_loop is True
-    assert first.message == "滚动探测失败，进入下一轮重新规划"
-    assert third.stop_reason == "连续 3 轮滚动探测失败"
-    assert third.stop_message == "\n连续 3 轮滚动探测失败，agent-loop 停止"
-
-
-def test_not_found_counts_as_no_action():
+def test_not_found_stops_immediately():
     decision = evaluate_turn_progress(
-        noop_count=2,
-        prev_statement_id="m1",
         sv_step=_step(),
         executed=False,
         action_decision=_decision(not_found=True),
-        probe_failed=False,
     )
 
-    assert decision.stop_reason == "连续 3 轮无动作"
+    assert decision.stop_reason == "动作目标未找到：找不到"
 
 
-def test_action_execution_failure_replans_until_third_failure():
+def test_action_execution_failure_stops_immediately():
     decision = evaluate_turn_progress(
-        noop_count=0,
-        prev_statement_id="m1",
         sv_step=_step(),
         executed=False,
         action_decision=_decision(),
-        probe_failed=False,
     )
 
-    assert decision.continue_loop is True
-    assert decision.message == "动作执行失败，进入下一轮重新规划"
+    assert decision.stop_reason == "动作执行失败"
 
 
 def test_protocol_suppression_is_not_reported_as_executor_failure():
-    first = evaluate_turn_progress(
-        noop_count=0,
-        prev_statement_id="m1",
-        sv_step=_step(),
-        executed=False,
-        action_decision=_decision(),
-        probe_failed=False,
-        suppressed_reason="commit already dispatched",
-    )
-    third = evaluate_turn_progress(
-        noop_count=2,
-        prev_statement_id="m1",
-        sv_step=_step(),
-        executed=False,
-        action_decision=_decision(),
-        probe_failed=False,
-        suppressed_reason="commit already dispatched",
-    )
-
-    assert first.continue_loop is True
-    assert first.message == "动作被执行协议抑制，重新观察并调整计划"
-    assert third.stop_reason == "连续 3 轮动作被执行协议抑制"
-
-
-def test_statement_change_resets_noop_count():
     decision = evaluate_turn_progress(
-        noop_count=2,
-        prev_statement_id="m1",
+        sv_step=_step(),
+        executed=False,
+        action_decision=_decision(),
+        suppressed_reason="commit already dispatched",
+    )
+    assert decision.stop_reason == "动作被执行协议抑制：commit already dispatched"
+
+
+def test_successful_action_continues():
+    decision = evaluate_turn_progress(
         sv_step=_step(should_act=True, statement_id="m2"),
         executed=True,
         action_decision=_decision(),
-        probe_failed=False,
     )
 
-    assert decision.noop_count == 0
-    assert decision.prev_statement_id == "m2"
     assert decision.stop_reason is None
-    assert decision.continue_loop is False
 
 
-def test_no_action_turn_stops_after_three_noops():
+def test_no_action_running_turn_stops_immediately():
     decision = evaluate_turn_progress(
-        noop_count=2,
-        prev_statement_id="m1",
         sv_step=_step(should_act=False, statement_id="m1"),
         executed=False,
         action_decision=None,
-        probe_failed=False,
     )
 
-    assert decision.stop_reason == "连续 3 轮无动作"
-    assert decision.prev_statement_id == "m1"
+    assert decision.stop_reason == "运行中的 Statement 未产生动作或终态"
 
 
 def test_missing_action_stops_immediately():
     decision = evaluate_turn_progress(
-        noop_count=0,
-        prev_statement_id="m1",
         sv_step=_step(),
         executed=False,
         action_decision=SimpleNamespace(action=None, not_found_reason=None),
-        probe_failed=False,
     )
 
     assert decision.stop_reason == "动作未执行，agent-loop 停止"
-    assert decision.continue_loop is False

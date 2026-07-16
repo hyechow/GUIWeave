@@ -16,6 +16,7 @@ from gui_agent.core.schemas import (
     PolicyContext,
     PolicyTurn,
     StatementOutcome,
+    StatementOutcomeEvent,
     SupervisorStep,
 )
 from gui_agent.core.run.state import program_outcome_from_result, write_final_program_outcome
@@ -39,7 +40,21 @@ def test_policy_context_exposes_only_journal_and_program_outcome_state_domains()
     assert {"journal", "outcome"}.issubset(PolicyContext.model_fields)
 
 
-def test_immediate_turn_strips_raw_observation_bytes_before_persist():
+def test_policy_turn_rejects_terminal_outcome_mirror():
+    with pytest.raises(ValidationError, match="StatementOutcomeEvent"):
+        PolicyTurn(
+            index=1,
+            observation_source="browser",
+            supervisor=SupervisorStep(
+                should_act=False,
+                summary="done",
+                statement_id="s1",
+                outcome=StatementOutcome.completed("done"),
+            ),
+        )
+
+
+def test_immediate_outcome_event_strips_raw_observation_bytes_before_persist():
     # An immediate read/query outcome carries the live screenshot observation (raw PNG
     # bytes). Persisting it crashed save_context: pydantic json-dumps `bytes` as UTF-8, so
     # non-text bytes (byte 0x89 = PNG magic) raise UnicodeDecodeError. The persisted turn
@@ -60,13 +75,23 @@ def test_immediate_turn_strips_raw_observation_bytes_before_persist():
         kind="data_query",
         name="query",
         observation_url="/tmp/collect_grid.png",
+    )
+    event = StatementOutcomeEvent(
+        after_turn=1,
+        observation_source="browser",
+        observation_url="/tmp/collect_grid.png",
+        statement_instance_id="imm-0:s1",
+        statement_id="s1",
+        statement_kind="collection",
         outcome=outcome,
     )
-    assert turn.supervisor.outcome.observation is None
+    assert turn.supervisor.outcome is None
+    assert event.outcome.observation is None
     assert turn.observation_url == "/tmp/collect_grid.png"
 
     context = _context()
     context.journal.append_turn(turn)
+    context.journal.append_statement_outcome(event)
     context.model_dump(mode="json")  # the original crash site; must not raise
 
 
@@ -139,7 +164,7 @@ def test_write_final_program_outcome_patches_outcome_block(tmp_path: Path):
             "goal": "g",
             "supervisor_policy_name": "m",
             "action_policy_name": "a",
-            "journal": {"schema_version": 2, "events": []},
+            "journal": {"schema_version": 3, "events": []},
         }),
         encoding="utf-8",
     )
@@ -171,10 +196,13 @@ def test_program_outcome_mapping_rejects_fields_outside_agent_result():
 
 
 def test_statement_reducer_folds_outcome_and_checklist():
-    turns = [
+    events = [
         {
-            "index": 1,
+            "event_type": "statement_outcome",
+            "after_turn": 0,
             "statement_instance_id": "i1:m1",
+            "statement_id": "m1",
+            "statement_kind": "navigation",
             "statement": {
                 "id": "m1",
                 "name": "打开页面",
@@ -182,28 +210,16 @@ def test_statement_reducer_folds_outcome_and_checklist():
                 "kind": "navigation",
                 "success_condition": "页面已打开",
             },
-            "supervisor": {
-                "should_act": False,
+            "outcome": {
+                "phase": "completed",
                 "summary": "完成",
-                "statement_id": "m1",
-                "statement_kind": "navigation",
-                "outcome": {
-                    "phase": "completed",
-                    "summary": "完成",
-                    "verification": "confirmed",
-                    "reads": {"x": "1"},
-                },
-                "pre_existing": True,
+                "verification": "confirmed",
+                "reads": {"x": "1"},
             },
-            "checker": {
-                "status": "done",
-                "reason": "已在目标页",
-                "item_verdicts": [{"index": 1, "met": True, "evidence": "ok"}],
-            },
-            "operation_mode": "observation",
+            "pre_existing": True,
         }
     ]
-    views = StatementReportReducer().reduce(events=turns)
+    views = StatementReportReducer().reduce(events=events)
     assert len(views) == 1
     view = views[0]
     assert view.statement_id == "m1"

@@ -4,7 +4,7 @@
   "action_policy_name": "browser_vision",
   "platform": "browser",
   "journal": {
-    "schema_version": 2,
+    "schema_version": 3,
     "events": [
       {
         "event_type": "program_revision",
@@ -56,30 +56,8 @@
             "target_controls": ["title"],
             "target_values": {"title": "ready"}
           },
-          "retry_count": 2,
-          "early_feasibility_probed": true,
-          "scroll_count": 1,
           "execution_scope": "i1:s1/statement",
-          "last_page_identity": "edit",
           "statement_info_emitted": true,
-          "constraints": [
-            {
-              "text": "do not reopen the editor",
-              "scope": "i1:s1/statement",
-              "source": "loop_guard"
-            }
-          ],
-          "progress_trace": [
-            {
-              "index": 1,
-              "state": "/edit",
-              "decision": "tap title",
-              "scope": "i1:s1/statement"
-            }
-          ],
-          "progress_values": ["draft"],
-          "last_url": "https://example.test/edit",
-          "last_dom_state": "title=draft",
           "initial_filters": {"status": "open"}
         },
         "supervisor": {

@@ -11,6 +11,7 @@ from gui_agent.core.orchestrator.recovery import (
     REQUIRED_ROUTE_MARKER,
     KickbackDirective,
     ReturnRecoveryLedger,
+    compose_kickback_directive,
     force_interactive_return_recovery,
     kickback_adherence_issues,
     parse_kickback_directive,
@@ -25,8 +26,8 @@ class _FakeSupervisor:
     def __init__(self):
         self.begins = []
 
-    def begin_statement(self, contract, *, instance_id, task_type="action", fresh_advance=False):
-        self.begins.append((contract, instance_id, task_type, fresh_advance))
+    def begin_statement(self, contract, *, instance_id, task_type="action"):
+        self.begins.append((contract, instance_id, task_type))
 
 
 def test_ledger_budget_exhausts_per_call_site():
@@ -61,13 +62,12 @@ def test_ledger_key_follows_contract_not_name_suffix():
 def test_start_statement_translates_run_and_begins_statement():
     sup = _FakeSupervisor()
     ui_run = Run(name="点击保存", kind="action", success_condition="出现保存成功提示")
-    statement = start_statement(sup, ui_run, 2, fresh_advance=True)
+    statement = start_statement(sup, ui_run, 2)
     assert len(sup.begins) == 1
-    seeded, _instance_id, task_type, fresh = sup.begins[0]
+    seeded, _instance_id, task_type = sup.begins[0]
     assert seeded is statement
     assert seeded.name == "点击保存"
     assert task_type == "action"
-    assert fresh is True
 
 
 def test_enum_domain_rejects_out_of_domain_value():
@@ -189,24 +189,18 @@ def test_start_statement_rejects_query_runs():
 
 
 def test_compose_and_parse_kickback_directive_roundtrip():
-    from gui_agent.core.supervisor.statement.feasibility import (
-        FeasibilityVerdict,
-        compose_directive,
-    )
-
-    verdict = FeasibilityVerdict(
-        feasible=False, reason="列表层无 Rating 筛选控件",
-        dead_route="在评论列表层按 Rating 筛选,以及 data_query 查询不存在的 rating 列",
-        required_route="逐条打开每条评论详情读取 Rating 再本地筛选",
+    dead_route = "在评论列表层按 Rating 筛选,以及 data_query 查询不存在的 rating 列"
+    required_route = "逐条打开每条评论详情读取 Rating 再本地筛选"
+    text = compose_kickback_directive(
+        dead_route=dead_route,
+        required_route=required_route,
         directive="列表层没有 Rating 筛选控件;必须逐条打开评论详情读取 Rating。",
     )
-    text = compose_directive(verdict)
     parsed = parse_kickback_directive(text)
     assert parsed.is_typed
-    assert parsed.dead_route == verdict.dead_route
-    assert parsed.required_route == verdict.required_route
-    # feasible=true → 空 directive
-    assert compose_directive(FeasibilityVerdict(feasible=True)) == ""
+    assert parsed.dead_route == dead_route
+    assert parsed.required_route == required_route
+    assert compose_kickback_directive() == ""
 
 
 def test_adherence_flags_dead_route_reuse():

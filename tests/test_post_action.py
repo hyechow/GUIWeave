@@ -95,15 +95,19 @@ def test_no_effect_requires_cdp_and_visual_channels_to_agree(monkeypatch):
     assert no_effect is True
 
 
-def test_finalize_auto_continue_turn_reuses_branch_settle():
+def test_finalize_auto_continue_turn_records_settle_and_verify(monkeypatch):
     turn = SimpleNamespace(settle_s=None, no_effect=False, target_verify=None)
     verify = TargetVerify(on_target=False, actual_element="取消按钮")
     future = _Future(verify)
     messages = []
+    monkeypatch.setattr(
+        action_exec,
+        "settle_after_action",
+        lambda *_args, **_kwargs: (0.4, False),
+    )
 
     action_exec.finalize_auto_continue_turn(
         turn=turn,
-        branch_settle_s=0.4,
         action_decision=None,
         platform=object(),
         observation_png=b"png",
@@ -139,7 +143,6 @@ def test_finalize_auto_continue_turn_passes_tap_center(monkeypatch):
 
     action_exec.finalize_auto_continue_turn(
         turn=turn,
-        branch_settle_s=None,
         action_decision=decision,
         platform=platform,
         observation_png=b"png",

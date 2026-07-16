@@ -8,7 +8,10 @@ from gui_agent.core.schemas import (
 )
 from gui_agent.core.supervisor.statement import policy as P
 from gui_agent.core.supervisor.statement.policy import StatementSupervisorPolicy
-from gui_agent.core.supervisor.statement.schemas import _SingleCheckResult
+from gui_agent.core.supervisor.statement.schemas import (
+    _StatementTransitionResult,
+    _TransitionAction,
+)
 
 
 def _price_statement() -> StatementContract:
@@ -32,6 +35,7 @@ def _row_turn(index: int, product_id: str) -> PolicyTurn:
     return PolicyTurn(
         index=index,
         observation_source="browser",
+        statement_instance_id="test:scope",
         supervisor=SupervisorStep(
             should_act=True,
             instruction="在 Price 字段输入 64.88",
@@ -44,29 +48,24 @@ def _row_turn(index: int, product_id: str) -> PolicyTurn:
     )
 
 
-def test_checker_history_is_bucketed_by_current_row_scope(monkeypatch):
+def test_transition_action_history_is_bucketed_by_current_row_scope(monkeypatch):
     policy = StatementSupervisorPolicy()
     statement = _price_statement()
     policy.begin_statement(statement, instance_id="test:scope")
 
     captured = {}
 
-    def fake_single_check(_statement, _observation, history, **_kwargs):
+    def fake_transition(_statement, _observation, history, **_kwargs):
         captured["history"] = history
-        return _SingleCheckResult(status="in_progress", effect_status="unverified", reason="还未保存", summary="进行中")
+        return _StatementTransitionResult(
+            kind="act",
+            reason="还未保存",
+            summary="进行中",
+            action=_TransitionAction(instruction="点击保存", action_family="activate"),
+        )
 
     monkeypatch.setattr(P, "is_loading_frame", lambda _obs: False)
-    monkeypatch.setattr(policy, "_single_check", fake_single_check)
-    monkeypatch.setattr(
-        policy,
-        "_plan_single",
-        lambda *_args, **_kwargs: SupervisorStep(
-            should_act=True,
-            instruction="在 Price 字段输入 64.88",
-            summary="plan",
-            statement_id=statement.id,
-        ),
-    )
+    monkeypatch.setattr(policy, "_invoke_statement_transition", fake_transition)
 
     obs = Observation(
         png_bytes=b"png",

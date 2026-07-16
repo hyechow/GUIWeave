@@ -87,7 +87,6 @@ def test_prompt_eval_suites_point_to_existing_paths():
 
 def test_migrated_prompt_constants_load_from_registry():
     from gui_agent.adapters.browser.router_prompt import BROWSER_ROUTER_SYSTEM
-    from gui_agent.adapters.browser.supervisor.statement.prompts import PLAN_PROMPT
     from gui_agent.adapters.iphone.policies.structured_output import SYSTEM_PROMPT
     from gui_agent.core.llm.reader import SYSTEM_PROMPT as READER_PROMPT
     from gui_agent.core.self_learning.app_summary import (
@@ -96,7 +95,6 @@ def test_migrated_prompt_constants_load_from_registry():
     )
     from gui_agent.core.self_learning.manual_pdf import _SECTION_SYSTEM as SECTION_SYS
 
-    assert PLAN_PROMPT == load_prompt_text("task.statement.browser.planner")
     assert SYSTEM_PROMPT == load_prompt_text("task.action_policy.iphone")
     assert BROWSER_ROUTER_SYSTEM == load_prompt_text("task.router.browser")
     assert READER_PROMPT == load_prompt_text("task.reader.screenshot_text")

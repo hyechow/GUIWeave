@@ -15,7 +15,6 @@ from gui_agent.core.schemas import (
     StatementContract,
     Observation,
     PolicyTurn,
-    StatementOutcome,
     SupervisorStep,
 )
 from gui_agent.core.orchestrator.passes import normalize_goal_value_contracts
@@ -23,8 +22,11 @@ from gui_agent.core.orchestrator.program import Program, Run
 from gui_agent.core.run.interactive import contract_for_run
 from gui_agent.core.supervisor.statement.model_io import _build_msgs
 from gui_agent.core.supervisor.statement.policy import StatementSupervisorPolicy
-from gui_agent.core.run.progress_monitor import ProgressAssessment, ProgressMonitor
-from gui_agent.core.supervisor.statement.schemas import _PlanResult, _SingleCheckResult
+from gui_agent.core.supervisor.statement.schemas import (
+    _ActionPlan,
+    _StatementTransitionResult,
+    _TransitionAction,
+)
 
 
 def _decision(action: AndroidAction) -> AndroidActionDecision:
@@ -233,7 +235,7 @@ def test_android_picker_postprocess_does_not_rewrite_plain_scroll_with_time_text
 
 
 def test_android_picker_drag_steps_use_circular_minute_direction():
-    plan = _PlanResult(
+    plan = _ActionPlan(
         instruction="在分钟列滚动，把 58 分钟调到 02 分钟",
         summary="x",
         drag_column="minute",
@@ -246,7 +248,7 @@ def test_android_picker_drag_steps_use_circular_minute_direction():
 
 
 def test_android_picker_drag_steps_use_shortest_hour_direction():
-    plan = _PlanResult(
+    plan = _ActionPlan(
         instruction="在小时列滚动，把 9 点调到 6 点",
         summary="x",
         drag_column="hour",
@@ -258,7 +260,7 @@ def test_android_picker_drag_steps_use_shortest_hour_direction():
     assert plan.direction == "decrease"
 
 
-def test_zero_step_picker_plan_is_retried_before_action(monkeypatch):
+def test_zero_step_picker_transition_is_redecided_before_action(monkeypatch):
     policy = StatementSupervisorPolicy()
     statement = StatementContract(
         id="m4",
@@ -268,39 +270,55 @@ def test_zero_step_picker_plan_is_retried_before_action(monkeypatch):
         kind="action",
         completion_strategy="visible_once",
     )
-    check = _SingleCheckResult(
-        status="in_progress",
-        effect_status="unverified",
-        reason="当前时间已设定为 06:30 AM，但尚未点击保存按钮。",
-        summary="时间已到位，等待保存。",
-    )
-    plans = iter(
+    policy.begin_statement(statement, instance_id="i1")
+    decisions = iter(
         [
-            _PlanResult(
-                instruction="在分钟列向上滚动，将值从 30 调整到 30",
+            _StatementTransitionResult(
+                kind="act",
+                reason="错误微调",
                 summary="错误微调",
-                direction="increase",
-                drag_column="minute",
-                drag_current_value=30,
-                drag_target_value=30,
+                action=_TransitionAction(
+                    instruction="在分钟列向上滚动，将值从 30 调整到 30",
+                    direction="increase",
+                    drag_column="minute",
+                    drag_current_value=30,
+                    drag_target_value=30,
+                ),
             ),
-            _PlanResult(instruction="点击右上角的保存按钮", summary="保存闹钟"),
+            _StatementTransitionResult(
+                kind="act",
+                reason="时间已到位，下一步保存",
+                summary="保存闹钟",
+                action=_TransitionAction(
+                    instruction="点击右上角的保存按钮",
+                    atomic_role="commit",
+                    action_family="activate",
+                ),
+            ),
         ]
     )
     extras: list[str] = []
 
-    def fake_invoke_planner(*args, extra: str = "", **kwargs):
+    def fake_transition(*args, extra: str = "", **kwargs):
         extras.append(extra)
-        return next(plans)
+        return next(decisions)
 
-    monkeypatch.setattr(policy, "_invoke_planner", fake_invoke_planner)
+    monkeypatch.setattr(policy, "_invoke_statement_transition", fake_transition)
+    monkeypatch.setattr(
+        "gui_agent.core.supervisor.statement.policy.is_loading_frame",
+        lambda _observation: False,
+    )
 
-    step = policy._plan_single(statement, check, Observation(png_bytes=b"png", source="test"), [])
+    step = policy._run_single_turn(
+        statement,
+        Observation(png_bytes=_png(), source="test"),
+        [],
+    )
 
     assert step.instruction == "点击右上角的保存按钮"
     assert step.drag_column is None
     assert step.drag_steps is None
-    assert any("steps=0" in extra for extra in extras)
+    assert any("already at its target" in extra for extra in extras)
 
 
 def test_alarm_time_value_statement_defaults_to_converge_strategy():
@@ -375,7 +393,7 @@ def test_goal_name_field_is_preserved_after_decompose_patch():
     assert "名称/标签=喝水" in program.statements[0].success_condition
 
 
-def test_iterative_statement_still_uses_screen_stuck(monkeypatch):
+def test_iterative_statement_strategy_change_is_chosen_by_transition(monkeypatch):
     policy = StatementSupervisorPolicy()
     statement = StatementContract(
         id="m2",
@@ -386,22 +404,12 @@ def test_iterative_statement_still_uses_screen_stuck(monkeypatch):
         completion_strategy="repeat_until_satisfied",
     )
     policy.begin_statement(statement, instance_id="i1")
-    check = _SingleCheckResult(
-        status="in_progress",
-        effect_status="unverified",
-        reason="当前中间行仍为 06:51，目标 06:30",
-        summary="当前时间为 06:51",
-    )
-    stuck = ProgressAssessment(
-        status="stalled",
-        reason="连续 3 帧局部与全局均无实质变化",
-        source_type="runtime.screen_progress",
-    )
     history = [
-        PolicyTurn(
-            index=1,
-            observation_source="eval",
-            supervisor=SupervisorStep(
+            PolicyTurn(
+                index=1,
+                observation_source="eval",
+                statement_instance_id="i1",
+                supervisor=SupervisorStep(
                 should_act=True,
                 instruction="在分钟列滚动，把 51 分钟调到 30 分钟",
                 summary="",
@@ -421,31 +429,29 @@ def test_iterative_statement_still_uses_screen_stuck(monkeypatch):
         )
     ]
 
-    monkeypatch.setattr(policy, "_single_check", lambda *args, **kwargs: check)
-    monkeypatch.setattr(policy._monitor, "check_screen_similarity", lambda *args, **kwargs: stuck)
-    monkeypatch.setattr(
-        policy,
-        "_handle_stuck",
-        lambda *args, **kwargs: SupervisorStep(
-            should_act=False,
-            outcome=StatementOutcome.failed("stuck"),
-            summary="stuck handled",
-            statement_id="m2",
-        ),
-    )
+    memory_sections: list[str] = []
+
+    def choose_next(*args, memory_view, **kwargs):
+        memory_sections.append(memory_view.render_prompt_section())
+        return _StatementTransitionResult(
+            kind="act",
+            reason="上一滚动未使 06:51 接近 06:30，改用更大幅度",
+            summary="换一个连续调整策略",
+            action=_TransitionAction(
+                instruction="在分钟列向下大幅滚动以接近 30",
+                atomic_role="iterate",
+                action_family="iterate",
+                direction="decrease",
+                drag_column="minute",
+                drag_current_value=51,
+                drag_target_value=30,
+            ),
+        )
+
+    monkeypatch.setattr(policy, "_invoke_statement_transition", choose_next)
 
     step = policy._run_single_turn(statement, Observation(png_bytes=_png(), source="eval"), history)
 
-    assert step.outcome is not None
-    assert step.outcome.summary == "stuck"
-
-
-def test_progress_value_extracts_time_from_reason_without_missing_evidence():
-    check = _SingleCheckResult(
-        status="in_progress",
-        effect_status="unverified",
-        reason="当前页面为新建闹钟界面，时间设定为上午08:51，尚未达到目标时间06:30。",
-        summary="当前屏幕为新建闹钟界面。",
-    )
-
-    assert ProgressMonitor._extract_progress_value(check) == "上午08:51"
+    assert step.outcome is None
+    assert step.should_act is True
+    assert any("51 分钟调到 30" in section for section in memory_sections)

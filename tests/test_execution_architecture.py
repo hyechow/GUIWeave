@@ -56,7 +56,8 @@ def test_statement_runtime_has_no_parallel_terminal_status():
     assert "status" not in StatementRuntimeState.__dataclass_fields__
     assert "_set_status" not in policy_source
     assert "StatementOutcome.completed" in policy_source
-    assert "StatementOutcome.failed" in policy_source
+    assert "StatementOutcome.exhausted" in policy_source
+    assert "StatementOutcome.infeasible" in policy_source
 
 
 def test_advance_requires_keyword_only_complete_decision():
@@ -74,12 +75,9 @@ def test_advance_requires_keyword_only_complete_decision():
         "success_condition": "postcondition is confirmed",
         "kind": "action",
     })
-    observation = Observation(png_bytes=b"png", source="test")
-
     with pytest.raises(ValueError, match="cannot advance without satisfied"):
         policy._advance(
             statement,
-            observation,
             [],
             decision=CompletionEvaluation("pending", "insufficient evidence"),
         )
@@ -103,7 +101,6 @@ def test_execution_kernel_contains_no_site_or_benchmark_vocabulary():
             "evidence.py",
             "execution_scope.py",
             "observation_state.py",
-            "acquisition.py",
             "model_io.py",
         )
     ]

@@ -11,7 +11,7 @@ sys.path.insert(0, str(PROJECT_ROOT))
 
 from gui_agent.core.run.execution_signals import (
     EvidenceClaim,
-    ExecutionCoordinator,
+    CompletionReducer,
     ExecutionContract,
 )
 
@@ -21,7 +21,7 @@ CASES = Path(__file__).with_name("cases.json")
 
 def main() -> int:
     cases = json.loads(CASES.read_text())
-    coordinator = ExecutionCoordinator()
+    reducer = CompletionReducer()
     failures: list[str] = []
     for case in cases:
         scope = case["scope"]
@@ -37,9 +37,9 @@ def main() -> int:
                 authoritative_for=((item["domain"],) if authoritative else ()),
                 **item,
             ))
-        decision = coordinator.decide(contract, claims, scope=scope)
+        decision = reducer.decide(contract, claims, scope=scope)
         got = {
-            "next": decision.next,
+            "status": decision.status,
             "completion_status": decision.completion_status,
         }
         if got != case["expected"]:

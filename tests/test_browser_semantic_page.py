@@ -3,7 +3,6 @@ from __future__ import annotations
 from gui_agent.adapters.browser.semantic_page import _walk
 from gui_agent.adapters.browser.target_binding import (
     active_surface_id,
-    active_target_aliases,
 )
 from gui_agent.core.schemas import Observation
 
@@ -37,21 +36,6 @@ def test_semantic_tree_excludes_ignored_interactive_nodes():
     assert [item["key"] for item in result] == ["Active control"]
 
 
-def test_browser_adapter_translates_dom_and_ax_targets_to_neutral_aliases():
-    observation = Observation(
-        png_bytes=b"frame",
-        source="browser",
-        form_controls=[{"label": "Field label", "name": "field_name"}],
-        semantic_tree=[{"role": "button", "key": "Action label", "ref": 18, "depth": 0}],
-    )
-
-    assert active_target_aliases(observation) == {
-        "Field label",
-        "field_name",
-        "Action label",
-    }
-
-
 def test_dialog_surface_excludes_background_targets_and_tracks_stage_heading():
     observation = Observation(
         png_bytes=b"frame",
@@ -68,4 +52,3 @@ def test_dialog_surface_excludes_background_targets_and_tracks_stage_heading():
     )
 
     assert active_surface_id(observation) == "dialog:20:Step 2"
-    assert active_target_aliases(observation) == {"Configure", "Next", "Step 2"}

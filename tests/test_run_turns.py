@@ -4,7 +4,10 @@ from types import SimpleNamespace
 
 from gui_agent.core.orchestrator.program import Program, Run
 from gui_agent.core.run import loop as run_loop
-from gui_agent.core.run.turns import SupervisorTimingCarry, make_interactive_turn, make_verdict_turn
+from gui_agent.core.run.turns import (
+    make_interactive_turn,
+    make_statement_outcome_event,
+)
 from gui_agent.core.schemas import (
     BaseActionDecision,
     Observation,
@@ -22,37 +25,46 @@ def _step() -> SupervisorStep:
     )
 
 
-def test_make_verdict_turn_captures_supervisor_state():
-    check = SimpleNamespace(model_dump=lambda exclude_none=True: {"status": "done"})
+def test_make_statement_outcome_event_captures_supervisor_state():
     supervisor = SimpleNamespace(
-        _last_check=check,
-        _last_plan=None,
-        _last_replan=None,
+        _last_action_plan=None,
+        _last_transition_record={
+            "proposal": {
+                "kind": "complete",
+                "reason": "done",
+                "effect_status": "confirmed",
+            },
+            "guard_rejections": [],
+        },
         _timings={"checker": 1.2},
         _token_usage={"checker": {"input": 10, "output": 5}},
         _last_sections_loaded=["orders"],
         _context_reports=[{"kind": "context_budget", "label": "checker.dynamic"}],
     )
 
-    turn = make_verdict_turn(
-        index=2,
+    event = make_statement_outcome_event(
+        after_turn=2,
         observation_source="screen.png",
-        supervisor_step=_step(),
+        supervisor_step=_step().model_copy(update={
+            "statement_id": "s1",
+            "statement_kind": "action",
+        }),
         supervisor=supervisor,
+        outcome=StatementOutcome.completed("完成"),
+        statement_instance_id="i1:s1",
         llm_calls=1,
         input_tokens=10,
         output_tokens=5,
     )
 
-    assert turn.index == 2
-    assert turn.observation_source == "screen.png"
-    assert turn.action_decision is None
-    assert turn.executed is False
-    assert turn.checker == {"status": "done"}
-    assert turn.timings == {"checker": 1.2}
-    assert turn.token_usage == {"checker": {"input": 10, "output": 5}}
-    assert turn.sections_loaded == ["orders"]
-    assert turn.llm_context == [{"kind": "context_budget", "label": "checker.dynamic"}]
+    assert event.after_turn == 2
+    assert event.observation_source == "screen.png"
+    assert event.transition is not None
+    assert event.transition["proposal"]["kind"] == "complete"
+    assert event.timings == {"checker": 1.2}
+    assert event.token_usage == {"checker": {"input": 10, "output": 5}}
+    assert event.sections_loaded == ["orders"]
+    assert event.llm_context == [{"kind": "context_budget", "label": "checker.dynamic"}]
 
 
 def test_grounding_failure_is_recorded_without_dispatch_evidence():
@@ -71,37 +83,6 @@ def test_grounding_failure_is_recorded_without_dispatch_evidence():
     assert turn.action_signal.execution == "not_attempted"
     assert turn.action_signal.action_key == ""
     assert turn.action_signal.mutation_receipt is None
-
-
-def test_supervisor_timing_carry_merges_ordered_timings_and_tokens():
-    carry = SupervisorTimingCarry()
-    first = SimpleNamespace(
-        _timings={"checker": 1.0},
-        _token_usage={"checker": {"input": 2, "output": 3}},
-        _context_reports=[{"kind": "context_budget", "label": "checker.dynamic"}],
-    )
-    final = SimpleNamespace(
-        _timings={"checker": 0.5, "action_policy": 2.0},
-        _token_usage={
-            "checker": {"input": 1, "output": 1},
-            "action_policy": {"input": 4, "output": 6},
-        },
-        _context_reports=[{"kind": "selector", "label": "knowledge.selector"}],
-    )
-
-    carry.collect(first)
-    carry.merge_into(final)
-
-    assert final._timings == {"checker": 1.5, "action_policy": 2.0}
-    assert final._timings_order == ["checker", "action_policy"]
-    assert final._token_usage == {
-        "checker": {"input": 3, "output": 4},
-        "action_policy": {"input": 4, "output": 6},
-    }
-    assert final._context_reports == [
-        {"kind": "context_budget", "label": "checker.dynamic"},
-        {"kind": "selector", "label": "knowledge.selector"},
-    ]
 
 
 def test_agent_loop_first_turn_has_no_deferred_loading_state(monkeypatch, tmp_path):
@@ -155,4 +136,5 @@ def test_agent_loop_first_turn_has_no_deferred_loading_state(monkeypatch, tmp_pa
 
     # ProgramRuntime path: a failed statement becomes an interpreter terminal reply.
     assert "test complete" in result.summary
-    assert len(context.journal.turns) == 1
+    assert len(context.journal.turns) == 0
+    assert len(context.journal.statement_outcomes) == 1

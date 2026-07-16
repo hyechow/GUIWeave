@@ -4,23 +4,26 @@ import inspect
 import re
 from pathlib import Path
 
-from gui_agent.core.run.action_exec import ActionExecutionState
+from gui_agent.core.run.action_exec import ActionExecutor
 from gui_agent.core.run import action_signals, turns
-from gui_agent.core.run.execution_signals import ExecutionCoordinator
+from gui_agent.core.run.execution_signals import CompletionReducer
 from gui_agent.core.supervisor.statement.policy import StatementSupervisorPolicy
 from gui_agent.core.supervisor.statement import evidence, observation_state
-from gui_agent.core.supervisor.statement.schemas import _PlanResult
+from gui_agent.core.supervisor.statement.schemas import _ActionPlan
 
 
 def test_statement_policy_is_the_only_component_with_control_flow_authority() -> None:
     policy_source = inspect.getsource(StatementSupervisorPolicy)
-    executor_source = inspect.getsource(ActionExecutionState)
+    executor_source = inspect.getsource(ActionExecutor)
     signal_source = inspect.getsource(action_signals)
-    evaluator_source = inspect.getsource(ExecutionCoordinator)
+    evaluator_source = inspect.getsource(CompletionReducer)
 
     assert "def _advance(" in policy_source
-    assert "def _handle_stuck(" in policy_source
-    assert "def _recover(" not in policy_source
+    assert "def _run_single_turn(" in policy_source
+    assert "def _handle_stuck(" not in policy_source
+    assert "def _run_loop_turn(" not in policy_source
+    assert "def _single_check(" not in policy_source
+    assert "def _plan_single(" not in policy_source
     assert "authorize_action_dispatch" not in policy_source
 
     assert "validate_action_family" not in executor_source
@@ -30,8 +33,11 @@ def test_statement_policy_is_the_only_component_with_control_flow_authority() ->
 
 
 def test_only_write_target_binding_can_fail_safe_before_dispatch() -> None:
-    source = inspect.getsource(ActionExecutionState.run)
+    source = inspect.getsource(ActionExecutor.run)
 
+    assert source.count("executor.execute(") == 1
+    assert "scroll_probe" not in source
+    assert "scroll_profile" not in source
     assert "action_family" not in source
     assert "effective_action_role(sv_step, action)" in source
     assert "bind_action_target" in source
@@ -39,7 +45,7 @@ def test_only_write_target_binding_can_fail_safe_before_dispatch() -> None:
 
 
 def test_concrete_action_semantics_are_fixed_at_dispatch_boundary() -> None:
-    executor_source = inspect.getsource(ActionExecutionState.run)
+    executor_source = inspect.getsource(ActionExecutor.run)
     recorder_source = inspect.getsource(turns.make_interactive_turn)
 
     assert "effective_action_role" in executor_source
@@ -51,7 +57,7 @@ def test_concrete_action_semantics_are_fixed_at_dispatch_boundary() -> None:
 def test_action_signal_updates_have_one_runtime_writer() -> None:
     signal_source = inspect.getsource(action_signals)
     evidence_source = inspect.getsource(evidence)
-    executor_source = inspect.getsource(ActionExecutionState)
+    executor_source = inspect.getsource(ActionExecutor)
 
     assert 'signal.response = "' in signal_source
     assert 'signal.target = "' in signal_source
@@ -102,14 +108,15 @@ def test_mutation_subject_has_one_runtime_owner() -> None:
 
     assert not hasattr(observation_state, "target_unit_state")
     assert not hasattr(observation_state, "required_group_field_gaps")
-    assert "resolve_mutation" in policy_source
-    assert "target_group_id" not in _PlanResult.model_fields
+    assert "resolve_mutation" not in policy_source
+    assert "_validate_declared_write" in policy_source
+    assert "target_group_id" not in _ActionPlan.model_fields
 
 
-def test_execution_coordinator_has_one_public_decision_api() -> None:
+def test_completion_reducer_has_one_public_decision_api() -> None:
     public = {
         name
-        for name, value in ExecutionCoordinator.__dict__.items()
+        for name, value in CompletionReducer.__dict__.items()
         if callable(value) and not name.startswith("_")
     }
 
@@ -189,6 +196,51 @@ def test_recovery_router_is_stateless_and_program_runtime_keeps_budgets() -> Non
     assert hasattr(ProgramRuntime, "begin_kickback")
     assert hasattr(ProgramRuntime, "next_return_attempt")
     assert hasattr(ProgramRuntime, "record_recovery")
+
+
+def test_policy_has_no_hidden_deterministic_route_output() -> None:
+    """Completion evidence must not drive a hidden compatibility route."""
+    from pathlib import Path
+
+    policy_src = Path("gui_agent/core/supervisor/statement/policy.py").read_text(
+        encoding="utf-8"
+    )
+    assert 'required_role="commit"' not in policy_src
+    assert "post_completion.next == \"commit\"" not in policy_src
+    assert "pre_completion.next ==" not in policy_src
+    assert "resolve_transition" not in policy_src
+    assert "_materialize_transition_action" in policy_src
+    assert "_invoke_statement_transition" in policy_src
+    assert "_invoke_planner" not in policy_src
+    assert "_single_check" not in policy_src
+    assert "advisory_next_ignored" not in policy_src
+
+
+def test_statement_memory_view_is_projection_not_phase_machine() -> None:
+    """Agentic pivot Phase 1: MemoryView has no business phase; Journal remains fact authority."""
+    from gui_agent.core.run.statement_memory import StatementMemoryView, build_memory_view
+    from gui_agent.core.schemas import StatementContract
+
+    fields = set(StatementMemoryView.__dataclass_fields__)
+    assert "phase" not in fields
+    assert "subphase" not in fields
+    assert "durable_facts" in fields
+    assert "recent_steps" in fields
+
+    # Projection only: empty history yields empty durable facts (no invented ledger).
+    empty = build_memory_view(
+        instance_id="i0",
+        contract=StatementContract(
+            id="s",
+            name="n",
+            description="d",
+            success_condition="ok",
+            kind="action",
+        ),
+        history=[],
+    )
+    assert empty.durable_facts == ()
+    assert empty.recent_steps == ()
 
 
 def test_statement_outcome_is_terminal_only_and_not_a_second_state_machine() -> None:

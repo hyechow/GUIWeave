@@ -3,14 +3,13 @@ from pathlib import Path
 
 from gui_agent.core.run.mutation import resolve_mutation
 from gui_agent.core.schemas import (
-    ActionSignal,
     StatementContract,
-    MutationReceipt,
     Observation,
-    PolicyTurn,
-    SupervisorStep,
 )
-from gui_agent.core.supervisor.statement.schemas import _PlanResult, _SingleCheckResult
+from gui_agent.core.supervisor.statement.schemas import (
+    _StatementTransitionResult,
+    _TransitionAction,
+)
 REPLAYS = Path(__file__).resolve().parents[1] / "replay/fixtures/browser"
 CHOICE_FIXTURE = REPLAYS / "152920_choice_surface"
 INTERMEDIATE_FIXTURE = REPLAYS / "205258_intermediate_transition"
@@ -28,7 +27,6 @@ def _observation(root: Path, turn_no: int) -> Observation:
 
 def test_real_152920_choice_surface_resolves_cleanup_then_target_write() -> None:
     from gui_agent.adapters.browser.target_binding import active_choice_controls
-    from gui_agent.core.supervisor.statement.policy import StatementSupervisorPolicy
 
     statement = StatementContract(
         id="m8_action",
@@ -38,32 +36,13 @@ def test_real_152920_choice_surface_resolves_cleanup_then_target_write() -> None
         kind="action",
         target_values={"Color": "green", "Size": "XXXL"},
     )
-    policy = StatementSupervisorPolicy(
-        mutation_control_resolver=active_choice_controls,
-    )
     states: dict[int, str] = {}
-    targets: dict[int, str] = {}
     for turn_no in (24, 25, 26):
         observation = _observation(CHOICE_FIXTURE, turn_no)
         derived = active_choice_controls(observation, statement.target_values)
-        normalized = policy._mutation_observation(  # noqa: SLF001 - replay the policy seam
-            observation,
-            statement.target_values,
-        )
+        normalized = observation.model_copy(update={"form_controls": derived})
         subject = resolve_mutation(statement, normalized, [])
         states[turn_no] = subject.status
-        targets[turn_no] = subject.target_control
-        step = policy._plan_single(  # noqa: SLF001 - replay the production policy seam
-            statement,
-            _SingleCheckResult(
-                status="in_progress",
-                reason="the exact declared choices are not ready",
-                summary="choice preparation is pending",
-                effect_status="unmet",
-            ),
-            normalized,
-            [],
-        )
 
         assert len(derived) == 33
         assert [
@@ -74,23 +53,8 @@ def test_real_152920_choice_surface_resolves_cleanup_then_target_write() -> None
             {"select_all": "Select All", "clear_all": "Deselect All"},
             {"select_all": "Select All", "clear_all": "Deselect All"},
         ]
-        if turn_no < 26:
-            assert step.atomic_role == "prepare"
-            assert step.requires_mutation_authorization is False
-        else:
-            assert step.atomic_role == "write"
-            assert step.mutation_authorization is not None
-            assert step.mutation_authorization.source == "visual"
-            assert step.mutation_authorization.subject_ref.startswith("choice:dialog:")
 
-    assert states == {24: "preparing", 25: "preparing", 26: "writable"}
-    assert targets == {
-        24: "Size Deselect All",
-        25: "Color Deselect All",
-        26: "Color green",
-    }
-    assert subject.target_control == "Color green"
-    assert subject.source == "visual"
+    assert states == {24: "writable", 25: "writable", 26: "writable"}
 
 
 def test_real_choice_surface_executes_multi_value_contract_as_exact_set() -> None:
@@ -128,15 +92,11 @@ def test_real_choice_surface_executes_multi_value_contract_as_exact_set() -> Non
             [],
         )
 
-    assert (state().status, state().target_control) == ("writable", "Size XXXL")
-    assert (state("XXXL").status, state("XXXL").target_control) == (
-        "writable", "Color Blue",
-    )
-    assert (state("XXXL", "Blue").status, state("XXXL", "Blue").target_control) == (
-        "writable", "Color Purple",
-    )
+    assert state().status == "writable"
+    assert state("XXXL").status == "writable"
+    assert state("XXXL", "Blue").status == "writable"
     assert state("XXXL", "Blue", "Purple").status == "complete"
-    assert state("XXXL", "Blue", "Purple", "Green").status == "preparing"
+    assert state("XXXL", "Blue", "Purple", "Green").status == "writable"
     assert resolve_mutation(
         statement, Observation(png_bytes=b"visual-only", source="browser"), []
     ).status == "unknown"
@@ -146,7 +106,6 @@ def test_real_205258_completed_choice_set_keeps_intermediate_transition_prepare(
     from gui_agent.adapters.browser.target_binding import (
         active_choice_controls,
         active_surface_id,
-        active_target_aliases,
     )
     from gui_agent.core.supervisor.statement.policy import StatementSupervisorPolicy
 
@@ -161,10 +120,10 @@ def test_real_205258_completed_choice_set_keeps_intermediate_transition_prepare(
     )
     observation = _observation(INTERMEDIATE_FIXTURE, 28)
     policy = StatementSupervisorPolicy(
-        active_target_resolver=active_target_aliases,
         mutation_control_resolver=active_choice_controls,
         surface_resolver=active_surface_id,
     )
+    policy.begin_statement(statement, instance_id="i1")
     normalized = policy._mutation_observation(  # noqa: SLF001 - replay production seam
         observation,
         statement.target_values,
@@ -173,61 +132,25 @@ def test_real_205258_completed_choice_set_keeps_intermediate_transition_prepare(
         statement,
         normalized,
         [],
-        surface_id=active_surface_id(observation),
     )
-    history = [
-        PolicyTurn(
-            index=27,
-            observation_source="browser",
-            supervisor=SupervisorStep(
-                should_act=True,
-                instruction="select the final declared choice",
-                summary="",
-                statement_id=statement.id,
-                atomic_role="write",
-                target_control="Size XXS",
-                target_value="XXS",
-            ),
-            executed=True,
-            action_signal=ActionSignal(
-                role="write",
-                target_control="Size XXS",
-                target_value="XXS",
-                execution="dispatched",
-                target="on_target",
-                response="observed",
-                surface_id=active_surface_id(observation),
-                mutation_receipt=MutationReceipt(
-                    statement_id=statement.id,
-                    subject_ref=subject.subject_ref,
-                    field="Size",
-                    intended_value="XXS",
-                    source="structural",
-                ),
-            ),
-        )
-    ]
-    proposal = _PlanResult(
-        instruction="advance the current workflow",
+    decision = _StatementTransitionResult(
+        kind="act",
+        reason="declared choices are complete but the workflow has not reached persistence",
         summary="the local choices are complete; continue to the next workflow surface",
-        atomic_role="prepare",
-        action_family="activate",
-        target_control="Next",
-    )
-    policy._invoke_planner = lambda *_args, **_kwargs: proposal  # type: ignore[method-assign]
-
-    step = policy._plan_single(  # noqa: SLF001 - replay production policy seam
-        statement,
-        _SingleCheckResult(
-            status="in_progress",
-            reason="declared choices are complete but the workflow has not reached persistence",
-            summary="continue the workflow",
-            effect_status="unverified",
+        action=_TransitionAction(
+            instruction="advance the current workflow",
+            atomic_role="prepare",
+            action_family="activate",
+            target_control="Next",
         ),
-        normalized,
-        history,
+    )
+    step, rejection = policy._materialize_transition_action(  # noqa: SLF001
+        decision,
+        statement,
+        execution_scope=policy._scope_for(statement, normalized),
     )
 
+    assert rejection == "" and step is not None
     assert subject.status == "complete"
     assert step.should_act is True
     assert step.atomic_role == "prepare"

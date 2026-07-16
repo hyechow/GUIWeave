@@ -105,11 +105,3 @@ def test_longest_path_wins_when_instruction_has_other_slashes():
 
     assert result.action.action_type == "upload"
     assert result.action.file_path == "/Users/hyde/Downloads/交管测试专用地图_2楼.map_export"
-
-
-def test_replan_prompt_knows_upload_action():
-    # Regression guard: Turn5 of 20260616_200258 wasted a turn because REPLAN_PROMPT
-    # had no upload rule while PLAN_PROMPT did. The two prompts must stay symmetric.
-    from gui_agent.adapters.browser.supervisor.statement.prompts import REPLAN_PROMPT
-
-    assert "上传文件" in REPLAN_PROMPT

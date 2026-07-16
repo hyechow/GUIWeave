@@ -14,5 +14,23 @@
     },
     "grid_total_records": 3,
     "expect_filter_gate_done": true
+  },
+  {
+    "label": "webarena551_product_attributes_server_rendered_filter_20260716_120342",
+    "source_run": "logs/gui_agent/webarena/browser/20260716_120342",
+    "goal": "Add new size 30 and 31 to all color variants of Diana Tights",
+    "statement_name": "在 Attribute Code 列用精确值'size'筛选",
+    "success_condition": "Attribute Code 精确筛选已应用，records-found 计数可读",
+    "target_values": {"Attribute Code": "size"},
+    "applied_filters": {"Attribute Code": "size"},
+    "applied_filter_meta": {
+      "source": "legacy_rendered",
+      "indicator_channel": "absent",
+      "fallback_channel": "present",
+      "chip_container": "absent",
+      "legacy_grid": "present"
+    },
+    "grid_total_records": 1,
+    "expect_filter_gate_done": true
   }
 ]

@@ -8,7 +8,10 @@ from PIL import Image, ImageDraw
 
 from gui_agent.core.schemas import StatementContract, Observation
 from gui_agent.core.supervisor.statement import StatementSupervisorPolicy
-from gui_agent.core.supervisor.statement.schemas import _SingleCheckResult
+from gui_agent.core.supervisor.statement.schemas import (
+    _StatementTransitionResult,
+    _TransitionEvidence,
+)
 
 
 def _png() -> bytes:
@@ -39,13 +42,16 @@ def _policy(task_type: str = "analysis") -> tuple[StatementSupervisorPolicy, Sta
 
 def test_done_read_once_collection_requests_reader():
     policy, statement = _policy("analysis")
-    policy._single_check = lambda *a, **k: _SingleCheckResult(  # type: ignore[assignment]
-        status="done",
-        effect_status="confirmed",
+    policy._invoke_statement_transition = lambda *a, **k: _StatementTransitionResult(  # type: ignore[assignment]
+        kind="complete",
         reason="The result count is visible.",
         summary="The page shows a result count.",
         page_identity="Result list",
         read_instruction="Extract the visible result count.",
+        evidence=[_TransitionEvidence(
+            source="current_observation",
+            claim="The result count is visible.",
+        )],
     )
 
     step = policy._run_single_turn(statement, Observation(png_bytes=_png(), source="eval"), [])
@@ -57,13 +63,16 @@ def test_done_read_once_collection_requests_reader():
 
 def test_action_task_done_collection_does_not_collect_notes():
     policy, statement = _policy("action")
-    policy._single_check = lambda *a, **k: _SingleCheckResult(  # type: ignore[assignment]
-        status="done",
-        effect_status="confirmed",
+    policy._invoke_statement_transition = lambda *a, **k: _StatementTransitionResult(  # type: ignore[assignment]
+        kind="complete",
         reason="The action result is visible.",
         summary="The page shows the target state.",
         page_identity="Result list",
         read_instruction="Extract the visible result count.",
+        evidence=[_TransitionEvidence(
+            source="current_observation",
+            claim="The action result is visible.",
+        )],
     )
 
     step = policy._run_single_turn(statement, Observation(png_bytes=_png(), source="eval"), [])

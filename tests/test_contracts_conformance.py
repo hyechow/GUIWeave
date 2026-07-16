@@ -107,26 +107,21 @@ def test_statement_prompts_injected_from_adapter():
 
     iphone = _build_supervisor(StatementSupervisorPolicy.name)
     assert iphone._prompts is IPHONE_STATEMENT_PROMPTS
-    assert all(
-        getattr(iphone._prompts, f)
-        for f in (
-            "single_checker", "check_kind_sections", "check_section_default",
-            "check_section_converge", "loop_frame", "plan", "loop_scroll", "replan",
-        )
-    )
+    assert set(StatementPrompts.__dataclass_fields__) == {
+        "image_resize",
+        "home_identity_markers",
+        "transition",
+    }
+    assert iphone._prompts.image_resize == "retina"
 
 
 def test_statement_vision_prompts_keep_runtime_data_out_of_templates():
-    # Vision statement prompts are stable task instructions. Runtime state (statement,
-    # constraints, checker result, history, loop summaries) enters through ContextBlock
-    # and assemble_messages, not str.format placeholders in prompt assets.
+    # Runtime state enters through ContextBlock, not str.format placeholders in the one
+    # shared Transition prompt.
     import string
 
-    from gui_agent.adapters.android.supervisor.statement.prompts import ANDROID_STATEMENT_PROMPTS
-    from gui_agent.adapters.browser.supervisor.statement.prompts import BROWSER_STATEMENT_PROMPTS
-    from gui_agent.adapters.iphone.supervisor.statement.prompts import IPHONE_STATEMENT_PROMPTS
+    from gui_agent.prompts import load_prompt_text
 
-    fields = ("single_checker", "plan", "loop_frame", "loop_scroll", "replan")
     forbidden = {
         "app_name_context", "statement_name", "statement_desc", "success_condition",
         "statement_kind", "completion_strategy", "task_type", "constraints",
@@ -135,11 +130,9 @@ def test_statement_vision_prompts_keep_runtime_data_out_of_templates():
         "stuck_reason", "retry_count", "failure_hints", "completed_statements",
         "tried_instructions",
     }
-    for prompts in (IPHONE_STATEMENT_PROMPTS, BROWSER_STATEMENT_PROMPTS, ANDROID_STATEMENT_PROMPTS):
-        for field in fields:
-            template = getattr(prompts, field)
-            used = {fn for _, fn, _, _ in string.Formatter().parse(template) if fn}
-            assert not (used & forbidden), f"{field} still contains runtime placeholders: {used & forbidden}"
+    template = load_prompt_text("task.statement.transition")
+    used = {field for _, field, _, _ in string.Formatter().parse(template) if field}
+    assert not (used & forbidden)
 
 
 def test_core_statement_is_leaf_without_iphone_prompts():
@@ -265,6 +258,7 @@ def test_build_platform_returns_iphone_bundle():
         "make_supervisor",
         "make_status_reporter",
         "make_action_visualizer",
+        "make_stitch_accumulator",
     ):
         assert callable(getattr(bundle, attr)), attr
     # iphone has no action visualizer yet (agent_cursor wiring is a follow-up).
@@ -352,11 +346,7 @@ def test_build_platform_returns_browser_bundle():
         "make_supervisor",
         "make_status_reporter",
         "make_action_visualizer",
-        "make_scroll_probe",
-        "apply_scroll_profile",
         "make_stitch_accumulator",
-        "robust_shift",
-        "gray_u8",
     ):
         assert callable(getattr(bundle, attr)), attr
     # HUD is created only when enabled; disabled -> None. (Enabling spawns a real
@@ -367,45 +357,18 @@ def test_build_platform_returns_browser_bundle():
     visualizer = bundle.make_action_visualizer(None)
     assert visualizer is not None
     assert isinstance(visualizer, ActionVisualizer)
-    # A cached profile reuses behavior but recomputes a safe non-control anchor each frame.
-    from gui_agent.adapters.browser.scroll_probe import BrowserScrollProfile
-    from gui_agent.core.schemas import Action
-
-    _pinned = bundle.apply_scroll_profile(
-        Action(action_type="scroll", direction="down", amount="medium"),
-        BrowserScrollProfile(x=123.0, y=456.0, direction="down"),
-    )
-    assert _pinned.x is None and _pinned.y is None and _pinned.direction == "down"
 
 
-def test_browser_scroll_collect_is_implemented():
-    # Browser collection reuses the NEUTRAL core.vision.stitch algos (whole-frame content
-    # band, no device mask) + a trivial deterministic-wheel scroll-probe. The runner's
-    # collection branch must receive real working objects (not the old stubs).
-    import io
-
-    import numpy as np
-    from PIL import Image
-
+def test_browser_read_stitching_is_implemented():
+    # Stitching observes frames produced by explicit, journalled scroll actions.
     from gui_agent.core.runtime.factory import build_platform
     from gui_agent.core.vision.stitch import StitchAccumulator
 
     bundle = build_platform("browser")
-    buf = io.BytesIO()
-    Image.new("RGB", (400, 800), "white").save(buf, "PNG")
-    png = buf.getvalue()
-
-    g = bundle.gray_u8(png)
-    assert isinstance(g, np.ndarray)
-    assert bundle.robust_shift(g, g) == (0, 0.0)            # identical frame -> no progress
-
     acc = bundle.make_stitch_accumulator(overlap_px=150)
     assert isinstance(acc, StitchAccumulator)
     # browser uses the whole frame as content (no iOS status bar to crop), no mask
     assert acc._content_top == 0.0 and acc._content_bot == 1.0 and acc._frame_mask is None
-
-    probe = bundle.make_scroll_probe(None, None, None)
-    assert hasattr(probe, "probe")
 
 
 def test_core_factory_stays_leaf_without_browser_adapter():
@@ -489,11 +452,7 @@ def test_build_platform_returns_android_bundle():
         "make_supervisor",
         "make_status_reporter",
         "make_action_visualizer",
-        "make_scroll_probe",
-        "apply_scroll_profile",
         "make_stitch_accumulator",
-        "robust_shift",
-        "gray_u8",
     ):
         assert callable(getattr(bundle, attr)), attr
     # HUD only when enabled (passing False must NOT spawn the tkinter subprocess).
@@ -502,8 +461,6 @@ def test_build_platform_returns_android_bundle():
     visualizer = bundle.make_action_visualizer(None)
     assert visualizer is not None
     assert isinstance(visualizer, ActionVisualizer)
-    # apply_scroll_profile is the identity pass-through.
-    assert bundle.apply_scroll_profile("ACT", "PROF") == "ACT"
 
 
 def test_android_visualizer_conforms():
@@ -514,9 +471,8 @@ def test_android_visualizer_conforms():
     assert isinstance(_blank(AndroidActionVisualizer), ActionVisualizer)
 
 
-def test_android_scroll_collect_fields_are_stubs():
-    # The iphone-shaped scroll/stitch helpers are only hit in the runner's
-    # collection branch, which the android MVP does not support. They must raise a
+def test_android_read_stitching_is_an_explicit_stub():
+    # Android does not support stitched reads yet. It must raise a
     # clear NotImplementedError rather than silently returning bad objects.
     import pytest
 
@@ -524,13 +480,7 @@ def test_android_scroll_collect_fields_are_stubs():
 
     bundle = build_platform("android")
     with pytest.raises(NotImplementedError):
-        bundle.make_scroll_probe(None, None, None)
-    with pytest.raises(NotImplementedError):
         bundle.make_stitch_accumulator()
-    with pytest.raises(NotImplementedError):
-        bundle.robust_shift()
-    with pytest.raises(NotImplementedError):
-        bundle.gray_u8(b"")
 
 
 def test_core_factory_stays_leaf_without_android_adapter():

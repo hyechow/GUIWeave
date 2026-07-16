@@ -1,40 +1,32 @@
 from __future__ import annotations
 
-import pytest
-
 from gui_agent.core.orchestrator.program import Finish, Program, Run
 from gui_agent.core.orchestrator.runner import Interpreter, RunRecord
 from gui_agent.core.run.statements.outcome import StatementOutcome
 from gui_agent.core.run.action_signals import effective_action_role, semantic_action_key
-from gui_agent.core.run.loop import _needs_terminal_reconciliation, _turn_budget_mode
 from gui_agent.core.run.result import orchestration_result
-from gui_agent.core.run.turns import interactive_turn_count, make_interactive_turn, make_verdict_turn
+from gui_agent.core.run.turns import make_interactive_turn
 from gui_agent.core.schemas import (
     ActionSignal,
     BaseAction,
     BaseActionDecision,
     EffectSignal,
     StatementContract,
-    MutationAuthorization,
     MutationReceipt,
     Observation,
     PolicyContext,
     PolicyTurn,
     SupervisorStep,
+    TargetBinding,
 )
 from gui_agent.core.supervisor.statement import policy as policy_module
-from gui_agent.core.supervisor.statement.evidence import action_lifecycle_claims, checker_claim
+from gui_agent.core.supervisor.statement.evidence import action_lifecycle_claims
 from gui_agent.core.supervisor.statement.policy import StatementSupervisorPolicy
-from gui_agent.core.supervisor.statement.schemas import _PlanResult, _SingleCheckResult
-
-
-def test_checker_payload_requires_explicit_effect_status() -> None:
-    with pytest.raises(ValueError, match="effect_status"):
-        _SingleCheckResult.model_validate({
-            "status": "done",
-            "reason": "visible state looks complete",
-            "summary": "done",
-        })
+from gui_agent.core.supervisor.statement.schemas import (
+    _StatementTransitionResult,
+    _TransitionAction,
+    _TransitionEvidence,
+)
 
 
 def _step(
@@ -93,31 +85,6 @@ def test_commit_key_ignores_button_coordinate_within_same_resource():
     )
 
 
-def test_write_key_keeps_structural_group_identity():
-    action = BaseAction(
-        action_type="type",
-        x=500,
-        y=700,
-        text="XXXL",
-        description="输入 XXXL",
-    )
-    def authorized(subject_ref: str) -> SupervisorStep:
-        return _step(role="write").model_copy(update={
-            "mutation_authorization": MutationAuthorization(
-                statement_id="m1",
-                subject_ref=subject_ref,
-                field="Size",
-                desired_value="XXXL",
-                source="structural",
-            )
-        })
-
-    first = authorized("collection:20")
-    second = authorized("collection:21")
-
-    assert semantic_action_key(first, action) != semantic_action_key(second, action)
-
-
 def test_ensure_draft_fields_require_commit_before_statement_advance(monkeypatch):
     """Replay 20260712_122035 T10-T12: matching draft controls are not persistence."""
     statement = StatementContract(
@@ -149,14 +116,6 @@ def test_ensure_draft_fields_require_commit_before_statement_advance(monkeypatch
             action_family="input",
             target_control=control,
             target_value="XXXL",
-            mutation_authorization=MutationAuthorization(
-                statement_id="m1",
-                subject_ref="collection:19",
-                field=control,
-                desired_value="XXXL",
-                source="structural",
-            ),
-            requires_mutation_authorization=True,
         )
         decision = BaseActionDecision(action=BaseAction(
             action_type="type",
@@ -172,6 +131,11 @@ def test_ensure_draft_fields_require_commit_before_statement_advance(monkeypatch
             supervisor_step=step,
             action_decision=decision,
             executed=True,
+            binding=TargetBinding(
+                status="bound",
+                source="structural",
+                unit_id="collection:19",
+            ),
             statement_instance_id="test:action-signal",
         )
 
@@ -202,30 +166,28 @@ def test_ensure_draft_fields_require_commit_before_statement_advance(monkeypatch
             },
         ],
     )
-    checker_calls: list[int] = []
+    transition_calls: list[int] = []
     policy = StatementSupervisorPolicy()
     policy.begin_statement(statement, instance_id="test:action-signal")
-    policy._single_check = lambda *_args, **_kwargs: (  # type: ignore[method-assign]
-        checker_calls.append(1)
-        or _SingleCheckResult(
-            status="in_progress",
+    policy._invoke_statement_transition = lambda *_args, **_kwargs: (  # type: ignore[method-assign]
+        transition_calls.append(1)
+        or _StatementTransitionResult(
+            kind="act",
             reason="draft fields match but Save has not been dispatched",
-            summary="commit pending",
-            effect_status="unverified",
+            summary="persist draft",
+            action=_TransitionAction(
+                instruction="click Save",
+                atomic_role="commit",
+                action_family="activate",
+                target_control="Save",
+            ),
         )
-    )
-    policy._invoke_planner = lambda *_args, **_kwargs: _PlanResult(  # type: ignore[method-assign]
-        instruction="click Save",
-        summary="persist draft",
-        atomic_role="commit",
-        action_family="activate",
-        target_control="Save",
     )
     monkeypatch.setattr(policy_module, "is_loading_frame", lambda _observation: False)
 
     step = policy._run_single_turn(statement, observation, history)
 
-    assert checker_calls == [1]
+    assert transition_calls == [1]
     assert step.outcome is None
     assert step.should_act is True
     assert step.atomic_role == "commit"
@@ -296,38 +258,7 @@ def test_make_turn_records_concrete_write_value():
     assert turn.action_signal.target_value == "Minerva LumaTech V-Tee"
 
 
-def test_observation_only_verdict_reconciles_pending_dispatch_without_spending_turn():
-    policy = StatementSupervisorPolicy()
-    dispatched = _turn(index=1, step=_step())
-    context = PolicyContext(
-        goal="g",
-        supervisor_policy_name="statement",
-        action_policy_name="action",
-        journal={"events": [dispatched]},
-    )
-
-    assert _needs_terminal_reconciliation(context) is True
-    assert _turn_budget_mode(context, max_turns=1) == "reconcile"
-    observation_turn = make_verdict_turn(
-        index=2,
-        observation_source="browser",
-        supervisor_step=SupervisorStep(
-            should_act=False,
-            summary="final state remains incomplete",
-            statement_id="m1",
-        ),
-        supervisor=policy,
-        observation_only=True,
-    )
-    context.journal.append_turn(observation_turn)
-
-    assert observation_turn.operation_mode == "observation"
-    assert interactive_turn_count(context) == 1
-    assert _needs_terminal_reconciliation(context) is False
-    assert _turn_budget_mode(context, max_turns=1) == "stop"
-
-
-def test_reconcile_never_invokes_planner_for_incomplete_statement(monkeypatch):
+def test_reconcile_vetoes_transition_action_for_incomplete_statement(monkeypatch):
     statement = StatementContract(
         id="m1",
         name="change target and save",
@@ -337,21 +268,20 @@ def test_reconcile_never_invokes_planner_for_incomplete_statement(monkeypatch):
     )
     policy = StatementSupervisorPolicy()
     policy.begin_statement(statement, instance_id="test:action-signal")
-    monkeypatch.setattr(
-        policy,
-        "_single_check",
-            lambda *_args, **_kwargs: _SingleCheckResult(
-                status="in_progress",
-                effect_status="unverified",
-            reason="target write was observed but save is still pending",
+    decisions: list[int] = []
+    monkeypatch.setattr(policy, "_invoke_statement_transition", lambda *a, **k: (
+        decisions.append(1)
+        or _StatementTransitionResult(
+            kind="act",
+            reason="save remains",
             summary="save remains",
-        ),
-    )
-    monkeypatch.setattr(
-        policy,
-        "_invoke_planner",
-        lambda *_args, **_kwargs: pytest.fail("reconcile must not invoke planner"),
-    )
+            action=_TransitionAction(
+                instruction="click Save",
+                atomic_role="commit",
+                action_family="activate",
+            ),
+        )
+    ))
     monkeypatch.setattr(
         "gui_agent.core.supervisor.statement.policy.is_loading_frame",
         lambda _observation: False,
@@ -364,11 +294,13 @@ def test_reconcile_never_invokes_planner_for_incomplete_statement(monkeypatch):
     )
 
     assert step.should_act is False
-    assert step.outcome is None
-    assert "save is still pending" in step.summary
+    assert step.outcome is not None
+    assert step.outcome.phase == "exhausted"
+    assert len(decisions) == 2
+    assert "hard-budget final frame" in step.summary
 
 
-def test_legacy_effect_does_not_reenter_current_lifecycle_evidence():
+def test_authoritative_negative_effect_reenters_lifecycle_evidence():
     policy = StatementSupervisorPolicy()
     statement = StatementContract(
         id="m1",
@@ -386,7 +318,7 @@ def test_legacy_effect_does_not_reenter_current_lifecycle_evidence():
         statement_id="m1",
         status="contradicted",
         freshness="current_run",
-        source_type="legacy.effect",
+        source_type="adapter.validation",
         authoritative=True,
         evidence=["the attempted route produced the wrong result"],
     )
@@ -397,50 +329,12 @@ def test_legacy_effect_does_not_reenter_current_lifecycle_evidence():
         [dispatched],
         scope="statement:m1",
     )
-    assert all(item.domain != "effect.state" for item in claims)
+    effect = next(item for item in claims if item.domain == "effect.state")
+    assert effect.value == "contradicted"
+    assert effect.authoritative
 
 
-def test_verdict_turn_persists_current_effect_projection() -> None:
-    policy = StatementSupervisorPolicy()
-    turn = make_verdict_turn(
-        index=1,
-        observation_source="browser",
-        supervisor_step=SupervisorStep(
-            should_act=False,
-            instruction=None,
-            summary="target state confirmed",
-            statement_id="m1",
-            effect_signal=EffectSignal(
-                statement_id="m1",
-                status="satisfied",
-                source_type="obs.mutation.desired_state",
-                authoritative=True,
-                evidence=["the declared collection is complete"],
-            ),
-        ),
-        supervisor=policy,
-        statement_instance_id="i1",
-    )
-
-    assert turn.effect_signal is not None
-    assert turn.effect_signal.status == "satisfied"
-    assert turn.supervisor.effect_signal is None
-
-
-def test_unmet_checker_state_is_not_a_failure():
-    check = _SingleCheckResult(
-        status="in_progress",
-        reason="the workflow is still on an intermediate step",
-        summary="target remains pending",
-        effect_status="unmet",
-    )
-    assert checker_claim(check, scope="statement:m1").value == "unmet"
-
-
-@pytest.mark.parametrize("checker_status", ["in_progress", "done"])
-def test_terminal_dispatch_without_persistence_response_waits_for_observation(
-    monkeypatch, checker_status
-):
+def test_terminal_dispatch_without_persistence_response_can_choose_an_action(monkeypatch):
     policy = StatementSupervisorPolicy()
     statement = StatementContract(
         id="m1",
@@ -462,15 +356,17 @@ def test_terminal_dispatch_without_persistence_response_waits_for_observation(
         "gui_agent.core.supervisor.statement.policy.is_loading_frame",
         lambda _obs: False,
     )
-    monkeypatch.setattr(
-        policy,
-        "_single_check",
-        lambda *a, **k: _SingleCheckResult(
-            status=checker_status,
+    monkeypatch.setattr(policy, "_invoke_statement_transition", lambda *a, **k:
+        _StatementTransitionResult(
+            kind="act",
             reason="未看到成功提示",
             summary="缺少可见反馈",
-            effect_status="unverified",
-        ),
+            action=_TransitionAction(
+                instruction="点击刷新以验证保存结果",
+                atomic_role="prepare",
+                action_family="activate",
+            ),
+        )
     )
 
     result = policy._run_single_turn(
@@ -480,7 +376,7 @@ def test_terminal_dispatch_without_persistence_response_waits_for_observation(
     )
 
     assert result.outcome is None
-    assert result.should_act is False
+    assert result.should_act is True
 
 
 def test_redirected_commit_uses_success_contract_and_is_not_preexisting(monkeypatch):
@@ -500,23 +396,21 @@ def test_redirected_commit_uses_success_contract_and_is_not_preexisting(monkeypa
         _turn(index=1, step=_step(scope="row:attribute/144", role="write"), role="write"),
         _turn(index=2, step=source_step),
     ]
-    policy._monitor.observe_effect("http://x/attribute/144", "draft")
     monkeypatch.setattr(
         "gui_agent.core.supervisor.statement.policy.is_loading_frame",
         lambda _obs: False,
     )
-    checker_calls: list[int] = []
-
-    def _unverified_feedback(*_args, **_kwargs):
-        checker_calls.append(1)
-        return _SingleCheckResult(
-            status="in_progress",
-            reason="保存请求已响应，但当前帧不能直接读取集合成员",
-            summary="提交有响应，结果尚未完全确认",
-            effect_status="unverified",
-        )
-
-    monkeypatch.setattr(policy, "_single_check", _unverified_feedback)
+    monkeypatch.setattr(
+        policy,
+        "_invoke_statement_transition",
+        lambda *a, **k: _StatementTransitionResult(
+            kind="complete",
+            reason="Save dispatch is in memory and the destination page is visible",
+            evidence=[_TransitionEvidence(
+                source="journal", event_ref="turn:2", claim="Save was dispatched"
+            )],
+        ),
+    )
 
     result = policy._run_single_turn(
         statement,
@@ -532,10 +426,7 @@ def test_redirected_commit_uses_success_contract_and_is_not_preexisting(monkeypa
     assert result.outcome is not None
     assert result.outcome.verification == "accepted_unverified"
     assert result.pre_existing is False
-    assert checker_calls == [1]
     assert history[-1].action_signal is not None
-    assert history[-1].action_signal.response == "observed"
-    assert set(history[-1].action_signal.response_channels) == {"url", "dom"}
 
 
 def test_redirected_commit_ignores_destination_only_absence(monkeypatch):
@@ -567,21 +458,19 @@ def test_redirected_commit_ignores_destination_only_absence(monkeypatch):
         source="structural",
     )
     history = [write, _turn(index=2, step=_step(scope="row:record/7"))]
-    policy._monitor.observe_effect("http://x/record/7", "draft")
     monkeypatch.setattr(
         "gui_agent.core.supervisor.statement.policy.is_loading_frame",
         lambda _obs: False,
     )
     monkeypatch.setattr(
         policy,
-        "_single_check",
-        lambda *_args, **_kwargs: _SingleCheckResult(
-            status="in_progress",
-            reason="the destination list does not render the source form fields",
-            summary="source-local state is outside this frame",
-            missing_evidence=["source form fields"],
-            visible_evidence=[],
-            effect_status="unmet",
+        "_invoke_statement_transition",
+        lambda *a, **k: _StatementTransitionResult(
+            kind="complete",
+            reason="the source write and Save dispatch are Journal facts",
+            evidence=[_TransitionEvidence(
+                source="journal", event_ref="turn:2", claim="Save was dispatched"
+            )],
         ),
     )
 

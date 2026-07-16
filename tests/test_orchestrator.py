@@ -490,30 +490,28 @@ def test_supervisor_begins_single_statement():
     p.begin_statement(contract_for_run(nav, 0), instance_id="i1", task_type="analysis")
     assert p._active_statement is not None and p._active_statement.id == "d"
     assert p.task_type == "analysis"          # 读取门由 task_type 控制
-    # Statement-local frame/scroll state is fresh at begin(statement).
-    assert list(p._monitor._recent_screenshots) == []
-    assert p._scroll_count == 0
+    # The minimal runtime keeps only invocation identity and the frozen contract.
+    assert p._rt.instance_id == "i1"
+    assert p._rt.contract.id == "d"
+    assert not hasattr(p._rt, "scroll_count")
 
 
-def test_begin_fresh_advance_nav_skips_initial_check():
-    # A freshly advanced navigation statement skips its first done-check.
-    # (in_progress by construction); action/filter keep it; a non-fresh reseed never skips.
+def test_begin_has_no_handoff_mode_and_contract_semantics_are_canonical():
+    # Unified Transition has no checker-skip handoff mode; begin only receives the contract.
+    import inspect
     from gui_agent.core.supervisor.statement.policy import StatementSupervisorPolicy
     from gui_agent.core.run.interactive import contract_for_run
     p = StatementSupervisorPolicy()
+    assert "fresh_advance" not in inspect.signature(p.begin_statement).parameters
     p.begin_statement(
         contract_for_run(Run(name="进页", kind="navigation"), 0),
         instance_id="test:nav-1",
-        fresh_advance=True,
     )
-    assert p._skip_initial_check is True                  # nav + 刚推进 → 跳 check
     p.end_statement()
     p.begin_statement(
         contract_for_run(Run(name="点按钮", kind="action"), 1),
         instance_id="test:action-1",
-        fresh_advance=True,
     )
-    assert p._skip_initial_check is False                 # action → 保留 check（防双执行）
     interaction = contract_for_run(
         Run(name="打开详情面板", kind="action", target_controls=["Details"]),
         1,
@@ -559,23 +557,6 @@ def test_begin_fresh_advance_nav_skips_initial_check():
     assert result_action.effect_mode == "dispatch"
     assert ExecutionContract.from_statement(result_action).completion_mode == "mutation"
     assert contract_for_run(Run(name="进页", kind="navigation"), 2).effect_mode is None
-    p.end_statement()
-    p.begin_statement(
-        contract_for_run(Run(name="进页", kind="navigation"), 2),
-        instance_id="test:nav-2",
-        fresh_advance=False,
-    )
-    assert p._skip_initial_check is False                 # 非交接（如首个 statement）→ 不跳
-    # precondition 仍是 navigation edge，不能由 checker 在无动作证据时直接判为 PreExisting。
-    p.end_statement()
-    p.begin_statement(
-        contract_for_run(
-            Run(name="确保在列表页", kind="navigation", precondition=True), 3,
-        ),
-        instance_id="test:nav-3",
-        fresh_advance=True,
-    )
-    assert p._skip_initial_check is True
 
 
 def test_canonical_effect_contract_survives_both_model_boundaries():
@@ -603,37 +584,36 @@ def test_canonical_effect_contract_survives_both_model_boundaries():
     )
 
 
-def test_advance_persists_done_check_on_terminal_completion():
-    # The terminal observation turn projects the live checker snapshot into the report.
+def test_advance_emits_outcome_without_mutable_done_check():
     from gui_agent.core.supervisor.statement.policy import StatementSupervisorPolicy
-    from gui_agent.core.supervisor.statement.schemas import _SingleCheckResult
     from gui_agent.core.run.interactive import contract_for_run
     from gui_agent.core.schemas import Observation
     p = StatementSupervisorPolicy()
     ms = contract_for_run(Run(name="进首页", kind="navigation"), 0)
     p.begin_statement(ms, instance_id="test:terminal")
-    check = _SingleCheckResult(status="done", effect_status="confirmed", reason="已进入首页", summary="首页")
-    p._last_check = check
-    obs = Observation(png_bytes=b"x", source="test")
     from gui_agent.core.run.execution_signals import CompletionEvaluation
     decision = CompletionEvaluation(
         status="satisfied",
-        reason=check.reason,
+        reason="已进入首页",
         completion_status="confirmed",
     )
     assert decision.status == "satisfied"
-    step = p._advance(ms, obs, [], decision=decision)
+    step = p._advance(ms, [], decision=decision)
     assert step.outcome is not None and step.outcome.phase == "completed"
-    assert p._done_check is check                         # done 判定已留存（验收面板有数据）
+    assert not hasattr(p, "_done_check")
 
 
 def test_transform_effect_blocks_preexisting_done(monkeypatch):
     # Mutation/write statements must not complete solely because the current
     # frame already contains the target value. They need an executed action in
     # this statement, otherwise dirty state can swallow the write.
-    from gui_agent.core.schemas import StatementContract, Observation, SupervisorStep
+    from gui_agent.core.schemas import StatementContract, Observation
     from gui_agent.core.supervisor.statement.policy import StatementSupervisorPolicy
-    from gui_agent.core.supervisor.statement.schemas import _SingleCheckResult
+    from gui_agent.core.supervisor.statement.schemas import (
+        _StatementTransitionResult,
+        _TransitionAction,
+        _TransitionEvidence,
+    )
 
     p = StatementSupervisorPolicy()
     ms = StatementContract(
@@ -645,30 +625,32 @@ def test_transform_effect_blocks_preexisting_done(monkeypatch):
         effect_mode="transform",
     )
     p.begin_statement(ms, instance_id="test:transform")
-    monkeypatch.setattr(
-        p,
-        "_single_check",
-        lambda *_args, **_kwargs: _SingleCheckResult(
-            status="done",
-            effect_status="confirmed",
-            reason="Price 字段已经是 64.88，且有保存成功提示。",
+    decisions = iter([
+        _StatementTransitionResult(
+            kind="complete",
+            reason="Price 字段已经是 64.88，且有旧保存提示",
             summary="看似已完成",
+            evidence=[_TransitionEvidence(
+                source="current_observation",
+                claim="Price 字段当前为 64.88",
+            )],
         ),
+        _StatementTransitionResult(
+            kind="act",
+            reason="transform 合同缺少本调用动作",
+            summary="执行本次变更",
+            action=_TransitionAction(
+                instruction="重新点击 Save 以产生本轮保存事件",
+                atomic_role="commit",
+                action_family="activate",
+            ),
+        ),
+    ])
+    monkeypatch.setattr(p, "_invoke_statement_transition", lambda *a, **k: next(decisions))
+    monkeypatch.setattr(
+        "gui_agent.core.supervisor.statement.policy.is_loading_frame",
+        lambda _observation: False,
     )
-
-    def fake_plan(statement, check, _observation, _history, _persistence=None):
-        assert check.status == "in_progress"
-        assert "动作结果" in check.reason
-        return SupervisorStep(
-            should_act=True,
-            instruction="重新点击 Save 以产生本轮保存事件",
-            summary=check.summary,
-            statement_id=statement.id,
-            statement_kind=statement.kind,
-            completion_strategy=statement.completion_strategy,
-        )
-
-    monkeypatch.setattr(p, "_plan_single", fake_plan)
     step = p._run_single_turn(ms, Observation(png_bytes=_png_bytes(), source="test"), [])
 
     assert step.should_act is True

@@ -1,6 +1,6 @@
 import pytest
 
-from gui_agent.core.run.mutation import authorize_mutation, resolve_mutation
+from gui_agent.core.run.mutation import resolve_mutation
 from gui_agent.core.schemas import (
     ActionSignal,
     StatementContract,
@@ -70,13 +70,11 @@ def test_subject_resolution_boundaries(
     assert _subject(controls, coverage=coverage).status == status
 
 
-def test_unique_subject_produces_one_authorized_next_write() -> None:
+def test_unique_subject_projects_one_open_declared_field() -> None:
     statement = _statement()
     subject = _subject(_row("r1", description="XXXL"), statement=statement)
-    authorization = authorize_mutation(statement, subject)
 
-    assert (subject.status, subject.next_field) == ("writable", "Admin Swatch")
-    assert authorization is not None and authorization.subject_ref == "r1"
+    assert (subject.status, subject.subject_ref) == ("writable", "r1")
 
 
 def test_aligned_values_resolve_across_repeated_non_choice_rows() -> None:
@@ -139,37 +137,6 @@ def test_singleton_form_can_change_an_existing_value() -> None:
     assert (subject.status, subject.subject_ref) == ("writable", "__form__")
 
 
-def _choice_group(selected: set[str], *, with_clear: bool = True) -> list[dict]:
-    controls = [
-        {
-            "label": value,
-            "option_text": value,
-            "kind": "checkbox_input",
-            "checked": value in selected,
-            "group_id": "choices",
-            "group_field": "Size",
-        }
-        for value in ("S", "M", "L", "38")
-    ]
-    if with_clear:
-        controls[-1]["choice_operations"] = {"clear_all": "Clear choices"}
-    return controls
-
-
-def test_choice_group_uses_clear_command_only_when_it_shortens_reconciliation() -> None:
-    bulk = _subject(
-        _choice_group({"S", "M", "L"}),
-        statement=_statement(Size="38"),
-    )
-    direct = _subject(
-        _choice_group({"S"}),
-        statement=_statement(Size="38"),
-    )
-
-    assert (bulk.status, bulk.target_control) == ("preparing", "Size Clear choices")
-    assert (direct.status, direct.target_control) == ("preparing", "Size S")
-
-
 def _receipt(subject_ref: str = "r1") -> MutationReceipt:
     return MutationReceipt(
         statement_id="m",
@@ -212,12 +179,12 @@ def test_receipt_binds_observation_and_followup_writes_to_one_subject() -> None:
     no_effect = _subject(_row("r1"), history=[_write_turn(_receipt(), no_effect=True)])
 
     assert (wrong_row_changed.subject_ref, wrong_row_changed.status) == ("r1", "writable")
-    assert (followup.subject_ref, followup.next_field) == ("r1", "Admin Swatch")
+    assert (followup.subject_ref, followup.status) == ("r1", "writable")
     assert (no_effect.subject_ref, no_effect.status) == ("r1", "writable")
 
 
-def test_unbound_or_conflicting_receipts_cannot_authorize_a_subject() -> None:
-    contaminated = _subject(
+def test_unbound_write_does_not_override_current_state_and_conflicting_receipts_are_ambiguous() -> None:
+    current = _subject(
         _row("r1", description="XXXL", swatch="55 cm"),
         history=[_write_turn(None)],
     )
@@ -227,5 +194,5 @@ def test_unbound_or_conflicting_receipts_cannot_authorize_a_subject() -> None:
         history=[_write_turn(_receipt("r1")), _write_turn(_receipt("r2"))],
     )
 
-    assert contaminated.status == "ambiguous"
+    assert current.status == "writable"
     assert conflicting.status == "ambiguous"

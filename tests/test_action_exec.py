@@ -1,8 +1,6 @@
 from __future__ import annotations
 
-from types import SimpleNamespace
-
-from gui_agent.core.run.action_exec import ActionExecutionState
+from gui_agent.core.run.action_exec import ActionExecutor
 from gui_agent.core.schemas import BaseAction, BaseActionDecision, Observation, SupervisorStep
 
 
@@ -68,14 +66,12 @@ def test_preformed_action_waits_for_prep_and_executes(tmp_path):
     flashes = []
     statuses = []
 
-    result = ActionExecutionState().run(
+    result = ActionExecutor().run(
         sv_step=_step(decision),
         observation=Observation(png_bytes=b"png", source="test"),
         action_policy=object(),
         supervisor=object(),
         executor=executor,
-        bundle=object(),
-        platform=object(),
         prep_future=future,
         log_dir=tmp_path,
         turn_no=3,
@@ -87,7 +83,6 @@ def test_preformed_action_waits_for_prep_and_executes(tmp_path):
     assert future.waited
     assert result.action_decision is decision
     assert result.executed is True
-    assert result.probe_failed is False
     assert flashes == [action]
     assert statuses == [(3, "[点击] 点击确认")]
     assert executor.calls == [{
@@ -108,14 +103,12 @@ def test_preformed_action_reflashes_after_executor_snap(tmp_path):
     def _flash(a):
         flashes.append((a.x, a.y, a.snap.copy() if a.snap else None))
 
-    result = ActionExecutionState().run(
+    result = ActionExecutor().run(
         sv_step=_step(decision),
         observation=Observation(png_bytes=b"png", source="test"),
         action_policy=object(),
         supervisor=object(),
         executor=executor,
-        bundle=object(),
-        platform=object(),
         prep_future=future,
         log_dir=tmp_path,
         turn_no=3,
@@ -138,14 +131,12 @@ def test_not_found_waits_for_prep_and_skips_execute(tmp_path):
     executor = _Executor()
     statuses = []
 
-    result = ActionExecutionState().run(
+    result = ActionExecutor().run(
         sv_step=_step(decision),
         observation=Observation(png_bytes=b"png", source="test"),
         action_policy=object(),
         supervisor=object(),
         executor=executor,
-        bundle=object(),
-        platform=object(),
         prep_future=future,
         log_dir=tmp_path,
         turn_no=4,
@@ -158,7 +149,6 @@ def test_not_found_waits_for_prep_and_skips_execute(tmp_path):
     assert result.action_decision is decision
     assert result.action_decision.action is None
     assert result.executed is False
-    assert result.probe_failed is False
     assert statuses == [(4, "未找到目标元素")]
     assert executor.calls == []
 
@@ -171,15 +161,12 @@ def test_executor_does_not_apply_legacy_commit_suppression(tmp_path):
     )
     executor = _Executor()
 
-    result = ActionExecutionState().run(
+    result = ActionExecutor().run(
         sv_step=step,
         observation=Observation(png_bytes=b"png", source="test"),
         action_policy=object(),
         supervisor=_DenyingSupervisor(),
-        history=[object()],
         executor=executor,
-        bundle=object(),
-        platform=object(),
         prep_future=_Future(),
         log_dir=tmp_path,
         turn_no=5,
@@ -203,14 +190,12 @@ def test_action_family_is_advisory_after_grounding(tmp_path):
     step = _step(decision).model_copy(update={"action_family": "input"})
     executor = _Executor()
 
-    result = ActionExecutionState().run(
+    result = ActionExecutor().run(
         sv_step=step,
         observation=Observation(png_bytes=b"png", source="test"),
         action_policy=object(),
         supervisor=object(),
         executor=executor,
-        bundle=object(),
-        platform=object(),
         prep_future=_Future(),
         log_dir=tmp_path,
         turn_no=6,
@@ -225,7 +210,7 @@ def test_action_family_is_advisory_after_grounding(tmp_path):
     assert executor.calls[0]["decision"].action == decision.action
 
 
-def test_target_directed_iterate_scroll_dispatches_once_without_boundary_probe(tmp_path):
+def test_target_directed_iterate_scroll_dispatches_exactly_once(tmp_path):
     action = BaseAction(
         action_type="scroll",
         direction="down",
@@ -242,35 +227,13 @@ def test_target_directed_iterate_scroll_dispatches_once_without_boundary_probe(t
         "direction": "down",
         "completion_strategy": "visible_once",
     })
-    probe_calls: list[str] = []
-
-    class _Probe:
-        def probe(self, _png, proposed, *, turn_no):
-            probe_calls.append(f"probe:{turn_no}:{proposed.direction}")
-            return SimpleNamespace(
-                success=True,
-                profile=SimpleNamespace(direction="down"),
-                reason="progress",
-            )
-
-    class _Bundle:
-        @staticmethod
-        def make_scroll_probe(_platform, _executor, _log_dir):
-            return _Probe()
-
-        @staticmethod
-        def apply_scroll_profile(proposed, _profile):
-            return proposed
-
     executor = _Executor()
-    result = ActionExecutionState().run(
+    result = ActionExecutor().run(
         sv_step=step,
         observation=Observation(png_bytes=b"png", source="test"),
         action_policy=object(),
         supervisor=object(),
         executor=executor,
-        bundle=_Bundle(),
-        platform=object(),
         prep_future=_Future(),
         log_dir=tmp_path,
         turn_no=7,
@@ -280,9 +243,7 @@ def test_target_directed_iterate_scroll_dispatches_once_without_boundary_probe(t
     )
 
     assert result.executed is True
-    assert result.probe_failed is False
     assert result.action_role == "iterate"
     assert result.action_key.endswith("|iterate|scroll|down|@-")
-    assert probe_calls == []
     assert len(executor.calls) == 1
     assert executor.calls[0]["decision"].action == action

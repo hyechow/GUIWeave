@@ -4,11 +4,8 @@ from gui_agent.context import ContextBlock, ContextBudgeter, ContextBundle
 from gui_agent.context.runtime import (
     feedback_block,
     form_controls_block,
-    format_history_text,
-    history_block,
     render_prompt_context,
 )
-from gui_agent.core.schemas import PolicyTurn, SupervisorStep
 
 
 def _blk(id_: str, budget: str, chars: int, *, ttl: str = "turn") -> ContextBlock:
@@ -30,9 +27,9 @@ def test_decompose_feedback_includes_previous_draft_for_local_repair():
 
 def test_context_block_renders_source_metadata():
     block = ContextBlock(
-        id="runtime.checker_result",
+        id="runtime.transition_evidence",
         source_type="runtime_state",
-        source="checker",
+        source="transition",
         ttl="turn",
         content="status=in_progress",
         metadata={"statement": "m1"},
@@ -40,9 +37,9 @@ def test_context_block_renders_source_metadata():
 
     text = block.render()
 
-    assert "[context: runtime.checker_result" in text
+    assert "[context: runtime.transition_evidence" in text
     assert "type=runtime_state" in text
-    assert "source=checker" in text
+    assert "source=transition" in text
     assert "statement=m1" in text
     assert "status=in_progress" in text
 
@@ -57,102 +54,6 @@ def test_context_bundle_preserves_order_by_default_and_can_sort_by_priority():
 
     assert default_text.index("context: a") < default_text.index("context: b")
     assert sorted_text.index("context: b") < sorted_text.index("context: a")
-
-
-def test_runtime_history_context_keeps_existing_history_text_with_metadata():
-    turn = PolicyTurn(
-        index=1,
-        observation_source="browser",
-        supervisor=SupervisorStep(
-            should_act=True,
-            instruction="点击搜索框",
-            summary="需要搜索",
-        ),
-        executed=False,
-    )
-
-    text = history_block([turn]).render()
-
-    assert "context: runtime.history.recent_actions" in text
-    assert "ttl=session" in text
-    assert "需要搜索" in text
-    assert "[无动作]" in text
-
-
-def test_runtime_history_keeps_action_lifecycle_separate_from_checker_summary():
-    turn = PolicyTurn(
-        index=14,
-        observation_source="browser",
-        supervisor=SupervisorStep(
-            should_act=True,
-            instruction="按回车提交筛选",
-            summary="submit",
-            statement_id="filter",
-            statement_kind="filter",
-            atomic_role="commit",
-        ),
-        action_decision={
-            "action": {"action_type": "press_enter", "description": "submit filter"}
-        },
-        executed=True,
-        action_signal={
-            "action_key": "filter|commit",
-            "role": "commit",
-            "execution": "dispatched",
-            "response": "observed",
-            "response_channels": ["dom"],
-        },
-        effect_signal={"statement_id": "filter", "status": "unknown"},
-    )
-    next_turn = PolicyTurn(
-        index=15,
-        observation_source="browser",
-        supervisor=SupervisorStep(
-            should_act=True,
-            instruction="Clear all",
-            summary="0 records, clear and retry",
-            statement_id="filter",
-        ),
-        executed=False,
-    )
-
-    text = history_block([turn, next_turn]).render()
-
-    assert "execution=dispatched" in text
-    assert "response=observed(dom)" in text
-    assert "effect=unknown(unknown)" in text
-    assert "按回车提交筛选 → 结果" not in text
-
-
-def test_runtime_history_renders_action_policy_not_found_without_crashing():
-    turn = PolicyTurn(
-        index=7,
-        observation_source="browser",
-        supervisor=SupervisorStep(
-            should_act=True,
-            instruction="点击 Add Swatch",
-            summary="需要创建新行",
-            statement_id="attribute_option",
-            atomic_role="prepare",
-            target_control="Add Swatch",
-        ),
-        action_decision={
-            "action": None,
-            "not_found_reason": "当前帧未找到 Add Swatch",
-        },
-        executed=False,
-        action_signal={
-            "role": "prepare",
-            "execution": "not_attempted",
-            "target": "unknown",
-            "response": "unknown",
-        },
-    )
-
-    text = history_block([turn]).render()
-
-    assert "[未派发] 当前帧未找到 Add Swatch" in text
-    assert "execution=not_attempted" in text
 
 
 def test_budgeter_keeps_all_when_under_ceiling():
@@ -238,7 +139,7 @@ def test_budgeter_long_files_knowledge_history_keep_required_and_report_reasons(
     ]
 
     result = ContextBudgeter(max_chars=4700).apply(blocks)
-    report = result.to_report(label="planner.knowledge")
+    report = result.to_report(label="transition.knowledge")
 
     kept = {b.id for b in result.kept}
     dropped = {b.id for b in result.dropped}
@@ -264,50 +165,15 @@ def test_render_prompt_context_enforces_ceiling_and_logs_drops():
     text = render_prompt_context(
         blocks,
         max_chars=500,
-        label="checker",
+        label="transition",
         say=logs.append,
         report_sink=reports,
     )
     assert "context: keep" in text and "context: drop" not in text
-    assert any("ContextBudget" in line and "checker" in line and "drop" in line for line in logs)
-    assert reports[0]["label"] == "checker"
+    assert any("ContextBudget" in line and "transition" in line and "drop" in line for line in logs)
+    assert reports[0]["label"] == "transition"
     assert reports[0]["included"][0]["id"] == "keep"
     assert reports[0]["dropped"][0]["id"] == "drop"
-
-
-def _turn(idx: int, mid: str, summary: str, instruction: str | None = None) -> PolicyTurn:
-    return PolicyTurn(
-        index=idx,
-        observation_source="browser",
-        supervisor=SupervisorStep(
-            should_act=bool(instruction), instruction=instruction,
-            summary=summary, statement_id=mid,
-        ),
-        executed=bool(instruction),
-    )
-
-
-def test_relevant_history_compresses_prior_statements():
-    history = [
-        _turn(1, "m1", "进入评论页", "点击评论入口"),
-        _turn(2, "m1", "已在评论列表"),
-        _turn(3, "m2", "设置筛选", "输入 disappointed"),
-        _turn(4, "m2", "已输入关键词", "点击提交"),
-    ]
-    text = format_history_text(history, current_statement_id="m2")
-    assert "[m1]" in text and "已在评论列表" in text   # prior statement → one compressed state line (its last summary)
-    assert "进入评论页" not in text                    # prior turn-by-turn detail dropped
-    assert "设置筛选" in text                          # current statement detail kept
-
-    flat = format_history_text(history)               # legacy mode (no statement id) unchanged
-    assert "进入评论页" in flat                         # shows every turn
-
-
-def test_relevant_history_first_statement_has_no_prior_block():
-    history = [_turn(1, "m1", "第一步", "点A"), _turn(2, "m1", "第二步", "点B")]
-    text = format_history_text(history, current_statement_id="m1")
-    assert "已完成/早前子目标" not in text   # no earlier statement → no compressed section
-    assert "第一步" in text and "第二步" in text
 
 
 def test_form_controls_context_marks_adapter_source():

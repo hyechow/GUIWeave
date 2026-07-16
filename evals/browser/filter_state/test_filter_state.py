@@ -1,8 +1,7 @@
 """Offline evals for browser applied-filter state.
 
-These cases exercise deterministic filter gates, not LLM checker behavior. They lock down the
-contract that `Observation.applied_filters` means "current applied filter set" regardless of the
-adapter-specific evidence channel (modern chips vs legacy grid URL/filter row).
+These cases lock down that adapter filter facts validate an LLM completion proposal regardless
+of the adapter-specific evidence channel (modern chips vs legacy grid URL/filter row).
 """
 
 from __future__ import annotations
@@ -12,14 +11,14 @@ from pathlib import Path
 
 import gui_agent.core.supervisor.statement.policy as policy_mod
 from gui_agent.core.schemas import StatementContract, Observation
+from gui_agent.core.supervisor.statement.schemas import (
+    _StatementTransitionResult,
+    _TransitionEvidence,
+)
 
 
 PROJECT_ROOT = Path(__file__).resolve().parents[3]
 CASES = Path(__file__).with_name("cases.json")
-
-
-class _CheckerReached(Exception):
-    pass
 
 
 def _png() -> bytes:
@@ -31,16 +30,23 @@ def test_filter_state_cases(monkeypatch):
     cases = json.loads(CASES.read_text(encoding="utf-8"))
     assert cases
 
-    checker_calls: list[str] = []
+    transition_calls: list[str] = []
 
-    def _spy_run_checker(*_args, **_kwargs):
-        checker_calls.append("called")
-        raise _CheckerReached()
+    def _transition(*_args, **_kwargs):
+        transition_calls.append("called")
+        return _StatementTransitionResult(
+            kind="complete",
+            reason="the exact declared filter is visible",
+            evidence=[_TransitionEvidence(
+                source="current_observation",
+                claim="the adapter reports the declared filter as applied",
+            )],
+        )
 
     monkeypatch.setattr(policy_mod, "is_loading_frame", lambda _obs: False)
 
     for case in cases:
-        checker_calls.clear()
+        transition_calls.clear()
         statement = StatementContract(
             id="m_filter",
             name=case["statement_name"],
@@ -51,7 +57,7 @@ def test_filter_state_cases(monkeypatch):
         )
         policy = policy_mod.StatementSupervisorPolicy()
         policy.begin_statement(statement, instance_id=f"eval:{case['label']}")
-        policy._single_check = _spy_run_checker  # type: ignore[method-assign]
+        policy._invoke_statement_transition = _transition  # type: ignore[method-assign]
         obs = Observation(
             png_bytes=_png(),
             source="eval",
@@ -64,14 +70,12 @@ def test_filter_state_cases(monkeypatch):
             }],
         )
 
-        try:
-            step = policy.step(obs, goal=case["goal"], history=[])
-        except _CheckerReached:
-            step = None
+        step = policy.step(obs, goal=case["goal"], history=[])
 
         if case.get("expect_filter_gate_done"):
-            assert checker_calls == [], case["label"]
+            assert transition_calls == ["called"], case["label"]
             assert step is not None and step.outcome is not None, case["label"]
             assert step.outcome.phase == "completed", case["label"]
         else:
-            assert checker_calls == ["called"], case["label"]
+            assert transition_calls == ["called", "called"], case["label"]
+            assert step.outcome is not None and step.outcome.phase == "exhausted", case["label"]

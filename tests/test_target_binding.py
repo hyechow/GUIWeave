@@ -4,13 +4,12 @@ from gui_agent.adapters.browser.actions import BrowserAction, BrowserActionDecis
 from gui_agent.adapters.browser.target_binding import (
     BrowserTargetBinder,
 )
-from gui_agent.core.run.action_exec import ActionExecutionState
+from gui_agent.core.run.action_exec import ActionExecutor
 from gui_agent.core.run.target_binding import bind_action_target
 from gui_agent.core.run.turns import make_interactive_turn
 from gui_agent.core.schemas import (
     BaseAction,
     BaseActionDecision,
-    MutationAuthorization,
     Observation,
     SupervisorStep,
 )
@@ -91,26 +90,12 @@ def test_structural_binding_uses_the_point_owner_in_a_repeated_collection() -> N
     ))
 
     bound = BrowserTargetBinder().bind(_step(), observation, decision)
-    wrong_unit = BrowserTargetBinder().bind(
-        _step(mutation_authorization=MutationAuthorization(
-            statement_id="m1",
-            subject_ref="record:2",
-            field="Amount",
-            desired_value="42",
-            source="structural",
-        )),
-        observation,
-        decision,
-    )
-
     assert bound is not None
     assert (bound.status, bound.source, bound.unit_id) == (
         "bound",
         "structural",
         "record:1",
     )
-    assert wrong_unit is not None
-    assert wrong_unit.status == "contradicted"
 
 
 def test_native_select_binds_via_target_option_despite_a_bad_label() -> None:
@@ -191,14 +176,12 @@ class _Executor:
 
 def _run_action(tmp_path, step: SupervisorStep):
     executor = _Executor()
-    result = ActionExecutionState().run(
+    result = ActionExecutor().run(
         sv_step=step,
         observation=Observation(png_bytes=b"frame", source="visual"),
         action_policy=object(),
         supervisor=object(),
         executor=executor,
-        bundle=object(),
-        platform=object(),
         prep_future=_Future(),
         log_dir=tmp_path,
         turn_no=1,
@@ -249,29 +232,8 @@ def test_unbound_write_is_suppressed_but_acquire_action_is_not(tmp_path) -> None
     assert acquired.binding is None
 
 
-def test_mutation_write_requires_system_authorization(tmp_path) -> None:
-    result, executor = _run_action(
-        tmp_path,
-        _step(
-            preformed_action=_decision(),
-            requires_mutation_authorization=True,
-        ),
-    )
-
-    assert result.executed is False
-    assert executor.calls == 0
-    assert "no system-resolved subject authorization" in result.suppressed_reason
-
-
-def test_authorized_write_persists_a_mutation_receipt() -> None:
-    authorization = MutationAuthorization(
-        statement_id="m1",
-        subject_ref="visual:m1",
-        field="Amount",
-        desired_value="42",
-        source="visual",
-    )
-    step = _step(mutation_authorization=authorization, requires_mutation_authorization=True)
+def test_bound_write_persists_a_mutation_receipt() -> None:
+    step = _step()
 
     turn = make_interactive_turn(
         index=1,
@@ -291,6 +253,6 @@ def test_authorized_write_persists_a_mutation_receipt() -> None:
     receipt = turn.action_signal.mutation_receipt
     assert receipt is not None
     assert (receipt.subject_ref, receipt.field) == (
-        "visual:m1",
+        "record:1",
         "Amount",
     )

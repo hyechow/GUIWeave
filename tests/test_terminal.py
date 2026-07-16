@@ -5,7 +5,11 @@ from gui_agent.core.run.flow import finish_terminal_step
 from gui_agent.core.run.program_runtime import ProgramRuntime
 from gui_agent.core.run.result import make_result
 from gui_agent.core.run.statements.outcome import StatementOutcome
-from gui_agent.core.schemas import PolicyContext, PolicyTurn, SupervisorStep
+from gui_agent.core.schemas import (
+    PolicyContext,
+    StatementOutcomeEvent,
+    SupervisorStep,
+)
 
 
 class _ReadState:
@@ -25,11 +29,13 @@ def _context(step: SupervisorStep) -> PolicyContext:
         supervisor_policy_name="statement",
         action_policy_name="browser",
         journal={"events": [
-            PolicyTurn(
-                index=1,
+            StatementOutcomeEvent(
+                after_turn=0,
                 observation_source="screen.png",
-                supervisor=step,
-                executed=False,
+                statement_instance_id="i1:s1",
+                statement_id="s1",
+                statement_kind="action",
+                outcome=step.outcome,
             )
         ]},
     )

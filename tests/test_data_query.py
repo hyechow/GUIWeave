@@ -491,7 +491,7 @@ def test_query_executor_blocks_when_collected_source_conflicts_with_goal(tmp_pat
     assert "数据源与任务意图不一致" in result.reply
     assert "清除该筛选" in result.reply
     assert context.journal.turns[-1].executed is False
-    assert context.journal.turns[-1].non_ui["failed"] is True
+    assert context.journal.statement_outcomes[-1].outcome.phase == "failed"
     assert context.journal.turns[-1].non_ui["reads"] == {}
 
 
@@ -560,7 +560,7 @@ def test_query_executor_empty_repair_after_sql_error_still_fails(tmp_path, monke
     assert result.reply is not None
     assert "SQL 修复后仍返回空结果" in result.reply
     assert context.journal.turns[-1].executed is False
-    assert context.journal.turns[-1].non_ui["failed"] is True
+    assert context.journal.statement_outcomes[-1].outcome.phase == "failed"
 
 
 def test_query_failure_sets_replan_evidence(tmp_path, monkeypatch):

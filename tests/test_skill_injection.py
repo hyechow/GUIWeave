@@ -201,7 +201,7 @@ def test_set_app_knowledge_stores_check():
     from gui_agent.core.supervisor.statement import StatementSupervisorPolicy
 
     p = StatementSupervisorPolicy(prompts=BROWSER_STATEMENT_PROMPTS)
-    assert p._check_knowledge == ""  # 未注入时为空,run_checker 不加动态段
+    assert p._check_knowledge == ""  # 未注入时 Transition 不加 app-specific 验收知识
     p.set_app_knowledge("nav", app_name="A", check="列内「10」即「s10-站点10」")
     assert "s10-站点10" in p._check_knowledge
 

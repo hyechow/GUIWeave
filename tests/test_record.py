@@ -13,9 +13,8 @@ def test_record_interactive_turn_appends_saves_and_emits_callback(monkeypatch):
         action_policy_name="browser",
     )
     supervisor = SimpleNamespace(
-        _last_check=None,
-        _last_plan=None,
-        _last_replan=None,
+        _last_action_plan=None,
+        _last_transition_record=None,
         _timings={"checker": 1.0},
         _timings_order=["checker"],
         _token_usage={"checker": {"input": 2, "output": 1}},

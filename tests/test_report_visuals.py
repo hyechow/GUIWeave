@@ -1,3 +1,6 @@
+import json
+
+from gui_agent.reports.builder import RunnerReportBuilder
 from gui_agent.reports.builder import _group_steps_by_statement
 from gui_agent.reports.models import ReportStep
 from gui_agent.reports.orchestrator_html import _render_program_section
@@ -9,7 +12,7 @@ def test_module_io_renders_summary_collapsed_schema_and_tokens():
     html = _render_module_io_html([
         {
             "kind": "prompt_snapshot",
-            "label": "checker",
+            "label": "transition",
             "roles": [
                 {"role": "system", "parts": [
                     {
@@ -19,7 +22,7 @@ def test_module_io_renders_summary_collapsed_schema_and_tokens():
                     },
                     {
                         "label": "schema_instruction",
-                        "text": "顶层必填字段：status, reason\n顶层可选字段：summary",
+                        "text": "顶层必填字段：kind, reason\n顶层可选字段：summary",
                         "chars": 32,
                     },
                 ]},
@@ -27,69 +30,24 @@ def test_module_io_renders_summary_collapsed_schema_and_tokens():
         },
         {
             "kind": "llm_output",
-            "label": "checker",
-            "schema": "_SingleCheckResult",
-            "raw_output": '{"status":"done","reason":"ok"}',
-            "parsed": {"status": "done", "reason": "ok"},
+            "label": "transition",
+            "schema": "_StatementTransitionResult",
+            "raw_output": '{"kind":"complete","reason":"ok"}',
+            "parsed": {"kind": "complete", "reason": "ok"},
         },
-    ], {"checker": {"input": 4108, "output": 73}})
+    ], {"transition": {"input": 4108, "output": 73}})
 
-    assert "prompt-call-summary prompt-call-summary-ok" in html
-    assert "done · ok" in html
+    assert "prompt-call-summary" in html
+    assert "complete · ok" in html
     assert "prompt-detail-meta" in html
     assert "1 call · 4.1k/73 tok" in html
     assert "prompt-token-detail" in html
     assert "Token 明细" in html
     assert "prompt-schema" in html
     assert "prompt-part-collapsed" in html
-    assert "schema_instruction · _SingleCheckResult · 2 required / 1 optional" in html
+    assert "schema_instruction · _StatementTransitionResult · 2 required / 1 optional" in html
     assert "prompt-token-total" not in html
-    assert "checker" in html
-
-
-def test_module_io_surfaces_selector_reports_from_legacy_logs():
-    html = _render_module_io_html([
-        {
-            "kind": "prompt_snapshot",
-            "label": "checker",
-            "roles": [{"role": "system", "parts": [{"label": "task_prompt", "text": "TASK"}]}],
-        },
-        {
-            "kind": "llm_output",
-            "label": "checker",
-            "schema": "_SingleCheckResult",
-            "raw_output": '{"status":"in_progress","reason":"need nav"}',
-            "parsed": {"status": "in_progress", "reason": "need nav"},
-        },
-        {
-            "kind": "selector",
-            "label": "knowledge.selector",
-            "cache": "miss",
-            "page_identity": "Marketing > All Reviews",
-            "page_known": True,
-            "section_ids": ["s13", "s25"],
-            "sections": ["Moderate_product_reviews", "The_Admin_sidebar"],
-            "fallback_triggered": False,
-            "cached": True,
-            "reason": "当前页面需要评论管理和侧边栏导航知识",
-        },
-        {
-            "kind": "prompt_snapshot",
-            "label": "planner",
-            "roles": [{"role": "system", "parts": [{"label": "task_prompt", "text": "PLAN"}]}],
-        },
-    ], {
-        "checker": {"input": 4108, "output": 73},
-        "selector": {"input": 1312, "output": 53},
-        "planner": {"input": 8120, "output": 111},
-    })
-
-    assert "3 calls · 13.5k/237 tok" in html
-    assert "2. selector" in html
-    assert "cache=miss · Moderate_product_reviews, The_Admin_sidebar" in html
-    assert "_SelectorResult" in html
-    assert "selector_report" in html
-    assert "旧日志没有记录该模块原始输出" not in html
+    assert "transition" in html
 
 
 def test_orchestrator_program_renders_foreach_block_and_body():
@@ -281,3 +239,75 @@ def test_group_keeps_statement_and_invocation_ids_separate():
 
     assert [page.statement_id for page in pages] == ["s1", "s1"]
     assert [page.instance_id for page in pages] == ["i1:s1", "i2:s1"]
+
+
+def test_terminal_event_attaches_to_statement_without_empty_report_turn(tmp_path):
+    (tmp_path / "context.json").write_text(
+        json.dumps({
+            "goal": "save then continue",
+            "supervisor_policy_name": "statement",
+            "action_policy_name": "browser",
+            "journal": {
+                "schema_version": 3,
+                "events": [
+                    {
+                        "event_type": "statement_outcome",
+                        "after_turn": 0,
+                        "observation_source": "browser",
+                        "observation_url": "screenshot_turn_1.png",
+                        "statement_instance_id": "i1:s1",
+                        "statement_id": "s1",
+                        "statement_kind": "action",
+                        "statement": {
+                            "id": "s1",
+                            "name": "save",
+                            "kind": "action",
+                            "success_condition": "saved",
+                        },
+                        "outcome": {
+                            "phase": "completed",
+                            "summary": "saved",
+                            "verification": "confirmed",
+                        },
+                    },
+                    {
+                        "event_type": "turn",
+                        "index": 1,
+                        "operation_mode": "interactive",
+                        "observation_source": "browser",
+                        "observation_url": "screenshot_turn_1.png",
+                        "statement_instance_id": "i2:s2",
+                        "statement": {
+                            "id": "s2",
+                            "name": "continue",
+                            "kind": "navigation",
+                            "success_condition": "next page open",
+                        },
+                        "supervisor": {
+                            "should_act": True,
+                            "instruction": "open next page",
+                            "summary": "continue",
+                            "statement_id": "s2",
+                            "statement_kind": "navigation",
+                        },
+                        "action_decision": {
+                            "action": {
+                                "action_type": "tap",
+                                "description": "open next page",
+                            },
+                        },
+                        "executed": True,
+                    },
+                ],
+            },
+        }),
+        encoding="utf-8",
+    )
+
+    data = RunnerReportBuilder().build(tmp_path)
+
+    assert data.stats["turns"] == 1
+    assert [page.instance_id for page in data.pages] == ["i1:s1", "i2:s2"]
+    assert data.pages[0].steps == []
+    assert data.pages[0].verify_url == "screenshot_turn_1.png"
+    assert [step.label for step in data.pages[1].steps] == ["Turn 1"]
