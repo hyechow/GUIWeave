@@ -22,6 +22,7 @@ from ._validator.sql import (
     sql_contains_template_ref as _sql_contains_template_ref,
     sql_cte_names as _sql_cte_names,
     sql_referenced_tables as _sql_referenced_tables,
+    sql_uses_bare_boolean_comparison as _sql_uses_bare_boolean_comparison,
     sql_uses_quoted_display_identifier as _sql_uses_quoted_display_identifier,
     sql_uses_schema_mapping_text as _sql_uses_schema_mapping_text,
     temporal_aggregate_without_row_limit as _temporal_aggregate_without_row_limit,
@@ -216,6 +217,53 @@ _NOOP_STEP_RE = re.compile(
 )
 
 
+def _check_split_persistence_boundaries(
+    stmts: list[Stmt],
+    issues: IssueList,
+) -> None:
+    """Reject a commit-only Run split off from the mutation that owns its boundary.
+
+    ``explicit_commit`` already places Save/Submit inside that interactive Run. A following
+    dispatch-only action with no declared target is a second representation of the same
+    boundary and makes the first contract impossible to finish without stealing the next
+    Statement's work. The check uses typed contract fields and control-flow adjacency, not
+    button names or site vocabulary.
+    """
+    for previous, current in zip(stmts, stmts[1:]):
+        if not (
+            isinstance(previous, Run)
+            and isinstance(current, Run)
+            and previous.kind == "action"
+            and current.kind == "action"
+            and previous.persistence == "explicit_commit"
+            and current.persistence == "explicit_commit"
+            and current.effect_mode == "dispatch"
+            and not current.target_controls
+            and not current.target_values
+            and not current.returns
+            and (
+                not current.from_state.strip()
+                or current.from_state.strip() == previous.success_condition.strip()
+            )
+        ):
+            continue
+        issues.add(
+            "SPLIT_PERSISTENCE_BOUNDARY",
+            f"action 步「{previous.name}」已声明 persistence=explicit_commit，"
+            f"但紧邻 action「{current.name}」又把无目标的 commit/dispatch 单独拆成一步。"
+            "Save/Submit 是前一 mutation Run 内部的 GUI 动作，不是新 Statement；"
+            "请删除后一动作，并让前一步的 success_condition 描述提交后的持久化终态。",
+            evidence=(previous.statement_id, current.statement_id),
+        )
+
+    for stmt in stmts:
+        if isinstance(stmt, If):
+            _check_split_persistence_boundaries(stmt.then, issues)
+            _check_split_persistence_boundaries(stmt.otherwise, issues)
+        elif isinstance(stmt, ForEach):
+            _check_split_persistence_boundaries(stmt.body, issues)
+
+
 def validate_program(program: Program, *, resolution=None) -> list[ValidationIssue]:
     """Deterministic shape guards — the high-value ones for the read-driven data-flow patterns.
 
@@ -233,6 +281,9 @@ def validate_program(program: Program, *, resolution=None) -> list[ValidationIss
     issues = IssueList()
     if not program.statements:
         return IssueList.one("EMPTY_PROGRAM", "程序为空：至少要有一个 run 步骤")
+    _check_split_persistence_boundaries(program.statements, issues)
+    for function in getattr(program, "functions", None) or []:
+        _check_split_persistence_boundaries(function.body, issues)
     function_defs = {fn.name: fn for fn in getattr(program, "functions", None) or []}
     function_returns = {name: {field for field in fn.returns if field} for name, fn in function_defs.items()}
     if _goal_expects_structured_answer(program.goal) and not _has_result_source(program.statements, function_returns):
@@ -602,6 +653,14 @@ def validate_program(program: Program, *, resolution=None) -> list[ValidationIss
                         f"data_query 步「{s.name}」的 SQL 使用了带空格/标点的 quoted display label。"
                         "data_query 表格列已经归一化为 snake_case 标识符；SQL 应写 normalized column identifiers，"
                         "不要写 UI 表头/标签的双引号形式。"
+                    )
+                if s.kind == "data_query" and _sql_uses_bare_boolean_comparison(s.sql):
+                    issues.add(
+                        "SQL_BARE_BOOLEAN_LITERAL",
+                        f"data_query 步「{s.name}」把字段与裸 SQL 布尔量 true/false 比较。"
+                        "foreach/read 产出的界面值以 TEXT 存入查询表；例如 `has_value = False` "
+                        "即使单元格是字符串 `false` 也匹配不到。请按真实枚举文本比较，"
+                        "例如 `lower(has_value) = 'false'`。",
                     )
                 if s.kind == "data_query" and _rank_query_drops_ties(rank_goal_text, s):
                     issues.add("RANK_QUERY_DROPS_TIES", 

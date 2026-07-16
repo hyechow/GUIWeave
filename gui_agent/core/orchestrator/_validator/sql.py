@@ -12,7 +12,7 @@ SQL_NON_FIELD_TOKENS = {
     "coalesce", "desc", "distinct", "else", "end", "from", "group", "having", "in", "int",
     "integer", "is", "like", "limit", "max", "min", "not", "null", "numeric", "offset", "on",
     "or", "order", "over", "partition", "real", "select", "str", "strftime", "sum", "text",
-    "then", "where", "when", "with",
+    "then", "true", "false", "where", "when", "with",
     "data", "result",
     # SQL scalar/string/numeric/window FUNCTIONS — never grid columns. Cleaning a collected cell
     # (e.g. strip "SKU: ..." off a Product name, cast "$45.00"→number) naturally uses these; without
@@ -22,6 +22,11 @@ SQL_NON_FIELD_TOKENS = {
 }
 
 _AGGREGATE_FN_RE = re.compile(r"\b(?:sum|avg|min|max|count)\s*\(", flags=re.IGNORECASE)
+_BARE_BOOLEAN_COMPARISON_RE = re.compile(
+    r"(?:=|==|!=|<>|\bis(?:\s+not)?)\s*(?:true|false)\b"
+    r"|\b(?:true|false)\s*(?:=|==|!=|<>)",
+    flags=re.IGNORECASE,
+)
 
 
 def data_query_field_tokens(run: Run) -> set[str]:
@@ -94,6 +99,12 @@ def query_field_available(token: str, available: set[str]) -> bool:
         if token.endswith(suffix) and token[: -len(suffix)] in available:
             return True
     return False
+
+
+def sql_uses_bare_boolean_comparison(sql: str) -> bool:
+    """Whether SQL compares collected TEXT values to SQLite boolean literals."""
+    text = re.sub(r"'(?:''|[^'])*'", " ", sql or "")
+    return bool(_BARE_BOOLEAN_COMPARISON_RE.search(text))
 
 
 def rank_query_drops_ties(goal_text: str, run: Run) -> bool:

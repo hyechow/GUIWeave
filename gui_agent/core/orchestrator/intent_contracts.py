@@ -157,6 +157,21 @@ def _check_multi_value_binding(
                 ),
             ))
             continue
+        partial = [
+            action.name
+            for action, groups in actions
+            if any(members & group and not members <= group for group in groups)
+        ]
+        if partial:
+            issues.append(IntentContractIssue(
+                code="ROUTER_MULTI_VALUE_SPLIT",
+                message=(
+                    f"Router 声明「{entity.mention}」是同一选择组的原子值 {sorted(members)}，"
+                    f"但这些 action 只承载了其中一部分：{partial}。即使另一个 action 已承载完整数组，"
+                    "也不能再按成员拆成独立 mutation；每个消费该选择组的 action 都必须在同一字段"
+                    "中保留完整数组，或删除多余的成员级 action。"
+                ),
+            ))
         if _entity_role(entity) != "qualifier_value":
             continue
         grouped_ids = {id(item[0]) for item in grouped}
