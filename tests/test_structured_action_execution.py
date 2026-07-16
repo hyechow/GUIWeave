@@ -1,3 +1,5 @@
+import pytest
+
 from gui_agent.core.schemas import ActionIntent
 from gui_agent.adapters.browser.actions import BrowserAction, BrowserActionDecision
 from gui_agent.adapters.browser.control_grounding import (
@@ -123,7 +125,6 @@ def test_action_policy_grounding_failure_is_not_reinterpreted(monkeypatch, tmp_p
             self.evidence_context = str(kwargs.get("evidence_context") or "")
             return BrowserActionDecision(
                 action=None,
-                not_found_reason="当前帧无法定位 Admin Swatch",
             )
 
     policy = RetryPolicy()
@@ -154,18 +155,17 @@ def test_action_policy_grounding_failure_is_not_reinterpreted(monkeypatch, tmp_p
     messages: list[str] = []
     monkeypatch.setattr(action_exec_module, "print_decision", lambda *_args, **_kwargs: None)
 
-    decision = ActionExecutor()._decide_action(
-        sv_step=step,
-        observation=observation,
-        action_policy=policy,
-        supervisor=supervisor,
-        log_dir=tmp_path,
-        turn_no=10,
-        status=lambda *_args: None,
-        say=messages.append,
-    )
+    with pytest.raises(Exception):
+        ActionExecutor()._decide_action(
+            sv_step=step,
+            observation=observation,
+            action_policy=policy,
+            supervisor=supervisor,
+            log_dir=tmp_path,
+            turn_no=10,
+            status=lambda *_args: None,
+            say=messages.append,
+        )
 
     assert policy.calls == 1
-    assert decision.action is None
-    assert decision.not_found_reason == "当前帧无法定位 Admin Swatch"
     assert not any("纠正" in message or "拒绝" in message for message in messages)

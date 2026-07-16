@@ -121,8 +121,6 @@ def _contract_lines(contract: StatementContract) -> list[str]:
         lines.append(f"验收条件：{contract.success_condition}")
     if contract.kind:
         lines.append(f"kind：{contract.kind}")
-    if contract.effect_mode:
-        lines.append(f"effect_mode：{contract.effect_mode}")
     if contract.persistence:
         lines.append(f"persistence：{contract.persistence}")
     if contract.returns:
@@ -144,10 +142,6 @@ def _contract_requirements(contract: StatementContract) -> list[str]:
         requirements.append(
             "合同要求 explicit_commit 持久化边界；是否已越过只由 Journal receipt 证明。"
         )
-    if contract.effect_mode == "transform":
-        requirements.append(
-            "effect_mode=transform 要求本调用内效果证据；预先存在状态不能证明本次写入。"
-        )
     if contract.returns:
         requirements.append(
             f"合同声明返回字段：{', '.join(contract.returns)}。"
@@ -164,10 +158,18 @@ def _durable_from_turn(turn: PolicyTurn, statement_id: str) -> list[DurableFact]
 
     if signal is not None:
         signal_role = str(signal.role or role or "")
-        if signal.execution == "dispatch_failed":
+        if signal.execution in {"dispatch_failed", "not_attempted"}:
+            detail = "; ".join(signal.evidence) or signal.suppressed_reason
             facts.append(DurableFact(
-                kind="dispatch_failure",
-                text=f"动作派发失败：{instr or signal.action_key or signal_role}",
+                kind=(
+                    "dispatch_failure"
+                    if signal.execution == "dispatch_failed"
+                    else "grounding_failure"
+                ),
+                text=(
+                    f"动作未执行：{instr or signal.action_key or signal_role}"
+                    + (f"；{detail}" if detail else "")
+                ),
                 event_ref=ref,
             ))
         if signal.execution == "dispatched":

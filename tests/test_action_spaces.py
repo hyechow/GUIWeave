@@ -115,7 +115,9 @@ def test_subclasses_are_base():
     d = IPhoneActionDecision(action=a)
     assert isinstance(d, BaseActionDecision)
     assert isinstance(
-        BrowserActionDecision(action=None, not_found_reason="目标不可定位"),
+        BrowserActionDecision(action=BrowserAction(
+            action_type="tap", x=1, y=1, description="x"
+        )),
         BaseActionDecision,
     )
     assert isinstance(AndroidActionDecision(action=AndroidAction(action_type="home", description="x")), BaseActionDecision)
@@ -150,7 +152,7 @@ def test_action_decision_unwraps_bare_string_action():
         {"action": "tap", "x": 67, "y": 175, "description": "点订单菜单"})
     assert d.action.action_type == "tap" and d.action.x == 67 and d.action.y == 175
     d2 = BrowserActionDecision.model_validate(
-        {"action": "navigate", "url": "http://x:22000", "description": "打开", "not_found_reason": None})
+        {"action": "navigate", "url": "http://x:22000", "description": "打开"})
     assert d2.action.action_type == "navigate" and d2.action.url == "http://x:22000"
 
 
@@ -172,16 +174,14 @@ def test_browser_pointer_coordinates_must_stay_inside_normalized_viewport():
         })
 
 
-def test_legacy_stop_decision_is_migrated_to_grounding_failure():
-    decision = BrowserActionDecision.model_validate({
-        "action": {"action_type": "stop", "description": "当前帧找不到目标"},
-    })
-
-    assert decision.action is None
-    assert decision.not_found_reason == "当前帧找不到目标"
+def test_stop_decision_is_rejected():
+    with pytest.raises(Exception):
+        BrowserActionDecision.model_validate({
+            "action": {"action_type": "stop", "description": "当前帧找不到目标"},
+        })
 
 
-def test_no_action_requires_grounding_reason():
+def test_no_action_is_not_part_of_action_policy_protocol():
     with pytest.raises(Exception):
         BrowserActionDecision(action=None)
 

@@ -72,8 +72,6 @@ class AndroidExecutor(VisionExecutor):
         target_control: str = "",
     ) -> bool:
         action = decision.action
-        if action is None:
-            return False
         if action.action_type == "scroll" and action.direction:
             print(f"\n动作: [{action.action_type}] {action.description}")
             self._execute_scroll_action(action)

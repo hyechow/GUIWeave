@@ -87,15 +87,6 @@ def main() -> None:
 
         group = c.get("group")
 
-        if decision.not_found_reason:
-            ok = False
-            _report(f"{c['id']}: y_zone={exp.get('y_zone', '')}", ok,
-                    "not_found", exp.get("y_zone", ""),
-                    f"「{instruction[:30]}」→ {decision.not_found_reason}")
-            if group:
-                group_results.setdefault(group, []).append(ok)
-            continue
-
         action = decision.action
         zone = exp.get("y_zone", "")
         ok = True

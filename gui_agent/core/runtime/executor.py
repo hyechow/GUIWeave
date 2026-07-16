@@ -85,8 +85,6 @@ class VisionExecutor:
     ) -> bool:
         # app_name / png_bytes / is_home_screen / target_control are adapter seams.
         action = decision.action
-        if action is None:
-            return False
         print(f"\n动作: [{action.action_type}] {action.description}")
         client = self._client()
 

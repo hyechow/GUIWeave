@@ -128,7 +128,6 @@ def test_rejected_complete_is_redecided_on_same_frame(monkeypatch) -> None:
         description="",
         kind="action",
         success_condition="Status is Active and saved",
-        effect_mode="transform",
         persistence="explicit_commit",
         target_values={"Status": "Active"},
     )
@@ -172,7 +171,6 @@ def test_guard_exhaustion_is_terminal_not_a_running_noop(monkeypatch) -> None:
         description="",
         kind="action",
         success_condition="Status is saved",
-        effect_mode="transform",
         persistence="explicit_commit",
         target_values={"Status": "Active"},
     )
@@ -212,7 +210,6 @@ def test_runtime_validates_contract_scope_without_choosing_write_order(monkeypat
         description="",
         kind="action",
         success_condition="both fields are 30",
-        effect_mode="ensure",
         target_values={"Admin Description": "30", "Admin Swatch": "30"},
     )
     policy = _policy(monkeypatch, statement)

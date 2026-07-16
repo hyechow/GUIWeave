@@ -89,7 +89,6 @@ def test_terminal_observation_replay_recovers_statement_from_program():
                 "name": "ensure values exist",
                 "kind": "action",
                 "success_condition": "values exist and are saved",
-                "effect_mode": "transform",
                 "persistence": "explicit_commit",
                 "target_values": {"Option": ["30", "31"]},
             }],

@@ -18,9 +18,8 @@
     "contract": {
       "statement_id": "save",
       "kind": "action",
-      "effect_mode": "transform",
       "persistence": "explicit_commit",
-      "completion_mode": "mutation"
+      "completion_mode": "state"
     },
     "scope": "row:7",
     "claims": [
@@ -35,9 +34,8 @@
     "contract": {
       "statement_id": "save_without_write",
       "kind": "action",
-      "effect_mode": "transform",
       "persistence": "explicit_commit",
-      "completion_mode": "mutation",
+      "completion_mode": "state",
       "output_fields": []
     },
     "scope": "statement:save_without_write",
@@ -48,12 +46,11 @@
     "expected": {"status": "contradicted", "completion_status": "failed"}
   },
   {
-    "label": "ensure accepts an already confirmed target state",
+    "label": "state contract accepts an already confirmed target state",
     "contract": {
       "statement_id": "ensure_state",
       "kind": "action",
-      "completion_mode": "mutation",
-      "effect_mode": "ensure"
+      "completion_mode": "state"
     },
     "scope": "statement:ensure_state",
     "claims": [
@@ -62,13 +59,12 @@
     "expected": {"status": "satisfied", "completion_status": "confirmed"}
   },
   {
-    "label": "ensure draft values from this run cannot skip declared persistence commit",
+    "label": "draft values from this run cannot skip declared persistence commit",
     "contract": {
       "statement_id": "ensure_saved_member",
       "kind": "action",
-      "effect_mode": "ensure",
       "persistence": "explicit_commit",
-      "completion_mode": "mutation",
+      "completion_mode": "state",
       "output_fields": []
     },
     "scope": "row:attribute/144",
@@ -112,9 +108,8 @@
     "contract": {
       "statement_id": "save_rejected",
       "kind": "action",
-      "effect_mode": "transform",
       "persistence": "explicit_commit",
-      "completion_mode": "mutation"
+      "completion_mode": "state"
     },
     "scope": "row:9",
     "claims": [
@@ -128,9 +123,8 @@
     "contract": {
       "statement_id": "save_pending",
       "kind": "action",
-      "effect_mode": "transform",
       "persistence": "explicit_commit",
-      "completion_mode": "mutation"
+      "completion_mode": "state"
     },
     "scope": "row:11",
     "claims": [
@@ -140,13 +134,12 @@
     "expected": {"status": "pending", "completion_status": "in_progress"}
   },
   {
-    "label": "fresh mutation cannot finish from pre-existing state alone",
+    "label": "state contract cannot finish from an unverified model claim alone",
     "contract": {
       "statement_id": "fresh_write",
       "kind": "action",
-      "effect_mode": "transform",
       "persistence": "explicit_commit",
-      "completion_mode": "mutation"
+      "completion_mode": "state"
     },
     "scope": "statement:fresh_write",
     "claims": [

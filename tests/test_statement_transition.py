@@ -137,6 +137,26 @@ def test_act_with_complete_action_can_fill_missing_report_reason() -> None:
     assert decision.reason == "点击 Catalog"
 
 
+def test_act_discards_provider_dom_annotations_beside_typed_action() -> None:
+    decision = _StatementTransitionResult.model_validate({
+        "kind": "act",
+        "reason": "filter the visible grid",
+        "action": {
+            "instruction": "Input 'size' into Attribute Code",
+            "atomic_role": "write",
+            "action_family": "input",
+            "target_control": "Attribute Code",
+            "target_value": "size",
+            "attribute_code": "text_input",
+        },
+    })
+
+    assert decision.action is not None
+    assert decision.action.target_control == "Attribute Code"
+    assert decision.action.target_value == "size"
+    assert "attribute_code" not in decision.action.model_dump()
+
+
 def test_act_drops_unreferenced_journal_explanation() -> None:
     decision = _StatementTransitionResult.model_validate({
         "kind": "act",

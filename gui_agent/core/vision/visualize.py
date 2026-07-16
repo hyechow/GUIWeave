@@ -18,11 +18,6 @@ def print_decision(
     output_path: Path = OUTPUT,
 ) -> None:
     action = decision.action
-    if action is None:
-        print("\n" + "=" * 50)
-        print(f"[no_action] {decision.not_found_reason}")
-        print("=" * 50)
-        return
     coords = f"  ({action.x:.0f},{action.y:.0f})" if action.x is not None else ""
     text = f"  文字={action.text!r}" if action.text else ""
     print("\n" + "=" * 50)

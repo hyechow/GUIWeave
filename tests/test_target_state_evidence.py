@@ -114,6 +114,46 @@ def test_aligned_values_resolve_across_repeated_non_choice_rows() -> None:
     ) is not None
 
 
+def test_complete_state_index_confirms_values_omitted_from_prompt_inventory() -> None:
+    statement = StatementContract(
+        id="members",
+        name="realize two declared members",
+        description="",
+        success_condition="the collection contains both declared members",
+        kind="action",
+        persistence="explicit_commit",
+        target_values={
+            "Admin Description": ["30", "31"],
+            "Admin Swatch": ["30", "31"],
+        },
+    )
+    observation = Observation(
+        png_bytes=b"frame",
+        source="browser",
+        form_controls=_row("collection:13", description="30", swatch="30"),
+        form_controls_meta={
+            "coverage": "partial",
+            "returned": 2,
+            "total_rendered": 4,
+        },
+        form_control_state=[
+            *_row("collection:13", description="30", swatch="30"),
+            *_row("collection:14", description="31", swatch="31"),
+        ],
+        form_control_state_meta={
+            "coverage": "complete",
+            "returned": 4,
+            "total_rendered": 4,
+            "truncated": False,
+        },
+    )
+
+    subject = resolve_mutation(statement, observation, [])
+
+    assert subject.status == "complete"
+    assert "repeated collection" in subject.evidence
+
+
 def test_abstract_collection_values_project_through_declared_target_controls() -> None:
     statement = StatementContract(
         id="members",

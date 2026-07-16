@@ -120,9 +120,7 @@ def build_action_signal(
         "dispatched"
         if executed
         else "dispatch_failed"
-        if action_decision is not None
-        and not action_decision.not_found_reason
-        and not suppressed_reason
+        if action_decision is not None and not suppressed_reason
         else "not_attempted"
     )
     bound_subject = (

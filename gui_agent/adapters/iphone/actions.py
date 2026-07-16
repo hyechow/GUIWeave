@@ -47,4 +47,4 @@ class IPhoneAction(BaseAction):
 
 
 class IPhoneActionDecision(BaseActionDecision):
-    action: Optional[SerializeAsAny[IPhoneAction]]  # type: ignore[assignment]
+    action: SerializeAsAny[IPhoneAction]  # type: ignore[assignment]

@@ -343,7 +343,6 @@ class StatementSupervisorPolicy(
             for turn in scoped_history
             if turn.executed
             and turn.action_decision is not None
-            and turn.action_decision.action is not None
             and turn.action_decision.action.action_type in {"scroll", "drag"}
         ]
         budget = max(0, statement.scroll_budget)

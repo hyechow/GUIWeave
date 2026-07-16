@@ -310,11 +310,8 @@ def turn_callback_entry(
     entry: dict = {"no": turn.index, "summary": supervisor_step.summary, "executed": executed}
     if action_decision:
         action = action_decision.action
-        if action is not None:
-            entry["action_type"] = action.action_type
-            entry["action_desc"] = action.description
-        if action_decision.not_found_reason:
-            entry["not_found"] = action_decision.not_found_reason
+        entry["action_type"] = action.action_type
+        entry["action_desc"] = action.description
     return entry
 
 

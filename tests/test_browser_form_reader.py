@@ -5,6 +5,7 @@ import types
 from gui_agent.adapters.browser.device import _FORM_VALUE_FINGERPRINT_JS
 from gui_agent.adapters.browser.form_reader import (
     form_controls_js,
+    normalize_form_control_state,
     normalize_form_control_snapshot,
     normalize_form_controls,
 )
@@ -271,5 +272,36 @@ def test_snapshot_keeps_bottom_repeated_row_atomic_and_reports_truncation():
         "returned": 39,
         "truncated": True,
         "coverage": "partial",
+        "raw_limit_hit": False,
+    }
+
+
+def test_complete_control_state_is_retained_before_prompt_truncation():
+    raw = {
+        "controls": [
+            {
+                "kind": "text_input",
+                "label": f"Field {index}",
+                "name": f"field_{index}",
+                "value": str(index),
+                "in_viewport": True,
+            }
+            for index in range(45)
+        ],
+        "total_rendered": 45,
+        "raw_limit_hit": False,
+    }
+
+    prompt_controls, prompt_meta = normalize_form_control_snapshot(raw)
+    state_controls, state_meta = normalize_form_control_state(raw)
+
+    assert len(prompt_controls) == 40
+    assert prompt_meta["coverage"] == "partial"
+    assert len(state_controls) == 45
+    assert state_meta == {
+        "total_rendered": 45,
+        "returned": 45,
+        "truncated": False,
+        "coverage": "complete",
         "raw_limit_hit": False,
     }

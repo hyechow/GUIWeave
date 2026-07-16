@@ -222,7 +222,7 @@ verification: confirmed | accepted_unverified  # 仅 completed
 
 第三档只能产生 `accepted_unverified`：Interpreter 可以继续执行后续 statement，但最终结果层
 不得把它表述为“已确认成功”。`effect.status=contradicted` 时不能凭 dispatch 推进；没有 toast
-也不能据此重复提交。`effect_mode=transform` 的写操作不能被 preexisting 状态吞掉。
+也不能据此重复提交。带 `target_values` 的 action 是幂等终态合同：权威状态已满足时直接完成。
 
 `persistence` 只投影 write/commit receipt 是否越过边界，不吸收业务效果。Statement 不再维护
 跨帧 `ProgressMonitor` 或重复指令计数；动作历史由 MemoryView 提供给 LLM，硬预算由 Runtime 处理。
@@ -258,9 +258,9 @@ prepare | write | commit | iterate
 - `iterate` 是允许重复并由边界/目标值终止的调节动作。
 
 交互 Run 还声明 `target_controls`；input/select proposal 必须命中这些字段或控件，不能在目标控件
-尚未渲染时改用相邻的全局搜索框。`effect_mode=ensure` 可由权威既有状态完成，
-`effect_mode=transform` 必须有本轮效果证据。`persistence=explicit_commit` 还要求同 scope 的写入
-跨过终端 commit；只有滚动或保存不能证明本轮产生了目标变化。
+尚未渲染时改用相邻的全局搜索框。带 `target_values` 的 action 可由权威既有状态完成；
+若本调用产生写入，`persistence=explicit_commit` 还要求同 scope 的写入
+跨过终端 commit；只有滚动或保存不能证明目标状态，权威既有状态则可直接满足幂等合同。
 
 持久化状态从当前 statement 的结构化 write/commit receipts 投影，不维护第二套可变事务对象。
 首个可观测 surface 只是 entry/root 的 fallback；只有 entry surface 上的 commit 才是终端边界。

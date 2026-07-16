@@ -11,6 +11,7 @@ from __future__ import annotations
 import io
 
 from PIL import Image
+import pytest
 
 from gui_agent.core.orchestrator import (
     Cond,
@@ -516,9 +517,8 @@ def test_begin_has_no_handoff_mode_and_contract_semantics_are_canonical():
         Run(name="打开详情面板", kind="action", target_controls=["Details"]),
         1,
     )
-    assert interaction.effect_mode is None
     from gui_agent.core.run.execution_signals import ExecutionContract
-    assert ExecutionContract.from_statement(interaction).completion_mode == "verification"
+    assert ExecutionContract.from_statement(interaction).completion_mode == "command"
     mutation = contract_for_run(
         Run(
             name="更新状态",
@@ -527,45 +527,39 @@ def test_begin_has_no_handoff_mode_and_contract_semantics_are_canonical():
         ),
         2,
     )
-    assert mutation.effect_mode == "transform"
-    assert ExecutionContract.from_statement(mutation).completion_mode == "mutation"
-    ensure = contract_for_run(
+    assert ExecutionContract.from_statement(mutation).completion_mode == "state"
+    state = contract_for_run(
         Run(
             name="确保通知已开启",
             kind="action",
-            effect_mode="ensure",
             target_controls=["Notifications"],
             target_values={"Notifications": "on"},
         ),
         2,
     )
-    assert ensure.effect_mode == "ensure"
-    assert ensure.target_controls == ["Notifications"]
-    assert ensure.target_values == {"Notifications": "on"}
-    assert ExecutionContract.from_statement(ensure).completion_mode == "mutation"
+    assert state.target_controls == ["Notifications"]
+    assert state.target_values == {"Notifications": "on"}
+    assert ExecutionContract.from_statement(state).completion_mode == "state"
     persisted = contract_for_run(
         Run(name="更新资料", kind="action", persistence="explicit_commit"),
         3,
     )
     assert persisted.persistence == "explicit_commit"
-    assert persisted.effect_mode == "dispatch"
+    assert ExecutionContract.from_statement(persisted).completion_mode == "command"
     assert ExecutionContract.from_statement(persisted).persistence == "explicit_commit"
     result_action = contract_for_run(
         Run(name="触发检测", kind="action", returns=["result"]),
         4,
     )
-    assert result_action.effect_mode == "dispatch"
-    assert ExecutionContract.from_statement(result_action).completion_mode == "mutation"
-    assert contract_for_run(Run(name="进页", kind="navigation"), 2).effect_mode is None
+    assert ExecutionContract.from_statement(result_action).completion_mode == "command"
 
 
-def test_canonical_effect_contract_survives_both_model_boundaries():
+def test_canonical_state_contract_survives_both_model_boundaries():
     from gui_agent.core.schemas import StatementContract
 
     contract = {
         "name": "更新并保存",
         "kind": "action",
-        "effect_mode": "transform",
         "persistence": "explicit_commit",
         "target_values": {"Status": "Approved"},
     }
@@ -577,11 +571,30 @@ def test_canonical_effect_contract_survives_both_model_boundaries():
         "success_condition": "状态已保存",
     })
 
-    assert (run.effect_mode, run.persistence) == ("transform", "explicit_commit")
-    assert (statement.effect_mode, statement.persistence) == (
-        "transform",
-        "explicit_commit",
-    )
+    assert run.persistence == "explicit_commit"
+    assert run.target_values == {"Status": "Approved"}
+    assert statement.persistence == "explicit_commit"
+    assert statement.target_values == {"Status": "Approved"}
+
+
+def test_retired_effect_mode_is_rejected_at_contract_boundaries():
+    from gui_agent.core.schemas import StatementContract
+
+    with pytest.raises(Exception, match="effect_mode is retired"):
+        Run.model_validate({
+            "name": "update",
+            "kind": "action",
+            "effect_mode": "transform",
+        })
+    with pytest.raises(Exception, match="effect_mode is retired"):
+        StatementContract.model_validate({
+            "id": "s1",
+            "name": "update",
+            "description": "",
+            "success_condition": "updated",
+            "kind": "action",
+            "effect_mode": "transform",
+        })
 
 
 def test_advance_emits_outcome_without_mutable_done_check():
@@ -603,10 +616,9 @@ def test_advance_emits_outcome_without_mutable_done_check():
     assert not hasattr(p, "_done_check")
 
 
-def test_transform_effect_blocks_preexisting_done(monkeypatch):
-    # Mutation/write statements must not complete solely because the current
-    # frame already contains the target value. They need an executed action in
-    # this statement, otherwise dirty state can swallow the write.
+def test_state_contract_blocks_unverified_preexisting_done(monkeypatch):
+    # A declared target state cannot complete solely from an LLM assertion.
+    # It needs authoritative observation or a write/dispatch fact from this call.
     from gui_agent.core.schemas import StatementContract, Observation
     from gui_agent.core.supervisor.statement.policy import StatementSupervisorPolicy
     from gui_agent.core.supervisor.statement.schemas import (
@@ -622,7 +634,7 @@ def test_transform_effect_blocks_preexisting_done(monkeypatch):
         description="将价格更新为 64.88 并保存",
         kind="action",
         success_condition="页面显示保存成功提示，Price 字段已更新为 64.88",
-        effect_mode="transform",
+        target_values={"Price": "64.88"},
     )
     p.begin_statement(ms, instance_id="test:transform")
     decisions = iter([
@@ -637,7 +649,7 @@ def test_transform_effect_blocks_preexisting_done(monkeypatch):
         ),
         _StatementTransitionResult(
             kind="act",
-            reason="transform 合同缺少本调用动作",
+            reason="state contract lacks authoritative evidence",
             summary="执行本次变更",
             action=_TransitionAction(
                 instruction="重新点击 Save 以产生本轮保存事件",

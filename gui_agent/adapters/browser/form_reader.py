@@ -383,6 +383,8 @@ def form_controls_js() -> str:
 
 def normalize_form_control_snapshot(
     raw: Any,
+    *,
+    max_controls: int | None = MAX_CONTROLS,
 ) -> tuple[list[dict[str, Any]], dict[str, Any]]:
     """Normalize controls and report whether the returned inventory is complete.
 
@@ -471,6 +473,21 @@ def normalize_form_control_snapshot(
         else:
             priority = 2
         ranked.append((priority, index, norm))
+    raw_total = raw.get("total_rendered") if isinstance(raw, dict) else None
+    total_rendered = int(raw_total) if isinstance(raw_total, (int, float)) else len(ranked)
+    raw_limit_hit = bool(isinstance(raw, dict) and raw.get("raw_limit_hit"))
+    if max_controls is None:
+        ranked.sort(key=lambda row: row[1])
+        normalized = [norm for _, _, norm in ranked]
+        metadata = {
+            "total_rendered": total_rendered,
+            "returned": len(normalized),
+            "truncated": raw_limit_hit,
+            "coverage": "partial" if raw_limit_hit else "complete",
+            "raw_limit_hit": raw_limit_hit,
+        }
+        return normalized, metadata
+
     units: dict[str, list[tuple[int, int, dict[str, Any]]]] = {}
     for row in ranked:
         norm = row[2]
@@ -502,14 +519,14 @@ def normalize_form_control_snapshot(
     selected: list[tuple[int, int, dict[str, Any]]] = []
     deferred_offscreen: list[list[tuple[int, int, dict[str, Any]]]] = []
     has_offscreen = any(unit_rank(unit)[0] == 5 for unit in ordered_units)
-    on_view_limit = MAX_CONTROLS - (OFF_VIEWPORT_RESERVE if has_offscreen else 0)
+    on_view_limit = max_controls - (OFF_VIEWPORT_RESERVE if has_offscreen else 0)
     for unit in ordered_units:
         if unit_rank(unit)[0] == 5:
             deferred_offscreen.append(unit)
             continue
         if len(selected) + len(unit) <= on_view_limit:
             selected.extend(unit)
-    offscreen_budget = min(OFF_VIEWPORT_RESERVE, MAX_CONTROLS - len(selected))
+    offscreen_budget = min(OFF_VIEWPORT_RESERVE, max_controls - len(selected))
     for unit in deferred_offscreen:
         if len(unit) <= offscreen_budget:
             selected.extend(unit)
@@ -519,15 +536,12 @@ def normalize_form_control_snapshot(
     for unit in ordered_units:
         if any(id(item) in selected_ids for item in unit):
             continue
-        if len(selected) + len(unit) <= MAX_CONTROLS:
+        if len(selected) + len(unit) <= max_controls:
             selected.extend(unit)
             selected_ids.update(id(item) for item in unit)
 
     selected.sort(key=lambda row: row[1])
     normalized = [norm for _, _, norm in selected]
-    raw_total = raw.get("total_rendered") if isinstance(raw, dict) else None
-    total_rendered = int(raw_total) if isinstance(raw_total, (int, float)) else len(ranked)
-    raw_limit_hit = bool(isinstance(raw, dict) and raw.get("raw_limit_hit"))
     truncated = raw_limit_hit or len(normalized) < total_rendered
     metadata = {
         "total_rendered": total_rendered,
@@ -543,6 +557,13 @@ def normalize_form_controls(raw: Any) -> list[dict[str, Any]]:
     """Backward-compatible controls-only view of :func:`normalize_form_control_snapshot`."""
     controls, _metadata = normalize_form_control_snapshot(raw)
     return controls
+
+
+def normalize_form_control_state(
+    raw: Any,
+) -> tuple[list[dict[str, Any]], dict[str, Any]]:
+    """Return the complete normalized control-state index before prompt truncation."""
+    return normalize_form_control_snapshot(raw, max_controls=None)
 
 
 def _text(value: Any, limit: int) -> str:

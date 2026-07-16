@@ -4,7 +4,7 @@ from __future__ import annotations
 
 import re
 
-from pydantic import BaseModel, Field, field_validator
+from pydantic import BaseModel, Field, field_validator, model_validator
 
 from gui_agent.core.schemas import TargetValue, target_value_options
 
@@ -38,6 +38,15 @@ def _draft_scalar_to_str(value: object, *, python_bool: bool = False) -> str:
 
 class _StepDraft(BaseModel):
     """One DSL step in flat, LLM-friendly form. `op` selects which fields matter."""
+
+    @model_validator(mode="before")
+    @classmethod
+    def _reject_retired_effect_mode(cls, data: object) -> object:
+        if isinstance(data, dict) and "effect_mode" in data:
+            raise ValueError(
+                "effect_mode is retired; declare target_values for state contracts"
+            )
+        return data
 
     op: str = Field(default="run", description='"run" | "if" | "finish" | "foreach" | "compute" | "call"')
     # --- op=run ---
@@ -76,13 +85,6 @@ class _StepDraft(BaseModel):
                     "批量机制一次覆盖（父记录一次保存级联全部子记录、全选+批量动作、bulk edit）时，"
                     "在执行该聚合动作的 mutation 步上填被覆盖的实体提及原文，程序可以不用 foreach。"
                     "没有知识依据时禁止填写——那等于漏改其余成员。",
-    )
-    effect_mode: str = Field(
-        default="",
-        description=(
-            "run_kind=action 的业务效果：ensure | transform | dispatch。普通展开/切换等"
-            "无业务效果交互留空。"
-        ),
     )
     persistence: str = Field(
         default="immediate",
@@ -396,12 +398,6 @@ def _to_stmts(drafts: list[_StepDraft]) -> list[Stmt]:
                     },
                     precondition=bool(d.precondition),
                     covers_set=(d.covers_set or "").strip(),
-                    effect_mode=(
-                        (d.effect_mode or "").strip().lower()
-                        if (d.effect_mode or "").strip().lower()
-                        in {"ensure", "transform", "dispatch"}
-                        else None
-                    ),
                     persistence=(
                         "explicit_commit"
                         if (d.persistence or "").strip().lower() == "explicit_commit"

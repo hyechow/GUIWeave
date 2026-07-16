@@ -82,4 +82,4 @@ class BrowserAction(BaseAction):
 
 
 class BrowserActionDecision(BaseActionDecision):
-    action: Optional[SerializeAsAny[BrowserAction]]  # type: ignore[assignment]
+    action: SerializeAsAny[BrowserAction]  # type: ignore[assignment]

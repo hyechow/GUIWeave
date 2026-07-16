@@ -185,8 +185,6 @@ class ActionExecutor:
         target_control: str = "",
     ) -> bool:
         action = decision.action
-        if action is None:
-            return False
         # iPhone status-bar / home-indicator dead-zone clamp: keep the tap anchor
         # in the tappable band [200, 850] (normalized). Moved here from the shared
         # Action schema (S3) so it stays an iPhone-only concern — other platforms

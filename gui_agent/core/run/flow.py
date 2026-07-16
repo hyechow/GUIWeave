@@ -7,7 +7,7 @@ from dataclasses import dataclass
 from typing import Any, Callable
 
 from gui_agent.core.run.result import AgentResult, orchestration_result
-from gui_agent.core.schemas import PolicyContext, SupervisorStep, TargetBinding
+from gui_agent.core.schemas import PolicyContext, SupervisorStep
 
 
 @dataclass
@@ -58,35 +58,10 @@ def evaluate_turn_progress(
     *,
     sv_step: SupervisorStep,
     executed: bool,
-    action_decision: Any,
-    suppressed_reason: str = "",
-    binding: TargetBinding | None = None,
 ) -> ProgressDecision:
-    """Stop on execution failures while allowing a grounded rejection to be re-decided."""
+    """Return execution failures to the same Statement for a fresh transition."""
     if not executed and sv_step.action_intent is not None:
-        if binding is not None and binding.status == "contradicted":
-            return ProgressDecision()
-        if suppressed_reason:
-            reason = f"动作被执行协议抑制：{suppressed_reason}"
-            return ProgressDecision(
-                stop_reason=reason,
-                stop_message=f"\n{reason}，agent-loop 停止",
-            )
-        if action_decision and action_decision.not_found_reason:
-            reason = f"动作目标未找到：{action_decision.not_found_reason}"
-            return ProgressDecision(
-                stop_reason=reason,
-                stop_message=f"\n{reason}，agent-loop 停止",
-            )
-        if action_decision is not None and getattr(action_decision, "action", None) is not None:
-            reason = "动作执行失败"
-            return ProgressDecision(
-                stop_reason=reason,
-                stop_message=f"\n{reason}，agent-loop 停止",
-            )
-        return ProgressDecision(
-            stop_reason="动作未执行，agent-loop 停止",
-        )
+        return ProgressDecision()
 
     if sv_step.action_intent is None:
         return ProgressDecision(

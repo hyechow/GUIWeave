@@ -237,7 +237,6 @@ def _check_split_persistence_boundaries(
             and current.kind == "action"
             and previous.persistence == "explicit_commit"
             and current.persistence == "explicit_commit"
-            and current.effect_mode == "dispatch"
             and not current.target_controls
             and not current.target_values
             and not current.returns

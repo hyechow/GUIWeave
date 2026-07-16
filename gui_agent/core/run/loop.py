@@ -1055,9 +1055,6 @@ def run_agent_loop(
             progress = evaluate_turn_progress(
                 sv_step=sv_step,
                 executed=executed,
-                action_decision=action_decision,
-                suppressed_reason=action_result.suppressed_reason,
-                binding=action_result.binding,
             )
             if progress.stop_reason:
                 if progress.stop_message:

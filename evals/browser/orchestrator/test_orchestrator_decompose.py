@@ -2341,8 +2341,6 @@ def _check_assertions(program, assertions: list[str]) -> list[str]:
                         "{'Size':'XXS','Color':['blue','purple']}；"
                         f"当前为 {target_values}"
                     )
-                if actions[0].effect_mode != "transform":
-                    details.append("Add 语义必须使用 effect_mode=transform，不能按既有状态 ensure 跳过。")
             color_prerequisites = []
             for run in all_actions:
                 if run in actions:

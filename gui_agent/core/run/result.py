@@ -160,11 +160,8 @@ def make_result(
             entry["action_signal"] = t.action_signal.model_dump(mode="json")
         if t.action_decision:
             a = t.action_decision.action
-            if a is not None:
-                entry["action_type"] = a.action_type
-                entry["action_desc"] = a.description
-            if t.action_decision.not_found_reason:
-                entry["not_found"] = t.action_decision.not_found_reason
+            entry["action_type"] = a.action_type
+            entry["action_desc"] = a.description
         turns_detail.append(entry)
     return AgentResult(
         goal=context.goal,

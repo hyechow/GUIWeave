@@ -213,8 +213,6 @@ def ground_rendered_action(
     already compatible ``type`` action; it never synthesizes input, selection, or scrolling.
     """
     action = decision.action
-    if action is None:
-        return decision
     if action_family != "input" or action.action_type != "type":
         return decision
     if not target_control or not target_value:

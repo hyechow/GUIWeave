@@ -117,8 +117,6 @@ def snapped_point(action_decision: ActionDecision | None) -> tuple[float, float]
     if action_decision is None:
         return None
     action = action_decision.action
-    if action is None:
-        return None
     if action.action_type not in ("tap", "click") or action.x is None or action.y is None:
         return None
     snap = action.snap
@@ -185,16 +183,24 @@ class ActionExecutor:
             say("使用预生成动作，跳过 Action Policy")
             result.action_decision = sv_step.preformed_action
         else:
-            result.action_decision = self._decide_action(
-                sv_step=sv_step,
-                observation=observation,
-                action_policy=action_policy,
-                supervisor=supervisor,
-                log_dir=log_dir,
-                turn_no=turn_no,
-                status=status,
-                say=say,
-            )
+            try:
+                result.action_decision = self._decide_action(
+                    sv_step=sv_step,
+                    observation=observation,
+                    action_policy=action_policy,
+                    supervisor=supervisor,
+                    log_dir=log_dir,
+                    turn_no=turn_no,
+                    status=status,
+                    say=say,
+                )
+            except Exception as exc:  # noqa: BLE001 - a grounding miss is statement feedback
+                result.suppressed_reason = (
+                    f"action policy could not ground the proposed intent: {exc}"
+                )
+                say(f"  [ActionPolicy] {result.suppressed_reason}")
+                status(turn_no, "动作意图未能落成物理动作，交回 Statement 重决策")
+                return result
 
         if interrupted():
             say("  [Interrupt] 收到 ESC，跳过本轮动作执行")
@@ -210,16 +216,7 @@ class ActionExecutor:
             status(turn_no, "收到 ESC，跳过动作执行")
             return result
         action_decision = result.action_decision
-        if action_decision.not_found_reason:
-            say(f"  [NotFound] {action_decision.not_found_reason}")
-            status(turn_no, "未找到目标元素")
-            return result
-
         action = action_decision.action
-        if action is None:
-            say("  [NoAction] Action Policy 未返回可执行动作")
-            status(turn_no, "未产生可执行动作")
-            return result
         result.action_role = effective_action_role(sv_step, action)
         if (
             action.action_type not in {"scroll", "drag"}
@@ -269,7 +266,7 @@ class ActionExecutor:
         )
         if result.executed and has_snapped_point(action_decision):
             flash(action)
-        if result.executed and result.action_decision.action is not None:
+        if result.executed:
             result.action_key = semantic_action_key(
                 sv_step, result.action_decision.action
             )
@@ -318,7 +315,7 @@ class ActionExecutor:
                     "target_value": intent.target_value,
                     "target_group_id": target_group_id,
                     "action_family": intent.family,
-                    "primitive": action_decision.action.action_type if action_decision.action else "none",
+                    "primitive": action_decision.action.action_type,
                     "fallback": False,
                 })
             say("原生控件已唯一解析，跳过视觉 Action Policy")
@@ -362,7 +359,7 @@ class ActionExecutor:
                             "statement_id": sv_step.statement_id,
                             "target_control": intent.target_control,
                             "target_group_id": target_group_id,
-                            "primitive": action_decision.action.action_type if action_decision.action else "none",
+                            "primitive": action_decision.action.action_type,
                         })
         if hasattr(supervisor, "_timings"):
             supervisor._timings["action_policy"] = time.perf_counter() - started

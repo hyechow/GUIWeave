@@ -67,7 +67,7 @@ class _DenyingSupervisor:
         return False, "scope|m1|commit", "commit already dispatched"
 
 
-def _step(decision: BaseActionDecision) -> SupervisorStep:
+def _step(decision: BaseActionDecision | None = None) -> SupervisorStep:
     return SupervisorStep(action_intent=ActionIntent(instruction='点击确认按钮'), summary='需要点击', preformed_action=decision, app_name='Settings', is_home_screen=True)
 
 
@@ -139,16 +139,19 @@ def test_preformed_action_reflashes_after_executor_snap(tmp_path):
     ]
 
 
-def test_not_found_waits_for_prep_and_skips_execute(tmp_path):
-    decision = BaseActionDecision(action=None, not_found_reason="未找到确认按钮")
+def test_action_policy_failure_returns_to_statement_without_execute(tmp_path):
+    class _FailingPolicy:
+        def decide(self, *_args, **_kwargs):
+            raise ValueError("cannot ground target")
+
     future = _Future()
     executor = _Executor()
     statuses = []
 
     result = ActionExecutor().run(
-        sv_step=_step(decision),
+        sv_step=_step(),
         observation=Observation(png_bytes=b"png", source="test"),
-        action_policy=object(),
+        action_policy=_FailingPolicy(),
         supervisor=object(),
         executor=executor,
         prep_future=future,
@@ -159,11 +162,14 @@ def test_not_found_waits_for_prep_and_skips_execute(tmp_path):
         say=lambda _message: None,
     )
 
-    assert future.waited
-    assert result.action_decision is decision
-    assert result.action_decision.action is None
+    assert not future.waited
+    assert result.action_decision is None
     assert result.executed is False
-    assert statuses == [(4, "未找到目标元素")]
+    assert "could not ground" in result.suppressed_reason
+    assert statuses == [
+        (4, "动作决策中…"),
+        (4, "动作意图未能落成物理动作，交回 Statement 重决策"),
+    ]
     assert executor.calls == []
 
 

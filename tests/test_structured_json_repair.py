@@ -84,6 +84,31 @@ def test_truncated_transition_reason_keeps_action_emitted_first():
     assert decision.action.target_value == "Diana Tights"
 
 
+def test_valid_transition_json_ignores_nonsemantic_nested_annotation():
+    raw = (
+        '{"kind":"act","reason":"filter the grid",'
+        '"action":{"instruction":"Input size into Attribute Code",'
+        '"atomic_role":"write","action_family":"input",'
+        '"target_control":"Attribute Code","target_value":"size",'
+        '"attribute_code":"text_input"}}'
+    )
+
+    decision = _parse_structured_response(raw, _StatementTransitionResult)
+
+    assert decision.action is not None
+    assert decision.action.model_dump() == {
+        "instruction": "Input size into Attribute Code",
+        "atomic_role": "write",
+        "action_family": "input",
+        "target_control": "Attribute Code",
+        "target_value": "size",
+        "direction": None,
+        "drag_column": None,
+        "drag_current_value": None,
+        "drag_target_value": None,
+    }
+
+
 def test_repair_is_not_reported_successful_when_schema_is_incomplete(capsys):
     broken = '{"kind":"act","reason":"DOM list shows `name="'
 

@@ -261,8 +261,6 @@ class AndroidActionPolicy(BaseActionPolicy):
             instruction, direction, drag_column, drag_steps
         )
         action = decision.action
-        if action is None:
-            return decision
 
         if column:
             anchor = _PICKER_COLUMN_ANCHORS.get(column)

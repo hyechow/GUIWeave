@@ -194,6 +194,16 @@ class _StatementTransitionResult(BaseModel):
         if kind in {"complete", "infeasible"}:
             data["action"] = None
         if kind == "act" and isinstance(data.get("action"), dict):
+            # Some providers copy DOM annotations (for example
+            # ``attribute_code: "text_input"``) beside the typed action fields. They are
+            # observation prose, not ActionIntent semantics. Drop them at the LLM boundary so a
+            # harmless annotation does not trigger a second model call; canonical fields remain
+            # strictly validated below and the Runtime Guard still validates contract scope.
+            data["action"] = {
+                key: item
+                for key, item in data["action"].items()
+                if key in _TransitionAction.model_fields
+            }
             if not str(data.get("reason") or "").strip():
                 data["reason"] = (
                     str(data["action"].get("instruction") or "").strip()

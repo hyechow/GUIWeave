@@ -68,20 +68,22 @@ def test_grounding_failure_is_recorded_without_dispatch_evidence():
         "action_intent": ActionIntent(instruction="find target"),
         "outcome": None,
     })
-    decision = BaseActionDecision(action=None, not_found_reason="当前帧找不到目标")
-
     turn = make_interactive_turn(
         index=3,
         observation_source="screen.png",
         supervisor_step=step,
-        action_decision=decision,
+        action_decision=None,
         executed=False,
+        suppressed_reason="action policy could not ground the proposed intent",
     )
 
     assert turn.action_signal is not None
     assert turn.action_signal.execution == "not_attempted"
     assert turn.action_signal.action_key == ""
     assert turn.action_signal.mutation_receipt is None
+    assert turn.action_signal.evidence == [
+        "action policy could not ground the proposed intent"
+    ]
 
 
 def test_agent_loop_first_turn_has_no_deferred_loading_state(monkeypatch, tmp_path):

@@ -12,13 +12,14 @@ import re
 from dataclasses import dataclass
 from typing import Iterable, Literal
 
-from gui_agent.core.schemas import EffectMode, StatementContract, PersistenceMode
+from gui_agent.core.schemas import StatementContract, PersistenceMode
 from gui_agent.core.run.persistence import PersistenceAssessment
 CompletionMode = Literal[
     "arrival",
     "filter_state",
     "filter_state_with_result",
-    "mutation",
+    "state",
+    "command",
     "read",
     "verification",
 ]
@@ -61,7 +62,6 @@ class ExecutionContract:
     output_fields: tuple[str, ...] = ()
     read_spec: str = ""
     completion_mode: CompletionMode = "verification"
-    effect_mode: EffectMode | None = None
     persistence: PersistenceMode = "immediate"
 
     @classmethod
@@ -71,16 +71,7 @@ class ExecutionContract:
         elif statement.kind == "filter":
             mode = "filter_state_with_result" if statement.returns else "filter_state"
         elif statement.kind == "action":
-            mode = (
-                "mutation"
-                if action_requires_mutation_evidence(
-                    effect_mode=statement.effect_mode,
-                    target_values=statement.target_values,
-                    persistence=statement.persistence,
-                    output_fields=statement.returns,
-                )
-                else "verification"
-            )
+            mode = "state" if statement.target_values else "command"
         elif statement.kind == "collection":
             mode = "read"
         else:
@@ -91,31 +82,8 @@ class ExecutionContract:
             output_fields=tuple(statement.returns or ()),
             read_spec=statement.read_spec or "",
             completion_mode=mode,
-            effect_mode=statement.effect_mode,
             persistence=statement.persistence,
         )
-
-
-def action_requires_mutation_evidence(
-    *,
-    effect_mode: EffectMode | None,
-    target_values: Iterable[object],
-    persistence: PersistenceMode,
-    output_fields: Iterable[object],
-) -> bool:
-    """Whether an action declares a business mutation that needs lifecycle evidence.
-
-    ``action`` is an interactive boundary, not inherently a persistent write.  Opening a record,
-    expanding a region, or switching a view may be emitted as an action by a decomposer and is
-    complete when its declared state is verified.  Structured target values, a persistence
-    boundary, returned action data, or explicit ensure semantics identify actual mutations.
-    """
-    return bool(
-        effect_mode is not None
-        or tuple(target_values)
-        or persistence == "explicit_commit"
-        or tuple(output_fields)
-    )
 
 
 @dataclass(frozen=True)
@@ -220,7 +188,7 @@ class CompletionReducer:
         execution = self._best(self._claims(scoped, "action.execution", scope))
         write = self._best(self._claims(scoped, "action.write", scope))
         expected_subject = ""
-        if contract.completion_mode == "mutation":
+        if contract.completion_mode == "state":
             # Only a write identifies the mutated business subject. A commit's execution
             # scope identifies the persistence boundary/page, not the child row or control
             # whose state was observed before the redirect.
@@ -404,20 +372,7 @@ class CompletionReducer:
                 "pending", "集合遍历尚未达到可验证边界"
             )
 
-        if contract.completion_mode == "mutation":
-            if (
-                contract.effect_mode == "dispatch"
-                and action_delivery == "delivered"
-                and (
-                    contract.persistence == "immediate"
-                    or persistence.terminal_turn is not None
-                )
-            ):
-                return CompletionEvaluation(
-                    "satisfied",
-                    "声明的副作用动作已可靠派发，业务效果没有独立反馈通道",
-                    "accepted_unverified",
-                )
+        if contract.completion_mode == "state":
             if effect_status == "unmet":
                 if persistence.status == "pending":
                     return CompletionEvaluation(
@@ -443,26 +398,23 @@ class CompletionReducer:
                     "pending", effect_evidence or "目标字段尚未达到声明值",
                 )
             if (
-                effect_status == "satisfied"
-                and effect_authoritative
-                and contract.persistence == "explicit_commit"
-                and persistence.status == "clean"
-                and contract.effect_mode == "transform"
-            ):
-                return CompletionEvaluation(
-                    "pending",
-                    "声明的业务状态已确认，等待本次调用越过显式持久化边界",
-                )
-            if (
                 persistence.orphan_commit
-                and persistence.status == "submitted"
-                and contract.effect_mode != "dispatch"
                 and not (effect_status == "satisfied" and effect_authoritative)
             ):
                 return CompletionEvaluation(
                     "contradicted",
                     "提交已派发，但当前执行作用域没有目标写入",
                     "failed",
+                )
+            if (
+                effect_status == "satisfied"
+                and effect_authoritative
+                and not write_confirmed
+            ):
+                return CompletionEvaluation(
+                    "satisfied",
+                    effect_evidence or "幂等目标状态已满足",
+                    "confirmed",
                 )
             if persistence.status == "pending":
                 if (
@@ -498,14 +450,39 @@ class CompletionReducer:
                     "终端提交已可靠派发，完成帧未出现反证",
                     "accepted_unverified",
                 )
-            if contract.effect_mode == "ensure" and effect_status == "satisfied":
+            if effect_status == "satisfied":
+                if not effect_authoritative and not write_confirmed:
+                    return CompletionEvaluation(
+                        "pending",
+                        "声明目标状态只有模型判断，尚无结构化观察或本调用写入回执",
+                    )
                 return CompletionEvaluation(
                     "satisfied",
-                    effect_evidence or "幂等目标状态已满足",
+                    effect_evidence or "目标状态已满足",
                     "confirmed" if effect_authoritative else "accepted_unverified",
                 )
             return CompletionEvaluation(
-                "pending", "动作结果尚未形成可完成的业务状态",
+                "pending", "结构化目标状态尚未满足",
+            )
+
+        if contract.completion_mode == "command":
+            if effect_status == "satisfied":
+                return CompletionEvaluation(
+                    "satisfied",
+                    effect_evidence or "命令结果已观察确认",
+                    "confirmed" if effect_authoritative else "accepted_unverified",
+                )
+            if commit_confirmed and (
+                contract.persistence == "immediate"
+                or persistence.terminal_turn is not None
+            ):
+                return CompletionEvaluation(
+                    "satisfied",
+                    "命令动作已可靠派发，当前没有稳定的业务反馈通道",
+                    "accepted_unverified",
+                )
+            return CompletionEvaluation(
+                "pending", "命令尚无可观察结果或可靠派发回执",
             )
 
         if effect_status == "satisfied":

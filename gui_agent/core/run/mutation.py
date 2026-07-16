@@ -112,9 +112,24 @@ def _desired_state(statement: StatementContract) -> DesiredState:
 def _groups(observation: Observation) -> tuple[dict[str, list[dict]], bool]:
     groups: dict[str, list[dict]] = {}
     flat: list[dict] = []
-    for control in observation.form_controls or []:
+    controls = [
+        *(observation.form_control_state or []),
+        *(observation.form_controls or []),
+    ]
+    seen: set[tuple[str, ...]] = set()
+    for control in controls:
         if not isinstance(control, dict):
             continue
+        identity = tuple(
+            _norm(control.get(field))
+            for field in (
+                "kind", "name", "id", "group_id", "group_field", "label",
+                "option_text", "ref",
+            )
+        )
+        if identity in seen:
+            continue
+        seen.add(identity)
         group = str(control.get("group_id") or "").strip()
         (groups.setdefault(group, []) if group else flat).append(control)
     repeated = bool(groups)
@@ -230,7 +245,12 @@ def resolve_mutation(
         return SubjectResolution("unknown", evidence="no desired-state map")
 
     groups, repeated = _groups(observation)
-    coverage = _norm((observation.form_controls_meta or {}).get("coverage"))
+    state_meta = (
+        observation.form_control_state_meta
+        if observation.form_control_state
+        else observation.form_controls_meta
+    )
+    coverage = _norm((state_meta or {}).get("coverage"))
     if _collection_complete(groups, desired):
         return SubjectResolution(
             "complete",

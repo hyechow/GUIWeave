@@ -58,10 +58,8 @@ ActionFamily = Literal[
 ActionExecutionStatus = Literal["not_attempted", "dispatched", "dispatch_failed"]
 ActionTargetStatus = Literal["on_target", "off_target", "unknown"]
 ActionResponseStatus = Literal["observed", "none_observed", "unobservable", "unknown"]
-EffectMode = Literal["ensure", "transform", "dispatch"]
 PersistenceMode = Literal["immediate", "explicit_commit"]
 EffectStatus = Literal["satisfied", "unmet", "contradicted", "unknown"]
-EffectFreshness = Literal["preexisting", "current_run", "unknown"]
 CompletionStatus = Literal["confirmed", "accepted_unverified", "failed", "in_progress"]
 StatementPhase = Literal["completed", "failed", "exhausted", "infeasible", "interrupted"]
 Verification = Literal["confirmed", "accepted_unverified"]
@@ -80,22 +78,6 @@ def target_value_options(value: TargetValue | object) -> tuple[str, ...]:
             result.append(text)
     return tuple(result)
 
-
-def normalize_effect_contract_fields(value: object) -> object:
-    """Fill canonical effect defaults without creating a second mutation vocabulary."""
-    if not isinstance(value, dict):
-        return value
-    data = dict(value)
-    data.setdefault("persistence", "immediate")
-    if data.get("kind") == "action" and not data.get("effect_mode"):
-        data["effect_mode"] = (
-            "transform"
-            if data.get("target_values")
-            else "dispatch"
-            if data.get("persistence") == "explicit_commit" or data.get("returns")
-            else None
-        )
-    return data
 
 # 「连续操作」轴（与 kind 正交）：靠重复调整逼近目标的策略，区别于单步达成。
 #   - repeat_until_satisfied：收敛到目标值（picker 调日期/时间、步进器、滑块）
@@ -190,7 +172,6 @@ class EffectSignal(BaseModel):
 
     statement_id: str = ""
     status: EffectStatus = "unknown"
-    freshness: EffectFreshness = "unknown"
     subject_ref: str = ""
     source_type: str = ""
     authoritative: bool = False
@@ -398,6 +379,17 @@ class Observation(BaseModel):
             "raw_limit_hit。用于区分『清单中没有』与『清单截断后未返回』；不提供该传感器的平台留空。"
         ),
     )
+    form_control_state: Optional[list[dict[str, Any]]] = Field(
+        default=None,
+        description=(
+            "平台感知层在截断决策清单前保留的完整表单状态索引。"
+            "仅供 Runtime 做声明目标值验收，不直接注入 LLM 上下文。"
+        ),
+    )
+    form_control_state_meta: Optional[dict[str, Any]] = Field(
+        default=None,
+        description="完整表单状态索引的覆盖率元数据；不提供该传感器的平台留空。",
+    )
     viewport: Optional[dict[str, Any]] = Field(
         default=None,
         description=(
@@ -552,20 +544,15 @@ class StatementOutcome(BaseModel):
         return self.phase == "completed"
 
 class BaseActionDecision(BaseModel):
-    """Action policy output: one physical action or an explicit grounding failure."""
+    """Action policy output: exactly one physical action."""
+
+    model_config = ConfigDict(extra="forbid")
 
     # SerializeAsAny so model_dump_json preserves per-platform Action subclass fields
     # (e.g. iphone value_direction, browser url). Without it, a base-typed field drops
     # subclass-only fields on serialization (context.json in runner.py:285).
-    action: Optional[SerializeAsAny[BaseAction]] = Field(
-        description="当前应该执行的物理操作；无法定位可执行目标时为 null",
-    )
-    not_found_reason: Optional[str] = Field(
-        default=None,
-        description=(
-            "action=null 时说明为什么当前帧无法定位可执行目标；它不是任务完成或终止信号，"
-            "找到目标时留空"
-        ),
+    action: SerializeAsAny[BaseAction] = Field(
+        description="当前应该执行的唯一物理操作",
     )
 
     @model_validator(mode="before")
@@ -581,42 +568,13 @@ class BaseActionDecision(BaseModel):
         """
         if not isinstance(data, dict):
             return data
-        raw_action = data.get("action")
-        action_type = (
-            raw_action.get("action_type")
-            if isinstance(raw_action, dict)
-            else raw_action
-        )
-        if action_type == "stop" or data.get("action_type") == "stop":
-            description = (
-                raw_action.get("description")
-                if isinstance(raw_action, dict)
-                else data.get("description")
-            )
-            return {
-                "action": None,
-                "not_found_reason": data.get("not_found_reason")
-                or description
-                or "legacy action policy returned stop",
-            }
-        if data.get("not_found_reason"):
-            return {**data, "action": None}
         if "action_type" in data and "action" not in data:
             return {"action": data}
         if isinstance(data.get("action"), str):
-            nested = {k: v for k, v in data.items() if k not in ("action", "not_found_reason")}
+            nested = {k: v for k, v in data.items() if k != "action"}
             nested["action_type"] = data["action"]
-            out: dict = {"action": nested}
-            if data.get("not_found_reason") is not None:
-                out["not_found_reason"] = data["not_found_reason"]
-            return out
+            return {"action": nested}
         return data
-
-    @model_validator(mode="after")
-    def _require_action_or_reason(self) -> "BaseActionDecision":
-        if self.action is None and not str(self.not_found_reason or "").strip():
-            raise ValueError("action=null 时必须填写 not_found_reason")
-        return self
 
 
 class SupervisorStep(BaseModel):
@@ -712,6 +670,10 @@ class StatementContract(BaseModel):
     def _normalize_kind_and_strategy(cls, data: object) -> object:
         """Normalize common LLM aliases for statement intent fields."""
         if isinstance(data, dict):
+            if "effect_mode" in data:
+                raise ValueError(
+                    "effect_mode is retired; declare target_values for state contracts"
+                )
             kind_aliases = {
                 "analysis": "verification",
                 "analyze": "verification",
@@ -747,11 +709,10 @@ class StatementContract(BaseModel):
                 normalized["completion_strategy"] = strategy_aliases.get(
                     strategy.strip().lower(), strategy
                 )
-            normalized = normalize_effect_contract_fields(normalized)
             # Keep only declared contract fields.
             allowed = {
                 "id", "name", "description", "success_condition", "kind",
-                "completion_strategy", "precondition", "effect_mode", "persistence",
+                "completion_strategy", "precondition", "persistence",
                 "target_controls", "target_values", "returns", "read_spec",
                 "scroll_stop_condition", "observable_boundary", "scroll_budget",
                 "failure_hints",
@@ -777,10 +738,6 @@ class StatementContract(BaseModel):
     precondition: bool = Field(
         default=False,
         description="True when this statement ensures an entry state and may already be satisfied on the first frame.",
-    )
-    effect_mode: Optional[EffectMode] = Field(
-        default=None,
-        description="业务效果语义；None 表示普通交互状态转换，不声明持久化业务效果。",
     )
     persistence: PersistenceMode = Field(
         default="immediate",
@@ -852,7 +809,6 @@ class StatementInfo(BaseModel):
     success_condition: str = ""
     completion_strategy: str = ""
     precondition: bool = False
-    effect_mode: Optional[EffectMode] = None
     persistence: PersistenceMode = "immediate"
     target_controls: list[str] = Field(default_factory=list)
     target_values: dict[str, TargetValue] = Field(default_factory=dict)
@@ -958,23 +914,13 @@ class PolicyTurn(BaseModel):
     )
 
     @model_validator(mode="after")
-    def _normalize_no_action_signal(self) -> "PolicyTurn":
-        """A turn without a physical action cannot contain dispatch evidence."""
+    def _reject_terminal_turn(self) -> "PolicyTurn":
+        """Terminal outcomes belong in StatementOutcomeEvent, never an action turn."""
         if self.supervisor.outcome is not None:
             raise ValueError(
                 "PolicyTurn cannot persist a terminal StatementOutcome; "
                 "append StatementOutcomeEvent instead"
             )
-        if self.action_decision is None or self.action_decision.action is not None:
-            return self
-        self.executed = False
-        if self.action_signal is not None:
-            self.action_signal.action_key = ""
-            self.action_signal.execution = "not_attempted"
-            self.action_signal.mutation_receipt = None
-            self.action_signal.response = "unknown"
-            self.action_signal.response_channels.clear()
-            self.effect_signal = None
         return self
 
 

@@ -368,7 +368,6 @@ class ProgramRuntime:
         }
         for field_name in (
             "precondition",
-            "effect_mode",
             "persistence",
             "target_controls",
             "target_values",

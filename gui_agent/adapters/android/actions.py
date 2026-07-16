@@ -8,7 +8,7 @@ picker, no browser navigate.
 
 from __future__ import annotations
 
-from typing import Literal, Optional
+from typing import Literal
 
 from pydantic import SerializeAsAny
 
@@ -27,4 +27,4 @@ class AndroidAction(BaseAction):
 
 
 class AndroidActionDecision(BaseActionDecision):
-    action: Optional[SerializeAsAny[AndroidAction]]  # type: ignore[assignment]
+    action: SerializeAsAny[AndroidAction]  # type: ignore[assignment]

@@ -23,11 +23,9 @@ from typing import Annotated, Literal, Optional, Union
 from pydantic import BaseModel, Discriminator, Field, Tag, model_validator
 
 from gui_agent.core.schemas import (
-    EffectMode,
     PersistenceMode,
     StatementOutcome,
     TargetValue,
-    normalize_effect_contract_fields,
 )
 
 # DSL data-flow template grammar: ``{var[field]}`` pulls a prior read's value out of the
@@ -120,9 +118,12 @@ class Run(RunLike):
 
     @model_validator(mode="before")
     @classmethod
-    def _migrate_effect_contract(cls, data: object) -> object:
-        """Accept legacy mutation fields while exposing one canonical execution contract."""
-        return normalize_effect_contract_fields(data)
+    def _reject_retired_effect_mode(cls, data: object) -> object:
+        if isinstance(data, dict) and "effect_mode" in data:
+            raise ValueError(
+                "effect_mode is retired; declare target_values for state contracts"
+            )
+        return data
 
     # 交互命令的 kind 只剩交互词汇；read/data_query 是平级的 Read/Query 节点。
     kind: Literal["navigation", "filter", "action"] = "action"  # type: ignore[assignment]
@@ -152,10 +153,6 @@ class Run(RunLike):
     # step declares coverage — knowledge decides WHEN aggregate coverage exists; this flag — not a
     # text pattern — is how the program states it.
     covers_set: str = ""
-    effect_mode: Optional[EffectMode] = Field(
-        default=None,
-        description="ensure | transform | dispatch；普通交互状态转换留空。",
-    )
     persistence: PersistenceMode = Field(
         default="immediate",
         description="immediate | explicit_commit。",

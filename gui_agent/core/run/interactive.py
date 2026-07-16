@@ -12,7 +12,6 @@ from typing import TYPE_CHECKING, Callable, Literal
 
 from gui_agent.core.orchestrator.contracts import normalize_return_reads
 from gui_agent.core.orchestrator.program import INTERACTIVE_KINDS, Query, Read, Run, RunLike
-from gui_agent.core.run.execution_signals import action_requires_mutation_evidence
 from gui_agent.core.schemas import StatementContract, StatementInfo
 
 if TYPE_CHECKING:
@@ -71,15 +70,6 @@ def contract_for_run(run: Run, program_index: int) -> StatementContract:
     description = run.name
     if run.returns:
         description = f"{run.name}（读取字段：{'、'.join(run.returns)}）"
-    mutation_evidence = bool(
-        run.kind == "action"
-        and action_requires_mutation_evidence(
-            effect_mode=run.effect_mode,
-            target_values=run.target_values,
-            persistence=run.persistence,
-            output_fields=run.returns,
-        )
-    )
     return StatementContract(
         id=statement_id_for_run(run, program_index),
         name=run.name,
@@ -88,7 +78,6 @@ def contract_for_run(run: Run, program_index: int) -> StatementContract:
         kind=kind,  # type: ignore[arg-type]
         completion_strategy=strategy,  # type: ignore[arg-type]
         precondition=run.precondition,
-        effect_mode=run.effect_mode if mutation_evidence else None,
         persistence=run.persistence,
         target_controls=list(run.target_controls),
         target_values=dict(run.target_values),
@@ -127,7 +116,6 @@ def statement_info_from_contract(contract: StatementContract) -> StatementInfo:
         success_condition=contract.success_condition,
         completion_strategy=contract.completion_strategy,
         precondition=contract.precondition,
-        effect_mode=contract.effect_mode,
         persistence=contract.persistence,
         target_controls=list(contract.target_controls),
         target_values=dict(contract.target_values),

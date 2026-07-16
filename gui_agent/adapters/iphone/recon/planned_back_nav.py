@@ -187,13 +187,14 @@ def planned_return_to_initial(
             _raw_tap = cached
         else:
             obs = Observation(png_bytes=current_bytes, source="planned_back_nav")
-            decision = action_policy.decide(obs, instruction)
-
-            if decision.not_found_reason:
-                _nav_print(f"目标不可见: {decision.not_found_reason}", page_hash=ph, round_num=round_num)
+            try:
+                decision = action_policy.decide(obs, instruction)
+            except Exception as exc:  # noqa: BLE001 - retry another observation round
+                reason = f"动作策略未能落成物理动作: {exc}"
+                _nav_print(reason, page_hash=ph, round_num=round_num)
                 log.append({"round": round_num, "strategy": strategy,
                             "instruction": instruction,
-                            "result": f"元素不可见: {decision.not_found_reason}",
+                            "result": reason,
                             "success": False})
                 continue
 

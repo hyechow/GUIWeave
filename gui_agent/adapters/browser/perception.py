@@ -141,10 +141,16 @@ class BrowserPerception:
                 viewport = client.read_viewport()
         form_controls = []
         form_controls_meta = None
+        form_control_state = []
+        form_control_state_meta = None
         if client is not None and hasattr(client, "read_form_controls"):
             form_controls = client.read_form_controls()
             if hasattr(client, "read_form_controls_meta"):
                 form_controls_meta = client.read_form_controls_meta()
+            if hasattr(client, "read_form_control_state"):
+                form_control_state = client.read_form_control_state()
+            if hasattr(client, "read_form_control_state_meta"):
+                form_control_state_meta = client.read_form_control_state_meta()
         semantic_tree = None
         if client is not None and hasattr(client, "read_semantic_tree"):
             semantic_tree = client.read_semantic_tree() or None
@@ -160,6 +166,8 @@ class BrowserPerception:
             tables=tables or None,
             form_controls=form_controls or None,
             form_controls_meta=form_controls_meta,
+            form_control_state=form_control_state or None,
+            form_control_state_meta=form_control_state_meta,
             viewport=viewport or None,
             semantic_tree=semantic_tree,
             applied_filters=applied_filters or None,

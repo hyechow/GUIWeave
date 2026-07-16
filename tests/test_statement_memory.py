@@ -26,7 +26,6 @@ def _contract(**updates) -> StatementContract:
         description="fill option rows then save",
         success_condition="options saved",
         kind="action",
-        effect_mode="transform",
         persistence="explicit_commit",
         target_values={"Admin Description": ["30", "31"]},
         returns=[],

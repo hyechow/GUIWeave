@@ -87,7 +87,6 @@ def test_ensure_draft_fields_require_commit_before_statement_advance(monkeypatch
         description="",
         success_condition="member fields match and the resource is saved",
         kind="action",
-        effect_mode="ensure",
         persistence="explicit_commit",
         target_controls=["options_collection"],
         target_values={
@@ -331,7 +330,6 @@ def test_terminal_dispatch_without_persistence_response_can_choose_an_action(mon
         description="",
         success_condition="记录已保存",
         kind="action",
-        effect_mode="transform",
         persistence="explicit_commit",
     )
     policy.begin_statement(statement, instance_id="test:action-signal")
@@ -376,7 +374,6 @@ def test_redirected_commit_uses_success_contract_and_is_not_preexisting(monkeypa
         description="",
         success_condition="保存后的选项集合包含 XXXL",
         kind="action",
-        effect_mode="transform",
         persistence="explicit_commit",
     )
     policy.begin_statement(statement, instance_id="test:action-signal")
@@ -427,7 +424,6 @@ def test_redirected_commit_ignores_destination_only_absence(monkeypatch):
         description="",
         success_condition="the saved record contains the requested values",
         kind="action",
-        effect_mode="transform",
         persistence="explicit_commit",
         target_controls=["record_fields"],
         target_values={"Primary Value": "A", "Secondary Value": "B"},

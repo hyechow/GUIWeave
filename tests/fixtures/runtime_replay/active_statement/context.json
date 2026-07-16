@@ -40,7 +40,6 @@
           "description": "edit draft",
           "kind": "action",
           "success_condition": "title is ready",
-          "effect_mode": "transform",
           "target_controls": ["title"],
           "target_values": {"title": "ready"}
         },
@@ -52,7 +51,6 @@
             "description": "edit draft",
             "success_condition": "title is ready",
             "kind": "action",
-            "effect_mode": "transform",
             "target_controls": ["title"],
             "target_values": {"title": "ready"}
           },

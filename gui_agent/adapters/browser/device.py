@@ -565,6 +565,7 @@ class PlaywrightDevice:
         """Return visible form controls with DOM type/value/option metadata."""
         from gui_agent.adapters.browser.form_reader import (
             form_controls_js,
+            normalize_form_control_state,
             normalize_form_control_snapshot,
         )
 
@@ -577,15 +578,28 @@ class PlaywrightDevice:
             val = (res.get("result", {}) or {}).get("value")
             raw = json.loads(val) if isinstance(val, str) else val
             controls, metadata = normalize_form_control_snapshot(raw)
+            state, state_metadata = normalize_form_control_state(raw)
             self._last_form_controls_meta = metadata
+            self._last_form_control_state = state
+            self._last_form_control_state_meta = state_metadata
             return controls
         except Exception:
             self._last_form_controls_meta = None
+            self._last_form_control_state = None
+            self._last_form_control_state_meta = None
             return []
 
     def read_form_controls_meta(self) -> dict | None:
         """Return coverage metadata from the last form-control snapshot."""
         return getattr(self, "_last_form_controls_meta", None)
+
+    def read_form_control_state(self) -> list[dict]:
+        """Return the complete control-state index from the last DOM snapshot."""
+        return list(getattr(self, "_last_form_control_state", None) or [])
+
+    def read_form_control_state_meta(self) -> dict | None:
+        """Return coverage metadata for the complete control-state index."""
+        return getattr(self, "_last_form_control_state_meta", None)
 
     def read_semantic_tree(self) -> list[dict]:
         """Return a pruned flat AX-tree snapshot of the current page.

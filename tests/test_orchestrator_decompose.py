@@ -199,13 +199,12 @@ def test_to_program_unknown_kind_defaults_action():
     assert to_program(draft, "").statements[0].kind == "action"
 
 
-def test_to_program_preserves_effect_contract():
+def test_to_program_preserves_state_contract():
     draft = _PlanDraft(steps=[
         _StepDraft(
             op="run",
             run_kind="action",
             name="确保通知设置保持开启",
-            effect_mode="ensure",
             persistence="explicit_commit",
             target_controls=["Notifications"],
             target_values={"Notifications": "on"},
@@ -214,10 +213,19 @@ def test_to_program_preserves_effect_contract():
 
     step = to_program(draft, "").statements[0]
     assert isinstance(step, Run)
-    assert step.effect_mode == "ensure"
     assert step.persistence == "explicit_commit"
     assert step.target_controls == ["Notifications"]
     assert step.target_values == {"Notifications": "on"}
+
+
+def test_draft_rejects_retired_effect_mode():
+    with pytest.raises(Exception, match="effect_mode is retired"):
+        _StepDraft.model_validate({
+            "op": "run",
+            "run_kind": "action",
+            "name": "update",
+            "effect_mode": "transform",
+        })
 
 
 def test_to_program_preserves_multi_value_mutation_contract():

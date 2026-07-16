@@ -67,7 +67,7 @@ def test_action_policy() -> None:
 
         expected = c["expected"]
         # Only pass action-field checks to _check_action; custom checks handled below.
-        _meta_keys = {"description_must_not_contain", "not_found"}
+        _meta_keys = {"description_must_not_contain"}
         action_expected = {k: v for k, v in expected.items() if k not in _meta_keys}
         details = _check_action(decision.action, c["instruction"], action_expected)
 
@@ -76,13 +76,6 @@ def test_action_policy() -> None:
             import re
             if re.search(pat, decision.action.description or ""):
                 details.append(f"description must not match '{pat}'")
-
-        if "not_found" in expected:
-            has_not_found = bool(decision.not_found_reason)
-            if expected["not_found"] != has_not_found:
-                details.append(
-                    f"not_found: expected {expected['not_found']}, got {has_not_found}"
-                )
 
         ok = len(details) == 0
         _report(c["label"], ok, "; ".join(details) if details else "")

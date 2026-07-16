@@ -42,7 +42,6 @@ def _contract() -> StatementContract:
         description="Admin Description/Swatch 30 与 31 后 Save Attribute",
         success_condition="选项已保存",
         kind="action",
-        effect_mode="transform",
         persistence="explicit_commit",
         target_values={
             "Admin Description": ["30", "31"],
