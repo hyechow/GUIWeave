@@ -365,7 +365,8 @@ def test_unknown_visual_surface_does_not_suppress_an_ordinary_proposal():
     assert step.instruction == "open the child editor again"
 
 
-def test_terminal_ready_rejects_repeated_noncommit_proposals():
+def test_terminal_ready_does_not_force_reject_noncommit_proposals():
+    """Agentic pivot: terminal_ready is a Memory/contract hint, not a hard commit-only gate."""
     statement = StatementContract(
         id="persisted",
         name="update collection and save",
@@ -403,11 +404,11 @@ def test_terminal_ready_rejects_repeated_noncommit_proposals():
         history,
     )
 
-    assert step.should_act is False
-    assert step.atomic_role == "commit"
-    assert "non-commit proposal rejected" in step.summary
-    assert any(
-        "terminal persistence is pending" in item
+    assert step.should_act is True
+    assert step.instruction == "open the child editor again"
+    assert step.atomic_role == "prepare"
+    assert not any(
+        "non-commit proposal rejected" in item
         for item in policy.constraints_snapshot("i1/statement")
     )
 
