@@ -11,7 +11,7 @@ from gui_agent.core.schemas import (
     SupervisorStep,
 )
 from gui_agent.core.supervisor.statement.schemas import _PlanResult, _SingleCheckResult
-REPLAYS = Path(__file__).resolve().parents[1] / "replay/browser"
+REPLAYS = Path(__file__).resolve().parents[1] / "replay/fixtures/browser"
 CHOICE_FIXTURE = REPLAYS / "152920_choice_surface"
 INTERMEDIATE_FIXTURE = REPLAYS / "205258_intermediate_transition"
 
