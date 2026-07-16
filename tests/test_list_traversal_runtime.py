@@ -5,7 +5,7 @@ from gui_agent.core.orchestrator.traversal.list_runtime import ListTraversalRunt
 from gui_agent.core.schemas import Observation
 
 
-REPLAYS = Path(__file__).resolve().parents[1] / "evals/browser/traversal_replay"
+REPLAYS = Path(__file__).resolve().parents[1] / "tests/fixtures/traversal_replay"
 
 
 def _obs(*, tables=None, controls=None, viewport=None, png_bytes=b"") -> Observation:
