@@ -20,7 +20,7 @@ Goal
             -> Query          表格查询
             -> Direct nav     确定性设备命令 fast path
        -> Interactive Run     交给 Statement Executor
-            -> observe/check/plan/action loop
+            -> Memory + Observation -> LLM Transition -> Guard -> action/outcome
   -> StatementOutcome
   -> Interpreter resume
 ```
@@ -97,39 +97,94 @@ Program 结果投影，使用相同的 `phase/summary/output` 词表，并只在
 
 Statement 是一个交互 Run 的闭环执行单元，不是一个原子动作，也不是整个 Program。
 
+### 目标架构（Agentic Statement Transition）
+
+交互 Statement **不是**业务相位状态机（prepare→write→commit 硬转移表），而是：
+
 ```text
-semantic Run
-  -> observe
-  -> check
-  -> acquire / plan
-  -> one atomic action
-  -> observe again
-  -> ...
-  -> completed | infeasible | exhausted | failed | interrupted
+EventJournal          事实权威（append-only 原始事件）
+StatementMemoryView   决策上下文（按 statement_instance_id 从 Journal 投影 / 压缩）
+LLM Transition        语义流转权威（正常每帧一次；Guard 否决时同帧最多重决策一次）
+Runtime Guard         仅硬否决 / 合法性校验（不替 LLM 选路线）
+StatementOutcome      唯一终态
 ```
+
+目标每帧循环：
+
+```text
+observe
+  → build StatementMemoryView(instance, journal, contract)
+  → LLM Transition(Contract + MemoryView + CurrentObservation)
+       → Act | Complete | Infeasible
+  → Runtime Guard validate
+  → dispatch 或 terminal
+  → append journal
+```
+
+| 主体 | 拥有 | 禁止 |
+|------|------|------|
+| EventJournal | 全部原始事实 | 信念、路线选择 |
+| StatementMemoryView | 只读决策上下文 | 可变 phase；发明事实 |
+| LLM Transition | 语义下一步 | 改 Program；无证据宣称不可逆事实 |
+| Runtime Guard | 终态证据、声明写入范围、结构性不可行、硬预算 | 替 LLM 选择下一个动作或业务相位 |
+| StatementOutcome | 交给 ProgramRuntime 的终态 | 环内记账 |
+
+**LLM Belief** 只存在于当帧决策载荷，**不得**无回执/信号路径就写入 Journal。
+
+MemoryView **不可被 compaction 丢掉**的内容：全部已派发动作 receipts、write/commit receipts、
+已确认 EffectSignal、off-target / dispatch failure 等硬反证、当前合同与 returns、
+尚未关闭的提交或验证承诺。普通页面描述与更早动作的叙事只保留最近 K 步或压缩摘要；这些叙事
+不能充当终态证据。只有不可压缩事实暴露的真实 `turn:N` 才允许被 Transition 引证。
+
+**应删除的默认关系**（不得再作为硬路线）：
+
+- `evidence pending → act`
+- `effect unknown → recover`
+- `persistence.terminal_ready → 强制下一动作只能 commit`
+
+这些应进入 Memory 的 Facts / Contract hints，由 LLM 选择验证、寻找提交入口或完成；
+Runtime 仅在动作越过合同、Complete 缺乏证据、Infeasible 缺乏完整结构证明或预算耗尽时否决。
+
+所有 interactive kind（action/filter/navigation/collection/verification）都走同一个
+`run_statement_transition`。Runtime 不再生成 action candidate，也不在 LLM 前按证据直接完成。
+结构化 observation、Journal receipts、集合覆盖和预算只作为事实输入或终态 Guard；下一步具体
+动作由 Transition 直接给出。
+
+Transition 提议被 Guard 否决后，同一 observation 最多再调用一次 Transition，并把否决原因作为
+输入；第二次仍不合法则返回 terminal `exhausted`，绝不由 Runtime 猜 fallback action，也不产生
+无动作的 running turn。
+
+Transition 的 `complete` 只负责提出语义完成并引用证据，不得自行声明 verification。Runtime
+从 adapter / Journal 的权威结构化事实归约 `confirmed`；只有可靠 dispatch 或非权威语义证据时
+最多产生 `accepted_unverified`。证据不足则 Guard 否决并触发同帧重决策。
+
+### 职责边界
 
 Statement 负责：
 
-- 页面内 acquire、滚动、展开、页签和向导步骤；
+- 页面内 acquire、滚动、展开、页签和向导步骤（战术，非 Program 编排）；
 - 控件绑定和原子动作生成；
-- 页面内 no-effect、stuck 和替代路线；
-- 区分动作是否执行与动作效果是否出现；
-- 按证据优先级判断当前 Run 是否达到终态。
+- loading、派发失败和总 turn budget 等少量硬边界；
+- 区分动作是否执行与业务效果是否出现（Journal 事实）；
+- 产出唯一 `StatementOutcome`。
 
 Statement 不能：
 
-- 改变目标实体、写入值、基数或业务副作用；
+- 改变目标实体、写入值、基数或业务副作用定义；
 - 代替 Program 任选第一条记录完成消歧；
 - 增删或重排独立业务事务；
 - 聚合表格或发明最终答案；
-- 修改剩余 Program。
+- 修改剩余 Program；
+- 维护 `StatementMemory.phase` 一类业务相位状态机。
 
 `core/run/statements/dispatch.py` 是唯一能为 immediate statement 推进 Interpreter generator
 的组件；单条 Read/Query/Navigation executor 不知道下一条 statement。`recording.py` 统一写入
-turn、LLM 统计和 recovery ledger。
+primitive turn、`StatementOutcomeEvent`、LLM 统计和 recovery ledger。
 
 `core/run/interactive.py` 是一个薄适配器：把其余交互 Run 转成 Supervisor 使用的 Statement
 结构，启动 Statement loop，并从终态 observation 提取声明返回值。它不拥有恢复策略。
+
+`core/run/statement_memory.py` 从 Journal turns 投影 `StatementMemoryView`；不另建平行账本。
 
 ## 动作信号与完成状态
 
@@ -143,7 +198,6 @@ response:  observed | none_observed | unobservable | unknown
 effect.status:    satisfied | unmet | contradicted | unknown
 effect.freshness: preexisting | current_run | unknown
 
-progress:    advancing | stalled | exhausted
 persistence: clean | pending | submitted
 ```
 
@@ -170,8 +224,8 @@ verification: confirmed | accepted_unverified  # 仅 completed
 不得把它表述为“已确认成功”。`effect.status=contradicted` 时不能凭 dispatch 推进；没有 toast
 也不能据此重复提交。`effect_mode=transform` 的写操作不能被 preexisting 状态吞掉。
 
-`progress` 只描述跨帧执行轨迹，不能把目标值暂未出现解释成业务失败。`persistence`
-只投影 write/commit receipt 是否越过边界，不吸收业务效果。
+`persistence` 只投影 write/commit receipt 是否越过边界，不吸收业务效果。Statement 不再维护
+跨帧 `ProgressMonitor` 或重复指令计数；动作历史由 MemoryView 提供给 LLM，硬预算由 Runtime 处理。
 
 动作事实只有一条归档路径：executor 在 concrete primitive 产生后固定 `role/action_key`，各传感器
 把 dispatch、target、visual/URL/DOM response 交给 `action_signals.py` 追加到同一 receipt；
@@ -183,11 +237,12 @@ verification: confirmed | accepted_unverified  # 仅 completed
 也不能另建第二套回执账本。报告所需 `report_run_log` 仅在一次 loop 调用收尾时由 `AgentResult`
 生成，不参与 checkpoint replay 或任何运行时决策。
 
-`ExecutionCoordinator` 是唯一把 action/effect/persistence claim 归约成完成建议的组件；`policy.py`
-是唯一应用建议、推进 Statement 或发起恢复的控制流所有者。只有 Coordinator 仍建议普通 `act`
-且 `ProgressMonitor` 给出停滞事实时，policy 才能升级为 `recover`；明确的 `commit` 前沿和已经确认
-的完成不受模糊 stuck 覆盖。checker、planner、monitor 和 adapter 只提供证据或提案，
-不能独立推进或重规划 Statement。
+`CompletionReducer` 只归约结构化证据并回答终态提议是 `satisfied | pending |
+contradicted`；它没有 `next` 字段，也不能选择 act/commit/recover。实时控制流固定为：
+MemoryView → LLM Transition → Guard → dispatch/terminal。
+
+adapter 只提供 observation 与 action grounding，不能独立修改 Program，不能把 LLM 文本写成
+Journal 事实，也不能用 prepare/write/commit 顺序表替代 Transition。
 
 ## 动作回执与持久边界
 
@@ -212,31 +267,36 @@ prepare | write | commit | iterate
 子表面的 in-place commit 只完成准备，URL 变化本身也不把它升级成终端提交。没有父级提交的工作流
 必须由 DSL 声明 `persistence=immediate`，不能靠 URL 启发式猜测完成。
 
-在 `terminal_ready` 之前，执行器允许继续提出前向 prepare；它不再从动作文本历史推断一套
-“已关闭 preparation”状态机。在子流程已提交并回到 entry surface 后，下一转移只能是 commit：
-planner 重试仍返回 prepare/write/navigation 时，本轮不派发。这个窄门防止重开子流程，同时不把
-正常 acquire/向导步骤误判为回退。
+`terminal_ready`、write/commit receipt 和 entry surface 都作为事实进入 Memory 与证据包；
+它们不强制下一转移必须 commit。是否观察、验证、寻找提交入口或改走页内路线由 LLM 决定。
+Runtime 只否决越过合同的写入目标/值、结构性不成立的 infeasible 和无证据完成；具体 action
+point 由 TargetBinding 记录，成功派发的结构化写入可形成 MutationReceipt，但不存在单独的
+MutationAuthorization 状态。“保存后又重开编辑器”应由完整 Memory 避免，而不是再引入一条
+隐藏的关闭 preparation 状态机。
 
 执行器在平台 adapter 成功派发 concrete primitive 后，用
 `execution_scope + statement_id + atomic_role` 形成语义动作键并写入同一 `ActionSignal` 回执。
 动作键只标识历史事实，不在 dispatch 前充当第二套授权或重复提交门。持久化投影按 scope 读取
-write/commit 回执；`terminal_ready` 后由 policy 只接收终端 commit。foreach 的不同 row identity
-属于不同 scope，因此不会互相污染。
+write/commit 回执；foreach 的不同 row identity 属于不同 scope，因此不会互相污染。
 
-旧字段 `mutation_mode`、`requires_commit`、`executed`、`no_effect` 和 `target_verify` 只承担模型
-边界或历史上下文兼容；新决策不得再把它们拼成单一“动作成功”结论。Program 与 Statement 的
-反序列化都经过同一兼容归一化函数，运行时只消费新合同字段。
+`executed`、`no_effect` 和 `target_verify` 是原子动作 delivery 事实，不能被拼成单一“业务成功”
+结论。业务效果只由 EffectSignal、结构化 observation 与合同归约得到。
 
-## 执行预算与终态观察
+## 执行预算与终态事实
 
 `max_turns` 是 interactive decision/action turn 的严格硬上限。运行器不得为了完成复杂 Program
 静默提高它；DSL 静态复杂度估算只能通过显式 `--dynamic-max-turns` 启用。复杂任务需要调用方明确
 提供足够预算，不能让估算器成为执行正确性的隐含依赖。
 
-若最后一个额度恰好派发了动作，循环在停止前允许一次 `operation_mode=observation` 的只读仲裁：
-重新观察页面并运行 checker、结构化 Gate 和 SignalFusion，但禁止 planner、replanner 和 action
-dispatch。该观察不消耗 interactive budget，且最多发生一次。它只能确认末次动作效果、推进纯
-控制/查询/finish，不能借预算外观察执行下一个 GUI 动作。
+正常 statement 终态不记录为 `PolicyTurn`。运行器在 statement runtime 仍存活时，把完成帧、
+Transition 诊断和补齐后的 reads 写成独立 `StatementOutcomeEvent`，持久化后再
+`ProgramRuntime.send_outcome`。若下一条也是 interactive statement，它直接在同一 observation
+上决定并产生下一个真实 action turn；Outcome event 不增加 turn index、不消耗预算，也不进入
+noop 统计。
+
+若最后一个额度恰好派发了动作，循环可重新观察一次并调用同一个 Transition，但进入
+terminal-only 模式：只接受 `complete` 或 `infeasible`，任何 `act` 都直接变为 `exhausted`。
+该观察不写无动作 `PolicyTurn`，也不能借预算外观察执行下一个 GUI 动作。
 
 `atomic_role` 描述动作生命周期，`action_family` 描述执行机制。生命周期角色优先：commit 只能映射
 到 commit/activate，write 只能映射到 input/select，iterate 只能映射到 iterate。协议归一化发生在
@@ -271,13 +331,19 @@ Statement 尽量在不改变 WHAT 的条件下修复 HOW；一旦修复需要改
 
 ## Journal、checkpoint 与 replay
 
-`EventJournal` 是 Program revision、PolicyTurn、content note 和 recovery fact 的唯一持久账本。
+`EventJournal` v3 是 Program revision、PolicyTurn、StatementOutcomeEvent、content note 和
+recovery fact 的唯一持久账本。`PolicyTurn` 只表达观察/决策/primitive 执行，schema 禁止在
+`PolicyTurn.supervisor.outcome` 中持久化终态；所有 statement 的终态只允许写入
+`StatementOutcomeEvent`。
+
 Program cursor、env、run_log 和 recovery budget 由 `ProgramRuntime.resume()` 重放 Journal 重建；
 交互 statement 的逻辑活态由最近一个 turn 携带的 `StatementRuntimeSnapshot` 恢复。
 
-checkpoint 的提交边界是一个 turn 追加到 Journal 并写入 `context.json`。快照只包含会影响后续
-逻辑决策的 retry、constraint、progress 和合同信息；截图、识别缓存、target acquire 临时探针及
-设备对象不进入快照。恢复后必须重新观察真实界面，不能把历史 screenshot 当作当前设备状态。
+运行中 checkpoint 的提交边界是一个 turn 追加到 Journal；终态 checkpoint 的提交边界是
+`StatementOutcomeEvent` 追加并写入 `context.json`，且必须发生在 Interpreter 推进和
+statement runtime 销毁之前。活态快照只包含会影响后续逻辑决策的 retry、constraint、progress
+和合同信息；截图、识别缓存、target acquire 临时探针及设备对象不进入快照。恢复后必须重新观察
+真实界面，不能把历史 screenshot 当作当前设备状态。
 `context.json` 使用原子替换避免半写文件；但外部动作可能先于 turn checkpoint 生效，因此当前
 恢复语义不是 exactly-once。不可安全重复的 commit 仍必须依赖页面事实和 mutation receipt 仲裁。
 
@@ -285,7 +351,7 @@ replay 分为两种，不能混称：
 
 1. **状态 replay**：只消费 Journal，重建 ProgramRuntime 与 StatementRuntime；必须是确定性的；
 2. **决策 replay**：载入某 turn 的 observation snapshot，恢复其前序 statement 状态，再调用真实
-   checker/planner；默认不 dispatch 动作。
+   LLM Transition；默认不 dispatch 动作。
 
 报告、完成状态和 content-note dedupe 都是 Journal 的投影，不得为 resume 再维护平行账本。
 

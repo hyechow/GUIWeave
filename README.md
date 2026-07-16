@@ -43,7 +43,7 @@ Only the `Run` lines enter the GUI loop. Everything else is deterministic runtim
 - **The agent loop becomes bounded I/O:** the interpreter schedules statements; the loop handles only local GUI tactics.
 - **The result becomes explicit:** `StatementOutcome` carries `phase`, verification, reads, and evidence; bounded recovery is recorded in `EventJournal`.
 
-Browser, iPhone, and Android are replaceable I/O backends. Moving orchestration and completion semantics out of the model **reduces planning load** so longer workflows are practical with smaller multimodal models (e.g. Qwen3.5-35B-A3B), including private OpenAI-compatible endpoints. It does **not** remove vision or grounding errors — perception quality still matters.
+Browser, iPhone, and Android are replaceable I/O backends. Program orchestration stays deterministic, while the LLM owns the next GUI tactic from statement-local Journal memory. Contracts and evidence retain terminal veto authority. This split **reduces task-level planning load** so longer workflows are practical with smaller multimodal models (e.g. Qwen3.5-35B-A3B), including private OpenAI-compatible endpoints. It does **not** remove vision or grounding errors — perception quality still matters.
 
 Planner-executor and multi-agent stacks do not change this boundary if plans stay prose and workers return text or booleans. RPA sits at the other extreme and scripts every step. GUIWeave is in the middle: **explicit workflow, bounded GUI uncertainty.**
 
@@ -82,7 +82,7 @@ flowchart TD
     Tight --> RT
     Kick --> Compiler
 
-    SE --> Loop[observe → check → acquire/plan → act]
+    SE --> Loop[Journal memory + observation<br/>→ LLM transition<br/>→ evidence guard → act / outcome]
     Loop --> SE
     Loop --> Journal[(EventJournal)]
     RT --> Journal
@@ -98,8 +98,8 @@ flowchart TD
 |-------|------|--------------|
 | Compiler | Program semantics and statement contracts | Pixels or page tactics |
 | ProgramRuntime / interpreter | Program cursor, env, statement order, recovery budgets | Page click targets |
-| Run loop | Observe/act lifecycle, persistence, recovery routing under runtime budgets | Program cursor or variable binding |
-| Statement executor | Tactics and terminal outcome for one interactive statement | Program rewrites or task completion |
+| Run loop | Observe/dispatch lifecycle and Journal persistence | Program cursor, semantic tactic, or variable binding |
+| Statement executor | Journal-memory projection, LLM tactic, and one statement outcome | Program rewrites or task completion |
 | Action policy | One grounded action proposal | Statement or task completion |
 | Adapter | Observation and device I/O | Goal semantics |
 

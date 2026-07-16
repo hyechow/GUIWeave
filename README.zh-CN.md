@@ -43,7 +43,7 @@ Finish
 - **Agent 环变成有界 I/O：** Interpreter 调度 statement，环只做局部 GUI 战术。
 - **结果变成显式返回值：** `StatementOutcome` 携带 `phase`、验证、reads 与证据；有预算的恢复记入 `EventJournal`。
 
-浏览器、iPhone 和 Android 是可替换的 I/O 后端。把编排与完成语义移出模型，**减轻规划负担**，使 Qwen3.5-35B-A3B 等较小多模态模型也能承载更长流程（含私有化 OpenAI 兼容接口）。这**不能消除**视觉与 grounding 误差——感知质量仍然关键。
+浏览器、iPhone 和 Android 是可替换的 I/O 后端。Program 编排保持确定性；LLM 根据 statement 内的 Journal 记忆决定下一步 GUI 战术，合同与证据保留终态否决权。这种切分**减轻任务级规划负担**，使 Qwen3.5-35B-A3B 等较小多模态模型也能承载更长流程（含私有化 OpenAI 兼容接口）。这**不能消除**视觉与 grounding 误差——感知质量仍然关键。
 
 Planner-Executor 与 Multi-Agent 若仍用文本计划和文本 / bool 返回值，并没有改变这个边界；RPA 在另一端把每一步都脚本化。GUIWeave 介于两者之间：**工作流显式，GUI 不确定性有界。**
 
@@ -82,7 +82,7 @@ flowchart TD
     Tight --> RT
     Kick --> Compiler
 
-    SE --> Loop[observe → check → acquire/plan → act]
+    SE --> Loop[Journal 记忆 + 当前观察<br/>→ LLM transition<br/>→ 证据 Guard → act / outcome]
     Loop --> SE
     Loop --> Journal[(EventJournal)]
     RT --> Journal
@@ -98,8 +98,8 @@ flowchart TD
 |----|------|----------|
 | Compiler | Program 语义与 statement 合同 | 像素或页内战术 |
 | ProgramRuntime / interpreter | Program 游标、env、statement 顺序、恢复预算 | 页内点击目标 |
-| Run loop | observe/act 生命周期、持久化、在 runtime 预算下路由恢复 | Program 游标或变量绑定 |
-| Statement 执行器 | 单个交互 statement 的战术与终态 | Program 改写或任务终态 |
+| Run loop | observe/dispatch 生命周期与 Journal 持久化 | Program 游标、语义战术或变量绑定 |
+| Statement 执行器 | Journal 记忆投影、LLM 战术与单个 statement 终态 | Program 改写或任务终态 |
 | Action policy | 一次 grounding 后的动作建议 | Statement 或任务完成 |
 | Adapter | 观察与设备 I/O | 目标语义 |
 
