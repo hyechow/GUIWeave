@@ -113,6 +113,70 @@ def test_aligned_values_resolve_across_repeated_non_choice_rows() -> None:
     ) is not None
 
 
+def test_abstract_collection_values_project_through_declared_target_controls() -> None:
+    statement = StatementContract(
+        id="members",
+        name="realize two declared members",
+        description="",
+        success_condition="the collection contains both declared members",
+        kind="action",
+        target_controls=["Admin Description", "Admin Swatch"],
+        target_values={"options_to_add": ["30", "31"]},
+    )
+    controls = [
+        *_row("collection:13", description="30", swatch="30"),
+        *_row("collection:14", description="31", swatch="31"),
+    ]
+
+    complete = _subject(controls, statement=statement, coverage="partial")
+    incomplete = _subject(
+        [
+            *_row("collection:13", description="30", swatch="30"),
+            *_row("collection:14", description="31"),
+        ],
+        statement=statement,
+        coverage="partial",
+    )
+
+    assert complete.status == "complete"
+    assert incomplete.status != "complete"
+    assert observed_effect_signal(
+        statement,
+        Observation(
+            png_bytes=b"frame",
+            source="browser",
+            form_controls=controls,
+            form_controls_meta={"coverage": "partial"},
+        ),
+        [],
+    ) is not None
+
+
+def test_unrelated_complete_inventory_cannot_disprove_source_local_fields() -> None:
+    statement = StatementContract(
+        id="members",
+        name="realize two declared members",
+        description="",
+        success_condition="the collection contains both declared members",
+        kind="action",
+        target_controls=["Admin Description", "Admin Swatch"],
+        target_values={"options_to_add": ["30", "31"]},
+    )
+    destination = Observation(
+        png_bytes=b"destination",
+        source="browser",
+        form_controls=[{
+            "label": "Destination Search",
+            "kind": "text_input",
+            "value": "",
+            "group_id": "destination-grid:1",
+        }],
+        form_controls_meta={"coverage": "complete"},
+    )
+
+    assert resolve_mutation(statement, destination, []).status == "unknown"
+
+
 def test_destination_only_absence_is_not_journaled_as_effect() -> None:
     statement = _statement()
     observation = Observation(

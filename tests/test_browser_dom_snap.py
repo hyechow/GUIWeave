@@ -103,6 +103,7 @@ def test_target_label_extracts_unquoted_browser_menu_labels():
     assert _target_label("点击 Filters 按钮以展开筛选条件区域") == "Filters"
     assert _target_label("点击弹窗中的「取消」按钮") == "取消"
     assert _target_label("点击虚拟机器人列表中「lucas-10002」所在行操作列下拉菜单中的「操作」") == "操作"
+    assert _target_label("Click the 'Products' link in the expanded Catalog submenu.") == "Products"
     assert _target_label("点击左侧导航栏的销售菜单") == ""
 
 
@@ -111,6 +112,78 @@ def test_target_label_does_not_treat_filter_value_as_click_label():
 
     assert _target_label("点击搜索框右侧的放大镜图标以应用'Olivia'筛选条件") == ""
     assert _target_label("点击搜索按钮搜索'Olivia'") == ""
+
+
+def test_composite_instruction_does_not_retarget_first_click_to_later_label():
+    from gui_agent.adapters.browser.executor import _target_label
+
+    description = (
+        "Click 'CATALOG' in the sidebar, then click 'Products' "
+        "to navigate to the Products List page."
+    )
+    assert _target_label(description) == ""
+
+    c = _FakeClient((-46.0, 114.0, "text 238x44"), viewport=(1281, 963))
+    dec = BrowserActionDecision(action=BrowserAction(
+        action_type="tap",
+        x=32,
+        y=240,
+        description=description,
+    ))
+
+    _exec(c).execute(dec)
+
+    assert c.seen_target == ""
+    assert c.clicked is not None
+    assert 40 <= c.clicked[0] <= 42
+    assert 230 <= c.clicked[1] <= 232
+    assert dec.action.snap is None
+
+
+def test_executor_rejects_any_dom_snap_coordinate_outside_viewport():
+    c = _FakeClient((-46.0, 114.0, "text 238x44"), viewport=(1281, 963))
+    dec = BrowserActionDecision(action=BrowserAction(
+        action_type="tap",
+        x=32,
+        y=240,
+        description="Click the 'Products' link.",
+    ))
+
+    _exec(c).execute(dec)
+
+    assert c.clicked is not None
+    assert 40 <= c.clicked[0] <= 42
+    assert 230 <= c.clicked[1] <= 232
+    assert dec.action.snap is None
+
+
+def test_row_identity_is_left_to_dom_semantics_not_instruction_vocabulary():
+    from gui_agent.adapters.browser.executor import _target_label
+
+    class StructurallyGuardedClient(_FakeClient):
+        def dom_snap(self, x, y, target_text=""):
+            self.seen_target = target_text
+            # The device may receive the business value, but its DOM-semantic candidate filter
+            # does not allow a filter input's current value or ordinary cell text to match it.
+            return x, y, None
+
+    description = "Click the 'size' row in the grid to open the Edit Attribute form."
+    assert _target_label(description) == "size"
+    c = StructurallyGuardedClient(None, viewport=(1281, 963))
+    dec = BrowserActionDecision(action=BrowserAction(
+        action_type="tap",
+        x=114,
+        y=452,
+        description=description,
+    ))
+
+    _exec(c).execute(dec)
+
+    assert c.seen_target == "size"
+    assert c.clicked is not None
+    assert 145 <= c.clicked[0] <= 147
+    assert 434 <= c.clicked[1] <= 436
+    assert dec.action.snap is None
 
 
 def test_execute_passes_quoted_label_to_dom_snap():

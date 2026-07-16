@@ -14,6 +14,8 @@ test.sh
 data/
 evals/**/*.png
 evals/**/*.jpg
+replay/**/*.png
+replay/**/*.jpg
 tests/**/*.png
 tests/**/*.jpg
 tests/**/*.jpeg

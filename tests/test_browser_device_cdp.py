@@ -78,3 +78,23 @@ def test_tracked_request_keeps_browser_loading_until_response_headers():
 
     response({"requestId": "save", "type": "XHR"})
     assert dev.is_loading() is False
+
+
+def test_dom_snap_text_retarget_uses_interactive_accessible_names():
+    dev = PlaywrightDevice.__new__(PlaywrightDevice)
+    captured: dict[str, str] = {}
+
+    def cdp_send(_method, params):
+        captured["expression"] = params["expression"]
+        return {"result": {"value": ""}}
+
+    dev._cdp_send = cdp_send
+
+    assert dev.dom_snap(146, 435, target_text="size") == (146, 435, None)
+    expression = captured["expression"]
+    assert "const RETARGET=" in expression
+    assert "const accessibleName=" in expression
+    assert "e.matches(RETARGET)" in expression
+    assert "accessibleName(e)===norm(target)" in expression
+    assert "const SEARCH=RETARGET+',input,select,textarea'" in expression
+    assert "if(!textMatch(c) && !matchCtl(c))continue" in expression

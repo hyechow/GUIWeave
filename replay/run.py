@@ -1,10 +1,11 @@
-"""Replay one production supervisor turn without dispatching an action.
+"""Replay one production Statement decision without dispatching an action.
 
 The replay input is a normal run directory containing ``context.json``,
 ``screenshot_turn_N.png`` and ``observation_turn_N.json``.  The observation snapshot is written
 by the runtime alongside each screenshot and preserves the structured adapter signals that a PNG
-cannot represent.  This script calls the real checker, selector and planner; it never constructs
-an executor or sends an action to a device/browser.
+cannot represent. This script calls the real Statement Transition and can optionally ground its
+semantic decision through the action policy; it never constructs an executor or sends an action
+to a device/browser.
 
 Examples:
     uv run python -m replay logs/.../20260713_090810 --turn 30
@@ -30,7 +31,9 @@ load_dotenv(PROJECT_ROOT / ".env")
 from gui_agent.adapters.browser.factory import _build_action_policy, _build_supervisor
 from gui_agent.adapters.browser.target_binding import BrowserTargetBinder
 from gui_agent.core.run.context import load_observation_snapshot
+from gui_agent.core.run.interactive import contract_for_run
 from gui_agent.core.run.target_binding import bind_action_target
+from gui_agent.core.orchestrator.program import Run
 from gui_agent.core.schemas import StatementContract, PolicyContext, PolicyTurn
 from gui_agent.core.self_learning.app_summary import load_knowledge_for_app
 
@@ -57,6 +60,53 @@ def _statement_for_turn(raw: dict[str, Any], turn: PolicyTurn) -> StatementContr
     if hasattr(info, "model_dump"):
         info = info.model_dump(mode="json")
     return StatementContract.model_validate(info)
+
+
+def _statement_for_terminal_observation(
+    raw: dict[str, Any],
+    *,
+    statement_id: str,
+) -> StatementContract:
+    """Recover a contract when the terminal observation intentionally has no running turn."""
+    program_raw = (raw.get("orchestrator") or {}).get("program")
+    if not isinstance(program_raw, dict):
+        raise ValueError("terminal replay requires orchestrator.program in context.json")
+
+    def find(items: list[dict[str, Any]]) -> dict[str, Any] | None:
+        for item in items:
+            if item.get("statement_id") == statement_id:
+                return item
+            for key in ("then", "otherwise", "body"):
+                if isinstance(item.get(key), list) and (match := find(item[key])):
+                    return match
+        return None
+
+    blocks = [program_raw.get("statements") or []]
+    blocks.extend(function.get("body") or [] for function in program_raw.get("functions") or [])
+    if match := next(filter(None, (find(block) for block in blocks)), None):
+        return contract_for_run(Run.model_validate(match), 0)
+    raise ValueError(f"statement {statement_id!r} is absent from orchestrator.program")
+
+
+def _terminal_event_for_observation(
+    raw: dict[str, Any],
+    *,
+    turn: int,
+) -> dict[str, Any] | None:
+    screenshot = f"screenshot_turn_{turn}.png"
+    fallback = None
+    for event in reversed((raw.get("journal") or {}).get("events") or []):
+        if event.get("event_type") != "statement_outcome":
+            continue
+        if event.get("observation_url") == screenshot:
+            return event
+        if (
+            fallback is None
+            and not event.get("observation_url")
+            and event.get("after_turn") == turn - 1
+        ):
+            fallback = event
+    return fallback
 
 
 def _load_snapshot(run_dir: Path, turn: int):
@@ -124,11 +174,10 @@ def _expectation_failures(
         failures.append(
             f"rejected target_control was proposed: {decision.target_control!r}"
         )
-    expected_retries = expectation.get("retry_count")
-    actual_retries = supervisor._rt.retry_count
-    if expected_retries is not None and actual_retries != expected_retries:
+    if expectation.get("retry_count") is not None:
         failures.append(
-            f"expected retry_count={expected_retries!r}, got {actual_retries!r}"
+            "retry_count expectation is invalid: the minimal Statement runtime retired "
+            "mutable retry counters"
         )
     return failures
 
@@ -163,12 +212,7 @@ def _decide_action_without_dispatch(
     decision: Any,
 ) -> Any:
     action_policy = _build_action_policy(context.action_policy_name)
-    authorization = decision.mutation_authorization
-    target_group_id = (
-        authorization.subject_ref
-        if authorization is not None and authorization.source == "structural"
-        else ""
-    )
+    target_group_id = ""
     native = action_policy.resolve_native_action(
         observation,
         target_control=decision.target_control,
@@ -229,7 +273,7 @@ def main() -> int:
     )
     parser.add_argument(
         "--expect-binding",
-        choices=("bound", "unresolved", "contradicted"),
+        choices=("bound", "unresolved"),
         help="also replay the pre-dispatch target binding and require this verdict",
     )
     parser.add_argument(
@@ -265,36 +309,55 @@ def main() -> int:
     raw = json.loads((run_dir / "context.json").read_text(encoding="utf-8"))
     context = PolicyContext.model_validate(raw)
     target_turn = next((turn for turn in context.journal.turns if turn.index == target_index), None)
-    if target_turn is None:
-        raise ValueError(f"turn {target_index} is absent from {run_dir / 'context.json'}")
+    warnings: list[str] = []
+    if target_turn is not None:
+        statement_instance_id = target_turn.statement_instance_id
+        statement = _statement_for_turn(raw, target_turn)
+    else:
+        terminal_event = _terminal_event_for_observation(raw, turn=target_index)
+        if terminal_event is None:
+            raise ValueError(
+                f"turn {target_index} and its terminal observation are absent from "
+                f"{run_dir / 'context.json'}"
+            )
+        statement_instance_id = str(terminal_event.get("statement_instance_id") or "")
+        statement_id = str(terminal_event.get("statement_id") or "")
+        if not statement_instance_id or not statement_id:
+            raise ValueError(f"terminal observation {target_index} lacks statement identity")
+        statement = _statement_for_terminal_observation(
+            raw,
+            statement_id=statement_id,
+        )
+        warnings.append(
+            "replaying a terminal observation that has no PolicyTurn; statement identity "
+            "was recovered from StatementOutcomeEvent + Program"
+        )
     if (context.platform or "browser") != "browser":
         raise ValueError("this replay runner currently supports the browser supervisor only")
 
     observation = _load_snapshot(run_dir, target_index)
     history = [turn for turn in context.journal.turns if turn.index < target_index]
-    statement = _statement_for_turn(raw, target_turn)
     supervisor = _build_supervisor(context.supervisor_policy_name)
     _configure_knowledge(supervisor, context)
     supervisor._goal = context.goal
     invocation_history = [
         turn
         for turn in history
-        if turn.statement_instance_id == target_turn.statement_instance_id
+        if turn.statement_instance_id == statement_instance_id
     ]
     if invocation_history:
         supervisor.resume_statement(
             statement,
-            instance_id=target_turn.statement_instance_id,
+            instance_id=statement_instance_id,
             history=invocation_history,
         )
     else:
         supervisor.begin_statement(
             statement,
-            instance_id=target_turn.statement_instance_id,
+            instance_id=statement_instance_id,
             task_type=context.task_type or "action",
         )
     statement = supervisor._active_statement
-    warnings: list[str] = []
 
     decision = supervisor.step(observation, context.goal, history)
     checker = getattr(supervisor, "_last_check", None)

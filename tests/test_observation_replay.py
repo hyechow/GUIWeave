@@ -10,7 +10,11 @@ from gui_agent.core.run.context import (
 )
 from gui_agent.core.schemas import Observation
 from gui_agent.adapters.browser.actions import BrowserAction, BrowserActionDecision
-from replay.run import _action_expectation_failures
+from replay.run import (
+    _action_expectation_failures,
+    _statement_for_terminal_observation,
+    _terminal_event_for_observation,
+)
 
 
 def test_observation_snapshot_round_trips_structured_signals_and_adjacent_png(tmp_path):
@@ -73,3 +77,58 @@ def test_action_replay_expectation_checks_primitive_and_target_region():
         {"action": {**expectation["action"], "x_range": [950, 1000]}},
         decision,
     ) == ["expected x in [950, 1000], got 908.0"]
+
+
+def test_terminal_observation_replay_recovers_statement_from_program():
+    raw = {
+        "orchestrator": {"program": {
+            "goal": "persist the edited resource",
+            "statements": [{
+                "op": "run",
+                "statement_id": "s3",
+                "name": "ensure values exist",
+                "kind": "action",
+                "success_condition": "values exist and are saved",
+                "effect_mode": "transform",
+                "persistence": "explicit_commit",
+                "target_values": {"Option": ["30", "31"]},
+            }],
+        }},
+        "journal": {
+            "events": [
+                {
+                    "event_type": "statement_outcome",
+                    "after_turn": 7,
+                    "observation_url": "screenshot_turn_8.png",
+                    "statement_instance_id": "i3:s3",
+                    "statement_id": "s3",
+                }
+            ]
+        },
+    }
+
+    event = _terminal_event_for_observation(raw, turn=8)
+    statement = _statement_for_terminal_observation(raw, statement_id="s3")
+
+    assert event is not None
+    assert event["statement_instance_id"] == "i3:s3"
+    assert statement.id == "s3"
+    assert statement.persistence == "explicit_commit"
+    assert statement.target_values == {"Option": ["30", "31"]}
+
+
+def test_terminal_observation_replay_does_not_match_another_screenshot():
+    raw = {
+        "journal": {
+            "events": [
+                {
+                    "event_type": "statement_outcome",
+                    "after_turn": 7,
+                    "observation_url": "screenshot_turn_9.png",
+                    "statement_id": "other",
+                }
+            ]
+        }
+    }
+
+    assert _terminal_event_for_observation(raw, turn=8) is None

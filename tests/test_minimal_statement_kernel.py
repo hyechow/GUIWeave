@@ -65,6 +65,21 @@ def test_transition_vocabulary_is_minimal() -> None:
     assert kind["enum"] == ["act", "complete", "infeasible"]
 
 
+def test_atomic_instruction_does_not_treat_value_31_as_numbered_sequence() -> None:
+    assert not StatementSupervisorPolicy._is_sequence(
+        "Click Save Attribute to persist options 30 and 31."
+    )
+    assert StatementSupervisorPolicy._is_sequence(
+        "Input 'size' into Attribute Code and click Search."
+    )
+    assert StatementSupervisorPolicy._is_sequence(
+        "在 Attribute Code 输入 size，然后点击 Search"
+    )
+    assert StatementSupervisorPolicy._is_sequence(
+        "1. Click Add\n2. Fill the new row"
+    )
+
+
 def test_navigation_completion_uses_runtime_verification(monkeypatch) -> None:
     statement = StatementContract(
         id="s1",
@@ -105,10 +120,16 @@ def test_rejected_complete_is_redecided_on_same_frame(monkeypatch) -> None:
             value="Active",
         ),
     ])
+    retry_inputs: list[str] = []
+
+    def decide(*_args, **kwargs):
+        retry_inputs.append(kwargs.get("extra", ""))
+        return next(decisions)
+
     monkeypatch.setattr(
         policy,
         "_invoke_statement_transition",
-        lambda *a, **k: next(decisions),
+        decide,
     )
 
     step = policy._run_single_turn(statement, _observation(), [])
@@ -118,6 +139,8 @@ def test_rejected_complete_is_redecided_on_same_frame(monkeypatch) -> None:
     assert step.target_control == "Status"
     assert step.atomic_role == "write"
     assert len(policy._last_transition_record["guard_rejections"]) == 1
+    assert retry_inputs[0] == ""
+    assert "否决了上一提议" in retry_inputs[1]
 
 
 def test_guard_exhaustion_is_terminal_not_a_running_noop(monkeypatch) -> None:
@@ -189,3 +212,60 @@ def test_runtime_validates_contract_scope_without_choosing_write_order(monkeypat
     assert step.should_act is True
     assert step.target_control == "Admin Swatch"
     assert step.target_value == "30"
+
+
+def test_runtime_fills_one_omitted_declared_write_value(monkeypatch) -> None:
+    statement = StatementContract(
+        id="s1",
+        name="filter by attribute code",
+        description="",
+        kind="filter",
+        success_condition="Attribute Code filter is applied",
+        target_controls=["Attribute Code"],
+        target_values={"Attribute Code": "size"},
+    )
+    policy = _policy(monkeypatch, statement)
+    monkeypatch.setattr(
+        policy,
+        "_invoke_statement_transition",
+        lambda *a, **k: _act(
+            "Type 'size' into Attribute Code",
+            family="input",
+            control="Attribute Code",
+        ),
+    )
+
+    step = policy._run_single_turn(statement, _observation(), [])
+
+    assert step.should_act is True
+    assert step.target_control == "Attribute Code"
+    assert step.target_value == "size"
+
+
+def test_runtime_does_not_guess_an_ambiguous_omitted_write_value(monkeypatch) -> None:
+    statement = StatementContract(
+        id="s1",
+        name="choose one status",
+        description="",
+        kind="filter",
+        success_condition="Status filter is applied",
+        target_controls=["Status"],
+        target_values={"Status": ["Pending", "Complete"]},
+    )
+    policy = _policy(monkeypatch, statement)
+    monkeypatch.setattr(
+        policy,
+        "_invoke_statement_transition",
+        lambda *a, **k: _act(
+            "Select a declared status",
+            family="select",
+            control="Status",
+        ),
+    )
+
+    step = policy._run_single_turn(statement, _observation(), [])
+
+    assert step.should_act is False
+    assert step.outcome is not None
+    assert step.outcome.phase == "exhausted"
+    assert "allowed=['Complete', 'Pending']" in step.outcome.summary

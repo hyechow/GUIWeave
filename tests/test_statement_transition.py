@@ -77,6 +77,62 @@ def test_complete_requires_cited_evidence() -> None:
         )
 
 
+def test_complete_drops_stray_action_before_runtime_guard() -> None:
+    decision = _StatementTransitionResult.model_validate({
+        "kind": "complete",
+        "reason": "目标已满足",
+        "evidence": [
+            {"source": "current_observation", "claim": "目标字段可见且已填写"}
+        ],
+        "action": {
+            "instruction": "点击 Save Attribute",
+            "atomic_role": "commit",
+            "action_family": "activate",
+        },
+    })
+
+    assert decision.kind == "complete"
+    assert decision.action is None
+
+
+def test_act_drops_unreferenced_journal_explanation() -> None:
+    decision = _StatementTransitionResult.model_validate({
+        "kind": "act",
+        "reason": "需要进入编辑页检查",
+        "evidence": [
+            {
+                "source": "journal",
+                "claim": "Previously clicked Save Attribute",
+            },
+            {
+                "source": "current_observation",
+                "claim": "Attribute list is visible",
+            },
+        ],
+        "action": {
+            "instruction": "打开 size 属性行",
+            "action_family": "activate",
+        },
+    })
+
+    assert decision.kind == "act"
+    assert [item.source for item in decision.evidence] == ["current_observation"]
+
+
+def test_terminal_journal_evidence_still_requires_event_ref() -> None:
+    with pytest.raises(ValidationError, match="requires turn:N event_ref"):
+        _StatementTransitionResult.model_validate({
+            "kind": "complete",
+            "reason": "保存已完成",
+            "evidence": [
+                {
+                    "source": "journal",
+                    "claim": "Previously clicked Save Attribute",
+                }
+            ],
+        })
+
+
 def test_guard_uses_runtime_verification_without_model_negotiation() -> None:
     verdict = guard_complete(
         CompletionEvaluation(
