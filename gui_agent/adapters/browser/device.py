@@ -860,13 +860,19 @@ class PlaywrightDevice:
             "const R=%d;"
             "const CLICK='a,button,input,select,textarea,label,[role=button],"
             "[role=option],[role=menuitem],[role=tab],[role=checkbox],[role=radio],[onclick],.cursor-pointer,li';"
-            "const txt=e=>((e.innerText||e.value||'')+'').trim();"
-            # Form-control IDENTITY match (name/aria/placeholder/label/container), with
-            # from/to/min/max role awareness — so a range filter's two visually-identical
-            # adjacent inputs (qty[from] vs qty[to]) can be told apart by the field label
-            # the planner named ("Quantity to"). Identity is matched, NOT the input's value,
-            # so a typed value can never retarget onto a field already holding it.
+            # Page-wide retarget accepts only interactive accessible identities.
+            "const RETARGET='a,button,summary,label,input[type=button],input[type=submit],"
+            "input[type=reset],[role=button],[role=link],[role=option],[role=menuitem],"
+            "[role=menuitemcheckbox],[role=menuitemradio],[role=tab],[role=checkbox],"
+            "[role=radio],[onclick],.cursor-pointer';"
+            "const SEARCH=RETARGET+',input,select,textarea';"
             "const norm=s=>((s||'')+'').replace(/\\s+/g,' ').trim().toLowerCase();"
+            "const accessibleName=e=>norm((e.getAttribute&&"
+            "(e.getAttribute('aria-label')||e.getAttribute('title')))"
+            "||e.innerText||e.textContent||'');"
+            "const textMatch=e=>!!(e&&e.matches&&e.matches(RETARGET)"
+            "&&accessibleName(e)===norm(target));"
+            # Form controls match identity, never their current value.
             "const T=norm(target);"
             "const roleT=/(?<![a-z])to(?![a-z])|\\bmax\\b|上限|截止/.test(T)?'to':"
             "(/(?<![a-z])from(?![a-z])|\\bmin\\b|下限|起始/.test(T)?'from':'');"
@@ -891,13 +897,15 @@ class PlaywrightDevice:
             "if(!ok)return false;return roleT?roleOf(e)===roleT:true;};"
             "let el=document.elementFromPoint(x,y);if(!el)return '';"
             "const n=el.closest&&el.closest(CLICK);"
-            "if(target && (!n || (txt(n)!==target && !matchCtl(n)))){"
+            "if(target && (!n || (!textMatch(n) && !matchCtl(n)))){"
             "  let best=null,bd=1e9;"
-            "  for(const c of document.querySelectorAll(CLICK)){"
-            "    if(txt(c)!==target && !matchCtl(c))continue;"
+            "  for(const c of document.querySelectorAll(SEARCH)){"
+            "    if(!textMatch(c) && !matchCtl(c))continue;"
             "    const r=c.getBoundingClientRect();"
-            "    if(r.width<=0||r.height<=0)continue;"
+            "    if(r.width<=0||r.height<=0||r.bottom<=0||r.right<=0"
+            "      ||r.top>=innerHeight||r.left>=innerWidth)continue;"
             "    const cx=r.x+r.width/2,cy=r.y+r.height/2,dd=Math.hypot(cx-x,cy-y);"
+            "    if(cx<0||cy<0||cx>=innerWidth||cy>=innerHeight)continue;"
             "    if(dd<bd){bd=dd;best={cx:Math.round(cx),cy:Math.round(cy),"
             "      w:Math.round(r.width),h:Math.round(r.height)};}}"
             "  if(best&&bd<=R)return JSON.stringify({...best,tag:'text'});"
@@ -909,7 +917,10 @@ class PlaywrightDevice:
             "if(['slider','scrollbar'].includes(role)||itype==='range')return '';"
             "const r=n.getBoundingClientRect(),vw=innerWidth,vh=innerHeight;"
             "if(r.width<=0||r.height<=0||r.width>vw*0.9||r.height>vh*0.6)return '';"
-            "return JSON.stringify({cx:Math.round(r.x+r.width/2),cy:Math.round(r.y+r.height/2),"
+            "const cx=r.x+r.width/2,cy=r.y+r.height/2;"
+            "if(r.bottom<=0||r.right<=0||r.top>=vh||r.left>=vw"
+            "  ||cx<0||cy<0||cx>=vw||cy>=vh)return '';"
+            "return JSON.stringify({cx:Math.round(cx),cy:Math.round(cy),"
             "tag,w:Math.round(r.width),h:Math.round(r.height)});})()"
             % (int(round(x)), int(round(y)), target_js, TEXT_RETARGET_RADIUS_PX)
         )
@@ -922,7 +933,11 @@ class PlaywrightDevice:
             return x, y, None
         try:
             d = json.loads(val)
-            return float(d["cx"]), float(d["cy"]), f"{d['tag']} {d['w']}x{d['h']}"
+            cx, cy = float(d["cx"]), float(d["cy"])
+            width, height = self.viewport_size
+            if not (0 <= cx < width and 0 <= cy < height):
+                return x, y, None
+            return cx, cy, f"{d['tag']} {d['w']}x{d['h']}"
         except Exception:  # noqa: BLE001
             return x, y, None
 

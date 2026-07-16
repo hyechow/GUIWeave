@@ -15,9 +15,17 @@ class StatementActionNormalizationMixin:
     def _is_sequence(instruction: str) -> bool:
         """Reject an LLM instruction that asks the action policy for multiple primitives."""
         text = instruction.strip()
-        return any(
-            marker in text
-            for marker in ("操作序列", "步骤", "\n1.", "\n2.", "1.", "2.", "；2", ";2")
+        return (
+            "操作序列" in text
+            or len(re.findall(r"(?:^|\n)\s*\d+[.)、]\s*", text)) >= 2
+            or bool(re.search(r"[；;]\s*2[.)、]\s*", text))
+            or bool(re.search(
+                r"(?:\b(?:and|then|and then)\b\s*|(?:并|然后|接着|随后|再)\s*)"
+                r"(?:click|tap|press|open|choose|select|type|input|enter|fill|clear|"
+                r"scroll|drag|点击|轻点|按下|打开|选择|输入|填写|清空|滚动|拖动)",
+                text,
+                re.IGNORECASE,
+            ))
         )
 
     @staticmethod

@@ -87,6 +87,28 @@ class SubjectResolution:
     evidence: str = ""
 
 
+def _desired_state(statement: StatementContract) -> DesiredState:
+    desired = {
+        str(field): options
+        for field, value in (statement.target_values or {}).items()
+        if _norm(field)
+        if (options := target_value_options(value))
+    }
+    if len(desired) != 1:
+        return desired
+
+    abstract_field, values = next(iter(desired.items()))
+    concrete_fields = tuple(dict.fromkeys(filter(None, map(str.strip, statement.target_controls))))
+    # A collection key may carry aligned members while target_controls names their row fields.
+    if (
+        len(values) > 1
+        and len(concrete_fields) > 1
+        and all(_key(field) != _key(abstract_field) for field in concrete_fields)
+    ):
+        return {field: values for field in concrete_fields}
+    return desired
+
+
 def _groups(observation: Observation) -> tuple[dict[str, list[dict]], bool]:
     groups: dict[str, list[dict]] = {}
     flat: list[dict] = []
@@ -203,12 +225,7 @@ def resolve_mutation(
     observation: Observation,
     history: list[PolicyTurn],
 ) -> SubjectResolution:
-    desired = {
-        str(field): options
-        for field, value in (statement.target_values or {}).items()
-        if _norm(field)
-        if (options := target_value_options(value))
-    }
+    desired = _desired_state(statement)
     if not desired:
         return SubjectResolution("unknown", evidence="no desired-state map")
 
@@ -257,7 +274,16 @@ def resolve_mutation(
         return writable[0]
     if len(writable) > 1:
         return SubjectResolution("ambiguous", evidence="multiple writable subjects")
-    if repeated and coverage in {"complete", "full"}:
+    if (
+        repeated
+        and coverage in {"complete", "full"}
+        and any(
+            _matches_field(control, field)
+            for controls in groups.values()
+            for control in controls
+            for field in desired
+        )
+    ):
         return SubjectResolution("absent", evidence="complete inventory has no target subject")
     return SubjectResolution("unknown", evidence="subject identity is not observable")
 

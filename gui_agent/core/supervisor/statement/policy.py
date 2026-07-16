@@ -428,7 +428,7 @@ class StatementSupervisorPolicy(
         statement: StatementContract,
         plan: _ActionPlan,
     ) -> str:
-        """Validate only contract scope, never choose which declared field comes next."""
+        """Validate contract scope and fill only an unambiguous omitted value."""
         matches = [
             (str(field), desired)
             for field, desired in (statement.target_values or {}).items()
@@ -443,6 +443,10 @@ class StatementSupervisorPolicy(
                 "write target is outside the Statement contract: "
                 f"{plan.target_control!r}"
             )
+        if not plan.target_value and len(matches) == 1:
+            options = target_value_options(matches[0][1])
+            if len(options) == 1:
+                plan.target_value = options[0]
         proposed = str(plan.target_value).strip().casefold()
         if not proposed or not any(
             proposed == str(value).strip().casefold()
@@ -632,8 +636,8 @@ class StatementSupervisorPolicy(
             extra = extra_base
             if rejections:
                 extra = (extra + "\n" if extra else "") + (
-                    "Runtime Guard 否决了上一提议；必须在当前帧改选 "
-                    "act、complete 或 infeasible，不得等待下一帧：\n- "
+                    "Runtime Guard 否决了上一提议；当前帧事实未变，必须改选一个"
+                    "可通过校验的 act / complete / infeasible。否决原因：\n- "
                     + "\n- ".join(rejections)
                 )
             with _Timer(

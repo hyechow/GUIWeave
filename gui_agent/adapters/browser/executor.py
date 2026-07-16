@@ -98,6 +98,16 @@ def _target_label(description: str) -> str:
     "点击 Filters 按钮". This rescues visible menu-row misses without treating arbitrary
     long Chinese instruction text as a label.
     """
+    text = description or ""
+    composite_action = re.search(
+        r"(?:\bthen\b|然后|接着|随后|再)\s*"
+        r"(?:点击|轻点|打开|选择|\b(?:click|tap|open|choose|select)\b)",
+        text,
+        re.IGNORECASE,
+    )
+    if composite_action:
+        # The pixel belongs to the first action; a later label is not a retarget candidate.
+        return ""
     quoted = _quoted_label(description)
     if quoted and _quoted_label_is_click_target(description, quoted):
         return quoted
@@ -132,9 +142,16 @@ def _quoted_label_is_click_target(description: str, label: str) -> bool:
         return False
     if re.search(r"^\s*(筛选条件|过滤条件|关键词|关键字|搜索词|查询词|值|文本|文字)", after):
         return False
-    if re.search(r"^\s*(按钮|链接|菜单|菜单项|选项|标签|页签|图标|列|控件)", after):
+    if re.search(
+        r"^\s*(按钮|链接|菜单|菜单项|选项|标签|页签|图标|列|控件"
+        r"|button|link|menu(?:\s+item)?|option|tab|icon|control)\b",
+        after,
+        re.IGNORECASE,
+    ):
         return True
     if re.search(r"(中的|下的|旁边的|列|按钮|链接|菜单)\s*$", before):
+        return True
+    if re.search(r"\b(?:click|tap|open|choose|select)\s+(?:the\s+)?$", before, re.IGNORECASE):
         return True
     return False
 
@@ -258,6 +275,7 @@ class BrowserExecutor(VisionExecutor):
             # dom_snap matches inputs by their .value, so it wrongly snaps onto an already-filled
             # field holding that same value (run 20260613_193023: typing 'admin' into the password
             # box kept retargeting to the account box whose value was already 'admin' → login stuck).
+            # Page-wide retargeting is limited to interactive accessible DOM identities.
             at = getattr(action, "action_type", "")
             description = getattr(action, "description", "") or ""
             if at in ("tap", "click"):
@@ -272,8 +290,16 @@ class BrowserExecutor(VisionExecutor):
             else:
                 target = ""
             cx, cy, info = self._client().dom_snap(px, py, target_text=target)
+            viewport = getattr(self._client(), "viewport_size", None)
+            in_viewport = bool(
+                isinstance(viewport, tuple)
+                and len(viewport) == 2
+                and 0 <= cx < viewport[0]
+                and 0 <= cy < viewport[1]
+            )
             if (
                 info is not None
+                and in_viewport
                 and (abs(cx - px) > 1 or abs(cy - py) > 1)
                 and _should_accept_dom_snap(description, info, px, py, cx, cy)
             ):

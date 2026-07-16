@@ -146,6 +146,26 @@ class _StatementTransitionResult(BaseModel):
     def _coerce_str(cls, value):
         return "" if value is None else value
 
+    @model_validator(mode="before")
+    @classmethod
+    def _normalize_redundant_payload(cls, value: object) -> object:
+        """Discard provider fields that contradict the explicit kind discriminator."""
+        if not isinstance(value, dict):
+            return value
+        data = dict(value)
+        kind = str(data.get("kind") or "").strip().lower()
+        if kind in {"complete", "infeasible"}:
+            data["action"] = None
+        if kind == "act" and isinstance(data.get("evidence"), list):
+            data["evidence"] = [
+                item
+                for item in data["evidence"]
+                if not isinstance(item, dict)
+                or item.get("source") != "journal"
+                or str(item.get("event_ref") or "").startswith("turn:")
+            ]
+        return data
+
     @model_validator(mode="after")
     def _validate_kind_payload(self) -> "_StatementTransitionResult":
         if self.kind == "act":
