@@ -71,12 +71,23 @@ def _binding(control: dict) -> TargetBinding:
     )
 
 
+def _control_identity(control: dict) -> str:
+    return next(
+        (
+            str(control.get(field) or "").strip()
+            for field in ("group_field", "label", "name", "id")
+            if str(control.get(field) or "").strip()
+        ),
+        "another rendered control",
+    )
+
+
 class BrowserTargetBinder:
-    """Upgrade a visual proposal only when a rendered control uniquely owns its point.
+    """Compare a visual proposal with rendered control ownership.
 
     Control identity is resolved from the adapter control inventory (a control's own
-    label / name / options / group) and the concrete action point. A point that is owned but
-    not recognized is an identity gap (``unresolved`` → the caller fails open).
+    label / name / options / group) and the concrete action point. A proven different
+    activation target is ``contradicted``; incomplete identity remains ``unresolved``.
     """
 
     def bind(
@@ -85,6 +96,9 @@ class BrowserTargetBinder:
         observation: Observation,
         action_decision: BaseActionDecision,
     ) -> TargetBinding | None:
+        intent = step.action_intent
+        if intent is None:
+            return None
         controls = getattr(observation, "form_controls", None)
         if not controls:
             return None
@@ -92,7 +106,11 @@ class BrowserTargetBinder:
             item
             for item in controls
             if isinstance(item, dict)
-            and matches_target_control(item, step.target_control)
+            and matches_target_control(
+                item,
+                intent.target_control,
+                allow_compound=intent.family in {"input", "select"},
+            )
         ]
         point_owners = [
             item
@@ -107,18 +125,29 @@ class BrowserTargetBinder:
         # carrying the declared target option IS the target control. The closed-select label
         # is unreliable, but the option list is authoritative — so this binds filter and
         # mutation selects without depending on mutation authorization or a perfect label.
-        target_value = str(getattr(step, "target_value", "") or "").strip()
+        target_value = intent.target_value.strip()
         if target_value:
             select_owners = [item for item in point_owners if _is_select_control(item)]
             if len(select_owners) == 1 and _select_has_option(select_owners[0], target_value):
                 return _binding(select_owners[0])
 
-        # The point lands on a rendered control but identity does not confirm the declared
-        # target. The point's name cannot be confirmed, so this is an identity
-        #    GAP, not a contradiction — adapter labels can be wrong (log 20260715_215953:
-        #    the Type select was labeled 'notice-EV92REG'), so a name-mismatch must fail
-        #    open rather than suppress a possibly-correct action. Mutation safety is still
-        #    recorded by the actual dispatch and subsequent observation.
+        # Activation at a structurally identified *different form control* is a positive
+        # contradiction, not an identity guess. Writes remain unresolved here because adapter
+        # labels can be incomplete or wrong (log 20260715_215953).
+        if point_owners and intent.family in {"activate", "navigate"}:
+            owner = point_owners[0]
+            return TargetBinding(
+                status="contradicted",
+                source="structural",
+                unit_id=str(owner.get("group_id") or "__form__"),
+                reason=(
+                    f"action point belongs to {_control_identity(owner)!r}, "
+                    f"not the declared target {intent.target_control!r}"
+                ),
+            )
+
+        # The point lands on a rendered write control but identity does not confirm the declared
+        # target. This remains an identity gap because adapter labels can be wrong.
         if point_owners:
             return TargetBinding(
                 status="unresolved",

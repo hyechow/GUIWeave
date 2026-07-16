@@ -1057,6 +1057,7 @@ def run_agent_loop(
                 executed=executed,
                 action_decision=action_decision,
                 suppressed_reason=action_result.suppressed_reason,
+                binding=action_result.binding,
             )
             if progress.stop_reason:
                 if progress.stop_message:
@@ -1068,14 +1069,15 @@ def run_agent_loop(
                     current=rt.current,
                 ))
             if auto_continue:
-                finalize_auto_continue_turn(
-                    turn=turn,
-                    action_decision=action_decision,
-                    platform=platform,
-                    observation_png=observation.png_bytes,
-                    verify_future=verify_future,
-                    say=_say,
-                )
+                if executed:
+                    finalize_auto_continue_turn(
+                        turn=turn,
+                        action_decision=action_decision,
+                        platform=platform,
+                        observation_png=observation.png_bytes,
+                        verify_future=verify_future,
+                        say=_say,
+                    )
                 _save_ctx()  # 落盘 settle_s（+ target_verify）
                 interrupted = _stop_after_esc(turn_no)
                 if interrupted is not None:

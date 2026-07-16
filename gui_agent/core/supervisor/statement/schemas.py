@@ -7,7 +7,6 @@ from typing import Literal, Optional
 
 from pydantic import BaseModel, ConfigDict, Field, field_validator, model_validator
 
-from gui_agent.core.orchestrator.recovery import DEAD_ROUTE_MARKER, REQUIRED_ROUTE_MARKER
 from gui_agent.core.schemas import ActionFamily, AtomicRole, StatementContract
 
 
@@ -88,8 +87,17 @@ class _TransitionAction(BaseModel):
     action_family: Literal[
         "input", "select", "activate", "navigate", "iterate", "unknown"
     ] = "unknown"
-    target_control: str = ""
-    target_value: str = ""
+    target_control: str = Field(
+        default="",
+        description=(
+            "动作所针对的当前可见控件或入口原名；具名 activate/navigate 以及 "
+            "input/select 必填"
+        ),
+    )
+    target_value: str = Field(
+        default="",
+        description="input/select 要写入或选择的合同精确值；其他动作通常留空",
+    )
     direction: Optional[
         Literal["up", "down", "left", "right", "increase", "decrease"]
     ] = None
@@ -103,6 +111,33 @@ class _TransitionAction(BaseModel):
     @classmethod
     def _coerce_str(cls, value):
         return "" if value is None else value
+
+    @field_validator("target_control")
+    @classmethod
+    def _normalize_structured_target(cls, value: str) -> str:
+        """Accept ``role: label`` as typed syntax, never as prose to interpret."""
+        prefix, separator, label = value.partition(":")
+        if (
+            separator
+            and prefix.strip().casefold()
+            in {
+                "button",
+                "checkbox",
+                "control",
+                "entry",
+                "field",
+                "input",
+                "link",
+                "menuitem",
+                "option",
+                "radio",
+                "select",
+                "tab",
+            }
+            and label.strip()
+        ):
+            return label.strip()
+        return value.strip()
 
     @field_validator("atomic_role", mode="before")
     @classmethod
@@ -127,10 +162,12 @@ class _StatementTransitionResult(BaseModel):
     model_config = ConfigDict(extra="forbid")
 
     kind: Literal["act", "complete", "infeasible"]
+    # Emit the concrete payload before prose in the JSON schema. If a provider truncates a long
+    # reason containing DOM quotes, an already-emitted action remains recoverable.
+    action: Optional[_TransitionAction] = None
     reason: str = Field(min_length=1, description="决策理由")
     summary: str = Field(default="", description="当前屏幕/局势一句话摘要")
     evidence: list[_TransitionEvidence] = Field(default_factory=list)
-    action: Optional[_TransitionAction] = None
     page_identity: str = Field(default="", description="页面身份描述")
     kickback: str = Field(
         default="",
@@ -149,13 +186,19 @@ class _StatementTransitionResult(BaseModel):
     @model_validator(mode="before")
     @classmethod
     def _normalize_redundant_payload(cls, value: object) -> object:
-        """Discard provider fields that contradict the explicit kind discriminator."""
+        """Normalize only contradictions whose typed discriminator has clear authority."""
         if not isinstance(value, dict):
             return value
         data = dict(value)
         kind = str(data.get("kind") or "").strip().lower()
         if kind in {"complete", "infeasible"}:
             data["action"] = None
+        if kind == "act" and isinstance(data.get("action"), dict):
+            if not str(data.get("reason") or "").strip():
+                data["reason"] = (
+                    str(data["action"].get("instruction") or "").strip()
+                    or "execute the proposed action"
+                )
         if kind == "act" and isinstance(data.get("evidence"), list):
             data["evidence"] = [
                 item
@@ -173,28 +216,13 @@ class _StatementTransitionResult(BaseModel):
                 raise ValueError("act transition requires one action")
         elif self.action is not None:
             raise ValueError(f"{self.kind} transition cannot carry an action")
-        if self.kind == "complete":
-            if not self.evidence:
-                raise ValueError("complete transition requires cited evidence")
-        if self.kind == "infeasible":
-            if not self.evidence:
-                raise ValueError("infeasible transition requires cited evidence")
-            if not self.kickback.strip():
-                raise ValueError("infeasible transition requires a kickback directive")
-            if (
-                DEAD_ROUTE_MARKER not in self.kickback
-                or REQUIRED_ROUTE_MARKER not in self.kickback
-            ):
-                raise ValueError(
-                    "infeasible kickback requires typed dead-route and required-route markers"
-                )
-        elif self.kickback:
+        if self.kind != "infeasible" and self.kickback:
             raise ValueError(f"{self.kind} transition cannot carry kickback")
         return self
 
 
-class _ActionPlan(BaseModel):
-    """Runtime-generated or Transition-materialized one-action capability."""
+class _ActionDraft(BaseModel):
+    """Mutable normalization draft before producing a frozen ActionIntent."""
 
     instruction: str = Field(description="下一步精确操作指令")
     summary: str = Field(description="规划依据一句话摘要")

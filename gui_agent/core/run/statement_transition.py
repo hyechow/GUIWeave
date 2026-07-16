@@ -9,6 +9,7 @@ from __future__ import annotations
 from dataclasses import dataclass
 from typing import Iterable, Literal, Protocol
 
+from gui_agent.core.orchestrator.recovery import DEAD_ROUTE_MARKER, REQUIRED_ROUTE_MARKER
 from gui_agent.core.run.execution_signals import CompletionEvaluation
 
 
@@ -79,16 +80,25 @@ def guard_infeasible(
     evidence_valid: bool,
     structure_complete: bool,
     reason: str,
+    kickback: str = "",
 ) -> GuardVerdict:
     """Allow infeasible only when the current structural inventory proves absence."""
     if not evidence_valid:
         return GuardVerdict(False, "infeasible transition lacks valid evidence")
-    if structure_complete:
-        return GuardVerdict(True, reason or "statement infeasible")
-    return GuardVerdict(
-        False,
-        "current control inventory is incomplete; infeasible is not proven",
-    )
+    if not structure_complete:
+        return GuardVerdict(
+            False,
+            "current control inventory is incomplete; infeasible is not proven",
+        )
+    if (
+        DEAD_ROUTE_MARKER not in kickback
+        or REQUIRED_ROUTE_MARKER not in kickback
+    ):
+        return GuardVerdict(
+            False,
+            "infeasible transition requires typed dead-route and required-route markers",
+        )
+    return GuardVerdict(True, reason or "statement infeasible")
 
 
 __all__ = [

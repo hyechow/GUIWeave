@@ -101,13 +101,15 @@ def _event_ref(turn: PolicyTurn) -> str:
 def _instruction(turn: PolicyTurn) -> str:
     if turn.supervisor is None:
         return ""
-    return (turn.supervisor.instruction or "").strip()
+    intent = turn.supervisor.action_intent
+    return intent.instruction.strip() if intent is not None else ""
 
 
 def _role(turn: PolicyTurn) -> str:
     if turn.supervisor is None:
         return ""
-    return str(getattr(turn.supervisor, "atomic_role", "") or "")
+    intent = turn.supervisor.action_intent
+    return intent.role if intent is not None else ""
 
 
 def _contract_lines(contract: StatementContract) -> list[str]:
@@ -210,6 +212,8 @@ def _durable_from_turn(turn: PolicyTurn, statement_id: str) -> list[DurableFact]
             actual = ""
             if turn.target_verify is not None:
                 actual = turn.target_verify.actual_element or turn.target_verify.reason
+            elif signal.binding is not None and signal.binding.status == "contradicted":
+                actual = signal.binding.reason
             facts.append(DurableFact(
                 kind="off_target",
                 text=f"落点偏离目标：{instr or ''}{(' → ' + actual) if actual else ''}",
@@ -260,7 +264,7 @@ def _step_summary(turn: PolicyTurn) -> str:
     if turn.executed and turn.action_decision and turn.action_decision.action:
         a = turn.action_decision.action
         parts.append(f"执行：{a.action_type} {a.description}")
-    elif turn.supervisor and not turn.supervisor.should_act:
+    elif turn.supervisor and turn.supervisor.action_intent is None:
         parts.append("无派发动作（观察/裁决）")
     signal = turn.action_signal
     if signal is not None:

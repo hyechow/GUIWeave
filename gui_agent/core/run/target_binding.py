@@ -1,4 +1,4 @@
-"""One-shot target binding for concrete write actions."""
+"""One-shot target binding for concrete actions."""
 
 from __future__ import annotations
 
@@ -15,9 +15,14 @@ def _visual_binding(
     action_decision: BaseActionDecision,
 ) -> TargetBinding:
     action = action_decision.action
+    intent = step.action_intent
     x = getattr(action, "x", None)
     y = getattr(action, "y", None)
-    if not step.target_control or not step.target_value:
+    if (
+        intent is None
+        or not intent.target_control
+        or not intent.target_value
+    ):
         return TargetBinding(
             status="unresolved",
             reason="visual binding requires a declared control and value",

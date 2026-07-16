@@ -286,6 +286,7 @@ def _message_text(content: object) -> str:
 
 
 def _parse_structured_response(text: str, schema: type[ModelT]) -> ModelT:
+    repaired = False
     try:
         data: object = json.loads(_extract_json_object(text))
     except ValueError:
@@ -296,10 +297,13 @@ def _parse_structured_response(text: str, schema: type[ModelT]) -> ModelT:
         data = _repair_json_object(text)
         if data is None:
             raise
-        print("  json.loads 失败,json_repair 确定性修复兜底成功(修复结果可能有轻微失真)")
+        repaired = True
     if _looks_like_schema_echo(data, schema):
         raise ValueError("模型返回了 JSON Schema，而不是业务结果对象")
-    return schema.model_validate(data)
+    parsed = schema.model_validate(data)
+    if repaired:
+        print("  json.loads 失败，json_repair 恢复并通过 schema 校验")
+    return parsed
 
 
 def _looks_like_schema_echo(data: object, schema: type[BaseModel]) -> bool:

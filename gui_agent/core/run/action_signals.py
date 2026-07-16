@@ -87,7 +87,8 @@ def effective_action_role(step: SupervisorStep, action: Any) -> AtomicRole:
         return "write"
     if action_type not in _COMMIT_ACTIONS:
         return "prepare"
-    return step.atomic_role or "prepare"
+    intent = step.action_intent
+    return intent.role if intent is not None else "prepare"
 
 
 def semantic_action_key(step: SupervisorStep, action: Any) -> str:
@@ -112,6 +113,7 @@ def build_action_signal(
 ) -> ActionSignal | None:
     """Record facts known when one concrete primitive reaches the dispatch boundary."""
     action = action_decision.action if action_decision else None
+    intent = step.action_intent
     if action_decision is None and not suppressed_reason:
         return None
     execution = (
@@ -132,8 +134,8 @@ def build_action_signal(
         MutationReceipt(
             statement_id=step.statement_id or "",
             subject_ref=bound_subject,
-            field=step.target_control,
-            intended_value=step.target_value,
+            field=intent.target_control,
+            intended_value=intent.target_value,
             source=binding.source or "visual",
         )
         if role == "write"
@@ -141,23 +143,29 @@ def build_action_signal(
         and bound_subject
         and binding is not None
         and binding.source is not None
-        and step.target_control
-        and step.target_value
+        and intent is not None
+        and intent.target_control
+        and intent.target_value
         else None
     )
     return ActionSignal(
         action_key=action_key,
         role=role,
         surface_id=surface_id,
-        target_control=step.target_control,
+        target_control=intent.target_control if intent is not None else "",
         target_value=(
-            step.target_value or str(getattr(action, "text", "") or "")
-            if role == "write"
+            (intent.target_value or str(getattr(action, "text", "") or ""))
+            if role == "write" and intent is not None
             else ""
         ),
         mutation_receipt=receipt,
         binding=binding,
         execution=execution,
+        target=(
+            "off_target"
+            if binding is not None and binding.status == "contradicted"
+            else "unknown"
+        ),
         suppressed_reason=suppressed_reason,
         evidence=([suppressed_reason] if suppressed_reason else []),
     )

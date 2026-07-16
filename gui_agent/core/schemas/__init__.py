@@ -66,7 +66,7 @@ CompletionStatus = Literal["confirmed", "accepted_unverified", "failed", "in_pro
 StatementPhase = Literal["completed", "failed", "exhausted", "infeasible", "interrupted"]
 Verification = Literal["confirmed", "accepted_unverified"]
 BindingSource = Literal["visual", "structural"]
-BindingStatus = Literal["bound", "unresolved"]
+BindingStatus = Literal["bound", "contradicted", "unresolved"]
 TargetValue = str | list[str]
 
 
@@ -112,7 +112,7 @@ ITERATIVE_STRATEGIES: tuple[str, ...] = (
 
 
 class TargetBinding(BaseModel):
-    """One-shot result of binding a concrete write to a target identity."""
+    """One-shot result of binding a concrete action to a target identity."""
 
     status: BindingStatus
     source: Optional[BindingSource] = None
@@ -158,6 +158,27 @@ class ActionSignal(BaseModel):
     response_channels: list[str] = Field(default_factory=list)
     evidence: list[str] = Field(default_factory=list)
     suppressed_reason: str = ""
+
+
+class ActionIntent(BaseModel):
+    """Immutable one-frame semantic action message.
+
+    It is created by one Statement decision and consumed by the platform adapter. It has no
+    lifecycle, retry counter, or independent persistence.
+    """
+
+    model_config = ConfigDict(frozen=True, extra="forbid")
+
+    instruction: str = Field(min_length=1)
+    role: AtomicRole = "prepare"
+    family: ActionFamily = "unknown"
+    target_control: str = ""
+    target_value: str = ""
+    direction: Optional[
+        Literal["up", "down", "left", "right", "increase", "decrease"]
+    ] = None
+    drag_column: Optional[str] = None
+    drag_steps: Optional[int] = None
 
 
 class EffectSignal(BaseModel):
@@ -603,10 +624,9 @@ class SupervisorStep(BaseModel):
 
     model_config = ConfigDict(extra="forbid")
 
-    should_act: bool = Field(description="是否调用 action policy 执行动作")
-    instruction: Optional[str] = Field(
+    action_intent: Optional[ActionIntent] = Field(
         default=None,
-        description="给 action policy 的精确操作指令（should_act=true 时必填）",
+        description="本帧唯一动作语义；None 表示终态、加载或非交互记录。",
     )
     outcome: Optional[StatementOutcome] = Field(
         default=None,
@@ -638,25 +658,6 @@ class SupervisorStep(BaseModel):
     )
     statement_kind: Optional[StatementKind] = Field(default=None, description="当前子目标类型")
     completion_strategy: Optional[CompletionStrategy] = Field(default=None, description="当前子目标完成策略")
-    atomic_role: AtomicRole = Field(
-        default="prepare",
-        description="当前原子动作在交互 Run 中的角色：prepare=准备状态，commit=最终副作用派发，iterate=允许有进展地重复。",
-    )
-    action_family: ActionFamily = Field(
-        default="unknown",
-        description=(
-            "planner 指令要求的原子动作族。runner 在派发前校验 concrete primitive；"
-            "unknown 表示当前无法确定具体 UI 原语；提交语义只由 atomic_role=commit 表达。"
-        ),
-    )
-    target_control: str = Field(
-        default="",
-        description="planner 声明的本轮控件/字段目标；执行前与 statement target_controls 对齐。",
-    )
-    target_value: str = Field(
-        default="",
-        description="本轮写入/选择的结构化目标值；为空时由平台策略按原有路径决策。",
-    )
     collection_scope: Optional[CollectionScope] = Field(default=None, description="当前内容采集范围")
     pre_existing: bool = Field(
         default=False,
@@ -665,12 +666,6 @@ class SupervisorStep(BaseModel):
     collection_summary: Optional[str] = Field(
         default=None,
         description="collection statement 完成时的采集摘要（含停止条件及触发原因）",
-    )
-    direction: Optional[str] = Field(default=None, description="scroll/drag 手指方向 hint（up/down/left/right）")
-    drag_column: Optional[str] = Field(default=None, description="picker drag 目标列 hint（year/month/day）")
-    drag_steps: Optional[int] = Field(
-        default=None,
-        description="picker drag 目标列当前值与目标值相差的格数（绝对值）hint，用于按距离放大拖动幅度",
     )
     # 由 checker 的 page_identity 和平台配置的 home markers 派生，非 LLM 填写。
     is_home_screen: bool = Field(
@@ -685,12 +680,17 @@ class SupervisorStep(BaseModel):
 
     @model_validator(mode="after")
     def _separate_running_and_terminal_decisions(self) -> "SupervisorStep":
-        if self.outcome is not None and (self.should_act or self.is_loading):
+        if self.outcome is not None and (
+            self.action_intent is not None or self.is_loading
+        ):
             raise ValueError(
                 "terminal SupervisorStep cannot request an action or loading wait"
             )
+        if self.is_loading and self.action_intent is not None:
+            raise ValueError("loading SupervisorStep cannot carry an ActionIntent")
+        if self.preformed_action is not None and self.action_intent is None:
+            raise ValueError("preformed action requires an ActionIntent")
         return self
-
 
 class GoalValidationResult(BaseModel):
     """Result of independent goal-completion validation."""
@@ -918,10 +918,6 @@ class PolicyTurn(BaseModel):
     non_ui: Optional[dict[str, Any]] = Field(
         default=None,
         description="非 UI primitive 执行明细：kind/sql/returns/reads/completed 等；interactive turn 留空",
-    )
-    action_plan: Optional[dict] = Field(
-        default=None,
-        description="Transition 已选动作的运行时物化结果：instruction、target 与手势参数。",
     )
     transition: Optional[dict[str, Any]] = Field(
         default=None,

@@ -176,7 +176,14 @@ class ActionExecutor:
         _, best_len, best_pos = candidates[0]
         return best_pos, best_len
 
-    def execute(self, decision: ActionDecision, app_name: str = "", png_bytes: bytes | None = None, is_home_screen: bool = False) -> bool:
+    def execute(
+        self,
+        decision: ActionDecision,
+        app_name: str = "",
+        png_bytes: bytes | None = None,
+        is_home_screen: bool = False,
+        target_control: str = "",
+    ) -> bool:
         action = decision.action
         if action is None:
             return False

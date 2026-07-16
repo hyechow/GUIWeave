@@ -169,13 +169,14 @@ class ActionExecutor:
         stop_requested: Callable[[], bool] | None = None,
     ) -> ActionRunResult:
         result = ActionRunResult()
-        if not sv_step.should_act:
+        intent = sv_step.action_intent
+        if intent is None:
             return result
 
         def interrupted() -> bool:
             return bool(stop_requested and stop_requested())
 
-        say(f"动作指令: {sv_step.instruction}")
+        say(f"动作指令: {intent.instruction}")
         if interrupted():
             say("  [Interrupt] 收到 ESC，跳过本轮动作执行")
             status(turn_no, "收到 ESC，跳过动作执行")
@@ -220,7 +221,10 @@ class ActionExecutor:
             status(turn_no, "未产生可执行动作")
             return result
         result.action_role = effective_action_role(sv_step, action)
-        if result.action_role == "write":
+        if (
+            action.action_type not in {"scroll", "drag"}
+            and (intent.target_control or result.action_role == "write")
+        ):
             binder = action_policy if callable(getattr(action_policy, "bind", None)) else None
             result.binding = bind_action_target(
                 binder=binder,
@@ -229,8 +233,13 @@ class ActionExecutor:
                 action_decision=action_decision,
             )
             binding = result.binding
-            if binding.status == "unresolved":
-                if sv_step.target_control:
+            if binding.status == "contradicted":
+                result.suppressed_reason = binding.reason
+                say(f"  [TargetBinding] contradicted: {binding.reason}")
+                status(turn_no, "动作落点与声明目标冲突，未派发")
+                return result
+            if result.action_role == "write" and binding.status == "unresolved":
+                if intent.target_control:
                     # A target IS declared but structural identity could not confirm it
                     # (e.g. the adapter mis-extracted the control label). Dispatch the LLM's
                     # concrete visual choice but do not emit a bound mutation receipt.
@@ -243,10 +252,11 @@ class ActionExecutor:
                     say(f"  [TargetBinding] {result.suppressed_reason}")
                     status(turn_no, "目标绑定失败，未派发写动作")
                     return result
-            say(
-                "  [TargetBinding] "
-                f"{result.binding.source}:{result.binding.unit_id or 'control'}"
-            )
+            if binding.status == "bound":
+                say(
+                    "  [TargetBinding] "
+                    f"{binding.source}:{binding.unit_id or 'control'}"
+                )
         status(turn_no, f"[{action_label(action.action_type)}] {action.description}")
 
         flash(action)
@@ -255,6 +265,7 @@ class ActionExecutor:
             app_name=sv_step.app_name or "",
             png_bytes=observation.png_bytes,
             is_home_screen=sv_step.is_home_screen,
+            target_control=intent.target_control,
         )
         if result.executed and has_snapped_point(action_decision):
             flash(action)
@@ -278,7 +289,10 @@ class ActionExecutor:
     ):
         status(turn_no, "动作决策中…")
         say("动作决策中...")
-        instruction_for_action = sv_step.instruction
+        intent = sv_step.action_intent
+        if intent is None:
+            raise ValueError("action execution requires ActionIntent")
+        instruction_for_action = intent.instruction
         started = time.perf_counter()
         token_before = get_llm_token_usage()
         action_decision = None
@@ -287,10 +301,10 @@ class ActionExecutor:
         if callable(native_resolver):
             action_decision = native_resolver(
                 observation,
-                target_control=sv_step.target_control,
-                target_value=sv_step.target_value,
+                target_control=intent.target_control,
+                target_value=intent.target_value,
                 target_group_id=target_group_id,
-                action_family=sv_step.action_family,
+                action_family=intent.family,
                 instruction=instruction_for_action or "",
             )
         if action_decision is not None:
@@ -300,10 +314,10 @@ class ActionExecutor:
                     "kind": "native_action",
                     "label": "execution.native_action",
                     "statement_id": sv_step.statement_id,
-                    "target_control": sv_step.target_control,
-                    "target_value": sv_step.target_value,
+                    "target_control": intent.target_control,
+                    "target_value": intent.target_value,
                     "target_group_id": target_group_id,
-                    "action_family": sv_step.action_family,
+                    "action_family": intent.family,
                     "primitive": action_decision.action.action_type if action_decision.action else "none",
                     "fallback": False,
                 })
@@ -314,17 +328,17 @@ class ActionExecutor:
             if callable(evidence_builder):
                 evidence_context = evidence_builder(
                     observation,
-                    target_control=sv_step.target_control,
-                    target_value=sv_step.target_value,
+                    target_control=intent.target_control,
+                    target_value=intent.target_value,
                     target_group_id=target_group_id,
-                    action_family=sv_step.action_family,
+                    action_family=intent.family,
                 )
             action_decision = action_policy.decide(
                 observation,
                 instruction_for_action,
-                direction=sv_step.direction,
-                drag_column=sv_step.drag_column,
-                drag_steps=sv_step.drag_steps,
+                direction=intent.direction,
+                drag_column=intent.drag_column,
+                drag_steps=intent.drag_steps,
                 evidence_context=evidence_context,
                 context_reports=getattr(supervisor, "_context_reports", None),
             )
@@ -334,10 +348,10 @@ class ActionExecutor:
                 action_decision = grounder(
                     action_decision,
                     observation,
-                    target_control=sv_step.target_control,
-                    target_value=sv_step.target_value,
+                    target_control=intent.target_control,
+                    target_value=intent.target_value,
                     target_group_id=target_group_id,
-                    action_family=sv_step.action_family,
+                    action_family=intent.family,
                 )
                 if action_decision is not ungrounded:
                     reports = getattr(supervisor, "_context_reports", None)
@@ -346,7 +360,7 @@ class ActionExecutor:
                             "kind": "action_grounding",
                             "label": "execution.action_grounding",
                             "statement_id": sv_step.statement_id,
-                            "target_control": sv_step.target_control,
+                            "target_control": intent.target_control,
                             "target_group_id": target_group_id,
                             "primitive": action_decision.action.action_type if action_decision.action else "none",
                         })
@@ -376,14 +390,15 @@ def submit_target_verify(
 ) -> Future | None:
     """Submit post-action target verification if this turn executed a tap/click."""
     verify_point = snapped_point(action_decision) if executed else None
-    if verify_point is None or not sv_step.instruction:
+    intent = sv_step.action_intent
+    if verify_point is None or intent is None:
         return None
     return pool.submit(
         verify_target,
         observation_png,
         verify_point[0],
         verify_point[1],
-        sv_step.instruction,
+        intent.instruction,
     )
 
 

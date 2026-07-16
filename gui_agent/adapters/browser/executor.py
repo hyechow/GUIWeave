@@ -46,116 +46,6 @@ _DATEPICKER_SET_JS = """(() => {{
   }} catch(e) {{ return false; }}
 }})()"""
 
-# Quoted UI label in an action description: 「操作」 / 『确定』 / "取消" / '编辑'.
-_QUOTE_RE = re.compile(r"[「『\"']([^「」『』\"']{1,8})[」』\"']")
-# Suffix must list 子菜单项/子菜单 BEFORE 菜单项/菜单: the engine tries alternatives left-to-right at
-# the SAME position, and for "Products 子菜单项" the text starts with 子, so 菜单项 fails there — without
-# the 子-prefixed forms _target_label returns "" and text-retarget can't rescue an adjacent-menu miss
-# (live 185: "Catalog 菜单下的 Products 子菜单项" snapped to the neighbouring Categories link).
-_INLINE_EN_LABEL_RE = re.compile(
-    r"(?:菜单下的|子菜单中的|下的|中的|内的)\s*([A-Z][A-Za-z0-9 &_-]{1,40})\s*"
-    r"(?:子菜单项|子菜单|选项|菜单项|菜单|按钮|链接|复选框|checkbox)"
-    r"|点击\s*([A-Z][A-Za-z0-9 &_-]{1,40})\s*(?:子菜单项|子菜单|选项|菜单项|菜单|按钮|链接|复选框|checkbox)"
-)
-_RANGE_FIELD_LABEL_RE = re.compile(
-    # The from/to/min/max qualifier must be a SEPARATE word (space before, non-letter after) —
-    # otherwise "admin" matches its trailing "min", "tomato" its "to", etc. The field label is a
-    # single token (no internal space) so a leading fill verb ("set Quantity to") isn't swallowed
-    # into it — Magento's numeric range fields are all single words (Quantity/Price/Weight).
-    r"([A-Za-z][\w/-]{0,30}?)\s+(from|to|min|max)(?![A-Za-z])",
-    re.IGNORECASE,
-)
-
-
-def _range_field_label(description: str) -> str:
-    """The field label a range-filter fill names (e.g. "Quantity to") — used to DOM-snap
-    a `type` focus-tap onto the right one of two visually-identical adjacent From/To inputs
-    by field identity + from/to role, instead of by the ambiguous vision pixel.
-
-    Only the LABEL is returned, never the typed value (which lives in action.text), so passing
-    it to dom_snap cannot recreate the value-retarget bug. Empty for an ordinary type action
-    (no from/to/min/max qualifier) — those snap normally with no retarget."""
-    match = _RANGE_FIELD_LABEL_RE.search(description or "")
-    if not match:
-        return ""
-    return re.sub(r"\s+", " ", f"{match.group(1)} {match.group(2)}").strip()
-
-
-def _quoted_label(description: str) -> str:
-    """The LAST short quoted label in the description — the actionable target
-    (「点击…菜单中的「操作」」→ 操作). Longer quotes (robot names, option values with
-    underscores) are skipped by the 8-char cap: those targets are unique under the
-    point anyway, while short labels (操作/删除/确定/取消) are the ambiguous ones."""
-    matches = _QUOTE_RE.findall(description or "")
-    return matches[-1] if matches else ""
-
-
-def _target_label(description: str) -> str:
-    """Best-effort clickable label for DOM text retarget.
-
-    Prefer explicit quotes. As a browser-specific fallback, extract short English admin UI
-    labels from common Chinese action phrasing, e.g. "Sales 菜单下的 Orders 选项" or
-    "点击 Filters 按钮". This rescues visible menu-row misses without treating arbitrary
-    long Chinese instruction text as a label.
-    """
-    text = description or ""
-    composite_action = re.search(
-        r"(?:\bthen\b|然后|接着|随后|再)\s*"
-        r"(?:点击|轻点|打开|选择|\b(?:click|tap|open|choose|select)\b)",
-        text,
-        re.IGNORECASE,
-    )
-    if composite_action:
-        # The pixel belongs to the first action; a later label is not a retarget candidate.
-        return ""
-    quoted = _quoted_label(description)
-    if quoted and _quoted_label_is_click_target(description, quoted):
-        return quoted
-    # Values embedded in instructions like "apply 'Olivia' filter" or
-    # "search 'Olivia'" are data, not clickable labels. Passing them to DOM
-    # text-retarget can snap a nearby icon click back into the input field.
-    match = _INLINE_EN_LABEL_RE.search(description or "")
-    if not match:
-        return ""
-    label = next((g for g in match.groups() if g), "")
-    return label.strip()[:40]
-
-
-def _quoted_label_is_click_target(description: str, label: str) -> bool:
-    """Return True when a short quoted string is likely a clickable UI label.
-
-    The last short quote in an instruction is often an input/search value
-    ("应用 'Olivia' 筛选条件"), not the thing to click. Text-retargeting to such
-    values is unsafe because form inputs expose their current value as text.
-    """
-    text = description or ""
-    if not label:
-        return False
-    quoted_forms = [f"「{label}」", f"『{label}』", f"\"{label}\"", f"'{label}'"]
-    positions = [(q, text.rfind(q)) for q in quoted_forms if text.rfind(q) >= 0]
-    if not positions:
-        return False
-    q, pos = max(positions, key=lambda item: item[1])
-    before = text[max(0, pos - 16):pos]
-    after = text[pos + len(q):pos + len(q) + 16]
-    if re.search(r"(输入|搜索|筛选|过滤|关键词|关键字|应用|匹配|包含|值为|设为|设置为)\s*$", before):
-        return False
-    if re.search(r"^\s*(筛选条件|过滤条件|关键词|关键字|搜索词|查询词|值|文本|文字)", after):
-        return False
-    if re.search(
-        r"^\s*(按钮|链接|菜单|菜单项|选项|标签|页签|图标|列|控件"
-        r"|button|link|menu(?:\s+item)?|option|tab|icon|control)\b",
-        after,
-        re.IGNORECASE,
-    ):
-        return True
-    if re.search(r"(中的|下的|旁边的|列|按钮|链接|菜单)\s*$", before):
-        return True
-    if re.search(r"\b(?:click|tap|open|choose|select)\s+(?:the\s+)?$", before, re.IGNORECASE):
-        return True
-    return False
-
-
 def _should_accept_dom_snap(description: str, info: str, px: float, py: float, cx: float, cy: float) -> bool:
     """Reject unsafe DOM snaps for icon clicks.
 
@@ -202,14 +92,28 @@ class BrowserExecutor(VisionExecutor):
             raise RuntimeError("浏览器尚未连接")
         return client
 
-    def execute(self, decision, app_name: str = "", png_bytes=None, is_home_screen: bool = False) -> bool:
+    def execute(
+        self,
+        decision,
+        app_name: str = "",
+        png_bytes=None,
+        is_home_screen: bool = False,
+        target_control: str = "",
+    ) -> bool:
         if decision.action is None:
             return False
         # Stash the action so _tap can record its DOM snap on it (the report / runtime visualizer
         # read action.snap to draw original→snapped, the same as iphone YOLO/OCR).
         self._cur_action = decision.action
+        self._cur_target_control = target_control
         self._prepare_scroll_anchor(decision.action)
-        return super().execute(decision, app_name, png_bytes, is_home_screen)
+        return super().execute(
+            decision,
+            app_name,
+            png_bytes,
+            is_home_screen,
+            target_control=target_control,
+        )
 
     def execute_scroll(self, action, *, ticks: int = 0, delta_px: int = 0) -> None:
         """Resolve omitted browser wheel coordinates before dispatch."""
@@ -258,37 +162,22 @@ class BrowserExecutor(VisionExecutor):
         for canvas / huge containers / non-clickable points (see device.dom_snap), so it only
         fixes a near-miss on a real control and never moves a legitimate precise click.
 
-        Also passes the label quoted in the action description (e.g. 「操作」) so dom_snap can
-        TEXT-RETARGET when the point landed on a differently-labelled neighbour — the OCR-snap
-        analogue. Rescues adjacent-menu-item misses: 操作/删除 are 28px apart, the vision
-        model's y was one row off, and the click hit the DESTRUCTIVE neighbour 3× in a row
-        (run 20260612_114219).
+        Also passes the typed ActionIntent target so dom_snap can TEXT-RETARGET when the point
+        landed on a differently-labelled neighbour. Free-form action prose is never parsed into
+        target identity here.
 
         Records ``action.snap`` (normalized 0-1000, method 'dom') when it moves the point, so the
         HTML report / runtime visualizer draw the original→snapped correction like YOLO/OCR."""
         sx, sy = px, py
         try:
             action = getattr(self, "_cur_action", None)
-            # Text-retarget is a TAP-on-labelled-control rescue (the 操作/删除 neighbour miss).
-            # Only pass the quoted label for a genuine tap/click. For a `type` focus-tap the
-            # quoted string in the description is the VALUE being typed, NOT a UI label — and
-            # dom_snap matches inputs by their .value, so it wrongly snaps onto an already-filled
-            # field holding that same value (run 20260613_193023: typing 'admin' into the password
-            # box kept retargeting to the account box whose value was already 'admin' → login stuck).
-            # Page-wide retargeting is limited to interactive accessible DOM identities.
             at = getattr(action, "action_type", "")
             description = getattr(action, "description", "") or ""
-            if at in ("tap", "click"):
-                target = _target_label(description)
-            elif at == "type":
-                # A range-filter fill (From/To) renders two visually-identical adjacent inputs;
-                # vision returns near-identical coords for both, so the focus-tap collapses onto
-                # one box. Pass the field LABEL the planner named (carried in description) so
-                # dom_snap disambiguates by DOM identity + from/to role. Value stays in
-                # action.text → no value-retarget regression.
-                target = _range_field_label(description)
-            else:
-                target = ""
+            target = (
+                str(getattr(self, "_cur_target_control", "") or "").strip()
+                if at in ("tap", "click", "type")
+                else ""
+            )
             cx, cy, info = self._client().dom_snap(px, py, target_text=target)
             viewport = getattr(self._client(), "viewport_size", None)
             in_viewport = bool(

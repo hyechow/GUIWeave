@@ -24,8 +24,8 @@ from gui_agent.adapters.browser.control_grounding import (
     ground_rendered_action,
     rendered_target_evidence,
     resolve_native_control_action,
+    semantic_target_evidence,
 )
-from gui_agent.adapters.browser.executor import _range_field_label
 from gui_agent.adapters.browser.target_binding import BrowserTargetBinder
 from gui_agent.core.policies.base import BaseActionPolicy
 from gui_agent.prompts import load_prompt_text
@@ -76,12 +76,6 @@ _UPLOAD_CONTROL_RE = re.compile(
 )
 # instruction 里出现的本地文件绝对路径（supervisor 规则要求把真实路径原样带进 instruction）。
 _FILE_PATH_RE = re.compile(r"(?:/[\w./+~-]+|~/[\w./+~-]+)")
-# 区间过滤器（From/To）填值：planner 指令里点名了某个「字段 from/to」框。把这条字段命名指令带进
-# type 动作的 description，executor 的聚焦点吸附即可按 DOM 身份（name/label + from/to 角色）
-# 命中相邻同形两框中的正确那个，而不是靠 vision 几乎相同的像素瞎猜。
-_FILL_VERB_RE = re.compile(r"填入|填写|输入|设为|设置为|设置成|set\b", re.IGNORECASE)
-
-
 class BrowserActionPolicy(BaseActionPolicy):
     """Vision policy for rendered interaction plus narrow native-control hooks."""
 
@@ -150,13 +144,21 @@ class BrowserActionPolicy(BaseActionPolicy):
         target_group_id: str = "",
         action_family: str = "",
     ) -> str:
-        return rendered_target_evidence(
-            getattr(observation, "form_controls", None),
-            target_control=target_control,
-            target_value=target_value,
-            target_group_id=target_group_id,
-            action_family=action_family,
-        )
+        blocks = [
+            rendered_target_evidence(
+                getattr(observation, "form_controls", None),
+                target_control=target_control,
+                target_value=target_value,
+                target_group_id=target_group_id,
+                action_family=action_family,
+            ),
+            semantic_target_evidence(
+                getattr(observation, "semantic_tree", None),
+                target_control=target_control,
+                action_family=action_family,
+            ),
+        ]
+        return "\n\n".join(block for block in blocks if block)
 
     def _postprocess(
         self, decision, instruction, *, direction=None, drag_column=None, drag_steps=None
@@ -190,15 +192,5 @@ class BrowserActionPolicy(BaseActionPolicy):
             # executor's DOM text retargeting. Preserve the authoritative instruction while
             # leaving the model-selected primitive and coordinate untouched.
             action = action.model_copy(update={"description": instruction.strip()})
-            decision = decision.model_copy(update={"action": action})
-        if (
-            getattr(action, "action_type", None) == "type"
-            and _FILL_VERB_RE.search(instruction or "")
-            and _range_field_label(instruction or "")
-        ):
-            # Carry the planner's field-naming instruction (e.g.「把 Quantity to 设为 3」) into the
-            # type action's description so the executor's focus-tap can retarget to the right
-            # From/To input by field identity. The typed value remains in action.text untouched.
-            action = action.model_copy(update={"description": instruction})
             decision = decision.model_copy(update={"action": action})
         return decision

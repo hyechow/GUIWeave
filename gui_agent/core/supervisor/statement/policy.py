@@ -5,6 +5,7 @@ from typing import Literal, Optional
 
 from gui_agent.core.vision.frame_analysis import is_loading_frame
 from gui_agent.core.schemas import (
+    ActionIntent,
     AtomicRole,
     StatementContract,
     Observation,
@@ -34,7 +35,7 @@ from gui_agent.core.run.statement_transition import (
 )
 from .schemas import (
     StatementPrompts,
-    _ActionPlan,
+    _ActionDraft,
     _StatementTransitionResult,
     _TransitionAction,
 )
@@ -100,7 +101,6 @@ class StatementSupervisorPolicy(
         self._completion_reducer = CompletionReducer()
         # Run-level filter provenance ledger: the FIRST applied-filters snapshot this run observed.
         self._initial_filters: Optional[dict[str, str]] = None
-        self._last_action_plan: Optional[_ActionPlan] = None
         self._last_transition_record: dict | None = None
         self._last_sections_loaded: list[str] = []
         self._context_reports: list[dict] = []
@@ -275,7 +275,6 @@ class StatementSupervisorPolicy(
         self._last_sections_loaded = []  # reset; Transition retrieval fills it per frame
         self._context_reports = []
         # Report-only materialized action metadata must never leak across turns.
-        self._last_action_plan = None
         self._last_transition_record = None
 
         # Filter provenance baseline: first observation that carries the applied-filters channel.
@@ -406,9 +405,9 @@ class StatementSupervisorPolicy(
         self,
         action: _TransitionAction,
         decision: _StatementTransitionResult,
-    ) -> tuple[_ActionPlan | None, str]:
+    ) -> tuple[_ActionDraft | None, str]:
         try:
-            return _ActionPlan(
+            return _ActionDraft(
                 instruction=action.instruction,
                 summary=decision.summary or decision.reason,
                 atomic_role=action.atomic_role,
@@ -426,7 +425,7 @@ class StatementSupervisorPolicy(
     @staticmethod
     def _validate_declared_write(
         statement: StatementContract,
-        plan: _ActionPlan,
+        plan: _ActionDraft,
     ) -> str:
         """Validate contract scope and fill only an unambiguous omitted value."""
         matches = [
@@ -439,10 +438,18 @@ class StatementSupervisorPolicy(
             )
         ]
         if not matches:
+            declared = ", ".join(str(field) for field in (statement.target_values or {}))
             return (
                 "write target is outside the Statement contract: "
-                f"{plan.target_control!r}"
+                f"{plan.target_control!r}; declared target(s)=[{declared}]. "
+                "An unrelated visible input is not a substitute. If the declared target is "
+                "not exposed in the current observation, propose one prepare action that "
+                "reveals it before attempting input/select."
             )
+        if len(matches) == 1:
+            # The contract owns the stable target identity. Provider-added DOM descriptions
+            # are useful evidence but must not become a second downstream target vocabulary.
+            plan.target_control = matches[0][0]
         if not plan.target_value and len(matches) == 1:
             options = target_value_options(matches[0][1])
             if len(options) == 1:
@@ -477,8 +484,6 @@ class StatementSupervisorPolicy(
         plan, rejection = self._proposal_plan(action, decision)
         if plan is None:
             return None, rejection
-        if self._is_sequence(plan.instruction):
-            return None, "transition proposed multiple actions; exactly one primitive is required"
 
         atomic_role = plan.atomic_role
         action_family = plan.action_family
@@ -490,6 +495,7 @@ class StatementSupervisorPolicy(
             rejection = self._validate_declared_write(statement, plan)
             if rejection:
                 return None, rejection
+        plan.instruction = self._canonical_instruction(plan)
 
         drag_steps = self._picker_drag_steps(plan)
         if drag_steps == 0 and plan.drag_column:
@@ -503,22 +509,20 @@ class StatementSupervisorPolicy(
         read_instruction = decision.read_instruction
         if statement.kind in {"collection", "verification"} and not read_instruction:
             read_instruction = _default_read_instruction(statement)
-        self._last_action_plan = plan
         print(f"  [TransitionAction] {plan.instruction}")
         return SupervisorStep(
-            should_act=True,
-            instruction=plan.instruction,
+            action_intent=ActionIntent(
+                instruction=plan.instruction,
+                role=atomic_role,
+                family=action_family,
+                target_control=plan.target_control,
+                target_value=plan.target_value,
+                direction=plan.direction,
+                drag_column=plan.drag_column,
+                drag_steps=drag_steps,
+            ),
             summary=decision.summary or decision.reason,
             execution_scope=execution_scope,
-            atomic_role=atomic_role,
-            action_family=action_family,
-            target_control=plan.target_control,
-            target_value=plan.target_value,
-            # The LLM owns write order inside the declared contract. TargetBinding records
-            # the concrete grounded point after action selection.
-            direction=plan.direction,
-            drag_column=plan.drag_column,
-            drag_steps=drag_steps,
             is_home_screen=_is_home_identity(
                 decision.page_identity,
                 self._prompts.home_identity_markers,
@@ -550,8 +554,6 @@ class StatementSupervisorPolicy(
         """
         if is_loading_frame(observation):
             return SupervisorStep(
-                should_act=False,
-                instruction=None,
                 is_loading=True,
                 summary="页面加载中（确定性空白帧），等待...",
                 **_ctx(statement, None),
@@ -611,7 +613,6 @@ class StatementSupervisorPolicy(
         claims.extend(collection_claims)
         if collection_exhausted:
             return SupervisorStep(
-                should_act=False,
                 outcome=StatementOutcome.exhausted(collection_exhausted),
                 summary=collection_exhausted,
                 **_ctx(statement, _default_read_instruction(statement)),
@@ -635,10 +636,15 @@ class StatementSupervisorPolicy(
         for _attempt in range(2):
             extra = extra_base
             if rejections:
+                assert last_decision is not None
                 extra = (extra + "\n" if extra else "") + (
-                    "Runtime Guard 否决了上一提议；当前帧事实未变，必须改选一个"
-                    "可通过校验的 act / complete / infeasible。否决原因：\n- "
-                    + "\n- ".join(rejections)
+                    "## Statement-local replan\n"
+                    "Runtime Guard 否决了上一条提议，但没有判定 Statement 不可达。"
+                    "保持合同、Memory 和页面不变，选择一个不同的局部动作。\n"
+                    f"被拒绝提议：{last_decision.model_dump_json(exclude_none=True)}\n"
+                    f"否决原因：{'; '.join(rejections)}\n"
+                    "若合同控件尚未暴露，从当前可见入口选择 prepare 动作；只有完整结构"
+                    "证据证明整个合同不可达时，才输出 infeasible + kickback。"
                 )
             with _Timer(
                 self._timings,
@@ -658,7 +664,8 @@ class StatementSupervisorPolicy(
                     extra=extra,
                 )
             last_decision = decision
-            print(f"  [TransitionLLM] kind={decision.kind}: {decision.reason[:120]}")
+            label = "StatementReplan" if rejections else "TransitionLLM"
+            print(f"  [{label}] kind={decision.kind}: {decision.reason[:120]}")
 
             if decision.kind == "complete":
                 refs = guard_evidence_references(
@@ -728,13 +735,13 @@ class StatementSupervisorPolicy(
                         observation,
                     ),
                     reason=decision.reason,
+                    kickback=decision.kickback,
                 )
                 if not verdict.allowed:
                     rejections.append(verdict.reason)
                     continue
                 self._record_transition(decision, rejections)
                 return SupervisorStep(
-                    should_act=False,
                     outcome=StatementOutcome.infeasible(
                         decision.reason,
                         kickback=decision.kickback,
@@ -764,11 +771,10 @@ class StatementSupervisorPolicy(
         assert last_decision is not None
         self._record_transition(last_decision, rejections)
         reason = (
-            "Transition 在当前帧未能产生合法动作或终态："
+            "Statement-local replan 后仍未产生合法动作或终态："
             + "; ".join(rejections or [last_decision.reason])
         )
         return SupervisorStep(
-            should_act=False,
             outcome=StatementOutcome.exhausted(reason),
             summary=reason,
             execution_scope=execution_scope,
@@ -814,7 +820,6 @@ class StatementSupervisorPolicy(
         )
         summary = f"子目标「{done_name}」已完成。"
         return SupervisorStep(
-            should_act=False,
             outcome=StatementOutcome.completed(summary, verification=verification),
             pre_existing=pre_existing,
             summary=summary,

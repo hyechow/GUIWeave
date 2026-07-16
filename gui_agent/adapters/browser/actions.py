@@ -72,6 +72,12 @@ class BrowserAction(BaseAction):
             raise ValueError("upload 动作必须填写 file_path（要上传的本地文件路径）")
         if self.action_type == "select_option" and not self.text:
             raise ValueError("select_option 动作必须填写 text（要选择的选项文本）")
+        for field in ("x", "y", "to_x", "to_y"):
+            value = getattr(self, field)
+            if value is not None and not 0 <= value < 1000:
+                raise ValueError(
+                    f"{field}={value:g} is outside the normalized browser viewport [0, 1000)"
+                )
         return self
 
 

@@ -5,31 +5,33 @@ from __future__ import annotations
 import re
 from typing import Optional
 
-from .schemas import _ActionPlan
+from .schemas import _ActionDraft
 
 
 class StatementActionNormalizationMixin:
     """Keep numeric picker direction and distance internally consistent."""
 
     @staticmethod
-    def _is_sequence(instruction: str) -> bool:
-        """Reject an LLM instruction that asks the action policy for multiple primitives."""
-        text = instruction.strip()
-        return (
-            "操作序列" in text
-            or len(re.findall(r"(?:^|\n)\s*\d+[.)、]\s*", text)) >= 2
-            or bool(re.search(r"[；;]\s*2[.)、]\s*", text))
-            or bool(re.search(
-                r"(?:\b(?:and|then|and then)\b\s*|(?:并|然后|接着|随后|再)\s*)"
-                r"(?:click|tap|press|open|choose|select|type|input|enter|fill|clear|"
-                r"scroll|drag|点击|轻点|按下|打开|选择|输入|填写|清空|滚动|拖动)",
-                text,
-                re.IGNORECASE,
-            ))
-        )
+    def _canonical_instruction(plan: _ActionDraft) -> str:
+        """Render the one typed action without interpreting free-form prose.
+
+        ``action_family`` plus its structured target/value fields own the primitive. The model's
+        prose remains useful only for action families whose payload is not structurally complete.
+        """
+        target = plan.target_control.strip()
+        value = plan.target_value.strip()
+        if plan.action_family == "input" and target and value:
+            return f"Input {value!r} into the visible {target!r} control."
+        if plan.action_family == "select" and target and value:
+            return f"Select {value!r} in the visible {target!r} control."
+        if plan.action_family == "activate" and target:
+            return f"Activate the visible {target!r} control."
+        if plan.action_family == "navigate" and target:
+            return f"Open the visible {target!r} entry."
+        return plan.instruction
 
     @staticmethod
-    def _picker_drag_steps(plan: _ActionPlan) -> Optional[int]:
+    def _picker_drag_steps(plan: _ActionDraft) -> Optional[int]:
         if not getattr(plan, "drag_column", None):
             return None
         cur = getattr(plan, "drag_current_value", None)
@@ -52,7 +54,7 @@ class StatementActionNormalizationMixin:
         return abs(tgt - cur)
 
     @staticmethod
-    def _fix_picker_direction(plan: _ActionPlan) -> None:
+    def _fix_picker_direction(plan: _ActionDraft) -> None:
         col = getattr(plan, "drag_column", None) or ""
         col_suffix = {"year": "年", "month": "月", "day": "日"}.get(col, "")
         if not col_suffix:

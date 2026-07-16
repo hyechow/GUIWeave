@@ -112,7 +112,11 @@ def action_lifecycle_claims(
         and latest.action_signal is not None
         and target_matches_declared(
             latest.action_signal.target_control
-            or getattr(latest.supervisor, "target_control", ""),
+            or (
+                latest.supervisor.action_intent.target_control
+                if latest.supervisor.action_intent is not None
+                else ""
+            ),
             (
                 *(statement.target_controls or []),
                 *(statement.target_values or {}).keys(),
@@ -263,11 +267,14 @@ def runtime_filter_intent(
         return None
     signal = turn.action_signal
     value = signal.target_value
-    if not value and turn.supervisor is not None:
-        value = str(getattr(turn.supervisor, "target_value", "") or "")
+    intent = turn.supervisor.action_intent if turn.supervisor is not None else None
+    if not value and intent is not None:
+        value = intent.target_value
     if not value and turn.action_decision is not None:
         value = str(getattr(turn.action_decision.action, "text", "") or "")
-    control = signal.target_control or getattr(turn.supervisor, "target_control", "")
+    control = signal.target_control or (
+        intent.target_control if intent is not None else ""
+    )
     if not control or not value:
         return None
     return RuntimeFilterIntent(control, value)

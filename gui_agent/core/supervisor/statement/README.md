@@ -6,7 +6,9 @@ platform-neutral. Site facts belong in knowledge; platform mechanics belong in a
 ## Modules
 
 - `policy.py`: builds Memory/evidence inputs, invokes one LLM Transition, and applies
-  hard Guard vetoes. It must not choose a business route from deterministic phases.
+  hard Guard vetoes. A veto triggers a bounded, stateless Statement-local replan on the same
+  contract and observation; it does not imply Statement infeasibility or Program redecomposition.
+  The policy must not choose a business route from deterministic phases.
 - `../../run/statement_memory.py`: projects the active instance's Journal facts into bounded,
   read-only LLM context. It stores no phase and writes no parallel ledger.
 - `../../run/statement_transition.py`: validates completion, infeasible, and evidence-reference

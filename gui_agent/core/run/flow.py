@@ -7,7 +7,7 @@ from dataclasses import dataclass
 from typing import Any, Callable
 
 from gui_agent.core.run.result import AgentResult, orchestration_result
-from gui_agent.core.schemas import PolicyContext, SupervisorStep
+from gui_agent.core.schemas import PolicyContext, SupervisorStep, TargetBinding
 
 
 @dataclass
@@ -60,9 +60,12 @@ def evaluate_turn_progress(
     executed: bool,
     action_decision: Any,
     suppressed_reason: str = "",
+    binding: TargetBinding | None = None,
 ) -> ProgressDecision:
-    """Enforce the minimal kernel invariant: a running turn must dispatch an action."""
-    if not executed and sv_step.should_act:
+    """Stop on execution failures while allowing a grounded rejection to be re-decided."""
+    if not executed and sv_step.action_intent is not None:
+        if binding is not None and binding.status == "contradicted":
+            return ProgressDecision()
         if suppressed_reason:
             reason = f"动作被执行协议抑制：{suppressed_reason}"
             return ProgressDecision(
@@ -85,7 +88,7 @@ def evaluate_turn_progress(
             stop_reason="动作未执行，agent-loop 停止",
         )
 
-    if not sv_step.should_act:
+    if sv_step.action_intent is None:
         return ProgressDecision(
             stop_reason="运行中的 Statement 未产生动作或终态",
             stop_message="\n运行中的 Statement 未产生动作或终态，agent-loop 停止",

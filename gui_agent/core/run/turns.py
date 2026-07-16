@@ -16,7 +16,6 @@ from llm.structured import get_llm_call_count, get_llm_token_usage
 from gui_agent.core.config import resolve_llm_config
 from gui_agent.core.run.action_signals import build_action_signal
 from gui_agent.core.run.context import (
-    extract_action_plan,
     extract_transition,
 )
 from gui_agent.core.run.result import print_timings, print_turn_stats
@@ -77,7 +76,6 @@ def make_interactive_turn(
     surface_id: str = "",
     supervisor_step: SupervisorStep,
     action_decision: Any = None,
-    action_plan: dict | None = None,
     transition: dict | None = None,
     executed: bool = False,
     action_role: AtomicRole | None = None,
@@ -98,7 +96,8 @@ def make_interactive_turn(
     runtime_state: StatementRuntimeSnapshot | None = None,
 ) -> PolicyTurn:
     """Build a normal UI turn."""
-    role = action_role or supervisor_step.atomic_role
+    intent = supervisor_step.action_intent
+    role = action_role or (intent.role if intent is not None else "prepare")
     action_signal = build_action_signal(
         supervisor_step,
         action_decision,
@@ -116,7 +115,6 @@ def make_interactive_turn(
         observation_url=observation_url,
         supervisor=supervisor_step.model_copy(update={"effect_signal": None}),
         action_decision=action_decision,
-        action_plan=action_plan,
         transition=transition,
         executed=executed,
         action_signal=action_signal,
@@ -273,7 +271,6 @@ def record_interactive_turn(
         surface_id=surface_id,
         supervisor_step=supervisor_step,
         action_decision=action_decision,
-        action_plan=extract_action_plan(supervisor),
         transition=extract_transition(supervisor),
         executed=executed,
         action_role=action_role,
@@ -360,8 +357,6 @@ def make_immediate_statement_turn(
         statement=statement,
         statement_instance_id=statement_instance_id,
         supervisor=SupervisorStep(
-            should_act=False,
-            instruction=None,
             summary=summary,
             statement_id=statement_id,
             statement_kind=kind if kind in {"navigation", "filter", "action", "collection", "verification"} else "collection",

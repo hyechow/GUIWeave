@@ -63,7 +63,14 @@ class AndroidExecutor(VisionExecutor):
     def execute_scroll(self, action, *, ticks: int = 0, delta_px: int = 0) -> None:
         self._execute_scroll_action(action)
 
-    def execute(self, decision, app_name: str = "", png_bytes=None, is_home_screen: bool = False) -> bool:
+    def execute(
+        self,
+        decision,
+        app_name: str = "",
+        png_bytes=None,
+        is_home_screen: bool = False,
+        target_control: str = "",
+    ) -> bool:
         action = decision.action
         if action is None:
             return False
@@ -71,7 +78,13 @@ class AndroidExecutor(VisionExecutor):
             print(f"\n动作: [{action.action_type}] {action.description}")
             self._execute_scroll_action(action)
             return True
-        return super().execute(decision, app_name=app_name, png_bytes=png_bytes, is_home_screen=is_home_screen)
+        return super().execute(
+            decision,
+            app_name=app_name,
+            png_bytes=png_bytes,
+            is_home_screen=is_home_screen,
+            target_control=target_control,
+        )
 
     def _dispatch_extra(self, action: AndroidAction, client) -> Optional[bool]:
         at = action.action_type

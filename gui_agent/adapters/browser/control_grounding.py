@@ -24,11 +24,18 @@ def _control_aliases(control: dict) -> set[str]:
     return {_norm(value) for value in values if _norm(value)}
 
 
-def matches_target_control(control: dict, target: str) -> bool:
+def matches_target_control(
+    control: dict,
+    target: str,
+    *,
+    allow_compound: bool = True,
+) -> bool:
     target_key = _norm(target)
     aliases = _control_aliases(control)
     if target_key in aliases:
         return True
+    if not allow_compound:
+        return False
     group_key = _norm(control.get("group_field"))
     compound = {alias for alias in aliases if group_key and group_key in alias}
     return bool(target_key and any(alias in target_key for alias in compound))
@@ -93,6 +100,38 @@ def rendered_target_evidence(
         f"- current_value={current!r}; requested_value={str(target_value)!r}\n"
         "只判断 matched_control 自身是否达到 requested_value；相邻字段出现相同文本不代表该目标完成。"
         "若该目标可见且 current_value 不同，执行指令要求的动作，不要拒绝该动作。"
+    )
+
+
+def semantic_target_evidence(
+    nodes: list[dict] | None,
+    *,
+    target_control: str,
+    action_family: str,
+) -> str:
+    """Expose one exact document-semantic action target without claiming visibility."""
+    if action_family not in {"activate", "navigate"} or not target_control:
+        return ""
+    target = _norm(target_control)
+    candidates = [
+        node
+        for node in nodes or []
+        if isinstance(node, dict)
+        and str(node.get("role") or "").lower()
+        in {"button", "link", "menuitem", "menuitemcheckbox", "menuitemradio", "tab"}
+        and _norm(node.get("key")) == target
+    ]
+    if len(candidates) != 1:
+        return ""
+    node = candidates[0]
+    return (
+        "## 结构化动作目标证据（浏览器可访问性树；不代表当前视口可见）\n"
+        f"- declared_target={target_control!r}; "
+        f"matched_document_target={str(node.get('key') or '')!r}; "
+        f"role={str(node.get('role') or '')!r}\n"
+        "该信号只证明文档中存在这个具名入口，不证明它在截图视口内。"
+        "只有截图中可见时才能点击；若不可见，应先滚动使其进入视口。"
+        "不得用其他可见按钮、标题或列表行替代。"
     )
 
 

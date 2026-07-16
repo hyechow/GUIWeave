@@ -81,8 +81,9 @@ class VisionExecutor:
         app_name: str = "",
         png_bytes: bytes | None = None,
         is_home_screen: bool = False,
+        target_control: str = "",
     ) -> bool:
-        # app_name / png_bytes / is_home_screen are iphone-only; ignored here.
+        # app_name / png_bytes / is_home_screen / target_control are adapter seams.
         action = decision.action
         if action is None:
             return False
