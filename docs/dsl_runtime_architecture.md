@@ -1,5 +1,12 @@
 # DSL Program Runtime 与 Statement Executor
 
+> **架构演进说明**：本文记录当前 DSL Runtime 与 Agentic Statement Transition 的实现边界。
+> 下一阶段的正式收口目标是
+> [语义执行架构：Program、Interact 与 Data](semantic_execution_architecture.md)：Program 只保留
+> `Interact / Data / Command / If / ForEach / Finish`，当前 Read/Query/Compute 和
+> navigation/filter/action 分类将按执行器边界归并。两份文档冲突时，以目标架构文档描述的演进方向
+> 为准；本文仍用于解释尚未退役的现有代码。
+
 GUI 任务是一份混合程序：控制流、计算和数据查询可以确定性执行，只有交互 statement
 需要进入非确定性的 GUI 执行循环。架构边界因此按 **statement 执行方式** 划分，而不是按
 “读/写”或某个 benchmark 的任务形态划分。
