@@ -1,76 +1,100 @@
+"""Minimal Statement kernel: one Transition call plus mechanical validation."""
+
 from __future__ import annotations
 
+import io
+
+from PIL import Image
+import pytest
+
 from gui_agent.core.schemas import Observation, StatementContract
+from gui_agent.core.supervisor.statement import policy as policy_module
 from gui_agent.core.supervisor.statement.policy import StatementSupervisorPolicy
 from gui_agent.core.supervisor.statement.schemas import (
     _StatementTransitionResult,
     _TransitionAction,
+    _TransitionAssessment,
     _TransitionEvidence,
 )
 
 
-INSTANCE = "test:minimal-kernel"
+INSTANCE = "run:s1"
 
 
-def _observation() -> Observation:
-    return Observation(
-        png_bytes=b"frame",
-        source="test",
-        title="Target page",
-        url="https://example.test/target",
+@pytest.fixture(autouse=True)
+def _frame_is_ready(monkeypatch) -> None:
+    monkeypatch.setattr(policy_module, "is_loading_frame", lambda _observation: False)
+
+
+def _png() -> bytes:
+    stream = io.BytesIO()
+    image = Image.new("RGB", (64, 64), "white")
+    for x in range(32):
+        for y in range(64):
+            image.putpixel((x, y), (0, 0, 0))
+    image.save(stream, format="PNG")
+    return stream.getvalue()
+
+
+def _assessment(status: str, *, gap: str = "target is not reached") -> _TransitionAssessment:
+    return _TransitionAssessment(
+        status=status,
+        summary="current Statement state",
+        established_facts=["current frame is available"],
+        open_gaps=[gap] if status == "in_progress" else [],
+        last_action_effect="none",
+    )
+
+
+def _act(
+    *,
+    family: str = "activate",
+    control: str = "Target",
+    value: str = "",
+    target_ref: str = "",
+    role: str = "prepare",
+) -> _StatementTransitionResult:
+    return _StatementTransitionResult(
+        assessment=_assessment("in_progress"),
+        kind="act",
+        reason="the contract remains open",
+        action=_TransitionAction(
+            instruction=f"在当前界面中对 {control} 执行 {family}",
+            atomic_role=role,
+            action_family=family,
+            target_control=control,
+            target_value=value,
+            target_ref=target_ref,
+            expected_result="the target reflects the requested operation",
+        ),
     )
 
 
 def _complete(reason: str = "the target is visible") -> _StatementTransitionResult:
     return _StatementTransitionResult(
+        assessment=_assessment("satisfied"),
         kind="complete",
         reason=reason,
-        evidence=[
-            _TransitionEvidence(source="current_observation", claim=reason)
-        ],
+        evidence=[_TransitionEvidence(source="current_observation", claim=reason)],
     )
 
 
-def _act(
-    instruction: str = "click the target",
-    *,
-    family: str = "activate",
-    control: str = "",
-    value: str = "",
-) -> _StatementTransitionResult:
-    return _StatementTransitionResult(
-        kind="act",
-        reason="the contract remains open",
-        action=_TransitionAction(
-            instruction=instruction,
-            action_family=family,
-            target_control=control,
-            target_value=value,
-        ),
-    )
-
-
-def _policy(monkeypatch, statement: StatementContract) -> StatementSupervisorPolicy:
+def _policy(statement: StatementContract) -> StatementSupervisorPolicy:
     policy = StatementSupervisorPolicy()
     policy.begin_statement(statement, instance_id=INSTANCE)
-    monkeypatch.setattr(
-        "gui_agent.core.supervisor.statement.policy.is_loading_frame",
-        lambda _observation: False,
-    )
     return policy
 
 
-def test_transition_vocabulary_is_minimal() -> None:
-    kind = _StatementTransitionResult.model_json_schema()["properties"]["kind"]
-    assert kind["enum"] == ["act", "complete", "infeasible"]
+def _observation(**updates) -> Observation:
+    return Observation.model_validate({
+        "png_bytes": _png(),
+        "source": "browser",
+        "title": "Current page",
+        **updates,
+    })
 
 
-def test_transition_schema_emits_action_before_reason() -> None:
-    properties = list(_StatementTransitionResult.model_json_schema()["properties"])
-    assert properties.index("action") < properties.index("reason")
-
-
-def test_typed_input_ignores_extra_prose_actions(monkeypatch) -> None:
+def test_transition_preserves_complete_visual_semantic_instruction(monkeypatch) -> None:
     statement = StatementContract(
         id="s1",
         name="filter attributes",
@@ -79,113 +103,172 @@ def test_typed_input_ignores_extra_prose_actions(monkeypatch) -> None:
         success_condition="Attribute Code=size is applied",
         target_values={"Attribute Code": "size"},
     )
-    policy = _policy(monkeypatch, statement)
-    monkeypatch.setattr(
-        policy,
-        "_invoke_statement_transition",
-        lambda *a, **k: _act(
-            "Input 'size' into Attribute Code and click Search.",
-            family="input",
-            control="Attribute Code text_input (name='attribute_code')",
-            value="size",
-        ),
+    policy = _policy(statement)
+    decision = _act(
+        family="input",
+        control="Attribute Code",
+        value="size",
+        role="write",
     )
+    instruction = (
+        "在 Product Attributes 表格筛选区的 Attribute Code 输入框中填写 size，"
+        "不要操作页面顶部的全局搜索框"
+    )
+    decision.action.instruction = instruction
+    monkeypatch.setattr(policy, "_invoke_statement_transition", lambda *a, **k: decision)
 
     step = policy._run_single_turn(statement, _observation(), [])
 
-    assert step.outcome is None
     assert step.action_intent is not None
-    assert (
-        step.action_intent.instruction
-        == "Input 'size' into the visible 'Attribute Code' control."
-    )
-    assert step.action_intent.target_control == "Attribute Code"
+    assert step.action_intent.instruction == instruction
+    assert step.action_intent.expected_result == "the target reflects the requested operation"
 
 
-def test_navigation_completion_uses_runtime_verification(monkeypatch) -> None:
+def test_offscreen_action_is_rejected_without_runtime_rewrite_or_retry(monkeypatch) -> None:
     statement = StatementContract(
         id="s1",
-        name="reach target page",
+        name="submit filter",
+        description="",
+        kind="action",
+        success_condition="filter submitted",
+    )
+    policy = _policy(statement)
+    calls = 0
+
+    def decide(*_args, **_kwargs):
+        nonlocal calls
+        calls += 1
+        return _act(family="activate", control="Search", target_ref="42")
+
+    monkeypatch.setattr(policy, "_invoke_statement_transition", decide)
+    observation = _observation(semantic_tree=[{
+        "role": "button",
+        "key": "Search",
+        "ref": 42,
+        "in_viewport": False,
+    }])
+
+    step = policy._run_single_turn(statement, observation, [])
+
+    assert calls == 1
+    assert step.outcome is not None and step.outcome.phase == "exhausted"
+    assert "supported=['iterate']" in step.outcome.summary
+    assert policy._last_transition_record["validation_error"]
+
+
+def test_wrong_target_ref_fails_once(monkeypatch) -> None:
+    statement = StatementContract(
+        id="s1",
+        name="open products",
         description="",
         kind="navigation",
-        success_condition="Target page is visible",
+        success_condition="Products visible",
     )
-    policy = _policy(monkeypatch, statement)
-    monkeypatch.setattr(policy, "_invoke_statement_transition", lambda *a, **k: _complete())
+    policy = _policy(statement)
+    calls = 0
 
-    step = policy._run_single_turn(statement, _observation(), [])
+    def decide(*_args, **_kwargs):
+        nonlocal calls
+        calls += 1
+        return _act(family="activate", control="Products", target_ref="99")
 
-    assert step.outcome is not None
-    assert step.outcome.phase == "completed"
-    assert step.outcome.verification == "accepted_unverified"
-    assert step.pre_existing is True
+    monkeypatch.setattr(policy, "_invoke_statement_transition", decide)
+    step = policy._run_single_turn(
+        statement,
+        _observation(semantic_tree=[{
+            "role": "link",
+            "key": "Products",
+            "ref": 11,
+            "in_viewport": True,
+        }]),
+        [],
+    )
+
+    assert calls == 1
+    assert step.outcome is not None and "target_ref" in step.outcome.summary
 
 
-def test_rejected_complete_is_redecided_on_same_frame(monkeypatch) -> None:
+def test_invalid_contract_write_value_fails_without_fuzzy_field_binding(monkeypatch) -> None:
     statement = StatementContract(
         id="s1",
         name="set status",
         description="",
         kind="action",
-        success_condition="Status is Active and saved",
-        persistence="explicit_commit",
-        target_values={"Status": "Active"},
+        success_condition="Status is Active",
+        target_values={"semantic status": "Active"},
     )
-    policy = _policy(monkeypatch, statement)
-    decisions = iter([
-        _complete("Status looks Active"),
-        _act(
-            "set Status to Active",
-            family="select",
-            control="Status",
-            value="Active",
-        ),
-    ])
-    retry_inputs: list[str] = []
-
-    def decide(*_args, **kwargs):
-        retry_inputs.append(kwargs.get("extra", ""))
-        return next(decisions)
-
+    policy = _policy(statement)
     monkeypatch.setattr(
         policy,
         "_invoke_statement_transition",
-        decide,
+        lambda *a, **k: _act(
+            family="select",
+            control="Current status",
+            value="Disabled",
+            role="write",
+        ),
+    )
+
+    step = policy._run_single_turn(statement, _observation(), [])
+
+    assert step.outcome is not None
+    assert "allowed=['Active']" in step.outcome.summary
+
+
+def test_adaptive_ui_field_name_is_allowed_when_value_matches_contract(monkeypatch) -> None:
+    statement = StatementContract(
+        id="s1",
+        name="set status",
+        description="",
+        kind="action",
+        success_condition="Status is Active",
+        target_values={"semantic status": "Active"},
+    )
+    policy = _policy(statement)
+    monkeypatch.setattr(
+        policy,
+        "_invoke_statement_transition",
+        lambda *a, **k: _act(
+            family="select",
+            control="Current status",
+            value="Active",
+            role="write",
+        ),
     )
 
     step = policy._run_single_turn(statement, _observation(), [])
 
     assert step.action_intent is not None
-    assert step.outcome is None
-    assert step.action_intent.target_control == "Status"
-    assert step.action_intent.role == "write"
-    assert len(policy._last_transition_record["guard_rejections"]) == 1
-    assert retry_inputs[0] == ""
-    assert "Statement-local replan" in retry_inputs[1]
+    assert step.action_intent.target_control == "Current status"
 
 
-def test_guard_exhaustion_is_terminal_not_a_running_noop(monkeypatch) -> None:
+def test_false_complete_fails_once_instead_of_being_replanned(monkeypatch) -> None:
     statement = StatementContract(
         id="s1",
-        name="persist status",
+        name="save status",
         description="",
         kind="action",
         success_condition="Status is saved",
         persistence="explicit_commit",
         target_values={"Status": "Active"},
     )
-    policy = _policy(monkeypatch, statement)
-    monkeypatch.setattr(policy, "_invoke_statement_transition", lambda *a, **k: _complete())
+    policy = _policy(statement)
+    calls = 0
 
+    def decide(*_args, **_kwargs):
+        nonlocal calls
+        calls += 1
+        return _complete("Status looks Active")
+
+    monkeypatch.setattr(policy, "_invoke_statement_transition", decide)
     step = policy._run_single_turn(statement, _observation(), [])
 
-    assert step.action_intent is None
-    assert step.outcome is not None
-    assert step.outcome.phase == "exhausted"
-    assert "Statement-local replan 后仍未产生合法动作或终态" in step.outcome.summary
+    assert calls == 1
+    assert step.outcome is not None and step.outcome.phase == "exhausted"
+    assert "validation failed" in step.outcome.summary
 
 
-def test_hard_budget_reconcile_cannot_emit_running_noop(monkeypatch) -> None:
+def test_terminal_budget_does_not_replace_act_with_a_terminal_decision(monkeypatch) -> None:
     statement = StatementContract(
         id="s1",
         name="continue editing",
@@ -193,141 +276,28 @@ def test_hard_budget_reconcile_cannot_emit_running_noop(monkeypatch) -> None:
         kind="action",
         success_condition="saved",
     )
-    policy = _policy(monkeypatch, statement)
+    policy = _policy(statement)
     monkeypatch.setattr(policy, "_invoke_statement_transition", lambda *a, **k: _act())
 
     step = policy.reconcile(_observation(), "goal", [])
 
-    assert step.outcome is not None
-    assert step.outcome.phase == "exhausted"
-    assert step.action_intent is None
+    assert step.outcome is not None and step.outcome.phase == "exhausted"
+    assert "hard-budget final frame" in step.outcome.summary
 
 
-def test_runtime_validates_contract_scope_without_choosing_write_order(monkeypatch) -> None:
+def test_valid_completion_uses_runtime_evidence_grade(monkeypatch) -> None:
     statement = StatementContract(
         id="s1",
-        name="ensure option 30",
+        name="reach target page",
         description="",
-        kind="action",
-        success_condition="both fields are 30",
-        target_values={"Admin Description": "30", "Admin Swatch": "30"},
+        kind="navigation",
+        success_condition="Target page is visible",
     )
-    policy = _policy(monkeypatch, statement)
-    # Admin Swatch is deliberately proposed before Admin Description. The kernel checks only
-    # contract scope; it does not carry a deterministic next-field phase.
-    monkeypatch.setattr(
-        policy,
-        "_invoke_statement_transition",
-        lambda *a, **k: _act(
-            "set Admin Swatch to 30",
-            family="input",
-            control="Admin Swatch",
-            value="30",
-        ),
-    )
+    policy = _policy(statement)
+    monkeypatch.setattr(policy, "_invoke_statement_transition", lambda *a, **k: _complete())
 
     step = policy._run_single_turn(statement, _observation(), [])
 
-    assert step.action_intent is not None
-    assert step.action_intent.target_control == "Admin Swatch"
-    assert step.action_intent.target_value == "30"
-
-
-def test_runtime_fills_one_omitted_declared_write_value(monkeypatch) -> None:
-    statement = StatementContract(
-        id="s1",
-        name="filter by attribute code",
-        description="",
-        kind="filter",
-        success_condition="Attribute Code filter is applied",
-        target_controls=["Attribute Code"],
-        target_values={"Attribute Code": "size"},
-    )
-    policy = _policy(monkeypatch, statement)
-    monkeypatch.setattr(
-        policy,
-        "_invoke_statement_transition",
-        lambda *a, **k: _act(
-            "Type 'size' into Attribute Code",
-            family="input",
-            control="Attribute Code",
-        ),
-    )
-
-    step = policy._run_single_turn(statement, _observation(), [])
-
-    assert step.action_intent is not None
-    assert step.action_intent.target_control == "Attribute Code"
-    assert step.action_intent.target_value == "size"
-
-
-def test_runtime_does_not_guess_an_ambiguous_omitted_write_value(monkeypatch) -> None:
-    statement = StatementContract(
-        id="s1",
-        name="choose one status",
-        description="",
-        kind="filter",
-        success_condition="Status filter is applied",
-        target_controls=["Status"],
-        target_values={"Status": ["Pending", "Complete"]},
-    )
-    policy = _policy(monkeypatch, statement)
-    monkeypatch.setattr(
-        policy,
-        "_invoke_statement_transition",
-        lambda *a, **k: _act(
-            "Select a declared status",
-            family="select",
-            control="Status",
-        ),
-    )
-
-    step = policy._run_single_turn(statement, _observation(), [])
-
-    assert step.action_intent is None
-    assert step.outcome is not None
-    assert step.outcome.phase == "exhausted"
-    assert "allowed=['Complete', 'Pending']" in step.outcome.summary
-
-
-def test_guard_rejection_uses_statement_local_replan_for_a_prepare_route(monkeypatch) -> None:
-    statement = StatementContract(
-        id="s1",
-        name="filter by product name",
-        description="",
-        kind="filter",
-        success_condition="Name filter is applied",
-        target_controls=["Name"],
-        target_values={"Name": "Diana Tights"},
-    )
-    policy = _policy(monkeypatch, statement)
-    decisions = iter([
-        _act(
-            "Type Diana Tights into Search by keyword",
-            family="input",
-            control="Search by keyword",
-            value="Diana Tights",
-        ),
-        _act(
-            "Open Filters",
-            family="activate",
-            control="Filters",
-        ),
-    ])
-    retry_inputs: list[str] = []
-
-    def decide(*_args, **kwargs):
-        retry_inputs.append(kwargs.get("extra", ""))
-        return next(decisions)
-
-    monkeypatch.setattr(policy, "_invoke_statement_transition", decide)
-
-    step = policy._run_single_turn(statement, _observation(), [])
-
-    assert step.outcome is None
-    assert step.action_intent is not None
-    assert step.action_intent.family == "activate"
-    assert step.action_intent.target_control == "Filters"
-    assert "Statement-local replan" in retry_inputs[1]
-    assert "没有判定 Statement 不可达" in retry_inputs[1]
-    assert "Search by keyword" in retry_inputs[1]
+    assert step.outcome is not None and step.outcome.phase == "completed"
+    assert step.outcome.verification == "accepted_unverified"
+    assert policy._last_transition_record["validation_error"] == ""

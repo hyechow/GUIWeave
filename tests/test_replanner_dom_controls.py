@@ -12,6 +12,7 @@ from gui_agent.core.supervisor.statement.policy import StatementSupervisorPolicy
 from gui_agent.core.supervisor.statement.schemas import (
     _StatementTransitionResult,
     _TransitionAction,
+    _TransitionAssessment,
 )
 
 
@@ -40,9 +41,19 @@ def test_transition_human_blocks_include_dom_form_controls(monkeypatch):
         model_io,
         "invoke_structured",
         lambda *a, **k: _StatementTransitionResult(
+            assessment=_TransitionAssessment(
+                status="in_progress",
+                summary="control state is not satisfied",
+                open_gaps=["continue interaction"],
+            ),
             kind="act",
             reason="权威控件状态尚未满足",
-            action=_TransitionAction(instruction="继续当前可见操作"),
+            action=_TransitionAction(
+                instruction="在当前可见区域激活目标控件",
+                action_family="activate",
+                target_control="visible control",
+                expected_result="the next control state is visible",
+            ),
         ),
     )
 
@@ -69,10 +80,16 @@ def test_transition_human_blocks_include_dom_form_controls(monkeypatch):
         acceptance_knowledge="保存成功提示表示本次提交已被接受",
     )
 
-    text = " ".join(getattr(block, "content", "") for block in captured["human_blocks"])
-    assert "浏览器 DOM 表单控件" in text
-    assert 'current="Olivia zip jacket"' in text
-    assert "保存成功提示表示本次提交已被接受" in text
+    system_text = " ".join(
+        getattr(block, "content", "") for block in captured["system_blocks"]
+    )
+    human_text = " ".join(
+        getattr(block, "content", "") for block in captured["human_blocks"]
+    )
+    assert '"control_state"' in system_text
+    assert '"value":"Olivia zip jacket"' in system_text
+    assert '"supported_operations":["input"]' in system_text
+    assert "保存成功提示表示本次提交已被接受" in human_text
 
 
 def test_transition_preserves_atomic_execution_contract(monkeypatch):
@@ -90,13 +107,19 @@ def test_transition_preserves_atomic_execution_contract(monkeypatch):
         policy,
         "_invoke_statement_transition",
         lambda *_args, **_kwargs: _StatementTransitionResult(
+                assessment=_TransitionAssessment(
+                    status="in_progress",
+                    summary="Products is not open",
+                    open_gaps=["open Products"],
+                ),
                 kind="act",
                 reason="展开菜单后激活目标入口",
                 action=_TransitionAction(
-                instruction="点击展开菜单中的 Products 链接",
+                instruction="在已展开的 CATALOG 导航菜单中打开 Products 链接进入产品列表",
                 atomic_role="prepare",
                 action_family="navigate",
                 target_control="Products",
+                expected_result="Products list becomes visible",
             ),
         ),
     )
@@ -107,7 +130,8 @@ def test_transition_preserves_atomic_execution_contract(monkeypatch):
         history=[],
     )
 
-    assert step.action_intent.instruction == "Open the visible 'Products' entry."
+    assert step.action_intent.instruction == "在已展开的 CATALOG 导航菜单中打开 Products 链接进入产品列表"
+    assert step.action_intent.expected_result == "Products list becomes visible"
     assert step.action_intent.role == "prepare"
     assert step.action_intent.family == "navigate"
     assert step.action_intent.target_control == "Products"

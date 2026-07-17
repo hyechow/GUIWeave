@@ -9,6 +9,7 @@ from gui_agent.core.supervisor.statement.policy import StatementSupervisorPolicy
 from gui_agent.core.supervisor.statement.schemas import (
     _StatementTransitionResult,
     _TransitionAction,
+    _TransitionAssessment,
 )
 
 
@@ -28,9 +29,19 @@ def _captured_elements(monkeypatch, policy: StatementSupervisorPolicy, statement
     def fake_transition(*args, **kwargs):
         captured.update(kwargs)
         return _StatementTransitionResult(
+            assessment=_TransitionAssessment(
+                status="in_progress",
+                summary="target is not open",
+                open_gaps=["open the target"],
+            ),
             kind="act",
             reason="continue",
-            action=_TransitionAction(instruction="open the visible target"),
+            action=_TransitionAction(
+                instruction="在当前可见区域激活目标控件",
+                action_family="activate",
+                target_control="visible target",
+                expected_result="target content becomes visible",
+            ),
         )
 
     monkeypatch.setattr(runtime_module, "run_statement_transition", fake_transition)

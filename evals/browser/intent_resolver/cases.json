@@ -1,5 +1,34 @@
 [
   {
+    "label": "命名 owner 与成员覆盖范围分离（task-551）",
+    "goal": "Add new size 30 and 31 to all color variants of Diana Tights",
+    "expected_entities": [
+      {
+        "mention_contains": "Diana",
+        "role": "lookup",
+        "type": "product",
+        "match_mode": "approximate",
+        "search_key_any": [
+          "Diana"
+        ]
+      },
+      {
+        "mention_contains": "color variants",
+        "role": "collection_scope",
+        "cardinality": "set"
+      },
+      {
+        "mention_contains": "30 and 31",
+        "role": "target_value",
+        "value_members": [
+          "30",
+          "31"
+        ]
+      }
+    ],
+    "note": "all color variants 是已定位 Diana Tights 父商品下的逻辑覆盖范围，不是可独立 exact→color 检索的命名实体。最终由 foreach 或聚合 owner covers_set 覆盖。"
+  },
+  {
     "label": "同一字段多值 → value_members 保留原子集合（task-550）",
     "goal": "Add a new size XXS to blue and purple Nona Fitness Tank",
     "expected_entities": [

@@ -1,5 +1,8 @@
 from __future__ import annotations
 
+import json
+
+from gui_agent.adapters.browser.actions import BrowserAction
 from gui_agent.core.schemas import ActionIntent
 
 from gui_agent.core.orchestrator.program import Finish, Program, Run
@@ -27,8 +30,17 @@ from gui_agent.core.supervisor.statement.policy import StatementSupervisorPolicy
 from gui_agent.core.supervisor.statement.schemas import (
     _StatementTransitionResult,
     _TransitionAction,
+    _TransitionAssessment,
     _TransitionEvidence,
 )
+
+
+def _assessment(status: str, summary: str) -> _TransitionAssessment:
+    return _TransitionAssessment(
+        status=status,
+        summary=summary,
+        open_gaps=[summary] if status == "in_progress" else [],
+    )
 
 
 def _step(
@@ -77,6 +89,22 @@ def test_commit_key_ignores_button_coordinate_within_same_resource():
     assert semantic_action_key(step, _decision(400).action) == semantic_action_key(
         step, _decision(700).action
     )
+
+
+def test_exact_transport_key_distinguishes_document_refs():
+    step = _step(role="iterate")
+    first = BrowserAction(
+        action_type="scroll_to_ref",
+        target_ref=41,
+        description="bring first target into view",
+    )
+    second = BrowserAction(
+        action_type="scroll_to_ref",
+        target_ref=42,
+        description="bring second target into view",
+    )
+
+    assert semantic_action_key(step, first) != semantic_action_key(step, second)
 
 
 def test_ensure_draft_fields_require_commit_before_statement_advance(monkeypatch):
@@ -154,6 +182,7 @@ def test_ensure_draft_fields_require_commit_before_statement_advance(monkeypatch
     policy._invoke_statement_transition = lambda *_args, **_kwargs: (  # type: ignore[method-assign]
         transition_calls.append(1)
         or _StatementTransitionResult(
+            assessment=_assessment("in_progress", "persist draft"),
             kind="act",
             reason="draft fields match but Save has not been dispatched",
             summary="persist draft",
@@ -162,6 +191,7 @@ def test_ensure_draft_fields_require_commit_before_statement_advance(monkeypatch
                 atomic_role="commit",
                 action_family="activate",
                 target_control="Save",
+                expected_result="Save produces a persistence response",
             ),
         )
     )
@@ -260,6 +290,7 @@ def test_reconcile_vetoes_transition_action_for_incomplete_statement(monkeypatch
     monkeypatch.setattr(policy, "_invoke_statement_transition", lambda *a, **k: (
         decisions.append(1)
         or _StatementTransitionResult(
+            assessment=_assessment("in_progress", "save remains"),
             kind="act",
             reason="save remains",
             summary="save remains",
@@ -267,6 +298,8 @@ def test_reconcile_vetoes_transition_action_for_incomplete_statement(monkeypatch
                 instruction="click Save",
                 atomic_role="commit",
                 action_family="activate",
+                target_control="Save",
+                expected_result="Save produces a persistence response",
             ),
         )
     ))
@@ -284,7 +317,7 @@ def test_reconcile_vetoes_transition_action_for_incomplete_statement(monkeypatch
     assert step.action_intent is None
     assert step.outcome is not None
     assert step.outcome.phase == "exhausted"
-    assert len(decisions) == 2
+    assert len(decisions) == 1
     assert "hard-budget final frame" in step.summary
 
 
@@ -345,6 +378,7 @@ def test_terminal_dispatch_without_persistence_response_can_choose_an_action(mon
     )
     monkeypatch.setattr(policy, "_invoke_statement_transition", lambda *a, **k:
         _StatementTransitionResult(
+            assessment=_assessment("in_progress", "缺少可见反馈"),
             kind="act",
             reason="未看到成功提示",
             summary="缺少可见反馈",
@@ -352,6 +386,8 @@ def test_terminal_dispatch_without_persistence_response_can_choose_an_action(mon
                 instruction="点击刷新以验证保存结果",
                 atomic_role="prepare",
                 action_family="activate",
+                target_control="Refresh",
+                expected_result="the saved state becomes observable",
             ),
         )
     )
@@ -390,6 +426,7 @@ def test_redirected_commit_uses_success_contract_and_is_not_preexisting(monkeypa
         policy,
         "_invoke_statement_transition",
         lambda *a, **k: _StatementTransitionResult(
+            assessment=_assessment("satisfied", "save receipt and destination are visible"),
             kind="complete",
             reason="Save dispatch is in memory and the destination page is visible",
             evidence=[_TransitionEvidence(
@@ -451,6 +488,7 @@ def test_redirected_commit_ignores_destination_only_absence(monkeypatch):
         policy,
         "_invoke_statement_transition",
         lambda *a, **k: _StatementTransitionResult(
+            assessment=_assessment("satisfied", "write and Save are Journal facts"),
             kind="complete",
             reason="the source write and Save dispatch are Journal facts",
             evidence=[_TransitionEvidence(
@@ -541,4 +579,35 @@ def test_final_result_separates_execution_completion_from_outcome_verification(m
     assert result.phase == "completed"
     assert result.verification == "accepted_unverified"
     assert "accepted_unverified" not in result.orchestrator
+
+
+def test_report_run_log_never_serializes_live_observation_bytes(monkeypatch):
+    monkeypatch.setattr(
+        "gui_agent.core.llm.output.compose_orchestration_reply",
+        lambda *_args, **_kwargs: "done",
+    )
+    interp = Interpreter(Program(goal="open target", statements=[Finish(message="done")]))
+    interp.run_log = [
+        RunRecord(
+            name="open target",
+            result=StatementOutcome.completed(
+                "opened",
+                observation=Observation(png_bytes=b"\x89PNG\r\n", source="browser"),
+                observation_url="screenshot_nav_1.png",
+            ),
+        )
+    ]
+    context = PolicyContext(
+        goal="open target",
+        supervisor_policy_name="statement",
+        action_policy_name="action",
+    )
+
+    result = orchestration_result(context, interp, "done")
+    payload = result.model_dump(mode="json")
+
+    json.dumps(payload)
+    logged = result.orchestrator["run_log"][0]["result"]
+    assert "observation" not in logged
+    assert logged["observation_url"] == "screenshot_nav_1.png"
     EffectSignal,

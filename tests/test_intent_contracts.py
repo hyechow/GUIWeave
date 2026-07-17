@@ -211,6 +211,110 @@ def test_intent_contract_covers_set_requires_entity_scope_in_retrieval():
     assert "ROUTER_SET_ENTITY_WITHOUT_FOREACH" in _codes(program, resolution)
 
 
+def test_collection_scope_is_covered_without_becoming_a_lookup_entity():
+    program = Program(statements=[
+        Run(
+            kind="filter",
+            var="f1",
+            name="在 Name 列用精确值 Diana Tights 筛选",
+            returns=["match_count"],
+            target_values={"Name": "Diana Tights"},
+        ),
+        If(
+            cond=Cond(var="f1", field="match_count", cmp="==", value="0"),
+            then=[Run(
+                kind="filter",
+                name="若 0 条则在同一 Name 列用 Diana 重筛",
+                target_values={"Name": "Diana"},
+            )],
+        ),
+        Run(
+            kind="action",
+            name="在聚合父商品上保存所有现有颜色变体的尺寸组合",
+            target_values={"Size": ["30", "31"]},
+            covers_set="all color variants",
+        ),
+    ])
+    resolution = IntentResolution(entities=[
+        EntityRef(
+            mention="Diana Tights",
+            role="lookup",
+            type="product",
+            match_mode="approximate",
+            search_key="Diana",
+        ),
+        EntityRef(
+            mention="all color variants",
+            role="collection_scope",
+            type="sku",
+            selector="all existing color variants",
+        ),
+        EntityRef(
+            mention="30 and 31",
+            role="target_value",
+            value_members=["30", "31"],
+            match_mode="exact",
+        ),
+    ])
+
+    assert validate_intent_contracts(program, resolution) == []
+
+
+def test_collection_scope_does_not_require_a_query_entity_predicate():
+    program = Program(statements=[
+        ForEach(
+            var="row",
+            into="variant_rows",
+            row_fields=["sku", "size"],
+            member_desc="all existing variants under the already-bound owner",
+            body=[Run(kind="action", name="update {row[sku]}")],
+        ),
+        Query(
+            var="q",
+            name="count updated members",
+            returns=["n"],
+            sql="SELECT COUNT(*) AS n FROM variant_rows",
+        ),
+    ])
+    resolution = IntentResolution(entities=[
+        EntityRef(
+            mention="all existing variants",
+            role="collection_scope",
+            selector="all existing variants",
+        ),
+    ])
+
+    codes = _codes(program, resolution)
+    assert "ROUTER_APPROXIMATE_MENTION_DROPPED" not in codes
+    assert "ROUTER_APPROXIMATE_KEY_DROPPED" not in codes
+    assert "ENTITY_SCOPE_PREDICATE_MISSING" not in codes
+
+
+def test_unrelated_foreach_does_not_cover_collection_scope():
+    program = Program(statements=[
+        ForEach(
+            var="row",
+            into="product_candidates",
+            row_fields=["name", "detail_url"],
+            body=[],
+        ),
+        Run(
+            kind="action",
+            name="update aggregate owner",
+            target_values={"Size": ["30", "31"]},
+        ),
+    ])
+    resolution = IntentResolution(entities=[
+        EntityRef(
+            mention="all color variants",
+            role="collection_scope",
+            selector="all color variants",
+        ),
+    ])
+
+    assert "ROUTER_SET_ENTITY_WITHOUT_FOREACH" in _codes(program, resolution)
+
+
 def test_intent_contract_key_dropped_rejects_downstream_token_substitution():
     program = Program(statements=[
         Run(kind="filter", name="在 Filters 面板的 Name 字段用精确值『Gobi HeatTec Tee』筛选"),

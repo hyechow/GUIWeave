@@ -14,7 +14,7 @@ from gui_agent.core.run.execution_signals import (
 )
 from gui_agent.core.run.persistence import assess_persistence
 from gui_agent.core.run.statement_memory import build_memory_view
-from gui_agent.core.run.statement_transition import guard_complete
+from gui_agent.core.run.statement_transition import validate_completion
 from gui_agent.core.schemas import (
     ActionSignal,
     BaseAction,
@@ -31,6 +31,7 @@ from gui_agent.core.supervisor.statement.evidence import action_lifecycle_claims
 from gui_agent.core.supervisor.statement.policy import StatementSupervisorPolicy
 from gui_agent.core.supervisor.statement.schemas import (
     _StatementTransitionResult,
+    _TransitionAssessment,
     _TransitionEvidence,
 )
 
@@ -158,7 +159,7 @@ def test_memory_after_save_preserves_receipts_without_route_instructions() -> No
     assert "优先考虑" not in text
 
 
-def test_evidence_and_guard_complete_on_list_page_without_options_dom() -> None:
+def test_evidence_and_completion_validation_on_list_page_without_options_dom() -> None:
     """List page after Save has no Options controls — journal still completes."""
     statement = _contract()
     history = _size_history()
@@ -175,7 +176,7 @@ def test_evidence_and_guard_complete_on_list_page_without_options_dom() -> None:
     assert evaluation.status == "satisfied"
     assert evaluation.completion_status in {"confirmed", "accepted_unverified"}
 
-    assert guard_complete(evaluation).allowed
+    assert validate_completion(evaluation).allowed
 
 
 def test_policy_completes_post_save_from_memory_without_reopen(monkeypatch) -> None:
@@ -187,6 +188,11 @@ def test_policy_completes_post_save_from_memory_without_reopen(monkeypatch) -> N
         policy,
         "_invoke_statement_transition",
         lambda *a, **k: _StatementTransitionResult(
+            assessment=_TransitionAssessment(
+                status="satisfied",
+                summary="option writes and Save dispatch are recorded",
+                established_facts=["Save Attribute was dispatched"],
+            ),
             kind="complete",
             reason="Journal records the option writes and Save dispatch",
             evidence=[

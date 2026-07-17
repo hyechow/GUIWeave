@@ -3,6 +3,7 @@ from __future__ import annotations
 from gui_agent.core.schemas import ActionIntent
 
 from gui_agent.core.run.action_exec import ActionExecutor
+from gui_agent.core.policies.base import _format_semantic_action_context
 from gui_agent.core.schemas import BaseAction, BaseActionDecision, Observation, SupervisorStep
 
 
@@ -69,6 +70,19 @@ class _DenyingSupervisor:
 
 def _step(decision: BaseActionDecision | None = None) -> SupervisorStep:
     return SupervisorStep(action_intent=ActionIntent(instruction='点击确认按钮'), summary='需要点击', preformed_action=decision, app_name='Settings', is_home_screen=True)
+
+
+def test_action_policy_context_keeps_semantic_target_and_expected_change() -> None:
+    context = _format_semantic_action_context(
+        action_family="activate",
+        target_control="Search",
+        expected_result="the local results grid refreshes with the current filter",
+    )
+
+    assert "operation: activate" in context
+    assert "target: Search" in context
+    assert "expected visible result: the local results grid refreshes" in context
+    assert "不得改变指令目标" in context
 
 
 def test_preformed_action_waits_for_prep_and_executes(tmp_path):
@@ -171,6 +185,41 @@ def test_action_policy_failure_returns_to_statement_without_execute(tmp_path):
         (4, "动作意图未能落成物理动作，交回 Statement 重决策"),
     ]
     assert executor.calls == []
+
+
+def test_action_policy_failure_replans_and_dispatches_once_on_the_same_frame(tmp_path):
+    class _FailingPolicy:
+        def decide(self, *_args, **_kwargs):
+            raise ValueError("cannot ground target")
+
+    replacement_action = BaseActionDecision(
+        action=BaseAction(action_type="tap", x=30, y=40, description="点击网格 Search")
+    )
+    replacement = _step(replacement_action)
+    executor = _Executor()
+    replans: list[str] = []
+
+    result = ActionExecutor().run(
+        sv_step=_step(),
+        observation=Observation(png_bytes=b"png", source="test"),
+        action_policy=_FailingPolicy(),
+        supervisor=object(),
+        executor=executor,
+        prep_future=_Future(),
+        log_dir=tmp_path,
+        turn_no=4,
+        flash=lambda _action: None,
+        status=lambda _turn_no, _message: None,
+        say=lambda _message: None,
+        replan=lambda _step, reason: replans.append(reason) or replacement,
+    )
+
+    assert len(replans) == 1
+    assert result.supervisor_step is replacement
+    assert result.executed is True
+    assert result.suppressed_reason == ""
+    assert len(executor.calls) == 1
+    assert executor.calls[0]["decision"] is replacement_action
 
 
 def test_executor_does_not_apply_legacy_commit_suppression(tmp_path):

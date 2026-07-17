@@ -26,6 +26,7 @@ from gui_agent.core.supervisor.statement.execution_scope import execution_scope_
 from gui_agent.core.supervisor.statement.schemas import (
     _StatementTransitionResult,
     _TransitionAction,
+    _TransitionAssessment,
     _TransitionEvidence,
 )
 from gui_agent.core.supervisor.statement.observation_state import (
@@ -36,6 +37,14 @@ from gui_agent.core.supervisor.statement.observation_state import (
     RuntimeFilterIntent,
 )
 from gui_agent.context.runtime import active_filters_block, applied_filter_state_block
+
+
+def _assessment(status: str) -> _TransitionAssessment:
+    return _TransitionAssessment(
+        status=status,
+        summary="filter state",
+        open_gaps=["filter is not yet authoritative"] if status == "in_progress" else [],
+    )
 
 
 def _filter_ms(
@@ -320,6 +329,7 @@ def test_runtime_write_intent_zero_result_completes_before_checker(monkeypatch):
     def _spy_transition(*_args, **_kwargs):
         transition_calls.append(1)
         return _StatementTransitionResult(
+            assessment=_assessment("satisfied"),
             kind="complete",
             reason="the exact applied filter is an authoritative observation",
             evidence=[_TransitionEvidence(
@@ -367,6 +377,7 @@ def test_zero_result_exact_search_can_finish_before_explicit_fallback(monkeypatc
     def _spy_transition(*_args, **_kwargs):
         transition_calls.append(1)
         return _StatementTransitionResult(
+            assessment=_assessment("satisfied"),
             kind="complete",
             reason="the exact applied filter is an authoritative observation",
             evidence=[_TransitionEvidence(
@@ -499,6 +510,7 @@ def _run_step(monkeypatch, applied_filters):
     def _spy_transition(*a, **k):
         transition_calls.append(1)
         return _StatementTransitionResult(
+            assessment=_assessment("satisfied"),
             kind="complete",
             reason="the exact applied filter is visible",
             evidence=[_TransitionEvidence(
@@ -547,6 +559,7 @@ def test_legacy_product_filter_evidence_confirms_transition_completion(monkeypat
     def _spy_transition(*a, **k):
         transition_calls.append(1)
         return _StatementTransitionResult(
+            assessment=_assessment("satisfied"),
             kind="complete",
             reason="the exact applied filter is visible",
             evidence=[_TransitionEvidence(
@@ -641,16 +654,14 @@ def test_policy_captures_first_applied_filters_snapshot(monkeypatch):
 
 
 def test_no_chips_falls_through_to_checker(monkeypatch):
-    # Without the cited adapter fact, Runtime vetoes completion and requests one same-frame
-    # redecision instead of advancing.
+    # Without cited adapter facts, the single Transition proposal fails visibly.
     _ms, step, transition_calls = _run_step(monkeypatch, None)
-    assert transition_calls == [1, 1]
+    assert transition_calls == [1]
     assert step is not None and step.outcome is not None
     assert step.outcome.phase == "exhausted"
 
 
-def test_guard_rejection_requests_a_new_direct_action(monkeypatch):
-    """Replay the 20260716_120342 evidence gap without invoking a live model."""
+def test_invalid_complete_is_not_hidden_by_same_frame_replan(monkeypatch):
     monkeypatch.setattr(supervisor_policy_mod, "is_loading_frame", lambda _obs: False)
     statement = _filter_ms(
         "在 Attribute Code 列用精确值'size'筛选",
@@ -660,29 +671,18 @@ def test_guard_rejection_requests_a_new_direct_action(monkeypatch):
     policy = supervisor_policy_mod.StatementSupervisorPolicy()
     policy.begin_statement(statement, instance_id="replay:20260716_120342")
 
-    calls: list[str] = []
+    calls: list[int] = []
 
-    def _transition(*_args, **kwargs):
-        calls.append(kwargs.get("extra", ""))
-        if len(calls) == 1:
-            return _StatementTransitionResult(
-                kind="complete",
-                reason="输入值和结果计数看起来已经满足合同",
-                evidence=[_TransitionEvidence(
-                    source="current_observation",
-                    claim="Attribute Code=size and one record is visible",
-                )],
-            )
-        assert "Runtime Guard 否决" in kwargs.get("extra", "")
+    def _transition(*_args, **_kwargs):
+        calls.append(1)
         return _StatementTransitionResult(
-            kind="act",
-            reason="提交已填充的筛选以获得权威 applied-state 证据",
-            action=_TransitionAction(
-                instruction="激活「Search」以提交当前已填充的筛选条件",
-                atomic_role="commit",
-                action_family="activate",
-                target_control="Search",
-            ),
+            assessment=_assessment("satisfied"),
+            kind="complete",
+            reason="输入值和结果计数看起来已经满足合同",
+            evidence=[_TransitionEvidence(
+                source="current_observation",
+                claim="Attribute Code=size and one record is visible",
+            )],
         )
 
     monkeypatch.setattr(policy, "_invoke_statement_transition", _transition)
@@ -707,21 +707,15 @@ def test_guard_rejection_requests_a_new_direct_action(monkeypatch):
         history=[],
     )
 
-    assert len(calls) == 2
-    assert step.action_intent is not None
-    assert step.action_intent.role == "commit"
-    assert step.action_intent.target_control == "Search"
-    assert step.action_intent.instruction == "Activate the visible 'Search' control."
-    assert policy._last_transition_record is not None
-    rejections = policy._last_transition_record["guard_rejections"]
-    assert len(rejections) == 1
-    assert "筛选状态尚未权威确认" in rejections[0]
+    assert calls == [1]
+    assert step.outcome is not None and step.outcome.phase == "exhausted"
+    assert policy._last_transition_record["validation_error"]
 
 
 def test_wrong_range_chip_falls_through_to_checker(monkeypatch):
     # A 2-3 chip cannot validate a 3-3 completion proposal.
     _ms, step, transition_calls = _run_step(monkeypatch, {"Quantity": "2 - 3"})
-    assert transition_calls == [1, 1]
+    assert transition_calls == [1]
     assert step is not None and step.outcome is not None
     assert step.outcome.phase == "exhausted"
 

@@ -52,6 +52,25 @@ def test_intent_block_renders_multi_value_members_as_separate_atoms():
     assert "只允许在最终 mutation 中选择、禁止建立独立定义阶段：['blue', 'purple']" in block.content
 
 
+def test_collection_scope_has_coverage_but_no_retrieval_semantics():
+    scope = EntityRef(
+        mention="all existing variants",
+        role="collection_scope",
+        match_mode="approximate",
+        search_key="variant",
+        selector="all existing variants",
+    )
+    block = intent_block(IntentResolution(entities=[scope]))
+
+    assert scope.cardinality == "set"
+    assert scope.match_mode == "exact"
+    assert scope.search_key == ""
+    assert block is not None
+    assert "成员覆盖范围「all existing variants」" in block.content
+    assert "禁止对该短语做 exact→fallback 检索" in block.content
+    assert "covers_set" in block.content
+
+
 def test_legacy_value_introduction_pair_normalizes_at_model_boundary():
     qualifier = EntityRef.model_validate({
         "mention": "blue",
@@ -67,6 +86,22 @@ def test_legacy_value_introduction_pair_normalizes_at_model_boundary():
     assert qualifier.role == "qualifier_value"
     assert target.role == "target_value"
     assert "introduction" not in qualifier.model_dump()
+
+
+def test_collection_scope_accepts_null_irrelevant_wire_fields():
+    scope = EntityRef.model_validate({
+        "mention": "all existing variants",
+        "role": "collection_scope",
+        "type": None,
+        "match_mode": None,
+        "search_key": None,
+        "selector": None,
+    })
+
+    assert scope.type == "generic"
+    assert scope.match_mode == "exact"
+    assert scope.search_key == ""
+    assert scope.selector == "all existing variants"
 
 
 def test_resolve_intent_empty_goal_skips_llm():

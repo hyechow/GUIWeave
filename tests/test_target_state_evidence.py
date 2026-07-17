@@ -1,7 +1,8 @@
 from gui_agent.core.schemas import ActionIntent
 import pytest
 
-from gui_agent.core.run.mutation import resolve_mutation
+from gui_agent.core.run.execution_signals import CompletionReducer, ExecutionContract
+from gui_agent.core.run.mutation import resolve_mutation, resolve_semantic_bindings
 from gui_agent.core.schemas import (
     ActionSignal,
     StatementContract,
@@ -10,7 +11,15 @@ from gui_agent.core.schemas import (
     PolicyTurn,
     SupervisorStep,
 )
-from gui_agent.core.supervisor.statement.evidence import observed_effect_signal
+from gui_agent.core.supervisor.statement.evidence import (
+    observed_effect_signal,
+    transition_claim,
+)
+from gui_agent.core.supervisor.statement.schemas import (
+    _StatementTransitionResult,
+    _TransitionAssessment,
+    _TransitionEvidence,
+)
 
 
 def _statement(**values: str) -> StatementContract:
@@ -54,6 +63,44 @@ def _subject(
         form_controls_meta={"coverage": coverage},
     )
     return resolve_mutation(statement or _statement(), observation, history or [])
+
+
+def _semantic_statement(*values: str) -> StatementContract:
+    return StatementContract(
+        id="members",
+        name="ensure semantic members",
+        description="",
+        success_condition="the collection contains every requested member",
+        kind="action",
+        target_values={"option_label": list(values) or ["30", "31"]},
+    )
+
+
+def _semantic_control(ref: str, value: str, group: str) -> dict:
+    return {
+        "kind": "text_input",
+        "name": ref,
+        "value": value,
+        "group_id": group,
+    }
+
+
+def _binding_decision() -> _StatementTransitionResult:
+    return _StatementTransitionResult(
+        assessment=_TransitionAssessment(
+            status="satisfied",
+            summary="the requested semantic members are present",
+            established_facts=["requested values are visible"],
+        ),
+        kind="complete",
+        reason="the requested semantic members are present",
+        evidence=[
+            _TransitionEvidence(
+                source="current_observation",
+                claim="the current collection contains the requested values",
+            )
+        ],
+    )
 
 
 @pytest.mark.parametrize(
@@ -232,6 +279,74 @@ def test_destination_only_absence_is_not_journaled_as_effect() -> None:
         form_controls_meta={"coverage": "complete"},
     )
     assert observed_effect_signal(statement, observation, []) is None
+
+
+def test_semantic_bindings_validate_abstract_contract_against_live_controls() -> None:
+    statement = _semantic_statement()
+    observation = Observation(
+        png_bytes=b"frame",
+        source="browser",
+        form_controls=[
+            _semantic_control("option[value][30]", "30", "collection:13"),
+            _semantic_control("option[value][31]", "31", "collection:14"),
+        ],
+    )
+    bindings = {
+        "option_label=30": ["option[value][30]"],
+        "option_label=31": ["option[value][31]"],
+    }
+    decision = _binding_decision()
+    state = resolve_semantic_bindings(statement, observation, bindings)
+    assert state.status == "complete"
+    evaluation = CompletionReducer().decide(
+        ExecutionContract.from_statement(statement),
+        [transition_claim(
+            decision,
+            scope="i1:s1/statement",
+            binding_evidence=state.evidence,
+        )],
+        scope="i1:s1/statement",
+    )
+    assert evaluation.status == "satisfied"
+    assert evaluation.completion_status == "accepted_unverified"
+
+
+def test_semantic_bindings_require_refs_from_one_observed_subject() -> None:
+    statement = _semantic_statement("30")
+    observation = Observation(
+        png_bytes=b"frame",
+        source="browser",
+        form_controls=[
+            _semantic_control("option[value][30]", "30", "collection:13"),
+            _semantic_control("description[value][30]", "30", "collection:14"),
+        ],
+    )
+    bindings = {
+        "option_label=30": [
+            "option[value][30]",
+            "description[value][30]",
+        ]
+    }
+
+    state = resolve_semantic_bindings(statement, observation, bindings)
+    assert state.status == "unknown"
+    assert "do not belong to one subject" in state.evidence
+
+
+def test_semantic_bindings_must_cover_every_declared_contract_value() -> None:
+    statement = _semantic_statement()
+    observation = Observation(
+        png_bytes=b"frame",
+        source="browser",
+        form_controls=[
+            _semantic_control("option[value][30]", "30", "collection:13")
+        ],
+    )
+    bindings = {"option_label=30": ["option[value][30]"]}
+
+    state = resolve_semantic_bindings(statement, observation, bindings)
+    assert state.status == "unknown"
+    assert "option_label=31" in state.evidence
 
 
 def test_singleton_form_can_change_an_existing_value() -> None:

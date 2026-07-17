@@ -45,6 +45,7 @@ def test_browser_vocabulary():
     assert {"new_tab", "select_tab", "close_tab"} <= v   # tab management
     assert "upload" in v                     # file upload via file chooser
     assert "select_option" in v              # native/browser dropdown option selection
+    assert "scroll_to_ref" in v              # exact offscreen target transport
     assert "home" not in v
     assert "app_switch" not in v
 
@@ -65,6 +66,7 @@ def test_positive_construction():
     BrowserAction(action_type="close_tab", description="关当前标签页")
     BrowserAction(action_type="upload", x=500, y=500, file_path="~/Downloads/m.map_export", description="上传地图文件")
     BrowserAction(action_type="select_option", x=500, y=500, text="Complete", description="选择状态")
+    BrowserAction(action_type="scroll_to_ref", target_ref=42, description="把目标移入视口")
     AndroidAction(action_type="back", description="返回")
     AndroidAction(action_type="app_switch", description="切换应用")
 
@@ -82,6 +84,11 @@ def test_browser_upload_requires_file_path():
 def test_browser_select_option_requires_text():
     with pytest.raises(Exception):
         BrowserAction(action_type="select_option", x=1, y=1, description="x")  # no option text
+
+
+def test_browser_scroll_to_ref_requires_ref():
+    with pytest.raises(Exception):
+        BrowserAction(action_type="scroll_to_ref", description="x")
 
 
 @pytest.mark.parametrize(

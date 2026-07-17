@@ -9,6 +9,7 @@ from gui_agent.core.schemas import (
 from gui_agent.core.supervisor.statement.schemas import (
     _StatementTransitionResult,
     _TransitionAction,
+    _TransitionAssessment,
 )
 REPLAYS = Path(__file__).resolve().parents[1] / "replay/fixtures/browser"
 CHOICE_FIXTURE = REPLAYS / "152920_choice_surface"
@@ -102,7 +103,7 @@ def test_real_choice_surface_executes_multi_value_contract_as_exact_set() -> Non
     ).status == "unknown"
 
 
-def test_real_205258_completed_choice_set_keeps_intermediate_transition_prepare() -> None:
+def test_real_205258_rejects_stale_intermediate_target_ref() -> None:
     from gui_agent.adapters.browser.target_binding import (
         active_choice_controls,
         active_surface_id,
@@ -134,6 +135,11 @@ def test_real_205258_completed_choice_set_keeps_intermediate_transition_prepare(
         [],
     )
     decision = _StatementTransitionResult(
+        assessment=_TransitionAssessment(
+            status="in_progress",
+            summary="the choices are complete but persistence remains",
+            open_gaps=["advance to the persistence surface"],
+        ),
         kind="act",
         reason="declared choices are complete but the workflow has not reached persistence",
         summary="the local choices are complete; continue to the next workflow surface",
@@ -142,16 +148,17 @@ def test_real_205258_completed_choice_set_keeps_intermediate_transition_prepare(
             atomic_role="prepare",
             action_family="activate",
             target_control="Next",
+            target_ref="1003885",
+            expected_result="the persistence surface becomes visible",
         ),
     )
     step, rejection = policy._materialize_transition_action(  # noqa: SLF001
         decision,
         statement,
+        observation,
         execution_scope=policy._scope_for(statement, normalized),
     )
 
-    assert rejection == "" and step is not None
+    assert step is None
+    assert "is not a unique current-frame target" in rejection
     assert subject.status == "complete"
-    assert step.action_intent is not None
-    assert step.action_intent.role == "prepare"
-    assert step.action_intent.target_control == "Next"

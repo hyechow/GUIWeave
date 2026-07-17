@@ -85,7 +85,7 @@ def test_transition_completion_projects_report_check_without_mutable_checker_sta
                     {"source": "current_observation", "claim": "成功提示可见"}
                 ],
             },
-            "guard_rejections": [],
+            "validation_error": "",
         },
     )
 
@@ -123,7 +123,7 @@ def test_transition_action_does_not_create_report_retry_state():
                 "reason": "当前入口无效，选择另一个可见入口",
                 "evidence": [],
             },
-            "guard_rejections": [],
+            "validation_error": "",
         },
     )
 

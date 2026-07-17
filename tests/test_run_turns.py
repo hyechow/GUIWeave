@@ -30,7 +30,7 @@ def test_make_statement_outcome_event_captures_supervisor_state():
                 "reason": "done",
                 "effect_status": "confirmed",
             },
-            "guard_rejections": [],
+            "validation_error": "",
         },
         _timings={"checker": 1.2},
         _token_usage={"checker": {"input": 10, "output": 5}},

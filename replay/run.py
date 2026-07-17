@@ -150,21 +150,33 @@ def _expectation_failures(
     outcome = decision.outcome
     intent = decision.action_intent
     actuals = {
+        "assessment_status": (
+            supervisor._last_transition_record.get("proposal", {})
+            .get("assessment", {})
+            .get("status")
+        ),
         "should_act": intent is not None,
         "phase": outcome.phase if outcome is not None else "running",
         "verification": outcome.verification if outcome is not None else None,
         "atomic_role": intent.role if intent is not None else "prepare",
         "action_family": intent.family if intent is not None else "unknown",
         "target_control": intent.target_control if intent is not None else "",
+        "expected_result": (
+            supervisor._last_transition_record.get("proposal", {})
+            .get("action", {})
+            .get("expected_result", "")
+        ),
         "direction": intent.direction if intent is not None else None,
     }
     checks = (
+        ("assessment_status", expectation.get("assessment_status")),
         ("should_act", expectation.get("should_act")),
         ("phase", expectation.get("phase")),
         ("verification", expectation.get("verification")),
         ("atomic_role", expectation.get("atomic_role")),
         ("action_family", expectation.get("action_family")),
         ("target_control", expectation.get("target_control")),
+        ("expected_result", expectation.get("expected_result")),
         ("direction", expectation.get("direction")),
     )
     for field, expected in checks:
@@ -224,6 +236,7 @@ def _decide_action_without_dispatch(
         observation,
         target_control=intent.target_control,
         target_value=intent.target_value,
+        target_ref=intent.target_ref,
         target_group_id=target_group_id,
         action_family=intent.family,
         instruction=intent.instruction,
@@ -234,6 +247,7 @@ def _decide_action_without_dispatch(
         observation,
         target_control=intent.target_control,
         target_value=intent.target_value,
+        target_ref=intent.target_ref,
         target_group_id=target_group_id,
         action_family=intent.family,
     )
@@ -243,6 +257,10 @@ def _decide_action_without_dispatch(
         direction=intent.direction,
         drag_column=intent.drag_column,
         drag_steps=intent.drag_steps,
+        action_family=intent.family,
+        target_control=intent.target_control,
+        target_value=intent.target_value,
+        expected_result=intent.expected_result,
         evidence_context=evidence,
         verbose=False,
     )
@@ -251,6 +269,7 @@ def _decide_action_without_dispatch(
         observation,
         target_control=intent.target_control,
         target_value=intent.target_value,
+        target_ref=intent.target_ref,
         target_group_id=target_group_id,
         action_family=intent.family,
     )
@@ -450,6 +469,12 @@ def main() -> int:
                 "turn": target_index,
                 "checker_status": getattr(checker, "status", None),
                 "checker_effect": getattr(checker, "effect_status", None),
+                "assessment": (
+                    supervisor._last_transition_record.get("proposal", {}).get("assessment")
+                ),
+                "validation_error": supervisor._last_transition_record.get(
+                    "validation_error", ""
+                ),
                 "instruction": (
                     decision.action_intent.instruction
                     if decision.action_intent is not None

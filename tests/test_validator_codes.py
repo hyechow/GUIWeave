@@ -168,6 +168,20 @@ SAMPLES: dict[str, Program] = {
             then=[Run(name="按名称打开目标", kind="navigation")],
         ),
     ]),
+    "DATA_QUERY_URL_ALIAS_NOT_URL_SOURCE": Program(statements=[
+        ForEach(
+            var="row",
+            row_fields=["Name", "Action"],
+            into="candidates",
+            body=[],
+        ),
+        Query(
+            var="q",
+            name="选出唯一入口",
+            returns=["detail_url"],
+            sql="SELECT MAX(Action) AS detail_url FROM candidates",
+        ),
+    ]),
     "CALL_FUNC_NOT_DEFINED": Program(statements=[Call(func="missing", args={}, var="m")]),
     "CALL_RETURNS_WITHOUT_VAR": Program(
         functions=[FunctionDef(name="f", returns=["x"], body=[Compute(var="x", expr="'1'")])],

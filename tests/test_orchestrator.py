@@ -332,6 +332,67 @@ def test_direct_nav_url_extracts_clean_url_across_cjk_and_punctuation():
     assert direct_navigation_url(punct, plat) == "https://h/item/5"
 
 
+def test_navigation_url_template_rejects_display_text_instead_of_clicking_it():
+    from gui_agent.core.orchestrator.runner import Interpreter
+
+    program = Program(statements=[
+        Read(
+            var="q",
+            name="读取目标入口",
+            returns=["detail_url"],
+            read_spec="读取真实详情 URL",
+        ),
+        Run(
+            name="打开 {q[detail_url]} 进入详情页",
+            kind="navigation",
+        ),
+    ])
+    interp = Interpreter(program)
+    steps = interp.steps()
+    first = next(steps)
+    assert first.kind == "read"
+
+    with pytest.raises(StopIteration) as stopped:
+        steps.send(
+            StatementOutcome.completed(
+                "read",
+                reads={"detail_url": "Edit"},
+            )
+        )
+
+    assert "invalid URL" in stopped.value.value
+    assert interp.run_log[-1].result.phase == "failed"
+
+
+def test_navigation_url_template_materializes_an_exact_target_contract():
+    from gui_agent.core.orchestrator.runner import Interpreter
+
+    program = Program(statements=[
+        Read(
+            var="q",
+            name="读取目标入口",
+            returns=["detail_url"],
+            read_spec="读取真实详情 URL",
+        ),
+        Run(
+            name="打开 {q[detail_url]} 进入详情页",
+            kind="navigation",
+        ),
+    ])
+    steps = Interpreter(program).steps()
+    next(steps)
+    navigation = steps.send(
+        StatementOutcome.completed(
+            "read",
+            reads={"detail_url": "https://shop.test/product/1854/"},
+        )
+    )
+
+    assert navigation.target_values == {
+        "__navigation_url__": "https://shop.test/product/1854/"
+    }
+
+
 def test_direct_back_gates_on_explicit_back_and_capability():
     from gui_agent.core.run.statements.navigation import is_direct_back
 
@@ -623,7 +684,7 @@ def test_state_contract_blocks_unverified_preexisting_done(monkeypatch):
     from gui_agent.core.supervisor.statement.policy import StatementSupervisorPolicy
     from gui_agent.core.supervisor.statement.schemas import (
         _StatementTransitionResult,
-        _TransitionAction,
+        _TransitionAssessment,
         _TransitionEvidence,
     )
 
@@ -637,8 +698,17 @@ def test_state_contract_blocks_unverified_preexisting_done(monkeypatch):
         target_values={"Price": "64.88"},
     )
     p.begin_statement(ms, instance_id="test:transform")
-    decisions = iter([
-        _StatementTransitionResult(
+    calls = 0
+
+    def decide(*_args, **_kwargs):
+        nonlocal calls
+        calls += 1
+        return _StatementTransitionResult(
+            assessment=_TransitionAssessment(
+                status="satisfied",
+                summary="看似已完成",
+                established_facts=["Price 字段当前为 64.88"],
+            ),
             kind="complete",
             reason="Price 字段已经是 64.88，且有旧保存提示",
             summary="看似已完成",
@@ -646,27 +716,17 @@ def test_state_contract_blocks_unverified_preexisting_done(monkeypatch):
                 source="current_observation",
                 claim="Price 字段当前为 64.88",
             )],
-        ),
-        _StatementTransitionResult(
-            kind="act",
-            reason="state contract lacks authoritative evidence",
-            summary="执行本次变更",
-            action=_TransitionAction(
-                instruction="重新点击 Save 以产生本轮保存事件",
-                atomic_role="commit",
-                action_family="activate",
-            ),
-        ),
-    ])
-    monkeypatch.setattr(p, "_invoke_statement_transition", lambda *a, **k: next(decisions))
+        )
+
+    monkeypatch.setattr(p, "_invoke_statement_transition", decide)
     monkeypatch.setattr(
         "gui_agent.core.supervisor.statement.policy.is_loading_frame",
         lambda _observation: False,
     )
     step = p._run_single_turn(ms, Observation(png_bytes=_png_bytes(), source="test"), [])
 
-    assert step.action_intent is not None
-    assert step.outcome is None
+    assert calls == 1
+    assert step.outcome is not None and step.outcome.phase == "exhausted"
     assert p._active_statement is ms
 
 
@@ -938,7 +998,12 @@ def test_exact_to_fuzzy_fallback_is_structural_if():
             returns=["match_count"], read_spec="读 grid 顶部 records found 计数",
             target_values={"目标列": "X"}),
         If(cond=Cond(var="f1", field="match_count", cmp="==", value="0"), then=[
-            Run(op="run", name="清除精确值后在同一列用关键词『K』重筛", kind="filter"),
+            Run(
+                op="run",
+                name="清除精确值后在同一列用关键词『K』重筛",
+                kind="filter",
+                target_values={"目标列": "K"},
+            ),
         ]),
         Finish(message="检索完成"),
     ])

@@ -1,309 +1,296 @@
-"""Hard Guard for Agentic Statement Transition never chooses a fallback route."""
+"""Transition-first schema, context, and mechanical-boundary tests."""
 
 from __future__ import annotations
+
+import json
 
 import pytest
 from pydantic import ValidationError
 
 from gui_agent.core.run.execution_signals import CompletionEvaluation
-from gui_agent.core.orchestrator.recovery import compose_kickback_directive
+from gui_agent.core.run.statement_memory import build_memory_view
 from gui_agent.core.run.statement_transition import (
-    guard_complete,
-    guard_evidence_references,
-    guard_infeasible,
+    validate_completion,
+    validate_evidence_references,
 )
+from gui_agent.core.schemas import Observation, StatementContract
+from gui_agent.core.supervisor.statement.model_io import _transition_frame_block
+from gui_agent.core.supervisor.statement.observation_view import build_observation_view
 from gui_agent.core.supervisor.statement.policy import StatementSupervisorPolicy
 from gui_agent.core.supervisor.statement.schemas import (
     _ActionDraft,
     _StatementTransitionResult,
     _TransitionAction,
+    _TransitionAssessment,
     _TransitionEvidence,
 )
-from gui_agent.core.supervisor.statement.model_io import (
-    _evidence_pack_block,
-    _semantic_actions_block,
+
+
+def _statement() -> StatementContract:
+    return StatementContract(
+        id="s1",
+        name="open products",
+        description="",
+        kind="navigation",
+        success_condition="Products page is visible",
+    )
+
+
+def _assessment(status: str, *, gaps: list[str] | None = None) -> _TransitionAssessment:
+    return _TransitionAssessment(
+        status=status,
+        summary="current statement state",
+        established_facts=["current page is visible"],
+        open_gaps=gaps if gaps is not None else ([] if status != "in_progress" else ["Products is not open"]),
+        last_action_effect="none",
+    )
+
+
+def test_transition_requires_assessment_before_decision() -> None:
+    with pytest.raises(ValidationError, match="assessment"):
+        _StatementTransitionResult(
+            kind="act",
+            reason="continue",
+            action=_TransitionAction(
+                instruction="在当前导航区域展开 Catalog 菜单",
+                action_family="activate",
+                target_control="Catalog",
+                expected_result="Catalog submenu becomes visible",
+            ),
+        )
+
+
+@pytest.mark.parametrize(
+    ("kind", "status"),
+    [("act", "satisfied"), ("complete", "in_progress"), ("infeasible", "in_progress")],
 )
+def test_assessment_and_transition_kind_must_agree(kind: str, status: str) -> None:
+    payload = {
+        "assessment": _assessment(status),
+        "kind": kind,
+        "reason": "contradictory decision",
+        "action": (
+            _TransitionAction(
+                instruction="在当前导航区域展开 Catalog 菜单",
+                action_family="activate",
+                target_control="Catalog",
+                expected_result="submenu becomes visible",
+            )
+            if kind == "act"
+            else None
+        ),
+        "evidence": (
+            [_TransitionEvidence(source="current_observation", claim="current frame")]
+            if kind != "act"
+            else []
+        ),
+        "kickback": "choose another route" if kind == "infeasible" else "",
+    }
+    with pytest.raises(ValidationError, match="requires assessment.status"):
+        _StatementTransitionResult(**payload)
 
 
-def test_guard_complete_only_validates_evidence() -> None:
-    ok = guard_complete(
-        CompletionEvaluation("satisfied", "done", "confirmed")
+def test_structured_action_owns_where_what_and_expected_change() -> None:
+    action = _TransitionAction(
+        instruction="click something nearby",
+        atomic_role="prepare",
+        action_family="activate",
+        target_control="CATALOG",
+        target_ref="42",
+        expected_result="CATALOG submenu becomes visible",
     )
-    assert ok.allowed and ok.verification == "confirmed"
-    bad = guard_complete(
-        CompletionEvaluation("pending", "not yet")
+    assert action.target_control == "CATALOG"
+    assert action.action_family == "activate"
+    with pytest.raises(ValidationError, match="target_control"):
+        _TransitionAction(
+            instruction="展开当前导航区域中的目标菜单",
+            action_family="activate",
+            expected_result="a menu opens",
+        )
+    with pytest.raises(ValidationError, match="expected_result"):
+        _TransitionAction(
+            instruction="在左侧导航区域展开 CATALOG 菜单",
+            action_family="activate",
+            target_control="CATALOG",
+        )
+
+
+def test_materialized_action_keeps_full_visual_instruction_and_expected_result() -> None:
+    instruction = (
+        "在 Product Attributes 表格筛选区，点击与 Attribute Code 输入框关联的 "
+        "Search 按钮以提交当前 size 筛选"
     )
-    assert not bad.allowed
-    assert not hasattr(bad, "fallback_kind")
+    expected_result = "Product Attributes 表格刷新并显示 Attribute Code=size 的结果"
+    decision = _StatementTransitionResult(
+        assessment=_assessment("in_progress"),
+        kind="act",
+        reason="submit the populated filter",
+        action=_TransitionAction(
+            instruction=instruction,
+            action_family="activate",
+            target_control="Search",
+            expected_result=expected_result,
+        ),
+    )
+
+    step, rejection = StatementSupervisorPolicy()._materialize_transition_action(
+        decision,
+        _statement(),
+        Observation(png_bytes=b"frame", source="test"),
+        execution_scope="statement:s1",
+    )
+
+    assert rejection is None
+    assert step is not None and step.action_intent is not None
+    assert step.action_intent.instruction == instruction
+    assert step.action_intent.expected_result == expected_result
+
+
+def test_current_frame_ref_is_optional_for_visual_grounding() -> None:
+    view = build_observation_view(
+        _statement(),
+        Observation(
+            png_bytes=b"frame",
+            source="browser",
+            semantic_tree=[{
+                "role": "button",
+                "key": "Search",
+                "ref": 42,
+                "in_viewport": True,
+                "point": {"x": 120, "y": 304},
+            }],
+        ),
+        [],
+    )
+    plan = _ActionDraft(
+        instruction="在当前局部筛选区点击 Search 按钮",
+        summary="submit filter",
+        action_family="activate",
+        target_control="Search",
+        expected_result="the local results refresh",
+    )
+
+    assert StatementSupervisorPolicy._validate_action_capability(view, plan) == ""
+
+
+def test_provider_extra_action_fields_fail_instead_of_being_repaired() -> None:
+    with pytest.raises(ValidationError, match="extra_forbidden"):
+        _StatementTransitionResult.model_validate({
+            "assessment": {
+                "status": "in_progress",
+                "summary": "filter is missing",
+                "open_gaps": ["filter value is not entered"],
+            },
+            "kind": "act",
+            "reason": "enter filter",
+            "action": {
+                "instruction": "在筛选区域的 Attribute Code 输入框填写 size",
+                "action_family": "input",
+                "target_control": "Attribute Code",
+                "target_value": "size",
+                "expected_result": "Attribute Code shows size",
+                "attribute_code": "text_input",
+            },
+        })
+
+
+def test_terminal_requires_evidence_and_infeasible_requires_kickback() -> None:
+    with pytest.raises(ValidationError, match="requires cited evidence"):
+        _StatementTransitionResult(
+            assessment=_assessment("satisfied"),
+            kind="complete",
+            reason="done",
+        )
+    with pytest.raises(ValidationError, match="requires kickback"):
+        _StatementTransitionResult(
+            assessment=_assessment("blocked"),
+            kind="infeasible",
+            reason="blocked",
+            evidence=[_TransitionEvidence(source="current_observation", claim="no route")],
+        )
+
+
+def test_affordances_distinguish_menu_activation_from_real_navigation() -> None:
+    observation = Observation(
+        png_bytes=b"frame",
+        source="browser",
+        url="https://shop.test/edit/#",
+        semantic_tree=[
+            {
+                "role": "link",
+                "key": "CATALOG",
+                "ref": 10,
+                "url": "https://shop.test/edit/#",
+                "in_viewport": True,
+            },
+            {
+                "role": "link",
+                "key": "Products",
+                "ref": 11,
+                "url": "https://shop.test/products",
+                "in_viewport": True,
+            },
+            {
+                "role": "button",
+                "key": "Save",
+                "ref": 12,
+                "in_viewport": False,
+            },
+        ],
+    )
+    view = build_observation_view(_statement(), observation, [])
+    by_label = {item["label"]: item for item in view.affordances}
+    assert by_label["CATALOG"]["supported_operations"] == ["activate"]
+    assert by_label["Products"]["supported_operations"] == ["activate", "navigate"]
+    assert by_label["Save"]["supported_operations"] == ["iterate"]
+
+
+def test_transition_frame_contains_facts_and_capabilities_without_runtime_verdicts() -> None:
+    statement = _statement()
+    observation = Observation(
+        png_bytes=b"frame",
+        source="browser",
+        title="Dashboard",
+        url="https://shop.test/admin",
+        semantic_tree=[{
+            "role": "link",
+            "key": "CATALOG",
+            "ref": 10,
+            "url": "https://shop.test/admin/#",
+            "in_viewport": True,
+        }],
+    )
+    memory = build_memory_view(
+        instance_id="run:s1",
+        contract=statement,
+        history=[],
+        observation=observation,
+    )
+    view = build_observation_view(statement, observation, [])
+    block = _transition_frame_block(
+        statement,
+        observation,
+        memory,
+        view,
+        initial_filters=None,
+    )
+    payload = json.loads(block.content.split("\n", 2)[2])
+    assert payload["contract"]["id"] == "s1"
+    assert payload["memory"]["last_action_result"] == "none"
+    assert payload["observation"]["affordances"][0]["supported_operations"] == ["activate"]
+    assert "allowed_transition_kinds" not in block.content
+    assert "repeated_write_forbidden" not in block.content
+    assert "evidence.status" not in block.content
 
 
 def test_journal_evidence_reference_must_be_exposed_by_memory() -> None:
     evidence = [
         _TransitionEvidence(source="journal", event_ref="turn:4", claim="commit dispatched")
     ]
-    assert guard_evidence_references(evidence, available_refs={"turn:4"}).allowed
-    rejected = guard_evidence_references(evidence, available_refs={"turn:3"})
-    assert not rejected.allowed
-    assert "turn:4" in rejected.reason
+    assert validate_evidence_references(evidence, available_refs={"turn:4"}).allowed
+    assert not validate_evidence_references(evidence, available_refs={"turn:3"}).allowed
 
 
-def test_current_observation_evidence_needs_no_event_ref() -> None:
-    evidence = [
-        _TransitionEvidence(source="current_observation", claim="success banner visible")
-    ]
-    assert guard_evidence_references(evidence, available_refs=set()).allowed
-
-
-def test_transition_action_requires_one_instruction() -> None:
-    assert _TransitionAction(instruction="点击 Save").instruction
-    with pytest.raises(ValidationError):
-        _TransitionAction()
-
-
-def test_typed_action_renders_one_canonical_instruction() -> None:
-    instruction = StatementSupervisorPolicy._canonical_instruction(
-        _ActionDraft(
-            instruction="input size and click Search",
-            summary="filter",
-            atomic_role="write",
-            action_family="input",
-            target_control="Attribute Code",
-            target_value="size",
-        )
-    )
-
-    assert instruction == "Input 'size' into the visible 'Attribute Code' control."
-
-
-def test_structured_target_role_prefix_is_normalized_without_prose_parsing() -> None:
-    action = _TransitionAction(
-        instruction="open the store menu",
-        action_family="activate",
-        target_control="link: STORES",
-    )
-
-    assert action.target_control == "STORES"
-
-
-def test_complete_evidence_is_enforced_by_runtime_guard() -> None:
-    decision = _StatementTransitionResult(
-        kind="complete",
-        reason="目标已出现",
-        evidence=[
-            _TransitionEvidence(
-                source="current_observation",
-                claim="目标页面标题与合同一致",
-            )
-        ],
-    )
-    assert decision.kind == "complete"
-    missing = _StatementTransitionResult(
-        kind="complete",
-        reason="looks done",
-    )
-    assert not guard_evidence_references(
-        missing.evidence,
-        available_refs=set(),
-    ).allowed
-
-
-def test_complete_discriminator_discards_redundant_action() -> None:
-    decision = _StatementTransitionResult.model_validate({
-        "kind": "complete",
-        "reason": "目标已经满足",
-        "action": {
-            "instruction": "点击 Catalog",
-            "atomic_role": "prepare",
-            "action_family": "navigate",
-            "target_control": "Catalog",
-        },
-    })
-
-    assert decision.kind == "complete"
-    assert decision.action is None
-
-
-def test_act_with_complete_action_can_fill_missing_report_reason() -> None:
-    decision = _StatementTransitionResult.model_validate({
-        "kind": "act",
-        "action": {
-            "instruction": "点击 Catalog",
-            "atomic_role": "prepare",
-            "action_family": "navigate",
-            "target_control": "Catalog",
-        },
-    })
-
-    assert decision.reason == "点击 Catalog"
-
-
-def test_act_discards_provider_dom_annotations_beside_typed_action() -> None:
-    decision = _StatementTransitionResult.model_validate({
-        "kind": "act",
-        "reason": "filter the visible grid",
-        "action": {
-            "instruction": "Input 'size' into Attribute Code",
-            "atomic_role": "write",
-            "action_family": "input",
-            "target_control": "Attribute Code",
-            "target_value": "size",
-            "attribute_code": "text_input",
-        },
-    })
-
-    assert decision.action is not None
-    assert decision.action.target_control == "Attribute Code"
-    assert decision.action.target_value == "size"
-    assert "attribute_code" not in decision.action.model_dump()
-
-
-def test_act_drops_unreferenced_journal_explanation() -> None:
-    decision = _StatementTransitionResult.model_validate({
-        "kind": "act",
-        "reason": "需要进入编辑页检查",
-        "evidence": [
-            {
-                "source": "journal",
-                "claim": "Previously clicked Save Attribute",
-            },
-            {
-                "source": "current_observation",
-                "claim": "Attribute list is visible",
-            },
-        ],
-        "action": {
-            "instruction": "打开 size 属性行",
-            "action_family": "activate",
-        },
-    })
-
-    assert decision.kind == "act"
-    assert [item.source for item in decision.evidence] == ["current_observation"]
-
-
-def test_terminal_journal_evidence_still_requires_event_ref() -> None:
-    with pytest.raises(ValidationError, match="requires turn:N event_ref"):
-        _StatementTransitionResult.model_validate({
-            "kind": "complete",
-            "reason": "保存已完成",
-            "evidence": [
-                {
-                    "source": "journal",
-                    "claim": "Previously clicked Save Attribute",
-                }
-            ],
-        })
-
-
-def test_guard_uses_runtime_verification_without_model_negotiation() -> None:
-    verdict = guard_complete(
-        CompletionEvaluation(
-            "satisfied",
-            "visual semantic evidence only",
-            "accepted_unverified",
-        ),
-    )
-
-    assert verdict.allowed
-    assert verdict.verification == "accepted_unverified"
-
-
-def test_act_requires_one_atomic_action() -> None:
-    act = _StatementTransitionResult(
-        kind="act",
-        reason="需要保存",
-        action=_TransitionAction(instruction="点击 Save", atomic_role="commit"),
-    )
-    assert act.action and act.action.atomic_role == "commit"
-    with pytest.raises(ValidationError):
-        _StatementTransitionResult(
-            kind="act",
-            reason="换路线",
-        )
-
-
-def test_infeasible_guard_requires_structure_or_exhausted_recovery() -> None:
-    kickback = compose_kickback_directive(
-        dead_route="继续寻找缺失入口",
-        required_route="使用可验证的新入口",
-    )
-    denied = guard_infeasible(
-        evidence_valid=True,
-        structure_complete=False,
-        reason="入口未见",
-        kickback=kickback,
-    )
-    assert not denied.allowed
-    assert guard_infeasible(
-        evidence_valid=True,
-        structure_complete=True,
-        reason="完整控件清单没有入口",
-        kickback=kickback,
-    ).allowed
-
-
-def test_infeasible_transition_requires_kickback_directive() -> None:
-    evidence = [
-        _TransitionEvidence(source="current_observation", claim="完整清单中无目标控件")
-    ]
-    missing = _StatementTransitionResult(
-        kind="infeasible",
-        reason="目标控件不存在",
-        evidence=evidence,
-    )
-    assert not guard_infeasible(
-        evidence_valid=True,
-        structure_complete=True,
-        reason=missing.reason,
-        kickback=missing.kickback,
-    ).allowed
-    malformed = _StatementTransitionResult(
-        kind="infeasible",
-        reason="目标控件不存在",
-        kickback="换一个方法",
-        evidence=evidence,
-    )
-    assert not guard_infeasible(
-        evidence_valid=True,
-        structure_complete=True,
-        reason=malformed.reason,
-        kickback=malformed.kickback,
-    ).allowed
-    decision = _StatementTransitionResult(
-        kind="infeasible",
-        reason="目标控件不存在",
-        kickback=compose_kickback_directive(
-            dead_route="继续使用缺失控件",
-            required_route="使用可见入口",
-        ),
-        evidence=evidence,
-    )
-    assert "【规定路线】" in decision.kickback
-
-
-def test_evidence_pack_is_context_not_a_route_instruction() -> None:
-    block = _evidence_pack_block(
-        evaluation_reason="write receipt exists; commit not observed",
-        evaluation_status="pending",
-        evaluation_verification="in_progress",
-        persistence_summary="status=pending terminal_ready=False",
-    )
-
-    assert block is not None
-    assert "evidence.status：pending" in block.content
-    assert "persistence：status=pending" in block.content
-    assert "只用于校验 complete" in block.content
-
-
-def test_semantic_action_inventory_is_positive_evidence_only() -> None:
-    block = _semantic_actions_block(
-        [
-            {"role": "link", "key": "Products"},
-            {"role": "heading", "key": "Catalog"},
-        ]
-    )
-
-    assert block is not None
-    assert "link: Products" in block.content
-    assert "heading: Catalog" not in block.content
-    assert "缺失项本身不能证明" in block.content
+def test_completion_validator_only_checks_terminal_evidence_grade() -> None:
+    assert validate_completion(CompletionEvaluation("satisfied", "done", "confirmed")).allowed
+    assert not validate_completion(CompletionEvaluation("pending", "not yet")).allowed

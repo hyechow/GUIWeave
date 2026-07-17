@@ -6,6 +6,7 @@ from gui_agent.adapters.browser.actions import BrowserAction, BrowserActionDecis
 from gui_agent.adapters.browser.target_binding import (
     BrowserTargetBinder,
 )
+from gui_agent.adapters.browser.policies import BrowserActionPolicy
 from gui_agent.core.run.action_exec import ActionExecutor
 from gui_agent.core.run.target_binding import bind_action_target
 from gui_agent.core.run.turns import make_interactive_turn
@@ -110,6 +111,81 @@ def test_structural_binding_uses_the_point_owner_in_a_repeated_collection() -> N
     )
 
 
+def test_form_control_ref_does_not_collide_with_semantic_ref_namespace() -> None:
+    observation = Observation(
+        png_bytes=b"frame",
+        source="browser",
+        semantic_tree=[],
+        form_controls=[{
+            "kind": "text_input",
+            "label": "Attribute Code",
+            "name": "attribute_code",
+            "group_id": "attribute-grid",
+            "rect": {"x": 167, "y": 408},
+        }],
+    )
+    step = SupervisorStep(
+        action_intent=ActionIntent(
+            instruction="在属性网格筛选区的 Attribute Code 输入框填写 size",
+            role="write",
+            family="input",
+            target_control="Attribute Code",
+            target_value="size",
+            target_ref="attribute_code",
+        ),
+        summary="fill filter",
+        statement_id="s2",
+    )
+    decision = BrowserActionDecision(action=BrowserAction(
+        action_type="type",
+        x=167,
+        y=408,
+        text="size",
+        description="填写 Attribute Code",
+    ))
+
+    binding = BrowserTargetBinder().bind(step, observation, decision)
+
+    assert binding is not None
+    assert (binding.status, binding.unit_id) == ("bound", "attribute-grid")
+
+
+def test_opaque_dom_id_cannot_contradict_a_visual_choice_target() -> None:
+    observation = Observation(
+        png_bytes=b"frame",
+        source="browser",
+        form_controls=[{
+            "kind": "checkbox_input",
+            "label": "generated-check-17",
+            "id": "generated-check-17",
+            "group_field": "generated-check-17",
+            "group_id": "row:0",
+            "rect": {"x": 154, "y": 527},
+        }],
+    )
+    step = SupervisorStep(
+        action_intent=ActionIntent(
+            instruction="在当前表格中点击 Color 行第一列的复选框",
+            family="activate",
+            target_control="Color row checkbox",
+        ),
+        summary="select color",
+        statement_id="s1",
+    )
+    decision = BrowserActionDecision(action=BrowserAction(
+        action_type="tap",
+        x=154,
+        y=527,
+        description="点击 Color 行复选框",
+    ))
+
+    binding = BrowserTargetBinder().bind(step, observation, decision)
+
+    assert binding is not None
+    assert binding.status == "unresolved"
+    assert "no semantic label" in binding.reason
+
+
 def test_native_select_binds_via_target_option_despite_a_bad_label() -> None:
     # Replay of log 20260715_215953 Turn 19: the Type <select> (name=type_id) was labeled
     # 'notice-EV92REG' by the adapter, so name/label matching could not confirm it as the
@@ -208,6 +284,164 @@ def test_activate_point_on_a_different_control_is_contradicted() -> None:
     assert binding is not None
     assert binding.status == "contradicted"
     assert "Visible" in binding.reason
+
+
+def test_exact_semantic_link_ref_becomes_bound_navigation() -> None:
+    observation = Observation(
+        png_bytes=b"frame",
+        source="browser",
+        semantic_tree=[
+            {
+                "role": "link",
+                "key": "Edit Diana Tights-28-Black",
+                "url": "https://shop.test/product/1848",
+                "ref": 1848,
+            },
+            {
+                "role": "link",
+                "key": "Edit Diana Tights",
+                "url": "https://shop.test/product/1854",
+                "ref": 1854,
+            },
+        ],
+    )
+    step = SupervisorStep(
+        action_intent=ActionIntent(
+            instruction="Open the exact Diana Tights owner",
+            role="prepare",
+            family="navigate",
+            target_control="Edit Diana Tights",
+            target_ref="1854",
+        ),
+        summary="open owner",
+        statement_id="s8",
+        execution_scope="i7:s8/statement",
+        statement_kind="navigation",
+    )
+    policy = BrowserActionPolicy()
+
+    decision = policy.resolve_native_action(
+        observation,
+        target_control=step.action_intent.target_control,
+        target_value="",
+        target_ref=step.action_intent.target_ref,
+        action_family=step.action_intent.family,
+        instruction=step.action_intent.instruction,
+    )
+
+    assert decision is not None
+    assert decision.action.action_type == "navigate"
+    assert decision.action.url == "https://shop.test/product/1854"
+    binding = BrowserTargetBinder().bind(step, observation, decision)
+    assert binding is not None
+    assert (binding.status, binding.unit_id) == ("bound", "ref:1854")
+
+
+def test_exact_visible_semantic_button_ref_becomes_bound_tap() -> None:
+    observation = Observation(
+        png_bytes=b"frame",
+        source="browser",
+        semantic_tree=[{
+            "role": "button",
+            "key": "Search",
+            "ref": 42,
+            "in_viewport": True,
+            "point": {"x": 121.0, "y": 304.0},
+        }],
+    )
+    step = SupervisorStep(
+        action_intent=ActionIntent(
+            instruction="submit the filter",
+            role="commit",
+            family="activate",
+            target_control="Search",
+            target_ref="42",
+        ),
+        summary="submit",
+        statement_id="s2",
+    )
+    policy = BrowserActionPolicy()
+
+    decision = policy.resolve_native_action(
+        observation,
+        target_control="Search",
+        target_ref="42",
+        action_family="activate",
+        instruction="submit the filter",
+    )
+
+    assert decision is not None
+    assert (
+        decision.action.action_type,
+        decision.action.x,
+        decision.action.y,
+    ) == ("tap", 121.0, 304.0)
+    binding = BrowserTargetBinder().bind(step, observation, decision)
+    assert binding is not None
+    assert (binding.status, binding.unit_id) == ("bound", "ref:42")
+
+
+def test_semantic_binding_uses_unique_ref_not_decorated_label() -> None:
+    observation = Observation(
+        png_bytes=b"frame",
+        source="browser",
+        semantic_tree=[{
+            "role": "link",
+            "key": "\ue608 CATALOG",
+            "ref": 273644,
+            "in_viewport": True,
+            "point": {"x": 35.0, "y": 239.0},
+        }],
+    )
+    step = SupervisorStep(
+        action_intent=ActionIntent(
+            instruction="Activate Catalog",
+            role="prepare",
+            family="activate",
+            target_control="Catalog",
+            target_ref="273644",
+        ),
+        summary="open menu",
+        statement_id="s3",
+    )
+    decision = BrowserActionDecision(action=BrowserAction(
+        action_type="tap",
+        x=35.0,
+        y=239.0,
+        description="Activate Catalog",
+    ))
+
+    binding = BrowserTargetBinder().bind(step, observation, decision)
+
+    assert binding is not None
+    assert (binding.status, binding.unit_id) == ("bound", "ref:273644")
+
+
+def test_exact_offscreen_semantic_target_becomes_transport_not_click() -> None:
+    observation = Observation(
+        png_bytes=b"frame",
+        source="browser",
+        semantic_tree=[{
+            "role": "button",
+            "key": "Add Swatch",
+            "ref": 247901,
+            "in_viewport": False,
+            "point": {"x": 500, "y": 1450},
+        }],
+    )
+    policy = BrowserActionPolicy()
+
+    decision = policy.resolve_native_action(
+        observation,
+        target_control="Add Swatch",
+        target_ref="247901",
+        action_family="iterate",
+        instruction="bring Add Swatch into view",
+    )
+
+    assert decision is not None
+    assert decision.action.action_type == "scroll_to_ref"
+    assert decision.action.target_ref == 247901
 
 
 class _Future:

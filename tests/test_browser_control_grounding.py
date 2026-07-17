@@ -3,6 +3,7 @@ from gui_agent.adapters.browser.control_grounding import (
     ground_rendered_action,
     rendered_target_evidence,
     resolve_native_control_action,
+    resolve_semantic_action,
     semantic_target_evidence,
 )
 
@@ -133,6 +134,68 @@ def test_unique_semantic_action_target_is_exposed_to_visual_policy() -> None:
     assert "matched_document_target='Search'" in evidence
     assert "不证明它在截图视口内" in evidence
     assert "不得用其他可见按钮" in evidence
+
+
+def test_semantic_activate_clicks_link_instead_of_opening_its_url() -> None:
+    decision = resolve_semantic_action(
+        [{
+            "role": "link",
+            "key": "STORES",
+            "url": "https://example.test/admin/dashboard/#",
+            "ref": 252808,
+            "in_viewport": True,
+            "point": {"x": 35.0, "y": 561.0},
+        }],
+        target_control="STORES",
+        target_ref="252808",
+        action_family="activate",
+        instruction="Expand the STORES menu.",
+    )
+
+    assert decision is not None
+    assert decision.action.action_type == "tap"
+    assert (decision.action.x, decision.action.y) == (35.0, 561.0)
+    assert decision.action.url is None
+
+
+def test_semantic_ref_owns_identity_when_label_has_decorative_glyphs() -> None:
+    decision = resolve_semantic_action(
+        [{
+            "role": "link",
+            "key": "\ue608 CATALOG",
+            "url": "https://example.test/admin/edit/#",
+            "ref": 273644,
+            "in_viewport": True,
+            "point": {"x": 35.0, "y": 239.0},
+        }],
+        target_control="Catalog",
+        target_ref="273644",
+        action_family="activate",
+    )
+
+    assert decision is not None
+    assert decision.action.action_type == "tap"
+    assert (decision.action.x, decision.action.y) == (35.0, 239.0)
+
+
+def test_semantic_navigate_opens_exact_link_url() -> None:
+    decision = resolve_semantic_action(
+        [{
+            "role": "link",
+            "key": "Product Attributes",
+            "url": "https://example.test/admin/attributes/",
+            "ref": 42,
+            "in_viewport": True,
+            "point": {"x": 100.0, "y": 200.0},
+        }],
+        target_control="Product Attributes",
+        target_ref="42",
+        action_family="navigate",
+    )
+
+    assert decision is not None
+    assert decision.action.action_type == "navigate"
+    assert decision.action.url == "https://example.test/admin/attributes/"
 
 
 def test_native_select_can_bypass_visual_policy() -> None:

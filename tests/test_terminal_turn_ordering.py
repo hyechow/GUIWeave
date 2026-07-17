@@ -13,6 +13,7 @@ from gui_agent.core.schemas import PolicyContext, SupervisorStep
 from gui_agent.core.supervisor.statement.policy import StatementSupervisorPolicy
 from gui_agent.core.supervisor.statement.schemas import (
     _StatementTransitionResult,
+    _TransitionAssessment,
     _TransitionEvidence,
 )
 
@@ -26,6 +27,11 @@ def test_terminal_event_carries_live_transition_and_filled_outcome():
     policy.begin_statement(contract, instance_id="i1:s1")
     policy._record_transition(
         _StatementTransitionResult(
+            assessment=_TransitionAssessment(
+                status="satisfied",
+                summary="在目标页",
+                established_facts=["目标详情页当前可见"],
+            ),
             kind="complete",
             reason="已在目标页",
             summary="在目标页",
@@ -36,7 +42,6 @@ def test_terminal_event_carries_live_transition_and_filled_outcome():
                 )
             ],
         ),
-        [],
     )
     info, instance_id = emit_statement_fields(policy)
     filled = StatementOutcome.completed("done", reads={"rating": "5"})

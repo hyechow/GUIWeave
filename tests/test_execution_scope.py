@@ -12,6 +12,7 @@ from gui_agent.core.supervisor.statement.policy import StatementSupervisorPolicy
 from gui_agent.core.supervisor.statement.schemas import (
     _StatementTransitionResult,
     _TransitionAction,
+    _TransitionAssessment,
 )
 
 
@@ -53,10 +54,20 @@ def test_transition_action_history_is_bucketed_by_current_row_scope(monkeypatch)
     def fake_transition(_statement, _observation, history, **_kwargs):
         captured["history"] = history
         return _StatementTransitionResult(
+            assessment=_TransitionAssessment(
+                status="in_progress",
+                summary="price is not saved",
+                open_gaps=["save the current row"],
+            ),
             kind="act",
             reason="还未保存",
             summary="进行中",
-            action=_TransitionAction(instruction="点击保存", action_family="activate"),
+            action=_TransitionAction(
+                instruction="在当前编辑表单中点击 Save 按钮",
+                action_family="activate",
+                target_control="Save",
+                expected_result="the current row reports a successful save",
+            ),
         )
 
     monkeypatch.setattr(P, "is_loading_frame", lambda _obs: False)

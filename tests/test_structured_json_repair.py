@@ -12,10 +12,16 @@ best-effort recovery. A hopeless payload still raises (no silent empty object).
 from __future__ import annotations
 
 import pytest
+from langchain_core.messages import AIMessage
 from pydantic import BaseModel, ValidationError
 
 from gui_agent.core.supervisor.statement.schemas import _StatementTransitionResult
-from llm.structured import _parse_structured_response, _repair_json_object
+from llm.structured import (
+    StructuredOutputError,
+    _parse_structured_response,
+    _repair_json_object,
+    invoke_structured,
+)
 
 
 class _Plan(BaseModel):
@@ -69,10 +75,12 @@ def test_code_fenced_malformed_json_is_repaired():
 
 def test_truncated_transition_reason_keeps_action_emitted_first():
     broken = (
-        '{"kind":"act",'
+        '{"assessment":{"status":"in_progress","summary":"filter missing",'
+        '"open_gaps":["filter value missing"]},"kind":"act",'
         '"action":{"instruction":"Input Diana Tights",'
         '"atomic_role":"write","action_family":"input",'
-        '"target_control":"frontend_label","target_value":"Diana Tights"},'
+        '"target_control":"frontend_label","target_value":"Diana Tights",'
+        '"expected_result":"field contains Diana Tights"},'
         '"reason":"DOM list shows `name="'
     )
 
@@ -84,35 +92,38 @@ def test_truncated_transition_reason_keeps_action_emitted_first():
     assert decision.action.target_value == "Diana Tights"
 
 
-def test_valid_transition_json_ignores_nonsemantic_nested_annotation():
+def test_transition_json_rejects_nonsemantic_nested_annotation():
     raw = (
-        '{"kind":"act","reason":"filter the grid",'
+        '{"assessment":{"status":"in_progress","summary":"filter missing",'
+        '"open_gaps":["filter value missing"]},'
+        '"kind":"act","reason":"filter the grid",'
         '"action":{"instruction":"Input size into Attribute Code",'
         '"atomic_role":"write","action_family":"input",'
         '"target_control":"Attribute Code","target_value":"size",'
+        '"expected_result":"Attribute Code contains size",'
         '"attribute_code":"text_input"}}'
     )
 
-    decision = _parse_structured_response(raw, _StatementTransitionResult)
+    with pytest.raises(ValidationError, match="extra_forbidden"):
+        _parse_structured_response(raw, _StatementTransitionResult)
 
-    assert decision.action is not None
-    assert decision.action.model_dump() == {
-        "instruction": "Input size into Attribute Code",
-        "atomic_role": "write",
-        "action_family": "input",
-        "target_control": "Attribute Code",
-        "target_value": "size",
-        "direction": None,
-        "drag_column": None,
-        "drag_current_value": None,
-        "drag_target_value": None,
-    }
+
+def test_invalid_journal_label_is_rejected():
+    raw = (
+        '{"assessment":{"status":"satisfied","summary":"done"},'
+        '"kind":"complete","reason":"runtime facts already satisfy the target",'
+        '"evidence":[{"source":"journal","claim":"runtime evaluation is satisfied",'
+        '"event_ref":""}]}'
+    )
+
+    with pytest.raises(ValidationError, match="turn:N"):
+        _parse_structured_response(raw, _StatementTransitionResult)
 
 
 def test_repair_is_not_reported_successful_when_schema_is_incomplete(capsys):
     broken = '{"kind":"act","reason":"DOM list shows `name="'
 
-    with pytest.raises(ValidationError, match="act transition requires one action"):
+    with pytest.raises(ValidationError):
         _parse_structured_response(broken, _StatementTransitionResult)
 
     assert "恢复并通过 schema 校验" not in capsys.readouterr().out
@@ -129,3 +140,33 @@ def test_repair_helper_rejects_empty_and_nonobject():
     assert _repair_json_object("no braces here") is None
     assert _repair_json_object("[1, 2, 3]") is None  # a list is not a schema object
     assert _repair_json_object("{}") is None  # empty object must not pass as a recovery
+
+
+def test_transition_can_disable_second_model_call_on_invalid_output():
+    class _Bound:
+        def __init__(self, owner):
+            self.owner = owner
+
+        def invoke(self, messages):
+            self.owner.calls += 1
+            return AIMessage(content='{"steps": []}')
+
+    class _LLM:
+        calls = 0
+
+        def bind(self, **kwargs):
+            return _Bound(self)
+
+        def invoke(self, messages):
+            raise AssertionError("plain-text fallback must not be called")
+
+    llm = _LLM()
+    with pytest.raises(StructuredOutputError):
+        invoke_structured(
+            llm,
+            [],
+            _Plan,
+            trace_label="transition",
+            fallback_on_invalid=False,
+        )
+    assert llm.calls == 1

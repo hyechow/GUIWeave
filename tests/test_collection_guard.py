@@ -20,6 +20,7 @@ from gui_agent.core.supervisor.statement import StatementSupervisorPolicy
 from gui_agent.core.supervisor.statement.schemas import (
     _StatementTransitionResult,
     _TransitionAction,
+    _TransitionAssessment,
     _TransitionEvidence,
 )
 
@@ -65,6 +66,11 @@ def _scroll_turn(*, read_added: bool = False) -> PolicyTurn:
 
 def _complete() -> _StatementTransitionResult:
     return _StatementTransitionResult(
+        assessment=_TransitionAssessment(
+            status="satisfied",
+            summary="collection boundary is reached",
+            established_facts=["current viewport has no more rows"],
+        ),
         kind="complete",
         reason="当前屏幕看起来已到底",
         summary="疑似边界",
@@ -79,6 +85,11 @@ def _complete() -> _StatementTransitionResult:
 
 def _forward() -> _StatementTransitionResult:
     return _StatementTransitionResult(
+        assessment=_TransitionAssessment(
+            status="in_progress",
+            summary="collection boundary is not proven",
+            open_gaps=["one traversal is still required"],
+        ),
         kind="act",
         reason="先真实遍历一次验证边界",
         summary="继续收集",
@@ -86,19 +97,21 @@ def _forward() -> _StatementTransitionResult:
             instruction="继续滚动当前集合以验证边界",
             atomic_role="iterate",
             action_family="iterate",
+            target_control="collection viewport",
             direction="down",
+            expected_result="the next collection viewport is visible",
         ),
     )
 
 
-def test_zero_traversal_complete_proposal_is_vetoed_then_llm_selects_forward(monkeypatch):
+def test_zero_traversal_complete_proposal_fails_without_hidden_replan(monkeypatch):
     policy, statement = _make_policy()
-    decisions = iter([_complete(), _forward()])
-    extras: list[str] = []
+    calls = 0
 
-    def transition(*args, extra: str = "", **kwargs):
-        extras.append(extra)
-        return next(decisions)
+    def transition(*args, **kwargs):
+        nonlocal calls
+        calls += 1
+        return _complete()
 
     monkeypatch.setattr(policy, "_invoke_statement_transition", transition)
     step = policy._run_single_turn(
@@ -107,18 +120,16 @@ def test_zero_traversal_complete_proposal_is_vetoed_then_llm_selects_forward(mon
         [],
     )
 
-    assert step.action_intent is not None and step.outcome is None
-    assert step.action_intent.role == "iterate"
-    assert any("集合遍历" in extra or "collection" in extra for extra in extras[1:])
+    assert calls == 1
+    assert step.outcome is not None and step.outcome.phase == "exhausted"
 
 
 def test_adapter_boundary_without_prior_move_is_not_authoritative(monkeypatch):
     policy, statement = _make_policy()
-    decisions = iter([_complete(), _forward()])
     monkeypatch.setattr(
         policy,
         "_invoke_statement_transition",
-        lambda *args, **kwargs: next(decisions),
+        lambda *args, **kwargs: _complete(),
     )
 
     step = policy._run_single_turn(
@@ -131,7 +142,7 @@ def test_adapter_boundary_without_prior_move_is_not_authoritative(monkeypatch):
         [],
     )
 
-    assert step.action_intent is not None and step.outcome is None
+    assert step.outcome is not None and step.outcome.phase == "exhausted"
 
 
 def test_adapter_boundary_after_dispatched_move_validates_llm_completion(monkeypatch):
@@ -161,6 +172,12 @@ def test_collection_strategy_change_is_an_ordinary_action(monkeypatch):
         policy,
         "_invoke_statement_transition",
         lambda *args, **kwargs: _StatementTransitionResult(
+            assessment=_TransitionAssessment(
+                status="in_progress",
+                summary="the last move added no rows",
+                open_gaps=["another traversal tactic is required"],
+                last_action_effect="no_effect",
+            ),
             kind="act",
             reason="上一滚动没有新增账单，换一个滚动区域",
             summary="调整遍历策略",
@@ -168,7 +185,9 @@ def test_collection_strategy_change_is_an_ordinary_action(monkeypatch):
                 instruction="在主账单区域向上滚动一屏",
                 atomic_role="iterate",
                 action_family="iterate",
+                target_control="main collection region",
                 direction="up",
+                expected_result="a different collection viewport is visible",
             ),
         ),
     )

@@ -13,6 +13,7 @@ import gui_agent.core.supervisor.statement.policy as policy_mod
 from gui_agent.core.schemas import StatementContract, Observation
 from gui_agent.core.supervisor.statement.schemas import (
     _StatementTransitionResult,
+    _TransitionAssessment,
     _TransitionEvidence,
 )
 
@@ -35,6 +36,11 @@ def test_filter_state_cases(monkeypatch):
     def _transition(*_args, **_kwargs):
         transition_calls.append("called")
         return _StatementTransitionResult(
+            assessment=_TransitionAssessment(
+                status="satisfied",
+                summary="the exact declared filter is visible",
+                established_facts=["adapter reports the filter as applied"],
+            ),
             kind="complete",
             reason="the exact declared filter is visible",
             evidence=[_TransitionEvidence(

@@ -14,6 +14,7 @@ class _Client:
         self._snap = snap
         self.clicked = None
         self.selected = None
+        self.scrolled_ref = None
 
     def dom_snap(self, x, y, target_text=""):
         return self._snap
@@ -25,6 +26,10 @@ class _Client:
     def select_option(self, x, y, option_text):
         self.selected = (x, y, option_text)
         return f"OK select_option {option_text!r}"
+
+    def scroll_to_ref(self, target_ref):
+        self.scrolled_ref = target_ref
+        return "ok"
 
 
 def _exec(client: _Client) -> BrowserExecutor:
@@ -45,6 +50,21 @@ def test_select_option_action_dispatches_client():
 
     assert _exec(client).execute(decision) is True
     assert client.selected == (600.0, 500.0, "Complete")
+    assert client.clicked is None
+
+
+def test_scroll_to_ref_dispatches_transport_without_click():
+    client = _Client()
+    decision = BrowserActionDecision(
+        action=BrowserAction(
+            action_type="scroll_to_ref",
+            target_ref=247901,
+            description="将 Add Swatch 移入视口",
+        )
+    )
+
+    assert _exec(client).execute(decision) is True
+    assert client.scrolled_ref == 247901
     assert client.clicked is None
 
 

@@ -28,6 +28,7 @@ from gui_agent.core.supervisor.statement.schemas import (
     _ActionDraft,
     _StatementTransitionResult,
     _TransitionAction,
+    _TransitionAssessment,
 )
 
 
@@ -262,7 +263,7 @@ def test_android_picker_drag_steps_use_shortest_hour_direction():
     assert plan.direction == "decrease"
 
 
-def test_zero_step_picker_transition_is_redecided_before_action(monkeypatch):
+def test_zero_step_picker_transition_fails_without_hidden_redecision(monkeypatch):
     policy = StatementSupervisorPolicy()
     statement = StatementContract(
         id="m4",
@@ -273,37 +274,31 @@ def test_zero_step_picker_transition_is_redecided_before_action(monkeypatch):
         completion_strategy="visible_once",
     )
     policy.begin_statement(statement, instance_id="i1")
-    decisions = iter(
-        [
-            _StatementTransitionResult(
-                kind="act",
-                reason="错误微调",
-                summary="错误微调",
-                action=_TransitionAction(
-                    instruction="在分钟列向上滚动，将值从 30 调整到 30",
-                    direction="increase",
-                    drag_column="minute",
-                    drag_current_value=30,
-                    drag_target_value=30,
-                ),
-            ),
-            _StatementTransitionResult(
-                kind="act",
-                reason="时间已到位，下一步保存",
-                summary="保存闹钟",
-                action=_TransitionAction(
-                    instruction="点击右上角的保存按钮",
-                    atomic_role="commit",
-                    action_family="activate",
-                ),
-            ),
-        ]
-    )
-    extras: list[str] = []
+    calls = 0
 
-    def fake_transition(*args, extra: str = "", **kwargs):
-        extras.append(extra)
-        return next(decisions)
+    def fake_transition(*args, **kwargs):
+        nonlocal calls
+        calls += 1
+        return _StatementTransitionResult(
+            assessment=_TransitionAssessment(
+                status="in_progress",
+                summary="minute picker still needs adjustment",
+                open_gaps=["minute value must change"],
+            ),
+            kind="act",
+            reason="错误微调",
+            action=_TransitionAction(
+                instruction="在时间选择器的分钟列滚动以接近目标分钟",
+                action_family="iterate",
+                atomic_role="iterate",
+                target_control="minute picker",
+                expected_result="minute value changes toward 30",
+                direction="increase",
+                drag_column="minute",
+                drag_current_value=30,
+                drag_target_value=30,
+            ),
+        )
 
     monkeypatch.setattr(policy, "_invoke_statement_transition", fake_transition)
     monkeypatch.setattr(
@@ -317,10 +312,9 @@ def test_zero_step_picker_transition_is_redecided_before_action(monkeypatch):
         [],
     )
 
-    assert step.action_intent.instruction == "点击右上角的保存按钮"
-    assert step.action_intent.drag_column is None
-    assert step.action_intent.drag_steps is None
-    assert any("already at its target" in extra for extra in extras)
+    assert calls == 1
+    assert step.outcome is not None and step.outcome.phase == "exhausted"
+    assert "already at its target" in step.outcome.summary
 
 
 def test_alarm_time_value_statement_defaults_to_converge_strategy():
@@ -431,6 +425,12 @@ def test_iterative_statement_strategy_change_is_chosen_by_transition(monkeypatch
     def choose_next(*args, memory_view, **kwargs):
         memory_sections.append(memory_view.render_prompt_section())
         return _StatementTransitionResult(
+            assessment=_TransitionAssessment(
+                status="in_progress",
+                summary="last picker move did not converge",
+                open_gaps=["minute must reach 30"],
+                last_action_effect="no_effect",
+            ),
             kind="act",
             reason="上一滚动未使 06:51 接近 06:30，改用更大幅度",
             summary="换一个连续调整策略",
@@ -438,6 +438,8 @@ def test_iterative_statement_strategy_change_is_chosen_by_transition(monkeypatch
                 instruction="在分钟列向下大幅滚动以接近 30",
                 atomic_role="iterate",
                 action_family="iterate",
+                target_control="minute picker",
+                expected_result="minute value moves closer to 30",
                 direction="decrease",
                 drag_column="minute",
                 drag_current_value=51,
