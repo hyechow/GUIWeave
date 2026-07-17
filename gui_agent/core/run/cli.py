@@ -146,8 +146,6 @@ def main(
     with bundle.open_session() as platform:
         cur_url = ""
         cur_title = ""
-        initial_png = None
-        initial_tables = None
         cur_site = ""  # init OUTSIDE the try: an observe() failure must not leave it unbound
         try:
             initial_obs = bundle.make_perception(
@@ -155,8 +153,6 @@ def main(
             ).observe()
             cur_url = initial_obs.url or ""
             cur_title = initial_obs.title or ""
-            initial_png = initial_obs.png_bytes
-            initial_tables = getattr(initial_obs, "tables", None)
             # Map the url's host to a known app name (semantic site) — the IP itself is opaque
             # to router/decompose, while an explicit application identity carries meaning.
             if cur_url:
@@ -253,15 +249,6 @@ def main(
                         if len(file_section) <= cap
                         else file_section[:cap] + "\n…（配置过长已截断，其余以分解结果为准）"
                     )
-                def _subdecompose(sub_goal: str):
-                    return decompose(
-                        sub_goal,
-                        knowledge=(
-                            knowledge.decompose_context(sub_goal) if knowledge else ""
-                        ),
-                        current_site=cur_site,
-                        prepare_vision_prompt_png=bundle.prepare_vision_prompt_png,
-                    )
                 if input_context_path:
                     raw = json.loads(input_context_path.read_text(encoding="utf-8"))
                     revisions = [
@@ -278,21 +265,21 @@ def main(
                         f"Orchestrator: 从 EventJournal 恢复 revision "
                         f"{revisions[-1].get('revision')}（{len(program.statements)} 条语句）"
                     )
-                    return program, {}, run_max_turns, _subdecompose
+                    return program, {}, run_max_turns
                 # Resolve @<path> refs once (config field values the goal only points at) and feed
                 # them to the decomposer so the LLM sees the referenced field values.
                 orch_started = time.perf_counter()
                 orch_calls_before = get_llm_call_count()
                 orch_tokens_before = get_llm_token_usage()
-                # decompose finalizes the L2 structural gates centrally (passes.finalize_gates:
-                # confirm-read dispatch gate + precondition ensure-state gate) — no caller wrap.
-                program = decompose(goal, knowledge=knowledge.decompose_context(goal) if knowledge else "",
-                                    file_section=file_section,
-                                    current_url=cur_url, current_title=cur_title,
-                                    current_site=cur_site, table_summaries=initial_tables,
-                                    png_bytes=initial_png,
-                                    prepare_vision_prompt_png=bundle.prepare_vision_prompt_png,
-                                    context_reports=orchestrator_context_reports)
+                program = decompose(
+                    goal,
+                    knowledge=knowledge.decompose_context(goal) if knowledge else "",
+                    file_section=file_section,
+                    current_url=cur_url,
+                    current_title=cur_title,
+                    current_site=cur_site,
+                    context_reports=orchestrator_context_reports,
+                )
                 orch_tokens_after = get_llm_token_usage()
                 orchestrator_metrics = {
                     "timings": {"orchestrator.decompose": time.perf_counter() - orch_started},
@@ -309,12 +296,6 @@ def main(
                 # them (LLM distillation of config into constraints proved unstable).
                 print(f"Orchestrator: 分解为 {len(program.statements)} 条语句")
 
-                # Per-row agentic sub-goal (ForEach.body_goal): decompose a row-templated sub-goal
-                # fresh at runtime, reusing the same app knowledge + normalize passes as the main
-                # decompose. The runtime depth guard enforces one-level-only; the decomposer is told
-                # not to nest. Lets the full agent loop solve complex per-row sub-tasks (derive →
-                # search → disambiguate → open → read) instead of the decomposer pre-baking brittle
-                # micro-steps. See memory typed-returns-validation / webarena-185.
                 if args.dynamic_max_turns:
                     run_max_turns = estimate_program_turns(program, floor=args.max_turns)
                     if run_max_turns != args.max_turns:
@@ -322,9 +303,9 @@ def main(
                             f"Orchestrator: max_turns {args.max_turns} -> {run_max_turns} "
                             "based on program complexity"
                         )
-                return program, orchestrator_metrics, run_max_turns, _subdecompose
+                return program, orchestrator_metrics, run_max_turns
 
-            program, orchestrator_metrics, run_max_turns, _subdecompose = _compile_program()
+            program, orchestrator_metrics, run_max_turns = _compile_program()
 
             try:
                 stop_on_esc = args.stop_on_esc and args.auto_continue
@@ -350,7 +331,6 @@ def main(
                         router=router_result.model_dump() if router_result else None,
                         knowledge=knowledge_summary,
                         program=program,
-                        subdecompose=_subdecompose,
                         orchestrator_context_reports=[*orchestrator_context_reports, {
                             "kind": "orchestrator_metrics",
                             **orchestrator_metrics,

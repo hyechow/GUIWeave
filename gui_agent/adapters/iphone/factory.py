@@ -79,12 +79,6 @@ def _setup_check() -> SetupCheckResult:
     )
 
 
-def _make_stitch_accumulator(*args: object, **kwargs: object) -> object:
-    from gui_agent.adapters.iphone.stitch import StitchAccumulator
-
-    return StitchAccumulator(*args, **kwargs)
-
-
 def _prepare_vision_prompt_png(png_bytes: bytes) -> bytes:
     from gui_agent.core.policies.base import resize_to_logical_png
 
@@ -113,7 +107,6 @@ def build_iphone_bundle(*, backend: Optional[str] = None, **_ignored: object) ->
         # + renderer level (browser reuses the same agent_cursor); the driving layer
         # differs because that is iphone's correct home. See ActionVisualizer docstring.
         make_action_visualizer=lambda session: None,
-        make_stitch_accumulator=_make_stitch_accumulator,
         prepare_vision_prompt_png=_prepare_vision_prompt_png,
         default_action_policy=StructuredOutputPolicy.name,
         default_supervisor=StatementSupervisorPolicy.name,

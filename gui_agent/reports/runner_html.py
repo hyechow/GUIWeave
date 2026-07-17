@@ -542,12 +542,9 @@ TIMING_COLORS: dict[str, str] = {
 }
 
 KIND_BADGE = {
-    "navigation": "statement-badge-navigation",
-    "action": "statement-badge-action",
-    "filter": "statement-badge-filter",
-    "collection": "statement-badge-collection",
-    "read": "statement-badge-collection",
-    "data_query": "statement-badge-collection",
+    "interact": "statement-badge-action",
+    "data": "statement-badge-collection",
+    "command": "statement-badge-navigation",
 }
 
 AT_LABELS = {
@@ -558,7 +555,7 @@ AT_LABELS = {
     "upload": "上传", "navigate": "导航", "back": "后退",
     "new_tab": "新标签页", "select_tab": "切标签页", "close_tab": "关标签页",
     "select_option": "选项",
-    "read": "只读", "data_query": "数据查询", "non_ui": "非交互",
+    "data": "数据", "command": "命令", "non_ui": "非交互",
 }
 
 
@@ -1227,7 +1224,7 @@ def generate_html(data: ReportData, grid: bool = False) -> str:
                 rd_banner += render_redecompose_card(data.orchestrator, _n)
                 placed_rd.add(_n)
         _triggered_rd = bool(rd_banner)  # → label its verify thumbnail 重编排
-        badge_cls = KIND_BADGE.get(page.statement_kind, "statement-badge-default")
+        badge_cls = KIND_BADGE.get(page.statement_executor, "statement-badge-default")
         ms_in = sum(_sum_tokens(s.token_usage)[0] for s in page.steps)
         ms_out = sum(_sum_tokens(s.token_usage)[1] for s in page.steps)
         ms_cost = sum(_token_cost(s.token_usage) for s in page.steps)
@@ -1299,7 +1296,7 @@ def generate_html(data: ReportData, grid: bool = False) -> str:
             if page.statement_description and page.statement_description.strip() != page.statement_name.strip()
             else ""
         )
-        sc_html = f'<div class="statement-sc">验收：{_safe(page.success_condition)}</div>' if page.success_condition else ""
+        sc_html = f'<div class="statement-sc">验收：{_safe(page.statement_success)}</div>' if page.statement_success else ""
         checklist_badge, checklist_data = _render_checklist(page.checklist, f"cl-{mid_safe}")
         ms_time_html = (
             f'总耗时 {ms_elapsed:.1f}s'
@@ -1379,7 +1376,7 @@ def generate_html(data: ReportData, grid: bool = False) -> str:
           <div class="statement-header">
             <h2>#{mid_disp}</h2>
             <span class="statement-name">{_safe(page.statement_name)}</span>
-            <span class="statement-badge {badge_cls}">{_safe(page.statement_kind)}</span>
+            <span class="statement-badge {badge_cls}">{_safe(page.statement_executor)}</span>
             {checklist_badge}
             <span class="statement-time" title="{_safe(ms_time_title)}">{ms_time_html} · {turns_label}{ms_tok_html}</span>
             {desc_html}

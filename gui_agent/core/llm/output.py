@@ -82,7 +82,7 @@ def compose_orchestration_reply(
     """Comprehensive final reply for DSL orchestrator runs: synthesize 已完成 / 读取发现 /
     未完成 / 结论 from the WHOLE program's structured state, not just the last finish line.
 
-    run_log: ordered statements [{name, phase, verification, reads:{字段:值}, summary}].
+    run_log: ordered statements [{name, executor, phase, verification, outputs:{字段:值}, summary}].
     current: the in-progress (uncompleted) statement name when interrupted (max_turns), else "".
     terminal: how the program ended — the finish/failure reply, or "达到最大轮数 N" etc."""
     from llm.provider_config import dashscope_extra_body
@@ -106,9 +106,9 @@ def compose_orchestration_reply(
             else ("✓ 完成" if phase == "completed" else "✗ 未完成")
         )
         lines.append(f"{i}. {r.get('name', '')} — {mark}")
-        reads = {k: v for k, v in (r.get("reads") or {}).items() if v}
-        if reads:
-            lines.append("   读取：" + "；".join(f"{k}={v}" for k, v in reads.items()))
+        outputs = {k: v for k, v in (r.get("outputs") or {}).items() if v is not None}
+        if outputs:
+            lines.append("   输出：" + "；".join(f"{k}={v}" for k, v in outputs.items()))
     if current:
         lines.append(f"（当前进行中、尚未完成：{current}）")
     digest = "\n".join(lines) or "（无已完成步骤）"

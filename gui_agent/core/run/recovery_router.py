@@ -46,11 +46,11 @@ class RecoveryRouter:
     @staticmethod
     def route_program_end(
         *,
-        failure_evidence: str | None,
+        replan_directive: str | None,
         can_redecompose: bool,
     ) -> RecoveryDecision:
-        if failure_evidence and can_redecompose:
-            return RecoveryDecision("kickback", "data_source_error")
+        if replan_directive and can_redecompose:
+            return RecoveryDecision("kickback", "infeasible_route")
         return RecoveryDecision("fail_or_escalate")
 
 

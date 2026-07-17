@@ -33,13 +33,13 @@ class StatementView:
     statement_id: str
     name: str = ""
     description: str = ""
-    kind: str = ""
-    success_condition: str = ""
+    executor: str = ""
+    success: str = ""
     status: str = ""  # done | failed | running
     phase: str = ""
     verification: str = ""
     kickback: str = ""
-    reads: dict[str, str] = field(default_factory=dict)
+    outputs: dict[str, Any] = field(default_factory=dict)
     checklist: list[dict] = field(default_factory=list)
     acceptance: dict = field(default_factory=dict)
     pre_existing: bool = False
@@ -80,7 +80,7 @@ def _upsert_checklist(
 
 def fold_checklist_from_verdict(
     *,
-    success_condition: str,
+    success: str,
     fallback: str,
     verdict: dict,
     items: dict[str, ChecklistItemView] | None = None,
@@ -106,7 +106,7 @@ def fold_checklist_from_verdict(
             verdicts[v["index"]] = v
 
     for idx, text in enumerate(
-        split_acceptance_items(success_condition, fallback), 1
+        split_acceptance_items(success, fallback), 1
     ):
         v = verdicts.get(idx)
         if v is not None:
@@ -120,7 +120,7 @@ def fold_checklist_from_verdict(
         else:
             item_status_i = item_status
             item_evidence_i = evidence
-            source_i = "verdict:success_condition"
+            source_i = "verdict:success"
         _upsert_checklist(
             items,
             item_id=_checklist_item_id("accept", text),
@@ -194,12 +194,10 @@ class StatementReportReducer:
             info = event.get("statement")
             if isinstance(info, dict):
                 view.statement_id = str(info.get("id") or view.statement_id)
-                view.name = str(info.get("name") or view.name)
-                view.description = str(info.get("description") or view.description)
-                view.kind = str(info.get("kind") or view.kind)
-                view.success_condition = str(
-                    info.get("success_condition") or view.success_condition
-                )
+                view.name = str(info.get("goal") or view.name)
+                view.description = str(info.get("goal") or view.description)
+                view.executor = str(info.get("executor") or view.executor)
+                view.success = str(info.get("success") or view.success)
 
             if not view.name:
                 view.name = str(
@@ -211,14 +209,6 @@ class StatementReportReducer:
                     )
                     or view.statement_id
                 )
-            if not view.kind:
-                view.kind = str(
-                    event.get("statement_kind")
-                    if is_outcome
-                    else sv.get("statement_kind")
-                    or ""
-                )
-
             if not is_outcome and sv.get("summary"):
                 view.last_summary = str(sv["summary"])
             if (
@@ -244,9 +234,9 @@ class StatementReportReducer:
                 view.phase = str(outcome.get("phase") or view.phase)
                 view.verification = str(outcome.get("verification") or view.verification)
                 view.kickback = str(outcome.get("kickback") or view.kickback)
-                reads = outcome.get("reads")
-                if isinstance(reads, dict) and reads:
-                    view.reads = {str(k): str(v) for k, v in reads.items()}
+                outputs = outcome.get("outputs")
+                if isinstance(outputs, dict) and outputs:
+                    view.outputs = dict(outputs)
                 if view.phase == "completed":
                     view.status = "done"
                 elif view.phase in {"failed", "exhausted", "infeasible", "interrupted"}:
@@ -282,7 +272,7 @@ class StatementReportReducer:
                 }
                 view.acceptance = terminal_check
                 fold_checklist_from_verdict(
-                    success_condition=view.success_condition,
+                    success=view.success,
                     fallback=view.name or view.statement_id,
                     verdict=terminal_check,
                     items=checklist_maps.setdefault(instance_id, {}),
@@ -323,7 +313,7 @@ class StatementReportReducer:
                 if kind in {"complete", "infeasible"}:
                     view.acceptance = transition_check
                 fold_checklist_from_verdict(
-                    success_condition=view.success_condition,
+                    success=view.success,
                     fallback=view.name or view.statement_id,
                     verdict=transition_check,
                     items=checklist_maps.setdefault(instance_id, {}),

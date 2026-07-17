@@ -1,99 +1,63 @@
-"""DSL orchestrator — a compiler + runtime for the mixed script a GUI task decomposes into.
+"""Semantic Program compiler and runtime.
 
-GUI task = script generation (see docs/dsl_runtime_architecture.md). The user's goal compiles to a
-small program of interactive actions (FFI calls into the nondeterministic GUI executor) and
-non-interactive statements (deterministic read/query/compute the interpreter runs itself). This
-package is that compiler + runtime; each module has one role in the toolchain:
-
-  ── language (AST + docs) ────────────────────────────────────────────────────────────
-  program.py        the IR: Run (interactive action) / Read·Query (non-interactive) / If /
-                    ForEach / Compute / Call / Finish. Wire-stable; the LLM draft is separate.
-  prompts/…/decomposer.md   the language documentation (worked examples > rule prose).
-
-  ── compiler frontend (AOT, LLM) ─────────────────────────────────────────────────────
-  decomposer.py     NL goal → draft → AST. Three entrances share ONE pipeline (_invoke_plan):
-                    decompose (AOT) / redecompose (kickback hot-patch) / subdecompose (per-row
-                    JIT). Pipeline = LLM → to_program (structural passes) → validate/retry →
-                    finalize_gates. So lint + gate-normalization cover all three uniformly.
-  _decomposer/      private draft schema, context blocks, and SQL normalizations used by the
-                    frontend; the public names are re-exported through decomposer.py.
-
-  ── compiler middle-end (deterministic) ──────────────────────────────────────────────
-  passes.py         AST normalize passes: collapse_foreach / insert_loop_entry_arrivals /
-                    chain_from_states (structural, pre-validate) + finalize_gates (confirm-read
-                    dispatch gate + precondition ensure-state gate, post-validate).
-
-  ── type-check / lint (deterministic) ────────────────────────────────────────────────
-  validator.py      reference/SQL/branch validation (type check). preflight.py    router-
-  preflight.py      coverage + execution-mode discipline (lint); sample-and-validate uses it.
-  _validator/       private validator rule families and issue registry; the public names are
-                    re-exported through validator.py.
-
-  ── non-interactive standard library (deterministic) ─────────────────────────────────
-  primitives/       restricted SQL, compute expressions, URL-JSON reads, and vision field
-                    extraction.
-  traversal/        foreach row-collection traversal controller/runtime.
-
-  ── runtime ──────────────────────────────────────────────────────────────────────────
-  runner.py         the interpreter: control flow + scalar evaluation over StatementOutcome.
-                    Interactive statements yield to the agent loop; statements that do
-                    not need a StatementContract loop are drained by core/run/statements/dispatch.py.
-  core/run/interactive.py   the interactive statement executor adapter: Run → StatementContract loop,
-                    then terminal-observation return extraction.
-  contracts.py      executor-result validation only; no execution or recovery decisions.
-  recovery.py       cross-statement recovery taxonomy, budgets, kickback protocol, and Program
-                    repair helpers. StatementContract-local retries remain inside the StatementContract loop.
-  budget.py         turn-cost estimate.
-
-  Retired: the old engine/FFI facades. Statement dispatch now names the actual executor; there is
-  no separate invocation-frame architecture layer.
+The public surface intentionally mirrors the six-node IR.  Concrete UI and
+data operations live behind runtime executors rather than in this package API.
 """
 
-from .program import (
-    Call, Compute, Cond, CondCmp, Finish, ForEach, FunctionDef, If,
-    INTERACTIVE_KINDS, NON_INTERACTIVE_KINDS, Program, Query, Read, Run, RunLike,
-    Stmt, execution_mode_for_kind,
-)
 from gui_agent.core.schemas import StatementOutcome
-from .decomposer import OrchestratorCompileError, decompose, redecompose, to_program
-from .validator import IssueList, ValidationIssue, validate_program
-from .intent_contracts import IntentContractIssue, validate_intent_contracts
-from .preflight import (
-    OrchestrationPreflightIssue,
-    OrchestrationPreflightResult,
-    validate_orchestration_preflight,
+
+from .program import (
+    Command,
+    Condition,
+    Data,
+    Finish,
+    ForEach,
+    If,
+    Interact,
+    OutputSpec,
+    Program,
+    Stmt,
+    ValueRef,
 )
-from .primitives.structured_read import structured_read
-from .primitives.data_query import DataQueryError, execute_data_query
-from .budget import estimate_program_turns
 from .runner import (
     Interpreter,
-    StatementExecutor,
     OrchestratorResult,
     ProgramRunner,
     RunRecord,
-    drive,
+    StatementExecutor,
+    StatementInvocation,
     summarize_progress,
 )
-from .passes import (
-    chain_from_states,
-    collapse_foreach_enrichment_passes,
-    finalize_gates,
-    insert_loop_entry_arrivals,
-    normalize_confirm_read_gates,
-    normalize_precondition_gates,
-)
+from .decomposer import OrchestratorCompileError, decompose, redecompose, to_program
+from .budget import estimate_program_turns
+from .validator import IssueList, ValidationIssue, validate_program
 
 __all__ = [
-    "Call", "Compute", "Cond", "CondCmp", "Finish", "ForEach", "FunctionDef", "If",
-    "INTERACTIVE_KINDS", "NON_INTERACTIVE_KINDS", "Program", "Query", "Read", "Run",
-    "RunLike", "StatementOutcome", "Stmt", "execution_mode_for_kind",
-    "Interpreter", "StatementExecutor", "OrchestratorResult", "ProgramRunner",
-    "RunRecord", "drive", "summarize_progress", "structured_read", "DataQueryError", "execute_data_query",
-    "decompose", "redecompose", "to_program", "validate_program", "OrchestratorCompileError",
-    "ValidationIssue", "IssueList", "IntentContractIssue", "validate_intent_contracts",
-    "OrchestrationPreflightIssue", "OrchestrationPreflightResult", "validate_orchestration_preflight",
+    "Command",
+    "Condition",
+    "Data",
+    "Finish",
+    "ForEach",
+    "If",
+    "Interact",
+    "OutputSpec",
+    "Program",
+    "Stmt",
+    "ValueRef",
+    "StatementOutcome",
+    "Interpreter",
+    "StatementExecutor",
+    "StatementInvocation",
+    "OrchestratorResult",
+    "ProgramRunner",
+    "RunRecord",
+    "summarize_progress",
+    "OrchestratorCompileError",
+    "decompose",
+    "redecompose",
+    "to_program",
+    "IssueList",
+    "ValidationIssue",
+    "validate_program",
     "estimate_program_turns",
-    "normalize_confirm_read_gates", "normalize_precondition_gates", "chain_from_states",
-    "collapse_foreach_enrichment_passes", "insert_loop_entry_arrivals", "finalize_gates",
 ]

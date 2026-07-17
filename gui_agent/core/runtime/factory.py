@@ -75,9 +75,6 @@ class PlatformBundle:
     #            (post-snap coords + all-path coverage); see adapters/iphone/factory.
     #   android: None (TBD).
     make_action_visualizer: Callable[["PerceptionSession"], "Optional[ActionVisualizer]"]
-    # Read-only stitching used to aggregate frames after explicit scroll actions.
-    # It observes journalled actions; it never dispatches actions itself.
-    make_stitch_accumulator: Callable[..., object]
     # Platform-specific image normalization for shared vision-LLM prompts. iPhone
     # screenshots are Retina-sized and should be downsampled to logical pixels;
     # browser/android observations are already in their reasoning coordinate space.

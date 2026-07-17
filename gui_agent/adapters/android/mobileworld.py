@@ -31,10 +31,8 @@ Usage:
   uv run python -m gui_agent.adapters.android.mobileworld --list \
       --base-url http://192.168.31.57:6800
 
-KNOWN LIMIT: the android adapter does not implement scroll-collect yet, so a task whose
-statement plans completion_strategy='scroll_until_boundary' (e.g. "read every item on
-this page") raises mid-run (see adapters/android/factory.py). Direct-action and
-single-screen tasks work today.
+Each turn observes the current frame; ordinary semantic Interact scrolling remains
+available.
 """
 
 from __future__ import annotations
@@ -319,15 +317,7 @@ def main() -> int:
 
                     def _compile_program():
                         run_max_turns = args.max_turns
-                        initial_png = None
                         cur_site = knowledge.app_name if knowledge is not None else ""
-                        try:
-                            initial_obs = bundle.make_perception(
-                                platform, log_dir / "screenshot_initial.png"
-                            ).observe()
-                            initial_png = initial_obs.png_bytes
-                        except Exception as exc:  # noqa: BLE001
-                            print(f"[mobileworld] initial observe failed; decompose without screenshot ({exc})")
 
                         from gui_agent.core.orchestrator import (
                             decompose,
@@ -342,7 +332,6 @@ def main() -> int:
                         if resolution.entities:
                             print("[mobileworld] intent: " + "; ".join(
                                 f"{e.mention}→{e.type}/{e.match_mode}/key={e.search_key}" for e in resolution.entities))
-                        # decompose finalizes gates centrally (passes.finalize_gates); no caller wrap.
                         program = decompose(
                             intent,
                             knowledge=knowledge.decompose_context(intent) if knowledge else "",
@@ -350,9 +339,6 @@ def main() -> int:
                             current_url="",
                             current_title="",
                             current_site=cur_site,
-                            table_summaries=None,
-                            png_bytes=initial_png,
-                            prepare_vision_prompt_png=bundle.prepare_vision_prompt_png,
                             context_reports=orchestrator_context_reports,
                             resolution=resolution,
                         )
@@ -367,13 +353,11 @@ def main() -> int:
                         def _redecompose(directive: str, context_reports=None, *, observation=None,
                                          prior_experience="", remaining_plan="",
                                          _goal=intent, _know=knowledge, _file=file_section,
-                                         _site=cur_site, _png=initial_png, _res=resolution):
-                            _cur_png = getattr(observation, "png_bytes", None) or _png
+                                         _site=cur_site, _res=resolution):
+                            del observation
                             return redecompose(
                                 _goal, knowledge=_know.decompose_context(_goal) if _know else "", file_section=_file,
                                 current_url="", current_title="", current_site=_site,
-                                table_summaries=None, png_bytes=_cur_png,
-                                prepare_vision_prompt_png=bundle.prepare_vision_prompt_png,
                                 corrective_directive=directive, resolution=_res,
                                 prior_experience=prior_experience, remaining_plan=remaining_plan,
                                 context_reports=context_reports,

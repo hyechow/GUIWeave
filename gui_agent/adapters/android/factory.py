@@ -5,13 +5,10 @@ the android session (phone over adb), executor, perception, action policy and
 supervisor. Core orchestration receives the neutral bundle and never imports these
 classes directly. Mirrors ``adapters/browser/factory.py``.
 
-READ STITCHING NOT YET SUPPORTED
---------------------------------
-The Android adapter does not yet provide a stitch accumulator. That read path is
-reached when the statement supervisor plans
-completion_strategy='scroll_until_boundary' (e.g. "read all items on this page"),
-so such a goal raises mid-run. Until android collection is built, restrict the
-android platform to direct-action goals.
+OBSERVATION MODEL
+-----------------
+The current frame is the complete visual input. Semantic Interact execution still
+supports ordinary scrolling and per-frame reading.
 The status reporter (HUD) is None: android has no on-screen agent HUD yet.
 """
 
@@ -52,18 +49,6 @@ def _build_supervisor(name: str) -> "SupervisorPolicy":
     if name == StatementSupervisorPolicy.name:
         return StatementSupervisorPolicy(prompts=ANDROID_STATEMENT_PROMPTS)
     raise ValueError(f"未知监督者 {name!r}，可选：{StatementSupervisorPolicy.name}")
-
-
-_SCROLL_COLLECT_MSG = (
-    "android scroll-collect not yet supported (the statement supervisor planned "
-    "completion_strategy='scroll_until_boundary'). Use a direct-action goal. See the "
-    "SCROLL-COLLECT note in adapters/android/factory.py."
-)
-
-
-def _make_stitch_accumulator(*args: object, **kwargs: object) -> object:
-    """Raised if a scroll_until_boundary statement reaches the runner's collection branch (android collection not yet supported)."""
-    raise NotImplementedError(_SCROLL_COLLECT_MSG)
 
 
 def _prepare_vision_prompt_png(png_bytes: bytes) -> bytes:
@@ -227,7 +212,6 @@ def build_android_bundle(
         make_supervisor=_build_supervisor,
         make_status_reporter=lambda enabled: (_make_android_hud() if enabled else None),
         make_action_visualizer=_make_action_visualizer,
-        make_stitch_accumulator=_make_stitch_accumulator,
         prepare_vision_prompt_png=_prepare_vision_prompt_png,
         default_action_policy="android_vision",
         default_supervisor="statement",

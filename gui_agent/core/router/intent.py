@@ -1,33 +1,9 @@
-"""Intent Resolver: an upfront semantic pass that classifies the entities a goal must look up.
+"""Resolve entity values and lookup hints before semantic Program compilation.
 
-Search-term relaxation does NOT belong in the agent's execution loop (reactive 'search exact → 0 →
-relax' is uncertain and, as live run 20260622_124258 showed, often never even fires). Whether a
-reference is PRECISE or APPROXIMATE is a property of the user's INTENT — decide it ONCE, upfront, and
-let the orchestrator build a prioritized retrieval (exact first, fuzzy fallback) deterministically.
-
-For each entity the goal needs to find in the system, this returns:
-  - type:       what it is (product / customer / order / category / sku / review_text / generic) —
-                lets the decomposer pick the right filter COLUMN (e.g. a product → the Product column,
-                not the review-text column — the bug in 20260622_124258).
-  - match_mode: exact (an order/SKU/id/email/@file value the user clearly copied verbatim) vs
-                approximate (a product/person/title referred to in everyday words — these rarely
-                string-match the canonical stored name; default named entities to approximate).
-  - search_key: for approximate, the single most distinctive token likely to appear VERBATIM in the
-                stored name (drop modifiers: 'Aurora jacket' → 'Aurora', because a broad phrase may
-                not be a substring of the canonical stored name but the distinctive token can be).
-                For exact, the full value.
-
-The DECISION (this module): whether a reference is precise or approximate is intent — decided once,
-upfront. That decision (permissiveness + search key) is rendered as a standalone, facts-only context
-block via intent_block(), which decompose places right after the goal. The decomposer owns only the
-retrieval STRATEGY (how to execute an allowed-fuzzy lookup: the exact→0→key ladder) — NOT the
-whether-fuzzy decision. So intent and orchestration stay separate: the decision lives in this block,
-the strategy lives in decomposer.py (rule 4b).
-
-(A goal-text variant, annotate_goal(), was tried first and measured only ~1/3 decompose compliance —
-a clause buried in goal prose reads as descriptive context and is easy for a 12k-char system prompt
-to skip. intent_block(), as a separately-headed, priority-placed block, measured 100% over N=5. Kept
-the dedicated-block approach; annotate_goal was removed.)"""
+The resolver preserves user values, ranges and approximate-search hints. It does
+not prescribe fields, query ladders, branches or UI routes; runtime statements
+adapt those details against the real environment.
+"""
 
 from __future__ import annotations
 
@@ -37,7 +13,6 @@ from langchain_core.messages import HumanMessage, SystemMessage
 from langchain_openai import ChatOpenAI
 from pydantic import BaseModel, Field, model_validator
 
-from gui_agent.context import ContextBlock
 from gui_agent.core.config import resolve_llm_config
 from gui_agent.core.schemas import target_value_options
 from gui_agent.prompts import load_prompt_text
@@ -175,85 +150,3 @@ def resolve_intent(
             e.search_key = e.mention
         e.value_members = list(target_value_options(e.value_members))
     return resolution
-
-
-def intent_block(resolution: Optional[IntentResolution]) -> Optional[ContextBlock]:
-    """Render the resolution as a standalone context block — FACTS ONLY (type/match_mode/
-    search_key per entity), no strategy/orchestration prose. The decision (fuzzy allowed? which
-    key?) rides as router-authoritative content; decompose's rule 4b owns translating it into
-    ladder/column/success_condition steps. Placed right after task_goal_block (priority 21) so
-    it's the first thing decompose reads. None when there are no entities."""
-    if resolution is None or not resolution.entities:
-        return None
-
-    def _line(e: EntityRef) -> str:
-        # Values are used verbatim and never searched. Their role says whether the task introduces
-        # the value itself or merely selects it while mutating another object.
-        if e.role in {"target_value", "qualifier_value"}:
-            members = target_value_options(e.value_members)
-            usage = (
-                "｜目标要引入或设置该值"
-                if e.role == "target_value"
-                else "｜仅作为最终限定值，不得额外创建/改写其定义"
-            )
-            if len(members) > 1:
-                return (
-                    f"- 待填入同字段值集合「{e.mention}」｜类型={e.type}｜"
-                    f"原子值={list(members)}（同一选择组，不合并成字符串）{usage}"
-                )
-            return f"- 待填入值「{e.mention}」｜类型={e.type}｜原样填写（不检索、不改拼写）{usage}"
-        if e.role == "collection_scope":
-            selector = (e.selector or e.mention).strip()
-            return (
-                f"- 成员覆盖范围「{e.mention}」｜类型={e.type}｜筛选/范围={selector}"
-                "｜不是独立命名实体，禁止对该短语做 exact→fallback 检索；"
-                "最终 mutation 必须用 foreach 逐成员覆盖，或在应用知识证明"
-                "聚合 owner 一次覆盖时声明 covers_set"
-            )
-        match = ("允许模糊匹配，检索关键词：" + e.search_key) if e.match_mode == "approximate" else "精确匹配"
-        # cardinality=set is authoritative for the DECISION (the reference denotes a SET, not one
-        # entity) — but NOT for the strategy: HOW the set gets covered is decompose's call (foreach
-        # per member, or a single aggregate action declared with covers_set when app knowledge says
-        # one mechanism covers the whole group). Dictating "foreach" here overrode correct knowledge
-        # (a parent record whose one save covers all members) and produced per-member mutations.
-        if getattr(e, "cardinality", "single") == "set":
-            sel = (getattr(e, "selector", "") or "").strip()
-            card = (
-                "｜**多目标(一组)**：这是一个规格，匹配多个实体"
-                + (f"（筛选：{sel}）" if sel else "")
-                + "，不可只处理其中一个就完事；覆盖方式二选一（规则 4c）："
-                "foreach 逐成员处理，或当应用知识明确指出存在单一聚合对象/批量机制一次覆盖全组时，"
-                "单步聚合动作并在该步声明 covers_set"
-            )
-        else:
-            card = "｜单目标"
-        return f"- 实体「{e.mention}」｜类型={e.type}｜{match}{card}"
-
-    lines = [_line(e) for e in resolution.entities]
-    target_values = [
-        value
-        for entity in resolution.entities
-        if entity.role == "target_value"
-        for value in (target_value_options(entity.value_members) or (entity.mention,))
-    ]
-    qualifier_values = [
-        value
-        for entity in resolution.entities
-        if entity.role == "qualifier_value"
-        for value in (target_value_options(entity.value_members) or (entity.mention,))
-    ]
-    if target_values or qualifier_values:
-        lines.extend((
-            "## 值生命周期合同",
-            f"- 可作为任务写入目标、必要时建立定义前置：{target_values or ['（无）']}",
-            f"- 只允许在最终 mutation 中选择、禁止建立独立定义阶段：{qualifier_values or ['（无）']}",
-        ))
-    return ContextBlock(
-        id="runtime.intent_resolution",
-        budget="required",
-        source_type="runtime_state",
-        source="intent_resolver",
-        ttl="task",
-        priority=21,  # right after task_goal_block(20) — first thing decompose reads
-        content="## 实体检索语义（来源：意图解析）\n" + "\n".join(lines),
-    )

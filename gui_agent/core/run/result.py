@@ -64,7 +64,7 @@ class AgentResult(BaseModel):
     collection_context: str | None = None
     collection_scope: dict[str, Any] | None = None
     orchestrator: dict[str, Any] | None = None
-    failure_kind: Literal["compile", "preflight", "environment"] | None = None
+    failure_kind: Literal["compile", "environment"] | None = None
 
     @model_validator(mode="after")
     def _validate_terminal(self) -> "AgentResult":
@@ -90,7 +90,7 @@ def failed_result(
     summary: str,
     *,
     task_type: str | None = None,
-    failure_kind: Literal["compile", "preflight", "environment"] | None = None,
+    failure_kind: Literal["compile", "environment"] | None = None,
 ) -> AgentResult:
     """Build a typed pre-runtime failure whose diagnostic is also its only safe output."""
     return AgentResult(
@@ -197,11 +197,9 @@ def orchestration_result(
         "summary",
         "verification",
         "kickback",
-        "reads",
-        "rows",
+        "outputs",
         "evidence",
         "observation_url",
-        "executed_sql",
         "recovery_notices",
         "failure_evidence",
     }
@@ -221,16 +219,17 @@ def orchestration_result(
     digest = [
         {
             "name": r.name,
+            "executor": r.executor,
             "phase": r.result.phase,
             "verification": r.result.verification,
-            "reads": dict(r.result.reads),
+            "outputs": dict(r.result.outputs),
             "summary": r.result.summary,
         }
         for r in interp.run_log
     ]
     reply = compose_orchestration_reply(
         context.goal, digest,
-        current=(current.name if current is not None else ""),
+        current=(current.goal if current is not None else ""),
         terminal=terminal,
     )
     # A program that reached finish but answered on an entirely-empty read produced no real

@@ -15,6 +15,7 @@ ordinary page prose and old routine acts; durable facts listed below are never d
 from __future__ import annotations
 
 from dataclasses import dataclass, field
+import json
 from typing import Any
 
 from gui_agent.core.schemas import (
@@ -114,25 +115,23 @@ def _role(turn: PolicyTurn) -> str:
 
 def _contract_lines(contract: StatementContract) -> list[str]:
     lines = [
-        f"名称：{contract.name}",
-        f"描述：{contract.description}",
+        f"目标：{contract.goal}",
     ]
-    if contract.success_condition:
-        lines.append(f"验收条件：{contract.success_condition}")
-    if contract.kind:
-        lines.append(f"kind：{contract.kind}")
+    if contract.success:
+        lines.append(f"验收条件：{contract.success}")
+    if contract.inputs:
+        payload = json.dumps(contract.inputs, ensure_ascii=False, default=str)
+        lines.append(f"本次调用 inputs：{payload[:4000]}")
     if contract.persistence:
         lines.append(f"persistence：{contract.persistence}")
     if contract.returns:
         lines.append(f"returns：{', '.join(contract.returns)}")
-    if contract.target_controls:
-        lines.append(f"target_controls：{', '.join(contract.target_controls)}")
-    if contract.target_values:
+    if contract.required_values:
         rendered = ", ".join(
             f"{field}={','.join(target_value_options(value))}"
-            for field, value in contract.target_values.items()
+            for field, value in contract.required_values.items()
         )
-        lines.append(f"target_values：{rendered}")
+        lines.append(f"required_values：{rendered}")
     return lines
 
 
@@ -231,25 +230,6 @@ def _durable_from_turn(turn: PolicyTurn, statement_id: str) -> list[DurableFact]
                 event_ref=ref,
             ))
 
-    effect = turn.effect_signal
-    if (
-        effect is not None
-        and effect.statement_id in {"", statement_id}
-        and effect.authoritative
-        and effect.status != "unknown"
-    ):
-        evidence = "; ".join(effect.evidence) if effect.evidence else ""
-        facts.append(DurableFact(
-            kind=f"effect_{effect.status}",
-            text=(
-                f"权威业务效果 {effect.status}（source={effect.source_type}"
-                f"{', subject=' + effect.subject_ref if effect.subject_ref else ''}）"
-                + (f"：{evidence}" if evidence else "")
-            ),
-            event_ref=ref,
-            metadata={"source_type": effect.source_type, "subject_ref": effect.subject_ref},
-        ))
-
     return facts
 
 
@@ -273,8 +253,6 @@ def _step_summary(turn: PolicyTurn) -> str:
         parts.append(
             f"signal exec={signal.execution} target={signal.target} response={signal.response}"
         )
-    if turn.effect_signal is not None and turn.effect_signal.status == "satisfied":
-        parts.append("effect=satisfied")
     if turn.transition is not None:
         proposal = turn.transition.get("proposal") or {}
         assessment = proposal.get("assessment") or {}
@@ -337,18 +315,7 @@ def build_memory_view(
     seen_keys: dict[tuple[str, ...], int] = {}
     for turn in scoped:
         for fact in _durable_from_turn(turn, contract.id):
-            if fact.kind.startswith("effect_") or fact.kind == "runtime_constraint":
-                # Snapshots repeat the same live constraint/effect on later turns. Keep the
-                # latest journal reference without growing a second unbounded memory stream.
-                key = (
-                    fact.kind,
-                    fact.text,
-                    str(fact.metadata.get("scope") or ""),
-                    str(fact.metadata.get("source") or fact.metadata.get("source_type") or ""),
-                    str(fact.metadata.get("subject_ref") or ""),
-                )
-            else:
-                key = (fact.kind, fact.event_ref, fact.text)
+            key = (fact.kind, fact.event_ref, fact.text)
             previous = seen_keys.get(key)
             if previous is None:
                 seen_keys[key] = len(durable)

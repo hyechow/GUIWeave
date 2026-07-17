@@ -4,7 +4,7 @@ import re
 from datetime import datetime
 from typing import Annotated, Any, Literal, Optional, Union
 
-from pydantic import BaseModel, ConfigDict, Field, SerializeAsAny, model_validator
+from pydantic import BaseModel, ConfigDict, Field, JsonValue, SerializeAsAny, model_validator
 
 # The 6 shared actions every platform supports. Platform-specific actions (iphone
 # home/app_switch, browser navigate, android home/back/app_switch) live in each
@@ -43,15 +43,6 @@ def action_label(action_type: str) -> str:
     return _ACTION_TYPE_LABELS.get(action_type, action_type)
 TaskType = Literal["action", "analysis"]
 ProgramPhase = Literal["completed", "failed", "interrupted", "stopped"]
-StatementKind = Literal["navigation", "filter", "collection", "action", "verification"]
-CompletionStrategy = Literal[
-    "visible_once",
-    "read_once",
-    "scroll_until_boundary",
-    "react_until_collected",
-    "repeat_until_satisfied",
-    "human_escalation",
-]
 AtomicRole = Literal["prepare", "write", "commit", "iterate"]
 ActionFamily = Literal[
     "input", "select", "activate", "navigate", "iterate", "unknown"
@@ -60,13 +51,23 @@ ActionExecutionStatus = Literal["not_attempted", "dispatched", "dispatch_failed"
 ActionTargetStatus = Literal["on_target", "off_target", "unknown"]
 ActionResponseStatus = Literal["observed", "none_observed", "unobservable", "unknown"]
 PersistenceMode = Literal["immediate", "explicit_commit"]
-EffectStatus = Literal["satisfied", "unmet", "contradicted", "unknown"]
+OutputType = Literal["text", "number", "boolean", "url", "record", "list[record]", "json"]
 CompletionStatus = Literal["confirmed", "accepted_unverified", "failed", "in_progress"]
 StatementPhase = Literal["completed", "failed", "exhausted", "infeasible", "interrupted"]
 Verification = Literal["confirmed", "accepted_unverified"]
 BindingSource = Literal["visual", "structural"]
 BindingStatus = Literal["bound", "contradicted", "unresolved"]
 TargetValue = str | list[str]
+
+
+class OutputSpec(BaseModel):
+    """Shared typed output contract used by Program and executor runtime."""
+
+    model_config = ConfigDict(frozen=True, extra="forbid")
+
+    type: OutputType = "text"
+    required: bool = True
+    description: str = ""
 
 
 def target_value_options(value: TargetValue | object) -> tuple[str, ...]:
@@ -78,20 +79,6 @@ def target_value_options(value: TargetValue | object) -> tuple[str, ...]:
         if text and text not in result:
             result.append(text)
     return tuple(result)
-
-
-# 「连续操作」轴（与 kind 正交）：靠重复调整逼近目标的策略，区别于单步达成。
-#   - repeat_until_satisfied：收敛到目标值（picker 调日期/时间、步进器、滑块）
-#   - scroll_until_boundary：滚动采集直到边界（已有 loop 机制）
-#   - react_until_collected：逐行/逐页集合遍历；系统维护 pending/current/completed rows，
-#     planner 只执行下一步意图（打开行、返回列表、翻页/滚动）。
-# 连续操作的「进展/卡住」判据与单步不同：进展=被监控值朝目标逼近/集合状态推进，重复同一操作属正常，
-# 故 checker(进展传感器)/planner(收敛分流)/stuck(值停滞判据) 都按此轴分流。
-ITERATIVE_STRATEGIES: tuple[str, ...] = (
-    "repeat_until_satisfied",
-    "scroll_until_boundary",
-    "react_until_collected",
-)
 
 
 class TargetBinding(BaseModel):
@@ -178,21 +165,6 @@ class ActionIntent(BaseModel):
     drag_steps: Optional[int] = None
 
 
-class EffectSignal(BaseModel):
-    """Persisted statement-level business-effect evidence.
-
-    It is deliberately separate from ``ActionSignal``: a correctly dispatched action may still
-    have an unknown or contradicted business result.
-    """
-
-    statement_id: str = ""
-    status: EffectStatus = "unknown"
-    subject_ref: str = ""
-    source_type: str = ""
-    authoritative: bool = False
-    evidence: list[str] = Field(default_factory=list)
-
-
 class CollectionScope(BaseModel):
     """Structured scope for collected content."""
 
@@ -220,13 +192,13 @@ class ProgramOutcome(BaseModel):
             raise ValueError(f"{self.phase} ProgramOutcome cannot carry verification")
         return self
 
-def split_acceptance_items(success_condition: str, fallback: str = "") -> list[str]:
-    """Split a statement success_condition into individual acceptance items.
+def split_acceptance_items(success: str, fallback: str = "") -> list[str]:
+    """Split a statement success contract into individual acceptance items.
 
     Shared by the checker (to enumerate items for per-item judgement) and the state derivation
     (to map per-item verdicts back) so the two agree on item identity and ordering. Splits on
     newlines and ; / ；, trims bullet markers, caps at 8 items, never returns empty."""
-    source = (success_condition or fallback or "完成当前子目标").strip()
+    source = (success or fallback or "完成当前子目标").strip()
     parts = [p.strip(" \t\r\n-•*") for p in re.split(r"[\n;；]+", source)]
     parts = [p for p in parts if p]
     return parts[:8] or [source]
@@ -470,12 +442,10 @@ class StatementOutcome(BaseModel):
     summary: str
     verification: Optional[Verification] = None
     kickback: Optional[str] = None
-    reads: dict[str, str] = Field(default_factory=dict)
-    rows: list[dict[str, str]] = Field(default_factory=list)
+    outputs: dict[str, JsonValue] = Field(default_factory=dict)
     evidence: list[str] = Field(default_factory=list)
     observation: Observation | None = None
     observation_url: str | None = None
-    executed_sql: str = ""
     context_reports: list[dict] = Field(default_factory=list)
     recovery_notices: list[RecoveryNotice] = Field(default_factory=list)
     failure_evidence: str | None = None
@@ -605,10 +575,6 @@ class SupervisorStep(BaseModel):
         default=None,
         description="当前 statement 的权威终态；None 表示仍在执行。",
     )
-    effect_signal: Optional[EffectSignal] = Field(
-        default=None,
-        description="当前观察产生的正向业务状态事实；记录 turn 时移入 EventJournal。",
-    )
     app_name: Optional[str] = Field(default=None, description="当前前台应用名称")
     summary: str = Field(description="对当前屏幕状态和任务进展的简要描述")
     preformed_action: Optional[BaseActionDecision] = Field(
@@ -624,13 +590,10 @@ class SupervisorStep(BaseModel):
     execution_scope: str = Field(
         default="",
         description=(
-            "当前执行上下文分桶 key；stuck/no-effect/history 等运行时记忆按此隔离。"
-            "新运行使用 <statement_instance_id>/statement，逐行/逐实体时使用 "
-            "<statement_instance_id>/row:<identity>。"
+            "当前 statement invocation 的唯一记忆 scope："
+            "<statement_instance_id>/statement。"
         ),
     )
-    statement_kind: Optional[StatementKind] = Field(default=None, description="当前子目标类型")
-    completion_strategy: Optional[CompletionStrategy] = Field(default=None, description="当前子目标完成策略")
     collection_scope: Optional[CollectionScope] = Field(default=None, description="当前内容采集范围")
     pre_existing: bool = Field(
         default=False,
@@ -680,136 +643,14 @@ class StatementContract(BaseModel):
 
     model_config = ConfigDict(frozen=True, extra="forbid")
 
-    @model_validator(mode="before")
-    @classmethod
-    def _normalize_kind_and_strategy(cls, data: object) -> object:
-        """Normalize common LLM aliases for statement intent fields."""
-        if isinstance(data, dict):
-            if "effect_mode" in data:
-                raise ValueError(
-                    "effect_mode is retired; declare target_values for state contracts"
-                )
-            kind_aliases = {
-                "analysis": "verification",
-                "analyze": "verification",
-                "summary": "verification",
-                "summarize": "verification",
-                "report": "verification",
-                "read": "collection",
-                "reading": "collection",
-                "collect": "collection",
-                "data_collection": "collection",
-                "browse": "collection",
-                "navigation": "navigation",
-                "navigate": "navigation",
-                "filtering": "filter",
-                "search": "filter",
-            }
-            strategy_aliases = {
-                "scroll": "scroll_until_boundary",
-                "scroll_until_end": "scroll_until_boundary",
-                "scroll_to_bottom": "scroll_until_boundary",
-                "read": "read_once",
-                "read_visible": "read_once",
-                "once": "visible_once",
-                "visible": "visible_once",
-                "manual": "human_escalation",
-            }
-            kind = data.get("kind")
-            strategy = data.get("completion_strategy")
-            normalized = dict(data)
-            if isinstance(kind, str):
-                normalized["kind"] = kind_aliases.get(kind.strip().lower(), kind)
-            if isinstance(strategy, str):
-                normalized["completion_strategy"] = strategy_aliases.get(
-                    strategy.strip().lower(), strategy
-                )
-            # Keep only declared contract fields.
-            allowed = {
-                "id", "name", "description", "success_condition", "kind",
-                "completion_strategy", "precondition", "persistence",
-                "target_controls", "target_values", "returns", "read_spec",
-                "scroll_stop_condition", "observable_boundary", "scroll_budget",
-                "failure_hints",
-            }
-            return {k: v for k, v in normalized.items() if k in allowed}
-        return data
-
     id: str
-    name: str
-    description: str
-    success_condition: str
-    kind: StatementKind = Field(
-        default="action",
-        description="navigation | filter | collection | action | verification",
-    )
-    completion_strategy: CompletionStrategy = Field(
-        default="visible_once",
-        description=(
-            "visible_once | read_once | scroll_until_boundary | "
-            "react_until_collected | repeat_until_satisfied | human_escalation"
-        ),
-    )
-    precondition: bool = Field(
-        default=False,
-        description="True when this statement ensures an entry state and may already be satisfied on the first frame.",
-    )
-    persistence: PersistenceMode = Field(
-        default="immediate",
-        description="业务效果是立即生效，还是需要独立持久化提交边界。",
-    )
-    target_controls: list[str] = Field(
-        default_factory=list,
-        description="该执行单元必须命中的字段、控件或集合能力名称。",
-    )
-    target_values: dict[str, TargetValue] = Field(
-        default_factory=dict,
-        description=(
-            "该执行单元要求实现的结构化业务终态；action 可用数组表示同一选择组必须同时"
-            "满足的精确值集合；对于重复的非选择控件组，多个字段的等长数组按下标组成目标行。"
-            "它不提供目标身份或写入授权。"
-        ),
-    )
-    returns: list[str] = Field(
-        default_factory=list,
-        description="声明的结构化返回字段；由编排器 Run.returns 填充，空 = 本 statement 无出参。"
-                    "StatementContract 返回后由 statement result contract 校验。",
-    )
-    read_spec: str = Field(
-        default="",
-        description="返回字段的判读说明（对应 Run.read_spec）；与 returns 一起构成出参合同的结构化通道。",
-    )
-    scroll_stop_condition: str = Field(
-        default="",
-        description=(
-            "仅 completion_strategy=scroll_until_boundary 时填写。"
-            "一句话描述何时应停止滚动，例如："
-            "「当可见记录日期早于2026-05-03时停止」"
-            "「当可见内容不再包含1星评价时停止」"
-            "「滚动至列表物理底部时停止」"
-        ),
-    )
-    observable_boundary: bool = Field(
-        default=True,
-        description="停止条件是否在屏幕上可直接观察。日期标记、列表结束标识为 true；关键词相关性为 false",
-    )
-    scroll_budget: int = Field(
-        default=0,
-        description="滚动预算上限（0=使用系统默认）。筛选降级为全量采集时由系统自动放大。",
-    )
-    failure_hints: list[str] = Field(default_factory=list)
-
-    @property
-    def is_iterative(self) -> bool:
-        """连续操作：靠重复调整逼近目标（picker 调值 / 滚动采集），区别于单步达成。
-        驱动 checker/planner/stuck 按「单步 vs 连续」分流。见 ITERATIVE_STRATEGIES。"""
-        return self.completion_strategy in ITERATIVE_STRATEGIES
-
-    @property
-    def is_converge(self) -> bool:
-        """连续操作中的「收敛到目标值」一味（picker/步进器/滑块）：重复同一操作逐步逼近
-        success_condition 指定的目标值。区别于 scroll_until_boundary（滚动采集）。"""
-        return self.completion_strategy == "repeat_until_satisfied"
+    goal: str
+    success: str
+    on: Literal["main"] = "main"
+    inputs: dict[str, JsonValue] = Field(default_factory=dict)
+    required_values: dict[str, JsonValue] = Field(default_factory=dict)
+    returns: dict[str, OutputSpec] = Field(default_factory=dict)
+    persistence: PersistenceMode = "immediate"
 
 
 class StatementInfo(BaseModel):
@@ -818,19 +659,14 @@ class StatementInfo(BaseModel):
     model_config = ConfigDict(frozen=True, extra="forbid")
 
     id: str = ""
-    name: str = ""
-    description: str = ""
-    kind: str = ""
-    success_condition: str = ""
-    completion_strategy: str = ""
-    precondition: bool = False
+    executor: Literal["interact", "data", "command"] = "interact"
+    goal: str = ""
+    success: str = ""
+    on: Literal["main"] = "main"
+    inputs: dict[str, JsonValue] = Field(default_factory=dict)
+    required_values: dict[str, JsonValue] = Field(default_factory=dict)
     persistence: PersistenceMode = "immediate"
-    target_controls: list[str] = Field(default_factory=list)
-    target_values: dict[str, TargetValue] = Field(default_factory=dict)
-    returns: list[str] = Field(default_factory=list)
-    read_spec: str = ""
-    sql: str = ""
-    data_scope: str = ""
+    returns: dict[str, OutputSpec] = Field(default_factory=dict)
 
 
 class StatementRuntimeSnapshot(BaseModel):
@@ -866,8 +702,7 @@ class PolicyTurn(BaseModel):
     operation_mode: Literal["interactive", "observation", "non_interactive"] = Field(
         default="interactive",
         description=(
-            "本轮是 UI 交互执行、无动作观察仲裁，还是非 UI primitive"
-            "（如 structured read / data_query）"
+            "本轮是 UI 交互执行、无动作观察仲裁，还是 Data/Command 非交互执行"
         ),
     )
     observation_source: str
@@ -899,11 +734,7 @@ class PolicyTurn(BaseModel):
     executed: bool = False
     action_signal: Optional[ActionSignal] = Field(
         default=None,
-        description="动作派发、目标命中与页面响应的结构化信号；旧日志可为空。",
-    )
-    effect_signal: Optional[EffectSignal] = Field(
-        default=None,
-        description="statement 级业务效果证据；与原子动作信号分离。",
+        description="动作派发、目标命中与页面响应的结构化信号。",
     )
     llm_calls: int = 0
     input_tokens: int = Field(default=0, description="本轮 LLM 调用累计输入 tokens（与 llm_calls 同口径），用于成本核算")
@@ -961,11 +792,9 @@ class StatementOutcomeEvent(BaseModel):
     statement: Optional[StatementInfo] = None
     statement_instance_id: str
     statement_id: str
-    statement_kind: Optional[StatementKind] = None
     execution_scope: str = ""
     outcome: StatementOutcome
     transition: Optional[dict[str, Any]] = None
-    effect_signal: Optional[EffectSignal] = None
     pre_existing: bool = False
     collection_summary: Optional[str] = None
     llm_calls: int = 0
@@ -1157,11 +986,11 @@ class PolicyContext(BaseModel):
     action_policy_name: str
     platform: Optional[str] = Field(
         default=None,
-        description="运行平台 iphone/browser/android(AGENT_PLATFORM);旧 log 无此字段则为 None",
+        description="运行平台 iphone/browser/android（AGENT_PLATFORM）。",
     )
     raw_input: Optional[str] = Field(
         default=None,
-        description="用户/CLI 原始输入(temporal 解析、router 改写之前);旧 log 无此字段则为 None",
+        description="用户/CLI 原始输入（temporal 解析、router 改写之前）。",
     )
     router: Optional[dict] = Field(
         default=None,
@@ -1181,11 +1010,11 @@ class PolicyContext(BaseModel):
     )
     wall_clock_s: Optional[float] = Field(
         default=None,
-        description="本次 run_agent_loop 端到端真实墙钟耗时(秒)；含 LLM、settle、感知/执行/调度等全部。旧 log 无此字段则为 None",
+        description="本次 run_agent_loop 端到端真实墙钟耗时（秒）；含 LLM、settle、感知/执行/调度等全部。",
     )
     orchestrator: Optional[dict] = Field(
         default=None,
-        description="DSL Program 运行信息：{program: {goal, statements:[run/if/finish]}}。"
+        description="语义 Program 运行信息：{program, run_log, context_reports, token_usage}。"
                     "decompose 是独立阶段，报告据此渲染单独的「分解」行。",
     )
 

@@ -27,10 +27,6 @@ Usage:
   --storage-state is optional (omit for tasks that need no auth, or when the
   CDP Chrome profile is already logged in).
 
-KNOWN LIMIT: the browser adapter does not implement scroll-collect yet, so an
-information-gathering task whose statement plans completion_strategy=
-'scroll_until_boundary' will raise mid-run (see adapters/browser/factory.py). Direct
--action and single-screen retrieve tasks work today.
 """
 
 from __future__ import annotations
@@ -250,8 +246,8 @@ def _guess_webarena_task_type(intent: str) -> str:
     return "RETRIEVE"
 
 
-def _preflight_failure_response(intent: str, result: AgentResult) -> WAResponse:
-    details = result.output or result.summary or "orchestration preflight failed"
+def _compile_failure_response(intent: str, result: AgentResult) -> WAResponse:
+    details = result.output or result.summary or "orchestrator compile failed"
     return WAResponse(
         task_type=_guess_webarena_task_type(intent),
         status="DATA_VALIDATION_ERROR",
@@ -260,7 +256,7 @@ def _preflight_failure_response(intent: str, result: AgentResult) -> WAResponse:
     )
 
 
-def _write_orchestration_preflight_context(
+def _write_compile_failure_context(
     context_path: Path,
     *,
     intent: str,
@@ -271,7 +267,7 @@ def _write_orchestration_preflight_context(
     max_turns: int,
     orchestrator_context_reports: list[dict],
     orchestrator_metrics: dict,
-    preflight_result: object,
+    compile_issues: object,
     result: AgentResult,
 ) -> None:
     from gui_agent.core.schemas import PolicyContext
@@ -292,10 +288,10 @@ def _write_orchestration_preflight_context(
         "timings": dict(orchestrator_metrics.get("timings") or {}),
         "token_usage": dict(orchestrator_metrics.get("token_usage") or {}),
         "llm_calls": int(orchestrator_metrics.get("llm_calls") or 0),
-        "preflight": (
-            preflight_result.model_dump(mode="json")
-            if hasattr(preflight_result, "model_dump")
-            else preflight_result
+        "compile_issues": (
+            compile_issues.model_dump(mode="json")
+            if hasattr(compile_issues, "model_dump")
+            else compile_issues
         ),
     }
     context_path.write_text(context.model_dump_json(indent=2), encoding="utf-8")
@@ -618,12 +614,11 @@ def _run_evidence_text(context_path: Path | None) -> str:
         supervisor = turn.get("supervisor") or {}
         transition = turn.get("transition") or {}
         proposal = transition.get("proposal") or {}
+        info = turn.get("statement") or {}
         parts = [
             f"turn={turn.get('index')}",
-            "statement="
-            f"{supervisor.get('statement_id') or '?'}:"
-            f"{supervisor.get('statement_kind') or '?'}"
-            f"/{supervisor.get('completion_strategy') or '?'}",
+            f"statement={supervisor.get('statement_id') or '?'}"
+            + (f":{info.get('executor')}" if info.get("executor") else ""),
         ]
         if supervisor.get("summary"):
             parts.append(f"supervisor_summary={supervisor.get('summary')}")
@@ -804,98 +799,38 @@ def _print_webarena_outputs(
         print(json.dumps(summary, indent=2, ensure_ascii=False))
 
 
-_DIRECT_NAV_TEMPLATE_RE = re.compile(
-    r"https?://|\{[^{}]*(?:url|href|链接)[^{}]*\}",
-    re.IGNORECASE,
-)
-_DIRECT_BACK_RE = re.compile(r"返回|上一页|后退|\bback\b", re.IGNORECASE)
-
-
-def _program_step_tag(s) -> str:
-    """Human-facing execution category for the printed DSL program.
-
-    This is intentionally a little finer than the runtime ABI's ``interactive`` /
-    ``non_interactive`` split: direct browser navigation is state-changing but
-    bypasses the planner UI loop.
-    """
-    kind = str(getattr(s, "kind", "") or "")
-    name = str(getattr(s, "name", "") or "")
-    nm = type(s).__name__
-    if nm == "Run" and kind == "navigation" and _DIRECT_BACK_RE.search(name):
-        return "browser:navigation_back"
-    if nm == "Run" and kind == "navigation" and _DIRECT_NAV_TEMPLATE_RE.search(name):
-        return "browser:navigation_url"
-    if kind in {"read", "data_query"}:
-        return f"non-interactive:{kind}"
-    if nm == "Compute":
-        return "non-interactive:compute"
-    if kind in {"navigation", "filter", "action"}:
-        return f"interactive:{kind}"
-    return nm.lower()
-
-
 def _print_program(program) -> None:
-    """Pretty-print the decomposed DSL program (functions + statements) to the terminal so the plan
-    is visible before/while it runs. Robust to type via class name (no import coupling)."""
+    """Print the six-node semantic Program before execution."""
     def emit(s, indent: str = "  ") -> None:
         nm = type(s).__name__
-        if nm == "Run":
-            line = f"{indent}[{_program_step_tag(s)}] {s.name}"
-            if getattr(s, "var", ""):
-                line += f"  → {s.var}"          # the bind var — what a later if/finish references
-            if getattr(s, "returns", None):
-                line += f"  returns={s.returns}"
+        if nm in {"Interact", "Data"}:
+            line = f"{indent}[{s.op}] {s.goal}"
+            if s.bind:
+                line += f"  → {s.bind}"
+            if s.returns:
+                line += f"  returns={list(s.returns)}"
             print(line)
-            if s.success_condition:
-                print(f"{indent}    ✓ {s.success_condition}")
-        elif nm in {"Read", "Query"}:
-            line = f"{indent}[{_program_step_tag(s)}] {s.name}"
-            if getattr(s, "var", ""):
-                line += f"  → {s.var}"
-            if getattr(s, "returns", None):
-                line += f"  returns={s.returns}"
-            print(line)
-            if getattr(s, "read_spec", ""):
-                print(f"{indent}    spec: {s.read_spec}")
-            if nm == "Query" and getattr(s, "sql", ""):
-                print(f"{indent}    SQL: {s.sql}")
-        elif nm == "Compute":
-            print(f"{indent}[{_program_step_tag(s)}] {s.var} = {s.expr}")
-        elif nm == "Call":
-            print(f"{indent}[control:call] {s.func}({s.args}) -> {s.var}")
+            if nm == "Interact":
+                print(f"{indent}    ✓ {s.success}")
+        elif nm == "Command":
+            print(f"{indent}[command] {s.capability} args={s.args}")
         elif nm == "If":
             c = s.cond
-            print(f"{indent}[control:if] {c.var}[{c.field}] {c.cmp} {c.value!r}{(' ' + str(c.values)) if c.values else ''}")
+            print(f"{indent}[if] {c.ref.var}{c.ref.path} {c.cmp} {c.value!r}")
             for b in s.then:
-                emit(b, indent + "    then ")
+                emit(b, indent + "  then ")
             for b in s.otherwise:
-                emit(b, indent + "    else ")
+                emit(b, indent + "  else ")
         elif nm == "ForEach":
-            parts = []
-            if getattr(s, "row_fields", None):
-                parts.append(f"row_fields={s.row_fields}")
-            if getattr(s, "output_fields", None):
-                parts.append(f"output_fields={s.output_fields}")
-            if getattr(s, "member_desc", ""):
-                parts.append(f"member_desc={s.member_desc!r}")
-            if getattr(s, "returns", None):
-                parts.append(f"returns={s.returns}")
-            suffix = (" " + " ".join(parts)) if parts else ""
-            print(f"{indent}[control:foreach] {s.var} -> {s.into or s.var + 's'}{suffix}")
-            if getattr(s, "body_goal", ""):
-                print(f"{indent}    body_goal: {s.body_goal}")
+            print(f"{indent}[foreach] {s.item} in {s.items.var}{s.items.path}")
             for b in s.body:
-                emit(b, indent + "    ")
+                emit(b, indent + "  ")
         elif nm == "Finish":
-            print(f"{indent}[control:finish] {s.message}")
+            print(f"{indent}[finish] {s.message}")
         else:
             print(f"{indent}{nm}: {s}")
 
     print("[webarena] ── orchestrator program ─────────────────────────")
-    for fn in getattr(program, "functions", []) or []:
-        print(f"  def {fn.name}({', '.join(fn.params)}) -> {fn.returns}")
-        for b in fn.body:
-            emit(b, "      ")
     for s in program.statements:
         emit(s)
     print("[webarena] ─────────────────────────────────────────────────")
@@ -964,12 +899,6 @@ def main() -> int:
         help="persistent Chromium profile for --headless (default: output/.headless_profiles/<site_run>)",
     )
     parser.add_argument("--max-turns", type=int, default=25)
-    parser.add_argument(
-        "--no-preflight",
-        dest="skip_preflight",
-        action="store_true",
-        help="do not stop after deterministic Program preflight failures",
-    )
     dynamic_turns = parser.add_mutually_exclusive_group()
     dynamic_turns.add_argument(
         "--dynamic-max-turns",
@@ -1173,17 +1102,14 @@ def main() -> int:
                     def _compile_program():
                         orchestrator_metrics: dict = {}
                         run_max_turns = args.max_turns
-                        preflight_blocked = False
+                        compile_blocked = False
                         compile_result = None
                         _redecompose = None
-                        _subdecompose = None
                         initial_observed_url = ""
                         initial_observed_title = ""
                         cur_url = ""
                         cur_title = ""
                         cur_site = knowledge.app_name if knowledge is not None else ""
-                        initial_png = None
-                        initial_tables = None
                         try:
                             initial_obs = bundle.make_perception(
                                 platform, log_dir / "screenshot_initial.png"
@@ -1192,8 +1118,6 @@ def main() -> int:
                             cur_title = initial_obs.title or ""
                             initial_observed_url = cur_url
                             initial_observed_title = cur_title
-                            initial_png = initial_obs.png_bytes
-                            initial_tables = getattr(initial_obs, "tables", None)
                             if not cur_site and cur_url:
                                 from gui_agent.core.self_learning.app_summary import match_app_by_url
                                 cur_site = match_app_by_url(cur_url, "browser") or ""
@@ -1208,20 +1132,13 @@ def main() -> int:
                             decompose,
                             estimate_program_turns,
                             redecompose,
-                            validate_orchestration_preflight,
                         )
                         from gui_agent.core.supervisor.statement.model_io import resolve_file_refs
                         from gui_agent.core.router import resolve_intent
 
                         file_section = resolve_file_refs(intent)
-                        # Intent Resolver: classify lookup entities (precise vs fuzzy + search key)
-                        # BEFORE decompose. Text-only judgment on the goal — no app knowledge: that
-                        # knowledge is HOW-layer (navigation/UI) content decompose already gets
-                        # independently via its own `knowledge` param; it doesn't carry the kind of
-                        # fact this judgment needs. The DECISION (fuzzy allowed? which key?) is
-                        # intent — decompose renders it as a facts-only context block (intent_block,
-                        # via the `resolution=` param) right after the goal; decompose then owns
-                        # only the retrieval STRATEGY (the exact→0→key ladder), not the decision.
+                        # Resolve values/ranges/search hints before semantic compilation.
+                        # The resolver does not prescribe UI routes or query branches.
                         resolution = resolve_intent(intent)
                         if resolution.entities:
                             print(f"[webarena] intent: " + "; ".join(
@@ -1229,7 +1146,6 @@ def main() -> int:
                         orch_started = time.perf_counter()
                         orch_calls_before = get_llm_call_count()
                         orch_tokens_before = get_llm_token_usage()
-                        # decompose finalizes gates centrally (passes.finalize_gates); no caller wrap.
                         compile_error: OrchestratorCompileError | None = None
                         try:
                             program = decompose(
@@ -1239,9 +1155,6 @@ def main() -> int:
                                 current_url=cur_url,
                                 current_title=cur_title,
                                 current_site=cur_site,
-                                table_summaries=initial_tables,
-                                png_bytes=initial_png,
-                                prepare_vision_prompt_png=bundle.prepare_vision_prompt_png,
                                 context_reports=orchestrator_context_reports,
                                 resolution=resolution,
                             )
@@ -1274,14 +1187,14 @@ def main() -> int:
                                     for issue in compile_error.issues
                                 ],
                             })
-                            preflight_blocked = True
+                            compile_blocked = True
                             compile_result = failed_result(
                                 intent,
                                 f"orchestrator compile failed: {summary}",
                                 task_type=_guess_webarena_task_type(intent),
                                 failure_kind="compile",
                             )
-                            _write_orchestration_preflight_context(
+                            _write_compile_failure_context(
                                 log_dir / "context.json",
                                 intent=intent,
                                 action_policy=action_policy,
@@ -1294,7 +1207,7 @@ def main() -> int:
                                     **orchestrator_metrics,
                                 }],
                                 orchestrator_metrics=orchestrator_metrics,
-                                preflight_result={
+                                compile_issues={
                                     "ok": False,
                                     "issues": [
                                         {
@@ -1315,48 +1228,8 @@ def main() -> int:
                                     file_section if len(file_section) <= cap
                                     else file_section[:cap] + "\n…（配置过长已截断，其余以分解结果为准）"
                                 )
-                            print(f"[webarena] orchestrator: {len(program.statements)} statements"
-                                  f"{(', ' + str(len(program.functions)) + ' functions') if program.functions else ''}")
+                            print(f"[webarena] orchestrator: {len(program.statements)} statements")
                             _print_program(program)
-
-                            preflight = validate_orchestration_preflight(intent, program)
-                            orchestrator_context_reports.append({
-                                "kind": "orchestrator_preflight",
-                                **preflight.model_dump(mode="json"),
-                            })
-                            if preflight.ok:
-                                print("[webarena] orchestrator preflight: ok")
-                            else:
-                                for issue in preflight.blocking_issues:
-                                    evidence = f" ({'; '.join(issue.evidence)})" if issue.evidence else ""
-                                    print(f"[webarena] orchestrator preflight: {issue.code}: {issue.message}{evidence}")
-                                if not args.skip_preflight:
-                                    preflight_blocked = True
-                                    summary = "; ".join(
-                                        f"{issue.code}: {issue.message}" for issue in preflight.blocking_issues[:3]
-                                    )
-                                    compile_result = failed_result(
-                                        intent,
-                                        f"orchestrator preflight failed: {summary}",
-                                        task_type=_guess_webarena_task_type(intent),
-                                        failure_kind="preflight",
-                                    )
-                                    _write_orchestration_preflight_context(
-                                        log_dir / "context.json",
-                                        intent=intent,
-                                        action_policy=action_policy,
-                                        supervisor=supervisor,
-                                        knowledge_summary=knowledge_summary,
-                                        program=program,
-                                        max_turns=run_max_turns,
-                                        orchestrator_context_reports=[*orchestrator_context_reports, {
-                                            "kind": "orchestrator_metrics",
-                                            **orchestrator_metrics,
-                                        }],
-                                        orchestrator_metrics=orchestrator_metrics,
-                                        preflight_result=preflight,
-                                        result=compile_result,
-                                    )
 
                             # Feasibility Guard kick-back: re-decompose ONLY the remaining plan via the
                             # dedicated redecompose() (NOT a fresh full-goal decompose). The page context
@@ -1368,35 +1241,18 @@ def main() -> int:
                                              prior_experience="", remaining_plan="",
                                              _goal=intent, _know=knowledge, _file=file_section,
                                              _url=cur_url, _title=cur_title, _site=cur_site,
-                                             _tables=initial_tables, _png=initial_png, _res=resolution):
-                                _cur_png = getattr(observation, "png_bytes", None) or _png
+                                             _res=resolution):
                                 _cur_url2 = (getattr(observation, "url", None) or _url) if observation else _url
                                 _cur_title2 = (getattr(observation, "title", None) or _title) if observation else _title
-                                _cur_tables = getattr(observation, "tables", None) if observation else None
-                                if _cur_tables is None:
-                                    _cur_tables = _tables
                                 return redecompose(
                                     _goal, knowledge=_know.decompose_context(_goal) if _know else "", file_section=_file,
                                     current_url=_cur_url2, current_title=_cur_title2, current_site=_site,
-                                    table_summaries=_cur_tables, png_bytes=_cur_png,
-                                    prepare_vision_prompt_png=bundle.prepare_vision_prompt_png,
                                     corrective_directive=directive, resolution=_res,
                                     prior_experience=prior_experience, remaining_plan=remaining_plan,
                                     context_reports=context_reports,
                                 )
 
-                            # Per-row agentic sub-goal (ForEach.body_goal): decompose a row-templated
-                            # sub-goal fresh at runtime (same knowledge/site as the main decompose;
-                            # depth guard in the interpreter enforces one-level-only). cli.py has wired
-                            # this since body_goal shipped; webarena.py hadn't — every body_goal foreach
-                            # silently no-opped (778 live 114429: rows=[], "body_goal 无法分解", then
-                            # flowed to finish and synthesized SUCCESS with zero saves).
-                            def _subdecompose(sub_goal: str, _know=knowledge, _site=cur_site):
-                                return decompose(sub_goal, knowledge=_know.decompose_context(sub_goal) if _know else "",
-                                                 current_site=_site,
-                                                 prepare_vision_prompt_png=bundle.prepare_vision_prompt_png)
-
-                            if not preflight_blocked and args.dynamic_max_turns:
+                            if not compile_blocked and args.dynamic_max_turns:
                                 run_max_turns = estimate_program_turns(program, floor=args.max_turns)
                                 if run_max_turns != args.max_turns:
                                     print(f"[webarena] orchestrator: max_turns {args.max_turns} -> {run_max_turns}")
@@ -1404,9 +1260,8 @@ def main() -> int:
                             program,
                             orchestrator_metrics,
                             run_max_turns,
-                            preflight_blocked,
+                            compile_blocked,
                             _redecompose,
-                            _subdecompose,
                             initial_observed_url,
                             initial_observed_title,
                             compile_result,
@@ -1416,16 +1271,15 @@ def main() -> int:
                         program,
                         orchestrator_metrics,
                         run_max_turns,
-                        preflight_blocked,
+                        compile_blocked,
                         _redecompose,
-                        _subdecompose,
                         initial_observed_url,
                         initial_observed_title,
                         compile_result,
                     ) = _compile_program()
                     if compile_result is not None:
                         result = compile_result
-                    if not preflight_blocked:
+                    if not compile_blocked:
                         if not _confirm_to_run(args.confirm):
                             return 1
                         _warn_if_pre_loop_page_changed(
@@ -1453,7 +1307,6 @@ def main() -> int:
                                 knowledge=knowledge_summary,
                                 program=program,
                                 redecompose=_redecompose,
-                                subdecompose=_subdecompose,
                                 orchestrator_context_reports=[*orchestrator_context_reports, {
                                     "kind": "orchestrator_metrics",
                                     **orchestrator_metrics,
@@ -1481,8 +1334,8 @@ def main() -> int:
                 print(f"[webarena] OK har 0 entries (recorder unavailable) -> {har_path}")
 
             try:
-                if result.failure_kind in {"compile", "preflight"}:
-                    resp = _preflight_failure_response(intent, result)
+                if result.failure_kind == "compile":
+                    resp = _compile_failure_response(intent, result)
                 else:
                     resp = _synthesize_response(intent, result, log_dir / "context.json")
                 response_payload = _finalize_response(

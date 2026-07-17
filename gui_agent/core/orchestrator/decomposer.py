@@ -1,13 +1,4 @@
-"""Program Decomposer: user goal -> DSL Program (the orchestrator's #2).
-
-Replaces the statement-DAG decompose with a PROGRAM decompose: a goal becomes a small
-sequence of statement-level run() statements plus control flow (if / finish). The LLM
-produces a flat, LLM-friendly draft (an explicit `op` per step, a `reasoning` CoT field
-up front — rigid schemas suppress reasoning, see structured_read), which we convert to
-the clean Program AST deterministically and validate (an if must branch on a real read,
-a read must request fields, a finish template must resolve) with one feedback-retry —
-the cheap deterministic backstop pattern, not a string-match band-aid.
-"""
+"""Compile a user goal into the six-node semantic Program IR."""
 
 from __future__ import annotations
 
@@ -24,225 +15,198 @@ from gui_agent.context.runtime import (
 )
 from gui_agent.core.config import resolve_llm_config
 from gui_agent.core.llm.messages import assemble_messages
+from gui_agent.core.router import IntentResolution
 from gui_agent.prompts import load_prompt_text
 from llm.structured import invoke_structured
 
-from gui_agent.core.router import IntentResolution, intent_block
+from ._decomposer.draft import _PlanDraft, _StepDraft, _to_stmts, to_program
+from ._validator.issue import ValidationIssue
 from .program import Program
-from ._decomposer.draft import _FunctionDraft, _PlanDraft, _StepDraft, _to_stmts, to_program
-from ._decomposer.context import (
-    _corrective_directive_block,
-    _page_and_table_blocks,
-    _prior_experience_block,
-    _remaining_plan_block,
-    _table_schema_prompt,
-)
-from ._decomposer.sql import (
-    _normalize_approximate_entity_sql,
-    _normalize_data_query_display_identifiers,
-)
-from .intent_contracts import IntentContractIssue, validate_intent_contracts
-from .validator import (  # validator lives in its own module; decompose imports it back
-    ValidationIssue,
-    validate_program,
-)
+from .validator import validate_program
+
 
 _SYSTEM = load_prompt_text("task.orchestrator.decomposer")
-# Re-decompose reuses the FULL decomposer prompt (DSL grammar + rules 1-10 + examples) and appends a
-# "mid-execution revision" framing — the output schema/validation is identical; only the framing
-# (re-plan the REMAINING steps from the CURRENT page, absorbing prior experience) differs.
 _REDECOMPOSE_SYSTEM = _SYSTEM + "\n\n" + load_prompt_text("task.orchestrator.redecomposer")
-
-
-# Validator repairs can cascade: fixing one structural issue can expose a second issue that was
-# previously masked by the invalid draft. Keep a small bounded extra attempt so the LLM sees the
-# newly surfaced validator feedback once, without turning compile into an open-ended loop.
-_MAX_RETRIES = 3
-
-__all__ = [
-    "OrchestratorCompileError",
-    "decompose",
-    "redecompose",
-    "to_program",
-    "validate_program",
-    "_FunctionDraft",
-    "_PlanDraft",
-    "_StepDraft",
-    "_to_stmts",
-    "_normalize_approximate_entity_sql",
-    "_normalize_data_query_display_identifiers",
-    "_table_schema_prompt",
-]
+_MAX_REPAIRS = 1
 
 
 class OrchestratorCompileError(RuntimeError):
-    """Raised when LLM draft repair retries are exhausted with validator issues still present."""
-
     def __init__(self, issues: list[ValidationIssue], program: Program) -> None:
         self.issues = list(issues)
         self.program = program
-        joined = "; ".join(str(issue) for issue in self.issues[:3])
-        suffix = "" if len(self.issues) <= 3 else f"; ... (+{len(self.issues) - 3})"
-        super().__init__(f"orchestrator compile validation failed: {joined}{suffix}")
+        super().__init__(
+            "orchestrator compile validation failed: "
+            + "; ".join(str(issue) for issue in issues[:4])
+        )
 
 
-def _contract_issue_to_validation_issue(issue: IntentContractIssue) -> ValidationIssue:
-    return ValidationIssue(
-        issue.code,
-        issue.message,
-        severity=issue.severity,
-        evidence=issue.evidence,
+def _intent_facts(resolution: IntentResolution | None) -> ContextBlock | None:
+    if resolution is None or not resolution.entities:
+        return None
+    lines = []
+    for entity in resolution.entities:
+        members = list(entity.value_members or [])
+        lines.append(
+            f"- mention={entity.mention!r}; role={entity.role}; type={entity.type}; "
+            f"members={members}; range={(entity.selector or '')!r}; "
+            f"search_hint={(entity.search_key or '')!r}"
+        )
+    return ContextBlock(
+        id="runtime.intent_facts",
+        budget="required",
+        source_type="runtime_state",
+        source="intent_resolver",
+        ttl="task",
+        priority=21,
+        content=(
+            "## Intent facts\n"
+            "这些是值、范围和检索提示，不是检索步骤模板。Program 必须保留目标值与范围，"
+            "具体字段、控件和检索方法由运行时 Interact 决定。\n"
+            + "\n".join(lines)
+        ),
     )
 
 
-def _merge_feedback_issues(
-    prior: list[ValidationIssue],
-    current: list[ValidationIssue],
+def _location_block(site: str, title: str, url: str) -> ContextBlock | None:
+    values = [part for part in (site, title, url) if part]
+    if not values:
+        return None
+    return ContextBlock(
+        id="runtime.main_location",
+        budget="normal",
+        source_type="runtime_state",
+        source="main_surface",
+        ttl="turn",
+        priority=30,
+        content="## Current main location\n" + " | ".join(values),
+    )
+
+
+def _value_contract_issues(
+    program: Program,
+    resolution: IntentResolution | None,
 ) -> list[ValidationIssue]:
-    """Carry validator feedback forward across repair attempts.
-
-    Repair prompts are constraints, not one-shot hints. If attempt N fixes issue A but attempt N+1
-    drops it while fixing issue B, a "last attempt only" feedback block creates validator
-    whack-a-mole. Keep the small de-duplicated history for the current compile call so later
-    retries preserve earlier repairs without adding any production normalizer.
-    """
-    out: list[ValidationIssue] = []
-    seen: set[tuple[str, str]] = set()
-    for issue in [*prior, *current]:
-        key = (issue.code, str(issue))
-        if key in seen:
+    if resolution is None:
+        return []
+    payload = program.model_dump_json(exclude={"id"}).casefold()
+    issues: list[ValidationIssue] = []
+    for entity in resolution.entities:
+        if entity.role in {"target_value", "qualifier_value"}:
+            values = list(entity.value_members or []) or [entity.mention]
+        elif entity.role == "collection_scope":
+            values = [entity.selector or entity.mention]
+        else:
             continue
-        out.append(issue)
-        seen.add(key)
-    return out
+        missing = [value for value in values if str(value).casefold() not in payload]
+        if missing:
+            issues.append(
+                ValidationIssue(
+                    "ROUTER_VALUE_NOT_PRESERVED",
+                    f"Router 声明的目标值/范围 {missing} 未进入 Program 的语义目标或参数",
+                    evidence=tuple(missing),
+                )
+            )
+    return issues
 
 
-def _invoke_plan(
+def _compile(
     *,
     system_prompt: str,
-    png_bytes: bytes | None,
-    context_blocks: list["ContextBlock | None"],
     goal: str,
-    prepare_vision_prompt_png: Callable[[bytes], bytes] | None,
+    context_blocks: list[ContextBlock | None],
     context_reports: list[dict] | None,
+    resolution: IntentResolution | None,
     label: str,
-    attempt_observer: "Callable[[int, list[ValidationIssue]], None] | None" = None,
-    resolution: "IntentResolution | None" = None,
+    attempt_observer: Callable[[int, list[ValidationIssue]], None] | None = None,
 ) -> Program:
-    """Shared LLM call + deterministic validate/feedback-retry. Both decompose() and redecompose()
-    assemble their own context blocks, then hand off here for the identical draft→AST→validate loop.
-    `resolution` (when the caller has one) additionally arms intent-contract checks
-    (router entity coverage / set selector membership / entity-scope predicates) so all generation
-    entrances share the same repair feedback."""
     cfg = resolve_llm_config("supervisor.decompose")
     if not cfg.model:
         cfg = resolve_llm_config("supervisor")
     from llm.provider_config import dashscope_extra_body
 
     llm = ChatOpenAI(
-        model=cfg.model, api_key=cfg.api_key, base_url=cfg.base_url,
+        model=cfg.model,
+        api_key=cfg.api_key,
+        base_url=cfg.base_url,
         extra_body=dashscope_extra_body(cfg.model),
     )
     issues: list[ValidationIssue] = []
-    feedback_issues: list[ValidationIssue] = []
-    previous_draft = ""
-    program = Program(goal=goal, statements=[])
-    for attempt in range(_MAX_RETRIES + 1):
+    previous = ""
+    program = Program(goal=goal)
+    for attempt in range(_MAX_REPAIRS + 1):
         messages = assemble_messages(
             system_prompt,
-            png_bytes,
-            human_blocks=[
-                *context_blocks,
-                feedback_block(feedback_issues, previous_output=previous_draft),
-            ],
+            None,
+            human_blocks=[*context_blocks, feedback_block(issues, previous_output=previous)],
             image_resize="none",
-            prepare_vision_prompt_png=prepare_vision_prompt_png,
             label=label,
             context_reports=context_reports,
             decision_text="",
         )
-        draft = invoke_structured(llm, messages, _PlanDraft, trace_sink=context_reports, trace_label=label)
-        previous_draft = draft.model_dump_json(exclude_defaults=True, exclude_none=True)
+        draft = invoke_structured(
+            llm,
+            messages,
+            _PlanDraft,
+            trace_sink=context_reports,
+            trace_label=label,
+        )
+        previous = draft.model_dump_json(exclude_defaults=True, exclude_none=True)
         program = to_program(draft, goal)
-        program = _normalize_data_query_display_identifiers(program)
-        all_issues = list(validate_program(program, resolution=resolution))
-        if resolution is not None:
-            all_issues.extend(
-                _contract_issue_to_validation_issue(issue)
-                for issue in validate_intent_contracts(program, resolution)
-            )
-        issues = [issue for issue in all_issues if getattr(issue, "severity", "error") == "error"]
-        if attempt_observer is not None:
-            # Offline instrumentation only (default None ⇒ production path unchanged): record the
-            # codes that fired on each draft so the retry-efficacy harness can measure, per code,
-            # whether feeding it back actually clears it on the next attempt. See
-            # scripts/validator_retry_efficacy.py.
-            attempt_observer(attempt, list(all_issues))
+        issues = [*validate_program(program), *_value_contract_issues(program, resolution)]
+        if attempt_observer:
+            attempt_observer(attempt, list(issues))
         if not issues:
-            break
-        feedback_issues = _merge_feedback_issues(feedback_issues, issues)
-        if attempt < _MAX_RETRIES:
-            print(f"  [Orchestrator] 程序分解校验发现 {len(issues)} 项问题，重试 ({attempt+1}/{_MAX_RETRIES})...")
-            for i in issues:
-                print(f"  [Orchestrator]   {i}")
-    if issues:
-        print(f"  [Orchestrator] 程序分解校验仍有 {len(issues)} 项问题，停止出厂。")
-        for i in issues:
-            print(f"  [Orchestrator]   {i}")
-        raise OrchestratorCompileError(issues, program)
-    return program
+            return program
+        if attempt < _MAX_REPAIRS:
+            print(f"  [Orchestrator] 语义 Program 有 {len(issues)} 项结构问题，修复一次...")
+            for issue in issues:
+                print(f"  [Orchestrator]   {issue}")
+    raise OrchestratorCompileError(issues, program)
 
 
 def decompose(
     goal: str,
     *,
-    png_bytes: bytes | None = None,
     knowledge: str = "",
     file_section: str = "",
     system_prompt: str = "",
     current_url: str = "",
     current_title: str = "",
     current_site: str = "",
-    table_summaries: list[dict] | None = None,
-    prepare_vision_prompt_png: Callable[[bytes], bytes] | None = None,
     context_reports: list[dict] | None = None,
     corrective_directive: str = "",
-    resolution: "IntentResolution | None" = None,
-    attempt_observer: "Callable[[int, list[ValidationIssue]], None] | None" = None,
+    resolution: IntentResolution | None = None,
+    attempt_observer: Callable[[int, list[ValidationIssue]], None] | None = None,
 ) -> Program:
-    """Decompose a user goal into a DSL Program via LLM + deterministic validate/retry.
-
-    `png_bytes` (current screen) gives the planner page context; `knowledge` injects app
-    navigation knowledge; `file_section` is the resolved content of any `@<path>` refs in the
-    goal (config field values the spoken goal only points at — see resolve_file_refs);
-    `system_prompt` overrides the default DSL prompt (platform tuning); `resolution` is the
-    router's upfront entity classification (fuzzy-allowed? which key?) — rendered as a FACTS-ONLY
-    context block right after the goal (see intent_block); decompose owns translating it into the
-    retrieval ladder (rule 4b), not the fuzzy/exact decision itself.
-    `prepare_vision_prompt_png` is the platform bundle's vision prompt image hook:
-    iPhone downscales Retina frames, browser/android keep native observations.
-    """
-    context_blocks: list[ContextBlock | None] = [
-        task_goal_block(goal),
-        intent_block(resolution),
-        _corrective_directive_block(corrective_directive),
-        file_reference_block(file_section),
-        knowledge_block("app_navigation", knowledge),
-        *_page_and_table_blocks(current_url, current_site, current_title, table_summaries),
-    ]
-    program = _invoke_plan(
+    corrective = (
+        ContextBlock(
+            id="runtime.corrective_directive",
+            budget="required",
+            source_type="runtime_state",
+            source="program_runtime",
+            ttl="turn",
+            priority=10,
+            content="## Runtime correction\n" + corrective_directive,
+        )
+        if corrective_directive
+        else None
+    )
+    return _compile(
         system_prompt=system_prompt or _SYSTEM,
-        png_bytes=png_bytes,
-        context_blocks=context_blocks,
         goal=goal,
-        prepare_vision_prompt_png=prepare_vision_prompt_png,
+        context_blocks=[
+            task_goal_block(goal),
+            _intent_facts(resolution),
+            corrective,
+            file_reference_block(file_section),
+            knowledge_block("app_navigation", knowledge),
+            _location_block(current_site, current_title, current_url),
+        ],
         context_reports=context_reports,
+        resolution=resolution,
         label="orchestrator.decompose",
         attempt_observer=attempt_observer,
-        resolution=resolution,
     )
-    from .passes import finalize_gates
-    return finalize_gates(_normalize_approximate_entity_sql(program, resolution))
 
 
 def redecompose(
@@ -251,45 +215,31 @@ def redecompose(
     remaining_plan: str = "",
     prior_experience: str = "",
     corrective_directive: str = "",
-    png_bytes: bytes | None = None,
-    knowledge: str = "",
-    file_section: str = "",
-    current_url: str = "",
-    current_title: str = "",
-    current_site: str = "",
-    table_summaries: list[dict] | None = None,
-    prepare_vision_prompt_png: Callable[[bytes], bytes] | None = None,
-    context_reports: list[dict] | None = None,
-    resolution: "IntentResolution | None" = None,
+    **kwargs,
 ) -> Program:
-    """Re-decompose the REMAINING (unexecuted) plan mid-run — NOT a fresh full-goal decompose.
-
-    Unlike `decompose` (goal → full plan from the start screen), this is invoked after a Feasibility
-    kick-back: some statements already ran (their outcomes are `prior_experience`), one hit a
-    correction (`corrective_directive`), and the rest (`remaining_plan`) must be re-planned from the
-    CURRENT page (current_url/title/png/table_summaries reflect where the run actually is now, not
-    its start). Reuses the full DSL prompt + schema + validation; only the framing differs (see
-    redecomposer.md). The returned Program covers only the remaining work.
-    """
-    context_blocks: list[ContextBlock | None] = [
-        task_goal_block(goal),
-        intent_block(resolution),
-        _corrective_directive_block(corrective_directive),
-        _prior_experience_block(prior_experience),
-        _remaining_plan_block(remaining_plan),
-        file_reference_block(file_section),
-        knowledge_block("app_navigation", knowledge),
-        *_page_and_table_blocks(current_url, current_site, current_title, table_summaries),
-    ]
-    program = _invoke_plan(
-        system_prompt=_REDECOMPOSE_SYSTEM,
-        png_bytes=png_bytes,
-        context_blocks=context_blocks,
-        goal=goal,
-        prepare_vision_prompt_png=prepare_vision_prompt_png,
-        context_reports=context_reports,
-        label="orchestrator.redecompose",
-        resolution=resolution,
+    extra = "\n\n".join(
+        part
+        for part in (
+            f"已完成事实：\n{prior_experience}" if prior_experience else "",
+            f"剩余语义工作：\n{remaining_plan}" if remaining_plan else "",
+            f"运行时纠正：\n{corrective_directive}" if corrective_directive else "",
+        )
+        if part
     )
-    from .passes import finalize_gates
-    return finalize_gates(_normalize_approximate_entity_sql(program, resolution))
+    return decompose(
+        goal,
+        system_prompt=_REDECOMPOSE_SYSTEM,
+        corrective_directive=extra,
+        **kwargs,
+    )
+
+
+__all__ = [
+    "OrchestratorCompileError",
+    "_PlanDraft",
+    "_StepDraft",
+    "_to_stmts",
+    "decompose",
+    "redecompose",
+    "to_program",
+]

@@ -50,8 +50,8 @@ class StatementLLMRuntimeMixin:
             signals = [
                 str(observation.title or ""),
                 str(observation.url or ""),
-                statement.name,
-                statement.success_condition,
+                statement.goal,
+                statement.success,
             ]
             stems = self._pk.match_signals(signals)
             self._last_sections_loaded = stems

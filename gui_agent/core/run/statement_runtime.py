@@ -24,10 +24,8 @@ class StatementRuntimeState:
     # StatementInfo is derived from ``contract`` when the first turn is recorded.
     statement_info_emitted: bool = False
 
-    def scope_key(self, *, row_identity: str = "") -> str:
+    def scope_key(self) -> str:
         """Instance-prefixed execution scope for history isolation."""
-        if row_identity:
-            return f"{self.instance_id}/row:{row_identity}"
         return f"{self.instance_id}/statement"
 
     def reset_for_return_retry(

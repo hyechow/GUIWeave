@@ -266,24 +266,23 @@ def _call_summary_text(label: str, output: dict) -> str:
         return _shorten(" · ".join(bits), 130) if bits else "read"
     if "decompose" in lname:
         steps = parsed.get("steps") if isinstance(parsed.get("steps"), list) else []
-        read_bits = []
+        typed_bits = []
         has_finish = False
         for step in steps:
             if not isinstance(step, dict):
                 continue
-            op = str(step.get("op") or "run")
-            run_kind = str(step.get("run_kind") or step.get("kind") or "")
+            op = str(step.get("op") or "")
             if op == "finish":
                 has_finish = True
-            if op == "run" and run_kind in {"read", "data_query"}:
-                var = str(step.get("var") or "")
-                returns = [str(v) for v in (step.get("returns") or []) if str(v)]
-                if var and returns:
-                    read_bits.append(f"{var}.{','.join(returns)}")
+            if op in {"interact", "data", "command"}:
+                bind = str(step.get("bind") or "")
+                returns = [str(v) for v in (step.get("returns") or {}) if str(v)]
+                if bind and returns:
+                    typed_bits.append(f"{bind}.{','.join(returns)}")
                 elif returns:
-                    read_bits.append(",".join(returns))
+                    typed_bits.append(",".join(returns))
         parts = [f"{len(steps)} steps" if steps else "program"]
-        parts.extend(f"read {bit}" for bit in read_bits[:2])
+        parts.extend(f"outputs {bit}" for bit in typed_bits[:2])
         if has_finish:
             parts.append("finish")
         return " · ".join(parts)

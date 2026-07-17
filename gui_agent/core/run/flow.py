@@ -83,10 +83,9 @@ def finish_terminal_step(
     say: Callable[[str], None],
     end_statement: Callable[[Any], None],
 ) -> AgentResult:
-    """Flush reads and send the authoritative terminal outcome into ProgramRuntime."""
+    """Send the authoritative terminal outcome into ProgramRuntime."""
     reason = outcome.summary or "statement stopped"
-    read_state.drain_pending(say=say)
-    read_state.flush(turn_no=turn_no, say=say)
+    del read_state, turn_no
 
     if outcome.is_completed:
         say(f"\n目标已达成：{outcome.summary or reason}")

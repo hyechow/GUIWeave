@@ -20,7 +20,7 @@ class ReportStep:
     index: int = 0              # context turn index (for ordering re-decompose cards by at_turn)
     statement_id: str = ""
     instance_id: str = ""       # statement invocation instance (foreach/retry isolate here)
-    statement_kind: str = ""
+    statement_executor: str = ""
     instruction: str = ""
     summary: str = ""
     timings: dict[str, float] = field(default_factory=dict)
@@ -44,10 +44,10 @@ class ReportPage:
     steps: list[ReportStep] = field(default_factory=list)
     statement_id: str = ""
     instance_id: str = ""
-    statement_kind: str = ""
+    statement_executor: str = ""
     statement_name: str = ""
     statement_description: str = ""
-    success_condition: str = ""
+    statement_success: str = ""
     checklist: list[dict] = field(default_factory=list)
     verify_url: str = ""  # verification screenshot (first turn of next statement)
     verify_outcome: dict = field(default_factory=dict)  # terminal Outcome/Transition projection

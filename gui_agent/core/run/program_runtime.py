@@ -1,25 +1,19 @@
-"""Program-level runtime state: the sole owner of statement scheduling.
+"""Program-level runtime state and journal replay.
 
-ProgramRuntime owns cursor, env/run_log (via Interpreter), recovery budgets, and
-task-level replan counts. It does not drive GUI turns — that stays in the agent
-loop + InteractiveStatementExecutor.
-
-The agent loop must not keep a parallel cursor (``_cur_run`` / ``_run_idx`` /
-``_kickback_replans``); all statement sequencing mutates this object.
+``ProgramRuntime`` is the sole owner of interpreter progress, typed env, run
+log and Program-level recovery.  Executors only consume the current resolved
+``StatementInvocation`` and return a ``StatementOutcome``.
 """
 
 from __future__ import annotations
 
 from dataclasses import dataclass, field
 import re
-from typing import Any, Callable, Generator
+from typing import Any, Generator
 
-from gui_agent.core.orchestrator.program import Program, RunLike
-from gui_agent.core.orchestrator.recovery import (
-    MAX_KICKBACK_REPLANS,
-    RecoveryLedger,
-)
-from gui_agent.core.orchestrator.runner import Interpreter
+from gui_agent.core.orchestrator.program import Interact, Program
+from gui_agent.core.orchestrator.recovery import MAX_KICKBACK_REPLANS, RecoveryLedger
+from gui_agent.core.orchestrator.runner import Interpreter, StatementInvocation
 from gui_agent.core.schemas import (
     EventJournal,
     PolicyTurn,
@@ -33,18 +27,10 @@ from gui_agent.core.schemas import (
 
 @dataclass
 class ProgramRuntime:
-    """Mutable program execution state shared across the agent loop.
-
-    Ownership (exclusive):
-    - program revision + interpreter (env / run_log)
-    - current statement cursor (current / index / notes_mark)
-    - RecoveryLedger and kickback replan budget
-    """
-
     program: Program
     interpreter: Interpreter
-    _steps: Generator[RunLike, StatementOutcome, str]
-    current: RunLike | None = None
+    _steps: Generator[StatementInvocation, StatementOutcome, str]
+    current: StatementInvocation | None = None
     index: int = 0
     notes_mark: int = 0
     _recovery: RecoveryLedger = field(default_factory=RecoveryLedger)
@@ -59,43 +45,29 @@ class ProgramRuntime:
         cls,
         program: Program,
         *,
-        collect_fn: Callable | None = None,
-        subdecompose_fn: Callable | None = None,
-        expand_fn: Callable | None = None,
-        select_fn: Callable | None = None,
         recovery: RecoveryLedger | None = None,
         journal: EventJournal | None = None,
         _record_revision: bool = True,
     ) -> "ProgramRuntime":
-        interp = Interpreter(
-            program,
-            collect_fn=collect_fn,
-            subdecompose_fn=subdecompose_fn,
-            expand_fn=expand_fn,
-            select_fn=select_fn,
-        )
-        gen = interp.steps()
+        interpreter = Interpreter(program)
+        steps = interpreter.steps()
         try:
-            current = next(gen)
+            current = next(steps)
             reply = None
         except StopIteration as exc:
             current = None
             reply = exc.value or ""
         runtime = cls(
             program=program,
-            interpreter=interp,
-            _steps=gen,
+            interpreter=interpreter,
+            _steps=steps,
             current=current,
-            index=0,
             _recovery=recovery or RecoveryLedger(),
             reply=reply,
             _journal=journal,
         )
         if journal is not None and _record_revision:
-            journal.append_program(
-                program.model_dump(mode="json"),
-                action="start",
-            )
+            journal.append_program(program.model_dump(mode="json"), action="start")
         return runtime
 
     @classmethod
@@ -103,102 +75,68 @@ class ProgramRuntime:
         cls,
         fallback_program: Program,
         journal: EventJournal,
-        *,
-        collect_fn: Callable | None = None,
-        subdecompose_fn: Callable | None = None,
-        expand_fn: Callable | None = None,
-        select_fn: Callable | None = None,
     ) -> "ProgramRuntime":
-        """Replay the ordered journal into a fresh interpreter and recovery ledger.
+        """Replay Program revisions and terminal outcomes from the new journal."""
 
-        A journal without a Program revision starts a new run. Otherwise the persisted Program,
-        not a newly compiled candidate, is authoritative. Terminal statement outcomes advance the
-        generator; replacement revisions reproduce kickback/data-source hot swaps; the last
-        unterminated invocation remains active for StatementRuntime restoration.
-        """
         revisions = journal.program_revisions
         if not revisions:
-            return cls.start(
-                fallback_program,
-                collect_fn=collect_fn,
-                subdecompose_fn=subdecompose_fn,
-                expand_fn=expand_fn,
-                select_fn=select_fn,
-                journal=journal,
-            )
-
-        first = revisions[0]
-        if first.action != "start":
+            if journal.events:
+                raise ValueError(
+                    "EventJournal with execution events requires an initial Program revision"
+                )
+            return cls.start(fallback_program, journal=journal)
+        if revisions[0].action != "start":
             raise ValueError("EventJournal must begin with a start Program revision")
         runtime = cls.start(
-            Program.model_validate(first.program),
-            collect_fn=collect_fn,
-            subdecompose_fn=subdecompose_fn,
-            expand_fn=expand_fn,
-            select_fn=select_fn,
+            Program.model_validate(revisions[0].program),
             journal=journal,
             _record_revision=False,
         )
-        pending_terminal: tuple[StatementOutcome, str] | None = None
-        active_instance_id = ""
+        pending: tuple[StatementOutcome, str] | None = None
+        active_instance = ""
         active_notes_mark = 0
+        next_notes_mark = 0
         note_count = 0
-        next_instance_notes_mark = 0
-        seen_first_revision = False
+        seen_start = False
 
         def apply_terminal() -> None:
-            nonlocal pending_terminal, active_instance_id
-            if pending_terminal is None:
+            nonlocal pending, active_instance
+            if pending is None:
                 return
-            outcome, instance_id = pending_terminal
+            outcome, instance_id = pending
             if runtime.current is None:
-                raise ValueError(
-                    f"journal terminal {instance_id!r} has no active Program statement"
-                )
+                raise ValueError(f"journal terminal {instance_id!r} has no active statement")
             runtime.current_instance_id = instance_id
             runtime.send_outcome(outcome)
-            pending_terminal = None
-            active_instance_id = ""
+            pending = None
+            active_instance = ""
 
         for event in journal.events:
             if isinstance(event, ProgramRevisionEvent):
-                if not seen_first_revision:
-                    seen_first_revision = True
+                if not seen_start:
+                    seen_start = True
                     continue
                 if event.action != "replace":
-                    raise ValueError("only the first Program revision may use action='start'")
+                    raise ValueError("only first Program revision may use action='start'")
                 if event.terminal_disposition == "record_then_drop":
                     apply_terminal()
                 elif event.terminal_disposition == "abandon":
-                    pending_terminal = None
-                    active_instance_id = ""
+                    pending = None
+                    active_instance = ""
                     runtime.current_instance_id = ""
                 else:
                     apply_terminal()
                 runtime.replace_program(
                     Program.model_validate(event.program),
-                    collect_fn=collect_fn,
-                    subdecompose_fn=subdecompose_fn,
-                    expand_fn=expand_fn,
-                    select_fn=select_fn,
-                    drop_failed_from_log=(
-                        event.terminal_disposition == "record_then_drop"
-                    ),
+                    drop_failed_from_log=event.terminal_disposition == "record_then_drop",
                     _record_revision=False,
                 )
-                next_instance_notes_mark = note_count
+                next_notes_mark = note_count
                 continue
             if isinstance(event, RecoveryJournalEvent):
-                if (
-                    event.mechanism == "tighten_return"
-                    and event.outcome.startswith("tighten ")
-                    and runtime.current is not None
-                ):
-                    runtime._recovery.next_attempt(runtime.index, runtime.current)
                 if event.mechanism == "kickback_budget":
                     runtime._kickback_replans = max(
-                        runtime._kickback_replans,
-                        int(event.outcome or 0),
+                        runtime._kickback_replans, int(event.outcome or 0)
                     )
                 runtime._recovery.record(
                     event.recovery_class,  # type: ignore[arg-type]
@@ -214,68 +152,44 @@ class ProgramRuntime:
             if isinstance(event, StatementOutcomeEvent):
                 match = re.match(r"i(\d+):", event.statement_instance_id or "")
                 if match:
-                    runtime._instance_seq = max(
-                        runtime._instance_seq,
-                        int(match.group(1)),
-                    )
-                if pending_terminal is not None:
+                    runtime._instance_seq = max(runtime._instance_seq, int(match.group(1)))
+                if pending is not None:
                     apply_terminal()
-                pending_terminal = (
-                    event.outcome,
-                    event.statement_instance_id,
-                )
-                active_instance_id = ""
-                # Notes written after the terminal fact belong to the next
-                # invocation even when no PolicyTurn separates two immediate
-                # statements.
-                next_instance_notes_mark = note_count
+                pending = (event.outcome, event.statement_instance_id)
+                active_instance = ""
+                next_notes_mark = note_count
                 continue
             if not isinstance(event, PolicyTurn):
                 continue
+            if pending is not None:
+                apply_terminal()
             match = re.match(r"i(\d+):", event.statement_instance_id or "")
             if match:
                 runtime._instance_seq = max(runtime._instance_seq, int(match.group(1)))
-            if pending_terminal is not None:
-                apply_terminal()
-            if event.statement_instance_id:
-                if event.statement_instance_id != active_instance_id:
-                    active_instance_id = event.statement_instance_id
-                    active_notes_mark = next_instance_notes_mark
+            if event.statement_instance_id and event.statement_instance_id != active_instance:
+                active_instance = event.statement_instance_id
+                active_notes_mark = next_notes_mark
 
         apply_terminal()
-        if active_instance_id:
+        if active_instance:
             if runtime.current is None:
-                raise ValueError(
-                    f"journal active instance {active_instance_id!r} has no Program statement"
-                )
-            runtime.current_instance_id = active_instance_id
+                raise ValueError(f"journal active instance {active_instance!r} has no statement")
+            runtime.current_instance_id = active_instance
             runtime.notes_mark = active_notes_mark
         return runtime
-
-    def next_instance_id(self, statement_id: str = "") -> str:
-        """Monotonic instance id for one statement invocation (foreach-safe)."""
-        if self.current_instance_id:
-            raise RuntimeError(
-                f"statement instance {self.current_instance_id!r} is still active"
-            )
-        self._instance_seq += 1
-        suffix = statement_id or "stmt"
-        iid = f"i{self._instance_seq}:{suffix}"
-        self.current_instance_id = iid
-        return iid
 
     @property
     def finished(self) -> bool:
         return self.current is None and self.reply is not None
 
-    def send_outcome(self, outcome: StatementOutcome) -> RunLike | None:
-        """Resume the interpreter with one authoritative statement outcome.
+    def next_instance_id(self, statement_id: str = "") -> str:
+        if self.current_instance_id:
+            raise RuntimeError(f"statement instance {self.current_instance_id!r} is still active")
+        self._instance_seq += 1
+        self.current_instance_id = f"i{self._instance_seq}:{statement_id or 'stmt'}"
+        return self.current_instance_id
 
-        The first run-log record appended while resuming is the record for the
-        statement that just returned.  Later records may be interpreter-owned
-        aggregates (for example the enclosing foreach materialization), so the
-        invocation id must be attached by position rather than to ``run_log[-1]``.
-        """
+    def send_outcome(self, outcome: StatementOutcome) -> StatementInvocation | None:
         log_start = len(self.interpreter.run_log)
         instance_id = self.current_instance_id
         try:
@@ -292,15 +206,10 @@ class ProgramRuntime:
             self.current_instance_id = ""
 
     def begin_kickback(self) -> int | None:
-        """Atomically reserve one task-level replan attempt."""
         if self._kickback_replans >= MAX_KICKBACK_REPLANS:
             return None
         self._kickback_replans += 1
-        site = str(
-            getattr(self.current, "var", "")
-            or getattr(self.current, "name", "")
-            or "program"
-        )
+        site = self.current.id if self.current else "program"
         self.record_recovery(
             "infeasible_route",
             "kickback_budget",
@@ -308,11 +217,6 @@ class ProgramRuntime:
             outcome=str(self._kickback_replans),
         )
         return self._kickback_replans
-
-    def next_return_attempt(self) -> int | None:
-        if self.current is None:
-            raise RuntimeError("cannot recover returns without an active statement")
-        return self._recovery.next_attempt(self.index, self.current)
 
     def record_recovery(
         self,
@@ -323,20 +227,10 @@ class ProgramRuntime:
         detail: str = "",
         outcome: str = "",
     ) -> None:
-        self._recovery.record(
-            cls,
-            mechanism,
-            site,
-            detail=detail,
-            outcome=outcome,
-        )
+        self._recovery.record(cls, mechanism, site, detail=detail, outcome=outcome)
         if self._journal is not None:
             self._journal.append_recovery(
-                cls,
-                mechanism,
-                str(site or ""),
-                detail=detail,
-                outcome=outcome,
+                cls, mechanism, site, detail=detail, outcome=outcome
             )
 
     @property
@@ -347,43 +241,36 @@ class ProgramRuntime:
         return self._recovery.summary()
 
     def mark_notes(self, note_count: int) -> None:
-        """Record content_notes length at the start of the current statement."""
         self.notes_mark = note_count
 
-    def retry_current(self, statement: RunLike) -> None:
-        """Replace the active statement contract without advancing the Program cursor."""
+    def retry_current(self, invocation: StatementInvocation) -> None:
         if self.current is None:
             raise RuntimeError("cannot retry without an active statement")
-        self.current = statement
+        self.current = invocation
+
+    def next_return_attempt(self) -> int | None:
+        """Consume one bounded retry for the active typed-output contract."""
+        if self.current is None:
+            raise RuntimeError("cannot recover outputs without an active statement")
+        return self._recovery.next_attempt(self.index, self.current.statement)
 
     def restore_current_contract(self, contract: StatementContract) -> None:
-        """Reapply a persisted return-tightened contract to the active Run."""
-        if self.current is None:
-            raise RuntimeError("cannot restore a contract without an active statement")
-        update = {
-            "name": contract.name,
-            "success_condition": contract.success_condition,
-            "returns": list(contract.returns),
-            "read_spec": contract.read_spec,
-        }
-        for field_name in (
-            "precondition",
-            "persistence",
-            "target_controls",
-            "target_values",
-        ):
-            if field_name in type(self.current).model_fields:
-                update[field_name] = getattr(contract, field_name)
-        self.current = self.current.model_copy(update=update)
+        """Restore an active Interact contract from a persisted live turn."""
+        if self.current is None or not isinstance(self.current.statement, Interact):
+            raise RuntimeError("only an active Interact has a restorable contract")
+        statement = self.current.statement.model_copy(
+            update={
+                "goal": contract.goal,
+                "success": contract.success,
+                "returns": dict(contract.returns),
+            }
+        )
+        self.current = self.current.model_copy(update={"statement": statement})
 
     def replace_program(
         self,
         program: Program,
         *,
-        collect_fn: Callable | None = None,
-        subdecompose_fn: Callable | None = None,
-        expand_fn: Callable | None = None,
-        select_fn: Callable | None = None,
         inherit_env: bool = True,
         inherit_run_log: bool = True,
         drop_failed_from_log: bool = False,
@@ -391,28 +278,14 @@ class ProgramRuntime:
         terminal_disposition: str = "none",
         _record_revision: bool = True,
     ) -> None:
-        """Hot-swap after redecompose; optionally keep prior env/run_log.
-
-        When ``drop_failed_from_log`` is true (kickback recovery), superseded
-        failed records are dropped so ``interp.failed`` does not permanently
-        veto a successful retry.
-        """
         prev_env = dict(self.interpreter.env) if inherit_env else {}
         prev_log = list(self.interpreter.run_log) if inherit_run_log else []
         if drop_failed_from_log:
             prev_log = [record for record in prev_log if record.result.is_completed]
         self.program = program
-        self.interpreter = Interpreter(
-            program,
-            collect_fn=collect_fn,
-            subdecompose_fn=subdecompose_fn,
-            expand_fn=expand_fn,
-            select_fn=select_fn,
-        )
-        if inherit_env:
-            self.interpreter.env = prev_env
-        if inherit_run_log:
-            self.interpreter.run_log = prev_log
+        self.interpreter = Interpreter(program)
+        self.interpreter.env = prev_env
+        self.interpreter.run_log = prev_log
         self._steps = self.interpreter.steps()
         try:
             self.current = next(self._steps)

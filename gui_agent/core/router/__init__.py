@@ -11,6 +11,6 @@ Boundaries:
   (future)         chat router (route_message) may consolidate here
 """
 
-from .intent import EntityRef, IntentResolution, intent_block, resolve_intent
+from .intent import EntityRef, IntentResolution, resolve_intent
 
-__all__ = ["EntityRef", "IntentResolution", "intent_block", "resolve_intent"]
+__all__ = ["EntityRef", "IntentResolution", "resolve_intent"]

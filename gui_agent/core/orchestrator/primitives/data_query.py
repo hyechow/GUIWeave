@@ -1,8 +1,8 @@
-"""Restricted in-memory SQL over structured table snapshots.
+"""Restricted in-memory SQL kernel used by the semantic Data executor.
 
-`data_query` is a non-UI primitive: it consumes rows already collected by the
-perception layer and returns structured values to the orchestrator. It never
-drives the browser and never writes to disk.
+It consumes runtime records/table snapshots and never drives the platform or
+writes persistent state. SQL is an executor-private implementation detail, not
+a public Program node.
 """
 
 from __future__ import annotations

@@ -109,7 +109,7 @@ def acceptance_items_block(items: list[str]) -> ContextBlock | None:
         id="runtime.acceptance.checklist",
         budget="required",
         source_type="runtime_state",
-        source="statement.success_condition",
+        source="statement.success",
         ttl="turn",
         priority=35,
         metadata={"count": len(items)},

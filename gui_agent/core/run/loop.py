@@ -40,26 +40,20 @@ from gui_agent.core.run.flow import (
     handle_loading_frame,
 )
 from gui_agent.core.run.statements import drain_immediate_statements
-from gui_agent.core.orchestrator.program import Program
-from gui_agent.core.orchestrator.contracts import check_return_contract
+from gui_agent.core.orchestrator.program import Interact, Program
 from gui_agent.core.orchestrator.recovery import (
     MAX_EMPTY_RETURN_RECOVERIES,
     MAX_KICKBACK_REPLANS,
-    force_interactive_return_recovery as _force_interactive_return_recovery,
-    kickback_adherence_issues,
-    parse_kickback_directive,
-    sharpen_kickback_directive,
-    tighten_ui_return_run as _tighten_ui_return_run,
 )
 from gui_agent.core.run.program_runtime import ProgramRuntime
 from gui_agent.core.run.recovery_router import RecoveryRouter
 from gui_agent.core.run.statements.outcome import StatementOutcome
 from gui_agent.core.run.interactive import (
-    contract_for_run,
-    extract_run_returns,
+    contract_for_interact,
+    extract_interact_outputs,
     start_statement,
-    statement_id_for_run,
-    statement_info_for_run,
+    statement_id,
+    statement_info,
 )
 from gui_agent.core.run.turns import (
     emit_statement_fields,
@@ -122,15 +116,6 @@ _VERIFY_POOL = ThreadPoolExecutor(max_workers=1, thread_name_prefix="verify")
 # snap has its boxes/text ready by execute time (~0.4s off the critical path).
 _PREP_POOL = ThreadPoolExecutor(max_workers=1, thread_name_prefix="prep")
 
-# Stitched-chunk reader (~1.8s LLM read) runs here so it overlaps the action +
-# settle + next turn's Transition. Result is drained at the next turn's read
-# block (read_added_content is set inline from the cheap stitch feed, so the
-# supervisor's boundary check never waits on the reader). 1 worker keeps
-# content_notes ordering. Stitch feed stays inline: it
-# produces read_added_content which the turn record needs synchronously.
-_READER_POOL = ThreadPoolExecutor(max_workers=1, thread_name_prefix="reader")
-
-
 def build_policy(name: str) -> "ActionPolicy":
     # Selection routes through the platform bundle; the factory raises ValueError
     # with the available choices on an unknown name (same behavior as before).
@@ -139,29 +124,6 @@ def build_policy(name: str) -> "ActionPolicy":
 
 def build_supervisor(name: str) -> "SupervisorPolicy":
     return build_platform().make_supervisor(name)
-
-
-def _make_collect_fn(bundle, platform, log_dir):
-    """Return a collect_fn for browser (DOM direct), or None for non-browser.
-
-    Browser path: when ForEach.over is empty, the foreach collects rows directly via
-    the DOM/AX semantic tree (read_grid_complete) rather than requiring a prior row-collection Run.
-    Non-browser (iphone/android) has no AX tree → returns None, so the legacy `over` path remains.
-    """
-    client = getattr(platform, "client", None)
-    if client is None or not hasattr(client, "read_semantic_tree"):
-        return None
-
-    def collect_fn(target: str, returns: list, limit: int | None = None) -> list | None:
-        from gui_agent.adapters.browser.page_read import read_grid_complete
-        obs_url = "collect_grid.png"
-        try:
-            obs = bundle.make_perception(platform, log_dir / obs_url).observe()
-        except Exception:  # noqa: BLE001
-            return None
-        return read_grid_complete(obs, list(returns), bundle=bundle, platform=platform, log_dir=log_dir, limit=limit)
-
-    return collect_fn
 
 
 def run_agent_loop(
@@ -184,8 +146,7 @@ def run_agent_loop(
     router: dict | None = None,    # RouterResult dict (chat path); None for bin/runner
     on_session_open: object = None,  # callable(platform) run once after session open, before the loop
     knowledge: dict | None = None,  # injected app-knowledge summary {app_name, nav_chars, ...}; None if no match
-    redecompose: object = None,  # callable(directive:str)->Program|None; Feasibility Guard kick-back re-plan. None disables.
-    subdecompose: object = None,  # callable(goal:str)->Program|None; per-row agentic sub-goal (ForEach.body_goal). None disables.
+    redecompose: object = None,  # callable(directive:str)->Program|None; Program-level hot recompile.
     orchestrator_context_reports: list[dict] | None = None,
     stop_requested: object = None,  # callable() -> bool; true means stop after current turn settles
     platform: object = None,  # already-open session (runner pre-opens it so router/decompose can see the current front-tab url/title; see cli.py); None → open here (chat path, unchanged)
@@ -266,11 +227,11 @@ def run_agent_loop(
     loading_streak = 0
 
     # The platform bundle is the single seam through which the agent loop obtains
-    # the session, executor, perception and read-stitch helper — no adapter
+    # the session, executor and perception — no adapter
     # class is referenced directly here.
     bundle = build_platform(backend=backend)
     reader = ContentReader(prepare_vision_prompt_png=bundle.prepare_vision_prompt_png)
-    read_state = ReadState(context=context, reader=reader, pool=_READER_POOL)
+    read_state = ReadState(context=context, reader=reader)
     # Record the platform on the context so the log and the HTML report can label
     # the run (iphone vs browser). Set here so both the runner and chat (which both
     # call run_agent_loop) persist it.
@@ -339,20 +300,11 @@ def run_agent_loop(
 
         # ── ProgramRuntime (always on; sole statement-scheduling owner) ───────────
         _immediate_failure: "str | None" = None
-        _collect_fn = _make_collect_fn(bundle, platform, log_dir)
-        from gui_agent.core.orchestrator.expansion import expand_foreach, select_members
-
-        rt = ProgramRuntime.resume(
-            program,
-            context.journal,
-            collect_fn=_collect_fn,
-            subdecompose_fn=subdecompose,
-            expand_fn=expand_foreach,
-            select_fn=select_members,
-        )
+        _immediate_kickback: "str | None" = None
+        rt = ProgramRuntime.resume(program, context.journal)
         recovery_router = RecoveryRouter()
         if rt.current_instance_id:
-            if rt.current is None or not getattr(rt.current, "is_interactive", False):
+            if rt.current is None or not isinstance(rt.current.statement, Interact):
                 raise ValueError(
                     "journal resumed an active instance that is not an interactive statement"
                 )
@@ -371,7 +323,7 @@ def run_agent_loop(
             if latest_snapshot is not None:
                 rt.restore_current_contract(latest_snapshot.contract)
             resume_statement(
-                contract_for_run(rt.current, rt.index),
+                contract_for_interact(rt.current, rt.index),
                 instance_id=rt.current_instance_id,
                 history=context.journal.turns,
             )
@@ -382,18 +334,16 @@ def run_agent_loop(
         def _stop_after_esc(turn_no: int) -> AgentResult | None:
             if not _stop_requested():
                 return None
-            read_state.drain_pending(say=_say)
-            read_state.flush(turn_no=turn_no, say=_say)
             _say("\n收到 ESC：当前 turn 已收尾，agent-loop 安全停止")
             reason = "用户按 ESC 中止 agent-loop"
             return _finish(_orch_result(
                 context, rt.interpreter, f"{reason}（任务未完成）", current=rt.current,
             ))
 
-        def _read_completed_run_returns(run, observation) -> dict[str, str]:
-            """Extract an interactive statement's declared fields from its terminal frame."""
-            return extract_run_returns(
-                run,
+        def _read_completed_outputs(invocation, observation) -> dict:
+            """Extract an Interact's typed outputs from its terminal frame."""
+            return extract_interact_outputs(
+                invocation,
                 observation,
                 check_knowledge=getattr(supervisor, "_check_knowledge", "") or "",
                 prepare_vision_prompt_png=bundle.prepare_vision_prompt_png,
@@ -407,7 +357,8 @@ def run_agent_loop(
             allow_navigation: bool = True,
         ) -> "str | None":
             """Execute inline statements, then begin the next interactive statement."""
-            nonlocal _immediate_failure, _record_llm_mark, _record_token_mark
+            nonlocal _immediate_failure, _immediate_kickback
+            nonlocal _record_llm_mark, _record_token_mark
             nonlocal observation, observation_url_for_turn, prep_future
             result = drain_immediate_statements(
                 program_runtime=rt,
@@ -421,7 +372,6 @@ def run_agent_loop(
                 status=lambda msg: _status(_interactive_turn_count(context), msg),
                 observation=observation_for_statements,
                 observation_url=observation_url,
-                materialized_tables=lambda: rt.interpreter.materialized_tables(),
                 allow_navigation=allow_navigation,
             )
             # Immediate statements record their own turns and metrics.
@@ -429,10 +379,10 @@ def run_agent_loop(
             _record_token_mark = get_llm_token_usage()
             if (
                 rt.current is not None
-                and getattr(rt.current, "is_interactive", False)
+                and isinstance(rt.current.statement, Interact)
                 and getattr(supervisor, "_statement_rt", None) is None
             ):
-                sid = statement_id_for_run(rt.current, rt.index)
+                sid = statement_id(rt.current, rt.index)
                 iid = rt.next_instance_id(sid)
                 start_statement(
                     supervisor,
@@ -442,6 +392,7 @@ def run_agent_loop(
                 )
                 rt.mark_notes(len(context.journal.content_notes))
             _immediate_failure = result.failure_evidence
+            _immediate_kickback = result.replan_directive
             if result.observation is not None:
                 observation = result.observation
                 observation_url_for_turn = result.observation_url or observation_url_for_turn
@@ -465,15 +416,11 @@ def run_agent_loop(
                 end_statement=supervisor.end_statement,
             )
 
-        def _outcome_from_step(sv_step, *, reads=None, rows=None):
+        def _outcome_from_step(sv_step, *, outputs=None):
             outcome = sv_step.outcome
             if outcome is None:
                 return None
-            updates: dict = {}
-            if reads is not None:
-                updates["reads"] = reads
-            if rows is not None:
-                updates["rows"] = rows
+            updates: dict = {"outputs": outputs} if outputs is not None else {}
             return outcome.model_copy(update=updates) if updates else outcome
 
         def _record_statement_outcome(sv_step, outcome) -> None:
@@ -488,7 +435,7 @@ def run_agent_loop(
             tokens_after = get_llm_token_usage()
             _info, _iid = emit_statement_fields(supervisor)
             if not _iid and rt.current is not None:
-                _info = statement_info_for_run(rt.current, rt.index)
+                _info = statement_info(rt.current, rt.index)
                 _iid = rt.current_instance_id
             context.journal.append_statement_outcome(make_statement_outcome_event(
                 after_turn=len(context.journal.turns),
@@ -559,9 +506,7 @@ def run_agent_loop(
             if kick_n is None:
                 return (False, None)
             failed_run = rt.current
-            _site = str(
-                getattr(failed_run, "var", "") or getattr(failed_run, "name", "") or "program"
-            )
+            _site = failed_run.id if failed_run is not None else "program"
             _say(f"\n[Kickback] 重规划 ({kick_n}/{MAX_KICKBACK_REPLANS})：{directive[:120]}")
             _rd_calls0 = get_llm_call_count()
             _rd_tok0 = get_llm_token_usage()
@@ -596,49 +541,6 @@ def run_agent_loop(
                 rt.record_recovery(cls, "kickback_redecompose", _site, outcome="no_plan")
                 return (False, None)
 
-            _kb = parse_kickback_directive(directive)
-            _adherence_issues = kickback_adherence_issues(
-                _new, _kb, failed_run=failed_run,
-            )
-            if _adherence_issues:
-                _say(
-                    "  [Kickback] 重规划未服从纠正指令："
-                    + "；".join(_adherence_issues) + " → 锐化重试一次"
-                )
-                _sharp = sharpen_kickback_directive(directive, _adherence_issues)
-                try:
-                    _retry = redecompose(
-                        _sharp, _rd_reports,
-                        observation=observation,
-                        prior_experience=_experience,
-                        remaining_plan=_remaining,
-                    )  # type: ignore[operator]
-                except Exception as _exc:  # noqa: BLE001
-                    _say(f"  [Kickback] 锐化重试失败（{_exc}），沿用第一版重规划")
-                    _retry = None
-                _picked_retry = False
-                if _retry is not None and _retry.statements:
-                    _retry_issues = kickback_adherence_issues(
-                        _retry, _kb, failed_run=failed_run,
-                    )
-                    if len(_retry_issues) < len(_adherence_issues):
-                        _new = _retry
-                        _adherence_issues = _retry_issues
-                        _picked_retry = True
-                    else:
-                        _say("  [Kickback] 锐化重试未改善服从度，沿用第一版重规划")
-                rt.record_recovery(
-                    cls, "adherence_sharpen", _site,
-                    detail="；".join(_adherence_issues)[:200],
-                    outcome="improved" if _picked_retry else "kept_first",
-                )
-            _promoted = _force_interactive_return_recovery(_new, directive)
-            if _promoted is not _new:
-                rt.record_recovery(
-                    "contract_violation", "interactive_promotion", _site,
-                    outcome="read_promoted_to_navigation",
-                )
-            _new = _promoted
             rt.record_recovery(
                 cls, "kickback_redecompose", _site,
                 detail=directive[:160], outcome="replanned",
@@ -651,10 +553,6 @@ def run_agent_loop(
                 supervisor.end_statement(terminal_outcome)
             rt.replace_program(
                 _new,
-                collect_fn=_collect_fn,
-                subdecompose_fn=subdecompose,
-                expand_fn=expand_foreach,
-                select_fn=select_members,
                 drop_failed_from_log=True,
                 reason=directive,
                 terminal_disposition=(
@@ -667,7 +565,6 @@ def run_agent_loop(
                 "kickback_n": kick_n,
                 "directive": directive,
                 "at_turn": len(context.journal.turns),
-                "adherence_issues": list(_adherence_issues),
                 "program": _new.model_dump(mode="json"),
                 "llm_calls": get_llm_call_count() - _rd_calls0,
                 "token_usage": {"orchestrator.redecompose": {
@@ -698,8 +595,6 @@ def run_agent_loop(
             _budget_mode = _turn_budget_mode(context, max_turns)
             _budget_reconcile = _budget_mode == "reconcile"
             if _budget_mode == "stop":
-                read_state.drain_pending(say=_say)
-                read_state.flush(turn_no=turn_no - 1, say=_say)
                 _say(f"\n达到最大轮数 {max_turns}，agent-loop 停止")
                 return _finish(_orch_result(
                     context, rt.interpreter,
@@ -778,57 +673,54 @@ def run_agent_loop(
 
                 # Statement completed → hand off to the next statement, same frame.
                 assert rt.current is not None
-                _done_name = rt.current.name
-                read_state.drain_pending(say=_say)
-                read_state.flush(turn_no=turn_no, say=_say)
-                _rows: list = []
-                _reads = _read_completed_run_returns(rt.current, observation)
-                _contract = check_return_contract(rt.current, _reads)
+                _done_name = rt.current.goal
+                _outputs = _read_completed_outputs(rt.current, observation)
+                _missing = [
+                    name
+                    for name, spec in rt.current.statement.returns.items()
+                    if spec.required and _outputs.get(name) in (None, "", [], {})
+                ]
                 _recovery_decision = recovery_router.route_statement(
                     _step_outcome,
-                    return_violation=bool(_contract),
+                    return_violation=bool(_missing),
                     can_redecompose=callable(redecompose),
                 )
                 if _recovery_decision.action == "tighten_return":
                     _attempt = rt.next_return_attempt()
-                    _cv_site = str(
-                        getattr(rt.current, "var", "") or getattr(rt.current, "name", "")
-                    )
+                    _cv_site = rt.current.id
                     if _attempt is not None:
                         rt.record_recovery(
                             "contract_violation", "tighten_return", _cv_site,
-                            detail=_contract.describe()[:200],
+                            detail=f"missing outputs: {_missing}",
                             outcome=f"tighten {_attempt}/{MAX_EMPTY_RETURN_RECOVERIES}",
                         )
-                        tightened = _tighten_ui_return_run(
-                            rt.current,
-                            _contract.missing,
-                            _reads,
-                            attempt=_attempt,
-                            violations=_contract.out_of_domain,
+                        contract = contract_for_interact(rt.current, rt.index)
+                        recovery = (
+                            f"\n返回字段恢复尝试 {_attempt}：仅当 {_missing} 都可从当前界面"
+                            "明确读取时才提议完成；否则继续在本 statement 内定位。"
                         )
-                        rt.retry_current(tightened)
-                        new_contract = contract_for_run(tightened, rt.index)
-                        supervisor.reset_for_return_retry(new_contract)
+                        supervisor.reset_for_return_retry(contract.model_copy(update={
+                            "success": contract.success + recovery,
+                        }))
                         _say(
                             "  [Orchestrator] 返回值合同未满足，继续定位"
                             f"（{_attempt}/{MAX_EMPTY_RETURN_RECOVERIES}）："
-                            + _contract.describe()
+                            + "、".join(_missing)
                         )
                         _did_return_recovery = True
                     else:
                         rt.record_recovery(
                             "contract_violation", "tighten_return", _cv_site,
-                            detail=_contract.describe()[:200],
+                            detail=f"missing outputs: {_missing}",
                             outcome="exhausted_honest_fail",
                         )
                         _say(
                             "  [Orchestrator] 返回值合同持续未满足，停止推进："
-                            + _contract.describe()
+                            + "、".join(_missing)
                         )
                         _outcome = StatementOutcome.exhausted(
-                            "返回值合同未满足：" + _contract.describe(),
-                            reads=_reads,
+                            "返回值合同未满足：" + "、".join(_missing),
+                            outputs=_outputs,
                         )
                         _record_statement_outcome(sv_step, _outcome)
                         try:
@@ -850,8 +742,7 @@ def run_agent_loop(
                     break
                 _outcome = _outcome_from_step(
                     sv_step,
-                    reads=_reads,
-                    rows=_rows,
+                    outputs=_outputs,
                 )
                 assert _outcome is not None and _outcome.is_completed
                 _record_statement_outcome(sv_step, _outcome)
@@ -873,28 +764,23 @@ def run_agent_loop(
                 assert rt.current is not None
                 _say(
                     f"  [Orchestrator] 子目标「{_done_name}」完成 → 下一子任务："
-                    f"{rt.current.name}（同一验收帧上决策，不另起 turn）"
+                    f"{rt.current.goal}（同一验收帧上决策，不另起 turn）"
                 )
 
             # The program ended on a hand-off (last actionable statement done → read / finish).
             # Every completed statement already recorded its own terminal event inside the
             # loop above, so no separate program-end verdict is needed here.
             if _orch_reply is not None:
-                read_state.drain_pending(say=_say)
-                # Feasibility Guard query kick-back: the program ended because a data_query failed with a
-                # re-plannable data-source issue (source empty / mismatched with the task). Re-decompose
-                # with that evidence as the directive instead of finishing on the failure.
+                # An executor can report a structural contract/data-source conflict that the
+                # current Program cannot resolve. Route that evidence to Program-level hot
+                # recompile instead of treating it as an action-level rejection.
                 _program_end_decision = recovery_router.route_program_end(
-                    failure_evidence=_immediate_failure,
+                    replan_directive=_immediate_kickback,
                     can_redecompose=callable(redecompose),
                 )
                 if _program_end_decision.action == "kickback":
                     assert _program_end_decision.recovery_class is not None
-                    _directive = (
-                        "上一份计划在 data_query 步失败：" + _immediate_failure
-                        + "\n这说明取数路线不对（数据源为空或与任务口径不一致）。请改用能真正拿到目标数据的"
-                          "路线重新规划，不要重复上面失败的取数方式。"
-                    )
+                    _directive = _immediate_kickback or ""
                     _handled, _r = _perform_replan(
                         _directive,
                         observation,
@@ -904,6 +790,7 @@ def run_agent_loop(
                         return _finish(_orch_result(context, rt.interpreter, _r))
                     if _handled:
                         _immediate_failure = None
+                        _immediate_kickback = None
                         continue
                 return _finish(_orch_result(context, rt.interpreter, _orch_reply))
 
@@ -1011,37 +898,37 @@ def run_agent_loop(
             if _post_grounding_outcome is not None:
                 if _post_grounding_outcome.is_completed:
                     assert rt.current is not None
-                    _reads = _read_completed_run_returns(rt.current, observation)
-                    _contract = check_return_contract(rt.current, _reads)
-                    if _contract:
+                    _outputs = _read_completed_outputs(rt.current, observation)
+                    _missing = [
+                        name
+                        for name, spec in rt.current.statement.returns.items()
+                        if spec.required and _outputs.get(name) in (None, "", [], {})
+                    ]
+                    if _missing:
                         _attempt = rt.next_return_attempt()
                         if _attempt is not None:
-                            tightened = _tighten_ui_return_run(
-                                rt.current,
-                                _contract.missing,
-                                _reads,
-                                attempt=_attempt,
-                                violations=_contract.out_of_domain,
+                            contract = contract_for_interact(rt.current, rt.index)
+                            recovery = (
+                                f"\n返回字段恢复尝试 {_attempt}：仅当 {_missing} 都可从当前界面"
+                                "明确读取时才提议完成。"
                             )
-                            rt.retry_current(tightened)
-                            supervisor.reset_for_return_retry(
-                                contract_for_run(tightened, rt.index)
-                            )
+                            supervisor.reset_for_return_retry(contract.model_copy(update={
+                                "success": contract.success + recovery,
+                            }))
                             _say(
                                 "  [Orchestrator] 同帧重决策完成但返回值合同未满足，"
                                 f"继续定位（{_attempt}/{MAX_EMPTY_RETURN_RECOVERIES}）："
-                                + _contract.describe()
+                                + "、".join(_missing)
                             )
                             continue
                         _post_grounding_outcome = StatementOutcome.exhausted(
-                            "返回值合同未满足：" + _contract.describe(),
-                            reads=_reads,
+                            "返回值合同未满足：" + "、".join(_missing),
+                            outputs=_outputs,
                         )
                     else:
                         _post_grounding_outcome = _outcome_from_step(
                             sv_step,
-                            reads=_reads,
-                            rows=[],
+                            outputs=_outputs,
                         )
                 _record_statement_outcome(sv_step, _post_grounding_outcome)
                 _post_decision = recovery_router.route_statement(

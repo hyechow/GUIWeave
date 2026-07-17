@@ -6,7 +6,7 @@ import time
 from typing import Optional
 
 from llm.structured import get_llm_token_usage
-from gui_agent.core.schemas import StatementContract, PolicyTurn
+from gui_agent.core.schemas import StatementContract
 
 class _Timer:
     """Context manager: time a named section and optionally record token deltas."""
@@ -43,39 +43,11 @@ class _Timer:
             slot["output"] += out - self._tok0[1]
 
 
-def _has_successful_scroll_for(history: list[PolicyTurn], statement_id: str) -> bool:
-    return any(
-        t.supervisor.statement_id == statement_id
-        and t.action_decision
-        and t.action_decision.action
-        and t.action_decision.action.action_type in {"scroll", "drag", "scroll_to_ref"}
-        and t.executed
-        for t in history
-    )
-
-
-def _has_collected(history: list[PolicyTurn], statement_id: str) -> bool:
-    return any(
-        t.supervisor.statement_id == statement_id and t.read_added_content
-        for t in history
-    )
-
-
-def _default_read_instruction(statement: StatementContract) -> str:
-    return (
-        f"提取当前屏幕中与「{statement.name}」相关的所有可见内容，"
-        "保留名称/标题、时间/位置、目标相关数值、状态、类别等字段；如果是列表，逐条提取。"
-    )
-
-
 def _ctx(statement: StatementContract, read_instruction: Optional[str], collection_scope=None) -> dict:
-    allow_read = statement.kind in {"collection", "verification"}
     return {
         "read_instruction": read_instruction,
-        "allow_read": bool(read_instruction and allow_read),
+        "allow_read": bool(read_instruction),
         "statement_id": statement.id,
-        "statement_kind": statement.kind,
-        "completion_strategy": statement.completion_strategy,
         "collection_scope": collection_scope,
     }
 

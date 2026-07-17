@@ -52,10 +52,10 @@ def _group_steps_by_statement(
             steps=steps,
             statement_id=str(ms_meta.get("id") or (first.statement_id if first else "")),
             instance_id=key,
-            statement_kind=ms_meta.get("kind", "") or (first.statement_kind if first else ""),
+            statement_executor=ms_meta.get("executor", "") or (first.statement_executor if first else ""),
             statement_name=ms_meta.get("name", "") or (first.description if first else ""),
             statement_description=ms_meta.get("description", "") or (first.summary if first else ""),
-            success_condition=ms_meta.get("success_condition", ""),
+            statement_success=ms_meta.get("success", ""),
             checklist=ms_lookup.get(key, {}).get("checklist", []) or [],
         )
 
@@ -490,10 +490,10 @@ class RunnerReportBuilder:
             non_ui = turn.get("non_ui") if isinstance(turn.get("non_ui"), dict) else None
             ad = turn.get("action_decision") or {}
             action = ad.get("action") or {}
-            atype = (non_ui.get("kind") if non_ui else action.get("action_type")) or "none"
+            atype = (non_ui.get("executor") if non_ui else action.get("action_type")) or "none"
             x = action.get("x")
             y = action.get("y")
-            desc = (non_ui.get("name") if non_ui else action.get("description")) or ""
+            desc = (non_ui.get("goal") if non_ui else action.get("description")) or ""
             sup = turn.get("supervisor") or {}
             summary = (non_ui.get("summary") if non_ui else sup.get("summary")) or ""
             executed = bool(turn.get("executed", False))
@@ -564,8 +564,8 @@ class RunnerReportBuilder:
                 index=idx,
                 statement_id=sup.get("statement_id", ""),
                 instance_id=str(turn.get("statement_instance_id") or ""),
-                statement_kind=sup.get("statement_kind", ""),
-                instruction=sup.get("instruction", ""),
+                statement_executor=(turn.get("statement") or {}).get("executor", ""),
+                instruction=(sup.get("action_intent") or {}).get("instruction", ""),
                 summary=summary,
                 timings=turn.get("timings", {}),
                 token_usage=turn.get("token_usage", {}),
@@ -592,12 +592,12 @@ class RunnerReportBuilder:
                 "instance_id": key,
                 "name": view.name,
                 "description": view.description,
-                "kind": view.kind,
-                "success_condition": view.success_condition,
+                "executor": view.executor,
+                "success": view.success,
                 "status": view.status,
                 "acceptance": view.acceptance,
                 "checklist": view.checklist,
-                "reads": view.reads,
+                "outputs": view.outputs,
                 "last_summary": view.last_summary,
                 "pre_existing": view.pre_existing,
                 "collection_summary": view.collection_summary,
@@ -641,11 +641,11 @@ class RunnerReportBuilder:
                 "id": page.statement_id,
                 "instance_id": page.instance_id,
                 "name": page.statement_name,
-                "kind": page.statement_kind,
+                "executor": page.statement_executor,
                 "description": page.statement_description,
-                "success_condition": page.success_condition,
+                "success": page.statement_success,
                 "status": ms_state.get("status", ""),
-                "reads": ms_state.get("reads", {}),
+                "outputs": ms_state.get("outputs", {}),
                 "checklist": ms_state.get("checklist", []),
                 "turns": (
                     f"{ms_steps[0].label.split()[-1]}-{ms_steps[-1].label.split()[-1]}"
@@ -696,7 +696,7 @@ class RunnerReportBuilder:
         # Decompose summary: list all statements with names
         ms_parts = []
         for ms in statements_info:
-            ms_parts.append(f"#{ms['id']} {ms['name']}（{ms['kind']}）")
+            ms_parts.append(f"#{ms['id']} {ms['name']}（{ms['executor']}）")
         data.decompose_summary = " → ".join(ms_parts) if ms_parts else ""
         data.stats = {
             "turns": len(all_steps),

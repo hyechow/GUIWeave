@@ -50,15 +50,8 @@ class ContentReader:
 
 
 def build_reader_instruction(original_goal: str, sv_step: SupervisorStep) -> str:
-    """Build the extraction prompt for ContentReader based on statement kind."""
-    instruction = sv_step.read_instruction or original_goal
-    if sv_step.statement_kind != "collection":
-        return instruction
-    return (
-        f"目标：{original_goal}\n"
-        f"采集要求：{instruction}\n"
-        "逐条提取当前屏幕可见记录，每条一行。记录可见范围/边界。"
-    )
+    """Build the extraction prompt declared by Transition."""
+    return sv_step.read_instruction or original_goal
 
 
 def annotate_content_note(
@@ -69,8 +62,6 @@ def annotate_content_note(
     collection_scope: CollectionScope | None,
 ) -> str:
     """Prepend collection metadata to a content note for traceability."""
-    if sv_step.statement_kind != "collection":
-        return note
     metadata = [f"[turn{turn_no} {sv_step.statement_id or '?'}]"]
     if collection_scope:
         metadata.append(

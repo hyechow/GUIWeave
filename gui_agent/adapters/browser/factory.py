@@ -5,11 +5,10 @@ construct the browser session (Chrome over CDP), executor, perception, action
 policy and supervisor. Core orchestration receives the neutral bundle and never
 imports these classes directly. Mirrors ``adapters/iphone/factory.py``.
 
-READ STITCHING
---------------
-Browser collection reuses the neutral stitch accumulator with the whole frame as
-the content band. Scrolling itself remains an ordinary, journalled LLM action;
-the adapter does not probe, retry, or cache scroll actions behind the runtime.
+OBSERVATION MODEL
+-----------------
+The current frame is the complete visual input. Scrolling remains an ordinary,
+journalled LLM action; the adapter holds no hidden cross-frame visual state.
 The status reporter is a translucent HUD floating over the Chrome window (the
 neutral core AgentHUD; macOS-host only), enabled by the --hud flag.
 
@@ -68,21 +67,6 @@ def _build_supervisor(name: str) -> "SupervisorPolicy":
             mutation_control_resolver=active_choice_controls,
         )
     raise ValueError(f"未知监督者 {name!r}，可选：{StatementSupervisorPolicy.name}")
-
-
-# Browser screenshots are full-page content (no device frame / iOS status bar), so
-# the neutral stitch runs with the WHOLE frame as content band and no frame mask.
-_BROWSER_CONTENT_TOP, _BROWSER_CONTENT_BOT = 0.0, 1.0
-
-
-def _make_stitch_accumulator(*args: object, **kwargs: object) -> object:
-    """Neutral core StitchAccumulator with the browser content band (whole frame)."""
-    from gui_agent.core.vision.stitch import StitchAccumulator
-
-    kwargs.setdefault("content_top", _BROWSER_CONTENT_TOP)
-    kwargs.setdefault("content_bot", _BROWSER_CONTENT_BOT)
-    kwargs.setdefault("frame_mask", None)
-    return StitchAccumulator(*args, **kwargs)
 
 
 def _prepare_vision_prompt_png(png_bytes: bytes) -> bytes:
@@ -219,7 +203,6 @@ def build_browser_bundle(
         make_supervisor=_build_supervisor,
         make_status_reporter=lambda enabled: (_make_browser_hud() if enabled else None),
         make_action_visualizer=_make_action_visualizer,
-        make_stitch_accumulator=_make_stitch_accumulator,
         prepare_vision_prompt_png=_prepare_vision_prompt_png,
         default_action_policy="browser_vision",
         default_supervisor="statement",

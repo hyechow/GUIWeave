@@ -144,8 +144,6 @@ def _last_action_result(memory: StatementMemoryView) -> str:
     if memory.recent_steps and "no_effect" in memory.recent_steps[-1].text:
         return "no_effect"
     for fact in reversed(memory.durable_facts):
-        if fact.kind.startswith("effect_satisfied"):
-            return "effective"
         if fact.kind != "action_receipt":
             continue
         response = str(fact.metadata.get("response") or "")
