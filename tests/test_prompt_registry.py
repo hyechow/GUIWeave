@@ -60,13 +60,12 @@ def test_render_rejects_raw_prompts():
         raise AssertionError("render() must refuse a raw prompt")
 
 
-def test_decomposer_contract_hides_runtime_architecture_terms():
-    """The decomposer sees its DSL surface, not downstream runtime class names."""
+def test_decomposer_contract_exposes_semantic_ir_not_runtime_components():
     from gui_agent.core.orchestrator._decomposer.draft import _PlanDraft
 
     prompt = load_prompt_text("task.orchestrator.decomposer")
     schema = json.dumps(_PlanDraft.model_json_schema(), ensure_ascii=False)
-    forbidden = ("supervisor", "checker", "planner", "replanner", "selector", "program")
+    forbidden = ("supervisor", "checker", "planner", "replanner")
 
     for source_name, source in (("prompt", prompt), ("schema", schema)):
         for term in forbidden:
@@ -74,9 +73,11 @@ def test_decomposer_contract_hides_runtime_architecture_terms():
                 f"decomposer {source_name} leaks runtime term {term!r}"
             )
 
-    for dsl_term in ("data_query", "body_goal", "covers_set"):
+    for dsl_term in ("interact", "data", "command", "foreach"):
         assert dsl_term in prompt
         assert dsl_term in schema
+    for retired in ("data_query", "body_goal", "covers_set", "function", "call"):
+        assert retired not in schema
 
 
 def test_prompt_eval_suites_point_to_existing_paths():

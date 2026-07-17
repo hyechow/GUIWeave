@@ -97,11 +97,9 @@ def _observation(**updates) -> Observation:
 def test_transition_preserves_complete_visual_semantic_instruction(monkeypatch) -> None:
     statement = StatementContract(
         id="s1",
-        name="filter attributes",
-        description="",
-        kind="filter",
-        success_condition="Attribute Code=size is applied",
-        target_values={"Attribute Code": "size"},
+        goal="filter attributes",
+        success="Attribute Code=size is applied",
+        required_values={"Attribute Code": "size"},
     )
     policy = _policy(statement)
     decision = _act(
@@ -124,13 +122,11 @@ def test_transition_preserves_complete_visual_semantic_instruction(monkeypatch) 
     assert step.action_intent.expected_result == "the target reflects the requested operation"
 
 
-def test_offscreen_action_is_rejected_without_runtime_rewrite_or_retry(monkeypatch) -> None:
+def test_offscreen_action_gets_one_same_frame_transition_retry(monkeypatch) -> None:
     statement = StatementContract(
         id="s1",
-        name="submit filter",
-        description="",
-        kind="action",
-        success_condition="filter submitted",
+        goal="submit filter",
+        success="filter submitted",
     )
     policy = _policy(statement)
     calls = 0
@@ -150,19 +146,17 @@ def test_offscreen_action_is_rejected_without_runtime_rewrite_or_retry(monkeypat
 
     step = policy._run_single_turn(statement, observation, [])
 
-    assert calls == 1
+    assert calls == 2
     assert step.outcome is not None and step.outcome.phase == "exhausted"
-    assert "supported=['iterate']" in step.outcome.summary
+    assert "does not support operation 'activate'" in step.outcome.summary
     assert policy._last_transition_record["validation_error"]
 
 
-def test_wrong_target_ref_fails_once(monkeypatch) -> None:
+def test_wrong_target_ref_gets_one_same_frame_transition_retry(monkeypatch) -> None:
     statement = StatementContract(
         id="s1",
-        name="open products",
-        description="",
-        kind="navigation",
-        success_condition="Products visible",
+        goal="open products",
+        success="Products visible",
     )
     policy = _policy(statement)
     calls = 0
@@ -184,18 +178,16 @@ def test_wrong_target_ref_fails_once(monkeypatch) -> None:
         [],
     )
 
-    assert calls == 1
+    assert calls == 2
     assert step.outcome is not None and "target_ref" in step.outcome.summary
 
 
 def test_invalid_contract_write_value_fails_without_fuzzy_field_binding(monkeypatch) -> None:
     statement = StatementContract(
         id="s1",
-        name="set status",
-        description="",
-        kind="action",
-        success_condition="Status is Active",
-        target_values={"semantic status": "Active"},
+        goal="set status",
+        success="Status is Active",
+        required_values={"semantic status": "Active"},
     )
     policy = _policy(statement)
     monkeypatch.setattr(
@@ -212,17 +204,15 @@ def test_invalid_contract_write_value_fails_without_fuzzy_field_binding(monkeypa
     step = policy._run_single_turn(statement, _observation(), [])
 
     assert step.outcome is not None
-    assert "allowed=['Active']" in step.outcome.summary
+    assert "outside required_values" in step.outcome.summary
 
 
 def test_adaptive_ui_field_name_is_allowed_when_value_matches_contract(monkeypatch) -> None:
     statement = StatementContract(
         id="s1",
-        name="set status",
-        description="",
-        kind="action",
-        success_condition="Status is Active",
-        target_values={"semantic status": "Active"},
+        goal="set status",
+        success="Status is Active",
+        required_values={"semantic status": "Active"},
     )
     policy = _policy(statement)
     monkeypatch.setattr(
@@ -242,15 +232,13 @@ def test_adaptive_ui_field_name_is_allowed_when_value_matches_contract(monkeypat
     assert step.action_intent.target_control == "Current status"
 
 
-def test_false_complete_fails_once_instead_of_being_replanned(monkeypatch) -> None:
+def test_transition_completion_is_not_reinterpreted_by_a_hidden_persistence_fsm(monkeypatch) -> None:
     statement = StatementContract(
         id="s1",
-        name="save status",
-        description="",
-        kind="action",
-        success_condition="Status is saved",
+        goal="save status",
+        success="Status is saved",
         persistence="explicit_commit",
-        target_values={"Status": "Active"},
+        required_values={"Status": "Active"},
     )
     policy = _policy(statement)
     calls = 0
@@ -264,17 +252,15 @@ def test_false_complete_fails_once_instead_of_being_replanned(monkeypatch) -> No
     step = policy._run_single_turn(statement, _observation(), [])
 
     assert calls == 1
-    assert step.outcome is not None and step.outcome.phase == "exhausted"
-    assert "validation failed" in step.outcome.summary
+    assert step.outcome is not None and step.outcome.phase == "completed"
+    assert step.pre_existing is True
 
 
 def test_terminal_budget_does_not_replace_act_with_a_terminal_decision(monkeypatch) -> None:
     statement = StatementContract(
         id="s1",
-        name="continue editing",
-        description="",
-        kind="action",
-        success_condition="saved",
+        goal="continue editing",
+        success="saved",
     )
     policy = _policy(statement)
     monkeypatch.setattr(policy, "_invoke_statement_transition", lambda *a, **k: _act())
@@ -288,10 +274,8 @@ def test_terminal_budget_does_not_replace_act_with_a_terminal_decision(monkeypat
 def test_valid_completion_uses_runtime_evidence_grade(monkeypatch) -> None:
     statement = StatementContract(
         id="s1",
-        name="reach target page",
-        description="",
-        kind="navigation",
-        success_condition="Target page is visible",
+        goal="reach target page",
+        success="Target page is visible",
     )
     policy = _policy(statement)
     monkeypatch.setattr(policy, "_invoke_statement_transition", lambda *a, **k: _complete())
@@ -299,5 +283,5 @@ def test_valid_completion_uses_runtime_evidence_grade(monkeypatch) -> None:
     step = policy._run_single_turn(statement, _observation(), [])
 
     assert step.outcome is not None and step.outcome.phase == "completed"
-    assert step.outcome.verification == "accepted_unverified"
+    assert step.outcome.verification == "confirmed"
     assert policy._last_transition_record["validation_error"] == ""

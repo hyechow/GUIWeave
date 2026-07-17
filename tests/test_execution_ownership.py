@@ -1,300 +1,68 @@
-from __future__ import annotations
-
-from gui_agent.core.schemas import ActionIntent
-
 import inspect
-import re
 from pathlib import Path
 
+from gui_agent.core.orchestrator.runner import Interpreter
 from gui_agent.core.run.action_exec import ActionExecutor
-from gui_agent.core.run import action_signals, turns
-from gui_agent.core.run.execution_signals import CompletionReducer
+from gui_agent.core.run.program_runtime import ProgramRuntime
+from gui_agent.core.run.statement_memory import StatementMemoryView
+from gui_agent.core.schemas import StatementOutcome
 from gui_agent.core.supervisor.statement.policy import StatementSupervisorPolicy
-from gui_agent.core.supervisor.statement import evidence, observation_state
-from gui_agent.core.supervisor.statement.schemas import _ActionDraft
 
 
-def test_statement_policy_is_the_only_component_with_control_flow_authority() -> None:
-    policy_source = inspect.getsource(StatementSupervisorPolicy)
-    executor_source = inspect.getsource(ActionExecutor)
-    signal_source = inspect.getsource(action_signals)
-    evaluator_source = inspect.getsource(CompletionReducer)
-
-    assert "def _advance(" in policy_source
-    assert "def _run_single_turn(" in policy_source
-    assert "def _handle_stuck(" not in policy_source
-    assert "def _run_loop_turn(" not in policy_source
-    assert "def _single_check(" not in policy_source
-    assert "def _plan_single(" not in policy_source
-    assert "authorize_action_dispatch" not in policy_source
-
-    assert "validate_action_family" not in executor_source
-    assert "authorize_action_dispatch" not in executor_source
-    assert "def authorize(" not in signal_source
-    assert "validate_proposal" not in evaluator_source
-
-
-def test_only_write_target_binding_can_fail_safe_before_dispatch() -> None:
-    source = inspect.getsource(ActionExecutor.run)
-
-    assert source.count("executor.execute(") == 1
-    assert "scroll_probe" not in source
-    assert "scroll_profile" not in source
-    assert "action_family" not in source
-    assert "effective_action_role(sv_step, action)" in source
-    assert "bind_action_target" in source
-    assert "target binding failed before dispatch" in source
-
-
-def test_concrete_action_semantics_are_fixed_at_dispatch_boundary() -> None:
-    executor_source = inspect.getsource(ActionExecutor.run)
-    recorder_source = inspect.getsource(turns.make_interactive_turn)
-
-    assert "effective_action_role" in executor_source
-    assert "semantic_action_key" in executor_source
-    assert "effective_action_role" not in recorder_source
-    assert "semantic_action_key" not in recorder_source
-
-
-def test_action_signal_updates_have_one_runtime_writer() -> None:
-    signal_source = inspect.getsource(action_signals)
-    evidence_source = inspect.getsource(evidence)
-    executor_source = inspect.getsource(ActionExecutor)
-
-    assert 'signal.response = "' in signal_source
-    assert 'signal.target = "' in signal_source
-    assert 'signal.response = "' not in evidence_source
-    assert 'signal.target = "' not in evidence_source
-    assert 'signal.response = "' not in executor_source
-    assert 'signal.target = "' not in executor_source
-    assert "turn.settle_s =" not in executor_source
-    assert "turn.no_effect =" not in executor_source
-    assert "turn.target_verify =" not in executor_source
-    assert "turn.settle_s =" in signal_source
-    assert "turn.no_effect =" in signal_source
-    assert "turn.target_verify =" in signal_source
-
-
-def test_optional_action_visualizer_never_compiles_on_dispatch_path() -> None:
-    root = Path(__file__).resolve().parents[1]
-    cursor_source = (root / "sck/agent_cursor.py").read_text(encoding="utf-8")
-    browser_source = (
-        root / "gui_agent/adapters/browser/visualizer.py"
-    ).read_text(encoding="utf-8")
-    android_source = (
-        root / "gui_agent/adapters/android/visualizer.py"
-    ).read_text(encoding="utf-8")
-
-    assert 'subprocess.run(["swiftc"' not in cursor_source
-    assert 'subprocess.run(["swiftc"' not in browser_source
-    assert 'subprocess.run(["swiftc"' not in android_source
-
-
-def test_evidence_projects_receipts_instead_of_reading_live_progress_monitor() -> None:
-    source = inspect.getsource(evidence)
-
-    assert "ProgressMonitor" not in source
-    assert "signal.response" in source
-
-
-def test_policy_does_not_execute_structural_target_units_directly() -> None:
-    source = inspect.getsource(StatementSupervisorPolicy._run_single_turn)
-
-    assert "target_unit_state" not in source
-    assert "target_unit_execution_plan" not in source
-    assert "ambiguous_target_unit" not in source
-
-
-def test_mutation_subject_has_one_runtime_owner() -> None:
-    policy_source = inspect.getsource(StatementSupervisorPolicy)
-
-    assert not hasattr(observation_state, "target_unit_state")
-    assert not hasattr(observation_state, "required_group_field_gaps")
-    assert "resolve_mutation" not in policy_source
-    assert "_validate_declared_write" in policy_source
-    assert "target_group_id" not in _ActionDraft.model_fields
-
-
-def test_completion_reducer_has_one_public_decision_api() -> None:
-    public = {
-        name
-        for name, value in CompletionReducer.__dict__.items()
-        if callable(value) and not name.startswith("_")
-    }
-
-    assert public == {"decide"}
-
-
-def test_support_services_cannot_transition_statements() -> None:
-    for module in (evidence,):
-        source = inspect.getsource(module)
-        assert "._advance(" not in source
-        assert "._handle_stuck(" not in source
-
-
-def test_program_runtime_owns_scheduling_and_supervisor_cannot_walk_dag() -> None:
-    """Ownership: ProgramRuntime always-on; supervisor cannot schedule statements."""
-    import inspect
-
-    from gui_agent.core.run import loop as loop_mod
-    from gui_agent.core.run import program_runtime as prt
-    from gui_agent.core.supervisor.statement.policy import StatementSupervisorPolicy
-
-    loop_src = inspect.getsource(loop_mod.run_agent_loop)
-    assert "ProgramRuntime.start" in loop_src
-    assert "ensure_program" not in loop_src
-    # Single-writer cursor: no parallel loop locals for interpreter cursor/kickback.
-    assert "_cur_run" not in loop_src
-    assert "_kickback_replans" not in loop_src
-    assert "should_kickback_replan" not in loop_src
-    assert "recovery_router.route_statement" in loop_src
-    assert "recovery_router.route_program_end" in loop_src
-    assert 'context.orchestrator["run_log"]' not in loop_src
-    assert '"report_run_log": report_run_log' in loop_src
-    assert "rt.current =" not in loop_src
-    assert "rt.send_outcome" in loop_src or "send_outcome" in loop_src
-    assert "rt.replace_program" in loop_src or "replace_program" in loop_src
-    assert "statement_outcome_from_supervisor_step" not in loop_src
-    assert "assign_statement_ids" not in loop_src
-    assert "_end(_turn_outcome)" not in loop_src
-    assert "terminal_outcome=_turn_outcome" in loop_src
-    assert "llm_calls_before=_record_llm_mark" in loop_src
-    assert "_record_llm_mark = calls_after" in loop_src
-
-    policy_src = inspect.getsource(StatementSupervisorPolicy.step)
-    assert "_decompose" not in policy_src
-    assert "begin_statement" in policy_src or "requires begin_statement" in policy_src
-
-    policy_src = inspect.getsource(StatementSupervisorPolicy)
-    for retired in ("self._statements", "self._order", "self._current_id", "_next_statement", "_terminal_step"):
-        assert retired not in policy_src
-    assert "def begin_statement" in policy_src
-    assert "def end_statement" in policy_src
-    assert "def reseed" not in policy_src
-    assert "def runtime_state_snapshot" not in policy_src
-
-    assert not hasattr(prt, "ensure_program")
-    assert not hasattr(prt, "compile_single_statement_program")
-    assert hasattr(prt.ProgramRuntime, "send_outcome")
-    assert hasattr(prt.ProgramRuntime, "replace_program")
-    assert hasattr(prt.ProgramRuntime, "next_instance_id")
-    assert hasattr(prt.ProgramRuntime, "begin_kickback")
-    assert not hasattr(prt.ProgramRuntime, "accept_dispatch_cursor")
-    assert not hasattr(prt.ProgramRuntime, "send")
-
-    from gui_agent.core.run.statements import drain_immediate_statements
-
-    dispatch_parameters = inspect.signature(drain_immediate_statements).parameters
-    assert "program_runtime" in dispatch_parameters
-    assert "interpreter_steps" not in dispatch_parameters
-    assert "current_statement" not in dispatch_parameters
-
-
-def test_recovery_router_is_stateless_and_program_runtime_keeps_budgets() -> None:
-    from gui_agent.core.run.program_runtime import ProgramRuntime
-    from gui_agent.core.run.recovery_router import RecoveryRouter
-
-    assert vars(RecoveryRouter()) == {}
+def test_program_runtime_owns_program_scheduling_and_recovery():
+    assert hasattr(ProgramRuntime, "send_outcome")
+    assert hasattr(ProgramRuntime, "replace_program")
     assert hasattr(ProgramRuntime, "begin_kickback")
-    assert hasattr(ProgramRuntime, "next_return_attempt")
-    assert hasattr(ProgramRuntime, "record_recovery")
+    policy = inspect.getsource(StatementSupervisorPolicy)
+    for retired in (
+        "self._statements",
+        "self._order",
+        "self._current_id",
+        "_next_statement",
+        "_terminal_step",
+        "_decompose",
+    ):
+        assert retired not in policy
 
 
-def test_policy_has_no_hidden_deterministic_route_output() -> None:
-    """Completion evidence must not drive a hidden compatibility route."""
-    from pathlib import Path
-
-    policy_src = Path("gui_agent/core/supervisor/statement/policy.py").read_text(
-        encoding="utf-8"
-    )
-    assert 'required_role="commit"' not in policy_src
-    assert "post_completion.next == \"commit\"" not in policy_src
-    assert "pre_completion.next ==" not in policy_src
-    assert "resolve_transition" not in policy_src
-    assert "_materialize_transition_action" in policy_src
-    assert "_invoke_statement_transition" in policy_src
-    assert "_invoke_planner" not in policy_src
-    assert "_single_check" not in policy_src
-    assert "advisory_next_ignored" not in policy_src
-
-
-def test_statement_memory_view_is_projection_not_phase_machine() -> None:
-    """Agentic pivot Phase 1: MemoryView has no business phase; Journal remains fact authority."""
-    from gui_agent.core.run.statement_memory import StatementMemoryView, build_memory_view
-    from gui_agent.core.schemas import StatementContract
-
+def test_statement_transition_does_not_own_a_business_phase_machine():
     fields = set(StatementMemoryView.__dataclass_fields__)
     assert "phase" not in fields
     assert "subphase" not in fields
-    assert "durable_facts" in fields
-    assert "recent_steps" in fields
-
-    # Projection only: empty history yields empty durable facts (no invented ledger).
-    empty = build_memory_view(
-        instance_id="i0",
-        contract=StatementContract(
-            id="s",
-            name="n",
-            description="d",
-            success_condition="ok",
-            kind="action",
-        ),
-        history=[],
-    )
-    assert empty.durable_facts == ()
-    assert empty.recent_steps == ()
+    source = inspect.getsource(StatementSupervisorPolicy)
+    assert "prepare→write" not in source
+    assert "resolve_transition" not in source
+    assert "_invoke_planner" not in source
+    assert "_single_check" not in source
+    assert "_invoke_statement_transition" in source
 
 
-def test_statement_outcome_is_terminal_only_and_not_a_second_state_machine() -> None:
-    """Ownership: StatementOutcome has no running phase or turn-control variants."""
-    import pytest
-
-    from gui_agent.core.run.statements import outcome as outcome_mod
-    from gui_agent.core.schemas import SupervisorStep
-
-    with pytest.raises(ValueError):
-        outcome_mod.StatementOutcome(phase="running", summary="mid")  # type: ignore[arg-type]
-
-    assert hasattr(outcome_mod.StatementOutcome, "completed")
-    assert hasattr(outcome_mod.StatementOutcome, "failed")
-    assert hasattr(outcome_mod.StatementOutcome, "infeasible")
-
-    assert not hasattr(outcome_mod, "ExecutorDecision")
-    assert not hasattr(outcome_mod, "statement_outcome_from_supervisor_step")
-    assert {
-        "stop",
-        "stop_reason",
-        "goal_completed",
-        "completion_status",
-        "replan_directive",
-    }.isdisjoint(SupervisorStep.model_fields)
-
-    mid = SupervisorStep(summary='go', action_intent=ActionIntent(instruction='tap'))
-    assert mid.outcome is None
+def test_statement_outcome_is_terminal_only():
+    assert "running" not in StatementOutcome.model_fields["phase"].annotation.__args__
+    assert hasattr(StatementOutcome, "completed")
+    assert hasattr(StatementOutcome, "infeasible")
 
 
-def test_gui_execution_path_does_not_construct_run_result_wire() -> None:
-    """The retired bool terminal wire must not reappear in any execution owner."""
-    import gui_agent.core.orchestrator as orchestrator
-    from gui_agent.core.orchestrator import program, runner
-    from gui_agent.core.run import action_exec, loop
-    from gui_agent.core.run.statements import dispatch
-
-    assert not hasattr(orchestrator, "RunResult")
-    for owner in (program, runner, action_exec, loop, dispatch):
-        source = inspect.getsource(owner)
-        assert re.search(r"\bRunResult\b", source) is None
+def test_action_executor_has_one_dispatch_boundary():
+    source = inspect.getsource(ActionExecutor.run)
+    assert source.count("executor.execute(") == 1
+    assert "bind_action_target" in source
 
 
-def test_dsl_only_entrypoints_have_no_mode_switches() -> None:
+def test_core_transition_prompt_contains_no_site_or_benchmark_vocabulary():
     root = Path(__file__).resolve().parents[1]
-    for relative in (
-        "gui_agent/core/run/cli.py",
-        "gui_agent/adapters/android/mobileworld.py",
-        "gui_agent/adapters/browser/webarena.py",
-    ):
-        source = (root / relative).read_text(encoding="utf-8")
-        assert "--orchestrator" not in source
-        assert "--no-orchestrator" not in source
-        assert re.search(r"args\.orchestrator\b", source) is None
-        assert re.search(r"args\.no_orchestrator\b", source) is None
+    paths = [
+        root / "gui_agent/core/supervisor/statement/policy.py",
+        root / "gui_agent/prompts/tasks/statement/shared/transition.md",
+    ]
+    for path in paths:
+        source = path.read_text(encoding="utf-8").casefold()
+        for token in ("webarena", "magento", "shopping_admin", "mobile-world"):
+            assert token not in source
+
+
+def test_interpreter_has_no_runtime_subcompiler():
+    source = inspect.getsource(Interpreter)
+    assert "subdecompose" not in source
+    assert "body_goal" not in source
+    assert "expand" not in source

@@ -35,10 +35,8 @@ def _decision() -> _StatementTransitionResult:
 def test_transition_infeasible_is_not_reclassified_by_inventory_heuristics(monkeypatch) -> None:
     statement = StatementContract(
         id="m1",
-        name="set rating",
-        description="",
-        success_condition="Rating<=3 is applied",
-        kind="filter",
+        goal="set rating",
+        success="Rating<=3 is applied",
     )
     policy = StatementSupervisorPolicy()
     policy.begin_statement(statement, instance_id="i1")

@@ -20,10 +20,8 @@ def _statement() -> StatementContract:
     return StatementContract.model_validate(
         {
             "id": "m3",
-            "name": "在 Product 列筛选框输入 'Olivia zip jacket'",
-            "description": "d",
-            "success_condition": "Product 框内容为 'Olivia zip jacket'",
-            "kind": "action",
+            "goal": "在 Product 列筛选框输入 'Olivia zip jacket'",
+            "success": "Product 框内容为 'Olivia zip jacket'",
         }
     )
 
@@ -96,10 +94,8 @@ def test_transition_preserves_atomic_execution_contract(monkeypatch):
     policy = StatementSupervisorPolicy()
     statement = StatementContract(
         id="open-products",
-        name="enter products list",
-        description="",
-        success_condition="products list is visible",
-        kind="navigation",
+        goal="enter products list",
+        success="products list is visible",
     )
     policy.begin_statement(statement, instance_id="test:transition")
     monkeypatch.setattr(statement_policy, "is_loading_frame", lambda _observation: False)

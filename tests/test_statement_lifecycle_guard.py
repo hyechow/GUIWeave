@@ -1,37 +1,36 @@
-"""Statement lifecycle guard + kickback end_statement (Issue 7)."""
-from gui_agent.core.orchestrator.program import Run
-from gui_agent.core.run.interactive import contract_for_run
+import pytest
+
+from gui_agent.core.orchestrator import Interact
+from gui_agent.core.orchestrator.runner import StatementInvocation
+from gui_agent.core.run.interactive import contract_for_interact
 from gui_agent.core.supervisor.statement.policy import StatementSupervisorPolicy
 
 
-def _contract(sid="s1"):
-    return contract_for_run(Run(statement_id=sid, name="x", kind="action"), 0)
+def _contract(sid="s1", goal="do one thing"):
+    return contract_for_interact(
+        StatementInvocation(
+            statement=Interact(
+                id=sid,
+                goal=goal,
+                success="the requested thing is done",
+            )
+        ),
+        0,
+    )
 
 
-def test_begin_statement_twice_raises():
-    p = StatementSupervisorPolicy()
-    p.begin_statement(_contract("s1"), instance_id="i1")
-    try:
-        import pytest
-        with pytest.raises(RuntimeError, match="already active"):
-            p.begin_statement(_contract("s2"), instance_id="i2")
-    finally:
-        p.end_statement()
+def test_begin_statement_twice_is_rejected_until_end():
+    policy = StatementSupervisorPolicy()
+    policy.begin_statement(_contract("s1"), instance_id="i1:s1")
+    with pytest.raises(RuntimeError, match="active statement"):
+        policy.begin_statement(_contract("s2"), instance_id="i2:s2")
+    policy.end_statement()
+    policy.begin_statement(_contract("s2"), instance_id="i2:s2")
+    assert policy._statement_rt.instance_id == "i2:s2"
 
 
-def test_end_then_begin_succeeds():
-    p = StatementSupervisorPolicy()
-    p.begin_statement(_contract("s1"), instance_id="i1")
-    p.end_statement()
-    p.begin_statement(_contract("s2"), instance_id="i2")  # no raise
-    assert p._statement_rt.instance_id == "i2"
-
-
-def test_reset_for_return_retry_does_not_trip_guard():
-    """reset_for_return_retry reuses the live runtime (does not call begin_statement), so the
-    guard must not reject it."""
-    p = StatementSupervisorPolicy()
-    p.begin_statement(_contract("s1"), instance_id="i1")
-    p.reset_for_return_retry(_contract("s1"))  # tightened, same instance
-    assert p._statement_rt.instance_id == "i1"
-    p.end_statement()
+def test_return_retry_reuses_the_same_statement_instance():
+    policy = StatementSupervisorPolicy()
+    policy.begin_statement(_contract(), instance_id="i1:s1")
+    policy.reset_for_return_retry(_contract(goal="continue reading output"))
+    assert policy._statement_rt.instance_id == "i1:s1"

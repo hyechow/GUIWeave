@@ -304,7 +304,6 @@ def test_target_directed_iterate_scroll_dispatches_exactly_once(tmp_path):
         ),
         "statement_id": "m-acquire",
         "execution_scope": "row:42",
-        "completion_strategy": "visible_once",
     })
     executor = _Executor()
     result = ActionExecutor().run(

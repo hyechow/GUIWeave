@@ -1,0 +1,100 @@
+from gui_agent.core.orchestrator import Data, OutputSpec
+from gui_agent.core.orchestrator.runner import StatementInvocation
+from gui_agent.core.run.statements import data as module
+from gui_agent.core.run.statements.data import (
+    DataPlan,
+    DataRef,
+    EmitOp,
+    ReadObservationOp,
+    SqlOp,
+    execute_data_statement,
+)
+from gui_agent.core.schemas import Observation
+
+
+def _invocation(returns):
+    return StatementInvocation(
+        statement=Data(
+            id="derive",
+            goal="derive outputs from current runtime data",
+            returns=returns,
+        )
+    )
+
+
+def test_data_executor_reads_current_observation_and_emits_declared_outputs(monkeypatch):
+    plan = DataPlan(
+        operations=[
+            ReadObservationOp(kind="read_observation", name="location", source="url"),
+            EmitOp(kind="emit", values={"url": DataRef(var="location")}),
+        ]
+    )
+    monkeypatch.setattr(module, "_plan", lambda *_args, **_kwargs: plan)
+    outcome = execute_data_statement(
+        _invocation({"url": OutputSpec(type="url")}),
+        observation=Observation(
+            png_bytes=b"png",
+            source="browser",
+            url="https://example.test/current",
+        ),
+    )
+
+    assert outcome.is_completed
+    assert outcome.outputs == {"url": "https://example.test/current"}
+    assert outcome.evidence == ["read_observation:url->location"]
+
+
+def test_data_executor_can_query_actual_table_snapshot(monkeypatch):
+    plan = DataPlan(
+        operations=[
+            ReadObservationOp(kind="read_observation", name="grid", source="tables"),
+            SqlOp(
+                kind="sql",
+                name="answer",
+                source="grid",
+                sql="SELECT COUNT(*) AS count FROM data",
+                returns=["count"],
+            ),
+            EmitOp(
+                kind="emit",
+                values={"count": DataRef(var="answer", path=["count"])},
+            ),
+        ]
+    )
+    monkeypatch.setattr(module, "_plan", lambda *_args, **_kwargs: plan)
+    outcome = execute_data_statement(
+        _invocation({"count": OutputSpec(type="number")}),
+        observation=Observation(
+            png_bytes=b"png",
+            source="browser",
+            tables=[{"caption": "items", "rows": [{"id": 1}, {"id": 2}]}],
+        ),
+    )
+
+    assert outcome.outputs == {"count": 2}
+
+
+def test_data_executor_has_exactly_one_plan_repair(monkeypatch):
+    calls = []
+
+    def bad_plan(*_args, **kwargs):
+        calls.append(kwargs.get("previous_error", ""))
+        return DataPlan(
+            operations=[
+                EmitOp(
+                    kind="emit",
+                    values={"value": DataRef(var="missing")},
+                )
+            ]
+        )
+
+    monkeypatch.setattr(module, "_plan", bad_plan)
+    outcome = execute_data_statement(
+        _invocation({"value": OutputSpec()}),
+        observation=None,
+    )
+
+    assert outcome.phase == "exhausted"
+    assert len(calls) == 2
+    assert calls[0] == ""
+    assert "data ref 未定义" in calls[1]

@@ -19,7 +19,7 @@ from gui_agent.core.schemas import (
 
 
 def _step(**updates) -> SupervisorStep:
-    step = SupervisorStep(action_intent=ActionIntent(instruction='set Amount to 42', role='write', family='input', target_control='Amount', target_value='42'), summary='write the declared field', statement_id='m1', execution_scope='record:1', statement_kind='action')
+    step = SupervisorStep(action_intent=ActionIntent(instruction='set Amount to 42', role='write', family='input', target_control='Amount', target_value='42'), summary='write the declared field', statement_id='m1', execution_scope='record:1')
     intent_updates = {
         {
             "atomic_role": "role",
@@ -215,7 +215,6 @@ def test_native_select_binds_via_target_option_despite_a_bad_label() -> None:
         description="选择下拉选项 Configurable Product",
     ))
     step = _step(
-        statement_kind="filter",
         action_family="select",
         target_control="Type",
         target_value="Configurable Product",
@@ -270,7 +269,6 @@ def test_activate_point_on_a_different_control_is_contradicted() -> None:
         summary="open row",
         statement_id="s3",
         execution_scope="i3:s3/statement",
-        statement_kind="navigation",
     )
     decision = BrowserActionDecision(action=BrowserAction(
         action_type="tap",
@@ -316,7 +314,6 @@ def test_exact_semantic_link_ref_becomes_bound_navigation() -> None:
         summary="open owner",
         statement_id="s8",
         execution_scope="i7:s8/statement",
-        statement_kind="navigation",
     )
     policy = BrowserActionPolicy()
 
@@ -498,7 +495,6 @@ def test_contradicted_activation_is_recorded_without_dispatch(tmp_path) -> None:
         )),
         statement_id="s3",
         execution_scope="i3:s3/statement",
-        statement_kind="navigation",
     )
     observation = Observation(
         png_bytes=b"frame",

@@ -58,7 +58,7 @@ def test_immediate_outcome_event_strips_raw_observation_bytes_before_persist():
     outcome = StatementOutcome.completed(
         "read 1 row",
         verification="confirmed",
-        reads={"match_count": "1"},
+        outputs={"match_count": 1},
         observation=Observation(png_bytes=png, source="browser"),
         observation_url="/tmp/collect_grid.png",
     )
@@ -67,8 +67,8 @@ def test_immediate_outcome_event_strips_raw_observation_bytes_before_persist():
         summary="read",
         statement_id="s1",
         observation_source="browser",
-        kind="data_query",
-        name="query",
+        executor="data",
+        goal="query",
         observation_url="/tmp/collect_grid.png",
     )
     event = StatementOutcomeEvent(
@@ -77,7 +77,6 @@ def test_immediate_outcome_event_strips_raw_observation_bytes_before_persist():
         observation_url="/tmp/collect_grid.png",
         statement_instance_id="imm-0:s1",
         statement_id="s1",
-        statement_kind="collection",
         outcome=outcome,
     )
     assert turn.supervisor.outcome is None
@@ -197,19 +196,17 @@ def test_statement_reducer_folds_outcome_and_checklist():
             "after_turn": 0,
             "statement_instance_id": "i1:m1",
             "statement_id": "m1",
-            "statement_kind": "navigation",
             "statement": {
                 "id": "m1",
-                "name": "打开页面",
-                "description": "打开页面",
-                "kind": "navigation",
-                "success_condition": "页面已打开",
+                "executor": "interact",
+                "goal": "打开页面",
+                "success": "页面已打开",
             },
             "outcome": {
                 "phase": "completed",
                 "summary": "完成",
                 "verification": "confirmed",
-                "reads": {"x": "1"},
+                "outputs": {"x": "1"},
             },
             "pre_existing": True,
         }
@@ -219,7 +216,7 @@ def test_statement_reducer_folds_outcome_and_checklist():
     view = views[0]
     assert view.statement_id == "m1"
     assert view.status == "done"
-    assert view.reads == {"x": "1"}
+    assert view.outputs == {"x": "1"}
     assert view.pre_existing is True
     assert view.checklist
     assert view.checklist[0]["status"] == "done"

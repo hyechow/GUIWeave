@@ -22,15 +22,6 @@ def test_sync_turn_metadata_records_models_statements_and_task_type(monkeypatch)
     ctx = _context()
     supervisor = SimpleNamespace(
         task_type="analysis",
-        _statements={
-            "m1": SimpleNamespace(
-                id="m1",
-                name="打开订单",
-                description="进入订单列表",
-                kind="navigation",
-                success_condition="显示订单列表",
-            )
-        },
     )
     monkeypatch.setattr(
         turns,

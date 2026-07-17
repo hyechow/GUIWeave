@@ -7,7 +7,7 @@ from gui_agent.adapters.browser.webarena import (
     _eval_compat_probe_urls_for_task,
     _finalize_response,
     _guess_webarena_task_type,
-    _preflight_failure_response,
+    _compile_failure_response,
     _run_official_eval,
     _synthesize_response,
     _official_eval_summary,
@@ -404,19 +404,19 @@ def test_multi_key_rows_are_left_as_objects():
     assert resp.retrieved_data == rows
 
 
-def test_preflight_failure_response_is_deterministic_error():
-    resp = _preflight_failure_response(
+def test_compile_failure_response_is_deterministic_error():
+    resp = _compile_failure_response(
         "Tell me the top search terms",
         _result(
-            summary="orchestrator preflight failed: ROUTER_ENTITY_DROPPED",
-            output="orchestrator preflight failed: ROUTER_ENTITY_DROPPED",
+            summary="orchestrator compile failed: REF_NOT_IN_SCOPE",
+            output="orchestrator compile failed: REF_NOT_IN_SCOPE",
         ),
     )
 
     assert resp.task_type == "RETRIEVE"
     assert resp.status == "DATA_VALIDATION_ERROR"
     assert resp.retrieved_data is None
-    assert "ROUTER_ENTITY_DROPPED" in (resp.error_details or "")
+    assert "REF_NOT_IN_SCOPE" in (resp.error_details or "")
 
 
 def test_pre_loop_page_drift_warns(capsys):

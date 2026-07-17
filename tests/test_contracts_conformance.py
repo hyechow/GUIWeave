@@ -258,7 +258,6 @@ def test_build_platform_returns_iphone_bundle():
         "make_supervisor",
         "make_status_reporter",
         "make_action_visualizer",
-        "make_stitch_accumulator",
     ):
         assert callable(getattr(bundle, attr)), attr
     # iphone has no action visualizer yet (agent_cursor wiring is a follow-up).
@@ -346,7 +345,6 @@ def test_build_platform_returns_browser_bundle():
         "make_supervisor",
         "make_status_reporter",
         "make_action_visualizer",
-        "make_stitch_accumulator",
     ):
         assert callable(getattr(bundle, attr)), attr
     # HUD is created only when enabled; disabled -> None. (Enabling spawns a real
@@ -357,19 +355,6 @@ def test_build_platform_returns_browser_bundle():
     visualizer = bundle.make_action_visualizer(None)
     assert visualizer is not None
     assert isinstance(visualizer, ActionVisualizer)
-
-
-def test_browser_read_stitching_is_implemented():
-    # Stitching observes frames produced by explicit, journalled scroll actions.
-    from gui_agent.core.runtime.factory import build_platform
-    from gui_agent.core.vision.stitch import StitchAccumulator
-
-    bundle = build_platform("browser")
-    acc = bundle.make_stitch_accumulator(overlap_px=150)
-    assert isinstance(acc, StitchAccumulator)
-    # browser uses the whole frame as content (no iOS status bar to crop), no mask
-    assert acc._content_top == 0.0 and acc._content_bot == 1.0 and acc._frame_mask is None
-
 
 def test_core_factory_stays_leaf_without_browser_adapter():
     # Importing the neutral dispatcher must pull in NEITHER any adapter NOR
@@ -452,7 +437,6 @@ def test_build_platform_returns_android_bundle():
         "make_supervisor",
         "make_status_reporter",
         "make_action_visualizer",
-        "make_stitch_accumulator",
     ):
         assert callable(getattr(bundle, attr)), attr
     # HUD only when enabled (passing False must NOT spawn the tkinter subprocess).
@@ -469,19 +453,6 @@ def test_android_visualizer_conforms():
     from gui_agent.adapters.android.visualizer import AndroidActionVisualizer
 
     assert isinstance(_blank(AndroidActionVisualizer), ActionVisualizer)
-
-
-def test_android_read_stitching_is_an_explicit_stub():
-    # Android does not support stitched reads yet. It must raise a
-    # clear NotImplementedError rather than silently returning bad objects.
-    import pytest
-
-    from gui_agent.core.runtime.factory import build_platform
-
-    bundle = build_platform("android")
-    with pytest.raises(NotImplementedError):
-        bundle.make_stitch_accumulator()
-
 
 def test_core_factory_stays_leaf_without_android_adapter():
     # Importing the neutral dispatcher must pull in NEITHER any adapter NOR

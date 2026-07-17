@@ -6,7 +6,6 @@ import inspect
 
 from gui_agent.core.self_learning.progressive import ProgressiveKnowledge
 from gui_agent.core.supervisor.statement import llm_runtime
-from gui_agent.core.supervisor.statement.execution_scope import page_known
 
 
 def test_selector_when_matches_statement_signals() -> None:
@@ -36,16 +35,3 @@ def test_transition_bridge_has_no_selector_llm_or_cache_route() -> None:
     assert "_select_sections" not in source
     assert "_selector_cache" not in source
     assert "match_signals" in source
-
-
-def test_unknown_page_markers_are_substring_matched() -> None:
-    for variant in [
-        "无法识别当前页面",
-        "未知页面（用户中心？）",
-        "unknown page",
-        "页面不确定",
-        "Unidentified view",
-    ]:
-        assert page_known(variant) is False, variant
-    for known in ["订单列表页", "个人中心", "WeChat 聊天列表"]:
-        assert page_known(known) is True, known

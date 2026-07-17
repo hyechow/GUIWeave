@@ -28,7 +28,7 @@ def test_per_item_verdicts_set_independent_status_and_evidence():
         ],
     }
     cmap = fold_checklist_from_verdict(
-        success_condition=SUCCESS, fallback="m1", verdict=verdict,
+        success=SUCCESS, fallback="m1", verdict=verdict,
     )
     items = _items(cmap)
     assert items["已进入评论页"].status == "done"
@@ -42,12 +42,12 @@ def test_per_item_verdicts_set_independent_status_and_evidence():
 def test_done_status_is_sticky_across_turns():
     met = {"status": "in_progress", "reason": "", "item_verdicts": [{"index": 1, "met": True, "evidence": "ok"}]}
     cmap = fold_checklist_from_verdict(
-        success_condition="只有一项", fallback="m1", verdict=met,
+        success="只有一项", fallback="m1", verdict=met,
     )
     assert _items(cmap)["只有一项"].status == "done"
     unmet = {"status": "in_progress", "reason": "", "item_verdicts": [{"index": 1, "met": False, "evidence": "x"}]}
     fold_checklist_from_verdict(
-        success_condition="只有一项", fallback="m1", verdict=unmet, items=cmap,
+        success="只有一项", fallback="m1", verdict=unmet, items=cmap,
     )
     assert _items(cmap)["只有一项"].status == "done"
 
@@ -61,7 +61,7 @@ def test_missing_evidence_kept_at_true_status_not_forced_done():
         "item_verdicts": [{"index": 1, "met": True, "evidence": "ok"}],
     }
     cmap = fold_checklist_from_verdict(
-        success_condition="只有一项", fallback="m1", verdict=verdict,
+        success="只有一项", fallback="m1", verdict=verdict,
     )
     items = _items(cmap)
     assert items["只有一项"].status == "done"
@@ -77,7 +77,7 @@ def test_falls_back_to_shared_verdict_without_item_verdicts():
         "missing_evidence": [],
     }
     cmap = fold_checklist_from_verdict(
-        success_condition="一项A；一项B", fallback="m1", verdict=verdict,
+        success="一项A；一项B", fallback="m1", verdict=verdict,
     )
     items = _items(cmap)
     assert items["一项A"].status == "done"

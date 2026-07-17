@@ -8,15 +8,15 @@ def _turn(
     instance_id,
     statement_id,
     outcome_phase=None,
-    reads=None,
+    outputs=None,
     summary="s",
     transition=None,
 ):
     statement = {
         "id": statement_id,
-        "name": f"stmt {statement_id}",
-        "kind": "action",
-        "success_condition": f"done {statement_id}",
+        "executor": "interact",
+        "goal": f"stmt {statement_id}",
+        "success": f"done {statement_id}",
     }
     if outcome_phase:
         return {
@@ -24,12 +24,11 @@ def _turn(
             "after_turn": max(0, index - 1),
             "statement_instance_id": instance_id,
             "statement_id": statement_id,
-            "statement_kind": "action",
             "statement": statement,
             "outcome": {
                 "phase": outcome_phase,
                 "summary": summary,
-                "reads": reads or {},
+                "outputs": outputs or {},
             },
             **({"transition": transition} if transition else {}),
         }
@@ -57,17 +56,17 @@ def test_two_invocations_of_same_statement_get_distinct_views():
     assert {v.statement_id for v in views} == {"s1"}
 
 
-def test_terminal_turn_reads_stay_isolated_by_instance_id():
+def test_terminal_outputs_stay_isolated_by_instance_id():
     turns = [
         _turn(1, instance_id="i1:s1", statement_id="s1",
-              outcome_phase="completed", reads={"rating": "5"}),
+              outcome_phase="completed", outputs={"rating": 5}),
         _turn(2, instance_id="i2:s1", statement_id="s1",
-              outcome_phase="completed", reads={"rating": "3"}),
+              outcome_phase="completed", outputs={"rating": 3}),
     ]
     views = StatementReportReducer().reduce(events=turns)
     by_inst = {v.instance_id: v for v in views}
-    assert by_inst["i1:s1"].reads == {"rating": "5"}
-    assert by_inst["i2:s1"].reads == {"rating": "3"}  # not overwritten by the other invocation
+    assert by_inst["i1:s1"].outputs == {"rating": 5}
+    assert by_inst["i2:s1"].outputs == {"rating": 3}
 
 
 def test_transition_completion_projects_report_check_without_mutable_checker_state():

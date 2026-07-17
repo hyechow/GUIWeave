@@ -14,7 +14,12 @@ from gui_agent.core.orchestrator.recovery import (
 
 
 def _run(var="m1", name="读取统计", returns=("total",)):
-    return SimpleNamespace(var=var, name=name, returns=list(returns))
+    return SimpleNamespace(
+        id=var,
+        bind=var,
+        goal=name,
+        returns={field: object() for field in returns},
+    )
 
 
 # ── inherited empty-return budget ────────────────────────────────────────────────────

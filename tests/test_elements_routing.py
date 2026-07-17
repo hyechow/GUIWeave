@@ -16,10 +16,8 @@ from gui_agent.core.supervisor.statement.schemas import (
 def _statement(name: str = "创建订单") -> StatementContract:
     return StatementContract(
         id="x",
-        name=name,
-        description="配置当前业务对象",
-        success_condition="目标配置已完成",
-        kind="action",
+        goal=name,
+        success="目标配置已完成",
     )
 
 
@@ -46,7 +44,7 @@ def _captured_elements(monkeypatch, policy: StatementSupervisorPolicy, statement
 
     monkeypatch.setattr(runtime_module, "run_statement_transition", fake_transition)
     policy.begin_statement(statement, instance_id="i1")
-    observation = Observation(png_bytes=b"x", source="test", title=statement.name)
+    observation = Observation(png_bytes=b"x", source="test", title=statement.goal)
     policy._invoke_statement_transition(
         statement,
         observation,

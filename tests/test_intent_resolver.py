@@ -1,55 +1,11 @@
-"""Deterministic tests for the Intent Resolver (intent_block rendering + normalization + empty-goal)."""
+"""Deterministic tests for intent fact normalization."""
 
 import gui_agent.core.router.intent as ir
 from gui_agent.core.router import (
     EntityRef,
     IntentResolution,
-    intent_block,
     resolve_intent,
 )
-
-
-def test_intent_block_renders_facts_only_for_approximate_and_exact():
-    res = IntentResolution(entities=[
-        EntityRef(mention="Olivia zip jacket", type="product", match_mode="approximate", search_key="Olivia"),
-        EntityRef(mention="WO-2024-007", type="order", match_mode="exact", search_key="WO-2024-007"),
-    ])
-    blk = intent_block(res)
-    assert blk is not None and blk.id == "runtime.intent_resolution"
-    assert blk.priority == 21  # right after task_goal_block(20)
-    # the DECISION (fuzzy allowed? which key?) is router-authoritative content — facts only,
-    # no orchestration/strategy prose (that belongs to decomposer.md rule 4b)
-    assert "允许模糊匹配" in blk.content and "关键词：Olivia" in blk.content
-    assert "精确匹配" in blk.content  # exact entity rendered too, just without a key
-    assert "若0条" not in blk.content and "阶梯" not in blk.content  # no strategy leakage
-
-
-def test_intent_block_none_when_no_entities():
-    assert intent_block(None) is None
-    assert intent_block(IntentResolution(entities=[])) is None
-
-
-def test_intent_block_renders_multi_value_members_as_separate_atoms():
-    block = intent_block(IntentResolution(entities=[
-        EntityRef(
-            mention="blue and purple",
-            role="qualifier_value",
-            value_members=["blue", "purple"],
-            match_mode="exact",
-        ),
-        EntityRef(
-            mention="XXS",
-            role="target_value",
-            match_mode="exact",
-        ),
-    ]))
-
-    assert block is not None
-    assert "原子值=['blue', 'purple']" in block.content
-    assert "同一选择组" in block.content
-    assert "不得额外创建/改写其定义" in block.content
-    assert "可作为任务写入目标、必要时建立定义前置：['XXS']" in block.content
-    assert "只允许在最终 mutation 中选择、禁止建立独立定义阶段：['blue', 'purple']" in block.content
 
 
 def test_collection_scope_has_coverage_but_no_retrieval_semantics():
@@ -60,15 +16,9 @@ def test_collection_scope_has_coverage_but_no_retrieval_semantics():
         search_key="variant",
         selector="all existing variants",
     )
-    block = intent_block(IntentResolution(entities=[scope]))
-
     assert scope.cardinality == "set"
     assert scope.match_mode == "exact"
     assert scope.search_key == ""
-    assert block is not None
-    assert "成员覆盖范围「all existing variants」" in block.content
-    assert "禁止对该短语做 exact→fallback 检索" in block.content
-    assert "covers_set" in block.content
 
 
 def test_legacy_value_introduction_pair_normalizes_at_model_boundary():

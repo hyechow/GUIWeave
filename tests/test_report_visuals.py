@@ -51,36 +51,50 @@ def test_module_io_renders_summary_collapsed_schema_and_tokens():
 
 
 def test_orchestrator_program_renders_foreach_block_and_body():
-    # A foreach program must render its loop block + indented body (not be silently dropped), with the
-    # legacy list_read badge (still rendered for old logs) and the accumulated into-table row count.
     html = _render_program_section(
         {
             "program": {
                 "goal": "找 rating<=3 昵称",
                 "statements": [
-                    {"op": "run", "kind": "read", "var": "r", "name": "读候选行 id",
-                     "returns": ["id"], "list_read": True},
-                    {"op": "foreach", "var": "row", "over": "r", "into": "reviews", "body": [
-                        {"op": "run", "kind": "action", "name": "打开评论 {row[id]} 详情"},
-                        {"op": "run", "kind": "read", "var": "d", "name": "读评分昵称",
-                         "returns": ["rating", "nickname"]},
-                    ]},
-                    {"op": "run", "kind": "data_query", "var": "q", "name": "筛 rating<=3",
-                     "returns": ["nickname"], "sql": "SELECT ..."},
-                    {"op": "finish", "message": "{q[nickname]}"},
+                    {
+                        "op": "data",
+                        "id": "s1",
+                        "bind": "selection",
+                        "goal": "选择 rating<=3 的评论",
+                        "returns": {"rows": {"type": "list[record]"}},
+                    },
+                    {
+                        "op": "foreach",
+                        "items": {"var": "selection", "path": ["rows"]},
+                        "item": "row",
+                        "into": "reviews",
+                        "collect": {"var": "detail", "path": ["nickname"]},
+                        "body": [
+                            {
+                                "op": "interact",
+                                "id": "s2",
+                                "bind": "detail",
+                                "goal": "打开当前评论并读取评分昵称",
+                                "success": "当前评论详情可见",
+                                "returns": {"nickname": {"type": "text"}},
+                            }
+                        ],
+                    },
+                    {"op": "finish", "message": "done"},
                 ],
             },
             "report_run_log": [
-                {"var": "reviews", "result": {"rows": [{"id": "347"}, {"id": "349"}, {"id": "351"}]}},
+                {
+                    "var": "selection",
+                    "result": {"outputs": {"rows": [{"id": "347"}, {"id": "349"}]}},
+                },
             ],
             "context_reports": [],
         },
     )
     assert "foreach" in html
-    assert "列表读取" in html          # the list_read badge
-    assert "采集 3 行" in html          # accumulated into-table row count
-    assert "打开评论" in html           # body Run rendered (not dropped)
-    assert "prog-branch" in html        # body is indented under the loop
+    assert "打开当前评论" in html
+    assert "prog-branch" in html
 
 
 def test_in_progress_program_card_does_not_require_report_run_log():
@@ -89,16 +103,18 @@ def test_in_progress_program_card_does_not_require_report_run_log():
             "goal": "open one row",
             "statements": [
                 {
-                    "op": "run",
-                    "kind": "read",
-                    "var": "row",
-                    "name": "read row",
-                    "returns": ["id"],
+                    "op": "data",
+                    "id": "s1",
+                    "bind": "row",
+                    "goal": "read row",
+                    "returns": {"id": {"type": "text"}},
                 },
                 {
-                    "op": "run",
-                    "kind": "action",
-                    "name": "open {row[id]}",
+                    "op": "interact",
+                    "id": "s2",
+                    "goal": "open selected row",
+                    "success": "selected row is open",
+                    "inputs": {"id": {"var": "row", "path": ["id"]}},
                 },
             ],
         },
@@ -106,7 +122,7 @@ def test_in_progress_program_card_does_not_require_report_run_log():
     })
 
     assert "read row" in html
-    assert "open {row[id]}" in html
+    assert "open selected row" in html
     assert "prog-resolved" not in html
 
 
@@ -257,12 +273,11 @@ def test_terminal_event_attaches_to_statement_without_empty_report_turn(tmp_path
                         "observation_url": "screenshot_turn_1.png",
                         "statement_instance_id": "i1:s1",
                         "statement_id": "s1",
-                        "statement_kind": "action",
                         "statement": {
                             "id": "s1",
-                            "name": "save",
-                            "kind": "action",
-                            "success_condition": "saved",
+                            "executor": "interact",
+                            "goal": "save",
+                            "success": "saved",
                         },
                         "outcome": {
                             "phase": "completed",
@@ -279,16 +294,16 @@ def test_terminal_event_attaches_to_statement_without_empty_report_turn(tmp_path
                         "statement_instance_id": "i2:s2",
                         "statement": {
                             "id": "s2",
-                            "name": "continue",
-                            "kind": "navigation",
-                            "success_condition": "next page open",
+                            "executor": "interact",
+                            "goal": "continue",
+                            "success": "next page open",
                         },
                         "supervisor": {
-                            "should_act": True,
-                            "instruction": "open next page",
+                            "action_intent": {
+                                "instruction": "open next page",
+                            },
                             "summary": "continue",
                             "statement_id": "s2",
-                            "statement_kind": "navigation",
                         },
                         "action_decision": {
                             "action": {
