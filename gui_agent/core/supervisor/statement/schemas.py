@@ -7,16 +7,6 @@ from typing import Literal, Optional
 
 from pydantic import BaseModel, ConfigDict, Field, field_validator, model_validator
 
-from gui_agent.core.schemas import ActionFamily, AtomicRole, StatementContract
-
-
-def action_metadata(plan, statement: StatementContract) -> tuple[AtomicRole, ActionFamily]:
-    """Normalize capability metadata against the statement execution strategy."""
-    if statement.is_iterative:
-        return "iterate", "iterate"
-    return plan.atomic_role, plan.action_family
-
-
 @dataclass(frozen=True)
 class StatementPrompts:
     """Platform seam for the one live Statement Transition prompt."""
@@ -60,43 +50,68 @@ class _TransitionEvidence(BaseModel):
         return self
 
 
-def _normalize_atomic_role(value: object) -> object:
-    """Tolerate an ``action_family`` value leaking into ``atomic_role`` (e.g. 'navigate').
+class _TransitionAssessment(BaseModel):
+    """Ephemeral Statement-state judgment produced before the next transition.
 
-    The two fields both label the action and are easily swapped; an action_family value here
-    fails the primary ``json_object`` parse and triggers the slow plain-text reparse. Map the
-    leak to the closest atomic_role; default to 'prepare'.
+    This value is recorded for diagnostics but is never replayed as Runtime state.  Journal
+    observations and receipts remain the only facts on the next frame.
     """
-    role = str(value or "").strip().lower()
-    if role in {"prepare", "write", "commit", "iterate"}:
-        return role
-    return {
-        "input": "write", "select": "write",
-        "navigate": "prepare", "activate": "prepare", "unknown": "prepare",
-        "iterate": "iterate",
-    }.get(role, "prepare")
+
+    model_config = ConfigDict(frozen=True, extra="forbid")
+
+    status: Literal["in_progress", "satisfied", "blocked"]
+    summary: str = Field(min_length=1, description="当前 Statement 局势的一句话判断")
+    established_facts: list[str] = Field(
+        default_factory=list,
+        description="当前观察或 Journal 已建立的相关事实，不得写未来动作",
+    )
+    open_gaps: list[str] = Field(
+        default_factory=list,
+        description="距离合同完成仍缺少的事实或边界；satisfied 时必须为空",
+    )
+    last_action_effect: Literal["effective", "no_effect", "unknown", "none"] = "none"
+
+    @model_validator(mode="after")
+    def _validate_gaps(self) -> "_TransitionAssessment":
+        if self.status == "satisfied" and self.open_gaps:
+            raise ValueError("satisfied assessment cannot carry open gaps")
+        if self.status == "in_progress" and not self.open_gaps:
+            raise ValueError("in_progress assessment requires at least one open gap")
+        return self
 
 
 class _TransitionAction(BaseModel):
-    """One semantic atomic action proposed by Transition."""
+    """One structured where+what action proposed by Transition."""
 
     model_config = ConfigDict(extra="forbid")
 
-    instruction: str = Field(min_length=1, description="一个原子 GUI 动作")
+    instruction: str = Field(
+        min_length=1,
+        description=(
+            "给视觉 Action Policy 的完整单步语义指令；必须说明在哪里对什么做什么，"
+            "同名目标还要写出当前画面可见的区域或关系线索"
+        ),
+    )
     atomic_role: Literal["prepare", "write", "commit", "iterate"] = "prepare"
-    action_family: Literal[
-        "input", "select", "activate", "navigate", "iterate", "unknown"
-    ] = "unknown"
+    action_family: Literal["input", "select", "activate", "navigate", "iterate"]
     target_control: str = Field(
         default="",
         description=(
-            "动作所针对的当前可见控件或入口原名；具名 activate/navigate 以及 "
-            "input/select 必填"
+            "动作所针对的当前控件或入口可读名称；具名 activate/navigate 以及 "
+            "input/select 必填；target_ref 存在时由 ref 承担精确身份"
         ),
     )
     target_value: str = Field(
         default="",
         description="input/select 要写入或选择的合同精确值；其他动作通常留空",
+    )
+    target_ref: str = Field(
+        default="",
+        description="当前语义入口清单给出的精确 ref；没有 ref 的目标留空",
+    )
+    expected_result: str = Field(
+        min_length=1,
+        description="执行后下一帧应观察到的具体变化，用于下一次状态判断",
     )
     direction: Optional[
         Literal["up", "down", "left", "right", "increase", "decrease"]
@@ -106,48 +121,18 @@ class _TransitionAction(BaseModel):
     drag_target_value: Optional[int] = None
 
     @field_validator(
-        "instruction", "target_control", "target_value", mode="before"
+        "instruction", "target_control", "target_value", "target_ref", mode="before"
     )
     @classmethod
     def _coerce_str(cls, value):
         return "" if value is None else value
 
-    @field_validator("target_control")
-    @classmethod
-    def _normalize_structured_target(cls, value: str) -> str:
-        """Accept ``role: label`` as typed syntax, never as prose to interpret."""
-        prefix, separator, label = value.partition(":")
-        if (
-            separator
-            and prefix.strip().casefold()
-            in {
-                "button",
-                "checkbox",
-                "control",
-                "entry",
-                "field",
-                "input",
-                "link",
-                "menuitem",
-                "option",
-                "radio",
-                "select",
-                "tab",
-            }
-            and label.strip()
-        ):
-            return label.strip()
-        return value.strip()
-
-    @field_validator("atomic_role", mode="before")
-    @classmethod
-    def _coerce_atomic_role(cls, value):
-        return _normalize_atomic_role(value)
-
     @model_validator(mode="after")
-    def _require_instruction(self) -> "_TransitionAction":
-        if not self.instruction.strip():
-            raise ValueError("transition action requires one instruction")
+    def _require_structured_action(self) -> "_TransitionAction":
+        if not self.target_control.strip():
+            raise ValueError("transition action requires target_control")
+        if self.action_family in {"input", "select"} and not self.target_value.strip():
+            raise ValueError(f"{self.action_family} transition requires target_value")
         return self
 
 
@@ -161,6 +146,7 @@ class _StatementTransitionResult(BaseModel):
 
     model_config = ConfigDict(extra="forbid")
 
+    assessment: _TransitionAssessment
     kind: Literal["act", "complete", "infeasible"]
     # Emit the concrete payload before prose in the JSON schema. If a provider truncates a long
     # reason containing DOM quotes, an already-emitted action remains recoverable.
@@ -183,42 +169,6 @@ class _StatementTransitionResult(BaseModel):
     def _coerce_str(cls, value):
         return "" if value is None else value
 
-    @model_validator(mode="before")
-    @classmethod
-    def _normalize_redundant_payload(cls, value: object) -> object:
-        """Normalize only contradictions whose typed discriminator has clear authority."""
-        if not isinstance(value, dict):
-            return value
-        data = dict(value)
-        kind = str(data.get("kind") or "").strip().lower()
-        if kind in {"complete", "infeasible"}:
-            data["action"] = None
-        if kind == "act" and isinstance(data.get("action"), dict):
-            # Some providers copy DOM annotations (for example
-            # ``attribute_code: "text_input"``) beside the typed action fields. They are
-            # observation prose, not ActionIntent semantics. Drop them at the LLM boundary so a
-            # harmless annotation does not trigger a second model call; canonical fields remain
-            # strictly validated below and the Runtime Guard still validates contract scope.
-            data["action"] = {
-                key: item
-                for key, item in data["action"].items()
-                if key in _TransitionAction.model_fields
-            }
-            if not str(data.get("reason") or "").strip():
-                data["reason"] = (
-                    str(data["action"].get("instruction") or "").strip()
-                    or "execute the proposed action"
-                )
-        if kind == "act" and isinstance(data.get("evidence"), list):
-            data["evidence"] = [
-                item
-                for item in data["evidence"]
-                if not isinstance(item, dict)
-                or item.get("source") != "journal"
-                or str(item.get("event_ref") or "").startswith("turn:")
-            ]
-        return data
-
     @model_validator(mode="after")
     def _validate_kind_payload(self) -> "_StatementTransitionResult":
         if self.kind == "act":
@@ -228,6 +178,19 @@ class _StatementTransitionResult(BaseModel):
             raise ValueError(f"{self.kind} transition cannot carry an action")
         if self.kind != "infeasible" and self.kickback:
             raise ValueError(f"{self.kind} transition cannot carry kickback")
+        if self.kind in {"complete", "infeasible"} and not self.evidence:
+            raise ValueError(f"{self.kind} transition requires cited evidence")
+        if self.kind == "infeasible" and not self.kickback.strip():
+            raise ValueError("infeasible transition requires kickback")
+        expected_status = {
+            "act": "in_progress",
+            "complete": "satisfied",
+            "infeasible": "blocked",
+        }[self.kind]
+        if self.assessment.status != expected_status:
+            raise ValueError(
+                f"{self.kind} transition requires assessment.status={expected_status}"
+            )
         return self
 
 
@@ -242,6 +205,8 @@ class _ActionDraft(BaseModel):
     ] = "unknown"
     target_control: str = ""
     target_value: str = ""
+    target_ref: str = ""
+    expected_result: str = ""
     direction: Optional[
         Literal["up", "down", "left", "right", "increase", "decrease"]
     ] = None
@@ -249,7 +214,7 @@ class _ActionDraft(BaseModel):
     drag_current_value: Optional[int] = None
     drag_target_value: Optional[int] = None
 
-    @field_validator("target_control", "target_value", mode="before")
+    @field_validator("target_control", "target_value", "target_ref", mode="before")
     @classmethod
     def _coerce_optional_string(cls, value):
         if value is None:
@@ -257,8 +222,3 @@ class _ActionDraft(BaseModel):
         if isinstance(value, (int, float)):
             return str(value)
         return value
-
-    @field_validator("atomic_role", mode="before")
-    @classmethod
-    def _coerce_atomic_role(cls, value):
-        return _normalize_atomic_role(value)

@@ -48,7 +48,7 @@ def _has_successful_scroll_for(history: list[PolicyTurn], statement_id: str) -> 
         t.supervisor.statement_id == statement_id
         and t.action_decision
         and t.action_decision.action
-        and t.action_decision.action.action_type in {"scroll", "drag"}
+        and t.action_decision.action.action_type in {"scroll", "drag", "scroll_to_ref"}
         and t.executed
         for t in history
     )

@@ -192,7 +192,32 @@ def orchestration_result(
 
     from gui_agent.core.llm.output import compose_orchestration_reply
 
-    run_log = [r.model_dump() for r in interp.run_log]
+    report_fields = {
+        "phase",
+        "summary",
+        "verification",
+        "kickback",
+        "reads",
+        "rows",
+        "evidence",
+        "observation_url",
+        "executed_sql",
+        "recovery_notices",
+        "failure_evidence",
+    }
+    run_log = [
+        {
+            "name": record.name,
+            "var": record.var,
+            "instance_id": record.instance_id,
+            "result": record.result.model_dump(
+                mode="json",
+                include=report_fields,
+                exclude_none=True,
+            ),
+        }
+        for record in interp.run_log
+    ]
     digest = [
         {
             "name": r.name,

@@ -29,6 +29,7 @@ _ACTION_TYPE_LABELS: dict[str, str] = {
     "clear_text": "清空",
     "press_enter": "回车",
     "scroll": "滚动",
+    "scroll_to_ref": "定位滚动",
     "drag": "拖动",
     "navigate": "导航",
     "home": "主屏",
@@ -156,6 +157,20 @@ class ActionIntent(BaseModel):
     family: ActionFamily = "unknown"
     target_control: str = ""
     target_value: str = ""
+    target_ref: str = Field(
+        default="",
+        description=(
+            "当前 Observation 暴露的一次性结构引用；仅用于把本帧语义目标贯通到"
+            " grounding/dispatch，不是跨帧状态"
+        ),
+    )
+    expected_result: str = Field(
+        default="",
+        description=(
+            "动作后下一帧应出现的可观察变化；只帮助 Action Policy 消歧目标，"
+            "不授予完成判定权"
+        ),
+    )
     direction: Optional[
         Literal["up", "down", "left", "right", "increase", "decrease"]
     ] = None
@@ -878,7 +893,7 @@ class PolicyTurn(BaseModel):
     transition: Optional[dict[str, Any]] = Field(
         default=None,
         description=(
-            "统一 Statement Transition 的最终提议及 Guard rejection。"
+            "统一 Statement Transition 的 assessment、最终提议及机械校验结果。"
         ),
     )
     executed: bool = False

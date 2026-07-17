@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import json
 import re
 from pathlib import Path
 from typing import Optional
@@ -11,17 +12,8 @@ from langchain_openai import ChatOpenAI
 
 from gui_agent.context import ContextBlock
 from gui_agent.context.runtime import (
-    active_filters_block,
-    applied_filter_state_block,
-    browser_page_block,
     constraints_block,
-    extra_instruction_block,
-    filter_residual_block,
-    form_controls_block,
-    grid_status_block,
     knowledge_block,
-    page_title_block,
-    statement_memory_block,
 )
 from gui_agent.core.config import resolve_llm_config
 from gui_agent.core.llm.messages import assemble_messages, prepare_prompt_png
@@ -30,7 +22,7 @@ from gui_agent.core.schemas import Observation, StatementContract
 from gui_agent.prompts import load_prompt_text
 from llm.structured import invoke_structured
 
-from .observation_state import RuntimeFilterIntent, filter_residual_labels
+from .observation_view import StatementObservationView, build_observation_view
 from .schemas import StatementPrompts, _StatementTransitionResult
 
 
@@ -146,75 +138,118 @@ def _build_msgs(
     return assemble_messages(system_prompt, png_bytes, image_resize=image_resize)
 
 
-def _evidence_pack_block(
+def _last_action_result(memory: StatementMemoryView) -> str:
+    if not memory.recent_steps and not memory.durable_facts:
+        return "none"
+    if memory.recent_steps and "no_effect" in memory.recent_steps[-1].text:
+        return "no_effect"
+    for fact in reversed(memory.durable_facts):
+        if fact.kind.startswith("effect_satisfied"):
+            return "effective"
+        if fact.kind != "action_receipt":
+            continue
+        response = str(fact.metadata.get("response") or "")
+        if response == "none_observed":
+            return "no_effect"
+        if response == "observed":
+            return "effective"
+        return "unknown"
+    return "unknown"
+
+
+def _compact_control_state(observation: Observation) -> list[dict]:
+    """Remove geometry and duplicated adapter detail from the semantic state channel."""
+    source = observation.form_control_state or observation.form_controls or []
+    keys = (
+        "kind",
+        "label",
+        "name",
+        "id",
+        "value",
+        "selected_text",
+        "checked",
+        "required",
+        "in_viewport",
+        "viewport_pos",
+        "group_id",
+        "group_index",
+        "group_field",
+        "options",
+    )
+    return [
+        {key: item[key] for key in keys if key in item}
+        for item in source
+        if isinstance(item, dict)
+    ]
+
+
+def _compact_affordances(view: StatementObservationView) -> list[dict]:
+    """Keep target identity and capability; geometry stays in the adapter observation."""
+    keys = ("label", "ref", "role", "visibility", "supported_operations")
+    return [
+        {key: item[key] for key in keys if key in item}
+        for item in view.affordances
+    ]
+
+
+def _transition_frame_block(
+    statement: StatementContract,
+    observation: Observation,
+    memory: StatementMemoryView,
+    view: StatementObservationView,
     *,
-    evaluation_reason: str = "",
-    evaluation_status: str = "",
-    evaluation_verification: str = "",
-    persistence_summary: str = "",
-) -> ContextBlock | None:
-    lines = ["## 结构化证据摘要（非路线指令）"]
-    if evaluation_status:
-        lines.append(f"- evidence.status：{evaluation_status}")
-    if evaluation_verification:
-        lines.append(f"- evidence.completion_status：{evaluation_verification}")
-    if evaluation_reason:
-        lines.append(f"- evidence.reason：{evaluation_reason}")
-    if persistence_summary:
-        lines.append(f"- persistence：{persistence_summary}")
-    lines.append(
-        "- 说明：以上是 Runtime 从 Journal/观察投影的事实评估，"
-        "只用于校验 complete，不规定下一动作。请结合 StatementMemory 自行决定。"
-    )
-    if len(lines) <= 2:
-        return None
-    return ContextBlock(
-        id="runtime.evidence_pack",
-        budget="required",
-        source_type="runtime_state",
-        source="execution_coordinator",
-        ttl="turn",
-        priority=24,
-        content="\n".join(lines),
-    )
-
-
-def _semantic_actions_block(nodes: list[dict] | None) -> ContextBlock | None:
-    """Expose positive AX navigation/action affordances without claiming full coverage."""
-    interactive_roles = {
-        "button",
-        "link",
-        "menuitem",
-        "menuitemcheckbox",
-        "menuitemradio",
-        "tab",
-        "treeitem",
+    initial_filters: dict[str, str] | None,
+) -> ContextBlock:
+    """Build the one decision packet; it contains facts, never a Runtime verdict."""
+    durable = [
+        {
+            "kind": fact.kind,
+            "event_ref": fact.event_ref,
+            "text": fact.text,
+            "metadata": fact.metadata,
+        }
+        for fact in memory.durable_facts
+    ]
+    frame = {
+        "contract": statement.model_dump(mode="json", exclude_none=True),
+        "memory": {
+            "instance_id": memory.instance_id,
+            "durable_facts": durable,
+            "recent_steps": [
+                {"event_ref": step.event_ref, "text": step.text}
+                for step in memory.recent_steps
+            ],
+            "compressed_history": list(memory.compressed_history),
+            "last_action_result": _last_action_result(memory),
+        },
+        "observation": {
+            "title": observation.title,
+            "url": observation.url,
+            "control_coverage": view.control_coverage,
+            "control_state": _compact_control_state(observation),
+            "applied_filters": observation.applied_filters or {},
+            "initial_filters": initial_filters or {},
+            "tables": observation.tables or [],
+            "affordances": _compact_affordances(view),
+        },
     }
-    rows: list[str] = []
-    for node in nodes or []:
-        if not isinstance(node, dict):
-            continue
-        role = str(node.get("role") or "").strip().lower()
-        label = str(node.get("key") or "").strip()
-        if role not in interactive_roles or not label:
-            continue
-        rows.append(f"- {role}: {label}")
-        if len(rows) >= 120:
-            break
-    if not rows:
-        return None
-    rows.append(
-        "- 注意：这是当前已暴露入口的正向清单，不保证覆盖折叠菜单或尚未渲染区域；"
-        "缺失项本身不能证明 navigation infeasible。"
-    )
     return ContextBlock(
-        id="observation.semantic_actions",
-        budget="high",
-        source_type="observation",
-        source="semantic_tree",
+        id="runtime.transition_frame",
+        budget="required",
+        source_type="decision_frame",
+        source="journal+observation+contract",
         ttl="turn",
-        priority=31,
-        content="## 当前语义交互入口\n" + "\n".join(rows),
+        priority=20,
+        content=(
+            "## TransitionFrame（本帧唯一决策包）\n"
+            "以下是合同、Journal 事实和当前观察；其中没有预先计算的完成状态或路线。\n"
+            + json.dumps(
+                frame,
+                ensure_ascii=False,
+                separators=(",", ":"),
+                default=str,
+            )
+        ),
     )
 
 
@@ -223,65 +258,37 @@ def run_statement_transition(
     observation: Observation,
     *,
     memory_view: StatementMemoryView,
+    observation_view: StatementObservationView | None = None,
     constraints: Optional[list[str]] = None,
-    extra: str = "",
     prompts: Optional[StatementPrompts] = None,
     context_reports: list[dict] | None = None,
-    evaluation_reason: str = "",
-    evaluation_status: str = "",
-    evaluation_verification: str = "",
-    persistence_summary: str = "",
     app_knowledge: Optional[str] = None,
     acceptance_knowledge: Optional[str] = None,
     elements_knowledge: Optional[str] = None,
     initial_filters: dict[str, str] | None = None,
-    runtime_filter: RuntimeFilterIntent | None = None,
 ) -> _StatementTransitionResult:
     """Return one semantic Statement decision for the current observation."""
+    observation_view = observation_view or build_observation_view(
+        statement, observation, []
+    )
     prompts = prompts or StatementPrompts.neutral()
     prompt = (prompts.transition or "").strip() or load_prompt_text(
         "task.statement.transition"
     )
-    mem_block = statement_memory_block(memory_view)
-    if mem_block is None:
-        raise ValueError("Statement Transition requires a non-empty StatementMemoryView")
     messages = assemble_messages(
         prompt,
         observation,
         system_blocks=[
-            mem_block,
-            _evidence_pack_block(
-                evaluation_reason=evaluation_reason,
-                evaluation_status=evaluation_status,
-                evaluation_verification=evaluation_verification,
-                persistence_summary=persistence_summary,
-            ),
-            constraints_block(constraints or []),
-            extra_instruction_block(extra, source="transition_guard"),
-            page_title_block(getattr(observation, "title", None)),
-        ],
-        human_blocks=[
-            browser_page_block(getattr(observation, "url", None), None),
-            active_filters_block(getattr(observation, "form_controls", None)),
-            applied_filter_state_block(
-                getattr(observation, "applied_filters", None),
-                getattr(observation, "applied_filter_meta", None),
+            _transition_frame_block(
+                statement,
+                observation,
+                memory_view,
+                observation_view,
                 initial_filters=initial_filters,
             ),
-            filter_residual_block(
-                filter_residual_labels(
-                    getattr(observation, "applied_filters", None),
-                    statement,
-                    runtime_filter,
-                ),
-                getattr(observation, "applied_filters", None),
-            ),
-            form_controls_block(
-                getattr(observation, "form_controls", None),
-                getattr(observation, "form_controls_meta", None),
-            ),
-            _semantic_actions_block(getattr(observation, "semantic_tree", None)),
-            grid_status_block(getattr(observation, "tables", None)),
+            constraints_block(constraints or []),
+        ],
+        human_blocks=[
             knowledge_block("app_navigation", app_knowledge),
             knowledge_block("completion_evidence", acceptance_knowledge),
             knowledge_block("page_elements", elements_knowledge),
@@ -296,4 +303,5 @@ def run_statement_transition(
         _StatementTransitionResult,
         trace_sink=context_reports,
         trace_label="transition",
+        fallback_on_invalid=False,
     )

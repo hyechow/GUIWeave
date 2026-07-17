@@ -6,6 +6,8 @@ advance, retry, fail, or otherwise own execution control flow.
 
 from __future__ import annotations
 
+from urllib.parse import urlsplit
+
 from gui_agent.core.run.action_signals import latest_action
 from gui_agent.core.run.execution_signals import (
     EvidenceClaim,
@@ -162,7 +164,40 @@ def target_value_claims(
     scope: str,
 ) -> list[EvidenceClaim]:
     """Translate declared field/value matches into authoritative state claims."""
-    if statement.kind != "action" or not statement.target_values:
+    if not statement.target_values:
+        return []
+    if statement.kind == "navigation":
+        expected = str(
+            statement.target_values.get("__navigation_url__") or ""
+        ).strip()
+        if not expected:
+            return []
+
+        def identity(value: str) -> tuple[str, str, str, str]:
+            parsed = urlsplit(value)
+            return (
+                parsed.scheme.casefold(),
+                parsed.netloc.casefold(),
+                parsed.path.rstrip("/") or "/",
+                parsed.query,
+            )
+
+        matches = bool(observation.url and identity(observation.url) == identity(expected))
+        return [claim(
+            "control.state",
+            "confirmed" if matches else "unmet",
+            source_type="obs.navigation.url",
+            scope=scope,
+            subject_scope=expected,
+            evidence=(
+                f"current URL matches declared navigation target: {expected}"
+                if matches
+                else f"current URL {observation.url!r} != declared target {expected!r}"
+            ),
+            authoritative=True,
+            coverage="exact_navigation_target",
+        )]
+    if statement.kind != "action":
         return []
     state = resolve_mutation(statement, observation, history)
     claims: list[EvidenceClaim] = []
@@ -227,6 +262,7 @@ def transition_claim(
     decision: _StatementTransitionResult,
     *,
     scope: str,
+    binding_evidence: str = "",
 ) -> EvidenceClaim:
     """Translate a model completion proposal without granting it fact authority."""
     evidence = "; ".join(
@@ -241,8 +277,10 @@ def transition_claim(
         # A semantic completion proposal does not establish a mutation subject identity. Leaving
         # it unbound lets persistence receipts own subject provenance across redirects.
         subject_scope="",
-        evidence=evidence or decision.reason or decision.summary,
-        coverage="visible_frame",
+        evidence=binding_evidence or evidence or decision.reason or decision.summary,
+        coverage=(
+            "validated_semantic_binding" if binding_evidence else "visible_frame"
+        ),
     )
 
 

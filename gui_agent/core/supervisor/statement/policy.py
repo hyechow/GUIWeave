@@ -6,7 +6,6 @@ from typing import Literal, Optional
 from gui_agent.core.vision.frame_analysis import is_loading_frame
 from gui_agent.core.schemas import (
     ActionIntent,
-    AtomicRole,
     StatementContract,
     Observation,
     PolicyTurn,
@@ -29,9 +28,8 @@ from gui_agent.core.run.statement_runtime import StatementRuntimeState
 from gui_agent.core.run.statement_memory import StatementMemoryView, build_memory_view
 from gui_agent.core.run.statement_memory import available_event_refs
 from gui_agent.core.run.statement_transition import (
-    guard_complete,
-    guard_evidence_references,
-    guard_infeasible,
+    validate_completion,
+    validate_evidence_references,
 )
 from .schemas import (
     StatementPrompts,
@@ -39,14 +37,15 @@ from .schemas import (
     _StatementTransitionResult,
     _TransitionAction,
 )
+from .observation_view import StatementObservationView, build_observation_view
 from .action_normalization import StatementActionNormalizationMixin
 from gui_agent.core.run.execution_signals import (
     ExecutionContract,
     CompletionEvaluation,
     CompletionReducer,
     claim,
-    target_matches_declared,
 )
+from llm.structured import StructuredOutputError
 from gui_agent.core.run.persistence import assess_persistence
 from .evidence import (
     action_lifecycle_claims,
@@ -322,6 +321,34 @@ class StatementSupervisorPolicy(
         finally:
             self._terminal_only = False
 
+    def replan_after_action_rejection(
+        self,
+        observation: Observation,
+        goal: str,
+        history: list[PolicyTurn],
+        rejected_step: SupervisorStep,
+        rejection: str,
+    ) -> SupervisorStep:
+        """Expose a post-Transition mechanical rejection without hiding it behind a retry."""
+        statement = self._active_statement
+        if statement is None:
+            raise RuntimeError("cannot replan without an active statement")
+        del observation, goal, history
+        diagnostic = f"Transition action rejected after decision: {rejection}"
+        self._last_transition_record = {
+            "proposal": (
+                rejected_step.action_intent.model_dump(mode="json")
+                if rejected_step.action_intent is not None
+                else {}
+            ),
+            "validation_error": diagnostic,
+        }
+        return SupervisorStep(
+            outcome=StatementOutcome.exhausted(diagnostic),
+            summary=diagnostic,
+            **_ctx(statement, None),
+        )
+
     # ── Single-step machine ───────────────────────────────────────────
 
     def _collection_context(
@@ -343,7 +370,8 @@ class StatementSupervisorPolicy(
             for turn in scoped_history
             if turn.executed
             and turn.action_decision is not None
-            and turn.action_decision.action.action_type in {"scroll", "drag"}
+            and turn.action_decision.action.action_type
+            in {"scroll", "drag", "scroll_to_ref"}
         ]
         budget = max(0, statement.scroll_budget)
         if budget and len(scroll_turns) >= budget:
@@ -377,29 +405,6 @@ class StatementSupervisorPolicy(
         notes.append(move_summary)
         return claims, None, notes
 
-    @staticmethod
-    def _structure_inventory_complete(
-        statement: StatementContract,
-        observation: Observation,
-    ) -> bool:
-        # A complete form-control inventory can prove a field/filter capability absent. It
-        # cannot prove a navigation link absent: links may live behind collapsed menus and the
-        # semantic tree currently has no completeness signal.
-        if statement.kind == "navigation":
-            return False
-        meta = observation.form_controls_meta or {}
-        if str(meta.get("coverage") or "").lower() in {"complete", "full"}:
-            return True
-        total = meta.get("total_rendered")
-        returned = meta.get("returned")
-        return bool(
-            isinstance(total, int)
-            and isinstance(returned, int)
-            and returned >= total
-            and not meta.get("truncated")
-            and not meta.get("raw_limit_hit")
-        )
-
     def _proposal_plan(
         self,
         action: _TransitionAction,
@@ -408,11 +413,13 @@ class StatementSupervisorPolicy(
         try:
             return _ActionDraft(
                 instruction=action.instruction,
-                summary=decision.summary or decision.reason,
+                summary=decision.assessment.summary,
                 atomic_role=action.atomic_role,
                 action_family=action.action_family,
                 target_control=action.target_control,
                 target_value=action.target_value,
+                target_ref=action.target_ref,
+                expected_result=action.expected_result,
                 direction=action.direction,
                 drag_column=action.drag_column,
                 drag_current_value=action.drag_current_value,
@@ -426,47 +433,55 @@ class StatementSupervisorPolicy(
         statement: StatementContract,
         plan: _ActionDraft,
     ) -> str:
-        """Validate contract scope and fill only an unambiguous omitted value."""
-        matches = [
-            (str(field), desired)
-            for field, desired in (statement.target_values or {}).items()
-            if target_matches_declared(
-                plan.target_control,
-                (str(field),),
-                allow_less_specific=True,
-            )
-        ]
-        if not matches:
-            declared = ", ".join(str(field) for field in (statement.target_values or {}))
-            return (
-                "write target is outside the Statement contract: "
-                f"{plan.target_control!r}; declared target(s)=[{declared}]. "
-                "An unrelated visible input is not a substitute. If the declared target is "
-                "not exposed in the current observation, propose one prepare action that "
-                "reveals it before attempting input/select."
-            )
-        if len(matches) == 1:
-            # The contract owns the stable target identity. Provider-added DOM descriptions
-            # are useful evidence but must not become a second downstream target vocabulary.
-            plan.target_control = matches[0][0]
-        if not plan.target_value and len(matches) == 1:
-            options = target_value_options(matches[0][1])
-            if len(options) == 1:
-                plan.target_value = options[0]
-        proposed = str(plan.target_value).strip().casefold()
-        if not proposed or not any(
-            proposed == str(value).strip().casefold()
-            for _, desired in matches
+        """Validate only the declared write value; field binding belongs to Transition."""
+        allowed = sorted({
+            str(value)
+            for desired in (statement.target_values or {}).values()
             for value in target_value_options(desired)
-        ):
-            allowed = sorted({
-                str(value)
-                for _, desired in matches
-                for value in target_value_options(desired)
-            })
+        })
+        if not allowed:
+            return ""
+        proposed = str(plan.target_value).strip().casefold()
+        if proposed not in {value.strip().casefold() for value in allowed}:
             return (
                 "write value is outside the Statement contract: "
                 f"{plan.target_value!r}; allowed={allowed}"
+            )
+        return ""
+
+    @staticmethod
+    def _validate_action_capability(
+        view: StatementObservationView,
+        plan: _ActionDraft,
+    ) -> str:
+        """Validate an advertised target mechanically; never rewrite its operation."""
+        label = plan.target_control.strip().casefold()
+        candidates = [
+            item for item in view.affordances
+            if str(item.get("label") or "").strip().casefold() == label
+        ]
+        if plan.target_ref:
+            matches = [
+                item for item in view.affordances
+                if str(item.get("ref") or "").strip() == plan.target_ref
+            ]
+            if len(matches) != 1:
+                return (
+                    f"target_ref {plan.target_ref!r} is not a unique current-frame target"
+                )
+            candidates = matches
+        if candidates and not any(
+            plan.action_family in (item.get("supported_operations") or [])
+            for item in candidates
+        ):
+            supported = sorted({
+                str(operation)
+                for item in candidates
+                for operation in item.get("supported_operations") or []
+            })
+            return (
+                f"operation {plan.action_family!r} is not supported by target "
+                f"{plan.target_control!r}; supported={supported}"
             )
         return ""
 
@@ -474,6 +489,7 @@ class StatementSupervisorPolicy(
         self,
         decision: _StatementTransitionResult,
         statement: StatementContract,
+        observation: Observation,
         *,
         execution_scope: str,
     ) -> tuple[SupervisorStep | None, str]:
@@ -484,17 +500,17 @@ class StatementSupervisorPolicy(
         if plan is None:
             return None, rejection
 
-        atomic_role = plan.atomic_role
-        action_family = plan.action_family
-        declared_write = bool(statement.target_values)
-        if declared_write and action_family in {"input", "select"}:
-            # Input/select is a write regardless of the model's role label. Runtime validates
-            # contract scope but intentionally does not prescribe a field order.
-            atomic_role = "write"
+        if plan.atomic_role == "write":
             rejection = self._validate_declared_write(statement, plan)
             if rejection:
                 return None, rejection
-        plan.instruction = self._canonical_instruction(plan)
+        rejection = self._validate_action_capability(
+            build_observation_view(statement, observation, []), plan
+        )
+        if rejection:
+            return None, rejection
+        atomic_role = plan.atomic_role
+        action_family = plan.action_family
 
         drag_steps = self._picker_drag_steps(plan)
         if drag_steps == 0 and plan.drag_column:
@@ -502,8 +518,6 @@ class StatementSupervisorPolicy(
                 f"picker column {plan.drag_column!r} is already at its target; "
                 "a different action is required"
             )
-        if plan.direction in {"increase", "decrease"} and plan.drag_column:
-            self._fix_picker_direction(plan)
 
         read_instruction = decision.read_instruction
         if statement.kind in {"collection", "verification"} and not read_instruction:
@@ -516,28 +530,47 @@ class StatementSupervisorPolicy(
                 family=action_family,
                 target_control=plan.target_control,
                 target_value=plan.target_value,
+                target_ref=plan.target_ref,
+                expected_result=plan.expected_result,
                 direction=plan.direction,
                 drag_column=plan.drag_column,
                 drag_steps=drag_steps,
             ),
-            summary=decision.summary or decision.reason,
+            summary=decision.assessment.summary,
             execution_scope=execution_scope,
             is_home_screen=_is_home_identity(
                 decision.page_identity,
                 self._prompts.home_identity_markers,
             ),
             **_ctx(statement, read_instruction),
-        ), ""
+        ), None
 
     def _record_transition(
         self,
         decision: _StatementTransitionResult,
-        rejections: list[str],
+        validation_error: str = "",
     ) -> None:
         self._last_transition_record = {
             "proposal": decision.model_dump(mode="json", exclude_none=True),
-            "guard_rejections": list(rejections),
+            "validation_error": validation_error,
         }
+
+    def _transition_failure(
+        self,
+        statement: StatementContract,
+        decision: _StatementTransitionResult,
+        reason: str,
+        *,
+        execution_scope: str,
+    ) -> SupervisorStep:
+        self._record_transition(decision, reason)
+        message = f"Statement Transition validation failed: {reason}"
+        return SupervisorStep(
+            outcome=StatementOutcome.exhausted(message),
+            summary=message,
+            execution_scope=execution_scope,
+            **_ctx(statement, decision.read_instruction),
+        )
 
     def _run_single_turn(
         self,
@@ -548,8 +581,7 @@ class StatementSupervisorPolicy(
         """Memory + current frame → Act | Complete | Infeasible.
 
         A running result always contains an executable action. Loading is detected before the
-        model call, while rejected proposals are retried on the same frame. Exhausting the
-        proposal budget produces a terminal outcome instead of an action-less running turn.
+        model call. Invalid proposals fail visibly; Runtime never chooses or repairs a route.
         """
         if is_loading_frame(observation):
             return SupervisorStep(
@@ -601,7 +633,7 @@ class StatementSupervisorPolicy(
             invocation_history,
             scope=execution_scope,
         ))
-        collection_claims, collection_exhausted, notes = (
+        collection_claims, collection_exhausted, _notes = (
             self._collection_context(
                 statement,
                 observation,
@@ -617,168 +649,147 @@ class StatementSupervisorPolicy(
                 **_ctx(statement, _default_read_instruction(statement)),
             )
 
-        evaluation = self._completion_reducer.decide(
-            contract,
-            claims,
-            scope=execution_scope,
-            persistence_assessment=persistence_assessment,
+        observation_view = build_observation_view(
+            statement,
+            observation,
+            invocation_history,
         )
-        extra_base = "\n".join(f"- {note}" for note in notes if note)
-        persistence_summary = (
-            f"status={persistence_assessment.status} "
-            f"terminal_ready={persistence_assessment.terminal_ready} "
-            f"orphan_commit={persistence_assessment.orphan_commit}"
-        )
-
-        rejections: list[str] = []
-        last_decision: _StatementTransitionResult | None = None
-        for _attempt in range(2):
-            extra = extra_base
-            if rejections:
-                assert last_decision is not None
-                extra = (extra + "\n" if extra else "") + (
-                    "## Statement-local replan\n"
-                    "Runtime Guard 否决了上一条提议，但没有判定 Statement 不可达。"
-                    "保持合同、Memory 和页面不变，选择一个不同的局部动作。\n"
-                    f"被拒绝提议：{last_decision.model_dump_json(exclude_none=True)}\n"
-                    f"否决原因：{'; '.join(rejections)}\n"
-                    "若合同控件尚未暴露，从当前可见入口选择 prepare 动作；只有完整结构"
-                    "证据证明整个合同不可达时，才输出 infeasible + kickback。"
-                )
-            with _Timer(
-                self._timings,
-                self._timings_order,
-                "transition",
-                self._token_usage,
-            ):
+        with _Timer(
+            self._timings,
+            self._timings_order,
+            "transition",
+            self._token_usage,
+        ):
+            try:
                 decision = self._invoke_statement_transition(
                     statement,
                     observation,
                     scoped_history,
                     memory_view=memory_view,
-                    evaluation_reason=evaluation.reason,
-                    evaluation_status=evaluation.status,
-                    evaluation_verification=evaluation.completion_status or "",
-                    persistence_summary=persistence_summary,
-                    extra=extra,
+                    observation_view=observation_view,
                 )
-            last_decision = decision
-            label = "StatementReplan" if rejections else "TransitionLLM"
-            print(f"  [{label}] kind={decision.kind}: {decision.reason[:120]}")
-
-            if decision.kind == "complete":
-                refs = guard_evidence_references(
-                    decision.evidence,
-                    available_refs=available_event_refs(memory_view),
-                )
-                if not refs.allowed:
-                    rejections.append(refs.reason)
-                    continue
-                completion_claims = [*claims, transition_claim(decision, scope=execution_scope)]
-                if statement.kind == "collection":
-                    has_traversal = _has_successful_scroll_for(
-                        scoped_history, statement.id
-                    )
-                    declared_current_boundary = statement.completion_strategy in {
-                        "read_once", "visible_once"
-                    }
-                    if declared_current_boundary or has_traversal or _has_collected(
-                        scoped_history, statement.id
-                    ):
-                        completion_claims.append(claim(
-                            "collection.coverage",
-                            "complete",
-                            source_type="transition.collection_boundary",
-                            scope=execution_scope,
-                            subject_scope=execution_scope,
-                            evidence="; ".join(item.claim for item in decision.evidence),
-                            coverage="complete",
-                        ))
-                proposed_evaluation = self._completion_reducer.decide(
-                    contract,
-                    completion_claims,
-                    scope=execution_scope,
-                    persistence_assessment=persistence_assessment,
-                )
-                verdict = guard_complete(proposed_evaluation)
-                if not verdict.allowed:
-                    rejection = proposed_evaluation.reason or "completion evidence insufficient"
-                    rejections.append(rejection)
-                    continue
-                self._record_transition(decision, rejections)
-                return self._advance(
-                    statement,
-                    history,
-                    decision=proposed_evaluation,
-                    final_read=(
-                        _ctx(
-                            statement,
-                            decision.read_instruction
-                            or _default_read_instruction(statement),
-                        )
-                        if statement.kind in {"collection", "verification"}
-                        and self.task_type != "action"
-                        else None
-                    ),
-                )
-
-            if decision.kind == "infeasible":
-                refs = guard_evidence_references(
-                    decision.evidence,
-                    available_refs=available_event_refs(memory_view),
-                )
-                verdict = guard_infeasible(
-                    evidence_valid=refs.allowed,
-                    structure_complete=self._structure_inventory_complete(
-                        statement,
-                        observation,
-                    ),
-                    reason=decision.reason,
-                    kickback=decision.kickback,
-                )
-                if not verdict.allowed:
-                    rejections.append(verdict.reason)
-                    continue
-                self._record_transition(decision, rejections)
+            except StructuredOutputError as exc:
+                message = f"Statement Transition output invalid: {exc}"
+                self._last_transition_record = {
+                    "proposal": {},
+                    "validation_error": message,
+                }
                 return SupervisorStep(
-                    outcome=StatementOutcome.infeasible(
-                        decision.reason,
-                        kickback=decision.kickback,
-                    ),
-                    summary=decision.summary or decision.reason,
-                    **_ctx(statement, decision.read_instruction),
+                    outcome=StatementOutcome.exhausted(message),
+                    summary=message,
+                    execution_scope=execution_scope,
+                    **_ctx(statement, None),
                 )
+        print(
+            f"  [TransitionLLM] state={decision.assessment.status} "
+            f"kind={decision.kind}: {decision.reason[:120]}"
+        )
 
-            if self._terminal_only:
-                rejections.append(
-                    "hard-budget final frame cannot dispatch another action; "
-                    "propose complete or evidence-backed infeasible"
+        if decision.kind == "complete":
+            refs = validate_evidence_references(
+                decision.evidence,
+                available_refs=available_event_refs(memory_view),
+            )
+            if not refs.allowed:
+                return self._transition_failure(
+                    statement, decision, refs.reason, execution_scope=execution_scope
                 )
-                continue
-
-            step, rejection = self._materialize_transition_action(
-                decision,
+            completion_claims = [
+                *claims,
+                transition_claim(decision, scope=execution_scope),
+            ]
+            if statement.kind == "collection":
+                has_traversal = _has_successful_scroll_for(
+                    scoped_history, statement.id
+                )
+                declared_current_boundary = statement.completion_strategy in {
+                    "read_once", "visible_once"
+                }
+                if declared_current_boundary or has_traversal or _has_collected(
+                    scoped_history, statement.id
+                ):
+                    completion_claims.append(claim(
+                        "collection.coverage",
+                        "complete",
+                        source_type="transition.collection_boundary",
+                        scope=execution_scope,
+                        subject_scope=execution_scope,
+                        evidence="; ".join(item.claim for item in decision.evidence),
+                        coverage="complete",
+                    ))
+            proposed_evaluation = self._completion_reducer.decide(
+                contract,
+                completion_claims,
+                scope=execution_scope,
+                persistence_assessment=persistence_assessment,
+            )
+            verdict = validate_completion(proposed_evaluation)
+            if not verdict.allowed:
+                return self._transition_failure(
+                    statement,
+                    decision,
+                    proposed_evaluation.reason or "completion evidence insufficient",
+                    execution_scope=execution_scope,
+                )
+            self._record_transition(decision)
+            return self._advance(
                 statement,
+                history,
+                decision=proposed_evaluation,
+                final_read=(
+                    _ctx(
+                        statement,
+                        decision.read_instruction
+                        or _default_read_instruction(statement),
+                    )
+                    if statement.kind in {"collection", "verification"}
+                    and self.task_type != "action"
+                    else None
+                ),
+            )
+
+        if decision.kind == "infeasible":
+            refs = validate_evidence_references(
+                decision.evidence,
+                available_refs=available_event_refs(memory_view),
+            )
+            if not refs.allowed:
+                return self._transition_failure(
+                    statement, decision, refs.reason, execution_scope=execution_scope
+                )
+            self._record_transition(decision)
+            return SupervisorStep(
+                outcome=StatementOutcome.infeasible(
+                    decision.reason,
+                    kickback=decision.kickback,
+                ),
+                summary=decision.assessment.summary,
+                **_ctx(statement, decision.read_instruction),
+            )
+
+        if self._terminal_only:
+                return self._transition_failure(
+                    statement,
+                    decision,
+                    "hard-budget final frame cannot dispatch another action",
+                    execution_scope=execution_scope,
+                )
+
+        step, rejection = self._materialize_transition_action(
+            decision,
+            statement,
+            observation,
+            execution_scope=execution_scope,
+        )
+        if step is None:
+            return self._transition_failure(
+                statement,
+                decision,
+                rejection or "invalid action",
                 execution_scope=execution_scope,
             )
-            if step is None:
-                rejections.append(rejection)
-                continue
-            self._record_transition(decision, rejections)
-            return step
-
-        assert last_decision is not None
-        self._record_transition(last_decision, rejections)
-        reason = (
-            "Statement-local replan 后仍未产生合法动作或终态："
-            + "; ".join(rejections or [last_decision.reason])
-        )
-        return SupervisorStep(
-            outcome=StatementOutcome.exhausted(reason),
-            summary=reason,
-            execution_scope=execution_scope,
-            **_ctx(statement, last_decision.read_instruction),
-        )
+        self._record_transition(decision)
+        return step
 
     def _advance(
         self,

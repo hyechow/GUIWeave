@@ -631,7 +631,7 @@ def _run_evidence_text(context_path: Path | None) -> str:
             parts.append(
                 "transition="
                 f"{proposal.get('kind')}: "
-                f"{proposal.get('summary') or proposal.get('reason') or ''}"
+                f"{(proposal.get('assessment') or {}).get('summary') or proposal.get('reason') or ''}"
             )
             evidence = [
                 item.get("claim")
@@ -640,9 +640,9 @@ def _run_evidence_text(context_path: Path | None) -> str:
             ]
             if evidence:
                 parts.append("visible_evidence=" + "; ".join(map(str, evidence[:4])))
-            missing = transition.get("guard_rejections") or []
-            if missing:
-                parts.append("missing_evidence=" + "; ".join(map(str, missing[:4])))
+            validation_error = str(transition.get("validation_error") or "")
+            if validation_error:
+                parts.append("validation_error=" + validation_error)
         lines.append(" | ".join(parts))
     return "\n".join(lines) if lines else "(none)"
 

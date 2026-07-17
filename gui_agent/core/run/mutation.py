@@ -308,4 +308,69 @@ def resolve_mutation(
     return SubjectResolution("unknown", evidence="subject identity is not observable")
 
 
-__all__ = ["SubjectResolution", "resolve_mutation"]
+def resolve_semantic_bindings(
+    statement: StatementContract,
+    observation: Observation,
+    bindings: dict[str, list[str]],
+) -> SubjectResolution:
+    """Validate proposal-local semantic value bindings against live controls."""
+    required = {
+        f"{field}={value}": str(value)
+        for field, desired in statement.target_values.items()
+        for value in target_value_options(desired)
+    }
+    if set(bindings) != set(required):
+        missing = ", ".join(sorted(set(required) - set(bindings))) or "none"
+        extra = ", ".join(sorted(set(bindings) - set(required))) or "none"
+        return SubjectResolution(
+            "unknown",
+            evidence=f"bindings must exactly cover contract selectors; missing={missing}; extra={extra}",
+        )
+
+    groups, _ = _groups(observation)
+    controls = [control for items in groups.values() for control in items]
+    controls_by_ref: dict[str, list[dict]] = {}
+    for control in controls:
+        for ref in {
+            str(control.get(key) or "").strip() for key in ("name", "id", "ref")
+        } - {""}:
+            controls_by_ref.setdefault(ref, []).append(control)
+    facts: list[str] = []
+
+    for selector, raw_refs in bindings.items():
+        value = required[selector]
+        refs = tuple(str(ref).strip() for ref in raw_refs if str(ref).strip())
+        if not refs:
+            return SubjectResolution("unknown", evidence=f"binding {selector} has no refs")
+        resolved: list[dict] = []
+        for ref in refs:
+            matches = controls_by_ref.get(ref, [])
+            if len(matches) != 1:
+                return SubjectResolution(
+                    "unknown",
+                    evidence=f"binding ref {ref!r} resolved to {len(matches)} controls",
+                )
+            if not _satisfies(matches[0], value):
+                return SubjectResolution(
+                    "unknown", evidence=f"binding ref {ref!r} does not equal {value!r}"
+                )
+            resolved.append(matches[0])
+
+        subjects = {
+            str(control.get("group_id") or "").strip()
+            for control in resolved
+            if str(control.get("group_id") or "").strip()
+        }
+        if len(subjects) > 1:
+            return SubjectResolution(
+                "unknown", evidence="binding refs do not belong to one subject"
+            )
+        facts.append(f"{selector} -> {','.join(refs)}")
+    return SubjectResolution("complete", evidence="; ".join(facts))
+
+
+__all__ = [
+    "SubjectResolution",
+    "resolve_mutation",
+    "resolve_semantic_bindings",
+]

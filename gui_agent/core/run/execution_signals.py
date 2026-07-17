@@ -292,7 +292,6 @@ class CompletionReducer:
             (effect_claim is not None and effect_claim.authoritative)
             or (control_state is not None and control_state.authoritative)
         )
-
         commit_confirmed = bool(
             execution is not None
             and execution.value == "confirmed"
@@ -451,7 +450,14 @@ class CompletionReducer:
                     "accepted_unverified",
                 )
             if effect_status == "satisfied":
-                if not effect_authoritative and not write_confirmed:
+                if (
+                    not effect_authoritative
+                    and not write_confirmed
+                    and (
+                        effect_claim is None
+                        or effect_claim.coverage != "validated_semantic_binding"
+                    )
+                ):
                     return CompletionEvaluation(
                         "pending",
                         "声明目标状态只有模型判断，尚无结构化观察或本调用写入回执",

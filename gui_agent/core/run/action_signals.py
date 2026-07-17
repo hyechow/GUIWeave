@@ -19,7 +19,7 @@ from gui_agent.core.schemas import (
 )
 
 _COMMIT_ACTIONS = frozenset({"tap", "click", "press_enter"})
-_ITERATIVE_ACTIONS = frozenset({"scroll", "drag"})
+_ITERATIVE_ACTIONS = frozenset({"scroll", "drag", "scroll_to_ref"})
 _WRITE_ACTIONS = frozenset({"type", "clear_text", "select_option"})
 _POSITION_BIN = 50
 
@@ -72,6 +72,8 @@ def action_signature(action: Any) -> str:
     else:
         position = "-"
     target = f"{tag}@{position}" if tag else f"@{position}"
+    if action_type == "scroll_to_ref":
+        return f"{action_type}|ref:{getattr(action, 'target_ref', '') or ''}"
     if action_type in _ITERATIVE_ACTIONS:
         return f"{action_type}|{getattr(action, 'direction', '') or ''}|{target}"
     text = normalize_action_text(getattr(action, "text", "") or "")

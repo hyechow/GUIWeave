@@ -970,6 +970,122 @@ def run_agent_loop(
                     outcome=_turn_outcome,
                 )
 
+            _same_frame_replan = getattr(
+                supervisor,
+                "replan_after_action_rejection",
+                None,
+            )
+            action_result = action_executor.run(
+                sv_step=sv_step,
+                observation=observation,
+                action_policy=action_policy,
+                supervisor=supervisor,
+                executor=executor,
+                prep_future=prep_future,
+                log_dir=log_dir,
+                turn_no=turn_no,
+                flash=_flash,
+                status=_status,
+                say=_say,
+                stop_requested=_stop_requested,
+                replan=(
+                    lambda rejected_step, reason: supervisor.replan_after_action_rejection(
+                        observation,
+                        context.goal,
+                        context.journal.turns,
+                        rejected_step,
+                        reason,
+                    )
+                )
+                if callable(_same_frame_replan)
+                else None,
+            )
+            if action_result.supervisor_step is not None:
+                sv_step = action_result.supervisor_step
+                _say(f"监督者重决策: {sv_step.summary}")
+                _status(turn_no, sv_step.summary)
+
+            # A grounding veto can cause the same-frame Transition replan to discover a terminal
+            # verdict. Persist it as an OutcomeEvent, never as an action-less PolicyTurn.
+            _post_grounding_outcome = _outcome_from_step(sv_step)
+            if _post_grounding_outcome is not None:
+                if _post_grounding_outcome.is_completed:
+                    assert rt.current is not None
+                    _reads = _read_completed_run_returns(rt.current, observation)
+                    _contract = check_return_contract(rt.current, _reads)
+                    if _contract:
+                        _attempt = rt.next_return_attempt()
+                        if _attempt is not None:
+                            tightened = _tighten_ui_return_run(
+                                rt.current,
+                                _contract.missing,
+                                _reads,
+                                attempt=_attempt,
+                                violations=_contract.out_of_domain,
+                            )
+                            rt.retry_current(tightened)
+                            supervisor.reset_for_return_retry(
+                                contract_for_run(tightened, rt.index)
+                            )
+                            _say(
+                                "  [Orchestrator] 同帧重决策完成但返回值合同未满足，"
+                                f"继续定位（{_attempt}/{MAX_EMPTY_RETURN_RECOVERIES}）："
+                                + _contract.describe()
+                            )
+                            continue
+                        _post_grounding_outcome = StatementOutcome.exhausted(
+                            "返回值合同未满足：" + _contract.describe(),
+                            reads=_reads,
+                        )
+                    else:
+                        _post_grounding_outcome = _outcome_from_step(
+                            sv_step,
+                            reads=_reads,
+                            rows=[],
+                        )
+                _record_statement_outcome(sv_step, _post_grounding_outcome)
+                _post_decision = recovery_router.route_statement(
+                    _post_grounding_outcome,
+                    can_redecompose=callable(redecompose),
+                )
+                if _post_decision.action == "kickback":
+                    assert _post_decision.recovery_class is not None
+                    _handled, _reply = _perform_replan(
+                        _post_grounding_outcome.kickback or "",
+                        observation,
+                        cls=_post_decision.recovery_class,
+                        terminal_outcome=_post_grounding_outcome,
+                    )
+                    if _handled and _reply is not None:
+                        return _finish(_orch_result(context, rt.interpreter, _reply))
+                    if _handled:
+                        continue
+                if _post_grounding_outcome.is_completed:
+                    try:
+                        rt.send_outcome(_post_grounding_outcome)
+                    finally:
+                        supervisor.end_statement(_post_grounding_outcome)
+                    if rt.finished:
+                        return _finish(
+                            _orch_result(
+                                context,
+                                rt.interpreter,
+                                rt.reply or _post_grounding_outcome.summary,
+                            )
+                        )
+                    _reply = _drain_immediate(
+                        observation_for_statements=observation,
+                        observation_url=observation_url_for_turn,
+                        allow_navigation=not _budget_reconcile,
+                    )
+                    if _reply is not None:
+                        return _finish(_orch_result(context, rt.interpreter, _reply))
+                    continue
+                return _finish_statement(
+                    turn_no=turn_no,
+                    outcome=_post_grounding_outcome,
+                )
+
             sync_turn_metadata(
                 context=context,
                 supervisor=supervisor,
@@ -989,20 +1105,6 @@ def run_agent_loop(
             read_added_content = read_result.added_content
             read_note_hash = read_result.note_hash
 
-            action_result = action_executor.run(
-                sv_step=sv_step,
-                observation=observation,
-                action_policy=action_policy,
-                supervisor=supervisor,
-                executor=executor,
-                prep_future=prep_future,
-                log_dir=log_dir,
-                turn_no=turn_no,
-                flash=_flash,
-                status=_status,
-                say=_say,
-                stop_requested=_stop_requested,
-            )
             action_decision = action_result.action_decision
             executed = action_result.executed
 

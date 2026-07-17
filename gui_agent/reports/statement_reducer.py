@@ -309,12 +309,16 @@ class StatementReportReducer:
                         else "in_progress"
                     ),
                     "reason": str(proposal.get("reason") or ""),
-                    "summary": str(proposal.get("summary") or ""),
+                    "summary": str(
+                        (proposal.get("assessment") or {}).get("summary")
+                        or proposal.get("summary")
+                        or ""
+                    ),
                     "effect_status": "confirmed" if kind == "complete" else "unverified",
                     "visible_evidence": evidence,
-                    "missing_evidence": list(
-                        transition.get("guard_rejections") or []
-                    ),
+                    "missing_evidence": [
+                        str(transition.get("validation_error") or "")
+                    ] if transition.get("validation_error") else [],
                 }
                 if kind in {"complete", "infeasible"}:
                     view.acceptance = transition_check

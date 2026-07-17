@@ -5,7 +5,7 @@ Normative authority (Agentic Statement Transition):
 - EventJournal: fact authority (raw append-only events)
 - StatementMemoryView: decision context for the LLM (this module)
 - LLM Transition: semantic control; beliefs must not be promoted here
-- Runtime Guard: hard veto only (not owned here)
+- Runtime validation: mechanical boundary only (not owned here)
 - StatementOutcome: sole terminal
 
 This module never stores live phase and never invents facts. Compaction may window
@@ -277,11 +277,16 @@ def _step_summary(turn: PolicyTurn) -> str:
         parts.append("effect=satisfied")
     if turn.transition is not None:
         proposal = turn.transition.get("proposal") or {}
+        assessment = proposal.get("assessment") or {}
+        status = str(assessment.get("status") or "")
+        if status:
+            parts.append(f"模型状态={status}")
         kind = str(proposal.get("kind") or "")
         if kind:
             parts.append(f"模型决定={kind}")
-        for rejection in turn.transition.get("guard_rejections") or []:
-            parts.append(f"Guard 否决：{rejection}")
+        validation_error = str(turn.transition.get("validation_error") or "")
+        if validation_error:
+            parts.append(f"机械校验失败：{validation_error}")
     if turn.no_effect:
         parts.append("no_effect")
     return "；".join(p for p in parts if p) or "(empty turn)"
