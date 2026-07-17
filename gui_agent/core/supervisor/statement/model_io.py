@@ -225,7 +225,7 @@ def _transition_frame_block(
         "observation": {
             "title": observation.title,
             "url": observation.url,
-            "control_coverage": view.control_coverage,
+            "affordance_coverage": view.affordance_coverage,
             "control_state": _compact_control_state(observation),
             "applied_filters": observation.applied_filters or {},
             "initial_filters": initial_filters or {},

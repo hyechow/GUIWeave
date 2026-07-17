@@ -20,6 +20,7 @@ TransitionOperation = Literal[
     "navigate",
     "iterate",
 ]
+AffordanceCoverage = Literal["unavailable", "unknown", "partial", "complete"]
 
 _ACTIVATABLE_ROLES = frozenset({
     "button",
@@ -36,10 +37,33 @@ _SELECT_ROLES = frozenset({"combobox", "listbox", "option"})
 
 @dataclass(frozen=True)
 class StatementObservationView:
-    """Current-frame mechanical facts consumed by Transition and dispatch validation."""
+    """Visual-first current-frame evidence consumed by Transition and validation.
 
-    control_coverage: str
+    The screenshot is always the base observation.  Adapter semantic sensors may add
+    positive target identity/capability facts, but their absence never means that the
+    screenshot contains no actionable target.
+    """
+
+    affordance_coverage: AffordanceCoverage
     affordances: tuple[dict, ...]
+
+
+def _affordance_coverage(observation: Observation) -> AffordanceCoverage:
+    # The complete control-state index is evidence about values, not about the
+    # target list projected below.  Coverage here therefore follows only the
+    # affordance-producing sensors.
+    meta = observation.form_controls_meta or {}
+    coverage = str(meta.get("coverage") or "").strip().casefold()
+    if coverage == "partial":
+        return "partial"
+    if coverage == "complete":
+        return "complete"
+    sensor_available = (
+        observation.semantic_tree is not None
+        or observation.form_controls is not None
+        or observation.form_controls_meta is not None
+    )
+    return "unknown" if sensor_available else "unavailable"
 
 
 def _usable_navigation_url(url: str, current_url: str) -> bool:
@@ -155,14 +179,8 @@ def build_observation_view(
     observation: Observation,
     history: list[PolicyTurn],
 ) -> StatementObservationView:
-    """Expose current targets and capabilities without judging Statement state."""
+    """Expose optional semantic targets without judging visual or Statement state."""
     del statement, history
-    meta = (
-        observation.form_control_state_meta
-        if observation.form_control_state is not None
-        else observation.form_controls_meta
-    ) or {}
-    control_coverage = str(meta.get("coverage") or "unknown")
 
     affordances: list[dict] = []
     seen: set[tuple[str, str, str]] = set()
@@ -184,13 +202,14 @@ def build_observation_view(
             affordances.append(item)
 
     return StatementObservationView(
-        control_coverage=control_coverage,
+        affordance_coverage=_affordance_coverage(observation),
         affordances=tuple(affordances),
     )
 
 
 __all__ = [
     "StatementObservationView",
+    "AffordanceCoverage",
     "TransitionOperation",
     "build_observation_view",
 ]

@@ -22,12 +22,14 @@ Runtime 不会替你选择路线、禁止重复动作或修补决定。错误的
 
 - `contract`：Statement 目标、成功条件、目标值、持久化和返回值要求。
 - `memory`：Journal 事实、最近步骤及 `last_action_result`。Journal receipt 比叙事摘要权威。
-- `observation`：当前页面、控件状态、筛选、表格和 `affordances`。
-- `affordances`：当前候选目标及它真实支持的 `supported_operations`。
-- 当前截图：用于理解结构、语义目标和未结构化的可见内容。
+- 当前截图：每个平台都必须提供，是理解当前可见状态、结构、位置和语义目标的基础观察。
+- `observation`：可选的平台结构证据，包括页面身份、控件状态、筛选、表格和 `affordances`。
+- `affordances`：adapter 能确认的候选目标及其 `supported_operations`；它是视觉观察的正向增强，
+  不是完整页面清单。`affordance_coverage=unavailable/partial` 或列表为空，不代表截图中没有目标。
 - 应用知识：只提供事实与可用路径，不代表当前页面已经处于某状态。
 
 不得把未来动作、模型猜测或知识描述写成 `established_facts`。
+不得因为 URL、控件清单、表格或 affordances 缺失，就判定视觉中可见的状态不存在。
 
 ## 第一步：assessment
 
@@ -55,11 +57,13 @@ assessment 与 kind 必须一致：
 
 一次只输出一个原子动作。结构字段是唯一执行权威：
 
-- **在哪里**：`target_control` 使用当前观察中的可读目标名；存在 `ref` 时必须原样填写
-  `target_ref`，不得沿用旧帧 ref。`target_ref` 是精确身份，目标名可省略装饰图标字符。
+- **在哪里**：`target_control` 使用当前截图或结构观察中的可读目标名。若匹配的当前帧 affordance
+  提供 `ref`，必须原样填写 `target_ref`，不得沿用旧帧 ref；visual-only 目标将 `target_ref` 留空。
+  `target_ref` 是可选的精确身份增强，目标名可省略装饰图标字符。
 - `target_control` 必须是本帧实际要操作的可见目标，不能写尚未显示的下游目标。若需要先展开
   容器、菜单或分组，本帧目标就是该可见容器入口，`expected_result` 再描述下游入口出现。
-- **做什么**：`action_family` 必须来自该目标的 `supported_operations`。
+- **做什么**：若当前帧有匹配 affordance，`action_family` 必须来自它的
+  `supported_operations`；没有匹配 affordance 时，根据截图中目标的可见交互语义选择。
 - `input/select` 必须填写精确 `target_value`。
 - `atomic_role` 只是动作 receipt 的语义用途：`prepare | write | commit | iterate`，不是相位。
 - `expected_result` 写下一帧应观察到的具体变化，不能写“任务完成”之类空泛结果。
@@ -67,6 +71,7 @@ assessment 与 kind 必须一致：
   若截图中有同名目标，必须写出当前画面能确认的区域、同行、同组、相邻字段或外观关系，
   例如区分局部筛选区入口与页面级同名入口。不得写坐标、CSS/XPath，也不得依赖 DOM 才能理解。
 - 只写截图和当前观察确实支持的位置关系；不要为了显得完整而编造区域、角色或布局。
+- 不得要求 Action Policy 依赖 DOM、ref 或结构清单才能理解指令；这些信息只用于存在时的消歧。
 
 重要机械区别：
 
@@ -86,6 +91,6 @@ assessment 与 kind 必须一致：
 ### infeasible
 
 只有 assessment 为 blocked 时才能提出。填写 evidence 和可操作的 `kickback`，说明编排器下次
-必须改变的约束。不要把一次动作失败、控件暂未显示或清单 partial 当作不可行。
+必须改变的约束。不要把一次动作失败、控件暂未显示、结构传感器不可用或清单 partial 当作不可行。
 
 输出必须严格符合结构化 schema；不得附加 DOM 注释字段或同时携带互相冲突的动作。

@@ -454,7 +454,12 @@ class StatementSupervisorPolicy(
         view: StatementObservationView,
         plan: _ActionDraft,
     ) -> str:
-        """Validate an advertised target mechanically; never rewrite its operation."""
+        """Validate positive adapter facts; visual-only targets remain model-owned.
+
+        An empty/partial affordance projection is not negative evidence about the
+        screenshot.  When Transition cites a ref or a matching advertised target,
+        however, Runtime can mechanically enforce its identity and capabilities.
+        """
         label = plan.target_control.strip().casefold()
         candidates = [
             item for item in view.affordances

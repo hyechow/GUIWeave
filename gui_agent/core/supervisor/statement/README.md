@@ -9,7 +9,8 @@ Runtime does not advance a business phase machine behind the model.
 Each non-loading frame follows one path:
 
 1. `StatementMemory` projects this invocation's Journal facts.
-2. `observation_view.py` projects current targets and their adapter-supported operations.
+2. The screenshot provides the required visual observation; `observation_view.py` projects
+   optional adapter-confirmed targets and operations.
 3. Transition receives the contract, Memory, current observation, screenshot, and knowledge.
 4. In one response it first returns `assessment`, then one decision:
    `act | complete | infeasible`.
@@ -31,7 +32,8 @@ Runtime may reject, but never repair, a Transition proposal when:
 
 - structured output is invalid;
 - a cited `turn:N` does not exist in this Statement's Memory;
-- a current-frame `target_ref` or operation is not advertised by its affordance;
+- a supplied current-frame `target_ref`, or an operation on a matching advertised target,
+  contradicts its affordance;
 - an input/select value is outside the Statement contract;
 - terminal evidence does not satisfy the completion contract; or
 - a hard action/traversal budget is exhausted.
@@ -58,12 +60,13 @@ business target, prohibit a semantic tactic, or turn a rejected action into infe
 
 - immutable Statement contract;
 - durable Journal facts, recent steps, compacted history, and last action result;
-- current title/URL, form state, applied filters, tables, and affordances;
-- current screenshot and selected application knowledge.
+- required current screenshot and selected application knowledge;
+- optional current title/URL, form state, applied filters, tables, and affordances;
+- explicit affordance coverage, including `unavailable` when the platform is visual-only.
 
 An action must name both parts explicitly:
 
-- **where**: a readable `target_control` and, when available, the exact current-frame
+- **where**: a visually readable `target_control` and, when available, the exact current-frame
   `target_ref`; the ref owns identity even when the rendered label contains decorative glyphs;
 - **what**: `action_family`, optional contract value, and expected next-frame result.
 
@@ -77,5 +80,8 @@ Transition output is a proposal, not an authoritative observation. `StatementOut
 only Statement terminal value consumed by `ProgramRuntime`.
 
 Core prompts and code stay application-neutral. Site facts belong in knowledge. Browser, Android,
-and iPhone mechanics belong in adapters. A missing live capability should be added as normalized
-adapter evidence, not as a case-specific core rule.
+and iPhone mechanics belong in adapters. Visual evidence is the portable baseline; DOM,
+accessibility, controls, tables, and URL metadata are optional positive evidence. Missing or partial
+adapter evidence must never be interpreted as proof that a visually present target or state does
+not exist. A missing live capability should be added as normalized adapter evidence, not as a
+case-specific core rule.
