@@ -172,10 +172,12 @@ def structured_read(
     iPhone Retina geometry for browser/android observations."""
     if not returns:
         return {}
+    from llm.provider_config import dashscope_extra_body
+
     cfg = resolve_llm_config("reader")
     llm = ChatOpenAI(
         model=cfg.model, api_key=cfg.api_key, base_url=cfg.base_url,
-        extra_body={"enable_thinking": False},
+        extra_body=dashscope_extra_body(cfg.model),
     )
     text = render_prompt_context([
         ContextBlock(
@@ -286,10 +288,12 @@ def structured_read_rows(
     row-wise extraction (unknown row count, one object per row), returning the rows."""
     if not returns:
         return []
+    from llm.provider_config import dashscope_extra_body
+
     cfg = resolve_llm_config("reader")
     llm = ChatOpenAI(
         model=cfg.model, api_key=cfg.api_key, base_url=cfg.base_url,
-        extra_body={"enable_thinking": False},
+        extra_body=dashscope_extra_body(cfg.model),
     )
     text = render_prompt_context([
         ContextBlock(

@@ -32,7 +32,7 @@ finish(f"最终答复,引用 {v['字段']}")                       # 产出答�
 2. **sc 写可见终态**(页面上能看到什么),不写"动作已发出"。要读值的步骤,sc 写"界面有响应",判定交给 returns/read_spec。
 3. **运行时才知道的值必须先读再用**:百分比调价等派生值,先 `returns=["current_price"]` 读现价,再 `new_price = round(float(d["current_price"]) * 0.865, 2)` 计算,再把 `{new_price}` 写进 action 描述。**绝不凭空写具体数值,也不写"更新为新值"这类泛指。**
 4. **集合任务用 for/collect**:目标是"所有满足某规格的成员"(所有某尺寸变体/所有某颜色商品/所有满足条件的记录)时,必须 collect+for 逐个处理,不能只做一个。collect 的 returns 只写**网格里真实存在的列**(sku/name/price/状态等)——不要把循环体要产出的值(新价格/是否成功)写进 returns。判定成员身份需要的列(如 name/sku)也要采进来。
-5. **实体检索语义块是权威**:上下文若给出【实体检索语义】,照办——精确值先试、0 条再用给定关键词重筛;标"多目标(一组)"的实体必须 for/collect 遍历。
+5. **实体检索语义块是权威**:上下文若给出【实体检索语义】,照办——仅 `lookup` 按精确值先试、0 条再用给定关键词重筛;`collection_scope` 是已定位 owner 下的覆盖范围，不独立检索，必须由 for/collect 遍历或聚合动作 `covers_set` 覆盖。
 6. **筛选卫生**:filter 步描述里声明本任务自己要的筛选集;跨任务残留由运行时清理,不要盲写"清除所有筛选"。
 7. **计算表达式只用**:算术、比较、and/or/not、三元、切片、字符串方法(split/strip/replace/…)、round/float/int/str/len/abs/re_sub/re_search。不支持 import、while、try、def、推导式。
 8. **分支条件必须基于某步的返回字段**:`if v["字段"] == "值":`。复杂判定先让某步 returns 一个判定字段(read_spec 写判定规则),再分支。`count == "0"`(空集守卫)的分支:命中 0 的那支放"未找到"finish,另一支放实际工作。

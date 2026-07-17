@@ -84,6 +84,7 @@ class _StepDraft(BaseModel):
         description="op=run 可选：当任务实体是【多目标(一组)】、但应用知识明确指出这组成员由单一聚合对象/"
                     "批量机制一次覆盖（父记录一次保存级联全部子记录、全选+批量动作、bulk edit）时，"
                     "在执行该聚合动作的 mutation 步上填被覆盖的实体提及原文，程序可以不用 foreach。"
+                    "Router 给出 collection_scope 且本步是其聚合 owner 时，必须把该 scope 原文填在这里。"
                     "没有知识依据时禁止填写——那等于漏改其余成员。",
     )
     persistence: str = Field(

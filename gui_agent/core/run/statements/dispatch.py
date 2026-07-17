@@ -156,6 +156,9 @@ def drain_immediate_statements(
 
         statement = program_runtime.send_outcome(outcome)
         if program_runtime.finished:
+            if program_runtime.interpreter.run_log:
+                terminal = program_runtime.interpreter.run_log[-1].result
+                failure_evidence = failure_evidence or terminal.failure_evidence
             return ImmediateDispatchResult(
                 reply=program_runtime.reply or "",
                 observation=cursor.observation,

@@ -4,7 +4,7 @@ from __future__ import annotations
 
 import re
 
-from ..program import BARE_REF_RE, TEMPLATE_RE, Call, Compute, ForEach, FunctionDef, If, Run, RunLike, Stmt
+from ..program import BARE_REF_RE, TEMPLATE_RE, Call, Compute, ForEach, FunctionDef, If, Query, Run, RunLike, Stmt
 from .issue import IssueList
 
 _URL_CAPABILITY_RE = re.compile(r"(?:url|href|link|链接|网址|詳細連結|详情链接)", re.IGNORECASE)
@@ -24,6 +24,130 @@ def template_fields_for_var(text: str, var: str) -> set[str]:
 
 def _is_url_capability(name: str) -> bool:
     return bool(_URL_CAPABILITY_RE.search(str(name or "")))
+
+
+def _top_level_keyword(text: str, keyword: str, *, start: int = 0) -> tuple[int, int] | None:
+    """Locate a SQL keyword outside parentheses and quoted strings."""
+    depth = 0
+    quote = ""
+    index = start
+    wanted = keyword.casefold()
+    while index < len(text):
+        char = text[index]
+        if quote:
+            if char == quote:
+                if index + 1 < len(text) and text[index + 1] == quote:
+                    index += 2
+                    continue
+                quote = ""
+            index += 1
+            continue
+        if char in {"'", '"'}:
+            quote = char
+            index += 1
+            continue
+        if char == "(":
+            depth += 1
+            index += 1
+            continue
+        if char == ")":
+            depth = max(0, depth - 1)
+            index += 1
+            continue
+        if depth == 0 and text[index:index + len(keyword)].casefold() == wanted:
+            before = text[index - 1] if index else " "
+            after_index = index + len(keyword)
+            after = text[after_index] if after_index < len(text) else " "
+            if not (before.isalnum() or before == "_") and not (
+                after.isalnum() or after == "_"
+            ):
+                return index, after_index
+        index += 1
+    return None
+
+
+def _split_top_level_csv(text: str) -> list[str]:
+    parts: list[str] = []
+    depth = 0
+    quote = ""
+    start = 0
+    index = 0
+    while index < len(text):
+        char = text[index]
+        if quote:
+            if char == quote:
+                if index + 1 < len(text) and text[index + 1] == quote:
+                    index += 2
+                    continue
+                quote = ""
+            index += 1
+            continue
+        if char in {"'", '"'}:
+            quote = char
+        elif char == "(":
+            depth += 1
+        elif char == ")":
+            depth = max(0, depth - 1)
+        elif char == "," and depth == 0:
+            parts.append(text[start:index].strip())
+            start = index + 1
+        index += 1
+    tail = text[start:].strip()
+    if tail:
+        parts.append(tail)
+    return parts
+
+
+def _select_projection(sql: str) -> dict[str, str]:
+    select = _top_level_keyword(sql, "select")
+    if select is None:
+        return {}
+    from_kw = _top_level_keyword(sql, "from", start=select[1])
+    body = sql[select[1]:from_kw[0] if from_kw else len(sql)]
+    projections: dict[str, str] = {}
+    for item in _split_top_level_csv(body):
+        alias_match = re.search(
+            r"\bas\s+([A-Za-z_][A-Za-z0-9_]*)\s*$",
+            item,
+            flags=re.IGNORECASE,
+        )
+        if alias_match:
+            alias = alias_match.group(1)
+            expression = item[:alias_match.start()].strip()
+        elif re.fullmatch(r"[A-Za-z_][A-Za-z0-9_]*", item):
+            alias = item
+            expression = item
+        else:
+            continue
+        projections[alias.casefold()] = expression
+    return projections
+
+
+def check_query_url_projection(query: Query, issues: IssueList) -> None:
+    """Require URL-typed results to originate from a URL/link capability."""
+    url_fields = [field for field in query.returns if _is_url_capability(field)]
+    if not url_fields:
+        return
+    projections = _select_projection(query.sql or "")
+    for field in url_fields:
+        expression = projections.get(str(field).casefold(), "")
+        identifiers = re.findall(
+            r"\b[A-Za-z_][A-Za-z0-9_]*\b",
+            re.sub(r"'[^']*'|\"[^\"]*\"", " ", expression),
+        )
+        if expression and (
+            re.search(r"https?://", expression, flags=re.IGNORECASE)
+            or any(_is_url_capability(identifier) for identifier in identifiers)
+        ):
+            continue
+        issues.add(
+            "DATA_QUERY_URL_ALIAS_NOT_URL_SOURCE",
+            f"data_query 步「{query.name}」把字段「{field}」声明成 URL/link 能力，"
+            f"但 SELECT 表达式 {expression or '<missing>'!r} 没有来自任何 URL/HREF/link 列。"
+            "显示文本（如 Action='Edit'）不能通过 `AS detail_url` 冒充可导航入口；"
+            "请让 foreach 采集真实 *_url/*_href/*_link 字段，并从该字段投影结果。",
+            evidence=(field, expression),
+        )
 
 
 def _run_text(run: Run) -> str:

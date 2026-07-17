@@ -23,7 +23,9 @@ output didn't know" disappears: the answer comes from the whole program, not the
 
 from __future__ import annotations
 
+import re
 from typing import Any, Callable, Generator, Optional
+from urllib.parse import urlsplit
 
 from pydantic import BaseModel, Field
 
@@ -698,11 +700,24 @@ class Interpreter:
         Returns the run unchanged when nothing templated (the common case)."""
         missing: list[str] = []
         target_ref_values: list[str] = []
+        navigation_urls: list[str] = []
         for match in TEMPLATE_RE.finditer(run.name or ""):
             rv = self.env.get(match.group(1))
-            value = (rv.reads.get(match.group(2).strip().strip("'\""), "") if rv else "").strip()
+            field = match.group(2).strip().strip("'\"")
+            value = (rv.reads.get(field, "") if rv else "").strip()
             if value:
                 target_ref_values.append(value)
+                if (
+                    run.kind == "navigation"
+                    and re.search(r"(?:url|href|link|链接|网址)", field, re.IGNORECASE)
+                ):
+                    parsed = urlsplit(value)
+                    if parsed.scheme not in {"http", "https"} or not parsed.netloc:
+                        missing.append(
+                            f"{match.group(1)}[{field}]: invalid URL {value!r}"
+                        )
+                    else:
+                        navigation_urls.append(value)
         # Bare `{base}` scalar refs in the name (function params / Compute results) also identify the
         # per-row target — anchor the acceptance gate to them too, so a leftover page from the prior
         # iteration cannot satisfy a generic gate using stale state from the prior item.
@@ -724,9 +739,24 @@ class Interpreter:
         if target_ref_values and not any(value in sc for value in target_ref_values):
             target_gate = f"必须对应子目标指定对象「{name}」"
             sc = f"{sc}（{target_gate}）" if sc else target_gate
-        if name == run.name and sc == run.success_condition and rs == run.read_spec:
+        updates = {
+            "name": name,
+            "success_condition": sc,
+            "read_spec": rs,
+        }
+        if navigation_urls:
+            updates["target_values"] = {
+                **run.target_values,
+                "__navigation_url__": navigation_urls[0],
+            }
+        if (
+            name == run.name
+            and sc == run.success_condition
+            and rs == run.read_spec
+            and not navigation_urls
+        ):
             return run, missing
-        return run.model_copy(update={"name": name, "success_condition": sc, "read_spec": rs}), missing
+        return run.model_copy(update=updates), missing
 
     def _render(self, template: str, missing: Optional[list[str]] = None) -> str:
         def _sub(m) -> str:

@@ -58,11 +58,13 @@ def repair_data_query_sql(
     cfg = resolve_llm_config("supervisor.decompose")
     if not cfg.model:
         cfg = resolve_llm_config("supervisor")
+    from llm.provider_config import dashscope_extra_body
+
     llm = ChatOpenAI(
         model=cfg.model,
         api_key=cfg.api_key,
         base_url=cfg.base_url,
-        extra_body={"enable_thinking": False},
+        extra_body=dashscope_extra_body(cfg.model),
     )
     prompt = {
         "goal": goal,

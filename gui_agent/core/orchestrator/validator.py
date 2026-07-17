@@ -28,7 +28,12 @@ from ._validator.sql import (
     temporal_aggregate_without_row_limit as _temporal_aggregate_without_row_limit,
     temporal_limit_without_order as _temporal_limit_without_order,
 )
-from ._validator.url import check_foreach_url_policy, check_function_contract, template_fields_for_var
+from ._validator.url import (
+    check_foreach_url_policy,
+    check_function_contract,
+    check_query_url_projection,
+    template_fields_for_var,
+)
 
 
 def _produces_result(run: Run) -> bool:
@@ -309,14 +314,13 @@ def validate_program(program: Program, *, resolution=None) -> list[ValidationIss
         if (
             isinstance(stmt, Run)
             and stmt.kind == "filter"
-            and stmt.returns
             and not stmt.target_values
         ):
             issues.add(
                 "FILTER_RESULT_WITHOUT_TARGET_STATE",
-                f"filter 步「{stmt.name}」会返回 {list(stmt.returns)}，但没有用 target_values "
-                "声明完成后的完整筛选状态。运行时无法区分任务筛选、旧残留筛选和相邻搜索框，"
-                "也无法可靠读取该结果。请按 {<语义筛选字段>: <精确值>} 填写 target_values；"
+                f"filter 步「{stmt.name}」没有用 target_values 声明完成后的语义筛选状态。"
+                "运行时无法区分任务筛选、旧残留筛选和相邻搜索框。"
+                "请按 {<语义筛选字段>: <精确值>} 填写 target_values；"
                 "若要保留上游筛选，也必须一并列入。",
             )
         if (
@@ -605,6 +609,7 @@ def validate_program(program: Program, *, resolution=None) -> list[ValidationIss
                         "请先把相关行集 materialize 成表，再在同一个 SQL/CTE 里计算并输出字段。"
                     )
                 if s.kind == "data_query":
+                    check_query_url_projection(s, issues)
                     scope_vars = {str(var).lower() for var in scope}
                     bad_var_tables = sorted((_sql_referenced_tables(s.sql) - _sql_cte_names(s.sql)) & scope_vars)
                     if bad_var_tables:

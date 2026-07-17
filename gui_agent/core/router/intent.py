@@ -52,11 +52,14 @@ class EntityRef(BaseModel):
     """One entity the goal must look up in the target system."""
 
     mention: str = Field(description="目标原文里对该实体的引用,如 'Aurora jacket'")
-    role: Literal["lookup", "target_value", "qualifier_value"] = Field(
+    role: Literal[
+        "lookup", "collection_scope", "target_value", "qualifier_value"
+    ] = Field(
         default="lookup",
         description=(
-            '"lookup"=检索既有实体;"target_value"=任务要引入或设置的目标值;'
-            '"qualifier_value"=只限定最终选择的既有值。后两者都不用于检索且保留原文'
+            '"lookup"=检索既有命名实体;"collection_scope"=已命名实体下最终动作'
+            '需覆盖的成员范围（不独立检索）;"target_value"=任务要引入或设置的'
+            '目标值;"qualifier_value"=只限定最终选择的既有值。值角色保留原文且不检索'
         ),
     )
     value_members: list[str] = Field(
@@ -80,6 +83,18 @@ class EntityRef(BaseModel):
         if not isinstance(value, dict):
             return value
         data = dict(value)
+        defaults = {
+            "value_members": [],
+            "type": "generic",
+            "match_mode": "approximate",
+            "search_key": "",
+            "cardinality": "single",
+            "selector": "",
+            "reason": "",
+        }
+        for field, default in defaults.items():
+            if data.get(field) is None:
+                data[field] = default
         if data.get("role") == "value":
             data["role"] = (
                 "qualifier_value"
@@ -88,6 +103,17 @@ class EntityRef(BaseModel):
             )
         data.pop("introduction", None)
         return data
+
+    @model_validator(mode="after")
+    def _normalize_collection_scope(self) -> "EntityRef":
+        """A logical coverage scope has no independent retrieval semantics."""
+        if self.role == "collection_scope":
+            self.cardinality = "set"
+            self.match_mode = "exact"
+            self.search_key = ""
+            if not self.selector.strip():
+                self.selector = self.mention
+        return self
 
 
 class IntentResolution(BaseModel):
@@ -135,6 +161,13 @@ def resolve_intent(
     )
     # Normalize: clamp match_mode; default search_key to the mention.
     for e in resolution.entities:
+        if e.role == "collection_scope":
+            e.cardinality = "set"
+            e.match_mode = "exact"
+            e.search_key = ""
+            if not e.selector.strip():
+                e.selector = e.mention
+            continue
         e.match_mode = e.match_mode.strip().lower()
         if e.match_mode not in _VALID_MODES:
             e.match_mode = "approximate"
@@ -169,6 +202,14 @@ def intent_block(resolution: Optional[IntentResolution]) -> Optional[ContextBloc
                     f"原子值={list(members)}（同一选择组，不合并成字符串）{usage}"
                 )
             return f"- 待填入值「{e.mention}」｜类型={e.type}｜原样填写（不检索、不改拼写）{usage}"
+        if e.role == "collection_scope":
+            selector = (e.selector or e.mention).strip()
+            return (
+                f"- 成员覆盖范围「{e.mention}」｜类型={e.type}｜筛选/范围={selector}"
+                "｜不是独立命名实体，禁止对该短语做 exact→fallback 检索；"
+                "最终 mutation 必须用 foreach 逐成员覆盖，或在应用知识证明"
+                "聚合 owner 一次覆盖时声明 covers_set"
+            )
         match = ("允许模糊匹配，检索关键词：" + e.search_key) if e.match_mode == "approximate" else "精确匹配"
         # cardinality=set is authoritative for the DECISION (the reference denotes a SET, not one
         # entity) — but NOT for the strategy: HOW the set gets covered is decompose's call (foreach

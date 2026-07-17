@@ -213,6 +213,7 @@ def _check_router_entity_coverage(program: Program, resolution: IntentResolution
         if _is_value_role(entity):
             continue
 
+        collection_scope = _is_collection_scope(entity)
         mention = str(entity.mention or "").strip()
         search_key = str(entity.search_key or "").strip()
         match_mode = str(entity.match_mode or "").strip().lower()
@@ -232,7 +233,7 @@ def _check_router_entity_coverage(program: Program, resolution: IntentResolution
             program, mention=mention, search_key=search_key
         )
 
-        if mention or search_key:
+        if (mention or search_key) and not collection_scope:
             if match_mode == "approximate":
                 if (
                     mention
@@ -288,17 +289,32 @@ def _check_router_entity_coverage(program: Program, resolution: IntentResolution
         set_covered_by_aggregate = (
             cardinality == "set"
             and _set_covered_by_aggregate(program, mention)
-            and (mention_present_in_retrieval or _contains(retrieval_text, search_key) or _contains(retrieval_text, selector))
+            and (
+                collection_scope
+                or mention_present_in_retrieval
+                or _contains(retrieval_text, search_key)
+                or _contains(retrieval_text, selector)
+            )
+        )
+        set_covered_by_iteration = (
+            any(
+                _foreach_declares_scope(loop, mention=mention, selector=selector)
+                for loop in foreach_stmts
+            )
+            if collection_scope
+            else bool(foreach_stmts)
         )
 
-        if cardinality == "set" and not foreach_stmts and not set_covered_by_aggregate:
+        if cardinality == "set" and not set_covered_by_iteration and not set_covered_by_aggregate:
             issues.append(IntentContractIssue(
                 code="ROUTER_SET_ENTITY_WITHOUT_FOREACH",
                 message=(
-                    "Router marked an entity as a set, but the program has no foreach iteration. "
+                    "Router marked an entity as a set, but the program has no matching foreach iteration. "
                     "Either iterate the matched members (foreach), or — ONLY when app knowledge "
                     "states a single aggregate object/bulk mechanism covers all members at once — "
-                    "declare covers_set=<entity mention> on that single mutation step."
+                    "declare covers_set=<entity mention> on that single mutation step. A foreach for "
+                    "collecting some other entity does not cover this set; collection_scope must be "
+                    "copied into that foreach's member_desc/body_goal or the aggregate action's covers_set."
                 ),
                 evidence=(f"mention={mention}", f"selector={getattr(entity, 'selector', '') or ''}"),
             ))
@@ -350,7 +366,7 @@ def _check_entity_scope_predicates(program: Program, resolution: IntentResolutio
     issues: list[IntentContractIssue] = []
     ui_text = " ".join(ui_text_parts).lower()
     for entity in entities:
-        if _is_value_role(entity):
+        if _is_value_role(entity) or _is_collection_scope(entity):
             continue
         keys = [str(k).strip() for k in (getattr(entity, "search_key", ""), getattr(entity, "mention", ""))
                 if str(k or "").strip()]
@@ -379,6 +395,10 @@ def _entity_role(entity: object) -> str:
 
 def _is_value_role(entity: object) -> bool:
     return _entity_role(entity) in {"target_value", "qualifier_value"}
+
+
+def _is_collection_scope(entity: object) -> bool:
+    return _entity_role(entity) == "collection_scope"
 
 
 def _program_text(program: Program) -> str:
@@ -525,6 +545,21 @@ def _foreach_has_membership(loop: ForEach) -> bool:
         (getattr(loop, "member_desc", "") or "").strip()
         or (loop.body_goal or "").strip()
         or _block_has_if(loop.body)
+    )
+
+
+def _foreach_declares_scope(
+    loop: ForEach,
+    *,
+    mention: str,
+    selector: str,
+) -> bool:
+    """Whether this loop explicitly owns one Router collection scope."""
+    text = " ".join((loop.target, loop.member_desc, loop.body_goal))
+    return any(
+        _contains(text, value)
+        for value in (mention, selector)
+        if str(value or "").strip()
     )
 
 

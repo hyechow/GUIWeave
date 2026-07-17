@@ -5,6 +5,7 @@ from __future__ import annotations
 import re
 from pathlib import Path
 from typing import Any, Callable
+from urllib.parse import urlsplit
 
 from gui_agent.core.orchestrator.program import Run, RunLike
 
@@ -15,6 +16,16 @@ from .outcome import StatementOutcome
 
 _URL_RE = re.compile(r"https?://[^\s一-鿿]+")
 _BACK_NAV_RE = re.compile(r"返回|上一页|后退|\bback\b", re.IGNORECASE)
+
+
+def _url_identity(value: str) -> tuple[str, str, str, str]:
+    parsed = urlsplit(value)
+    return (
+        parsed.scheme.casefold(),
+        parsed.netloc.casefold(),
+        parsed.path.rstrip("/") or "/",
+        parsed.query,
+    )
 
 
 def direct_navigation_url(statement: RunLike | None, platform: Any) -> str | None:
@@ -94,6 +105,16 @@ def execute_direct_navigation(
         platform.client.navigate(nav_url)
         _settle(platform.client, "navigate")
         observation = cursor.refresh(f"screenshot_nav_{statement_index}.png")
+        if observation.url and _url_identity(observation.url) != _url_identity(nav_url):
+            return StatementOutcome.failed(
+                f"直达导航落在错误目标：{observation.url!r} != {nav_url!r}",
+                observation=observation,
+                observation_url=cursor.observation_url,
+                failure_evidence=(
+                    f"navigation target mismatch: expected {nav_url!r}, "
+                    f"observed {observation.url!r}"
+                ),
+            )
 
         if run.returns:
             json_reads = read_json_url_returns(run.name, list(run.returns), run.read_spec)
