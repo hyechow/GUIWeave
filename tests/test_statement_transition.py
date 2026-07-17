@@ -14,6 +14,7 @@ from gui_agent.core.run.statement_transition import (
     validate_evidence_references,
 )
 from gui_agent.core.schemas import Observation, StatementContract
+from gui_agent.prompts import load_prompt_text
 from gui_agent.core.supervisor.statement.model_io import _transition_frame_block
 from gui_agent.core.supervisor.statement.observation_view import build_observation_view
 from gui_agent.core.supervisor.statement.policy import StatementSupervisorPolicy
@@ -173,6 +174,66 @@ def test_current_frame_ref_is_optional_for_visual_grounding() -> None:
     assert StatementSupervisorPolicy._validate_action_capability(view, plan) == ""
 
 
+def test_visual_only_observation_keeps_visual_targets_actionable() -> None:
+    observation = Observation(png_bytes=b"frame", source="android")
+    view = build_observation_view(_statement(), observation, [])
+    plan = _ActionDraft(
+        instruction="在当前画面底部点击继续按钮",
+        summary="continue from the visible screen",
+        action_family="activate",
+        target_control="继续",
+        expected_result="下一页内容可见",
+    )
+
+    assert view.affordance_coverage == "unavailable"
+    assert view.affordances == ()
+    assert StatementSupervisorPolicy._validate_action_capability(view, plan) == ""
+
+
+def test_optional_semantic_evidence_only_constrains_matching_targets() -> None:
+    observation = Observation(
+        png_bytes=b"frame",
+        source="browser",
+        form_controls=[{
+            "kind": "text_input",
+            "label": "Search",
+            "ref": "42",
+            "in_viewport": True,
+        }],
+        form_controls_meta={"coverage": "partial"},
+    )
+    view = build_observation_view(_statement(), observation, [])
+
+    assert view.affordance_coverage == "partial"
+    assert StatementSupervisorPolicy._validate_action_capability(
+        view,
+        _ActionDraft(
+            instruction="在截图中的页面底部点击继续按钮",
+            summary="the visual target is outside the partial sensor projection",
+            action_family="activate",
+            target_control="继续",
+            expected_result="下一页内容可见",
+        ),
+    ) == ""
+    assert "not supported" in StatementSupervisorPolicy._validate_action_capability(
+        view,
+        _ActionDraft(
+            instruction="点击 Search",
+            summary="wrong operation for an advertised input",
+            action_family="activate",
+            target_control="Search",
+            expected_result="Search changes",
+        ),
+    )
+
+
+def test_transition_prompt_declares_visual_baseline_and_optional_semantics() -> None:
+    prompt = load_prompt_text("task.statement.transition")
+    assert "每个平台都必须提供" in prompt
+    assert "列表为空，不代表截图中没有目标" in prompt
+    assert "visual-only 目标将 `target_ref` 留空" in prompt
+
+
 def test_provider_extra_action_fields_fail_instead_of_being_repaired() -> None:
     with pytest.raises(ValidationError, match="extra_forbidden"):
         _StatementTransitionResult.model_validate({
@@ -277,6 +338,7 @@ def test_transition_frame_contains_facts_and_capabilities_without_runtime_verdic
     payload = json.loads(block.content.split("\n", 2)[2])
     assert payload["contract"]["id"] == "s1"
     assert payload["memory"]["last_action_result"] == "none"
+    assert payload["observation"]["affordance_coverage"] == "unknown"
     assert payload["observation"]["affordances"][0]["supported_operations"] == ["activate"]
     assert "allowed_transition_kinds" not in block.content
     assert "repeated_write_forbidden" not in block.content
