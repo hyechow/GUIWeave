@@ -191,14 +191,15 @@ def _page_body(text: str) -> str:
 
 def _call_llm(system: str, prompt: str) -> str:
     cfg = resolve_llm_config("action_policy")
+    from llm.provider_config import dashscope_extra_body
+
+    # Prefer thinking off for latency on small reductions; models that force thinking stay on.
     llm = ChatOpenAI(
         model=cfg.model,
         api_key=cfg.api_key,
         base_url=cfg.base_url,
         temperature=0,
-        # DashScope qwen thinking mode burns 30s+ per call on these small text reductions
-        # (measured on reader: 119s → 0.9s with thinking off). Pure summarization — no need.
-        extra_body={"enable_thinking": False},
+        extra_body=dashscope_extra_body(cfg.model),
     )
     resp = llm.invoke([
         SystemMessage(content=system),

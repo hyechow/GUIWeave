@@ -74,6 +74,27 @@ class ChatProviderConfig:
     max_retries: int = 2
 
 
+def enable_thinking_for_model(model: Optional[str]) -> bool:
+    """Whether DashScope-compatible chat must send enable_thinking=True for this model.
+
+    Most Qwen endpoints prefer thinking off (latency). Some families reject False and only
+    accept True — currently qwen3.7-* (e.g. qwen3.7-max-preview).
+    """
+    name = (model or "").strip().lower()
+    if not name:
+        return False
+    # Normalize common separators so "qwen3.7" / "qwen3-7" / "Qwen/Qwen3.7-..." all match.
+    compact = name.replace("_", "-")
+    if "qwen3.7" in compact or "qwen3-7" in compact:
+        return True
+    return False
+
+
+def dashscope_extra_body(model: Optional[str] = None) -> dict:
+    """extra_body for DashScope OpenAI-compatible chat, including enable_thinking."""
+    return {"enable_thinking": enable_thinking_for_model(model)}
+
+
 def resolve_chat_provider_config(
     provider: Optional[str] = None,
     *,

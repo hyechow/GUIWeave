@@ -24,11 +24,13 @@ class ContentReader:
         self,
         prepare_vision_prompt_png: Callable[[bytes], bytes] | None = None,
     ) -> None:
+        from llm.provider_config import dashscope_extra_body
+
         cfg = resolve_llm_config("reader")
         self._llm = ChatOpenAI(
             model=cfg.model, api_key=cfg.api_key, base_url=cfg.base_url,
             timeout=cfg.timeout_s, max_retries=cfg.max_retries,
-            extra_body={"enable_thinking": False},
+            extra_body=dashscope_extra_body(cfg.model),
         )
         self._prepare_vision_prompt_png = prepare_vision_prompt_png or (lambda b: b)
 

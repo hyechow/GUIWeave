@@ -13,12 +13,27 @@ from langchain_openai import ChatOpenAI
 from openai import BadRequestError
 from pydantic import BaseModel, ValidationError
 
+from llm.provider_config import dashscope_extra_body
+
 ModelT = TypeVar("ModelT", bound=BaseModel)
 ReturnT = TypeVar("ReturnT")
 _LLM_CALL_COUNT = 0
 _LLM_INPUT_TOKENS = 0
 _LLM_OUTPUT_TOKENS = 0
 MAX_LLM_TRANSIENT_RETRIES = 2
+
+
+def _llm_model_name(llm: ChatOpenAI) -> str | None:
+    """Best-effort model id from a ChatOpenAI instance (varies by langchain version)."""
+    for attr in ("model_name", "model"):
+        value = getattr(llm, attr, None)
+        if isinstance(value, str) and value.strip():
+            return value
+    return None
+
+
+class StructuredOutputError(ValueError):
+    """One model response could not be validated as the requested result."""
 
 
 def get_llm_call_count() -> int:
@@ -59,20 +74,24 @@ def invoke_structured(
     *,
     trace_sink: MutableSequence[dict] | Callable[[dict], None] | None = None,
     trace_label: str = "",
+    fallback_on_invalid: bool = True,
 ) -> ModelT:
     """Invoke a chat model and parse a Pydantic object.
 
-    Uses DashScope json_object constrained decoding with thinking disabled.
+    Uses DashScope json_object constrained decoding. Thinking is off by default for
+    latency, but models that require enable_thinking=True (e.g. qwen3.7-*) keep it on.
     Falls back to plain JSON text parsing if the constrained mode fails.
     """
     instruction = _json_schema_instruction(schema)
     msgs = _with_json_instruction(messages, schema, instruction=instruction)
     _append_schema_instruction_trace(trace_sink, trace_label or schema.__name__, instruction)
 
-    # Primary: json_object mode (constrained decoding) + disable thinking
+    model_name = _llm_model_name(llm)
+    thinking_body = dashscope_extra_body(model_name)
+    # Primary: json_object mode (constrained decoding) + model-aware thinking flag
     bound = llm.bind(
         response_format={"type": "json_object"},
-        extra_body={"enable_thinking": False},
+        extra_body=thinking_body,
     )
     primary_error: Exception | None = None
     try:
@@ -93,13 +112,19 @@ def invoke_structured(
         return parsed
     except (BadRequestError, ValidationError, ValueError) as exc:
         primary_error = exc
+        if not fallback_on_invalid:
+            raise StructuredOutputError(
+                f"{trace_label or schema.__name__} structured output is invalid: {exc}"
+            ) from exc
         print(f"json_object 模式失败（{type(exc).__name__}）: {exc}，改用纯文本 JSON 解析...")
 
-    # Fallback: plain text, let model output JSON freely (retry once on parse failure)
+    # Fallback: plain text, let model output JSON freely (retry once on parse failure).
+    # Re-bind enable_thinking so a constructor default of False cannot 400 on forced-thinking models.
+    fallback_llm = llm.bind(extra_body=thinking_body)
     fallback_msgs = _with_repair_instruction(msgs, schema, primary_error)
     for fallback_attempt in range(2):
         response = _invoke_counted_with_retry(
-            lambda: llm.invoke(fallback_msgs),
+            lambda: fallback_llm.invoke(fallback_msgs),
             label="json text fallback",
         )
         content = _message_text(response.content)

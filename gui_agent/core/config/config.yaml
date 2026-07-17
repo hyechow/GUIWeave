@@ -16,7 +16,7 @@ llm:
     decompose:
       # 任务分解——只在开始时调用一次，建议用更强的模型
       provider: dashscope
-      model: qwen3.5-plus-2026-04-20
+      model: qwen3.6-35b-a3b
     intent:
       # 意图解析——decompose 前一次性判实体的精确/近似 + 检索关键词（纯文本，无截图）
       provider: dashscope
@@ -47,7 +47,7 @@ profiles:
       navigator: {model: qwen3.6-35b-a3b}
     supervisor:
       model: qwen3.6-35b-a3b
-      decompose: {model: qwen3.5-plus-2026-04-20}
+      decompose: {model: qwen3.6-35b-a3b}
 
 # 各模型单价（元/百万 token），用于报告成本估算。key 为模型名，需与上面 llm.*.model 对应；
 # 报告按「模块→该模块所用模型→单价」逐模块计费再汇总，故不同模块用不同模型也能算准。

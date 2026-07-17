@@ -44,9 +44,17 @@ def generate_reply(
     session=None  → runner mode (ACTION / ANALYSIS prompt)
     session=list  → chat mode (CHAT prompt with session context)
     """
+    from llm.provider_config import dashscope_extra_body
+
     cfg = resolve_llm_config("output")
-    llm = ChatOpenAI(model=cfg.model, api_key=cfg.api_key, base_url=cfg.base_url,
-                     timeout=cfg.timeout_s, max_retries=cfg.max_retries, extra_body={"enable_thinking": False})
+    llm = ChatOpenAI(
+        model=cfg.model,
+        api_key=cfg.api_key,
+        base_url=cfg.base_url,
+        timeout=cfg.timeout_s,
+        max_retries=cfg.max_retries,
+        extra_body=dashscope_extra_body(cfg.model),
+    )
 
     if content_notes:
         messages = _analysis_messages(goal, result, content_notes, collection_context)
@@ -77,11 +85,16 @@ def compose_orchestration_reply(
     run_log: ordered statements [{name, phase, verification, reads:{字段:值}, summary}].
     current: the in-progress (uncompleted) statement name when interrupted (max_turns), else "".
     terminal: how the program ended — the finish/failure reply, or "达到最大轮数 N" etc."""
+    from llm.provider_config import dashscope_extra_body
+
     cfg = resolve_llm_config("output")
     llm = ChatOpenAI(
-        model=cfg.model, api_key=cfg.api_key, base_url=cfg.base_url,
-        timeout=cfg.timeout_s, max_retries=cfg.max_retries,
-        extra_body={"enable_thinking": False},
+        model=cfg.model,
+        api_key=cfg.api_key,
+        base_url=cfg.base_url,
+        timeout=cfg.timeout_s,
+        max_retries=cfg.max_retries,
+        extra_body=dashscope_extra_body(cfg.model),
     )
     lines = []
     for i, r in enumerate(run_log, 1):
