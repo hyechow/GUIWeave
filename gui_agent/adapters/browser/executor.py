@@ -301,6 +301,14 @@ class BrowserExecutor(VisionExecutor):
             result = client.select_option(px, py, action.text)
             print(f"  结果: {result}")
             return "failed" not in result.lower()
+        if at == "scroll_to_ref":
+            if action.target_ref is None:
+                print("精确滚动失败：缺少 target_ref")
+                return False
+            print(f"将语义目标 ref={action.target_ref} 移入视口")
+            result = client.scroll_to_ref(action.target_ref)
+            print(f"  结果: {result}")
+            return "failed" not in result.lower()
         return None
 
 

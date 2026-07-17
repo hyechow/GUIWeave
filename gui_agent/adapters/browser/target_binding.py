@@ -82,6 +82,30 @@ def _control_identity(control: dict) -> str:
     )
 
 
+def _has_positive_semantic_identity(control: dict, target: str) -> bool:
+    """Whether the owner name can prove that it is a different semantic target.
+
+    DOM readers fall back to ``id`` when a rendered control has no accessible label.  Such an
+    opaque id proves point ownership but not business identity, so it may leave binding
+    unresolved but must not contradict a visually grounded action.
+    """
+    label = str(control.get("label") or "").strip()
+    control_id = str(control.get("id") or "").strip()
+    name = str(control.get("name") or "").strip()
+    group_field = str(control.get("group_field") or "").strip()
+    id_fallback_only = bool(
+        control_id
+        and label == control_id
+        and not name
+        and group_field in {"", control_id}
+    )
+    if not id_fallback_only:
+        return True
+    owner_key = "".join(char.casefold() for char in control_id if char.isalnum())
+    target_key = "".join(char.casefold() for char in target if char.isalnum())
+    return bool(target_key and (target_key in owner_key or owner_key in target_key))
+
+
 class BrowserTargetBinder:
     """Compare a visual proposal with rendered control ownership.
 
@@ -99,6 +123,57 @@ class BrowserTargetBinder:
         intent = step.action_intent
         if intent is None:
             return None
+        if intent.target_ref:
+            semantic = [
+                node
+                for node in observation.semantic_tree or []
+                if isinstance(node, dict)
+                and str(node.get("ref") or "").strip() == intent.target_ref
+            ]
+            if len(semantic) > 1:
+                return TargetBinding(
+                    status="unresolved",
+                    source="structural",
+                    unit_id=f"ref:{intent.target_ref}",
+                    reason="declared target_ref is no longer unique in the current frame",
+                )
+            if len(semantic) == 1:
+                action = action_decision.action
+                if (
+                    getattr(action, "action_type", "") == "navigate"
+                    and str(semantic[0].get("url") or "").strip()
+                    == str(getattr(action, "url", "") or "").strip()
+                ):
+                    return TargetBinding(
+                        status="bound",
+                        source="structural",
+                        unit_id=f"ref:{intent.target_ref}",
+                        reason="navigation URL is owned by the declared semantic target ref",
+                    )
+                point = semantic[0].get("point")
+                if isinstance(point, dict) and all(
+                    isinstance(point.get(axis), (int, float)) for axis in ("x", "y")
+                ):
+                    if (
+                        getattr(action, "action_type", "") == "tap"
+                        and abs(float(point["x"]) - float(getattr(action, "x", -1000))) <= 3
+                        and abs(float(point["y"]) - float(getattr(action, "y", -1000))) <= 3
+                    ):
+                        return TargetBinding(
+                            status="bound",
+                            source="structural",
+                            unit_id=f"ref:{intent.target_ref}",
+                            reason="action point is owned by the declared semantic target ref",
+                        )
+                    return TargetBinding(
+                        status="contradicted",
+                        source="structural",
+                        unit_id=f"ref:{intent.target_ref}",
+                        reason="action point does not belong to the declared semantic target ref",
+                    )
+            # A ref may come from the optional form-control inventory rather than the
+            # semantic tree.  Absence from that namespace is not a contradiction; continue
+            # with point ownership and label binding below.
         controls = getattr(observation, "form_controls", None)
         if not controls:
             return None
@@ -136,6 +211,14 @@ class BrowserTargetBinder:
         # labels can be incomplete or wrong (log 20260715_215953).
         if point_owners and intent.family in {"activate", "navigate"}:
             owner = point_owners[0]
+            if not _has_positive_semantic_identity(owner, intent.target_control):
+                return TargetBinding(
+                    status="unresolved",
+                    reason=(
+                        "the action point is owned by a rendered control whose DOM id has "
+                        "no semantic label"
+                    ),
+                )
             return TargetBinding(
                 status="contradicted",
                 source="structural",

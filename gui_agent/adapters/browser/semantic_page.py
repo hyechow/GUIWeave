@@ -12,6 +12,8 @@ Each node in the output is::
         "value": str,   # current value for form controls; "" otherwise
         "ref":   int,   # backendDOMNodeId — use for DOM-direct click/scroll
         "depth": int,   # nesting depth (0 = page root)
+        "point": {"x": float, "y": float},  # normalized center; may be outside 0..1000
+        "in_viewport": bool,
     }
 
 This is intentionally a flat list, not a recursive tree.  The LLM mapper reads
@@ -469,4 +471,51 @@ def build_semantic_tree(cdp_send: Any) -> list[dict]:
     for root_id in roots:
         _walk(root_id, node_map, 0, out)
 
+    _attach_viewport_points(cdp_send, out)
     return out
+
+
+def _attach_viewport_points(cdp_send: Any, tree: list[dict]) -> None:
+    """Join AX refs to current viewport centers from one DOM layout snapshot."""
+    try:
+        snapshot = cdp_send("DOMSnapshot.captureSnapshot", {"computedStyles": []})
+        metrics = cdp_send("Page.getLayoutMetrics", {})
+        document = (snapshot.get("documents") or [])[0]
+        node_refs = document["nodes"]["backendNodeId"]
+        layout = document["layout"]
+        viewport = (
+            metrics.get("cssVisualViewport")
+            or metrics.get("visualViewport")
+            or {}
+        )
+        page_x = float(viewport.get("pageX") or 0)
+        page_y = float(viewport.get("pageY") or 0)
+        width = float(viewport["clientWidth"])
+        height = float(viewport["clientHeight"])
+    except Exception:
+        return
+    if width <= 0 or height <= 0:
+        return
+
+    boxes: dict[int, list[float]] = {}
+    for node_index, bounds in zip(layout.get("nodeIndex") or [], layout.get("bounds") or []):
+        if (
+            isinstance(node_index, int)
+            and 0 <= node_index < len(node_refs)
+            and isinstance(bounds, list)
+            and len(bounds) == 4
+        ):
+            boxes[int(node_refs[node_index])] = bounds
+    for node in tree:
+        bounds = boxes.get(int(node.get("ref") or 0))
+        if bounds is None:
+            continue
+        x, y, box_width, box_height = map(float, bounds)
+        center_x = x - page_x + box_width / 2
+        center_y = y - page_y + box_height / 2
+        in_viewport = 0 <= center_x < width and 0 <= center_y < height
+        node["in_viewport"] = in_viewport
+        node["point"] = {
+            "x": center_x / width * 1000,
+            "y": center_y / height * 1000,
+        }

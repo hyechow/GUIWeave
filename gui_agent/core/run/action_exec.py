@@ -45,7 +45,7 @@ def settle_after_action(
     center: tuple[float, float] | None = None,
 ) -> tuple[float, bool]:
     """Wait until the screen changed and settled, or hit the cap."""
-    if action_type not in ("drag", "scroll"):
+    if action_type not in ("drag", "scroll", "scroll_to_ref"):
         cdp_settle = getattr(platform, "wait_settled", None)
         if cdp_settle is not None:
             try:
@@ -59,7 +59,7 @@ def settle_after_action(
             except Exception as exc:
                 print(f"  [Settle] CDP settle 异常，回退视觉: {exc}")
     started = time.perf_counter()
-    if action_type in ("drag", "scroll"):
+    if action_type in ("drag", "scroll", "scroll_to_ref"):
         prev: bytes | None = None
         for i in range(1, SETTLE_MAX_UNITS + 1):
             time.sleep(SETTLE_GESTURE_FIRST_S if i == 1 else SETTLE_UNIT_S)
@@ -145,6 +145,7 @@ class ActionRunResult:
     action_key: str = ""
     suppressed_reason: str = ""
     binding: TargetBinding | None = None
+    supervisor_step: SupervisorStep | None = None
 
 
 class ActionExecutor:
@@ -165,6 +166,7 @@ class ActionExecutor:
         status: Callable[[int, str], None],
         say: Callable[[str], None],
         stop_requested: Callable[[], bool] | None = None,
+        replan: Callable[[SupervisorStep, str], SupervisorStep] | None = None,
     ) -> ActionRunResult:
         result = ActionRunResult()
         intent = sv_step.action_intent
@@ -173,6 +175,32 @@ class ActionExecutor:
 
         def interrupted() -> bool:
             return bool(stop_requested and stop_requested())
+
+        def rejected(reason: str) -> ActionRunResult:
+            result.suppressed_reason = reason
+            if replan is None:
+                return result
+            replacement = replan(sv_step, reason)
+            if replacement.action_intent is None:
+                result.supervisor_step = replacement
+                return result
+            retried = self.run(
+                sv_step=replacement,
+                observation=observation,
+                action_policy=action_policy,
+                supervisor=supervisor,
+                executor=executor,
+                prep_future=prep_future,
+                log_dir=log_dir,
+                turn_no=turn_no,
+                flash=flash,
+                status=status,
+                say=say,
+                stop_requested=stop_requested,
+                replan=None,
+            )
+            retried.supervisor_step = replacement
+            return retried
 
         say(f"动作指令: {intent.instruction}")
         if interrupted():
@@ -200,7 +228,7 @@ class ActionExecutor:
                 )
                 say(f"  [ActionPolicy] {result.suppressed_reason}")
                 status(turn_no, "动作意图未能落成物理动作，交回 Statement 重决策")
-                return result
+                return rejected(result.suppressed_reason)
 
         if interrupted():
             say("  [Interrupt] 收到 ESC，跳过本轮动作执行")
@@ -219,7 +247,7 @@ class ActionExecutor:
         action = action_decision.action
         result.action_role = effective_action_role(sv_step, action)
         if (
-            action.action_type not in {"scroll", "drag"}
+            action.action_type not in {"scroll", "drag", "scroll_to_ref"}
             and (intent.target_control or result.action_role == "write")
         ):
             binder = action_policy if callable(getattr(action_policy, "bind", None)) else None
@@ -234,7 +262,7 @@ class ActionExecutor:
                 result.suppressed_reason = binding.reason
                 say(f"  [TargetBinding] contradicted: {binding.reason}")
                 status(turn_no, "动作落点与声明目标冲突，未派发")
-                return result
+                return rejected(result.suppressed_reason)
             if result.action_role == "write" and binding.status == "unresolved":
                 if intent.target_control:
                     # A target IS declared but structural identity could not confirm it
@@ -248,7 +276,7 @@ class ActionExecutor:
                     )
                     say(f"  [TargetBinding] {result.suppressed_reason}")
                     status(turn_no, "目标绑定失败，未派发写动作")
-                    return result
+                    return rejected(result.suppressed_reason)
             if binding.status == "bound":
                 say(
                     "  [TargetBinding] "
@@ -294,14 +322,19 @@ class ActionExecutor:
         token_before = get_llm_token_usage()
         action_decision = None
         target_group_id = ""
+        grounding_kwargs = {
+            "target_control": intent.target_control,
+            "target_value": intent.target_value,
+            "target_group_id": target_group_id,
+            "action_family": intent.family,
+        }
+        if intent.target_ref:
+            grounding_kwargs["target_ref"] = intent.target_ref
         native_resolver = getattr(action_policy, "resolve_native_action", None)
         if callable(native_resolver):
             action_decision = native_resolver(
                 observation,
-                target_control=intent.target_control,
-                target_value=intent.target_value,
-                target_group_id=target_group_id,
-                action_family=intent.family,
+                **grounding_kwargs,
                 instruction=instruction_for_action or "",
             )
         if action_decision is not None:
@@ -325,10 +358,7 @@ class ActionExecutor:
             if callable(evidence_builder):
                 evidence_context = evidence_builder(
                     observation,
-                    target_control=intent.target_control,
-                    target_value=intent.target_value,
-                    target_group_id=target_group_id,
-                    action_family=intent.family,
+                    **grounding_kwargs,
                 )
             action_decision = action_policy.decide(
                 observation,
@@ -336,6 +366,10 @@ class ActionExecutor:
                 direction=intent.direction,
                 drag_column=intent.drag_column,
                 drag_steps=intent.drag_steps,
+                action_family=intent.family,
+                target_control=intent.target_control,
+                target_value=intent.target_value,
+                expected_result=intent.expected_result,
                 evidence_context=evidence_context,
                 context_reports=getattr(supervisor, "_context_reports", None),
             )
@@ -345,10 +379,7 @@ class ActionExecutor:
                 action_decision = grounder(
                     action_decision,
                     observation,
-                    target_control=intent.target_control,
-                    target_value=intent.target_value,
-                    target_group_id=target_group_id,
-                    action_family=intent.family,
+                    **grounding_kwargs,
                 )
                 if action_decision is not ungrounded:
                     reports = getattr(supervisor, "_context_reports", None)
@@ -362,13 +393,19 @@ class ActionExecutor:
                             "primitive": action_decision.action.action_type,
                         })
         if hasattr(supervisor, "_timings"):
-            supervisor._timings["action_policy"] = time.perf_counter() - started
-            supervisor._timings_order.append("action_policy")
+            supervisor._timings["action_policy"] = (
+                supervisor._timings.get("action_policy", 0.0)
+                + time.perf_counter()
+                - started
+            )
+            if "action_policy" not in supervisor._timings_order:
+                supervisor._timings_order.append("action_policy")
         if hasattr(supervisor, "_token_usage"):
             token_after = get_llm_token_usage()
+            prior = supervisor._token_usage.get("action_policy", {})
             supervisor._token_usage["action_policy"] = {
-                "input": token_after[0] - token_before[0],
-                "output": token_after[1] - token_before[1],
+                "input": int(prior.get("input", 0)) + token_after[0] - token_before[0],
+                "output": int(prior.get("output", 0)) + token_after[1] - token_before[1],
             }
         print_decision(
             action_decision,

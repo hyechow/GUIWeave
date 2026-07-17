@@ -16,7 +16,7 @@ from gui_agent.core.schemas import BaseAction, BaseActionDecision
 BrowserActionType = Literal[
     "tap", "type", "clear_text", "press_enter", "scroll", "drag",
     "navigate", "back", "new_tab", "select_tab", "close_tab", "upload",
-    "select_option",
+    "select_option", "scroll_to_ref",
 ]
 
 
@@ -27,7 +27,7 @@ class BrowserAction(BaseAction):
     action_type: BrowserActionType = Field(
         description=(
             "浏览器动作类型：tap/type/clear_text/press_enter/scroll/drag/navigate/"
-            "back/new_tab/select_tab/close_tab/upload/select_option"
+            "back/new_tab/select_tab/close_tab/upload/select_option/scroll_to_ref"
         )
     )  # type: ignore[assignment]
     direction: Optional[str] = Field(
@@ -48,6 +48,10 @@ class BrowserAction(BaseAction):
     file_path: Optional[str] = Field(
         default=None,
         description="upload 动作要上传的本地文件路径（如 ~/Downloads/map.map_export）；路径来自任务，不要自己编造",
+    )
+    target_ref: Optional[int] = Field(
+        default=None,
+        description="scroll_to_ref 要移入视口的当前帧 backendDOMNodeId",
     )
 
     @model_validator(mode="before")
@@ -72,6 +76,8 @@ class BrowserAction(BaseAction):
             raise ValueError("upload 动作必须填写 file_path（要上传的本地文件路径）")
         if self.action_type == "select_option" and not self.text:
             raise ValueError("select_option 动作必须填写 text（要选择的选项文本）")
+        if self.action_type == "scroll_to_ref" and self.target_ref is None:
+            raise ValueError("scroll_to_ref 动作必须填写 target_ref")
         for field in ("x", "y", "to_x", "to_y"):
             value = getattr(self, field)
             if value is not None and not 0 <= value < 1000:

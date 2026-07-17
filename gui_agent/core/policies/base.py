@@ -34,6 +34,10 @@ class ActionPolicy(Protocol):
         direction: Optional[str] = None,
         drag_column: Optional[str] = None,
         drag_steps: Optional[int] = None,
+        action_family: str = "",
+        target_control: str = "",
+        target_value: str = "",
+        expected_result: str = "",
         evidence_context: str = "",
         context_reports: MutableSequence[dict] | Callable[[dict], None] | None = None,
     ) -> BaseActionDecision:
@@ -57,6 +61,10 @@ class BaseActionPolicy:
         direction: Optional[str] = None,
         drag_column: Optional[str] = None,
         drag_steps: Optional[int] = None,
+        action_family: str = "",
+        target_control: str = "",
+        target_value: str = "",
+        expected_result: str = "",
         evidence_context: str = "",
         verbose: bool = True,
         context_reports: MutableSequence[dict] | Callable[[dict], None] | None = None,
@@ -79,6 +87,14 @@ class BaseActionPolicy:
         instruction_text = self._build_user_text(
             instruction, direction=direction, drag_column=drag_column, drag_steps=drag_steps
         )
+        semantic_context = _format_semantic_action_context(
+            action_family=action_family,
+            target_control=target_control,
+            target_value=target_value,
+            expected_result=expected_result,
+        )
+        if semantic_context:
+            instruction_text = f"{instruction_text}\n\n{semantic_context}"
         user_text = instruction_text
         if evidence_context.strip():
             user_text = f"{user_text}\n\n{evidence_context.strip()}"
@@ -191,6 +207,29 @@ def resize_to_logical_png(png_bytes: bytes) -> bytes:
     buf = io.BytesIO()
     small.save(buf, format="PNG")
     return buf.getvalue()
+
+
+def _format_semantic_action_context(
+    *,
+    action_family: str = "",
+    target_control: str = "",
+    target_value: str = "",
+    expected_result: str = "",
+) -> str:
+    """Render the one-frame semantic contract without introducing another state object."""
+    fields = [
+        ("operation", action_family),
+        ("target", target_control),
+        ("value", target_value),
+        ("expected visible result", expected_result),
+    ]
+    lines = [f"- {label}: {value}" for label, value in fields if str(value).strip()]
+    if not lines:
+        return ""
+    return (
+        "语义执行约束（用于从截图定位和消歧，不得改变指令目标，也不代表任务已完成）：\n"
+        + "\n".join(lines)
+    )
 
 
 def _append_report(

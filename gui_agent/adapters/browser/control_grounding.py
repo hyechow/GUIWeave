@@ -107,6 +107,7 @@ def semantic_target_evidence(
     nodes: list[dict] | None,
     *,
     target_control: str,
+    target_ref: str = "",
     action_family: str,
 ) -> str:
     """Expose one exact document-semantic action target without claiming visibility."""
@@ -120,6 +121,10 @@ def semantic_target_evidence(
         and str(node.get("role") or "").lower()
         in {"button", "link", "menuitem", "menuitemcheckbox", "menuitemradio", "tab"}
         and _norm(node.get("key")) == target
+        and (
+            not target_ref
+            or str(node.get("ref") or "").strip() == str(target_ref).strip()
+        )
     ]
     if len(candidates) != 1:
         return ""
@@ -128,10 +133,73 @@ def semantic_target_evidence(
         "## 结构化动作目标证据（浏览器可访问性树；不代表当前视口可见）\n"
         f"- declared_target={target_control!r}; "
         f"matched_document_target={str(node.get('key') or '')!r}; "
-        f"role={str(node.get('role') or '')!r}\n"
+        f"role={str(node.get('role') or '')!r}; "
+        f"ref={str(node.get('ref') or '')!r}\n"
         "该信号只证明文档中存在这个具名入口，不证明它在截图视口内。"
         "只有截图中可见时才能点击；若不可见，应先滚动使其进入视口。"
         "不得用其他可见按钮、标题或列表行替代。"
+    )
+
+
+def resolve_semantic_action(
+    nodes: list[dict] | None,
+    *,
+    target_control: str,
+    target_ref: str,
+    action_family: str,
+    instruction: str = "",
+) -> BrowserActionDecision | None:
+    """Use an exact current-frame ref as a deterministic adapter capability."""
+    if action_family not in {"activate", "navigate", "iterate"} or not target_ref:
+        return None
+    candidates = [
+        node
+        for node in nodes or []
+        if isinstance(node, dict)
+        and str(node.get("ref") or "").strip() == str(target_ref).strip()
+    ]
+    if len(candidates) != 1:
+        return None
+    node = candidates[0]
+    if action_family == "iterate":
+        try:
+            backend_node_id = int(target_ref)
+        except (TypeError, ValueError):
+            return None
+        return BrowserActionDecision(
+            action=BrowserAction(
+                action_type="scroll_to_ref",
+                target_ref=backend_node_id,
+                description=instruction or f"将 {target_control} 移入视口",
+            )
+        )
+    if node.get("in_viewport") is False:
+        return None
+    if action_family == "navigate":
+        if (
+            str(node.get("role") or "").casefold() == "link"
+            and str(node.get("url") or "").strip()
+        ):
+            return BrowserActionDecision(
+                action=BrowserAction(
+                    action_type="navigate",
+                    url=str(node["url"]).strip(),
+                    description=instruction or f"打开 {target_control}",
+                )
+            )
+        return None
+    point = node.get("point")
+    if node.get("in_viewport") is not True or not isinstance(point, dict):
+        return None
+    if not all(isinstance(point.get(axis), (int, float)) for axis in ("x", "y")):
+        return None
+    return BrowserActionDecision(
+        action=BrowserAction(
+            action_type="tap",
+            x=float(point["x"]),
+            y=float(point["y"]),
+            description=instruction or f"点击 {target_control}",
+        )
     )
 
 

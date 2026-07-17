@@ -24,6 +24,7 @@ from gui_agent.adapters.browser.control_grounding import (
     ground_rendered_action,
     rendered_target_evidence,
     resolve_native_control_action,
+    resolve_semantic_action,
     semantic_target_evidence,
 )
 from gui_agent.adapters.browser.target_binding import BrowserTargetBinder
@@ -96,18 +97,27 @@ class BrowserActionPolicy(BaseActionPolicy):
         *,
         target_control: str = "",
         target_value: str = "",
+        target_ref: str = "",
         target_group_id: str = "",
         action_family: str = "",
         instruction: str = "",
     ):
-        decision = resolve_native_control_action(
-            getattr(observation, "form_controls", None),
+        decision = resolve_semantic_action(
+            getattr(observation, "semantic_tree", None),
             target_control=target_control,
-            target_value=target_value,
-            target_group_id=target_group_id,
+            target_ref=target_ref,
             action_family=action_family,
             instruction=instruction,
         )
+        if decision is None:
+            decision = resolve_native_control_action(
+                getattr(observation, "form_controls", None),
+                target_control=target_control,
+                target_value=target_value,
+                target_group_id=target_group_id,
+                action_family=action_family,
+                instruction=instruction,
+            )
         if decision is not None:
             action = decision.action
             print(
@@ -123,6 +133,7 @@ class BrowserActionPolicy(BaseActionPolicy):
         *,
         target_control: str = "",
         target_value: str = "",
+        target_ref: str = "",
         target_group_id: str = "",
         action_family: str = "",
     ):
@@ -141,6 +152,7 @@ class BrowserActionPolicy(BaseActionPolicy):
         *,
         target_control: str = "",
         target_value: str = "",
+        target_ref: str = "",
         target_group_id: str = "",
         action_family: str = "",
     ) -> str:
@@ -155,6 +167,7 @@ class BrowserActionPolicy(BaseActionPolicy):
             semantic_target_evidence(
                 getattr(observation, "semantic_tree", None),
                 target_control=target_control,
+                target_ref=target_ref,
                 action_family=action_family,
             ),
         ]
