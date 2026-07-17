@@ -1,87 +1,49 @@
-# Statement Execution Boundary
+# Interactive Statement Executor
 
-This package executes one interactive Statement at a time. The Statement executor is
-agentic: one Transition model call judges the current state and chooses the next transition.
-Runtime does not advance a business phase machine behind the model.
+This package executes one `Interact` invocation at a time. It is an agentic React executor, not a
+business phase machine.
 
-## Decision ownership
+## One decision core
 
-Each non-loading frame follows one path:
+For each non-loading observation:
 
 1. `StatementMemory` projects this invocation's Journal facts.
-2. The screenshot provides the required visual observation; `observation_view.py` projects
-   optional adapter-confirmed targets and operations.
-3. Transition receives the contract, Memory, current observation, screenshot, and knowledge.
-4. In one response it first returns `assessment`, then one decision:
-   `act | complete | infeasible`.
-5. Runtime mechanically validates the proposal and either dispatches it or records a visible
-   terminal validation failure. It does not rewrite the action and does not call Transition a
-   second time on the same frame.
+2. The screenshot supplies the portable visual baseline; adapter affordances are optional evidence.
+3. Transition receives the immutable contract, Memory, current observation and relevant knowledge.
+4. Transition assesses the current state and proposes one `act | complete | infeasible` result.
+5. Runtime mechanically validates the proposal. An invalid proposal is returned to Transition once
+   on the same frame; Runtime never repairs it into another business action.
+6. A valid action is grounded by the action policy and dispatched by the adapter. A valid terminal
+   proposal becomes `StatementOutcome`.
 
-Transition is therefore the only component that answers both semantic questions:
+Transition is therefore the only component that answers:
 
 - What state is this Statement currently in?
 - Where should the next operation happen, and what should it do?
 
-`assessment` is diagnostic output, not persisted runtime state. The next frame is reconstructed
-from the contract, Journal facts, and current observation.
+Assessment is diagnostic output, not persisted state. The next frame is reconstructed from the
+contract, Journal facts and current observation.
 
 ## Mechanical boundaries
 
-Runtime may reject, but never repair, a Transition proposal when:
+Runtime may reject a proposal only when its structure is invalid, a Journal citation is invented, a
+current-frame capability is contradicted, a value is outside the contract, completion evidence is
+insufficient, or a hard budget is exhausted. These checks do not choose page routes, business targets
+or fallback tactics.
 
-- structured output is invalid;
-- a cited `turn:N` does not exist in this Statement's Memory;
-- a supplied current-frame `target_ref`, or an operation on a matching advertised target,
-  contradicts its affordance;
-- an input/select value is outside the Statement contract;
-- terminal evidence does not satisfy the completion contract; or
-- a hard action/traversal budget is exhausted.
+An action identifies:
 
-These are capability, evidence, and resource checks. They must not infer a page route, select a
-business target, prohibit a semantic tactic, or turn a rejected action into infeasibility.
+- **where**: a visually readable target and optional current-frame `target_ref`;
+- **what**: an action family, optional contract value and expected next-frame result.
 
-## Modules
+Free-text instruction is a human-readable rendering, not a second source of control flow.
 
-- `policy.py`: drives the one-call path and materializes validated actions or outcomes.
-- `model_io.py`: assembles the single `TransitionFrame` and invokes structured output once.
-- `schemas.py`: defines assessment, where+what action, evidence, and terminal result shapes.
-- `observation_view.py`: exposes current-frame affordances without completion or route verdicts.
-- `../../run/statement_memory.py`: builds bounded, read-only Memory from the Journal.
-- `../../run/statement_transition.py`: validates terminal evidence and Journal references.
-- `action_normalization.py`: renders structured action fields into an executor instruction.
-- `../../run/action_exec.py`: grounds and dispatches one primitive action.
-- `../../run/action_signals.py`: journals dispatch, target, response, and effect receipts.
-- `../../run/execution_signals.py`: reduces evidence only after Transition proposes completion.
+## State boundary
 
-## Context contract
+The Journal is the only persisted fact stream. Memory is a bounded read-only projection, and
+`StatementOutcome` is the only terminal value consumed by ProgramRuntime. Statement-private caches,
+progress and grounding data end with the invocation.
 
-`TransitionFrame` contains raw decision evidence, not precomputed route advice:
-
-- immutable Statement contract;
-- durable Journal facts, recent steps, compacted history, and last action result;
-- required current screenshot and selected application knowledge;
-- optional current title/URL, form state, applied filters, tables, and affordances;
-- explicit affordance coverage, including `unavailable` when the platform is visual-only.
-
-An action must name both parts explicitly:
-
-- **where**: a visually readable `target_control` and, when available, the exact current-frame
-  `target_ref`; the ref owns identity even when the rendered label contains decorative glyphs;
-- **what**: `action_family`, optional contract value, and expected next-frame result.
-
-The free-text `instruction` is diagnostic only. Runtime renders the executable instruction from
-the structured fields and never parses prose with route or business regexes.
-
-## State and platform boundaries
-
-The Journal is the only persisted fact stream. Memory is a projection, not another ledger.
-Transition output is a proposal, not an authoritative observation. `StatementOutcome` remains the
-only Statement terminal value consumed by `ProgramRuntime`.
-
-Core prompts and code stay application-neutral. Site facts belong in knowledge. Browser, Android,
-and iPhone mechanics belong in adapters. Visual evidence is the portable baseline; DOM,
-accessibility, controls, tables, and URL metadata are optional positive evidence. Missing or partial
-adapter evidence must never be interpreted as proof that a visually present target or state does
-not exist. A missing live capability should be added as normalized adapter evidence, not as a
-case-specific core rule.
+Core prompts remain platform- and scenario-neutral. Browser, Android and iPhone mechanics live in
+adapters; application facts live in knowledge. Missing DOM or accessibility data is never treated as
+proof that a visually present target does not exist.
