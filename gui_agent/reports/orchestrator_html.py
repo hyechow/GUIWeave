@@ -12,6 +12,7 @@ from .prompt_html import _render_module_io_html
 
 _PROG_KIND_BADGE = {
     "interact": "statement-badge-action",
+    "acquire": "statement-badge-collection",
     "data": "statement-badge-collection",
     "command": "statement-badge-navigation",
 }
@@ -196,37 +197,106 @@ def _render_program_card(
 
     counter = [0]
 
+    def _result_html(s: dict) -> str:
+        var = s.get("bind")
+        returned = list((s.get("returns") or {}).keys())
+        if not returned:
+            return ""
+        values = env.get(var or "") or {}
+        shown = "、".join(
+            (
+                f"{_safe(field)}={_safe(_report_value(values[field], sample_items=0, limit=240))}"
+                if values.get(field) is not None else _safe(field)
+            )
+            for field in returned
+        )
+        return f'<span class="prog-ret">→ {_safe("result" if len(returned) == 1 else "outputs")} {shown}</span>'
+
     def _run_row(s: dict) -> str:
         counter[0] += 1
         kind = s.get("op", "interact")
         badge = _PROG_KIND_BADGE.get(kind, "statement-badge-default")
-        var = s.get("bind")
-        var_html = f'<span class="prog-var">{_safe(var)} =</span> ' if var else ""
         name = s.get("goal") or s.get("capability", "")
-        ret = list((s.get("returns") or {}).keys())
-        if ret:
-            vals = env.get(var or "") or {}
-            shown = "、".join(
-                (
-                    f"{_safe(f)}={_safe(_report_value(vals[f], sample_items=0, limit=240))}"
-                    if vals.get(f) is not None else _safe(f)
-                )
-                for f in ret
-            )
-            ret_html = f'<span class="prog-ret">→ outputs {shown}</span>'
-        else:
-            ret_html = ""
         return (
             f'<div class="prog-step">'
             f'<span class="prog-n">{counter[0]}</span>'
-            f'<span class="prog-name">{var_html}{_safe(name)}</span>'
-            f'<span class="statement-badge {badge}">{_safe(kind)}</span>{ret_html}'
+            f'<span class="prog-name">{_safe(name)}</span>'
+            f'<span class="statement-badge {badge}">{_safe(kind)}</span>{_result_html(s)}'
+            f'</div>'
+        )
+
+    def _source_macro(items: list, index: int) -> tuple[dict, dict, dict, dict] | None:
+        nodes = items[index:index + 4]
+        if len(nodes) != 4 or not all(isinstance(node, dict) for node in nodes):
+            return None
+        initial, branch, final, acquire = nodes
+        if not (
+            [node.get("op") for node in nodes] == ["data", "if", "data", "acquire"]
+            and initial.get("mode") == final.get("mode") == "inspect"
+            and str(initial.get("bind") or "").startswith("__source_")
+            and str(final.get("bind") or "").startswith("__source_")
+            and (acquire.get("source_check") or {}).get("var") == final.get("bind")
+        ):
+            return None
+        return initial, branch, final, acquire
+
+    def _availability(s: dict) -> tuple[object, str]:
+        values = env.get(str(s.get("bind") or "")) or {}
+        available = values.get("available")
+        return available, {True: "可读", False: "不可读"}.get(available, "未运行")
+
+    def _acquire_macro_row(
+        macro: tuple[dict, dict, dict, dict], consumer: dict | None,
+    ) -> str:
+        initial, _, final, acquire = macro
+        counter[0] += 1
+        fields = list(acquire.get("required_fields") or initial.get("required_fields") or [])
+        field_html = (
+            f'<span class="compat-chip">字段 · {_safe("、".join(map(str, fields)))}</span>'
+            if fields else ""
+        )
+        returns = acquire.get("returns") or {}
+        coverage = next(
+            (spec.get("coverage") for spec in returns.values() if isinstance(spec, dict)),
+            "complete",
+        )
+        coverage_label = "完整集合" if coverage == "complete" else "尽力采集"
+        goal = (consumer or {}).get("goal") or acquire.get("goal") or "当前业务集合"
+        initial_value, initial_status = _availability(initial)
+        _, final_status = _availability(final)
+        repair_status = {True: "已跳过", False: "已执行"}.get(initial_value, "按需执行")
+        return (
+            f'<div class="nonui-detail">'
+            f'<div class="prog-step">'
+            f'<span class="prog-n">{counter[0]}</span>'
+            f'<span class="prog-name">采集{_safe(coverage_label)}：{_safe(goal)}</span>'
+            f'<span class="statement-badge statement-badge-collection">acquire</span>'
+            f'{_result_html(acquire)}'
+            f'</div>'
+            f'<div class="compat-row">{field_html}</div>'
+            f'<details class="prog-compiler-detail">'
+            f'<summary>Compiler 自动步骤 · 来源检查 + 必要时修复</summary>'
+            f'<div><b>初检</b> · {_safe(initial_status)}</div>'
+            f'<div><b>修复</b> · {_safe(repair_status)}</div>'
+            f'<div><b>复检</b> · {_safe(final_status)}</div>'
+            f'</details>'
             f'</div>'
         )
 
     def _walk(items: list) -> list[str]:
-        out = []
-        for s in items:
+        out: list[str] = []
+        index = 0
+        while index < len(items):
+            macro = _source_macro(items, index)
+            if macro is not None:
+                consumer = items[index + 4] if index + 4 < len(items) else None
+                out.append(_acquire_macro_row(
+                    macro,
+                    consumer if isinstance(consumer, dict) and consumer.get("op") == "data" else None,
+                ))
+                index += 4
+                continue
+            s = items[index]
             op = s.get("op", "")
             if op in {"interact", "acquire", "data", "command"}:
                 out.append(_run_row(s))
@@ -274,7 +344,14 @@ def _render_program_card(
                     f'</div>'
                 )
             elif op == "finish":
-                out.append(f'<div class="prog-finish">↩ finish「{_safe(s.get("message", ""))}」</div>')
+                message = str(s.get("message") or "").strip()
+                output_names = list((s.get("outputs") or {}).keys())
+                conclusion = (
+                    message
+                    or (f'完成并返回 {"、".join(map(str, output_names))}' if output_names else "完成任务")
+                )
+                out.append(f'<div class="prog-finish">↩ {_safe(conclusion)}</div>')
+            index += 1
         return out
 
     counter[0] = 0
@@ -282,7 +359,7 @@ def _render_program_card(
     g = _safe(program.get("goal") or "")
     input_html = (
         f'<div class="prog-input"><span class="prog-input-label">输入</span>{g}'
-        f'<span class="prog-input-arrow">↓ 分解为</span></div>'
+        f'<span class="prog-input-arrow">↓ 执行计划</span></div>'
     ) if g else ""
     # A re-decompose card leads with WHY it fired (the Feasibility kick-back directive).
     directive_html = (
@@ -314,7 +391,7 @@ def _render_program_card(
         f'<span class="statement-badge statement-badge-default">program</span>'
         f'{metrics_html}'
         f'</div>'
-        f'<div class="prog-body">{directive_html}{input_html}{extras_html}{card_body}</div>'
+        f'<div class="prog-body">{directive_html}{input_html}{card_body}{extras_html}</div>'
         f'</div>'
     )
 
@@ -329,7 +406,7 @@ def _render_program_section(orchestrator: dict | None) -> str:
     if not prog0.get("statements"):
         return ""
     return _render_program_card(
-        orchestrator, prog0, "#0", "编排 · decompose → DSL program",
+        orchestrator, prog0, "#0", "任务编排 · 业务步骤与控制流",
         metrics_html=_render_orchestrator_metrics(orchestrator),
         extras_html=_render_orchestrator_context_reports(orchestrator),
     )

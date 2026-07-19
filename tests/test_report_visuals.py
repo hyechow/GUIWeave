@@ -188,6 +188,59 @@ def test_orchestrator_program_renders_value_ref_path_in_if_condition():
     assert 'source["available"]' in html
 
 
+def test_orchestrator_program_collapses_compiler_acquire_macro():
+    html = _render_program_section({
+        "program": {
+            "goal": "count records by month",
+            "statements": [
+                {
+                    "op": "data", "mode": "inspect", "bind": "__source_initial",
+                    "goal": "inspect fields", "required_fields": ["date", "status"],
+                },
+                {
+                    "op": "if",
+                    "cond": {
+                        "ref": {"var": "__source_initial", "path": ["available"]},
+                        "cmp": "==", "value": False,
+                    },
+                    "then": [{"op": "interact", "goal": "expose required fields"}],
+                    "otherwise": [],
+                },
+                {
+                    "op": "data", "mode": "inspect", "bind": "__source_final",
+                    "goal": "inspect fields again", "required_fields": ["date", "status"],
+                },
+                {
+                    "op": "acquire", "bind": "__collection",
+                    "goal": "collect the scoped records",
+                    "source_check": {"var": "__source_final", "path": ["available"]},
+                    "required_fields": ["date", "status"],
+                    "returns": {"rows": {"type": "list[record]", "coverage": "complete"}},
+                },
+                {
+                    "op": "finish", "message": "",
+                    "outputs": {"result": {"var": "answer", "path": ["result"]}},
+                },
+            ],
+        },
+        "report_run_log": [
+            {"var": "__source_initial", "result": {"outputs": {"available": True}}},
+            {"var": "__source_final", "result": {"outputs": {"available": True}}},
+            {"var": "__collection", "result": {"outputs": {"rows": [{"id": "1"}]}}},
+        ],
+        "context_reports": [],
+    })
+
+    assert "prog-compiler-detail" in html
+    assert "采集完整集合" in html
+    assert "Compiler 自动步骤" in html
+    assert "初检</b> · 可读" in html
+    assert "修复</b> · 已跳过" in html
+    assert "__source_initial" not in html
+    assert "完成并返回 result" in html
+    assert "finish「」" not in html
+
+
 def test_thumb_time_only_renders_total_and_keeps_flags_searchable():
     html, search = _render_thumb_time(
         ReportStep(

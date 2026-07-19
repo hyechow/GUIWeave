@@ -103,6 +103,9 @@ HTML_TEMPLATE = """\
   .prog-name {{ color: var(--text); }}
   .prog-var {{ font-family: monospace; color: #0891b2; font-weight: 600; }}
   .prog-ret {{ color: #047857; font-size: 11px; font-family: monospace; }}
+  .prog-compiler-detail {{ margin-left:25px; color:#64748b; font-size:11px; }}
+  .prog-compiler-detail summary {{ width:max-content; max-width:100%; cursor:pointer; color:#64748b; }}
+  .prog-compiler-detail[open] {{ padding:6px 8px; background:#fff; border:1px dashed #cbd5e1; border-radius:6px; line-height:1.55; }}
   .prog-resolved {{ color: #0e7490; font-size: 11px; font-family: monospace; background: #ecfeff; border: 1px solid #a5f3fc; border-radius: 5px; padding: 0 6px; }}
   .prog-empty {{ color: #cbd5e1; }}
   .prog-if {{ display: flex; flex-direction: column; gap: 5px; padding: 8px 10px; margin: 2px 0; background: #fffbeb; border: 1px solid #fde68a; border-radius: 8px; }}
