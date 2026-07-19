@@ -99,18 +99,22 @@ If / ForEach 消费处理结果
 
 ## 数值与集合处理
 
-Compiler 只声明数据目标、输入和 typed returns，不在编排阶段固定 SQL、Python 表达式或真实字段。
-Data executor 面对运行时数据选择小型执行计划，LLM 负责理解语义，确定性 kernel 负责计算。
+Compiler 只声明数据目标、输入和 typed returns，不在编排阶段固定查询表达式或真实字段。Data
+executor 面对运行时数据选择小型 typed pipeline，LLM 负责把语义绑定到真实字段，纯 Python kernel
+负责确定性计算。计划只包含结构化算子和参数，不包含 SQL、Python source、`eval` 或 `exec`。
 
 期望支持的处理能力包括：
 
-- 字段选择和类型归一化；
-- 筛选、去重、排序和限制数量；
-- 分组、计数、求和和其他受限聚合；
-- 基于真实字段的关联；
-- 标量算术、比较和条件派生；
-- 集合差、成员判断和组合生成；
+- 字段选择和显式类型归一化；
+- 筛选、去重、排序、Top-N / Nth；
+- 日期分桶；
+- 分组后的 count / sum / min / max / avg；
+- dense rank（保留目标名次的并列项）；
 - 按 Statement declared returns 发出最终结果。
+
+第一阶段明确不支持 join、任意标量表达式、集合组合和任意 Python。任务需要这些能力时，由 Data
+executor 返回清晰失败并触发上层重排，而不是偷偷退回 SQL 或让 GUI Transition 临场计算。能力只按
+真实任务增量扩展。
 
 数据计划是一次执行内的临时方案，不进入 ProgramRuntimeState，也不作为可恢复的第二套程序。
 执行失败可以携带确定性错误做一次局部修复；仍失败则返回 StatementOutcome，而不是把计算退回

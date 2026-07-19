@@ -83,9 +83,11 @@ Data(
 )
 ```
 
-At runtime, the executor proposes a small plan over actual inputs and observation. A deterministic
-kernel supports observation reads, restricted SQL over real records/tables, and a final emit. One
-execution failure may trigger one repair; the plan is not persisted as Program state.
+At runtime, the executor proposes a small typed pipeline over actual inputs and observation. A
+deterministic Python kernel supports filter, sort, top/nth, projection, distinct, date bucketing,
+group aggregation and dense ranking, followed by a final emit. It executes no generated Python or
+SQL source. One execution failure may trigger one repair; the plan is not persisted as Program
+state.
 
 ### Command
 
