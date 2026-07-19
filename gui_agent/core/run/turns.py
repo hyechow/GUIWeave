@@ -37,7 +37,7 @@ from gui_agent.core.schemas import (
 MODEL_KEYS = (
     "supervisor",
     "supervisor.decompose",
-    "supervisor.data",
+    "data",
     "action_policy",
     "reader",
     "output",

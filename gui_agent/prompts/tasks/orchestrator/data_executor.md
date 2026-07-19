@@ -1,5 +1,5 @@
 ---
-id: task.orchestrator.data_executor
+id: task.statement.data_executor
 source_type: task_template
 platform: shared
 scope:

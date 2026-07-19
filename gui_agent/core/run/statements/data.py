@@ -32,7 +32,8 @@ from .data_kernel import (
 )
 
 
-_SYSTEM = load_prompt_text("task.orchestrator.data_executor")
+_SYSTEM = load_prompt_text("task.statement.data_executor")
+_TRACE_LABEL = "statement.data"
 
 
 class DataRef(BaseModel):
@@ -178,7 +179,7 @@ def _context_summary(invocation: StatementInvocation, observation: Observation |
 
 
 def _llm() -> ChatOpenAI:
-    cfg = resolve_llm_config("supervisor.data")
+    cfg = resolve_llm_config("data")
     if not cfg.model:
         cfg = resolve_llm_config("supervisor.decompose")
     if not cfg.model:
@@ -228,7 +229,7 @@ def _plan(
         observation,
         human_blocks=blocks,
         image_resize="none",
-        label="orchestrator.data",
+        label=_TRACE_LABEL,
         context_reports=context_reports,
         decision_text="生成一次可执行的数据计划。",
     )
@@ -237,7 +238,7 @@ def _plan(
         messages,
         DataPlan,
         trace_sink=context_reports,
-        trace_label="orchestrator.data",
+        trace_label=_TRACE_LABEL,
     )
 
 

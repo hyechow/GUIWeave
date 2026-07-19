@@ -78,6 +78,7 @@ def drain_immediate_statements(
         tokens_before = get_llm_token_usage()
 
         if isinstance(invocation.statement, Data):
+            emit_status(f"Data 数据处理中：{invocation.goal}")
             if cursor.observation is None:
                 cursor.ensure(program_runtime.index)
             reports: list[dict] = []

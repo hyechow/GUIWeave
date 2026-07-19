@@ -378,7 +378,7 @@ def run_agent_loop(
                 context=context,
                 save_context=_save_ctx,
                 say=_say,
-                status=lambda msg: _status(_interactive_turn_count(context), msg),
+                status=lambda msg: _status(max(1, _interactive_turn_count(context)), msg),
                 observation=observation_for_statements,
                 observation_url=observation_url,
                 allow_navigation=allow_navigation,
