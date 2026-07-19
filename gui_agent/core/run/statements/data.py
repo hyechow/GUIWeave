@@ -118,6 +118,7 @@ def _jsonable(value: Any) -> JsonValue:
 
 def _context_summary(invocation: StatementInvocation, observation: Observation | None) -> str:
     payload = {
+        "task_goal": invocation.task_goal,
         "goal": invocation.goal,
         "inputs": invocation.inputs,
         "returns": {
@@ -217,6 +218,8 @@ def _resolve(ref: DataRef, bindings: dict[str, JsonValue]) -> JsonValue:
 
 
 def _table_snapshots(value: JsonValue, name: str) -> list[dict[str, Any]]:
+    if isinstance(value, dict) and isinstance(value.get("rows"), list):
+        return [dict(value)]
     if isinstance(value, list) and value and all(
         isinstance(item, dict) and "rows" in item for item in value
     ):
@@ -227,16 +230,6 @@ def _table_snapshots(value: JsonValue, name: str) -> list[dict[str, Any]]:
     if isinstance(value, dict):
         return [{"caption": name, "rows": [dict(value)], "partial": False}]
     raise DataQueryError(f"sql source {name!r} 不是 record/list[record]/tables")
-
-
-def _parse_scalar(value: str) -> JsonValue:
-    text = value.strip()
-    if not text:
-        return ""
-    try:
-        return json.loads(text)
-    except json.JSONDecodeError:
-        return text
 
 
 def _coerce(value: JsonValue, spec: OutputSpec) -> JsonValue:
@@ -312,9 +305,7 @@ def _execute(
                 operation.returns,
                 require_complete=_derive_require_complete(invocation, operation),
             )
-            bindings[operation.name] = {
-                name: _parse_scalar(value) for name, value in rows.items()
-            }
+            bindings[operation.name] = _jsonable(rows)
             trace.append(f"sql:{operation.name}:{operation.sql}")
             continue
         values = {

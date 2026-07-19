@@ -40,6 +40,7 @@ class StatementInvocation(BaseModel):
     """One resolved executor call yielded by the Program interpreter."""
 
     statement: ExecutableStatement = Field(discriminator="op")
+    task_goal: str = ""
     inputs: dict[str, JsonValue] = Field(default_factory=dict)
     args: dict[str, JsonValue] = Field(default_factory=dict)
     loop_path: list[int] = Field(default_factory=list)
@@ -236,6 +237,7 @@ class Interpreter:
                 args[name] = resolved
         return StatementInvocation(
             statement=statement,
+            task_goal=self._program.goal,
             inputs=inputs,
             args=args,
             loop_path=list(loop_path),

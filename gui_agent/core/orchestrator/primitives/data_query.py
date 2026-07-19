@@ -29,7 +29,7 @@ def execute_data_query(
     max_rows: int = 200,
     timeout_s: float = 1.0,
     require_complete: bool = True,
-) -> dict[str, str]:
+) -> list[dict[str, Any]]:
     """Run a restricted read-only SQL query over structured table snapshots.
 
     The first table is available as `data`; every table is also available as
@@ -65,10 +65,20 @@ def execute_data_query(
         conn.set_progress_handler(lambda: 1 if time.monotonic() > deadline else 0, 2000)
         cur = conn.execute(normalized_sql)
         rows = cur.fetchmany(max_rows + 1)
-        truncated = len(rows) > max_rows
-        rows = rows[:max_rows]
+        if len(rows) > max_rows:
+            raise DataQueryError(
+                f"SQL 结果超过 {max_rows} 行；请用 LIMIT 或先缩小语义范围，禁止静默截断"
+            )
         columns = [d[0] for d in (cur.description or [])]
-        return _reads_from_rows(rows, columns, returns or ["result"], truncated=truncated)
+        missing = [field for field in (returns or []) if _return_column(field, columns) is None]
+        if missing:
+            raise DataQueryError(
+                "SQL 查询结果缺少 returns 字段: "
+                + ", ".join(missing)
+                + "；请把 SELECT 输出列 alias 成这些字段。"
+                + f" 当前输出列: {', '.join(columns) if columns else '(none)'}"
+            )
+        return [{column: row[column] for column in columns} for row in rows]
     except sqlite3.Error as exc:
         raise DataQueryError(f"SQL 查询失败: {exc}") from exc
     finally:
@@ -580,69 +590,8 @@ def _install_read_only_authorizer(conn: sqlite3.Connection) -> None:
     conn.set_authorizer(_authorizer)
 
 
-def _reads_from_rows(
-    rows: list[sqlite3.Row],
-    columns: list[str],
-    returns: list[str],
-    *,
-    truncated: bool,
-) -> dict[str, str]:
-    result_rows = [{col: row[col] for col in columns} for row in rows]
-    payload = _compact_payload(result_rows, columns)
-    if truncated:
-        payload = {"rows": result_rows, "truncated": True}
-    text_payload = _json_or_scalar(payload)
-
-    reads: dict[str, str] = {}
-    if not returns:
-        return {"result": text_payload}
-    if len(returns) == 1:
-        reads[returns[0]] = text_payload
-        return reads
-    missing = [
-        field for field in returns
-        if field.lower() not in {"result", "结果"} and _return_column(field, columns) is None
-    ]
-    if missing:
-        raise DataQueryError(
-            "SQL 查询结果缺少 returns 字段: "
-            + ", ".join(missing)
-            + "；请把 SELECT 输出列 alias 成这些字段，或用单个 result 返回完整结果。"
-            + f" 当前输出列: {', '.join(columns) if columns else '(none)'}"
-        )
-    for field in returns:
-        col = _return_column(field, columns)
-        if col is not None:
-            values = [_stringify(r.get(col, "")) for r in result_rows]
-            reads[field] = values[0] if len(values) == 1 else json.dumps(values, ensure_ascii=False)
-        elif field.lower() in {"result", "结果"}:
-            reads[field] = text_payload
-    return reads
-
-
 def _return_column(field: str, columns: list[str]) -> str | None:
     if field in columns:
         return field
     key = _identifier(field)
     return key if key in columns else None
-
-
-def _compact_payload(rows: list[dict[str, str]], columns: list[str]) -> Any:
-    if len(columns) == 1:
-        values = [row.get(columns[0], "") for row in rows]
-        if len(values) == 1:
-            return values[0]
-        return values
-    if len(rows) == 1:
-        return rows[0]
-    return rows
-
-
-def _json_or_scalar(value: Any) -> str:
-    if isinstance(value, str):
-        return value
-    return json.dumps(value, ensure_ascii=False)
-
-
-def _stringify(value: Any) -> str:
-    return "" if value is None else str(value)

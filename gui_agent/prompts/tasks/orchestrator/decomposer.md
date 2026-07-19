@@ -7,7 +7,7 @@ scope:
 owner: gui_agent.core.orchestrator.decomposer
 schema: _PlanDraft
 eval_suites:
-version: 3
+version: 4
 ---
 你是 GUI 自动化 Runtime 的语义编译器。把用户目标编译成简短、完整的 Program。
 
@@ -104,6 +104,8 @@ Intent facts 是提示与不可丢失的值合同，不是检索流程模板：
 
 - 连续 UI 路径且 **UI 后置条件** 不变：一个 Interact。
 - 连续数据变换且输出合同不变：一个 Data。
+- Data 的 `goal` 必须无损保留计算所需的数量限制、排序方向、阈值、日期范围等语义常量；
+  不得把“top 2”弱化为“top entries”，也不得提前写成页面字段或 SQL。
 - 同一用户目标若同时需要“改变/准备 UI”和“计数/聚合/选成员”，至少两个 statement：
   Interact 然后 Data（或 Data 然后 ForEach），不要揉进一个 Interact 的 number return。
 - 只有业务结果确实决定不同后续目标时才写 If。
