@@ -11,13 +11,84 @@ from collections.abc import Mapping
 from typing import Literal
 
 from ._validator.issue import ALL_CODES, IssueList, ValidationIssue
-from .program import Command, Data, Finish, ForEach, If, Interact, OutputSpec, Program, Stmt, ValueRef
+from .program import Acquire, Command, Data, Finish, ForEach, If, Interact, OutputSpec, Program, Stmt, ValueRef
 
 
 Scope = dict[str, Mapping[str, OutputSpec] | None]
 # Who produced a bound variable: used to keep numeric Finish results out of Interact.
-BindOrigin = Literal["interact", "data", "command", "foreach", "mixed"]
+BindOrigin = Literal["interact", "acquire", "data", "command", "foreach", "mixed"]
 Origins = dict[str, BindOrigin]
+_INSPECTION_OUTPUTS = {
+    "available": "boolean",
+    "bindings": "record",
+    "missing_fields": "json",
+}
+
+
+def _executor_nodes(statements: list[Stmt]):
+    for statement in statements:
+        if isinstance(statement, (Interact, Acquire, Data, Command)):
+            yield statement
+        elif isinstance(statement, If):
+            yield from _executor_nodes(statement.then)
+            yield from _executor_nodes(statement.otherwise)
+        elif isinstance(statement, ForEach):
+            yield from _executor_nodes(statement.body)
+
+
+def _semantic_fields(values: list[str]) -> frozenset[str]:
+    return frozenset(value.strip().casefold() for value in values if value.strip())
+
+
+def _check_acquired_field_flow(program: Program, issues: IssueList) -> None:
+    """Check semantic field dependencies without inferring physical UI columns."""
+    nodes = list(_executor_nodes(program.statements))
+    inspections: dict[str, list[frozenset[str]]] = {}
+    for node in nodes:
+        if isinstance(node, Data) and node.mode == "inspect" and node.bind:
+            inspections.setdefault(node.bind, []).append(
+                _semantic_fields(node.required_fields)
+            )
+
+    acquired: dict[str, list[frozenset[str]]] = {}
+    for node in nodes:
+        if not isinstance(node, Acquire) or not node.bind or node.source_check is None:
+            continue
+        checked = inspections.get(node.source_check.var, [])
+        if not checked:
+            issues.add(
+                "ACQUIRE_SOURCE_CHECK_INVALID",
+                f"Acquire「{node.goal}」的 source_check 不是 Data inspect 结果",
+                evidence=(node.id, node.source_check.var),
+            )
+            continue
+        acquired.setdefault(node.bind, []).extend(checked)
+
+    for node in nodes:
+        if not isinstance(node, Data) or node.mode != "derive":
+            continue
+        sources = sorted({ref.var for ref in node.inputs.values()} & set(acquired))
+        if not sources:
+            continue
+        required = _semantic_fields(node.required_fields)
+        if not required:
+            issues.add(
+                "DATA_REQUIRED_FIELDS_REQUIRED",
+                f"Data「{node.goal}」消费 Acquire 集合 {sources}，必须用 required_fields "
+                "声明分组、筛选、排序和最终输出所需的语义源字段",
+                evidence=(node.id, *sources),
+            )
+            continue
+        for source in sources:
+            for checked in acquired[source]:
+                missing = sorted(required - checked)
+                if missing:
+                    issues.add(
+                        "DATA_REQUIRED_FIELDS_NOT_ACQUIRED",
+                        f"Data「{node.goal}」需要语义字段 {missing}，但 Acquire 集合「{source}」"
+                        "引用的 Data inspect 没有覆盖它们",
+                        evidence=(node.id, source, *missing),
+                    )
 
 
 def _check_ref(ref: ValueRef, scope: Scope, issues: IssueList, *, site: str) -> None:
@@ -95,7 +166,7 @@ def _walk(
     current = dict(scope)
     current_origins = dict(origins)
     for statement in statements:
-        if isinstance(statement, (Interact, Data, Command)):
+        if isinstance(statement, (Interact, Acquire, Data, Command)):
             if not statement.id:
                 issues.add("EMPTY_STATEMENT_GOAL", "executor statement 缺少稳定 id")
             elif statement.id in ids:
@@ -118,6 +189,107 @@ def _walk(
                     f"Interact「{statement.goal}」缺少业务 success 合同",
                     evidence=(statement.id,),
                 )
+            if isinstance(statement, Interact):
+                collection_outputs = [
+                    name for name, spec in statement.returns.items()
+                    if spec.type == "list[record]"
+                ]
+                if collection_outputs:
+                    issues.add(
+                        "INTERACT_COLLECTION_OUTPUT",
+                        f"Interact「{statement.goal}」不能物化集合 {collection_outputs}；"
+                        "当前帧读取交给 Data，跨窗口采集交给 Acquire",
+                        evidence=(statement.id, *collection_outputs),
+                    )
+            if isinstance(statement, Acquire):
+                collection_outputs = [
+                    (name, spec) for name, spec in statement.returns.items()
+                    if spec.type == "list[record]"
+                ]
+                if len(statement.returns) != 1 or len(collection_outputs) != 1:
+                    issues.add(
+                        "ACQUIRE_OUTPUT_CONTRACT",
+                        f"Acquire「{statement.goal}」必须且只能声明一个 list[record] output",
+                        evidence=(statement.id,),
+                    )
+                elif collection_outputs[0][1].coverage not in {"complete", "best_effort"}:
+                    issues.add(
+                        "ACQUIRE_COVERAGE_REQUIRED",
+                        f"Acquire「{statement.goal}」的集合 output 必须声明 "
+                        "coverage=complete 或 best_effort",
+                        evidence=(statement.id, collection_outputs[0][0]),
+                    )
+                elif collection_outputs[0][1].fields:
+                    issues.add(
+                        "ACQUIRE_RAW_FIELDS_FORBIDDEN",
+                        f"Acquire「{statement.goal}」搬运 observation 原始记录，output 不得声明 fields；"
+                        "所需语义源字段只写在 Data inspect/derive.required_fields",
+                        evidence=(
+                            statement.id,
+                            collection_outputs[0][0],
+                            *collection_outputs[0][1].fields,
+                        ),
+                    )
+                if statement.source_check is None:
+                    issues.add(
+                        "ACQUIRE_SOURCE_CHECK_REQUIRED",
+                        f"Acquire「{statement.goal}」启动前必须引用 Data inspect 的 available；"
+                        "字段不可用分支应先由 Interact 修正界面、重新 inspect，再进入 Acquire",
+                        evidence=(statement.id,),
+                    )
+                else:
+                    _check_ref(
+                        statement.source_check,
+                        current,
+                        issues,
+                        site=f"{statement.id}.source_check",
+                    )
+                    declared = current.get(statement.source_check.var)
+                    field = (
+                        statement.source_check.path[0]
+                        if statement.source_check.path
+                        and isinstance(statement.source_check.path[0], str)
+                        else None
+                    )
+                    if (
+                        field != "available"
+                        or declared is None
+                        or {name: spec.type for name, spec in declared.items()}
+                        != _INSPECTION_OUTPUTS
+                    ):
+                        issues.add(
+                            "ACQUIRE_SOURCE_CHECK_INVALID",
+                            "Acquire.source_check 必须引用 Data inspect 产出的 boolean 字段",
+                            evidence=(statement.id,),
+                        )
+            if isinstance(statement, Data) and statement.mode == "inspect":
+                if not statement.required_fields:
+                    issues.add(
+                        "DATA_INSPECT_FIELDS_REQUIRED",
+                        f"Data inspect「{statement.goal}」必须用 required_fields 声明要检查的语义源字段",
+                        evidence=(statement.id,),
+                    )
+                actual = {name: spec.type for name, spec in statement.returns.items()}
+                if actual != _INSPECTION_OUTPUTS:
+                    issues.add(
+                        "DATA_INSPECT_OUTPUT_CONTRACT",
+                        "Data inspect 必须声明 available:boolean、bindings:record、"
+                        "missing_fields:json 三个 outputs",
+                        evidence=(statement.id,),
+                    )
+            if isinstance(statement, Data):
+                missing_record_fields = [
+                    name for name, spec in statement.returns.items()
+                    if spec.type == "list[record]" and not spec.fields
+                ]
+                if missing_record_fields:
+                    issues.add(
+                        "DATA_RECORD_FIELDS_REQUIRED",
+                        f"Data「{statement.goal}」的 list[record] outputs "
+                        f"{missing_record_fields} 必须声明 fields；"
+                        "例如 fields=['email']，使运行时能校验逐条记录形状",
+                        evidence=(statement.id, *missing_record_fields),
+                    )
             if statement.returns and not statement.bind:
                 issues.add(
                     "RETURNS_WITHOUT_BIND",
@@ -180,6 +352,8 @@ def _walk(
                 current[statement.bind] = statement.returns
                 if isinstance(statement, Interact):
                     current_origins[statement.bind] = "interact"
+                elif isinstance(statement, Acquire):
+                    current_origins[statement.bind] = "acquire"
                 elif isinstance(statement, Data):
                     current_origins[statement.bind] = "data"
                 else:
@@ -270,6 +444,7 @@ def validate_program(program: Program, resolution=None) -> IssueList:
         issues.add("EMPTY_PROGRAM", "Program 不能为空")
         return issues
     _walk(program.statements, {}, {}, issues, set())
+    _check_acquired_field_flow(program, issues)
     return issues
 
 

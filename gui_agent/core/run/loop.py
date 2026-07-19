@@ -40,7 +40,7 @@ from gui_agent.core.run.flow import (
     handle_loading_frame,
 )
 from gui_agent.core.run.statements import drain_immediate_statements
-from gui_agent.core.orchestrator.program import Interact, Program
+from gui_agent.core.orchestrator.program import Acquire, Interact, Program
 from gui_agent.core.orchestrator.recovery import (
     MAX_EMPTY_RETURN_RECOVERIES,
     MAX_KICKBACK_REPLANS,
@@ -51,7 +51,6 @@ from gui_agent.core.run.statements.outcome import StatementOutcome
 from gui_agent.core.run.interactive import (
     contract_for_interact,
     extract_interact_outputs,
-    project_interact_outputs,
     start_statement,
     statement_id,
     statement_info,
@@ -60,7 +59,6 @@ from gui_agent.core.run.turns import (
     emit_statement_fields,
     interactive_turn_count as _interactive_turn_count,
     make_statement_outcome_event,
-    record_collection_slice,
     record_interactive_turn,
     sync_turn_metadata,
 )
@@ -306,32 +304,40 @@ def run_agent_loop(
         rt = ProgramRuntime.resume(program, context.journal)
         recovery_router = RecoveryRouter()
         if rt.current_instance_id:
-            if rt.current is None or not isinstance(rt.current.statement, Interact):
+            if rt.current is None:
                 raise ValueError(
-                    "journal resumed an active instance that is not an interactive statement"
+                    "journal resumed an active instance without a current statement"
                 )
-            resume_statement = getattr(supervisor, "resume_statement", None)
-            if not callable(resume_statement):
-                raise TypeError("configured supervisor cannot resume statement runtime")
-            latest_snapshot = next(
-                (
-                    turn.runtime_state
-                    for turn in reversed(context.journal.turns)
-                    if turn.statement_instance_id == rt.current_instance_id
-                    and turn.runtime_state is not None
-                ),
-                None,
-            )
-            if latest_snapshot is not None:
-                rt.restore_current_contract(latest_snapshot.contract)
-            resume_statement(
-                contract_for_interact(rt.current, rt.index),
-                instance_id=rt.current_instance_id,
-                history=context.journal.turns,
-            )
+            if isinstance(rt.current.statement, Interact):
+                resume_statement = getattr(supervisor, "resume_statement", None)
+                if not callable(resume_statement):
+                    raise TypeError("configured supervisor cannot resume statement runtime")
+                latest_snapshot = next(
+                    (
+                        turn.runtime_state
+                        for turn in reversed(context.journal.turns)
+                        if turn.statement_instance_id == rt.current_instance_id
+                        and turn.runtime_state is not None
+                    ),
+                    None,
+                )
+                if latest_snapshot is not None:
+                    rt.restore_current_contract(latest_snapshot.contract)
+                resume_statement(
+                    contract_for_interact(rt.current, rt.index),
+                    instance_id=rt.current_instance_id,
+                    history=context.journal.turns,
+                )
+            elif not isinstance(rt.current.statement, Acquire):
+                raise ValueError(
+                    "only Interact or journal-backed Acquire may resume an active instance"
+                )
             _say(f"  [Resume] 恢复 statement {rt.current_instance_id}")
         _record_llm_mark = get_llm_call_count()
         _record_token_mark = get_llm_token_usage()
+        observation = None
+        observation_url_for_turn = None
+        prep_future = None
 
         def _stop_after_esc(turn_no: int) -> AgentResult | None:
             if not _stop_requested():
@@ -343,17 +349,10 @@ def run_agent_loop(
             ))
 
         def _read_completed_outputs(invocation, observation) -> dict:
-            """Project an Interact's typed outputs.
-
-            ``list[record]`` returns declared ``complete``/``best_effort`` come from the
-            Journal-projected CollectionView; the current frame was appended as a slice before
-            Transition. ``current_view`` and scalar returns still come from the terminal frame.
-            """
-            return project_interact_outputs(
+            """Read terminal-frame scalar/record outputs for one Interact."""
+            return extract_interact_outputs(
                 invocation,
                 observation,
-                history=context.journal.events,
-                instance_id=getattr(rt, "current_instance_id", "") or "",
                 check_knowledge=getattr(supervisor, "_check_knowledge", "") or "",
                 prepare_vision_prompt_png=bundle.prepare_vision_prompt_png,
                 say=_say,
@@ -495,11 +494,6 @@ def run_agent_loop(
         }
         context.outcome = None
         _save_ctx()
-        if rt.finished:
-            return _finish(_orch_result(context, rt.interpreter, rt.reply or ""))
-        _reply = _drain_immediate()
-        if _reply is not None:
-            return _finish(_orch_result(context, rt.interpreter, _reply))
 
         def _perform_replan(
             directive: str,
@@ -554,10 +548,8 @@ def run_agent_loop(
                 cls, "kickback_redecompose", _site,
                 detail=directive[:160], outcome="replanned",
             )
-            # Close the infeasible statement's runtime BEFORE hot-swapping the program — the
-            # infeasible step was already recorded as an interactive turn (Transition captured), and
-            # the new program's first statement is begun by _drain_immediate below. Ending here
-            # prevents the begin_statement guard from rejecting the implicit overwrite.
+            # Close an interactive runtime before hot-swapping. Every executor has already
+            # recorded its terminal Journal fact; the replacement starts at _drain_immediate.
             if terminal_outcome is not None:
                 supervisor.end_statement(terminal_outcome)
             rt.replace_program(
@@ -594,6 +586,30 @@ def run_agent_loop(
                 return (True, rt.reply or "")
             _reply2 = _drain_immediate()
             return (True, _reply2) if _reply2 is not None else (True, None)
+
+        if rt.finished:
+            return _finish(_orch_result(context, rt.interpreter, rt.reply or ""))
+        _reply = _drain_immediate()
+        if _reply is not None:
+            _initial_decision = recovery_router.route_program_end(
+                replan_directive=_immediate_kickback,
+                can_redecompose=callable(redecompose),
+            )
+            if _initial_decision.action == "kickback":
+                assert _initial_decision.recovery_class is not None
+                _handled, _replanned_reply = _perform_replan(
+                    _immediate_kickback or "",
+                    observation,
+                    cls=_initial_decision.recovery_class,
+                )
+                if _handled and _replanned_reply is not None:
+                    return _finish(
+                        _orch_result(context, rt.interpreter, _replanned_reply)
+                    )
+                if not _handled:
+                    return _finish(_orch_result(context, rt.interpreter, _reply))
+            else:
+                return _finish(_orch_result(context, rt.interpreter, _reply))
 
         while True:
             interrupted = _stop_after_esc(_interactive_turn_count(context))
@@ -659,16 +675,6 @@ def run_agent_loop(
             while True:
                 _status(turn_no, f"使用 {supervisor.name} supervisor 决策中…")
                 _say("监督决策中...")
-                # Observation facts precede decisions. A statement completing on this frame
-                # therefore persists its terminal collection slice before Transition proposes
-                # completion and before outputs are materialized.
-                record_collection_slice(
-                    context=context,
-                    supervisor=supervisor,
-                    observation=observation,
-                    observation_url=observation_url_for_turn,
-                    save_context=_save_ctx,
-                )
                 if _budget_reconcile:
                     sv_step = supervisor.reconcile(
                         observation, context.goal, context.journal.events

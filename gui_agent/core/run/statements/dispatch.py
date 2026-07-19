@@ -1,4 +1,4 @@
-"""Drain consecutive Data and Command statements outside the GUI React loop."""
+"""Drain consecutive Acquire, Data and Command statements outside the GUI React loop."""
 
 from __future__ import annotations
 
@@ -9,12 +9,13 @@ from typing import Any, Callable
 
 from llm.structured import get_llm_call_count, get_llm_token_usage
 
-from gui_agent.core.orchestrator.program import Command, Data
+from gui_agent.core.orchestrator.program import Acquire, Command, Data
 from gui_agent.core.run.interactive import statement_id
 from gui_agent.core.run.program_runtime import ProgramRuntime
 from gui_agent.core.schemas import Observation, PolicyContext
 
 from .command import execute_command
+from .acquire import execute_acquire_statement
 from .data import execute_data_statement
 from .observation import ObservationCursor
 from .recording import record_statement_outcome
@@ -33,7 +34,7 @@ def is_immediate_statement(invocation, platform: Any, *, allow_navigation: bool 
     del platform, allow_navigation
     return bool(
         invocation is not None
-        and isinstance(invocation.statement, (Data, Command))
+        and isinstance(invocation.statement, (Acquire, Data, Command))
     )
 
 
@@ -72,12 +73,25 @@ def drain_immediate_statements(
     while is_immediate_statement(invocation, platform):
         assert invocation is not None
         sid = statement_id(invocation, program_runtime.index)
-        iid = program_runtime.next_instance_id(sid)
+        iid = program_runtime.current_instance_id or program_runtime.next_instance_id(sid)
         started_at = time.perf_counter()
         calls_before = get_llm_call_count()
         tokens_before = get_llm_token_usage()
 
-        if isinstance(invocation.statement, Data):
+        if isinstance(invocation.statement, Acquire):
+            emit_status(f"Acquire 集合采集中：{invocation.goal}")
+            outcome = execute_acquire_statement(
+                invocation,
+                cursor=cursor,
+                bundle=bundle,
+                platform=platform,
+                context=context,
+                instance_id=iid,
+                save_context=save_context,
+                say=say,
+                status=emit_status,
+            )
+        elif isinstance(invocation.statement, Data):
             emit_status(f"Data 数据处理中：{invocation.goal}")
             if cursor.observation is None:
                 cursor.ensure(program_runtime.index)
@@ -88,6 +102,8 @@ def drain_immediate_statements(
                 check_knowledge=check_knowledge,
                 prepare_vision_prompt_png=getattr(bundle, "prepare_vision_prompt_png", None),
                 context_reports=reports,
+                say=say,
+                status=emit_status,
             )
         else:
             outcome = execute_command(

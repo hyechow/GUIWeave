@@ -43,7 +43,7 @@ class ValueRef(BaseModel):
 
 
 class StatementNode(BaseModel):
-    """Fields shared by the three executor-backed Program statements."""
+    """Fields shared by executor-backed Program statements."""
 
     model_config = ConfigDict(extra="forbid")
 
@@ -78,6 +78,26 @@ class Data(StatementNode):
 
     op: Literal["data"] = "data"
     goal: str
+    mode: Literal["derive", "inspect"] = "derive"
+    required_fields: list[str] = Field(default_factory=list)
+
+    @property
+    def goal_text(self) -> str:
+        return self.goal
+
+
+class Acquire(StatementNode):
+    """Materialize one already-scoped collection across reachable windows.
+
+    Acquire never changes the business scope, exposes columns, opens records or
+    performs data transforms.  Those choices belong to Interact / Data / Program
+    control flow respectively.
+    """
+
+    op: Literal["acquire"] = "acquire"
+    goal: str
+    on: SurfaceName = "main"
+    source_check: ValueRef | None = None
 
     @property
     def goal_text(self) -> str:
@@ -98,7 +118,7 @@ class Command(StatementNode):
         return self.capability
 
 
-ExecutableStatement: TypeAlias = Interact | Data | Command
+ExecutableStatement: TypeAlias = Interact | Acquire | Data | Command
 
 
 class Condition(BaseModel):
@@ -158,7 +178,7 @@ class Finish(BaseModel):
 
 
 Stmt = Annotated[
-    Union[Interact, Data, Command, If, ForEach, Finish],
+    Union[Interact, Acquire, Data, Command, If, ForEach, Finish],
     Field(discriminator="op"),
 ]
 
@@ -179,7 +199,7 @@ def assign_statement_ids(program: Program) -> Program:
     def visit(statements: list[Stmt]) -> None:
         nonlocal counter
         for statement in statements:
-            if isinstance(statement, (Interact, Data, Command)):
+            if isinstance(statement, (Interact, Acquire, Data, Command)):
                 counter += 1
                 if not statement.id:
                     statement.id = f"s{counter}"
@@ -199,6 +219,7 @@ Program.model_rebuild()
 
 
 __all__ = [
+    "Acquire",
     "Command",
     "CommandCapability",
     "Condition",

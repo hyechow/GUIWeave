@@ -108,6 +108,8 @@ def build_iphone_bundle(*, backend: Optional[str] = None, **_ignored: object) ->
         # differs because that is iphone's correct home. See ActionVisualizer docstring.
         make_action_visualizer=lambda session: None,
         prepare_vision_prompt_png=_prepare_vision_prompt_png,
+        move_collection=None,
+        validate_collection_action=None,
         default_action_policy=StructuredOutputPolicy.name,
         default_supervisor=StatementSupervisorPolicy.name,
         action_policy_choices=tuple(sorted(_POLICIES)),

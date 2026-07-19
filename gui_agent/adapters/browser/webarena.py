@@ -800,10 +800,10 @@ def _print_webarena_outputs(
 
 
 def _print_program(program) -> None:
-    """Print the six-node semantic Program before execution."""
+    """Print the semantic Program before execution."""
     def emit(s, indent: str = "  ") -> None:
         nm = type(s).__name__
-        if nm in {"Interact", "Data"}:
+        if nm in {"Interact", "Acquire", "Data"}:
             line = f"{indent}[{s.op}] {s.goal}"
             if s.bind:
                 line += f"  → {s.bind}"

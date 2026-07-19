@@ -235,10 +235,8 @@ def orchestration_result(
     # A program that reached finish but answered on an entirely-empty read produced no real
     # answer (the read found nothing on the frame) — do not let it masquerade as success.
     finish_incomplete = getattr(interp, "finish_incomplete", False)
-    accepted_unverified = any(
-        r.result.verification == "accepted_unverified"
-        for r in interp.run_log
-    )
+    terminal_verification = getattr(interp, "terminal_verification", None)
+    accepted_unverified = terminal_verification == "accepted_unverified"
     completed = (
         (current is None)
         and not interp.failed

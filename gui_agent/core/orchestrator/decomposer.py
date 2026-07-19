@@ -1,4 +1,4 @@
-"""Compile a user goal into the six-node semantic Program IR."""
+"""Compile a user goal into the semantic Program IR."""
 
 from __future__ import annotations
 
@@ -21,7 +21,7 @@ from llm.structured import invoke_structured
 
 from ._decomposer.draft import _PlanDraft, _StepDraft, _to_stmts, to_program
 from ._validator.issue import ValidationIssue
-from .program import Program
+from .program import ForEach, If, Interact, Program, Stmt
 from .validator import validate_program
 
 
@@ -60,8 +60,9 @@ def _intent_facts(resolution: IntentResolution | None) -> ContextBlock | None:
         priority=21,
         content=(
             "## Intent facts\n"
-            "这些是值、范围和检索提示，不是检索步骤模板。Program 必须保留目标值与范围，"
-            "具体字段、控件和检索方法由运行时 Interact 决定。\n"
+            "这些是检索值、匹配模式与范围的权威合同。需要检索 lookup 实体时，用一个 "
+            "lookup macro 引用原始 mention 和语义字段；Compiler 负责完整值精确检索及零结果后的 "
+            "search_hint 回退。真实控件和页面路径仍由运行时 Interact 决定。\n"
             + "\n".join(lines)
         ),
     )
@@ -86,10 +87,35 @@ def _value_contract_issues(
     program: Program,
     resolution: IntentResolution | None,
 ) -> list[ValidationIssue]:
-    if resolution is None:
-        return []
-    payload = program.model_dump_json(exclude={"id"}).casefold()
+    def walk(statements: list[Stmt]):
+        for statement in statements:
+            yield statement
+            if isinstance(statement, If):
+                yield from walk(statement.then)
+                yield from walk(statement.otherwise)
+            elif isinstance(statement, ForEach):
+                yield from walk(statement.body)
+
+    allowed_lookups = {
+        entity.mention.strip().casefold()
+        for entity in (resolution.entities if resolution is not None else [])
+        if entity.role == "lookup"
+    }
     issues: list[ValidationIssue] = []
+    for statement in walk(program.statements):
+        if not isinstance(statement, Interact):
+            continue
+        mention = statement.required_values.get("lookup_entity")
+        if isinstance(mention, str) and mention.strip().casefold() not in allowed_lookups:
+            issues.append(ValidationIssue(
+                "ROUTER_LOOKUP_NOT_DECLARED",
+                f"lookup 实体「{mention}」不在 Router lookup facts 中；泛称、输出字段和集合范围"
+                "不得包装成实体检索，请删除 lookup macro 并直接编排其真实工作",
+                evidence=(mention,),
+            ))
+    if resolution is None:
+        return issues
+    payload = program.model_dump_json(exclude={"id"}).casefold()
     for entity in resolution.entities:
         if entity.role in {"target_value", "qualifier_value"}:
             values = list(entity.value_members or []) or [entity.mention]
@@ -151,7 +177,7 @@ def _compile(
             trace_label=label,
         )
         previous = draft.model_dump_json(exclude_defaults=True, exclude_none=True)
-        program = to_program(draft, goal)
+        program = to_program(draft, goal, resolution=resolution)
         issues = [*validate_program(program), *_value_contract_issues(program, resolution)]
         if attempt_observer:
             attempt_observer(attempt, list(issues))

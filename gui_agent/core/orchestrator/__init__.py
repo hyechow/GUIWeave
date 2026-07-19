@@ -1,12 +1,13 @@
 """Semantic Program compiler and runtime.
 
-The public surface intentionally mirrors the six-node IR.  Concrete UI and
+The public surface intentionally mirrors the semantic IR.  Concrete UI and
 data operations live behind runtime executors rather than in this package API.
 """
 
 from gui_agent.core.schemas import StatementOutcome
 
 from .program import (
+    Acquire,
     Command,
     Condition,
     Data,
@@ -33,6 +34,7 @@ from .budget import estimate_program_turns
 from .validator import IssueList, ValidationIssue, validate_program
 
 __all__ = [
+    "Acquire",
     "Command",
     "Condition",
     "Data",

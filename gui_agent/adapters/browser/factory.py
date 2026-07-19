@@ -185,6 +185,7 @@ def build_browser_bundle(
     http://localhost:9222, overridable via env CHROME_CDP_URL; headless mode
     launches Chromium directly and can keep login state in ``user_data_dir``.
     """
+    from gui_agent.adapters.browser.acquisition import move_collection, validate_collection_action
     from gui_agent.adapters.browser.executor import BrowserExecutor
     from gui_agent.adapters.browser.perception import BrowserPerception, BrowserSession
 
@@ -204,6 +205,8 @@ def build_browser_bundle(
         make_status_reporter=lambda enabled: (_make_browser_hud() if enabled else None),
         make_action_visualizer=_make_action_visualizer,
         prepare_vision_prompt_png=_prepare_vision_prompt_png,
+        move_collection=move_collection,
+        validate_collection_action=validate_collection_action,
         default_action_policy="browser_vision",
         default_supervisor="statement",
         action_policy_choices=_POLICY_NAMES,

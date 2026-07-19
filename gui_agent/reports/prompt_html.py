@@ -274,7 +274,7 @@ def _call_summary_text(label: str, output: dict) -> str:
             op = str(step.get("op") or "")
             if op == "finish":
                 has_finish = True
-            if op in {"interact", "data", "command"}:
+            if op in {"interact", "acquire", "data", "command"}:
                 bind = str(step.get("bind") or "")
                 returns = [str(v) for v in (step.get("returns") or {}) if str(v)]
                 if bind and returns:

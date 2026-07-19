@@ -2,7 +2,7 @@
 
 > Status: implemented. This document records the design decision behind the current runtime.
 
-The planned completion of cross-frame collection and deterministic data processing is specified in
+The detailed contracts for cross-frame collection and deterministic data processing are specified in
 [Runtime Data Acquisition and Processing Design](data_acquisition_and_processing_design.md).
 
 ## Decision
@@ -15,7 +15,7 @@ machine.
 User goal
   -> Compiler: semantic intent + typed dataflow + explicit control flow
   -> Interpreter: cursor + environment + If/ForEach
-  -> Interact | Data | Command executors
+  -> Interact | Acquire | Data | Command executors
   -> StatementOutcome
   -> ProgramOutcome
 ```
@@ -23,7 +23,7 @@ User goal
 The production IR contains only:
 
 ```text
-Interact | Data | Command | If | ForEach | Finish
+Interact | Acquire | Data | Command | If | ForEach | Finish
 ```
 
 The active interaction surface is currently the singleton `main`.
@@ -39,6 +39,7 @@ This produces a stable split:
 - Compiler decides **what semantic work and explicit branching exist**.
 - Interpreter decides **which Program node runs next**.
 - Transition decides **the current UI state and the next where+what operation**.
+- Acquire decides **how to expose the next window of one already-bound collection**.
 - Data executor decides **how to derive declared outputs from actual runtime data**.
 - Command executor invokes **known deterministic platform capabilities**.
 - Journal records **what actually happened**.
@@ -48,7 +49,8 @@ This produces a stable split:
 ### Interact
 
 `Interact` reaches one semantic UI postcondition through a linear React trace. It may cross pages,
-dialogs or application screens. It does not contain an internal branch contract.
+dialogs or application screens. It does not contain an internal branch contract and does not
+materialize `list[record]` collections.
 
 ```python
 Interact(
@@ -70,6 +72,29 @@ one action proposal or one terminal proposal. Its action names both:
 The screenshot is required. DOM, accessibility, URL, tables and form controls are optional positive
 evidence. Missing structural evidence is never negative proof against a visual target.
 
+### Acquire
+
+`Acquire` materializes one collection that Interact has already scoped. It first uses a zero-LLM
+adapter traversal capability and may fall back to an independent acquisition-only React policy.
+The fallback can only bind a region, page, scroll, load more or wait; it cannot change filters,
+open records, expose columns, navigate elsewhere or complete the Program.
+
+The semantic draft declares source coverage, required fields and an optional UI source-readiness
+goal. The Compiler, rather than the Decomposer LLM, lowers that into a preceding
+`Data(mode="inspect")`, an If that may run Interact, one final inspection and the single Acquire.
+
+```python
+Acquire(
+    bind="observed",
+    goal="Materialize every reachable record from the scoped collection",
+    source_check=ValueRef(var="source_schema", path=["available"]),
+    returns={"rows": OutputSpec(type="list[record]", coverage="complete")},
+)
+```
+
+Each observed window and movement receipt is appended to EventJournal. CollectionView and
+AcquireMemoryView are replayable pure projections; no private paging phase is persisted.
+
 ### Data
 
 `Data` describes a semantic derivation rather than precompiled SQL or expressions.
@@ -79,7 +104,10 @@ Data(
     bind="selection",
     goal="Select the records that still need the requested values",
     inputs={"rows": ValueRef(var="observed", path=["rows"])},
-    returns={"records": OutputSpec(type="list[record]")},
+    required_fields=["stable record identity", "requested values"],
+    returns={
+        "records": OutputSpec(type="list[record]", fields=["record_id"]),
+    },
 )
 ```
 
@@ -88,6 +116,17 @@ deterministic Python kernel supports filter, sort, top/nth, projection, distinct
 group aggregation and dense ranking, followed by a final emit. It executes no generated Python or
 SQL source. One execution failure may trigger one repair; the plan is not persisted as Program
 state.
+
+Data has a read-only `inspect` mode for runtime schema availability. It returns
+`available/bindings/missing_fields`; Program `If` may then run an Interact that exposes missing
+fields before Acquire. Normal Data derivation still returns `unavailable` rather than fabricating
+an empty or shape-compatible result; kickback recompiles the remaining Program using the same
+inspect → If → Interact → Acquire boundary.
+
+Entity retrieval uses the same split. A compile-time `lookup` macro names the Router entity and
+semantic lookup field. The Compiler lowers it to exact full-mention Interact, Data match-count
+read, and a Program If that uses the Router hint only after count=0. Physical controls remain an
+Interact concern; exact-versus-fallback control flow does not.
 
 ### Command
 
@@ -148,7 +187,9 @@ Program(
         Data(
             bind="selection",
             goal="Resolve the records requested by the user",
-            returns={"records": OutputSpec(type="list[record]")},
+            returns={
+                "records": OutputSpec(type="list[record]", fields=["record_id"]),
+            },
         ),
         If(
             cond=Condition(
@@ -219,7 +260,7 @@ Each executor returns one `StatementOutcome` with a terminal phase and:
 outputs: dict[str, JsonValue]
 ```
 
-Interpreter checks the outputs against declared `OutputSpec`s before binding them. Program completion
+Interpreter checks output types and declared record `fields` against `OutputSpec`s before binding them. Program completion
 is reduced to one `ProgramOutcome`.
 
 Recovery is layered by meaning:

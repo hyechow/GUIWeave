@@ -17,7 +17,6 @@ from gui_agent.context.runtime import (
 )
 from gui_agent.core.config import resolve_llm_config
 from gui_agent.core.llm.messages import assemble_messages, prepare_prompt_png
-from gui_agent.core.run.collection_view import CollectionView, coverage_status
 from gui_agent.core.run.statement_memory import StatementMemoryView
 from gui_agent.core.schemas import Observation, StatementContract
 from gui_agent.prompts import load_prompt_text
@@ -191,43 +190,6 @@ def _compact_affordances(view: StatementObservationView) -> list[dict]:
     ]
 
 
-def _collection_block(view: CollectionView) -> dict:
-    """Render CollectionView into the Transition decision packet.
-
-    Facts only — record count, a small preview, the authoritative total, the mechanical
-    coverage status, citable boundary evidence, the current-frame movement affordance and
-    the last move's effect. It deliberately exposes NO advance / next_action /
-    should_continue / is_complete / phase key: CollectionView is a projection, Transition
-    remains the sole next-step authority.
-    """
-    return {
-        "collection_key": view.collection_key,
-        "collection_keys": list(view.collection_keys),
-        "record_count": len(view.records),
-        "records_preview": list(view.records[:30]),
-        "known_total": view.known_total,
-        "coverage_status": coverage_status(view),
-        "boundary_evidence": [
-            {"event_ref": evidence.event_ref, "kind": evidence.kind, "claim": evidence.claim}
-            for evidence in view.boundary_evidence
-        ],
-        "available_movements": [
-            {
-                "kind": movement.kind,
-                "can_forward": movement.can_forward,
-                "can_backward": movement.can_backward,
-            }
-            for movement in view.available_movements
-        ],
-        "last_move_result": view.last_move_result,
-        "provenance_drift": view.provenance_drift,
-        "provenance_incomplete": view.provenance_incomplete,
-        "total_drift": view.total_drift,
-        "truncated": view.truncated,
-        "may_contain_duplicates": view.may_contain_duplicates,
-    }
-
-
 def _transition_frame_block(
     statement: StatementContract,
     observation: Observation,
@@ -235,7 +197,6 @@ def _transition_frame_block(
     view: StatementObservationView,
     *,
     initial_filters: dict[str, str] | None,
-    collection_view: CollectionView | None = None,
 ) -> ContextBlock:
     """Build the one decision packet; it contains facts, never a Runtime verdict."""
     durable = [
@@ -270,8 +231,6 @@ def _transition_frame_block(
             "affordances": _compact_affordances(view),
         },
     }
-    if collection_view is not None:
-        frame["collection"] = _collection_block(collection_view)
     return ContextBlock(
         id="runtime.transition_frame",
         budget="required",
@@ -305,7 +264,6 @@ def run_statement_transition(
     acceptance_knowledge: Optional[str] = None,
     elements_knowledge: Optional[str] = None,
     initial_filters: dict[str, str] | None = None,
-    collection_view: CollectionView | None = None,
 ) -> _StatementTransitionResult:
     """Return one semantic Statement decision for the current observation."""
     observation_view = observation_view or build_observation_view(
@@ -325,7 +283,6 @@ def run_statement_transition(
                 memory_view,
                 observation_view,
                 initial_filters=initial_filters,
-                collection_view=collection_view,
             ),
             constraints_block(constraints or []),
         ],

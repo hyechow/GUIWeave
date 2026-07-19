@@ -79,6 +79,11 @@ class PlatformBundle:
     # screenshots are Retina-sized and should be downsampled to logical pixels;
     # browser/android observations are already in their reasoning coordinate space.
     prepare_vision_prompt_png: Callable[[bytes], bytes]
+    # Optional deterministic movement for one adapter-bound collection.  Core
+    # supplies the exact current-frame candidate; adapters may only move that
+    # surface forward/backward and never choose a business collection.
+    move_collection: Callable[["PerceptionSession", dict, str], bool] | None
+    validate_collection_action: Callable[["PerceptionSession", dict, object, str], bool] | None
     default_action_policy: str
     default_supervisor: str
     action_policy_choices: tuple[str, ...]

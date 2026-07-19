@@ -16,7 +16,7 @@ llm:
     decompose:
       # 任务分解——只在开始时调用一次，建议用更强的模型
       provider: dashscope
-      model: qwen3.6-35b-a3b
+      model: qwen3.5-35b-a3b
     intent:
       # 意图解析——decompose 前一次性判实体的精确/近似 + 检索关键词（纯文本，无截图）
       provider: dashscope
@@ -28,7 +28,7 @@ llm:
   data:
     # Data Statement runtime plan; falls back to supervisor.decompose when omitted.
     provider: dashscope
-    model: qwen3.6-35b-a3b
+    model: qwen3.5-35b-a3b
   reader:
     provider: dashscope
     model: qwen3.5-35b-a3b

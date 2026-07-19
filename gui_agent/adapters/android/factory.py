@@ -213,6 +213,8 @@ def build_android_bundle(
         make_status_reporter=lambda enabled: (_make_android_hud() if enabled else None),
         make_action_visualizer=_make_action_visualizer,
         prepare_vision_prompt_png=_prepare_vision_prompt_png,
+        move_collection=None,
+        validate_collection_action=None,
         default_action_policy="android_vision",
         default_supervisor="statement",
         action_policy_choices=_POLICY_NAMES,

@@ -116,7 +116,8 @@ def invoke_structured(
             raise StructuredOutputError(
                 f"{trace_label or schema.__name__} structured output is invalid: {exc}"
             ) from exc
-        print(f"json_object 模式失败（{type(exc).__name__}）: {exc}，改用纯文本 JSON 解析...")
+        label = trace_label or schema.__name__
+        print(f"  [{label}] json_object 校验失败，改用纯文本 JSON：{_concise_error(exc)}")
 
     # Fallback: plain text, let model output JSON freely (retry once on parse failure).
     # Re-bind enable_thinking so a constructor default of False cannot 400 on forced-thinking models.
@@ -142,7 +143,8 @@ def invoke_structured(
             return parsed
         except (ValidationError, ValueError) as exc:
             if fallback_attempt == 0:
-                print(f"  fallback 解析失败，重试一次...")
+                label = trace_label or schema.__name__
+                print(f"  [{label}] 纯文本 JSON 校验失败，重试一次：{_concise_error(exc)}")
                 fallback_msgs = _with_repair_instruction(fallback_msgs, schema, exc, content)
                 continue
             raise ValueError(
@@ -308,6 +310,10 @@ def _message_text(content: object) -> str:
                 parts.append(item["text"])
         return "\n".join(parts)
     return str(content)
+
+
+def _concise_error(error: Exception, limit: int = 220) -> str:
+    return " ".join(str(error).split())[:limit]
 
 
 def _parse_structured_response(text: str, schema: type[ModelT]) -> ModelT:

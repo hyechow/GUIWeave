@@ -8,7 +8,6 @@ from pydantic import JsonValue
 
 from gui_agent.core.orchestrator.program import Interact, OutputSpec
 from gui_agent.core.orchestrator.runner import StatementInvocation
-from gui_agent.core.run.collection_view import materialize_collection
 from gui_agent.core.schemas import StatementContract, StatementInfo
 
 if TYPE_CHECKING:
@@ -166,79 +165,9 @@ def extract_interact_outputs(
     return outputs
 
 
-def _materialized_records(
-    history,
-    contract: StatementContract,
-    instance_id: str,
-) -> list[dict[str, JsonValue]]:
-    """Records projected solely from independent Journal slice events.
-
-    The loop appends the current observation before Transition, so terminal materialization
-    and replay consume the exact same fact stream.
-    """
-    records, _status = materialize_collection(
-        instance_id=instance_id,
-        contract=contract,
-        history=history,
-    )
-    return records
-
-
-def project_interact_outputs(
-    invocation: StatementInvocation,
-    observation: "Observation",
-    *,
-    history,
-    instance_id: str,
-    check_knowledge: str = "",
-    prepare_vision_prompt_png=None,
-    say: Callable[[str], None] = lambda _s: None,
-) -> dict[str, JsonValue]:
-    """Project an Interact's typed outputs, splitting by declared coverage.
-
-    ``list[record]`` returns declared ``complete``/``best_effort`` come from the Journal-projected
-    CollectionView (including the terminal slice already persisted by the loop); ``current_view``
-    and scalar returns still come from the terminal frame via :func:`extract_interact_outputs`. The split
-    keeps today's behavior for non-collection Interacts and routes collection outputs through the
-    materialized-record channel (design: 「所有采集与处理结果只通过 outputs 进入 Program 环境」).
-    """
-    statement = invocation.statement
-    if not isinstance(statement, Interact) or not statement.returns:
-        return {}
-    collection_names = {
-        name
-        for name, spec in statement.returns.items()
-        if spec.type == "list[record]" and spec.coverage in {"complete", "best_effort"}
-    }
-    terminal_names = set(statement.returns) - collection_names
-    outputs: dict[str, JsonValue] = {}
-    if terminal_names:
-        outputs.update(
-            extract_interact_outputs(
-                invocation,
-                observation,
-                check_knowledge=check_knowledge,
-                prepare_vision_prompt_png=prepare_vision_prompt_png,
-                say=say,
-                only_fields=terminal_names,
-            )
-        )
-    if collection_names:
-        contract = contract_for_interact(invocation, 0)
-        records = _materialized_records(history, contract, instance_id)
-        for name in collection_names:
-            outputs[name] = records
-        say(
-            f"  [Program] Interact collection outputs {sorted(collection_names)} "
-            f"→ {len(records)} records"
-        )
-    return outputs
-
-
 __all__ = [
     "contract_for_interact",
     "extract_interact_outputs",
-    "project_interact_outputs",
     "start_statement",
     "statement_id",
     "statement_info",

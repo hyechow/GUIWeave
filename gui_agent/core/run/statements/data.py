@@ -10,7 +10,7 @@ from __future__ import annotations
 import json
 from datetime import datetime
 from decimal import Decimal
-from typing import Annotated, Any, Literal, Union
+from typing import Annotated, Any, Callable, Literal, Union
 
 from langchain_openai import ChatOpenAI
 from pydantic import BaseModel, ConfigDict, Field, JsonValue, model_validator
@@ -19,7 +19,7 @@ from gui_agent.context import ContextBlock
 from gui_agent.core.config import resolve_llm_config
 from gui_agent.core.llm.messages import assemble_messages
 from gui_agent.core.orchestrator.program import Data, OutputSpec
-from gui_agent.core.orchestrator.runner import StatementInvocation
+from gui_agent.core.orchestrator.runner import StatementInvocation, matches_output_spec
 from gui_agent.core.schemas import Observation, StatementOutcome
 from gui_agent.prompts import load_prompt_text
 from llm.structured import invoke_structured
@@ -33,6 +33,7 @@ from .data_kernel import (
 
 
 _SYSTEM = load_prompt_text("task.statement.data_executor")
+_INSPECT_SYSTEM = load_prompt_text("task.orchestrator.data_inspector")
 _TRACE_LABEL = "statement.data"
 
 
@@ -102,11 +103,22 @@ DataOp = Annotated[
 class DataPlan(BaseModel):
     model_config = ConfigDict(extra="forbid")
 
+    decision: Literal["execute", "unavailable"]
     reasoning: str = ""
-    operations: list[DataOp]
+    operations: list[DataOp] = Field(default_factory=list)
+    missing_fields: list[str] = Field(default_factory=list)
+    required_coverage: Literal["current_view", "complete"] = "current_view"
 
     @model_validator(mode="after")
     def _validate_shape(self) -> "DataPlan":
+        if self.decision == "unavailable":
+            if not self.reasoning.strip():
+                raise ValueError("unavailable data plan requires reasoning")
+            if self.operations:
+                raise ValueError("unavailable data plan cannot carry operations")
+            return self
+        if self.missing_fields or self.required_coverage != "current_view":
+            raise ValueError("execute data plan cannot carry unavailable fields")
         if not self.operations or len(self.operations) > 6:
             raise ValueError("data plan requires 1..6 operations")
         if not isinstance(self.operations[-1], EmitOp):
@@ -116,6 +128,23 @@ class DataPlan(BaseModel):
         names = [op.name for op in self.operations if hasattr(op, "name")]
         if len(names) != len(set(names)):
             raise ValueError("data operation names must be unique")
+        return self
+
+
+class DataInspection(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+
+    available: bool
+    bindings: dict[str, str] = Field(default_factory=dict)
+    missing_fields: list[str] = Field(default_factory=list)
+    reasoning: str = ""
+
+    @model_validator(mode="after")
+    def _consistent(self) -> "DataInspection":
+        if self.available and self.missing_fields:
+            raise ValueError("available inspection cannot carry missing_fields")
+        if not self.available and not self.missing_fields:
+            raise ValueError("unavailable inspection requires missing_fields")
         return self
 
 
@@ -159,6 +188,8 @@ def _context_summary(invocation: StatementInvocation, observation: Observation |
     payload = {
         "task_goal": invocation.task_goal,
         "goal": invocation.goal,
+        "mode": invocation.statement.mode,
+        "required_fields": list(invocation.statement.required_fields),
         "inputs": input_values,
         "returns": {
             name: spec.model_dump(mode="json")
@@ -239,6 +270,39 @@ def _plan(
         DataPlan,
         trace_sink=context_reports,
         trace_label=_TRACE_LABEL,
+    )
+
+
+def _inspect(
+    invocation: StatementInvocation,
+    observation: Observation | None,
+    *,
+    context_reports: list[dict] | None = None,
+) -> DataInspection:
+    block = ContextBlock(
+        id="runtime.data_inspection",
+        budget="required",
+        source_type="runtime_state",
+        source="data_context_view",
+        ttl="statement",
+        priority=10,
+        content="## DataContextView\n" + _context_summary(invocation, observation),
+    )
+    messages = assemble_messages(
+        _INSPECT_SYSTEM,
+        observation,
+        human_blocks=[block],
+        image_resize="none",
+        label="statement.data.inspect",
+        context_reports=context_reports,
+        decision_text="判断所需语义字段当前是否全部可读取。",
+    )
+    return invoke_structured(
+        _llm(),
+        messages,
+        DataInspection,
+        trace_sink=context_reports,
+        trace_label="statement.data.inspect",
     )
 
 
@@ -354,9 +418,42 @@ def execute_data_statement(
     check_knowledge: str = "",
     prepare_vision_prompt_png=None,
     context_reports: list[dict] | None = None,
+    say: Callable[[str], None] = lambda _message: None,
+    status: Callable[[str], None] = lambda _message: None,
 ) -> StatementOutcome:
     if not isinstance(invocation.statement, Data):
         raise TypeError("execute_data_statement requires a Data invocation")
+    if invocation.statement.mode == "inspect":
+        try:
+            inspected = _inspect(
+                invocation,
+                observation,
+                context_reports=context_reports,
+            )
+        except Exception as exc:  # noqa: BLE001 - typed failure is a statement failure
+            return StatementOutcome.exhausted(
+                f"Data schema inspect 失败：{exc}",
+                observation=observation,
+                context_reports=list(context_reports or []),
+            )
+        outputs = {
+            "available": inspected.available,
+            "bindings": dict(inspected.bindings),
+            "missing_fields": list(inspected.missing_fields),
+        }
+        say(
+            "  [Data] schema "
+            + ("可用" if inspected.available else f"缺少 {inspected.missing_fields}")
+        )
+        status("Data 数据可用性检查完成")
+        return StatementOutcome.completed(
+            inspected.reasoning or invocation.goal,
+            verification="accepted_unverified",
+            outputs=outputs,
+            evidence=[f"schema:{name}->{field}" for name, field in inspected.bindings.items()],
+            observation=observation,
+            context_reports=list(context_reports or []),
+        )
     error = ""
     for attempt in range(2):
         try:
@@ -366,6 +463,23 @@ def execute_data_statement(
                 previous_error=error,
                 context_reports=context_reports,
             )
+            steps = " → ".join(op.kind for op in plan.operations) or plan.decision
+            say(f"  [Data] 计划 {attempt + 1}/2：{steps}")
+            if plan.decision == "unavailable":
+                fields = ", ".join(plan.missing_fields) or "目标计算所需字段"
+                coverage = "完整集合" if plan.required_coverage == "complete" else "当前视图"
+                say(f"  [Data] 数据源不足：{plan.reasoning}")
+                status("Data 数据不足，正在请求重编排…")
+                return StatementOutcome.infeasible(
+                    f"Data 数据源不足：{plan.reasoning}",
+                    kickback=(
+                        f"当前 Data 缺少 {fields}（需要{coverage}覆盖）。请用 Data inspect + Program If "
+                        "决定是否由 Interact 暴露字段；需要跨窗口记录时再用 Acquire 物化 list[record] "
+                        "并通过 Data.inputs 传入。"
+                    ),
+                    observation=observation,
+                    context_reports=list(context_reports or []),
+                )
             outputs, trace, unverified = _execute(
                 plan,
                 invocation,
@@ -380,6 +494,15 @@ def execute_data_statement(
             ]
             if missing:
                 raise DataKernelError(f"emit 缺少必需 outputs: {missing}")
+            invalid = [
+                name
+                for name, spec in invocation.statement.returns.items()
+                if name in outputs and not matches_output_spec(outputs[name], spec)
+            ]
+            if invalid:
+                raise DataKernelError(f"emit outputs 类型不符合合同: {invalid}")
+            say(f"  [Data] 完成：{', '.join(outputs) or '无输出'}")
+            status("Data 数据处理完成")
             return StatementOutcome.completed(
                 invocation.goal,
                 verification="accepted_unverified" if unverified else "confirmed",
@@ -390,8 +513,11 @@ def execute_data_statement(
             )
         except Exception as exc:  # noqa: BLE001 - one bounded semantic plan repair
             error = str(exc)
+            say(f"  [Data] 计划 {attempt + 1}/2 失败：{error[:240]}")
             if attempt == 0:
+                status("Data 计划执行失败，正在修复一次…")
                 continue
+    status("Data 数据处理失败")
     return StatementOutcome.exhausted(
         f"Data statement 两次计划均失败：{error}",
         observation=observation,
@@ -402,6 +528,7 @@ def execute_data_statement(
 
 __all__ = [
     "DataPlan",
+    "DataInspection",
     "DataRef",
     "EmitOp",
     "ReadObservationOp",

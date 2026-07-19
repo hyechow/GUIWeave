@@ -1,6 +1,6 @@
 """Steppable interpreter for the semantic Program IR.
 
-Only ``Interact``, ``Data`` and ``Command`` cross an executor boundary.  The
+Only ``Interact``, ``Acquire``, ``Data`` and ``Command`` cross an executor boundary.  The
 interpreter owns all explicit branching, deterministic iteration and typed
 value binding.  It never collects UI rows, writes SQL or asks an LLM to expand
 the Program at runtime.
@@ -8,14 +8,15 @@ the Program at runtime.
 
 from __future__ import annotations
 
-from collections.abc import Callable, Generator, Mapping
+from collections.abc import Callable, Generator, Iterable, Mapping
 from typing import Any, Literal
 
 from pydantic import BaseModel, Field, JsonValue
 
-from gui_agent.core.schemas import StatementOutcome
+from gui_agent.core.schemas import StatementOutcome, Verification
 
 from .program import (
+    Acquire,
     Command,
     Condition,
     Data,
@@ -32,7 +33,7 @@ from .program import (
 )
 
 
-ExecutorKind = Literal["interact", "data", "command", "program"]
+ExecutorKind = Literal["interact", "acquire", "data", "command", "program"]
 StatementExecutor = Callable[["StatementInvocation"], StatementOutcome]
 
 
@@ -58,7 +59,7 @@ class StatementInvocation(BaseModel):
         return self.statement.goal_text
 
     @property
-    def executor(self) -> Literal["interact", "data", "command"]:
+    def executor(self) -> Literal["interact", "acquire", "data", "command"]:
         return self.statement.op
 
 
@@ -121,15 +122,8 @@ class OrchestratorResult(BaseModel):
     env: dict[str, JsonValue] = Field(default_factory=dict)
     run_log: list[RunRecord] = Field(default_factory=list)
 
-    @property
-    def accepted_unverified(self) -> bool:
-        return any(
-            record.result.verification == "accepted_unverified"
-            for record in self.run_log
-        )
 
-
-def _value_matches(value: JsonValue, spec: OutputSpec) -> bool:
+def matches_output_spec(value: JsonValue, spec: OutputSpec) -> bool:
     if value is None:
         return not spec.required
     if spec.type in {"text", "url"}:
@@ -139,9 +133,12 @@ def _value_matches(value: JsonValue, spec: OutputSpec) -> bool:
     if spec.type == "boolean":
         return isinstance(value, bool)
     if spec.type == "record":
-        return isinstance(value, dict)
+        return isinstance(value, dict) and all(field in value for field in spec.fields)
     if spec.type == "list[record]":
-        return isinstance(value, list) and all(isinstance(row, dict) for row in value)
+        return isinstance(value, list) and all(
+            isinstance(row, dict) and all(field in row for field in spec.fields)
+            for row in value
+        )
     return True
 
 
@@ -153,13 +150,25 @@ class Interpreter:
         self.env: dict[str, JsonValue] = {}
         self.run_log: list[RunRecord] = []
         self.finish_incomplete = False
-        self.finish_outputs: dict[str, JsonValue] = {}
+        self.finish_verification: Verification | None = None
+        self.binding_verifications: dict[str, Verification] = {}
+        self._frame_verifications: dict[int, dict[str, Verification]] = {}
         self.control_error = ""
 
     @property
     def failed(self) -> bool:
         return bool(self.control_error) or any(
             not record.result.is_completed for record in self.run_log
+        )
+
+    @property
+    def terminal_verification(self) -> Verification | None:
+        if self.failed:
+            return None
+        return self.finish_verification or self._combined_verification(
+            record.result.verification
+            for record in self.run_log
+            if record.result.verification is not None
         )
 
     def steps(self) -> Generator[StatementInvocation, StatementOutcome, str]:
@@ -174,12 +183,13 @@ class Interpreter:
         loop_path: list[int],
     ) -> Generator[StatementInvocation, StatementOutcome, str | None]:
         for statement in statements:
-            if isinstance(statement, (Interact, Data, Command)):
+            if isinstance(statement, (Interact, Acquire, Data, Command)):
                 invocation, error = self._invocation(statement, frames, loop_path)
                 if error:
                     outcome = StatementOutcome.failed(error)
                 else:
                     outcome = yield invocation
+                    outcome = self._propagate_input_verification(statement, outcome, frames)
                     outcome = self._validated_outcome(statement, outcome)
                 self.run_log.append(
                     RunRecord(
@@ -194,7 +204,12 @@ class Interpreter:
                 if not outcome.is_completed:
                     return f"子任务「{statement.goal_text}」未完成：{outcome.summary}"
                 if statement.bind:
-                    self._bind(statement.bind, dict(outcome.outputs), frames)
+                    self._bind(
+                        statement.bind,
+                        dict(outcome.outputs),
+                        frames,
+                        verification=outcome.verification or "confirmed",
+                    )
                 continue
             if isinstance(statement, If):
                 branch = statement.then if self._condition(statement.cond, frames) else statement.otherwise
@@ -212,7 +227,11 @@ class Interpreter:
                 if missing:
                     self.finish_incomplete = True
                     return self._fail_control(f"最终结果缺少引用：{', '.join(missing)}")
-                self.finish_outputs = values
+                if statement.outputs:
+                    self.finish_verification = self._combined_verification(
+                        self._verification(ref, frames)
+                        for ref in statement.outputs.values()
+                    )
                 return self._render_message(statement.message, values)
         return None
 
@@ -228,6 +247,11 @@ class Interpreter:
                 f"输入引用不存在：{', '.join(missing)}"
             )
         args: dict[str, JsonValue] = {}
+        if isinstance(statement, Acquire) and statement.source_check is not None:
+            resolved, ok = self._resolve(statement.source_check, frames)
+            if not ok:
+                return StatementInvocation(statement=statement), "采集入口检查引用不存在"
+            args["source_check"] = resolved
         if isinstance(statement, Command):
             args.update(statement.args)
             for name, ref in statement.arg_refs.items():
@@ -253,7 +277,7 @@ class Interpreter:
         invalid = [
             name
             for name, spec in statement.returns.items()
-            if not _value_matches(outcome.outputs.get(name), spec)
+            if not matches_output_spec(outcome.outputs.get(name), spec)
         ]
         extras = sorted(set(outcome.outputs) - set(statement.returns))
         if invalid or extras:
@@ -276,6 +300,27 @@ class Interpreter:
             )
         return outcome
 
+    def _propagate_input_verification(
+        self,
+        statement: ExecutableStatement,
+        outcome: StatementOutcome,
+        frames: list[dict[str, JsonValue]],
+    ) -> StatementOutcome:
+        """Carry data provenance through executor bindings.
+
+        Statement verification describes both the executor's own evidence and the values it
+        consumed. Program control dependencies (If conditions and Acquire.source_check) are not
+        data provenance: a later confirmed collection may supersede an unverified preflight.
+        """
+        if not outcome.is_completed or outcome.verification != "confirmed":
+            return outcome
+        refs = list(statement.inputs.values())
+        if isinstance(statement, Command):
+            refs.extend(statement.arg_refs.values())
+        if any(self._verification(ref, frames) == "accepted_unverified" for ref in refs):
+            return outcome.model_copy(update={"verification": "accepted_unverified"})
+        return outcome
+
     def _foreach(
         self,
         loop: ForEach,
@@ -290,26 +335,42 @@ class Interpreter:
                 f"foreach 只接受 list，实际为 {type(items).__name__}"
             )
         collected: list[JsonValue] = []
+        collected_verifications = [self._verification(loop.items, frames)]
         for index, item in enumerate(items):
             frame: dict[str, JsonValue] = {loop.item: item}
             if loop.index:
                 frame[loop.index] = index
-            reply = yield from self._block(
-                loop.body,
-                frames=[*frames, frame],
-                loop_path=[*loop_path, index],
-            )
-            if reply is not None:
-                return reply
-            if loop.collect is not None:
-                value, found = self._resolve(loop.collect, [*frames, frame])
-                if not found:
-                    return self._fail_control(
-                        f"foreach collect 引用不存在：{loop.collect.var}"
+            self._frame_verifications[id(frame)] = {
+                loop.item: collected_verifications[0],
+                **({loop.index: "confirmed"} if loop.index else {}),
+            }
+            try:
+                reply = yield from self._block(
+                    loop.body,
+                    frames=[*frames, frame],
+                    loop_path=[*loop_path, index],
+                )
+                if reply is not None:
+                    return reply
+                if loop.collect is not None:
+                    value, found = self._resolve(loop.collect, [*frames, frame])
+                    if not found:
+                        return self._fail_control(
+                            f"foreach collect 引用不存在：{loop.collect.var}"
+                        )
+                    collected.append(value)
+                    collected_verifications.append(
+                        self._verification(loop.collect, [*frames, frame])
                     )
-                collected.append(value)
+            finally:
+                self._frame_verifications.pop(id(frame), None)
         if loop.into:
-            self._bind(loop.into, collected, frames)
+            self._bind(
+                loop.into,
+                collected,
+                frames,
+                verification=self._combined_verification(collected_verifications),
+            )
         return None
 
     def _condition(self, cond: Condition, frames: list[dict[str, JsonValue]]) -> bool:
@@ -383,11 +444,36 @@ class Interpreter:
                 return None, False
         return value, True
 
-    def _bind(self, name: str, value: JsonValue, frames: list[dict[str, JsonValue]]) -> None:
+    def _verification(
+        self,
+        ref: ValueRef,
+        frames: list[dict[str, JsonValue]],
+    ) -> Verification:
+        for frame in reversed(frames):
+            if ref.var in frame:
+                return self._frame_verifications.get(id(frame), {}).get(
+                    ref.var, "confirmed"
+                )
+        return self.binding_verifications.get(ref.var, "confirmed")
+
+    @staticmethod
+    def _combined_verification(values: Iterable[Verification]) -> Verification:
+        return "accepted_unverified" if "accepted_unverified" in values else "confirmed"
+
+    def _bind(
+        self,
+        name: str,
+        value: JsonValue,
+        frames: list[dict[str, JsonValue]],
+        *,
+        verification: Verification = "confirmed",
+    ) -> None:
         if frames:
             frames[-1][name] = value
+            self._frame_verifications.setdefault(id(frames[-1]), {})[name] = verification
         else:
             self.env[name] = value
+            self.binding_verifications[name] = verification
 
     @staticmethod
     def _render_message(message: str, values: dict[str, JsonValue]) -> str:
@@ -437,5 +523,6 @@ __all__ = [
     "RunRecord",
     "StatementExecutor",
     "StatementInvocation",
+    "matches_output_spec",
     "summarize_progress",
 ]

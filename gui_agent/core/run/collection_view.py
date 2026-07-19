@@ -6,8 +6,7 @@ Normative authority (Runtime Data Acquisition and Processing Design,
 - EventJournal: fact authority. Independent ``CollectionSliceEvent`` values carry each
   observed slice's normalized records, provenance and boundary evidence.
 - CollectionView: a PURE projection of those frames (this module).
-- Transition: the sole next-step authority inside a Statement. It is fed this view; it is
-  never driven by it.
+- Acquire: the sole consumer of this view while collecting one bound collection.
 - StatementOutcome.outputs: the only channel through which materialized records enter the
   Program environment.
 
@@ -16,14 +15,7 @@ CollectionView is NOT a state machine. It MUST NOT expose:
     advance(), next_action(), should_continue(), is_complete(), phase
 
 (see ``docs/data_acquisition_and_processing_design.md`` lines 179-187). It only describes
-facts; Transition combines this view with the contract, the full Memory and the current
-observation to choose the next scroll / page / target / complete proposal.
-
-The pure record-extraction helpers below are copied (not imported) from
-``gui_agent.core.orchestrator.traversal.list_runtime`` so this module stays decoupled from
-the stateful traverser slated for retirement. The design's REUSE list
-(``docs/...:240-244``) keeps exactly these: current-frame record extraction & normalization,
-stable identity & dedup, boundary-signal reading, before/after content-change measurement.
+facts; Acquire combines it with adapter capabilities and acquisition-only policy proposals.
 """
 
 from __future__ import annotations
@@ -90,7 +82,7 @@ class CollectionView:
     """Frozen cross-frame projection of collected records and coverage evidence.
 
     A pure projection, not a state owner. Exposes no advance / next_action /
-    should_continue / is_complete / phase surface. Transition reads it; nothing mutates it.
+    should_continue / is_complete / phase surface. Acquire reads it; nothing mutates it.
 
     Only the latest collection provenance is materialized. Earlier collection keys remain
     visible as drift diagnostics but their records are never silently mixed into the active
@@ -176,6 +168,7 @@ def _provenance(
 ) -> CollectionProvenance:
     headers = [str(header) for header in (table.get("headers") or [])]
     surface = _table_surface_id(table, contract.id)
+    structural_surface = str(table.get("path") or "").strip()
     route = _normalized_route(getattr(observation, "url", "") or "")
     filters = {
         str(key): value
@@ -189,7 +182,7 @@ def _provenance(
         filter_snapshot=filters,
         schema_fingerprint=schema,
         route=route,
-        incomplete=not bool(surface and schema),
+        incomplete=not bool(structural_surface and schema),
     )
 
 
@@ -200,28 +193,33 @@ def _collection_key(provenance: CollectionProvenance) -> str:
     ).hexdigest()
 
 
-def _pick_richest_table(
-    tables: list[dict[str, Any]] | None,
-) -> dict[str, Any] | None:
-    """Pick the table most likely to back the collection (most rows, prefer total_records)."""
-    if not tables:
-        return None
-    best: tuple[tuple[int, int, int], dict[str, Any]] | None = None
-    for table in tables:
-        rows = [r for r in (table.get("rows") or []) if isinstance(r, dict)]
-        headers = [str(h) for h in (table.get("headers") or [])]
+def collection_candidates(observation: Observation) -> list[dict[str, Any]]:
+    """Return normalized browser collection candidates without choosing among them."""
+    candidates: list[dict[str, Any]] = []
+    for index, table in enumerate(getattr(observation, "tables", None) or []):
+        if not isinstance(table, dict):
+            continue
+        rows = [row for row in (table.get("rows") or []) if isinstance(row, dict)]
+        headers = [str(header) for header in (table.get("headers") or [])]
         if not rows or not headers:
             continue
-        # A generic table is not automatically a collection. Require an adapter-provided
-        # collection affordance/total so dashboard summary tables encountered en route are
-        # not silently absorbed into a later paged result set.
-        if not isinstance(table.get("traversal"), dict) and not table.get("total_records"):
-            continue
-        has_total = 1 if table.get("total_records") else 0
-        score = (has_total, len(rows), len(headers))
-        if best is None or score > best[0]:
-            best = (score, table)
-    return best[1] if best else None
+        traversal = table.get("traversal")
+        reliable = bool(
+            (isinstance(traversal, dict) and traversal.get("type") in {"paged", "scroll"})
+            or _known_total_from_table(table) is not None
+        )
+        candidates.append(
+            {
+                "ref": f"table:{index}",
+                "table": table,
+                "surface_fingerprint": _table_surface_id(table, f"table:{index}"),
+                "reliable": reliable,
+                "caption": str(table.get("caption") or ""),
+                "headers": headers,
+                "record_count": len(rows),
+            }
+        )
+    return candidates
 
 
 def _known_total_from_table(table: dict[str, Any]) -> int | None:
@@ -299,8 +297,10 @@ def project_collection_slice(
     after_turn: int,
     event_ref: str,
     frame_ref: str,
+    table: dict[str, Any] | None = None,
+    strategy: Literal["structured", "react"] = "structured",
 ) -> CollectionSliceEvent | None:
-    """Project one observation's richest table into an independent Journal slice.
+    """Project one explicitly bound table into an independent Journal slice.
 
     Returns None unless the contract declares a ``list[record]`` return and a backing
     table resolves with rows. Pure sensor: reads ``observation.tables``/``viewport``, emits
@@ -309,7 +309,9 @@ def project_collection_slice(
     """
     if not _contract_collects_records(contract):
         return None
-    table = _pick_richest_table(getattr(observation, "tables", None))
+    if table is None:
+        reliable = [item for item in collection_candidates(observation) if item["reliable"]]
+        table = reliable[0]["table"] if len(reliable) == 1 else None
     if table is None:
         return None
     headers = [str(h) for h in (table.get("headers") or [])]
@@ -340,6 +342,7 @@ def project_collection_slice(
         known_total=_known_total_from_table(table),
         boundary=_boundary_from_traversal(table.get("traversal")),
         source="table",
+        strategy=strategy,
         truncated=truncated,
     )
 
@@ -384,7 +387,7 @@ def build_collection_view(
     """Project independent Journal slice events into a frozen CollectionView.
 
     The current observation is never folded in: callers must append its slice event before
-    invoking Transition or materializing terminal outputs. That ordering is what makes live,
+    evaluating coverage or materializing terminal outputs. That ordering is what makes live,
     checkpoint and replay projections identical.
     """
     del current_observation
@@ -557,6 +560,7 @@ __all__ = [
     "MovementCapability",
     "MoveResult",
     "build_collection_view",
+    "collection_candidates",
     "coverage_status",
     "materialize_collection",
     "project_collection_slice",

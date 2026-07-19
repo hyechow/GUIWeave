@@ -15,6 +15,7 @@ from gui_agent.core.orchestrator.program import Interact, Program
 from gui_agent.core.orchestrator.recovery import MAX_KICKBACK_REPLANS, RecoveryLedger
 from gui_agent.core.orchestrator.runner import Interpreter, StatementInvocation
 from gui_agent.core.schemas import (
+    AcquisitionReceiptEvent,
     CollectionSliceEvent,
     EventJournal,
     PolicyTurn,
@@ -147,7 +148,7 @@ class ProgramRuntime:
                     outcome=event.outcome,
                 )
                 continue
-            if isinstance(event, CollectionSliceEvent):
+            if isinstance(event, (CollectionSliceEvent, AcquisitionReceiptEvent)):
                 if pending is not None:
                     apply_terminal()
                 match = re.match(r"i(\d+):", event.statement_instance_id or "")
@@ -292,12 +293,16 @@ class ProgramRuntime:
         _record_revision: bool = True,
     ) -> None:
         prev_env = dict(self.interpreter.env) if inherit_env else {}
+        prev_verifications = (
+            dict(self.interpreter.binding_verifications) if inherit_env else {}
+        )
         prev_log = list(self.interpreter.run_log) if inherit_run_log else []
         if drop_failed_from_log:
             prev_log = [record for record in prev_log if record.result.is_completed]
         self.program = program
         self.interpreter = Interpreter(program)
         self.interpreter.env = prev_env
+        self.interpreter.binding_verifications = prev_verifications
         self.interpreter.run_log = prev_log
         self._steps = self.interpreter.steps()
         try:

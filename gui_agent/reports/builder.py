@@ -545,7 +545,12 @@ class RunnerReportBuilder:
 
             status = "✓" if executed else "✗"
             if operation_mode == "non_interactive":
-                status = "✓ non-UI" if executed else "✗ non-UI"
+                label = {
+                    "acquire": "Acquire",
+                    "data": "Data",
+                    "command": "Command",
+                }.get(atype, "non-UI")
+                status = f"{'✓' if executed else '✗'} {label}"
             if atype == "none":
                 status = "— skip"
 

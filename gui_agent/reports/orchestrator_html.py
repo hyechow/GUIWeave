@@ -23,7 +23,7 @@ def _program_run_items(stmts: list) -> list[dict]:
         if not isinstance(s, dict):
             continue
         op = s.get("op", "")
-        if op in {"interact", "data", "command"}:
+        if op in {"interact", "acquire", "data", "command"}:
             out.append(s)
         elif op == "if":
             out.extend(_program_run_items(s.get("then", [])))
@@ -44,7 +44,11 @@ def _pretty_non_ui_value(value: object) -> str:
 
 def _render_non_ui_detail(non_ui: dict) -> str:
     kind = str(non_ui.get("executor") or "non_ui")
-    mode = "非交互"
+    mode = {
+        "acquire": "Acquire 集合采集",
+        "data": "Data 数据处理",
+        "command": "确定性命令",
+    }.get(kind, "非交互")
     outputs = non_ui.get("outputs") if isinstance(non_ui.get("outputs"), dict) else {}
     fields = list(outputs)
     evidence = [str(value) for value in (non_ui.get("evidence") or [])]
@@ -61,7 +65,7 @@ def _render_non_ui_detail(non_ui: dict) -> str:
     )
     return (
         f'<div class="nonui-detail">'
-        f'<div class="nonui-title">{mode} · {_safe(kind)}</div>'
+        f'<div class="nonui-title">{_safe(mode)}</div>'
         f'{reads_html}'
         f'{evidence_html}'
         f'</div>'
@@ -195,12 +199,13 @@ def _render_program_card(
         out = []
         for s in items:
             op = s.get("op", "")
-            if op in {"interact", "data", "command"}:
+            if op in {"interact", "acquire", "data", "command"}:
                 out.append(_run_row(s))
             elif op == "if":
                 cond = s.get("cond", {})
                 ref = cond.get("ref") or {}
-                c = (f'<span class="prog-condvar">{_safe(ref.get("var",""))}{_safe(ref.get("path", []))}</span>'
+                path = json.dumps(ref.get("path") or [], ensure_ascii=False)
+                c = (f'<span class="prog-condvar">{_safe(ref.get("var",""))}{_safe(path)}</span>'
                      f' {_safe(cond.get("cmp","=="))} '
                      f'<span class="prog-condval">{_safe(cond.get("value",""))}</span>')
                 then_html = "".join(_walk(s.get("then", []))) or '<div class="prog-step prog-empty">—</div>'

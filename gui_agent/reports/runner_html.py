@@ -543,6 +543,7 @@ TIMING_COLORS: dict[str, str] = {
 
 KIND_BADGE = {
     "interact": "statement-badge-action",
+    "acquire": "statement-badge-collection",
     "data": "statement-badge-collection",
     "command": "statement-badge-navigation",
 }
@@ -555,7 +556,7 @@ AT_LABELS = {
     "upload": "上传", "navigate": "导航", "back": "后退",
     "new_tab": "新标签页", "select_tab": "切标签页", "close_tab": "关标签页",
     "select_option": "选项",
-    "data": "数据", "command": "命令", "non_ui": "非交互",
+    "acquire": "采集", "data": "数据", "command": "命令", "non_ui": "非交互",
 }
 
 
@@ -622,7 +623,13 @@ def _step_diagnostic_flags(step: ReportStep) -> list[tuple[str, str]]:
     if "✗" in step.status:
         flags.append(("error", "failed"))
     if step.operation_mode == "non_interactive":
-        flags.append(("normal", "non-UI"))
+        executor = str((step.non_ui or {}).get("executor") or "")
+        label = {
+            "acquire": "Acquire 采集",
+            "data": "Data 处理",
+            "command": "Command",
+        }.get(executor, "non-UI")
+        flags.append(("normal", label))
     return flags
 
 

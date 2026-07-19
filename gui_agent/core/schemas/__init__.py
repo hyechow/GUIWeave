@@ -4,7 +4,15 @@ import re
 from datetime import datetime
 from typing import Annotated, Any, Literal, Optional, Union
 
-from pydantic import BaseModel, ConfigDict, Field, JsonValue, SerializeAsAny, model_validator
+from pydantic import (
+    BaseModel,
+    ConfigDict,
+    Field,
+    JsonValue,
+    SerializeAsAny,
+    field_validator,
+    model_validator,
+)
 
 # The 6 shared actions every platform supports. Platform-specific actions (iphone
 # home/app_switch, browser navigate, android home/back/app_switch) live in each
@@ -70,6 +78,26 @@ class OutputSpec(BaseModel):
     required: bool = True
     description: str = ""
     coverage: Coverage = "current_view"
+    fields: tuple[str, ...] = Field(
+        default_factory=tuple,
+        description="required record keys for Data-produced record/list[record] outputs",
+    )
+
+    @field_validator("fields", mode="before")
+    @classmethod
+    def _normalize_fields(cls, value):
+        fields = tuple(str(item).strip() for item in (value or ()))
+        if any(not item for item in fields):
+            raise ValueError("output fields cannot contain empty names")
+        if len(fields) != len(set(fields)):
+            raise ValueError("output fields must be unique")
+        return fields
+
+    @model_validator(mode="after")
+    def _record_fields_only(self) -> "OutputSpec":
+        if self.fields and self.type not in {"record", "list[record]"}:
+            raise ValueError("output fields require record or list[record] type")
+        return self
 
 
 def target_value_options(value: TargetValue | object) -> tuple[str, ...]:
@@ -661,7 +689,7 @@ class StatementInfo(BaseModel):
     model_config = ConfigDict(frozen=True, extra="forbid")
 
     id: str = ""
-    executor: Literal["interact", "data", "command"] = "interact"
+    executor: Literal["interact", "acquire", "data", "command"] = "interact"
     goal: str = ""
     success: str = ""
     on: Literal["main"] = "main"
@@ -735,7 +763,37 @@ class CollectionSliceEvent(BaseModel):
     known_total: int | None = None
     boundary: CollectionBoundary = "unknown"
     source: CollectionSource = "table"
+    strategy: Literal["structured", "react"] = "structured"
     truncated: bool = False
+
+
+class AcquisitionReceiptEvent(BaseModel):
+    """Append-only receipt for one acquisition capability probe or move.
+
+    Receipts contain facts needed to rebuild Acquire decisions after replay.  They
+    intentionally do not carry a writable phase, cursor or completion flag.
+    """
+
+    model_config = ConfigDict(frozen=True, extra="forbid")
+
+    event_type: Literal["acquisition_receipt"] = "acquisition_receipt"
+    event_ref: str
+    after_turn: int = Field(default=0, ge=0)
+    timestamp: str = Field(default_factory=lambda: datetime.now().isoformat(timespec="seconds"))
+    statement_instance_id: str
+    statement_id: str
+    collection_key: str = ""
+    bound_region: str = ""
+    strategy: Literal["structured", "react"]
+    capability: str
+    action_family: Literal[
+        "bind_region", "paginate_next", "paginate_prev", "scroll_forward",
+        "scroll_backward", "load_more", "wait",
+    ]
+    status: Literal["selected", "dispatched", "observed", "rejected", "failed"]
+    before_content_key: str = ""
+    after_content_key: str = ""
+    reason: str = ""
 
 
 class PolicyTurn(BaseModel):
@@ -910,6 +968,7 @@ JournalEvent = Annotated[
     Union[
         PolicyTurn,
         CollectionSliceEvent,
+        AcquisitionReceiptEvent,
         StatementOutcomeEvent,
         ProgramRevisionEvent,
         ContentNoteEvent,
@@ -950,6 +1009,13 @@ class EventJournal(BaseModel):
         ]
 
     @property
+    def acquisition_receipts(self) -> list[AcquisitionReceiptEvent]:
+        return [
+            event for event in self.events
+            if isinstance(event, AcquisitionReceiptEvent)
+        ]
+
+    @property
     def program_revisions(self) -> list[ProgramRevisionEvent]:
         return [
             event for event in self.events if isinstance(event, ProgramRevisionEvent)
@@ -980,6 +1046,22 @@ class EventJournal(BaseModel):
             )
         if any(existing.event_ref == event.event_ref for existing in self.collection_slices):
             raise ValueError(f"duplicate collection event_ref {event.event_ref!r}")
+        self.events.append(event)
+        return event
+
+    def append_acquisition_receipt(
+        self,
+        event: AcquisitionReceiptEvent,
+    ) -> AcquisitionReceiptEvent:
+        if event.after_turn != len(self.turns):
+            raise ValueError(
+                "AcquisitionReceiptEvent.after_turn must equal the current turn count"
+            )
+        if any(
+            existing.event_ref == event.event_ref
+            for existing in self.acquisition_receipts
+        ):
+            raise ValueError(f"duplicate acquisition event_ref {event.event_ref!r}")
         self.events.append(event)
         return event
 
