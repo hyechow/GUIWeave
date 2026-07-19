@@ -558,7 +558,7 @@ def normalize_table_snapshots(raw: Any) -> list[dict[str, Any]]:
         headers = _dedupe_headers(raw_headers, width)
         # A cell's href is part of the row's complete content. Fold it in as a sibling column
         # "<col>_url" — no preset "the url" field; every linked column carries its own. Columns
-        # must live in `headers` (data_query builds its SQL schema from headers, not row keys).
+        # must live in `headers` so every structured-data consumer sees the complete schema.
         raw_links = item.get("rowLinks") if isinstance(item.get("rowLinks"), list) else []
         link_headers = _link_headers(raw_links, headers, width)
         rows: list[dict[str, str]] = []
@@ -622,7 +622,7 @@ def _link_headers(raw_links: list[Any], headers: list[str], width: int) -> dict[
 
     A column is link-bearing if ANY row has a non-empty href in that cell; the whole column then
     gets a sibling URL column (rectangular: rows without a link store ""). Names are deduped
-    against the existing text headers and each other so data_query sees distinct identifiers."""
+    against the existing text headers and each other so Data sees distinct fields."""
     has_link = [False] * width
     for link_row in raw_links:
         if not isinstance(link_row, list):

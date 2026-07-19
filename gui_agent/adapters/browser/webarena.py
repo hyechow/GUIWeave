@@ -90,8 +90,8 @@ def _search_term_scalar(item: object) -> object | None:
 
 def _single_column_scalars(data: list) -> list | None:
     """A single-column result — every item a dict with the SAME one key — is scalar values, never
-    the intended RETRIEVE answer. A 1-column ``data_query`` (e.g. ``SELECT DISTINCT material``) yields
-    rows ``[{"material": "cotton"}, {"material": "fleece"}]``; webarena expects ``[cotton, fleece]``,
+    the intended RETRIEVE answer. A one-field Data result can yield rows
+    ``[{"material": "cotton"}, {"material": "fleece"}]``; WebArena expects ``[cotton, fleece]``,
     so the ``{"material": …}`` wrapper must be unwrapped (live 185 returned the stringified dicts and
     scored 0). Returns None unless EVERY item is a dict with exactly one key and all share that key —
     multi-key objects are intentional keyed output and are left untouched."""

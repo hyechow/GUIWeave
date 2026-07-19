@@ -44,8 +44,8 @@ from gui_agent.core.schemas import (
     StatementContract,
 )
 
-# Per-frame record budget, mirrors primitives/data_query.max_rows. Frames exceeding this set
-# truncated=True and keep the first MAX_FRAME_RECORDS records.
+# Per-frame transport budget. Frames exceeding this set are marked truncated and keep the
+# first MAX_FRAME_RECORDS records; semantic filtering remains the Data executor's job.
 MAX_FRAME_RECORDS = 200
 
 BoundaryKind = Literal["known_total", "at_end", "has_next_page", "not_at_end", "unknown"]

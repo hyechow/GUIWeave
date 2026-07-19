@@ -8,6 +8,8 @@ the restricted data kernel executes it.  A failed plan gets at most one repair.
 from __future__ import annotations
 
 import json
+from datetime import datetime
+from decimal import Decimal
 from typing import Annotated, Any, Literal, Union
 
 from langchain_openai import ChatOpenAI
@@ -16,15 +18,18 @@ from pydantic import BaseModel, ConfigDict, Field, JsonValue, model_validator
 from gui_agent.context import ContextBlock
 from gui_agent.core.config import resolve_llm_config
 from gui_agent.core.llm.messages import assemble_messages
-from gui_agent.core.orchestrator.primitives.data_query import (
-    DataQueryError,
-    execute_data_query,
-)
 from gui_agent.core.orchestrator.program import Data, OutputSpec
 from gui_agent.core.orchestrator.runner import StatementInvocation
 from gui_agent.core.schemas import Observation, StatementOutcome
 from gui_agent.prompts import load_prompt_text
 from llm.structured import invoke_structured
+
+from .data_kernel import (
+    DataKernelError,
+    DataStep,
+    describe_datasets,
+    execute_pipeline,
+)
 
 
 _SYSTEM = load_prompt_text("task.orchestrator.data_executor")
@@ -64,14 +69,20 @@ class ReadObservationOp(BaseModel):
         return self
 
 
-class SqlOp(BaseModel):
+class TransformOp(BaseModel):
     model_config = ConfigDict(extra="forbid")
 
-    kind: Literal["sql"] = "sql"
+    kind: Literal["transform"] = "transform"
     name: str
-    source: str
-    sql: str
-    returns: list[str]
+    source: DataRef
+    steps: list[DataStep] = Field(min_length=1, max_length=10)
+
+    @model_validator(mode="after")
+    def _validate_steps(self) -> "TransformOp":
+        terminal = [index for index, step in enumerate(self.steps) if step.op == "aggregate"]
+        if terminal and terminal != [len(self.steps) - 1]:
+            raise ValueError("aggregate must be the final transform step")
+        return self
 
 
 class EmitOp(BaseModel):
@@ -81,7 +92,10 @@ class EmitOp(BaseModel):
     values: dict[str, DataRef]
 
 
-DataOp = Annotated[Union[ReadObservationOp, SqlOp, EmitOp], Field(discriminator="kind")]
+DataOp = Annotated[
+    Union[ReadObservationOp, TransformOp, EmitOp],
+    Field(discriminator="kind"),
+]
 
 
 class DataPlan(BaseModel):
@@ -111,24 +125,51 @@ def _jsonable(value: Any) -> JsonValue:
         return [_jsonable(item) for item in value]
     if isinstance(value, dict):
         return {str(key): _jsonable(item) for key, item in value.items()}
+    if isinstance(value, Decimal):
+        return int(value) if value == value.to_integral_value() else float(value)
+    if isinstance(value, datetime):
+        return value.isoformat()
     if value is None or isinstance(value, (str, int, float, bool)):
         return value
     return str(value)
 
 
+def _input_context(inputs: dict[str, JsonValue]) -> tuple[dict[str, JsonValue], list[dict[str, Any]]]:
+    values: dict[str, JsonValue] = {}
+    schemas: list[dict[str, Any]] = []
+    for name, value in inputs.items():
+        table: dict[str, Any] | None = None
+        if isinstance(value, dict) and isinstance(value.get("rows"), list):
+            table = dict(value)
+        elif isinstance(value, list) and all(isinstance(item, dict) for item in value):
+            table = {"rows": value, "partial": False}
+        if table is None:
+            values[name] = value
+            continue
+        schema = describe_datasets([table])[0]
+        schema.pop("path", None)
+        schemas.append({**schema, "source": {"var": name}})
+        values[name] = {"record_count": schema["row_count"], "dataset": True}
+    return values, schemas
+
+
 def _context_summary(invocation: StatementInvocation, observation: Observation | None) -> str:
+    input_values, input_schemas = _input_context(invocation.inputs)
     payload = {
         "task_goal": invocation.task_goal,
         "goal": invocation.goal,
-        "inputs": invocation.inputs,
+        "inputs": input_values,
         "returns": {
             name: spec.model_dump(mode="json")
             for name, spec in invocation.statement.returns.items()
         },
+        "dataset_schemas": {
+            "inputs": input_schemas,
+            "observation_tables": describe_datasets(getattr(observation, "tables", None)),
+        },
         "observation": {
             "url": getattr(observation, "url", None),
             "title": getattr(observation, "title", None),
-            "tables": _jsonable(getattr(observation, "tables", None)),
             "form_controls": _jsonable(getattr(observation, "form_controls", None)),
         },
     }
@@ -200,39 +241,25 @@ def _plan(
     )
 
 
-def _resolve(ref: DataRef, bindings: dict[str, JsonValue]) -> JsonValue:
+def _resolve(ref: DataRef, bindings: dict[str, Any]) -> Any:
     if ref.var not in bindings:
-        raise DataQueryError(f"data ref 未定义: {ref.var}")
+        raise DataKernelError(f"data ref 未定义: {ref.var}")
     value = bindings[ref.var]
     for part in ref.path:
         if isinstance(part, int) and isinstance(value, list):
             try:
                 value = value[part]
             except IndexError as exc:
-                raise DataQueryError(f"data ref 越界: {ref.var}.{ref.path}") from exc
+                raise DataKernelError(f"data ref 越界: {ref.var}.{ref.path}") from exc
         elif isinstance(part, str) and isinstance(value, dict) and part in value:
             value = value[part]
         else:
-            raise DataQueryError(f"data ref 不存在: {ref.var}.{ref.path}")
+            raise DataKernelError(f"data ref 不存在: {ref.var}.{ref.path}")
     return value
 
 
-def _table_snapshots(value: JsonValue, name: str) -> list[dict[str, Any]]:
-    if isinstance(value, dict) and isinstance(value.get("rows"), list):
-        return [dict(value)]
-    if isinstance(value, list) and value and all(
-        isinstance(item, dict) and "rows" in item for item in value
-    ):
-        return [dict(item) for item in value if isinstance(item, dict)]
-    if isinstance(value, list) and all(isinstance(item, dict) for item in value):
-        rows = [dict(item) for item in value if isinstance(item, dict)]
-        return [{"caption": name, "rows": rows, "partial": False}]
-    if isinstance(value, dict):
-        return [{"caption": name, "rows": [dict(value)], "partial": False}]
-    raise DataQueryError(f"sql source {name!r} 不是 record/list[record]/tables")
-
-
-def _coerce(value: JsonValue, spec: OutputSpec) -> JsonValue:
+def _coerce(value: Any, spec: OutputSpec) -> JsonValue:
+    value = _jsonable(value)
     if spec.type == "number" and isinstance(value, str):
         try:
             parsed = float(value.replace(",", ""))
@@ -247,14 +274,6 @@ def _coerce(value: JsonValue, spec: OutputSpec) -> JsonValue:
     return value
 
 
-def _derive_require_complete(invocation: StatementInvocation, operation: SqlOp) -> bool:
-    return not any(
-        (spec := invocation.statement.returns.get(name)) is not None
-        and spec.coverage == "best_effort"
-        for name in operation.returns
-    )
-
-
 def _execute(
     plan: DataPlan,
     invocation: StatementInvocation,
@@ -263,13 +282,13 @@ def _execute(
     check_knowledge: str,
     prepare_vision_prompt_png,
 ) -> tuple[dict[str, JsonValue], list[str], bool]:
-    bindings: dict[str, JsonValue] = dict(invocation.inputs)
+    bindings: dict[str, Any] = dict(invocation.inputs)
     trace: list[str] = []
-    visual_used = False
+    unverified = False
     for operation in plan.operations:
         if isinstance(operation, ReadObservationOp):
             if observation is None:
-                raise DataQueryError("当前 Data statement 没有 observation")
+                raise DataKernelError("当前 Data statement 没有 observation")
             if operation.source == "visual":
                 from gui_agent.core.orchestrator.primitives.structured_read import structured_read
 
@@ -284,7 +303,7 @@ def _execute(
                     check_knowledge=check_knowledge,
                     prepare_vision_prompt_png=prepare_vision_prompt_png,
                 )
-                visual_used = True
+                unverified = True
             else:
                 empty: JsonValue = [] if operation.source in {"tables", "form_controls"} else ""
                 source = _jsonable(getattr(observation, operation.source, None) or empty)
@@ -296,17 +315,24 @@ def _execute(
             path = f"{operation.path}" if operation.path else ""
             trace.append(f"read_observation:{operation.source}{path}->{operation.name}")
             continue
-        if isinstance(operation, SqlOp):
-            if operation.source not in bindings:
-                raise DataQueryError(f"sql source 未定义: {operation.source}")
-            rows = execute_data_query(
-                _table_snapshots(bindings[operation.source], operation.source),
-                operation.sql,
-                operation.returns,
-                require_complete=_derive_require_complete(invocation, operation),
-            )
-            bindings[operation.name] = _jsonable(rows)
-            trace.append(f"sql:{operation.name}:{operation.sql}")
+        if isinstance(operation, TransformOp):
+            source = _resolve(operation.source, bindings)
+            partial = isinstance(source, dict) and bool(source.get("partial"))
+            if partial and any(
+                spec.coverage == "complete"
+                for spec in invocation.statement.returns.values()
+            ):
+                raise DataKernelError(
+                    "transform source is partial but Data return requires complete coverage"
+                )
+            if partial and any(
+                spec.coverage == "best_effort"
+                for spec in invocation.statement.returns.values()
+            ):
+                unverified = True
+            value, step_trace = execute_pipeline(source, operation.steps)
+            bindings[operation.name] = value
+            trace.extend(f"transform:{operation.name}:{item}" for item in step_trace)
             continue
         values = {
             name: _coerce(_resolve(ref, bindings), invocation.statement.returns[name])
@@ -315,9 +341,9 @@ def _execute(
         }
         extras = sorted(set(operation.values) - set(invocation.statement.returns))
         if extras:
-            raise DataQueryError(f"emit 包含未声明 outputs: {extras}")
-        return values, trace, visual_used
-    raise DataQueryError("data plan did not emit outputs")
+            raise DataKernelError(f"emit 包含未声明 outputs: {extras}")
+        return values, trace, unverified
+    raise DataKernelError("data plan did not emit outputs")
 
 
 def execute_data_statement(
@@ -339,7 +365,7 @@ def execute_data_statement(
                 previous_error=error,
                 context_reports=context_reports,
             )
-            outputs, trace, visual_used = _execute(
+            outputs, trace, unverified = _execute(
                 plan,
                 invocation,
                 observation,
@@ -352,10 +378,10 @@ def execute_data_statement(
                 if spec.required and name not in outputs
             ]
             if missing:
-                raise DataQueryError(f"emit 缺少必需 outputs: {missing}")
+                raise DataKernelError(f"emit 缺少必需 outputs: {missing}")
             return StatementOutcome.completed(
                 invocation.goal,
-                verification="accepted_unverified" if visual_used else "confirmed",
+                verification="accepted_unverified" if unverified else "confirmed",
                 outputs=outputs,
                 evidence=trace,
                 observation=observation,
@@ -378,6 +404,6 @@ __all__ = [
     "DataRef",
     "EmitOp",
     "ReadObservationOp",
-    "SqlOp",
+    "TransformOp",
     "execute_data_statement",
 ]
