@@ -84,6 +84,13 @@ CASES = (
         expect_materialized_data=True,
     ),
     Case(
+        "monthly-count-filtered-range",
+        "Get the monthly count of completed orders from January 2023 through May 2023, inclusive. "
+        'Return a list of objects with keys "month" and "count" only.',
+        required_text=("completed", "January 2023", "May 2023"),
+        expect_materialized_data=True,
+    ),
+    Case(
         "data-top-n",
         "From the current result data, return the top 2 labels ranked by usage.",
         required_data_text=("top 2",),
@@ -267,7 +274,7 @@ def _check(case: Case, program: Program) -> list[str]:
             if isinstance(node, Acquire) and node.source_check is None
         ]
         if not collection_binds:
-            errors.append("entire-history ranking requires complete Acquire collection output")
+            errors.append("full-scope aggregation requires complete Acquire collection output")
         elif collection_binds.isdisjoint(data_inputs):
             errors.append("Data must consume the materialized complete collection via inputs")
         if unchecked_acquires:

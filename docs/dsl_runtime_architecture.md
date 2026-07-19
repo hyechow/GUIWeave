@@ -125,9 +125,11 @@ Data 是业务数据事实和数据验收依据的唯一 owner，但没有 UI �
 计划必须以唯一 `emit` 结束。执行失败时可携带确定性错误再规划一次；第二次失败即返回失败，
 不在 Program 内持久化半成品数据计划。
 
-Data 的语义草稿还声明 source coverage：`current_view` 直接读取当前帧；`complete`/`best_effort` 且
-没有物化输入时，由 Compiler 自动插入 Acquire 预检链。required_fields 只包含原始记录已携带的属性；
-count/rank 等派生量不能被当成需要 UI 暴露的字段。
+Data 的 source 合同只有两种形态：直接读 observation 时必须显式声明 coverage，
+`current_view` 仅代表当前物理窗口，`complete`/`best_effort` 且没有物化输入时由 Compiler
+自动插入 Acquire 预检链；只处理 typed inputs 时不声明 coverage，集合覆盖由上游 OutputSpec
+继承，不重复 Acquire。UI 已筛选只证明语义范围正确，不证明当前窗口已包含全部记录。
+required_fields 只包含原始记录已携带的属性；count/rank 等派生量不能被当成需要 UI 暴露的字段。
 
 ## Lookup：显式检索策略分支
 

@@ -34,6 +34,7 @@ def test_draft_converts_only_the_six_semantic_nodes():
                 op="data",
                 bind="selection",
                 goal="select records that need a change",
+                coverage="current_view",
                 returns={"rows": OutputSpec(type="list[record]")},
             ),
             _StepDraft(
@@ -120,6 +121,7 @@ def test_compiler_rejects_consecutive_data_in_one_linear_block():
                 op="data",
                 bind="ranked_customers",
                 goal="rank customers by completed order count",
+                coverage="current_view",
                 returns={
                     "emails": OutputSpec(type="list[record]", fields=["email"]),
                 },
@@ -143,6 +145,7 @@ def test_lowering_does_not_assume_rows_for_data_owned_record_lists():
             op="data",
             bind="ranked",
             goal="derive ranked identities",
+            coverage="current_view",
             returns={
                 "emails": OutputSpec(type="list[record]", fields=["email"]),
             },
@@ -245,25 +248,26 @@ def test_complete_data_source_is_materialized_but_current_view_is_not():
     assert validate_program(current) == []
 
 
-def test_hot_recompile_reuses_declared_collection_binding_without_reacquiring():
+def test_typed_collection_input_inherits_coverage_without_reacquiring():
     contract = {
         "rows": OutputSpec(type="list[record]", coverage="complete")
     }
+    draft = _StepDraft(
+        op="data",
+        bind="answer",
+        goal="rank the already collected records",
+        required_fields=["customer email"],
+        inputs={"records": ValueRef(var="orders", path=["rows"])},
+        returns={
+            "customers": OutputSpec(type="list[record]", fields=["email"])
+        },
+    )
     program = to_program(
-        _PlanDraft(steps=[_StepDraft(
-            op="data",
-            bind="answer",
-            goal="rank the already collected records",
-            coverage="complete",
-            required_fields=["customer email"],
-            inputs={"records": ValueRef(var="orders", path=["rows"])},
-            returns={
-                "customers": OutputSpec(type="list[record]", fields=["email"])
-            },
-        )]),
+        _PlanDraft(steps=[draft]),
         initial_collection_binds=frozenset({"orders"}),
     )
 
+    assert draft.coverage is None
     assert len(program.statements) == 1
     assert isinstance(program.statements[0], Data)
     assert program.statements[0].inputs["records"].var == "orders"
@@ -275,6 +279,7 @@ def test_lowering_names_anonymous_typed_producer_from_finish_reference():
         _StepDraft(
             op="data",
             goal="derive the requested answer",
+            coverage="current_view",
             returns={"result": OutputSpec(type="text")},
         ),
         _StepDraft(
@@ -291,6 +296,7 @@ def test_lowering_names_anonymous_typed_producer_from_finish_reference():
     "payload",
     [
         {"op": "run", "goal": "legacy"},
+        {"op": "data", "goal": "read data"},
         {"op": "command"},
         {"op": "if"},
         {"op": "foreach", "items": {"var": "rows"}, "body": []},
@@ -341,10 +347,12 @@ def test_decompose_repairs_at_most_once(monkeypatch):
                 steps=[
                     _StepDraft(
                         op="data", bind="counts", goal="group records",
+                        coverage="current_view",
                         returns={"rows": OutputSpec(type="list[record]", fields=["id"])},
                     ),
                     _StepDraft(
                         op="data", bind="answer", goal="rank grouped records",
+                        coverage="current_view",
                         returns={"rows": OutputSpec(type="list[record]", fields=["id"])},
                     ),
                     _StepDraft(
@@ -357,6 +365,7 @@ def test_decompose_repairs_at_most_once(monkeypatch):
                 steps=[
                     _StepDraft(
                         op="data", bind="answer", goal="group and rank records",
+                        coverage="current_view",
                         returns={"rows": OutputSpec(type="list[record]", fields=["id"])},
                     ),
                     _StepDraft(

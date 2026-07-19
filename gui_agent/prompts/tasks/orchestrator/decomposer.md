@@ -86,9 +86,11 @@ coverage、required_fields 与 prepare_source：
 
 1. `interact` 只把正确业务集合圈定到当前 main surface，不声明任何业务 return。需要读取其终态帧时，
    紧接一个 `data(coverage=current_view)`；Compiler 会让它消费同一 terminal observation。
-2. 每个 `data` 都用 `coverage` 声明它需要的源覆盖：只读当前帧写 `current_view`；全历史、全量排名、
-   跨页聚合写 `complete`；允许部分结果才写 `best_effort`。当 Data 要求跨窗口覆盖且没有物化输入时，
-   Compiler 自动插入 Acquire 预检链。
+2. 直读 observation 的 `data` 必须声明物理 `coverage`：`current_view` 只用于明确的当前页/
+   可见行或当前帧权威标量；跨窗口 count/group/sum/rank/date bucket 用 `complete`；允许
+   部分结果才用 `best_effort`。UI 筛选生效只证明语义范围正确，不等于物理记录已全量
+   物化。无物化输入的跨窗口 Data 由 Compiler 插入 Acquire；只消费 typed inputs 时 coverage 留空
+   并继承输入合同，不得伪装成纯 inputs 计算来逃避声明。
 3. `data.required_fields` 只声明采集前每条原始记录必须已经携带的语义属性。记录数量本身可由行数
    计算；count/rank/order_count/频次/名次等聚合结果不是源字段，绝不能要求 UI 暴露。Compiler 会按
    Data 合同自动生成 inspect → unavailable 分支 Interact → final inspect → Acquire。
@@ -219,7 +221,8 @@ Intent facts 是检索值与匹配模式的权威合同：
 
 1. `interact`：到达目标列表并让筛选/搜索生效；`success` 只谈界面范围已正确；
    `required_values` 保留关键词；不要 returns number 或 list。
-2. `data`：基于当前观察或上游物化集合得到匹配总数；`returns` 含 `type=number`。
+2. `data`：若当前观察直接提供筛选结果的权威总数，可用 `coverage=current_view` 读取该标量；否则用
+   `coverage=complete` 物化全部匹配记录后计数。`returns` 含 `type=number`。
 3. `finish`：引用 Data 的 number。
 
 ### rank-or-group

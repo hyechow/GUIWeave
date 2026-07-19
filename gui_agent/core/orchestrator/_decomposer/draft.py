@@ -73,9 +73,12 @@ class _StepDraft(BaseModel):
         default="",
         description="data source 字段当前不可读时要达到的线性 UI 后置条件",
     )
-    coverage: Literal["current_view", "complete", "best_effort"] = Field(
-        default="current_view",
-        description="data source coverage: current_view | complete | best_effort",
+    coverage: Literal["current_view", "complete", "best_effort"] | None = Field(
+        default=None,
+        description=(
+            "Data 直读 observation 时必须声明物理覆盖；current_view 仅是当前窗口，"
+            "跨窗口集合运算用 complete；仅消费 typed inputs 时留空并继承输入合同"
+        ),
     )
     persistence: Literal["immediate", "explicit_commit"] = Field(
         default="immediate",
@@ -121,6 +124,8 @@ class _StepDraft(BaseModel):
             raise ValueError("interact requires goal or success")
         if self.op == "data" and not self.goal.strip() and not self.returns:
             raise ValueError("data requires goal or typed returns")
+        if self.op == "data" and not self.inputs and self.coverage is None:
+            raise ValueError("observation-backed data requires explicit source coverage")
         if self.op == "lookup" and (
             not self.lookup_entity.strip() or not self.lookup_field.strip()
         ):
