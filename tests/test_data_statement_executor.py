@@ -9,8 +9,17 @@ from gui_agent.core.run.statements.data import (
     DataRef,
     EmitOp,
     ReadObservationOp,
-    SqlOp,
+    TransformOp,
     execute_data_statement,
+)
+from gui_agent.core.run.statements.data_kernel import (
+    AggregateSpec,
+    AggregateStep,
+    FieldRef,
+    ProjectStep,
+    SortKey,
+    SortStep,
+    TakeStep,
 )
 from gui_agent.core.schemas import Observation
 
@@ -47,20 +56,26 @@ def test_data_executor_reads_current_observation_and_emits_declared_outputs(monk
     assert outcome.evidence == ["read_observation:url->location"]
 
 
-def test_data_executor_can_query_actual_table_snapshot(monkeypatch):
+def test_data_executor_can_transform_actual_table_snapshot(monkeypatch):
     plan = DataPlan(
         operations=[
-            ReadObservationOp(kind="read_observation", name="grid", source="tables"),
-            SqlOp(
-                kind="sql",
+            ReadObservationOp(
+                kind="read_observation",
+                name="grid",
+                source="tables",
+                path=[0],
+            ),
+            TransformOp(
+                kind="transform",
                 name="answer",
-                source="grid",
-                sql="SELECT COUNT(*) AS count FROM data",
-                returns=["count"],
+                source=DataRef(var="grid"),
+                steps=[
+                    AggregateStep(values={"count": AggregateSpec(fn="count")}),
+                ],
             ),
             EmitOp(
                 kind="emit",
-                values={"count": DataRef(var="answer", path=[0, "count"])},
+                values={"count": DataRef(var="answer", path=["count"])},
             ),
         ]
     )
@@ -77,18 +92,24 @@ def test_data_executor_can_query_actual_table_snapshot(monkeypatch):
     assert outcome.outputs == {"count": 2}
 
 
-def test_data_executor_queries_selected_table_as_row_records(monkeypatch):
+def test_data_executor_transforms_selected_table_as_row_records(monkeypatch):
     plan = DataPlan(
         operations=[
             ReadObservationOp(name="terms_table", source="tables", path=[1]),
-            SqlOp(
+            TransformOp(
                 name="ranked",
-                source="terms_table",
-                sql=(
-                    'SELECT "Search Term" AS term, CAST("Uses" AS INTEGER) AS count '
-                    'FROM data ORDER BY CAST("Uses" AS INTEGER) DESC LIMIT 2'
-                ),
-                returns=["term", "count"],
+                source=DataRef(var="terms_table"),
+                steps=[
+                    SortStep(keys=[SortKey(
+                        field=FieldRef(path=["Uses"], type="number"),
+                        direction="desc",
+                    )]),
+                    TakeStep(count=2),
+                    ProjectStep(fields={
+                        "term": FieldRef(path=["Search Term"], type="text"),
+                        "count": FieldRef(path=["Uses"], type="number"),
+                    }),
+                ],
             ),
             EmitOp(values={"terms": DataRef(var="ranked")}),
         ]
@@ -153,6 +174,46 @@ def test_data_executor_projects_structural_table_metadata(monkeypatch):
     assert outcome.evidence == [
         "read_observation:tables[0, 'total_records']->total"
     ]
+
+
+@pytest.mark.parametrize(
+    ("coverage", "phase", "verification"),
+    [
+        ("current_view", "completed", "confirmed"),
+        ("best_effort", "completed", "accepted_unverified"),
+        ("complete", "exhausted", None),
+    ],
+)
+def test_data_executor_enforces_partial_source_coverage(
+    monkeypatch,
+    coverage,
+    phase,
+    verification,
+):
+    plan = DataPlan(operations=[
+        ReadObservationOp(name="grid", source="tables", path=[0]),
+        TransformOp(
+            name="rows",
+            source=DataRef(var="grid"),
+            steps=[ProjectStep(fields={"id": FieldRef(path=["ID"])})],
+        ),
+        EmitOp(values={"rows": DataRef(var="rows")}),
+    ])
+    monkeypatch.setattr(module, "_plan", lambda *_args, **_kwargs: plan)
+
+    outcome = execute_data_statement(
+        _invocation({
+            "rows": OutputSpec(type="list[record]", coverage=coverage),
+        }),
+        observation=Observation(
+            png_bytes=b"png",
+            source="browser",
+            tables=[{"rows": [{"ID": "1"}], "partial": True}],
+        ),
+    )
+
+    assert outcome.phase == phase
+    assert outcome.verification == verification
 
 
 def test_non_visual_observation_read_rejects_ignored_fields():

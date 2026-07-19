@@ -45,7 +45,7 @@ def test_read_grid_complete_falls_back_to_dom_table_when_ax_tree_empty():
     products = [r.get("Product", "") for r in rows]
     assert any("Proteus" in p for p in products)
     assert any("Ida" in p for p in products)
-    # Phantom empty-Price rows are preserved here; the downstream data_query filters Price != ''.
+    # Phantom empty-Price rows are preserved here; downstream Data filters Price != ''.
     assert any(r.get("Price") in ("", None) for r in rows)
 
 

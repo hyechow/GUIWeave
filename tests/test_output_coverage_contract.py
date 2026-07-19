@@ -1,19 +1,15 @@
-"""Phase 4: OutputSpec.coverage field, structural validator rule, runtime complete-coverage
-gate, and Data SqlOp require_complete derivation. Deterministic, no LLM.
-"""
+"""Output coverage contracts and the runtime complete-coverage gate."""
 
 from __future__ import annotations
 
 from gui_agent.core.orchestrator import (
-    Data,
     Interact,
     OutputSpec,
     Program,
     ValueRef,
     validate_program,
 )
-from gui_agent.core.orchestrator.runner import Interpreter, StatementInvocation
-from gui_agent.core.run.statements.data import SqlOp, _derive_require_complete
+from gui_agent.core.orchestrator.runner import Interpreter
 from gui_agent.core.schemas import StatementOutcome
 
 
@@ -125,38 +121,3 @@ def test_validated_outcome_does_not_gate_current_view_or_best_effort_coverage():
     interp = Interpreter(Program(statements=[statement]))
     result = interp._validated_outcome(statement, _complete_outcome("accepted_unverified"))
     assert result.is_completed
-
-
-# --- 5. Data SqlOp require_complete derives from coverage -------------------
-
-
-def _invocation(returns):
-    return StatementInvocation(
-        statement=Data(
-            id="derive",
-            goal="derive outputs",
-            returns=returns,
-        )
-    )
-
-
-def _sql_op() -> SqlOp:
-    return SqlOp(
-        kind="sql",
-        name="q",
-        source="rows",
-        sql="SELECT COUNT(*) AS count FROM rows",
-        returns=["count"],
-    )
-
-
-def test_derive_require_complete_honors_best_effort_coverage():
-    best_effort = _invocation({"count": OutputSpec(type="number", coverage="best_effort")})
-    assert _derive_require_complete(best_effort, _sql_op()) is False
-
-
-def test_derive_require_complete_keeps_true_for_complete_and_default_coverage():
-    complete = _invocation({"count": OutputSpec(type="number", coverage="complete")})
-    assert _derive_require_complete(complete, _sql_op()) is True
-    default = _invocation({"count": OutputSpec(type="number")})
-    assert _derive_require_complete(default, _sql_op()) is True

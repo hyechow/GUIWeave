@@ -3,7 +3,7 @@
 Root case = WebArena shopping_admin task 63: the foreach declared
 ``returns=['ID','Customer Email','Status']`` but the Magento Orders grid did not render the
 ``Customer Email`` column, so the AX extractor silently dropped it → the grouping column was
-empty → data_query produced no answer (live run 20260629_130033).
+empty → Data produced no answer (live run 20260629_130033).
 
 The collector now, before paginating, detects a declared column the grid isn't rendering,
 opens the grid's "Columns" visibility control, enables the missing toggle(s), and re-reads.

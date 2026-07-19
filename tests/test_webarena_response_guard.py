@@ -371,7 +371,7 @@ def test_search_term_rows_keep_objects_when_intent_asks_metric():
 
 
 def test_single_column_rows_are_unwrapped_to_scalars():
-    # Live 185: a 1-column data_query (SELECT DISTINCT material) yields row dicts; webarena expects
+    # Live 185: a one-field Data result yields row dicts; WebArena expects
     # flat scalars, so [{"material":"cotton"},{"material":"fleece"}] must become [cotton, fleece]
     # regardless of intent (the {"material":…} wrapper is never the wanted RETRIEVE answer; the run
     # shipped stringified dicts and scored 0).
