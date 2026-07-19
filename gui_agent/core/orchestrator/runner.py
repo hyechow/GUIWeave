@@ -13,7 +13,7 @@ from typing import Any, Literal
 
 from pydantic import BaseModel, Field, JsonValue
 
-from gui_agent.core.schemas import StatementOutcome, Verification
+from gui_agent.core.schemas import Coverage, OutputType, StatementOutcome, Verification
 
 from .program import (
     Acquire,
@@ -37,12 +37,26 @@ ExecutorKind = Literal["interact", "acquire", "data", "command", "program"]
 StatementExecutor = Callable[["StatementInvocation"], StatementOutcome]
 
 
+class InputDescriptor(BaseModel):
+    """Control-plane description of one resolved input; never carries its value."""
+
+    model_config = {"frozen": True, "extra": "forbid"}
+
+    source_var: str
+    producer: ExecutorKind = "program"
+    output_name: str = ""
+    type: OutputType | None = None
+    coverage: Coverage = "current_view"
+    verification: Verification = "confirmed"
+
+
 class StatementInvocation(BaseModel):
     """One resolved executor call yielded by the Program interpreter."""
 
     statement: ExecutableStatement = Field(discriminator="op")
     task_goal: str = ""
     inputs: dict[str, JsonValue] = Field(default_factory=dict)
+    input_descriptors: dict[str, InputDescriptor] = Field(default_factory=dict)
     args: dict[str, JsonValue] = Field(default_factory=dict)
     loop_path: list[int] = Field(default_factory=list)
 
@@ -96,12 +110,42 @@ def summarize_progress(
     """Describe completed facts and remaining semantic work for hot recompile."""
 
     completed_ids = {record.node_id for record in run_log if record.result.is_completed}
-    experience = "\n".join(
-        f"{'✓' if record.result.is_completed else '✗'} [{record.executor}] "
-        f"{record.name}（{record.result.summary}）"
-        + (f" outputs={record.result.outputs}" if record.result.outputs else "")
-        for record in run_log
-    )
+    nodes = {node.id: node for node in _flatten_statements(program.statements)}
+
+    def summarize_value(value: JsonValue) -> str:
+        if isinstance(value, list):
+            if all(isinstance(item, dict) for item in value):
+                fields = list(dict.fromkeys(key for row in value for key in row))
+                return f"list[record](count={len(value)}, fields={fields})"
+            if len(value) <= 10:
+                return repr(value)[:240]
+            return f"list(count={len(value)})"
+        if isinstance(value, dict):
+            rows = value.get("rows")
+            if isinstance(rows, list) and all(isinstance(item, dict) for item in rows):
+                fields = list(dict.fromkeys(key for row in rows for key in row))
+                return f"dataset(count={len(rows)}, fields={fields})"
+            rendered = repr(value)
+            return rendered if len(rendered) <= 240 else f"record(fields={list(value)})"
+        return repr(value)[:240]
+
+    experience_lines: list[str] = []
+    for record in run_log:
+        node = nodes.get(record.node_id)
+        outputs: list[str] = []
+        for name, value in record.result.outputs.items():
+            spec = node.returns.get(name) if node is not None else None
+            contract = (
+                f", type={spec.type}, coverage={spec.coverage}" if spec is not None else ""
+            )
+            outputs.append(f"{name}={summarize_value(value)}{contract}")
+        binding = f" bind={record.var}" if record.var else ""
+        output_text = f" outputs=[{'; '.join(outputs)}]" if outputs else ""
+        experience_lines.append(
+            f"{'✓' if record.result.is_completed else '✗'} [{record.executor}] "
+            f"{record.name}（{record.result.summary}）{binding}{output_text}"
+        )
+    experience = "\n".join(experience_lines)
     remaining: list[str] = []
     if current_run is not None:
         remaining.append(f"1. [{current_run.executor}] {current_run.goal}")
@@ -145,8 +189,26 @@ def matches_output_spec(value: JsonValue, spec: OutputSpec) -> bool:
 class Interpreter:
     """Program state and deterministic control-flow owner."""
 
-    def __init__(self, program: Program) -> None:
+    def __init__(
+        self,
+        program: Program,
+        *,
+        inherited_contracts: Mapping[str, Mapping[str, OutputSpec]] | None = None,
+    ) -> None:
         self._program = program
+        self._binding_producers = {
+            node.bind: node
+            for node in _flatten_statements(program.statements)
+            if node.bind
+        }
+        self.binding_contracts: dict[str, dict[str, OutputSpec]] = {
+            name: dict(outputs)
+            for name, outputs in (inherited_contracts or {}).items()
+        }
+        self.binding_contracts.update({
+            name: dict(node.returns)
+            for name, node in self._binding_producers.items()
+        })
         self.env: dict[str, JsonValue] = {}
         self.run_log: list[RunRecord] = []
         self.finish_incomplete = False
@@ -263,9 +325,33 @@ class Interpreter:
             statement=statement,
             task_goal=self._program.goal,
             inputs=inputs,
+            input_descriptors={
+                name: self._input_descriptor(ref, frames)
+                for name, ref in statement.inputs.items()
+            },
             args=args,
             loop_path=list(loop_path),
         ), ""
+
+    def _input_descriptor(
+        self,
+        ref: ValueRef,
+        frames: list[dict[str, JsonValue]],
+    ) -> InputDescriptor:
+        producer = self._binding_producers.get(ref.var)
+        output_name = ref.path[0] if ref.path and isinstance(ref.path[0], str) else ""
+        contracts = self.binding_contracts.get(ref.var, {})
+        spec = contracts.get(output_name) if output_name else None
+        if not output_name and len(contracts) == 1:
+            output_name, spec = next(iter(contracts.items()))
+        return InputDescriptor(
+            source_var=ref.var,
+            producer=producer.op if producer is not None else "program",
+            output_name=output_name,
+            type=spec.type if spec is not None else None,
+            coverage=spec.coverage if spec is not None else "current_view",
+            verification=self._verification(ref, frames),
+        )
 
     def _validated_outcome(
         self,
@@ -517,6 +603,7 @@ class ProgramRunner:
 
 
 __all__ = [
+    "InputDescriptor",
     "Interpreter",
     "OrchestratorResult",
     "ProgramRunner",

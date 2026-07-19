@@ -12,7 +12,7 @@ from gui_agent.core.run.statements.observation import ObservationCursor
 from gui_agent.core.schemas import BaseAction, BaseActionDecision, EventJournal, Observation, PolicyContext
 
 
-def _observation(page, *, has_next=None, total=0, traversal=True):
+def _observation(page, *, has_next=None, total=None, traversal=True):
     signal = (
         {
             "type": "paged",
@@ -27,8 +27,9 @@ def _observation(page, *, has_next=None, total=0, traversal=True):
         "caption": "Records",
         "headers": ["ID", "Value"],
         "rows": [{"ID": str(page), "Value": f"v{page}"}],
-        "total_records": total,
     }
+    if total is not None:
+        table["total_records"] = total
     if signal is not None:
         table["traversal"] = signal
     return Observation(
@@ -116,6 +117,38 @@ def test_structured_acquire_pages_without_policy_calls(tmp_path):
     )
 
 
+def test_structured_empty_collection_is_confirmed_without_policy(tmp_path):
+    observation = _observation(1, has_next=False, total=0)
+    observation.tables[0]["rows"] = []
+    bundle = SimpleNamespace(
+        make_perception=None,
+        move_collection=None,
+        make_action_policy=lambda _name: (_ for _ in ()).throw(
+            AssertionError("known empty collection must not call a policy")
+        ),
+    )
+    context = PolicyContext(goal="collect", supervisor_policy_name="s", action_policy_name="a")
+    outcome = execute_acquire_statement(
+        _invocation(),
+        cursor=ObservationCursor(
+            bundle=bundle, platform=object(), log_dir=tmp_path,
+            observation=observation, observation_url="empty.png",
+        ),
+        bundle=bundle,
+        platform=object(),
+        context=context,
+        instance_id="i1:collect",
+        save_context=lambda: None,
+        say=lambda _message: None,
+        status=lambda _message: None,
+    )
+
+    assert outcome.is_completed
+    assert outcome.verification == "confirmed"
+    assert outcome.outputs == {"records": []}
+    assert len(context.journal.collection_slices) == 1
+
+
 def test_acquire_rejects_ambiguous_structured_collections(tmp_path):
     observation = _observation(1, has_next=False, total=1)
     observation.tables.append({**observation.tables[0], "path": "#other"})
@@ -162,7 +195,7 @@ def test_react_fallback_requires_two_same_collection_no_progress_moves(monkeypat
         "gui_agent.core.run.statements.acquire.decide_acquisition",
         lambda *_args, **_kwargs: next(decisions),
     )
-    observation = _observation(1, total=0, traversal=False)
+    observation = _observation(1, traversal=False)
     bundle = SimpleNamespace(
         make_perception=lambda _platform, _path: _Perception(observation),
         move_collection=None,
@@ -223,7 +256,7 @@ def test_complete_budget_exhaustion_never_claims_partial_success(monkeypatch, tm
         "gui_agent.core.run.statements.acquire.decide_acquisition",
         lambda *_args, **_kwargs: next(decisions),
     )
-    observation = _observation(1, total=0, traversal=False)
+    observation = _observation(1, traversal=False)
     bundle = SimpleNamespace(
         make_perception=lambda _platform, _path: _Perception(observation),
         move_collection=None,
@@ -291,7 +324,7 @@ def test_react_fallback_rejects_business_action_family_before_dispatch(monkeypat
         "gui_agent.core.run.statements.acquire.decide_acquisition",
         lambda *_args, **_kwargs: next(decisions),
     )
-    observation = _observation(1, total=0, traversal=False)
+    observation = _observation(1, traversal=False)
     dispatched = []
     bundle = SimpleNamespace(
         make_perception=lambda _platform, _path: _Perception(observation),
@@ -346,3 +379,75 @@ def test_browser_affordance_guard_reads_callable_viewport_size():
     assert validate_collection_action(
         SimpleNamespace(client=Client()), {"path": "#records"}, decision, "paginate_next"
     ) is True
+
+
+def test_mobile_visual_acquire_is_journal_replayable_without_private_phase(monkeypatch, tmp_path):
+    decisions = iter([
+        AcquireDecision(
+            kind="move", reason="bind the visible list", bound_hint="visual:main",
+            action_family="bind_region", target_role="bound_region",
+        ),
+        AcquireDecision(
+            kind="move", reason="move the same visible list", action_family="scroll_forward",
+            target_role="scroll_affordance", instruction="scroll the visible list forward",
+        ),
+        AcquireDecision(
+            kind="move", reason="confirm its end", action_family="scroll_forward",
+            target_role="scroll_affordance", instruction="scroll the same list forward again",
+        ),
+        AcquireDecision(kind="boundary", reason="visible end with repeated no progress"),
+    ])
+    monkeypatch.setattr(
+        "gui_agent.core.run.statements.acquire.decide_acquisition",
+        lambda *_args, **_kwargs: next(decisions),
+    )
+    vision_calls = []
+    monkeypatch.setattr(
+        "gui_agent.core.orchestrator.primitives.structured_read.structured_read_rows",
+        lambda *_args, **_kwargs: vision_calls.append(1) or [{"name": "A"}],
+    )
+    observation = Observation(png_bytes=b"png", source="android")
+    bundle = SimpleNamespace(
+        prepare_vision_prompt_png=lambda value: value,
+        make_perception=lambda _platform, _path: _Perception(observation),
+        move_collection=None,
+        validate_collection_action=None,
+        default_action_policy="visual",
+        make_action_policy=lambda _name: SimpleNamespace(
+            decide=lambda *_args, **_kwargs: BaseActionDecision(
+                action=BaseAction(
+                    action_type="scroll", x=500, y=500, direction="down",
+                    description="scroll the bound collection",
+                )
+            )
+        ),
+        make_executor=lambda _platform: SimpleNamespace(execute=lambda *_args, **_kwargs: True),
+    )
+    context = PolicyContext(goal="collect", supervisor_policy_name="s", action_policy_name="a")
+    invocation = _invocation()
+    invocation.statement.required_fields = ["name"]
+    outcome = execute_acquire_statement(
+        invocation,
+        cursor=ObservationCursor(
+            bundle=bundle, platform=object(), log_dir=tmp_path,
+            observation=observation, observation_url="frame.png",
+        ),
+        bundle=bundle,
+        platform=object(),
+        context=context,
+        instance_id="i1:collect",
+        save_context=lambda: None,
+        say=lambda _message: None,
+        status=lambda _message: None,
+        max_moves=5,
+    )
+
+    assert outcome.is_completed
+    assert len(vision_calls) == 3  # initial frame plus the two physically refreshed windows
+    assert len(context.journal.collection_slices) == 3
+    replayed = EventJournal.model_validate(context.journal.model_dump(mode="json"))
+    memory = build_acquire_memory(
+        replayed, instance_id="i1:collect", statement_id="collect",
+    )
+    assert memory.bound_region.startswith("visual:android:")
+    assert "phase" not in memory.__dataclass_fields__

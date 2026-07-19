@@ -3,7 +3,10 @@ import json
 from gui_agent.reports.builder import RunnerReportBuilder
 from gui_agent.reports.builder import _group_steps_by_statement
 from gui_agent.reports.models import ReportStep
-from gui_agent.reports.orchestrator_html import _render_program_section
+from gui_agent.reports.orchestrator_html import (
+    _render_non_ui_detail,
+    _render_program_section,
+)
 from gui_agent.reports.prompt_html import _render_module_io_html
 from gui_agent.reports.runner_html import generate_html, _render_thumb_time, _turn_elapsed_seconds
 
@@ -95,6 +98,42 @@ def test_orchestrator_program_renders_foreach_block_and_body():
     assert "foreach" in html
     assert "打开当前评论" in html
     assert "prog-branch" in html
+
+
+def test_acquire_outputs_are_bounded_in_program_and_non_ui_details():
+    rows = [
+        {"id": f"row-{index}", "email": f"user-{index}@example.test"}
+        for index in range(12)
+    ]
+    program_html = _render_program_section({
+        "program": {
+            "goal": "collect every row",
+            "statements": [{
+                "op": "acquire",
+                "id": "s1",
+                "bind": "collection",
+                "goal": "collect rows",
+                "returns": {"rows": {"type": "list[record]"}},
+            }],
+        },
+        "report_run_log": [{
+            "var": "collection",
+            "result": {"outputs": {"rows": rows}},
+        }],
+        "context_reports": [],
+    })
+    detail_html = _render_non_ui_detail({
+        "executor": "acquire",
+        "outputs": {"rows": rows},
+    })
+
+    assert "rows=12 records · 2 fields [id, email]" in program_html
+    assert "row-0" not in program_html
+    assert "12 records · 2 fields [id, email]" in detail_html
+    assert "sample (first 2)" in detail_html
+    assert "row-0" in detail_html
+    assert "row-1" in detail_html
+    assert "row-2" not in detail_html
 
 
 def test_in_progress_program_card_does_not_require_report_run_log():
@@ -287,7 +326,7 @@ def test_terminal_event_attaches_to_statement_without_empty_report_turn(tmp_path
             "supervisor_policy_name": "statement",
             "action_policy_name": "browser",
             "journal": {
-                "schema_version": 3,
+                "schema_version": 4,
                 "events": [
                     {
                         "event_type": "statement_outcome",
@@ -357,7 +396,7 @@ def test_non_interactive_turn_renders_its_observation_frame(tmp_path):
         json.dumps({
             "goal": "read current data",
             "journal": {
-                "schema_version": 3,
+                "schema_version": 4,
                 "events": [{
                     "event_type": "turn",
                     "index": 1,

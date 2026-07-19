@@ -165,10 +165,6 @@ class StatementSupervisorPolicy(
                 else None
             )
 
-    def reset_for_return_retry(self, new_contract: StatementContract) -> None:
-        self._rt.reset_for_return_retry(new_contract)
-        self._goal = new_contract.goal
-
     def end_statement(self, outcome=None) -> None:
         del outcome
         self._statement_rt = None
@@ -376,7 +372,7 @@ class StatementSupervisorPolicy(
             is_home_screen=_is_home_identity(
                 decision.page_identity, self._prompts.home_identity_markers
             ),
-            **_ctx(statement, decision.read_instruction),
+            **_ctx(statement),
         ), ""
 
     def _record_transition(
@@ -403,7 +399,7 @@ class StatementSupervisorPolicy(
             outcome=StatementOutcome.exhausted(message),
             summary=message,
             execution_scope=execution_scope,
-            **_ctx(statement, decision.read_instruction),
+            **_ctx(statement),
         )
 
     @staticmethod
@@ -523,7 +519,7 @@ class StatementSupervisorPolicy(
                 ),
                 pre_existing=not executed,
                 summary=summary,
-                **_ctx(statement, decision.read_instruction),
+                **_ctx(statement),
             )
         if decision.kind == "infeasible":
             self._record_transition(decision)
@@ -534,7 +530,7 @@ class StatementSupervisorPolicy(
                     evidence=self._outcome_evidence(decision),
                 ),
                 summary=decision.assessment.summary,
-                **_ctx(statement, decision.read_instruction),
+                **_ctx(statement),
             )
         if self._terminal_only:
             return self._transition_failure(

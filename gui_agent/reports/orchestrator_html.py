@@ -33,13 +33,42 @@ def _program_run_items(stmts: list) -> list[dict]:
     return out
 
 
-def _pretty_non_ui_value(value: object) -> str:
-    text = str(value if value is not None else "")
-    try:
-        parsed = json.loads(text)
-    except Exception:
+def _field_summary(fields: list[str]) -> str:
+    shown = ", ".join(fields[:12])
+    suffix = f", … +{len(fields) - 12}" if len(fields) > 12 else ""
+    return f"{len(fields)} fields [{shown}{suffix}]"
+
+
+def _report_value(value: object, *, sample_items: int, limit: int) -> str:
+    """Bound data-plane values in HTML while keeping a useful report projection."""
+    items = value
+    prefix = ""
+    if isinstance(value, dict) and isinstance(value.get("rows"), list):
+        items = value["rows"]
+        prefix = "rows: "
+    if isinstance(items, list) and items and all(isinstance(item, dict) for item in items):
+        fields = list(dict.fromkeys(str(key) for row in items for key in row))
+        summary = f"{prefix}{len(items)} records · {_field_summary(fields)}"
+        if sample_items:
+            sample = json.dumps(
+                items[:sample_items], ensure_ascii=False, indent=2, default=str,
+            )
+            summary += f"\nsample (first {min(len(items), sample_items)}):\n{sample}"
+        return summary
+    if isinstance(items, list) and len(items) > 8:
+        summary = f"{prefix}{len(items)} items"
+        if sample_items:
+            sample = json.dumps(items[:sample_items], ensure_ascii=False, indent=2, default=str)
+            summary += f"\nsample (first {sample_items}):\n{sample}"
+        return summary
+    text = value if isinstance(value, str) else json.dumps(
+        value, ensure_ascii=False, indent=2 if sample_items else None, default=str,
+    )
+    if len(text) <= limit:
         return text
-    return json.dumps(parsed, ensure_ascii=False, indent=2)
+    if isinstance(value, dict):
+        return f"object · {_field_summary(list(map(str, value)))}"
+    return text[:limit - 3] + "…"
 
 
 def _render_non_ui_detail(non_ui: dict) -> str:
@@ -56,7 +85,7 @@ def _render_non_ui_detail(non_ui: dict) -> str:
     for field in fields:
         read_rows.append(
             f'<div class="nonui-read"><span class="nonui-key">{_safe(field)}</span>'
-            f'<pre class="nonui-val">{_safe(_pretty_non_ui_value(outputs.get(field, "")))}</pre></div>'
+            f'<pre class="nonui-val">{_safe(_report_value(outputs.get(field, ""), sample_items=2, limit=2400))}</pre></div>'
         )
     reads_html = f'<div class="nonui-reads">{"".join(read_rows)}</div>' if read_rows else ""
     evidence_html = (
@@ -179,7 +208,7 @@ def _render_program_card(
             vals = env.get(var or "") or {}
             shown = "、".join(
                 (
-                    f"{_safe(f)}={_safe(json.dumps(vals[f], ensure_ascii=False, default=str))}"
+                    f"{_safe(f)}={_safe(_report_value(vals[f], sample_items=0, limit=240))}"
                     if vals.get(f) is not None else _safe(f)
                 )
                 for f in ret

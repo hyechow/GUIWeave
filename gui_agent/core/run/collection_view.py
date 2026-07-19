@@ -35,6 +35,10 @@ from gui_agent.core.schemas import (
     Observation,
     StatementContract,
 )
+from gui_agent.core.run.observation_materializer import (
+    NormalizedDataset,
+    materialize_observation,
+)
 
 # Per-frame transport budget. Frames exceeding this set are marked truncated and keep the
 # first MAX_FRAME_RECORDS records; semantic filtering remains the Data executor's job.
@@ -140,6 +144,9 @@ def _table_content_key(table: dict[str, Any]) -> str:
 
 
 def _table_surface_id(table: dict[str, Any], fallback: str) -> str:
+    explicit = str(table.get("_surface_fingerprint") or "").strip()
+    if explicit:
+        return explicit
     path = str(table.get("path") or "").strip()
     caption = _norm(table.get("caption"))
     headers = ",".join(_norm(header) for header in (table.get("headers") or []))
@@ -182,7 +189,9 @@ def _provenance(
         filter_snapshot=filters,
         schema_fingerprint=schema,
         route=route,
-        incomplete=not bool(structural_surface and schema),
+        incomplete=bool(table.get("_provenance_incomplete")) or not bool(
+            structural_surface and schema
+        ),
     )
 
 
@@ -193,28 +202,28 @@ def _collection_key(provenance: CollectionProvenance) -> str:
     ).hexdigest()
 
 
-def collection_candidates(observation: Observation) -> list[dict[str, Any]]:
-    """Return normalized browser collection candidates without choosing among them."""
+def collection_candidates(
+    observation: Observation,
+    *,
+    extra_datasets: list[NormalizedDataset] | None = None,
+) -> list[dict[str, Any]]:
+    """Return normalized cross-platform collection candidates without choosing one."""
     candidates: list[dict[str, Any]] = []
-    for index, table in enumerate(getattr(observation, "tables", None) or []):
-        if not isinstance(table, dict):
+    normalized = materialize_observation(observation)
+    datasets = [*normalized.datasets, *(extra_datasets or [])]
+    for dataset in datasets:
+        table = dataset.as_table()
+        rows = [row for row in dataset.records if isinstance(row, dict)]
+        headers = list(dataset.fields)
+        if not headers:
             continue
-        rows = [row for row in (table.get("rows") or []) if isinstance(row, dict)]
-        headers = [str(header) for header in (table.get("headers") or [])]
-        if not rows or not headers:
-            continue
-        traversal = table.get("traversal")
-        reliable = bool(
-            (isinstance(traversal, dict) and traversal.get("type") in {"paged", "scroll"})
-            or _known_total_from_table(table) is not None
-        )
         candidates.append(
             {
-                "ref": f"table:{index}",
+                "ref": dataset.ref,
                 "table": table,
-                "surface_fingerprint": _table_surface_id(table, f"table:{index}"),
-                "reliable": reliable,
-                "caption": str(table.get("caption") or ""),
+                "surface_fingerprint": dataset.surface_fingerprint,
+                "reliable": dataset.reliable,
+                "caption": dataset.caption,
                 "headers": headers,
                 "record_count": len(rows),
             }
@@ -223,11 +232,14 @@ def collection_candidates(observation: Observation) -> list[dict[str, Any]]:
 
 
 def _known_total_from_table(table: dict[str, Any]) -> int | None:
+    raw = table.get("total_records")
+    if raw in (None, ""):
+        return None
     try:
-        total = int(table.get("total_records") or 0)
+        total = int(raw)
     except (TypeError, ValueError):
         return None
-    return total if total > 0 else None
+    return total if total >= 0 else None
 
 
 def _boundary_from_traversal(signal: Any) -> CollectionBoundary:
@@ -316,7 +328,7 @@ def project_collection_slice(
         return None
     headers = [str(h) for h in (table.get("headers") or [])]
     raw_rows = [r for r in (table.get("rows") or []) if isinstance(r, dict)]
-    if not raw_rows or not headers:
+    if not headers:
         return None
     provenance = _provenance(observation, table, contract)
     records: list[dict[str, Any]] = []
@@ -325,8 +337,6 @@ def project_collection_slice(
         if not any(values.values()):
             continue
         records.append(values)
-    if not records:
-        return None
     truncated = len(records) > MAX_FRAME_RECORDS
     return CollectionSliceEvent(
         event_ref=event_ref,
@@ -341,7 +351,7 @@ def project_collection_slice(
         records=records[:MAX_FRAME_RECORDS],
         known_total=_known_total_from_table(table),
         boundary=_boundary_from_traversal(table.get("traversal")),
-        source="table",
+        source=str(table.get("_source") or "table"),  # type: ignore[arg-type]
         strategy=strategy,
         truncated=truncated,
     )
@@ -501,6 +511,8 @@ def _classify_coverage(
     """
     has_next_now = last_kind == "has_next_page"
     at_end_now = last_kind == "at_end"
+    if total == 0 and collected == 0 and not has_next_now:
+        return "complete"
     if total is not None and total > 0 and collected > total:
         return "conflicting"
     if has_next_now:

@@ -91,20 +91,21 @@ def test_validator_checks_command_capability_contract():
     assert "COMMAND_OUTPUT_UNSUPPORTED" in _codes(unsupported)
 
 
-def test_validator_keeps_collection_ownership_on_acquire():
-    interact = Program(statements=[
+def test_interact_schema_rejects_business_outputs():
+    with pytest.raises(ValidationError, match="adjacent Data"):
         Interact(
-            id="collect", bind="rows", goal="collect", success="collected",
-            returns={"rows": OutputSpec(type="list[record]", coverage="complete")},
+            id="read", bind="value", goal="read", success="visible",
+            returns={"value": OutputSpec(type="text")},
         )
-    ])
+
+
+def test_validator_keeps_collection_ownership_on_acquire():
     invalid_acquire = Program(statements=[
         Acquire(
             id="collect", bind="rows", goal="collect",
             returns={"rows": OutputSpec(type="list[record]")},
         )
     ])
-    assert "INTERACT_COLLECTION_OUTPUT" in _codes(interact)
     assert "ACQUIRE_COVERAGE_REQUIRED" in _codes(invalid_acquire)
 
 
@@ -270,6 +271,14 @@ def test_validator_propagates_data_fields_through_acquire_check():
     assert validate_program(aligned) == []
 
 
+def test_validator_rejects_outputless_data_transform():
+    program = Program(statements=[
+        Data(id="noop", bind="rows", goal="materialize records"),
+    ])
+
+    assert "DATA_OUTPUT_REQUIRED" in _codes(program)
+
+
 def test_all_emitted_codes_are_registered():
     programs = [
         Program(),
@@ -277,29 +286,16 @@ def test_all_emitted_codes_are_registered():
         Program(statements=[Command(id="open", capability="open_url")]),
         Program(
             statements=[
-                Interact(
+                Data(
                     id="read",
                     bind="title",
                     goal="read title",
-                    success="title read",
                     returns={"title": OutputSpec(type="text", coverage="complete")},
                 ),
-            ]
-        ),
-        # Trigger sample for FINISH_NUMERIC_FROM_DATA (Interact number → Finish).
-        Program(
-            statements=[
-                Interact(
-                    id="filter",
-                    bind="counts",
-                    goal="filter and count",
-                    success="filtered",
-                    returns={"total": OutputSpec(type="number")},
-                ),
-                Finish(outputs={"result": ValueRef(var="counts", path=["total"])}),
             ]
         ),
     ]
     emitted = {issue.code for program in programs for issue in validate_program(program)}
     assert emitted <= ALL_CODES
-    assert "FINISH_NUMERIC_FROM_DATA" in emitted
+import pytest
+from pydantic import ValidationError

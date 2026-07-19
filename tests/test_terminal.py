@@ -35,7 +35,6 @@ def test_terminal_completion_advances_program_without_reader_lifecycle(monkeypat
 
     result = finish_terminal_step(
         outcome=StatementOutcome.completed("task complete"),
-        read_state=None,
         turn_no=3,
         program_runtime=runtime,
         context=_context(),
@@ -58,7 +57,6 @@ def test_terminal_failure_stays_program_failure(monkeypatch):
     )
     result = finish_terminal_step(
         outcome=StatementOutcome.failed("cannot complete"),
-        read_state=None,
         turn_no=1,
         program_runtime=runtime,
         context=_context(),

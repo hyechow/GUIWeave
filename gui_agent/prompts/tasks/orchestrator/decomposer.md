@@ -7,7 +7,7 @@ scope:
 owner: gui_agent.core.orchestrator.decomposer
 schema: _PlanDraft
 eval_suites:
-version: 8
+version: 10
 ---
 你是 GUI 自动化 Runtime 的语义编译器。把用户目标编译成简短、完整的 Program。
 
@@ -46,12 +46,26 @@ Program 描述“为什么、要什么、依赖什么”，不描述“面对当
 **GUI 与数值/集合处理分离（硬边界）：**
 
 - `interact` 只负责 UI 业务后置条件：到达正确范围、筛选/搜索已生效、记录已打开或已保存等。
-  它的 `success` 描述界面状态，不描述“已算出总数/排名/金额”。
+  它的 `success` 描述界面状态，不描述“已算出总数/排名/金额”，也不声明 bind/returns。
 - `acquire` 只搬运同一集合的窗口，不改变筛选、不打开记录、不暴露隐藏列、不计算数据。
 - `data` 负责不改变 UI 的读取与派生：计数、求和、筛选成员、排序、去重、分组、比较、组合。
   当前帧已可见的表格/表单/URL/标题上的读数也属于 Data，不是 Interact 的 number return。
-- **Finish 引用的 `number` 必须来自 Data 的 bind**，不得由 Interact 直接返回 number 再 Finish。
-  结构校验会拒绝 `Interact(returns number) → Finish`。
+- **If/ForEach/Finish 消费的所有业务数据必须来自 Data 或 Acquire 的 bind**。Interact 不返回 text、
+  number、boolean、record 或 list；结构校验会拒绝任何 `Interact.returns`。
+
+**优先使用 UI 的业务能力（谓词下推）：**
+
+- 输出前逐项核对用户目标里的限定语：状态、时间范围、数量、排序、阈值、类别、归属，以及用动词或
+  从句表达的记录条件，都必须无损进入 Program。交给 UI 下推的具体条件和值必须写入 Interact 的
+  `required_values`（key 使用语义字段，不猜真实列名）；留在数据计算里的条件必须写入最终 Data 的
+  goal。不得只在 reasoning 或宽泛的“完整范围”描述里提到后从 Program 丢失。
+- 用户明确给出的状态、日期范围、关键词、类别、归属等集合约束，如果当前界面可通过搜索、筛选、
+  排序或视图能力表达，必须先由 Interact 让约束生效，再 Acquire 已圈定的集合，最后交给 Data。
+- 不要为了方便 Data 而清除、放宽或绕过与用户口径一致的 UI 条件。Data 主要承担 UI 不擅长的分组、
+  聚合、排名、投影和数值派生，不应默认先采全量原始集合再重复过滤。
+- Program 只声明语义条件和值，不写真实控件、列名或点击步骤；条件如何落到当前页面由 Interact
+  自适应。若运行时证明确无对应 UI 能力，才由显式 Program 修正路线选择 Acquire 后 Data 过滤，
+  不能在同一份初始计划中静默假设 UI 不支持。
 
 `interact` 可以跨多个页面或 screen。页面内菜单、链接、局部 tab、搜索、填写、选择、保存、
 返回列表和继续验证都可以属于同一个 Interact，只要实际执行仍围绕**同一 UI 后置条件**。不要按页面、
@@ -70,7 +84,8 @@ Data 的 `returns` 是用户可见答案合同，不是中间工作表。record/
 Data 不操作 UI，Acquire 不修复数据源。若计算依赖当前帧不能保证具备的数据，只在 Data 草稿声明
 coverage、required_fields 与 prepare_source：
 
-1. `interact` 只把正确业务集合圈定到当前 main surface，不声明 `list[record]` return。
+1. `interact` 只把正确业务集合圈定到当前 main surface，不声明任何业务 return。需要读取其终态帧时，
+   紧接一个 `data(coverage=current_view)`；Compiler 会让它消费同一 terminal observation。
 2. 每个 `data` 都用 `coverage` 声明它需要的源覆盖：只读当前帧写 `current_view`；全历史、全量排名、
    跨页聚合写 `complete`；允许部分结果才写 `best_effort`。当 Data 要求跨窗口覆盖且没有物化输入时，
    Compiler 自动插入 Acquire 预检链。
@@ -80,6 +95,9 @@ coverage、required_fields 与 prepare_source：
 4. `prepare_source` 只描述字段不可读时要达到的线性 UI 后置条件，例如“保持订单范围不变，使客户邮箱
    可读取”；不写 Columns 按钮、真实列名、控件或备用数据源路径。省略时 Compiler 会从语义字段生成通用目标。
 5. 当前帧 schema/总数已经足以回答时 Data 用 `coverage=current_view`，Compiler 不插 Acquire。
+6. 不要单独生成一个“Acquire/collect/materialize 数据”的无 returns Data，再让另一个 Data 处理它。
+   采集与派生必须由同一个带 typed returns 的 `data(coverage=complete|best_effort)` 表达；Compiler 会在
+   这个 Data 前自动插入 Acquire。每个 Data 都必须产出其后续消费者或 Finish 实际引用的 typed returns。
 
 Compiler 生成的 Runtime Program 骨架是：
 
@@ -141,7 +159,7 @@ returns 形状：
 }
 ```
 
-声明 returns 时必须声明 bind。不要返回后续和最终结果都不消费的字段。
+只有 data 声明业务 returns；声明 returns 时必须声明 bind。不要返回后续和最终结果都不消费的字段。
 `fields` 只用于 Data 产出的 record/list[record] 形状（例如 `fields=["email"]`）。Acquire 的 raw rows
 合同由 Compiler 生成，草稿 schema 不提供 Acquire returns/fields。
 
@@ -181,7 +199,9 @@ Intent facts 是检索值与匹配模式的权威合同：
 优先使用尽可能少的 statement：
 
 - 连续 UI 路径且 **UI 后置条件** 不变：一个 Interact。
-- 连续数据变换且输出合同不变：一个 Data。
+- **同一直线 block 禁止 `Data → Data`**。两者之间没有新的 UI、采集或控制流事实，筛选、投影、
+  去重、分组、聚合、排序、排名和计算必须收进一个 Data，并直接声明最终消费者需要的 returns。
+  中间结果只有确实被 If/ForEach 消费时才能离开 Data；不得把内部工作表拆成第二个 Data。
 - Data 的 `goal` 必须无损保留计算所需的数量限制、排序方向、阈值、日期范围等语义常量；
   不得把“top 2”弱化为“top entries”，也不得提前写成页面字段或 SQL。
 - 同一用户目标若同时需要“改变/准备 UI”和“计数/聚合/选成员”，至少两个 statement：
@@ -208,7 +228,8 @@ Intent facts 是检索值与匹配模式的权威合同：
 
 期望骨架：
 
-1. `interact`：使相关业务列表/范围在界面上可达且口径正确。
+1. `interact`：使相关业务列表/范围在界面上可达，并先应用用户明确给出的状态、日期、类别等可表达
+   UI 条件；`required_values` 无损保留条件和值。
 2. 一个 `data(coverage=complete)`，在 `required_fields` 声明源字段；Compiler 自动插入字段预检和
    Acquire。
 3. `data` 运行时再分组、计数、排序或筛选成员；returns 为 number 或

@@ -68,6 +68,14 @@ class Interact(StatementNode):
     scope: str = ""
     persistence: PersistenceMode = "immediate"
 
+    @model_validator(mode="after")
+    def _ui_postcondition_only(self) -> "Interact":
+        if self.bind is not None or self.returns:
+            raise ValueError(
+                "Interact cannot bind business outputs; add an adjacent Data statement"
+            )
+        return self
+
     @property
     def goal_text(self) -> str:
         return self.goal
@@ -98,6 +106,7 @@ class Acquire(StatementNode):
     goal: str
     on: SurfaceName = "main"
     source_check: ValueRef | None = None
+    required_fields: list[str] = Field(default_factory=list)
 
     @property
     def goal_text(self) -> str:

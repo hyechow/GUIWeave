@@ -1,7 +1,8 @@
 # GUIWeave Runtime Architecture
 
-本文描述当前生产实现。GUIWeave 只有一种执行入口：Compiler 生成语义 Program，
-Interpreter 解释显式控制流，四个 Statement executor 在运行时完成 UI、采集、数据与平台能力。
+本文描述当前生产实现。GUIWeave 只有一种执行入口：Compiler 生成语义 Program，Interpreter 解释
+显式控制流，四个 Statement executor 在运行时完成 UI、采集、数据与平台能力。Interact 的 UI
+完成与 Data 的业务数据读取已经分离，不存在并行的终态视觉 Reader 数据通道。
 
 滚动、分页采集与数值/集合处理的能力边界及当前落地缺口，见
 [运行时数据采集与处理设计](data_acquisition_and_processing_design.md)。
@@ -26,7 +27,7 @@ Program 只包含七种节点：
 | --- | --- | --- |
 | `Interact` | 在当前 `main` surface 上达成一个线性 UI 后置条件 | Transition 驱动的交互 executor |
 | `Acquire` | 在已圈定集合内跨窗口物化 `list[record]` | 自适应采集 executor |
-| `Data` | 从已绑定输入和当前观察中派生类型化数据 | Data executor |
+| `Data` | 从已绑定输入和当前观察中读取、验收并派生类型化数据 | Data executor |
 | `Command` | 调用 `open_url/back/launch_app` 等确定性能力 | 平台 capability executor |
 | `If` | 根据已绑定值选择显式分支 | Interpreter |
 | `ForEach` | 对已物化列表执行固定 body | Interpreter |
@@ -46,7 +47,8 @@ Program 只包含七种节点：
 | 当前 Statement 处于什么状态、下一步在哪里做什么 | Transition |
 | 一个语义动作如何落到平台原子动作 | Action policy / adapter |
 | 同一集合下一窗口如何暴露、覆盖是否可信 | Acquire executor |
-| 数据计划及其一次局部修复 | Data executor |
+| 业务数据读取、数据验收、数据计划及其一次局部修复 | Data executor |
+| 数据不满足后的显式纠正路径 | Compiler / Program If / RecoveryRouter |
 | 确定性导航和应用能力 | Command executor |
 | 已经发生的动作、观察和终态 | EventJournal |
 
@@ -69,8 +71,8 @@ Action policy 不决定停止、完成或不可行。
 
 Transition 的输入由以下部分组成：
 
-- 不可变 Statement contract：goal、success、required values、inputs、typed returns；
-- Journal memory：事实、最近动作和回执、失败约束、已有输出；
+- 不可变 Statement contract：goal、success、required values、inputs；
+- Journal memory：事实、最近动作和回执、失败约束；
 - 当前截图及当前观察摘要；
 - 平台可选提供的 URL、标题、控件、表格、affordance；
 - 与当前应用相关的知识。
@@ -79,6 +81,10 @@ Transition 的输入由以下部分组成：
 
 Runtime 可以否决越权、伪造证据、无能力、超预算或不满足完成合同的提议，但不依据业务词表
 补正则、不替模型选择路线，也不把一次动作拒绝升级成 Statement 不可行。
+
+Interact 完成只表示 UI 后置条件成立，不表示业务数据已经验收。Interact 不声明业务 `returns`，也不
+把终态帧文本、数字或 record 绑定进 Program env。需要消费终态数据时，Compiler 安排紧邻的 Data，
+Runtime 将同一份 terminal observation 原样交给它；两者之间不得执行新的 UI 动作。
 
 ## Acquire：同一集合的自适应采集
 
@@ -100,6 +106,15 @@ Decomposer 只声明 Data source coverage、required_fields 与语义 prepare_so
 `Data` 在 Program 中只声明 goal、inputs、语义 `required_fields` 和 typed returns。消费 Acquire
 集合时，required_fields 必须被前置 inspect 覆盖。运行时 Data executor 查看真实输入
 与当前 observation，由一次 LLM 调用生成最多六步的小计划，再由受限 kernel 执行。
+
+Data 是业务数据事实和数据验收依据的唯一 owner，但没有 UI 纠正权：
+
+- 数据可读且满足条件：completed，并输出事实与 `satisfied=true`；
+- 数据可读但不满足条件：completed，并输出事实与 `satisfied=false`，由 Program If 进入纠正 Interact；
+- 数据不可读：infeasible，携带来源证据与 kickback，不得把缺证据伪装成 false。
+
+纠正完成后必须由新的 Data 重读。Data 不得为了验收去点击、导航、切 tab、暴露列、修改筛选或写值；
+未预见的数据源不可用由 RecoveryRouter 热重编排剩余 Program。
 
 允许的计划操作只有：
 
@@ -148,15 +163,17 @@ Command 参数可以是字面量，也可以引用已绑定输出。未知路线
 
 ## 类型化数据流
 
-四个 executor 都只返回 `StatementOutcome`。完成态可携带：
+四个 executor 都只返回 `StatementOutcome`。Interact 的业务 `outputs` 必须为空；Data 与 Acquire 的
+完成态可按合同携带：
 
 ```text
 outputs: dict[str, JsonValue]
 ```
 
-每个输出必须在 Statement `returns` 中声明 `OutputSpec`。Interpreter 拒绝缺失、类型错误和额外
-字段；Data 产出的 record/list 还用 `OutputSpec.fields` 校验逐条 record key。通过后才把整个
-outputs record 绑定到 `bind`。后续节点只能通过 `ValueRef(var, path)` 读取。
+每个输出必须在 Data/Acquire `returns` 中声明 `OutputSpec`。Interpreter 拒绝缺失、类型错误和额外
+字段；Data 产出的 record/list 还用 `OutputSpec.fields` 校验逐条 record key。通过后才把整个 outputs
+record 绑定到 `bind`。后续节点只能通过 `ValueRef(var, path)` 读取。Program validator 拒绝
+Interact 的业务 returns，以及 If/ForEach/Finish 对它的直接依赖。
 
 `StatementOutcome` 是 Statement 终态唯一权威；`ProgramOutcome` 是任务终态唯一权威。报告、
 持久化和外层结果都是它们与 Journal 的只读投影。
@@ -179,7 +196,7 @@ Program 进度；不支持把旧 DSL、旧 milestone 状态或缺少 Program rev
 恢复路由保持语义分层：
 
 - 一次动作被机械拒绝：同一 Statement 的 Transition 重决策；
-- 当前 Statement 仍可达但输出不足：同一 Statement 重试；
+- Data 小计划执行错误：同一 Data 最多修复一次；证据不可读则返回 infeasible；
 - Statement 结构性不可行或合同冲突：ProgramRuntime 发起 hot recompile；
 - 预算耗尽或失败：收敛为 StatementOutcome，再由 ProgramRuntime 处理。
 

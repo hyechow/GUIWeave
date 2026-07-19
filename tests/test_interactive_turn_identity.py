@@ -1,4 +1,4 @@
-from gui_agent.core.orchestrator import Interact, OutputSpec
+from gui_agent.core.orchestrator import Interact
 from gui_agent.core.orchestrator.runner import StatementInvocation
 from gui_agent.core.run.interactive import contract_for_interact
 from gui_agent.core.run.turns import emit_statement_fields
@@ -11,7 +11,6 @@ def _contract(goal="open the current record"):
             id="s1",
             goal=goal,
             success="the current record detail is visible",
-            returns={"rating": OutputSpec(type="number")},
         )
     )
     return contract_for_interact(invocation, 0)
@@ -29,11 +28,12 @@ def test_statement_info_is_emitted_once_per_invocation():
     assert first_id == next_id == "i9:s1"
 
 
-def test_return_retry_keeps_invocation_and_does_not_reemit_contract():
+def test_new_invocation_emits_its_own_contract_once():
     policy = StatementSupervisorPolicy()
     policy.begin_statement(_contract(), instance_id="i9:s1")
     emit_statement_fields(policy)
-
-    policy.reset_for_return_retry(_contract("continue locating rating"))
-
-    assert emit_statement_fields(policy) == (None, "i9:s1")
+    policy.end_statement()
+    policy.begin_statement(_contract("open another record"), instance_id="i10:s1")
+    info, instance_id = emit_statement_fields(policy)
+    assert info is not None and info.goal == "open another record"
+    assert instance_id == "i10:s1"

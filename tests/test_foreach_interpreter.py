@@ -26,9 +26,14 @@ def _program() -> Program:
                 body=[
                     Interact(
                         id="apply",
-                        bind="result",
                         goal="apply the change to this member",
                         success="this member reflects the requested value",
+                        inputs={"member": ValueRef(var="member")},
+                    ),
+                    Data(
+                        id="read_result",
+                        bind="result",
+                        goal="read the changed member identity",
                         inputs={"member": ValueRef(var="member")},
                         returns={"id": OutputSpec(type="text")},
                     )
@@ -48,20 +53,24 @@ def test_foreach_iterates_a_materialized_list_without_runtime_expansion():
     seen = []
 
     def execute(invocation):
-        if invocation.executor == "data":
+        if invocation.id == "members":
             return StatementOutcome.completed(
                 "members", outputs={"rows": [{"id": "a"}, {"id": "b"}]}
             )
-        seen.append((invocation.inputs["member"], invocation.loop_path))
-        return StatementOutcome.completed(
-            "changed", outputs={"id": invocation.inputs["member"]["id"]}
-        )
+        if invocation.executor == "interact":
+            seen.append((invocation.inputs["member"], invocation.loop_path))
+            return StatementOutcome.completed("changed")
+        return StatementOutcome.completed("read", outputs={
+            "id": invocation.inputs["member"]["id"]
+        })
 
     result = ProgramRunner(execute).run(_program())
 
     assert seen == [({"id": "a"}, [0]), ({"id": "b"}, [1])]
     assert result.env["changed_ids"] == ["a", "b"]
-    assert result.run_log[1].node_id == result.run_log[2].node_id == "apply"
+    assert [record.node_id for record in result.run_log] == [
+        "members", "apply", "read_result", "apply", "read_result"
+    ]
     assert result.run_log[1].instance_id == ""
 
 

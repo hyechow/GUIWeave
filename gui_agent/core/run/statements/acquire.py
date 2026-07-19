@@ -14,6 +14,7 @@ from gui_agent.core.run.collection_view import (
     coverage_status,
     project_collection_slice,
 )
+from gui_agent.core.run.observation_materializer import visual_dataset
 from gui_agent.core.schemas import (
     AcquisitionReceiptEvent,
     EventJournal,
@@ -119,6 +120,7 @@ class _AcquireExecutor:
     say: Any
     status: Any
     reports: list[dict] = field(default_factory=list)
+    check_knowledge: str = ""
 
     @property
     def statement(self) -> Acquire:
@@ -156,6 +158,41 @@ class _AcquireExecutor:
             contract=self.contract,
             history=self.journal.events,
         )
+
+    def candidates(self) -> list[dict[str, Any]]:
+        observation = self.cursor.observation
+        assert observation is not None
+        structural = collection_candidates(observation)
+        if structural:
+            return structural
+        fields = list(self.statement.required_fields) or ["record"]
+        prior = next(
+            (
+                event for event in reversed(self.journal.collection_slices)
+                if event.statement_instance_id == self.instance_id
+                and event.statement_id == self.statement.id
+                and event.source == "visual"
+                and event.frame_ref == (self.cursor.observation_url or "")
+            ),
+            None,
+        )
+        if prior is not None:
+            records = [dict(record) for record in prior.records]
+        else:
+            from gui_agent.core.orchestrator.primitives.structured_read import (
+                structured_read_rows,
+            )
+
+            records = structured_read_rows(
+                observation.png_bytes,
+                fields,
+                read_spec=self.statement.goal,
+                check_knowledge=self.check_knowledge,
+                prepare_vision_prompt_png=self.bundle.prepare_vision_prompt_png,
+                context_reports=self.reports,
+            )
+        dataset = visual_dataset(observation, fields=fields, records=records)
+        return collection_candidates(observation, extra_datasets=[dataset])
 
     def receipt(
         self,
@@ -306,7 +343,7 @@ class _AcquireExecutor:
             return False
         self.cursor.refresh(f"screenshot_acquire_{index + 2}.png")
         after_candidate = _bound(
-            collection_candidates(self.cursor.observation), memory.bound_region,
+            self.candidates(), memory.bound_region,
         )
         after_event = self.slice(after_candidate, "structured") if after_candidate else None
         self.receipt(
@@ -344,6 +381,10 @@ class _AcquireExecutor:
             valid = self.bundle.validate_collection_action(
                 self.platform, candidate["table"], action, family,
             )
+        elif valid and self.bundle.validate_collection_action is None and action_type == "tap":
+            # A screenshot-only adapter cannot mechanically prove a pager/load-more tap
+            # belongs to the bound collection. Scroll/drag remain region-neutral safe moves.
+            valid = False
         if not valid:
             self.receipt(
                 "react", capability, family, "rejected", view=view, before=before,
@@ -361,7 +402,7 @@ class _AcquireExecutor:
         if dispatched:
             self.cursor.refresh(f"screenshot_acquire_{index + 2}.png")
             candidate = _bound(
-                collection_candidates(self.cursor.observation), self.memory().bound_region,
+                self.candidates(), self.memory().bound_region,
             )
             after_event = self.slice(candidate, "react") if candidate else None
         self.receipt(
@@ -394,6 +435,10 @@ class _AcquireExecutor:
                 "react", f"bind:react:{candidate['ref']}", "bind_region", "selected",
                 bound=candidate["surface_fingerprint"], reason=decision.reason,
             )
+            # Binding establishes provenance; persist the already-materialized first window
+            # immediately so the next loop rebuilds both memory and rows from Journal rather
+            # than invoking the visual materializer twice for the same frame.
+            self.slice(candidate, "react")
             return None
         if decision.kind == "blocked":
             return StatementOutcome.infeasible(
@@ -440,7 +485,7 @@ class _AcquireExecutor:
         self.cursor.ensure(0)
         while True:
             observation = self.cursor.observation
-            candidates = collection_candidates(observation)
+            candidates = self.candidates()
             memory = self.memory()
             candidate = _bound(candidates, memory.bound_region) if memory.bound_region else None
             reliable = [item for item in candidates if item["reliable"]]
@@ -519,6 +564,7 @@ def execute_acquire_statement(
     save_context,
     say,
     status,
+    check_knowledge: str = "",
     max_moves: int = MAX_ACQUIRE_MOVES,
 ) -> StatementOutcome:
     statement = invocation.statement
@@ -528,7 +574,7 @@ def execute_acquire_statement(
         return StatementOutcome.failed("Acquire 必须且只能声明一个 list[record] output")
     return _AcquireExecutor(
         invocation, cursor, bundle, platform, context, instance_id,
-        save_context, say, status,
+        save_context, say, status, check_knowledge=check_knowledge,
     ).run(max_moves)
 
 

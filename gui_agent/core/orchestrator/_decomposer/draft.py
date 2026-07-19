@@ -2,7 +2,7 @@
 
 from __future__ import annotations
 
-from dataclasses import dataclass
+from dataclasses import dataclass, field
 from typing import Literal
 
 from pydantic import BaseModel, Field, JsonValue, model_validator
@@ -188,11 +188,22 @@ def _data_goal(draft: _StepDraft) -> str:
 class _LoweringContext:
     resolution: IntentResolution | None
     collection_binds: frozenset[str] = frozenset()
+    collection_fields: dict[str, tuple[str, ...]] = field(default_factory=dict)
     macro_seq: int = 0
 
     def next_macro(self, kind: str) -> str:
         self.macro_seq += 1
         return f"__{kind}_{self.macro_seq}"
+
+    def register_collection(self, bind: str, required_fields: list[str]) -> None:
+        self.collection_binds = self.collection_binds | {bind}
+        self.collection_fields[bind] = tuple(required_fields)
+
+
+def _collection_input(ref: ValueRef, ctx: _LoweringContext) -> ValueRef:
+    if ref.var in ctx.collection_fields and not ref.path:
+        return ref.model_copy(update={"path": ["rows"]})
+    return ref
 
 
 def _infer_missing_binds(drafts: list[_StepDraft]) -> None:
@@ -410,6 +421,7 @@ def _acquire_stmts(
             bind=bind,
             goal=goal,
             source_check=ValueRef(var=final_bind, path=["available"]),
+            required_fields=required,
             returns={
                 "rows": OutputSpec(
                     type="list[record]",
@@ -435,21 +447,47 @@ def _to_stmts(
             goal = draft.goal.strip() or draft.success.strip()
             statements.append(
                 Interact(
-                    bind=draft.bind or None,
                     goal=goal,
                     success=draft.success.strip() or goal,
                     inputs=dict(draft.inputs),
                     required_values=dict(draft.required_values),
                     scope=draft.scope,
                     persistence=draft.persistence,
-                    returns=dict(draft.returns),
                 )
             )
+            # The LLM-facing draft may attach a terminal read to an UI step for
+            # convenience.  Program IR never does: lower it to an adjacent Data
+            # statement so UI completion and data acceptance remain independent.
+            if draft.returns:
+                coverage = (
+                    "complete"
+                    if any(spec.coverage == "complete" for spec in draft.returns.values())
+                    else "best_effort"
+                    if any(spec.coverage == "best_effort" for spec in draft.returns.values())
+                    else "current_view"
+                )
+                read_draft = draft.model_copy(update={
+                    "op": "data",
+                    "goal": (
+                        "从上一 UI 后置条件的终态观察读取并派生："
+                        + "、".join(
+                            spec.description.strip() or name
+                            for name, spec in draft.returns.items()
+                        )
+                    ),
+                    "success": "",
+                    "required_values": {},
+                    "coverage": coverage,
+                })
+                statements.extend(_to_stmts([read_draft], _ctx=ctx))
         elif draft.op == "lookup":
             statements.extend(_lookup_stmts(draft, ctx))
         elif draft.op == "data":
             goal = _data_goal(draft)
-            inputs = dict(draft.inputs)
+            inputs = {
+                name: _collection_input(ref, ctx)
+                for name, ref in draft.inputs.items()
+            }
             has_materialized_input = any(
                 ref.var in ctx.collection_binds for ref in inputs.values()
             )
@@ -463,12 +501,18 @@ def _to_stmts(
                     source_bind,
                     ctx,
                 ))
+                ctx.register_collection(source_bind, draft.required_fields)
                 inputs["records"] = ValueRef(var=source_bind, path=["rows"])
+            inherited_fields = list(dict.fromkeys(
+                field
+                for ref in inputs.values()
+                for field in ctx.collection_fields.get(ref.var, ())
+            ))
             statements.append(
                 Data(
                     bind=draft.bind or None,
                     goal=goal,
-                    required_fields=list(draft.required_fields),
+                    required_fields=list(draft.required_fields) or inherited_fields,
                     inputs=inputs,
                     returns=dict(draft.returns),
                 )
@@ -521,9 +565,13 @@ def to_program(
     goal: str = "",
     *,
     resolution: IntentResolution | None = None,
+    initial_collection_binds: frozenset[str] = frozenset(),
 ) -> Program:
     _infer_missing_binds(draft.steps)
-    ctx = _LoweringContext(resolution, _collection_binds(draft.steps))
+    ctx = _LoweringContext(
+        resolution,
+        _collection_binds(draft.steps) | initial_collection_binds,
+    )
     program = Program(goal=goal or draft.goal, statements=_to_stmts(draft.steps, _ctx=ctx))
     return assign_statement_ids(program)
 

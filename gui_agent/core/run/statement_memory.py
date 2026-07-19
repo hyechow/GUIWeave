@@ -124,8 +124,6 @@ def _contract_lines(contract: StatementContract) -> list[str]:
         lines.append(f"本次调用 inputs：{payload[:4000]}")
     if contract.persistence:
         lines.append(f"persistence：{contract.persistence}")
-    if contract.returns:
-        lines.append(f"returns：{', '.join(contract.returns)}")
     if contract.required_values:
         rendered = ", ".join(
             f"{field}={','.join(target_value_options(value))}"
@@ -140,10 +138,6 @@ def _contract_requirements(contract: StatementContract) -> list[str]:
     if contract.persistence == "explicit_commit":
         requirements.append(
             "合同要求 explicit_commit 持久化边界；是否已越过只由 Journal receipt 证明。"
-        )
-    if contract.returns:
-        requirements.append(
-            f"合同声明返回字段：{', '.join(contract.returns)}。"
         )
     return requirements
 

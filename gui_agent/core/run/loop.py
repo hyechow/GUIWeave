@@ -16,9 +16,7 @@ from dotenv import load_dotenv
 load_dotenv()
 
 from llm.structured import get_llm_call_count, get_llm_token_usage
-from gui_agent.core.run.content import ReadState
 from gui_agent.core.runtime.factory import build_platform
-from gui_agent.core.llm.reader import ContentReader
 from gui_agent.core.run.context import (
     load_context as _load_context,
     save_context as _save_context,
@@ -41,16 +39,12 @@ from gui_agent.core.run.flow import (
 )
 from gui_agent.core.run.statements import drain_immediate_statements
 from gui_agent.core.orchestrator.program import Acquire, Interact, Program
-from gui_agent.core.orchestrator.recovery import (
-    MAX_EMPTY_RETURN_RECOVERIES,
-    MAX_KICKBACK_REPLANS,
-)
+from gui_agent.core.orchestrator.recovery import MAX_KICKBACK_REPLANS
 from gui_agent.core.run.program_runtime import ProgramRuntime
 from gui_agent.core.run.recovery_router import RecoveryRouter
 from gui_agent.core.run.statements.outcome import StatementOutcome
 from gui_agent.core.run.interactive import (
     contract_for_interact,
-    extract_interact_outputs,
     start_statement,
     statement_id,
     statement_info,
@@ -223,15 +217,12 @@ def run_agent_loop(
         hud.set_goal(context.goal)
 
     action_executor = ActionExecutor()
-    original_goal = context.goal
     loading_streak = 0
 
     # The platform bundle is the single seam through which the agent loop obtains
     # the session, executor and perception — no adapter
     # class is referenced directly here.
     bundle = build_platform(backend=backend)
-    reader = ContentReader(prepare_vision_prompt_png=bundle.prepare_vision_prompt_png)
-    read_state = ReadState(context=context, reader=reader)
     # Record the platform on the context so the log and the HTML report can label
     # the run (iphone vs browser). Set here so both the runner and chat (which both
     # call run_agent_loop) persist it.
@@ -348,16 +339,6 @@ def run_agent_loop(
                 context, rt.interpreter, f"{reason}（任务未完成）", current=rt.current,
             ))
 
-        def _read_completed_outputs(invocation, observation) -> dict:
-            """Read terminal-frame scalar/record outputs for one Interact."""
-            return extract_interact_outputs(
-                invocation,
-                observation,
-                check_knowledge=getattr(supervisor, "_check_knowledge", "") or "",
-                prepare_vision_prompt_png=bundle.prepare_vision_prompt_png,
-                say=_say,
-            )
-
         def _drain_immediate(
             observation_for_statements=None,
             observation_url: str | None = None,
@@ -398,7 +379,6 @@ def run_agent_loop(
                     rt.index,
                     instance_id=iid,
                 )
-                rt.mark_notes(len(context.journal.content_notes))
             _immediate_failure = result.failure_evidence
             _immediate_kickback = result.replan_directive
             if result.observation is not None:
@@ -415,7 +395,6 @@ def run_agent_loop(
             """Terminal interactive statement → ProgramRuntime.send → task result."""
             return finish_terminal_step(
                 outcome=outcome,
-                read_state=read_state,
                 turn_no=turn_no,
                 program_runtime=rt,
                 context=context,
@@ -424,12 +403,8 @@ def run_agent_loop(
                 end_statement=supervisor.end_statement,
             )
 
-        def _outcome_from_step(sv_step, *, outputs=None):
-            outcome = sv_step.outcome
-            if outcome is None:
-                return None
-            updates: dict = {"outputs": outputs} if outputs is not None else {}
-            return outcome.model_copy(update=updates) if updates else outcome
+        def _outcome_from_step(sv_step):
+            return sv_step.outcome
 
         def _record_statement_outcome(sv_step, outcome) -> None:
             """Persist one terminal fact before Program advance/runtime teardown.
@@ -520,6 +495,11 @@ def run_agent_loop(
             _experience, _remaining = summarize_progress(
                 rt.program, rt.interpreter.run_log, failed_run,
             )
+            _available_bindings = {
+                name: outputs
+                for name, outputs in rt.interpreter.binding_contracts.items()
+                if name in rt.interpreter.env
+            }
             _prev_log_len = len(rt.interpreter.run_log)
             if _experience:
                 _say(
@@ -532,6 +512,7 @@ def run_agent_loop(
                     observation=observation,
                     prior_experience=_experience,
                     remaining_plan=_remaining,
+                    available_bindings=_available_bindings,
                 )  # type: ignore[operator]
             except Exception as _exc:  # noqa: BLE001
                 _say(f"[Kickback] 重规划失败（{_exc}），按原结果收尾")
@@ -669,7 +650,6 @@ def run_agent_loop(
             _orch_reply: "str | None" = None    # set if the program ended during a hand-off
             _did_loading = False
             _did_kickback_replan = False
-            _did_return_recovery = False
             # Each completed step writes its own timing/token diagnostics into the
             # OutcomeEvent before the next same-frame step clears supervisor state.
             while True:
@@ -699,76 +679,7 @@ def run_agent_loop(
                 # Statement completed → hand off to the next statement, same frame.
                 assert rt.current is not None
                 _done_name = rt.current.goal
-                _outputs = _read_completed_outputs(rt.current, observation)
-                _missing = [
-                    name
-                    for name, spec in rt.current.statement.returns.items()
-                    if spec.required and _outputs.get(name) in (None, "", [], {})
-                ]
-                _recovery_decision = recovery_router.route_statement(
-                    _step_outcome,
-                    return_violation=bool(_missing),
-                    can_redecompose=callable(redecompose),
-                )
-                if _recovery_decision.action == "tighten_return":
-                    _attempt = rt.next_return_attempt()
-                    _cv_site = rt.current.id
-                    if _attempt is not None:
-                        rt.record_recovery(
-                            "contract_violation", "tighten_return", _cv_site,
-                            detail=f"missing outputs: {_missing}",
-                            outcome=f"tighten {_attempt}/{MAX_EMPTY_RETURN_RECOVERIES}",
-                        )
-                        contract = contract_for_interact(rt.current, rt.index)
-                        recovery = (
-                            f"\n返回字段恢复尝试 {_attempt}：仅当 {_missing} 都可从当前界面"
-                            "明确读取时才提议完成；否则继续在本 statement 内定位。"
-                        )
-                        supervisor.reset_for_return_retry(contract.model_copy(update={
-                            "success": contract.success + recovery,
-                        }))
-                        _say(
-                            "  [Orchestrator] 返回值合同未满足，继续定位"
-                            f"（{_attempt}/{MAX_EMPTY_RETURN_RECOVERIES}）："
-                            + "、".join(_missing)
-                        )
-                        _did_return_recovery = True
-                    else:
-                        rt.record_recovery(
-                            "contract_violation", "tighten_return", _cv_site,
-                            detail=f"missing outputs: {_missing}",
-                            outcome="exhausted_honest_fail",
-                        )
-                        _say(
-                            "  [Orchestrator] 返回值合同持续未满足，停止推进："
-                            + "、".join(_missing)
-                        )
-                        _outcome = StatementOutcome.exhausted(
-                            "返回值合同未满足：" + "、".join(_missing),
-                            outputs=_outputs,
-                        )
-                        _record_statement_outcome(sv_step, _outcome)
-                        try:
-                            rt.send_outcome(_outcome)
-                        finally:
-                            supervisor.end_statement(_outcome)
-                        if rt.finished:
-                            _orch_reply = rt.reply or ""
-                            break
-                        # ALWAYS begin the next statement (was skipped when nxt was not None,
-                        # leaving no live runtime → next step() raised). Mark return-recovery so
-                        # the outer loop continues onto the newly-begun statement next turn.
-                        _drain_immediate(
-                            observation_for_statements=observation,
-                            observation_url=observation_url_for_turn,
-                            allow_navigation=not _budget_reconcile,
-                        )
-                        _did_return_recovery = True
-                    break
-                _outcome = _outcome_from_step(
-                    sv_step,
-                    outputs=_outputs,
-                )
+                _outcome = _outcome_from_step(sv_step)
                 assert _outcome is not None and _outcome.is_completed
                 _record_statement_outcome(sv_step, _outcome)
                 try:
@@ -831,7 +742,7 @@ def run_agent_loop(
                     outcome=_budget_outcome,
                 )
 
-            if _did_kickback_replan or _did_return_recovery:
+            if _did_kickback_replan:
                 continue
 
             # 页面未稳定（白屏/加载中）：等待并重新观察，本帧不写入 context.journal.turns、不消耗
@@ -921,40 +832,6 @@ def run_agent_loop(
             # verdict. Persist it as an OutcomeEvent, never as an action-less PolicyTurn.
             _post_grounding_outcome = _outcome_from_step(sv_step)
             if _post_grounding_outcome is not None:
-                if _post_grounding_outcome.is_completed:
-                    assert rt.current is not None
-                    _outputs = _read_completed_outputs(rt.current, observation)
-                    _missing = [
-                        name
-                        for name, spec in rt.current.statement.returns.items()
-                        if spec.required and _outputs.get(name) in (None, "", [], {})
-                    ]
-                    if _missing:
-                        _attempt = rt.next_return_attempt()
-                        if _attempt is not None:
-                            contract = contract_for_interact(rt.current, rt.index)
-                            recovery = (
-                                f"\n返回字段恢复尝试 {_attempt}：仅当 {_missing} 都可从当前界面"
-                                "明确读取时才提议完成。"
-                            )
-                            supervisor.reset_for_return_retry(contract.model_copy(update={
-                                "success": contract.success + recovery,
-                            }))
-                            _say(
-                                "  [Orchestrator] 同帧重决策完成但返回值合同未满足，"
-                                f"继续定位（{_attempt}/{MAX_EMPTY_RETURN_RECOVERIES}）："
-                                + "、".join(_missing)
-                            )
-                            continue
-                        _post_grounding_outcome = StatementOutcome.exhausted(
-                            "返回值合同未满足：" + "、".join(_missing),
-                            outputs=_outputs,
-                        )
-                    else:
-                        _post_grounding_outcome = _outcome_from_step(
-                            sv_step,
-                            outputs=_outputs,
-                        )
                 _record_statement_outcome(sv_step, _post_grounding_outcome)
                 _post_decision = recovery_router.route_statement(
                     _post_grounding_outcome,
@@ -1006,17 +883,6 @@ def run_agent_loop(
                 say=_say,
             )
 
-            read_result = read_state.process_turn(
-                original_goal=original_goal,
-                sv_step=sv_step,
-                observation_png=observation.png_bytes,
-                bundle=bundle,
-                turn_no=turn_no,
-                say=_say,
-            )
-            read_added_content = read_result.added_content
-            read_note_hash = read_result.note_hash
-
             action_decision = action_result.action_decision
             executed = action_result.executed
 
@@ -1052,8 +918,6 @@ def run_agent_loop(
                 llm_calls_before=_record_llm_mark,
                 tokens_before=_record_token_mark,
                 turn_started_at=turn_started_at,
-                read_added_content=read_added_content,
-                read_note_hash=read_note_hash,
                 save_context=_save_ctx,
                 silent=silent,
                 on_turn=on_turn,

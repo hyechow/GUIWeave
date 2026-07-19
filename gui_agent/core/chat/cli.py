@@ -608,8 +608,6 @@ def main() -> None:
                 # LLM prompt construction is an external serialization boundary; the runtime
                 # and chat control flow retain AgentResult up to this point.
                 user_msg, result.model_dump(mode="json"), session=session,
-                content_notes=result.content_notes,
-                collection_context=result.collection_context,
             )
             reply_secs = time.time() - t1
             reply_state["done"] = True

@@ -196,6 +196,15 @@ def _check(case: Case, program: Program) -> list[str]:
         if not has_finish_number:
             errors.append("expected Finish to cite a number field from Data")
     if case.label == "rank-customer":
+        completed_filter = any(
+            any("complete" in str(value).casefold() for value in node.required_values.values())
+            for node in nodes
+            if isinstance(node, Interact)
+        )
+        if not completed_filter:
+            errors.append(
+                "user-specified completed status must be pushed into the UI scope before Acquire"
+            )
         data_nodes = [node for node in nodes if isinstance(node, Data) and node.mode == "derive"]
         if not data_nodes:
             errors.append("rank/group goal expected a Data statement for ranking/aggregation")

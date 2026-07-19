@@ -13,7 +13,6 @@ RecoveryClass = Literal[
     "data_source_error",
 ]
 
-MAX_EMPTY_RETURN_RECOVERIES = 3
 MAX_KICKBACK_REPLANS = 1
 
 
@@ -35,36 +34,10 @@ class RecoveryEvent:
         }
 
 
-class ReturnRecoveryLedger:
-    """Bound missing-output retries by executor call site."""
-
-    def __init__(self, max_attempts: int = MAX_EMPTY_RETURN_RECOVERIES) -> None:
-        self.max_attempts = max_attempts
-        self._attempts: dict[tuple[int, str, tuple[str, ...]], int] = {}
-
-    @staticmethod
-    def _key(index: int, statement: object) -> tuple[int, str, tuple[str, ...]]:
-        returns = getattr(statement, "returns", {})
-        return (
-            index,
-            str(getattr(statement, "id", "") or getattr(statement, "bind", "")),
-            tuple(str(field) for field in returns),
-        )
-
-    def next_attempt(self, index: int, statement: object) -> int | None:
-        key = self._key(index, statement)
-        attempt = self._attempts.get(key, 0) + 1
-        if attempt > self.max_attempts:
-            return None
-        self._attempts[key] = attempt
-        return attempt
-
-
-class RecoveryLedger(ReturnRecoveryLedger):
+class RecoveryLedger:
     """The one Program recovery budget and event ledger."""
 
-    def __init__(self, max_attempts: int = MAX_EMPTY_RETURN_RECOVERIES) -> None:
-        super().__init__(max_attempts=max_attempts)
+    def __init__(self) -> None:
         self.events: list[RecoveryEvent] = []
 
     def record(
@@ -95,10 +68,8 @@ class RecoveryLedger(ReturnRecoveryLedger):
 
 
 __all__ = [
-    "MAX_EMPTY_RETURN_RECOVERIES",
     "MAX_KICKBACK_REPLANS",
     "RecoveryClass",
     "RecoveryEvent",
     "RecoveryLedger",
-    "ReturnRecoveryLedger",
 ]

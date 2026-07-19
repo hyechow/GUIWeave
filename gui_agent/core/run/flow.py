@@ -75,7 +75,6 @@ def evaluate_turn_progress(
 def finish_terminal_step(
     *,
     outcome: Any,
-    read_state: Any,
     turn_no: int,
     program_runtime: Any,
     context: PolicyContext,
@@ -85,7 +84,7 @@ def finish_terminal_step(
 ) -> AgentResult:
     """Send the authoritative terminal outcome into ProgramRuntime."""
     reason = outcome.summary or "statement stopped"
-    del read_state, turn_no
+    del turn_no
 
     if outcome.is_completed:
         say(f"\n目标已达成：{outcome.summary or reason}")

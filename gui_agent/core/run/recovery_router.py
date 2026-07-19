@@ -11,7 +11,6 @@ from gui_agent.core.schemas import StatementOutcome
 
 RecoveryAction = Literal[
     "advance_program",
-    "tighten_return",
     "kickback",
     "fail_or_escalate",
 ]
@@ -32,13 +31,10 @@ class RecoveryRouter:
     def route_statement(
         outcome: StatementOutcome,
         *,
-        return_violation: bool = False,
         can_redecompose: bool = False,
     ) -> RecoveryDecision:
         if outcome.phase == "infeasible" and can_redecompose:
             return RecoveryDecision("kickback", "infeasible_route")
-        if outcome.is_completed and return_violation:
-            return RecoveryDecision("tighten_return", "contract_violation")
         if outcome.is_completed:
             return RecoveryDecision("advance_program")
         return RecoveryDecision("fail_or_escalate")

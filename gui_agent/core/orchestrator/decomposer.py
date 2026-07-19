@@ -21,7 +21,7 @@ from llm.structured import invoke_structured
 
 from ._decomposer.draft import _PlanDraft, _StepDraft, _to_stmts, to_program
 from ._validator.issue import ValidationIssue
-from .program import ForEach, If, Interact, Program, Stmt
+from .program import ForEach, If, Interact, OutputSpec, Program, Stmt
 from .validator import validate_program
 
 
@@ -135,6 +135,32 @@ def _value_contract_issues(
     return issues
 
 
+def _draft_data_flow_issues(draft: _PlanDraft) -> list[ValidationIssue]:
+    """Reject data pipelines that the Data executor must own as one operation."""
+    issues: list[ValidationIssue] = []
+
+    def walk(steps: list[_StepDraft]) -> None:
+        for previous, current in zip(steps, steps[1:]):
+            if previous.op == current.op == "data":
+                issues.append(ValidationIssue(
+                    "DATA_CHAIN_NOT_FUSED",
+                    "同一直线 block 中连续 Data 之间没有新的 UI、采集或控制流事实；"
+                    "请合并为一个 Data，由它从原始输入完成筛选、分组、聚合、排序、"
+                    "排名和最终投影，并只声明最终消费者实际需要的 returns",
+                    evidence=(
+                        previous.bind or previous.goal,
+                        current.bind or current.goal,
+                    ),
+                ))
+        for step in steps:
+            walk(step.then)
+            walk(step.otherwise)
+            walk(step.body)
+
+    walk(draft.steps)
+    return issues
+
+
 def _compile(
     *,
     system_prompt: str,
@@ -143,6 +169,7 @@ def _compile(
     context_reports: list[dict] | None,
     resolution: IntentResolution | None,
     label: str,
+    initial_scope: dict[str, dict[str, OutputSpec]] | None = None,
     attempt_observer: Callable[[int, list[ValidationIssue]], None] | None = None,
 ) -> Program:
     cfg = resolve_llm_config("supervisor.decompose")
@@ -177,8 +204,21 @@ def _compile(
             trace_label=label,
         )
         previous = draft.model_dump_json(exclude_defaults=True, exclude_none=True)
-        program = to_program(draft, goal, resolution=resolution)
-        issues = [*validate_program(program), *_value_contract_issues(program, resolution)]
+        program = to_program(
+            draft,
+            goal,
+            resolution=resolution,
+            initial_collection_binds=frozenset(
+                name
+                for name, outputs in (initial_scope or {}).items()
+                if any(spec.type == "list[record]" for spec in outputs.values())
+            ),
+        )
+        issues = [
+            *_draft_data_flow_issues(draft),
+            *validate_program(program, initial_scope=initial_scope),
+            *_value_contract_issues(program, resolution),
+        ]
         if attempt_observer:
             attempt_observer(attempt, list(issues))
         if not issues:
@@ -203,6 +243,7 @@ def decompose(
     corrective_directive: str = "",
     resolution: IntentResolution | None = None,
     attempt_observer: Callable[[int, list[ValidationIssue]], None] | None = None,
+    initial_scope: dict[str, dict[str, OutputSpec]] | None = None,
 ) -> Program:
     corrective = (
         ContextBlock(
@@ -231,6 +272,7 @@ def decompose(
         context_reports=context_reports,
         resolution=resolution,
         label="orchestrator.decompose",
+        initial_scope=initial_scope,
         attempt_observer=attempt_observer,
     )
 
@@ -241,6 +283,7 @@ def redecompose(
     remaining_plan: str = "",
     prior_experience: str = "",
     corrective_directive: str = "",
+    available_bindings: dict[str, dict[str, OutputSpec]] | None = None,
     **kwargs,
 ) -> Program:
     extra = "\n\n".join(
@@ -256,6 +299,7 @@ def redecompose(
         goal,
         system_prompt=_REDECOMPOSE_SYSTEM,
         corrective_directive=extra,
+        initial_scope=available_bindings,
         **kwargs,
     )
 

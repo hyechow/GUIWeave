@@ -3,8 +3,6 @@
 from __future__ import annotations
 
 import time
-from typing import Optional
-
 from llm.structured import get_llm_token_usage
 from gui_agent.core.schemas import StatementContract
 
@@ -43,10 +41,8 @@ class _Timer:
             slot["output"] += out - self._tok0[1]
 
 
-def _ctx(statement: StatementContract, read_instruction: Optional[str], collection_scope=None) -> dict:
+def _ctx(statement: StatementContract, collection_scope=None) -> dict:
     return {
-        "read_instruction": read_instruction,
-        "allow_read": bool(read_instruction),
         "statement_id": statement.id,
         "collection_scope": collection_scope,
     }

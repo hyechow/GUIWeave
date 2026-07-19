@@ -1,6 +1,6 @@
 # LLM settings for gui_agent.
 # AGENT_MODEL 选 profile（默认 qwen35=下方基线，不覆盖）。对比测试 qwen3.6：AGENT_MODEL=qwen36，
-# 只深合并覆盖核心推理模型（见文件末 profiles），flash/reader 等共用——无需复制整个配置文件。
+# 只深合并覆盖核心推理模型（见文件末 profiles），外围模型共用——无需复制整个配置文件。
 llm:
   # 默认 qwen3.5-35b-a3b（≤128K 档便宜：输入 0.4 / 输出 3.2 元每百万 token）。
   action_policy:
@@ -27,9 +27,6 @@ llm:
       model: qwen3.5-35b-a3b
   data:
     # Data Statement runtime plan; falls back to supervisor.decompose when omitted.
-    provider: dashscope
-    model: qwen3.5-35b-a3b
-  reader:
     provider: dashscope
     model: qwen3.5-35b-a3b
   output:

@@ -30,9 +30,6 @@ def test_guard_rejection_is_not_itself_a_program_recompile_signal():
     ).action == "kickback"
 
 
-def test_completed_output_violation_retries_same_statement_before_advancing():
+def test_completed_statement_advances_without_interact_return_tightening():
     completed = StatementOutcome.completed("done")
-    assert RecoveryRouter.route_statement(
-        completed, return_violation=True
-    ).action == "tighten_return"
     assert RecoveryRouter.route_statement(completed).action == "advance_program"

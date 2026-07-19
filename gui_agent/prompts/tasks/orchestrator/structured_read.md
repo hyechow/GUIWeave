@@ -3,10 +3,10 @@ id: task.orchestrator.structured_read
 source_type: task_template
 platform: shared
 scope:
-  - reader
+  - data
 owner: gui_agent.core.orchestrator.primitives.structured_read
 eval_suites:
-version: 1
+version: 2
 ---
 你从截图读取【指定字段】的当前值，用于程序判断。这是通用读法，具体「读什么、怎么判读」以本次的【读取说明】为准。对每个字段：
 1. 先在 evidence 里写出你在界面上看到的、与该字段相关的具体信号——包括文字，也包括图标/颜色/形状/位置（例：「起点终点输入框之间右侧有一个绿色圆形对勾✓」）。

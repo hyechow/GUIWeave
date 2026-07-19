@@ -40,8 +40,6 @@ def test_record_interactive_turn_appends_saves_and_emits_callback(monkeypatch):
         llm_calls_before=3,
         tokens_before=(80, 40),
         turn_started_at=0.0,
-        read_added_content=True,
-        read_note_hash="abc",
         save_context=lambda: saves.append("saved"),
         silent=True,
         on_turn=callbacks.append,
@@ -52,8 +50,6 @@ def test_record_interactive_turn_appends_saves_and_emits_callback(monkeypatch):
     assert turn.llm_calls == 2
     assert turn.input_tokens == 20
     assert turn.output_tokens == 10
-    assert turn.read_added_content is True
-    assert turn.read_note_hash == "abc"
     assert turn.sections_loaded == ["orders"]
     assert callbacks == [{
         "no": 1,

@@ -1,6 +1,6 @@
 import json
 
-from gui_agent.core.orchestrator import Finish, Interact, OutputSpec, Program
+from gui_agent.core.orchestrator import Acquire, Finish, OutputSpec, Program
 from gui_agent.core.run.context import save_context, save_observation_snapshot
 from gui_agent.core.run.program_runtime import ProgramRuntime
 from gui_agent.core.run.replay import main, replay_log
@@ -16,11 +16,10 @@ from gui_agent.core.schemas import (
 
 def _checkpoint(tmp_path, *, with_snapshot=True):
     program = Program(statements=[
-        Interact(
+        Acquire(
             id="collect",
             bind="observed",
             goal="materialize the scoped collection",
-            success="the scoped collection is materialized",
             returns={
                 "rows": OutputSpec(type="list[record]", coverage="complete"),
             },

@@ -611,11 +611,6 @@ class SupervisorStep(BaseModel):
         default=None,
         description="预生成的动作决策（设置后 runner 跳过 Action Policy 直接执行）",
     )
-    read_instruction: Optional[str] = Field(
-        default=None,
-        description="当前屏幕需要提取的内容说明（analysis 任务时由 Checker 填写）",
-    )
-    allow_read: bool = Field(default=False, description="是否允许 runner 将读取结果写入 content_notes")
     statement_id: Optional[str] = Field(default=None, description="当前子目标 ID")
     execution_scope: str = Field(
         default="",
@@ -842,8 +837,6 @@ class PolicyTurn(BaseModel):
     llm_calls: int = 0
     input_tokens: int = Field(default=0, description="本轮 LLM 调用累计输入 tokens（与 llm_calls 同口径），用于成本核算")
     output_tokens: int = Field(default=0, description="本轮 LLM 调用累计输出 tokens（与 llm_calls 同口径），用于成本核算")
-    read_added_content: bool = False
-    read_note_hash: Optional[str] = None
     target_verify: Optional[TargetVerify] = Field(default=None, description="动作后落点校验：on_target, actual_element")
     timings: dict[str, float] = Field(default_factory=dict, description="各模块耗时(秒)，如 {transition: 1.2, action_policy: 2.3}")
     token_usage: dict[str, dict[str, int]] = Field(default_factory=dict, description="各模块 token 用量，如 {transition: {input: 2284, output: 114}}")
@@ -940,16 +933,6 @@ class ProgramRevisionEvent(BaseModel):
     timestamp: str = Field(default_factory=lambda: datetime.now().isoformat(timespec="seconds"))
 
 
-class ContentNoteEvent(BaseModel):
-    """One extracted note; note text has no writable mirror outside the journal."""
-
-    model_config = ConfigDict(frozen=True, extra="forbid")
-
-    event_type: Literal["content_note"] = "content_note"
-    note: str
-    timestamp: str = Field(default_factory=lambda: datetime.now().isoformat(timespec="seconds"))
-
-
 class RecoveryJournalEvent(BaseModel):
     """One Program-level recovery fact suitable for budget replay."""
 
@@ -971,7 +954,6 @@ JournalEvent = Annotated[
         AcquisitionReceiptEvent,
         StatementOutcomeEvent,
         ProgramRevisionEvent,
-        ContentNoteEvent,
         RecoveryJournalEvent,
     ],
     Field(discriminator="event_type"),
@@ -981,7 +963,7 @@ JournalEvent = Annotated[
 class EventJournal(BaseModel):
     """The single ordered fact stream for one Program execution.
 
-    Turns, statement outcomes, Program revisions, recovered content, and recovery mechanisms
+    Turns, statement outcomes, Program revisions, collection facts, and recovery mechanisms
     share one ordered log.
     Post-dispatch sensors may finalize delivery fields on an existing PolicyTurn only through
     ``run.action_signals``; they never create a parallel ledger or rewrite outcome events.
@@ -990,16 +972,12 @@ class EventJournal(BaseModel):
 
     model_config = ConfigDict(extra="forbid")
 
-    schema_version: Literal[3] = 3
+    schema_version: Literal[4] = 4
     events: list[JournalEvent] = Field(default_factory=list)
 
     @property
     def turns(self) -> list[PolicyTurn]:
         return [event for event in self.events if isinstance(event, PolicyTurn)]
-
-    @property
-    def content_notes(self) -> list[str]:
-        return [event.note for event in self.events if isinstance(event, ContentNoteEvent)]
 
     @property
     def collection_slices(self) -> list[CollectionSliceEvent]:
@@ -1080,11 +1058,6 @@ class EventJournal(BaseModel):
             raise ValueError(
                 f"duplicate terminal outcome for {event.statement_instance_id!r}"
             )
-        self.events.append(event)
-        return event
-
-    def append_content(self, note: str) -> ContentNoteEvent:
-        event = ContentNoteEvent(note=note)
         self.events.append(event)
         return event
 

@@ -157,11 +157,7 @@ class MobileWorldEnv:
 
 
 def _final_answer(result: AgentResult) -> str:
-    """Best-effort final answer text for answer-style tasks: prefer collected content
-    notes, then the run's output. Empty when the run produced neither."""
-    notes = result.content_notes or []
-    if notes:
-        return "\n".join(str(n) for n in notes)
+    """Return the Program's user-facing output for answer-style tasks."""
     return result.output.strip()
 
 
@@ -352,6 +348,7 @@ def main() -> int:
 
                         def _redecompose(directive: str, context_reports=None, *, observation=None,
                                          prior_experience="", remaining_plan="",
+                                         available_bindings=None,
                                          _goal=intent, _know=knowledge, _file=file_section,
                                          _site=cur_site, _res=resolution):
                             del observation
@@ -360,6 +357,7 @@ def main() -> int:
                                 current_url="", current_title="", current_site=_site,
                                 corrective_directive=directive, resolution=_res,
                                 prior_experience=prior_experience, remaining_plan=remaining_plan,
+                                available_bindings=available_bindings,
                                 context_reports=context_reports,
                             )
 

@@ -1,0 +1,80 @@
+{
+  "source": "logs/gui_agent/webarena/browser/20260719_205135",
+  "goal": "Return every customer tied at dense rank 2 by completed order count",
+  "records": [
+    {"Customer Email": "top@example.test", "Status": "Complete"},
+    {"Customer Email": "top@example.test", "Status": "Complete"},
+    {"Customer Email": "top@example.test", "Status": "Complete"},
+    {"Customer Email": "second-a@example.test", "Status": "Complete"},
+    {"Customer Email": "second-a@example.test", "Status": "Complete"},
+    {"Customer Email": "second-b@example.test", "Status": "Complete"},
+    {"Customer Email": "second-b@example.test", "Status": "Complete"},
+    {"Customer Email": "last@example.test", "Status": "Complete"}
+  ],
+  "bad_plan": {
+    "decision": "execute",
+    "operations": [
+      {
+        "kind": "transform",
+        "name": "ranked_customers",
+        "source": {"var": "records", "path": []},
+        "steps": [
+          {
+            "op": "group",
+            "by": {"email": {"path": ["Customer Email"], "type": "text"}},
+            "values": {"count": {"fn": "count"}}
+          },
+          {
+            "op": "rank",
+            "keys": [
+              {"field": {"path": ["count"], "type": "number"}, "direction": "desc"}
+            ],
+            "position": 2
+          }
+        ]
+      },
+      {
+        "kind": "emit",
+        "values": {"emails": {"var": "ranked_customers", "path": ["email"]}}
+      }
+    ]
+  },
+  "repaired_plan": {
+    "decision": "execute",
+    "operations": [
+      {
+        "kind": "transform",
+        "name": "ranked_customers",
+        "source": {"var": "records", "path": []},
+        "steps": [
+          {
+            "op": "group",
+            "by": {"email": {"path": ["Customer Email"], "type": "text"}},
+            "values": {"count": {"fn": "count"}}
+          },
+          {
+            "op": "rank",
+            "keys": [
+              {"field": {"path": ["count"], "type": "number"}, "direction": "desc"}
+            ],
+            "position": 2
+          },
+          {
+            "op": "project",
+            "fields": {"email": {"path": ["email"], "type": "text"}}
+          }
+        ]
+      },
+      {
+        "kind": "emit",
+        "values": {"emails": {"var": "ranked_customers", "path": []}}
+      }
+    ]
+  },
+  "expected": {
+    "emails": [
+      {"email": "second-a@example.test"},
+      {"email": "second-b@example.test"}
+    ]
+  }
+}

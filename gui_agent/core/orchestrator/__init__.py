@@ -21,6 +21,7 @@ from .program import (
     ValueRef,
 )
 from .runner import (
+    InputDescriptor,
     Interpreter,
     OrchestratorResult,
     ProgramRunner,
@@ -48,6 +49,7 @@ __all__ = [
     "ValueRef",
     "StatementOutcome",
     "Interpreter",
+    "InputDescriptor",
     "StatementExecutor",
     "StatementInvocation",
     "OrchestratorResult",

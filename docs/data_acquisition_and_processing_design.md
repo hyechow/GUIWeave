@@ -1,15 +1,15 @@
 # 运行时数据采集与处理设计
 
-> 状态：已落地的架构合同。完整集合采集由独立 `Acquire` 执行；`Interact` 不再承担跨窗口
-> 物化，Transition 不再接收 CollectionView。Browser 已实现结构化主路径与受限 React fallback；
-> iPhone/Android 在 NormalizedObservation materializer 落地前明确返回 infeasible。
+> 状态：已落地的架构合同。完整集合采集由独立 `Acquire` 执行；`Interact` 不再声明业务
+> outputs，当前帧读取与验收统一由 `Data` 执行。Browser、iPhone 与 Android 共用无状态的
+> `NormalizedObservation`；结构信号不可用时，Data/Acquire 以截图作为跨平台基线。
 
 ## 决策
 
 GUI 数据工作拆成三个不同权限的步骤：
 
 ```text
-Interact：圈定业务集合、让筛选生效、暴露所需字段
+Interact：圈定业务集合、让筛选生效、暴露所需字段（不返回业务数据）
     ↓
 Acquire：只在同一集合内搬运窗口并物化 list[record]
     ↓
@@ -29,8 +29,9 @@ inspect / If / Acquire 节点、固定 outputs、引用和 statement id。
 
 ### Interact
 
-Interact 只到达一个线性 UI 后置条件。它可以跨页面、dialog 或 screen，但不得输出
-`list[record]`。当前帧读取属于 Data，跨窗口集合属于 Acquire。
+Interact 只到达一个线性 UI 后置条件。它可以跨页面、dialog 或 screen，但不得声明业务
+`returns`。当前帧的 text/number/boolean/record 读取属于 Data，跨窗口 `list[record]` 物化属于
+Acquire。Interact 的终态 observation 必须原样交给紧邻的 Data；两者之间不得执行新的 UI 动作。
 
 ### Acquire（lowered Program）
 
@@ -82,6 +83,47 @@ Program 数据依赖，不是运行态字段缓存。
 
 当前帧 schema、总数或可见记录已经足够回答问题时，Compiler 直接使用 Data，不插 Acquire。
 
+### UI 谓词下推
+
+用户明确给出的状态、日期范围、关键词、类别或归属等集合条件，优先通过 Interact 使用当前 UI 的
+搜索、筛选、排序或视图能力生效；Acquire 随后只物化已经圈定的集合。Data 主要处理分组、聚合、
+排名、投影以及 UI 无法可靠表达的残余条件，不能默认采集未筛选的全量集合后重复实现 UI 筛选。
+
+Program 只保存语义条件和值，不保存真实控件或列名。若 Interact 在运行时证明当前 UI 不支持该条件，
+RecoveryRouter 才能选择显式的 `Acquire → Data filter` 降级路线；初始编排不能静默假设 UI 不支持，
+也不能清除与用户口径一致的现有筛选。
+
+### 数据读取、验收与纠正
+
+Data 是业务数据事实及数据验收依据的唯一 owner，但没有 UI 纠正权。UI 动作是否到达声明的界面
+后置条件仍由 Interact/Transition 判断；Program 决定验收不通过后的分支。
+
+```text
+Interact：执行修改并到达“已保存”的 UI 后置条件
+Data：从终态 observation 读取保存后的业务事实
+If satisfied
+  -> 继续 / Finish
+Else
+  -> Interact：纠正可确认的不满足项
+  -> Data：重新读取并验收
+```
+
+数据验收必须区分三种结果：
+
+| 结果 | 含义 | 处理 |
+| --- | --- | --- |
+| satisfied | 数据可读且满足声明条件 | Data completed，输出事实和 `satisfied=true` |
+| unsatisfied | 数据可读但不满足声明条件 | Data completed，输出事实和 `satisfied=false`；由 Program If 进入纠正 Interact |
+| unavailable | 当前来源或证据无法读取所需事实 | Data infeasible，携带缺失来源证据和 kickback；不得伪装成 false |
+
+Data 禁止为了验收而点击、导航、切 tab、展开区域、暴露列、修改筛选或写入数据。已知的纠正路径必须
+显式存在于 Program；未预见的数据源不可用由 RecoveryRouter 热重编排剩余 Program。纠正之后必须由
+新的 Data 再读，不能复用纠正前的读取结果。
+
+Compiler 必须把“Interact 后读取/验收”正规化为相邻 Data，而不是要求 Decomposer LLM 描述 DOM、
+视觉抽取或字段绑定细节。Program validator 拒绝 Interact 的业务 returns，以及 If/ForEach/Finish 对
+Interact 业务输出的直接依赖。
+
 ### 实体检索分支
 
 检索匹配模式同样属于 Program，而不是 Statement 内部 improvisation。Decomposer 用一个 compile-time
@@ -111,7 +153,8 @@ Else
 | 每个窗口实际观察到的 records/provenance | EventJournal |
 | 跨窗口只读汇总 | CollectionView reducer |
 | 是否达到可信采集终点 | Acquire Runtime 机械校验 |
-| 数据筛选、排序、去重、分组、聚合 | Data |
+| 当前帧业务数据读取、数据验收、物化集合内的残余筛选、排序、去重、分组、聚合 | Data |
+| 数据不满足后的 UI 纠正路径 | Program If / RecoveryRouter → Interact |
 | 业务分支与逐记录固定 body | If / ForEach |
 
 Transition 只处理业务 Interact 的“当前状态 + 下一步在哪里做什么”。它看不到累计采集记录、分页
@@ -182,6 +225,22 @@ Runtime 同时校验 Action Policy 的物理动作和 adapter 的绑定 affordan
 - type、open_detail、activate_row、filter、Columns、sidebar、URL navigation、tab/app switch 一律拒绝。
 
 这是动作权限校验，不是业务正则 guard。
+
+## 数据面与控制面
+
+完整 records 只存在于 CollectionView、Program env 和确定性 Data kernel。LLM 控制面只接收
+`DatasetDescriptor`：稳定变量引用、producer、record_count、字段/类型、有界样本、coverage、
+verification、filter snapshot 与 provenance。它选择 DataRef 和算子，不接收或复制完整记录。
+
+DataPlan 执行前由纯类型预检沿线推导 `scalar / record / list[record] / table`，只校验 binding 拓扑、
+transform source 与 emit 顶层基数。字段存在性仍由 Data kernel 的真实执行和最终 OutputSpec 校验负责，
+不在预检中复制一套字段类型系统。错误携带实际 shape、目标 shape 与合法引用方式，只允许交给同一个
+Data statement 做一次 bounded repair；预检不持有 phase，也不写 Journal。
+
+Data 已有显式物化 input 时，该 input 是唯一集合权威；当前页面的局部窗口不会作为并列 dataset 注入，
+也不能把上游 `complete + confirmed` 降级为 partial。Transition 不接收采集 records。热重编排同样只
+接收 completed binding manifest，不展开 `StatementOutcome.outputs`；新 Program 通过原变量名引用
+仍在 env 中的数据。
 
 ## Journal 与 replay
 
@@ -260,7 +319,7 @@ Adapter 可提供批量 acquisition，但必须：
 
 ## 冻结不变量
 
-1. Interact 不物化 `list[record]`；完整集合只由 Acquire 输出。
+1. Interact 不声明业务 `returns`；当前帧业务数据只由 Data 输出，完整集合只由 Acquire 输出。
 2. Acquire 无绑定集合时不启动 Policy 满页搜表。
 3. Policy 输出仅 `move|boundary|blocked`，越权由 Runtime 拒绝。
 4. move 只允许翻页、滚动、load more、wait。
@@ -270,6 +329,8 @@ Adapter 可提供批量 acquisition，但必须：
 8. 同失败 capability 不重试；策略切换有迟滞。
 9. structured 可用时 AcquirePolicy LLM 调用数为 0。
 10. 当前帧足够的数据任务不得被 Compiler 强行插入 Acquire。
+11. Data 验收只能读和判断；`unsatisfied` 进入 Program 分支，`unavailable` 不得伪装成 false。
+12. Interact 终态与相邻 Data 读取之间不得插入 UI 动作或换用无关 observation。
 
 ## 验收
 
@@ -283,3 +344,6 @@ Adapter 可提供批量 acquisition，但必须：
 - 两条显示文本相同但业务身份不同的记录不在采集层合并；
 - current-view count 类任务编译为 Data，不生成 Acquire；
 - 全量排名/分组类任务编译为 Interact → 可选 inspect/If → Acquire → Data。
+- Interact 保存成功但 Data 读到业务值不满足时，Program 进入纠正 Interact，纠正后由新 Data 重读；
+- 当前证据读不到验收字段时返回 unavailable/kickback，不得误判 unsatisfied；
+- Program validator 拒绝 Interact 业务 returns 及其被 If/ForEach/Finish 直接消费。

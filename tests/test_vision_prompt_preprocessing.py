@@ -75,25 +75,3 @@ def test_structured_read_uses_injected_vision_preprocessor(monkeypatch):
 
     assert captured["size"] == (150, 60)
     assert result == {"字段": ""}
-
-
-def test_content_reader_uses_injected_vision_preprocessor(monkeypatch):
-    mod = importlib.import_module("gui_agent.core.llm.reader")
-
-    captured: dict[str, tuple[int, int]] = {}
-
-    class FakeLLM:
-        def invoke(self, messages):
-            captured["size"] = _image_size_from_parts(messages[1].content)
-            return SimpleNamespace(content="ok")
-
-    monkeypatch.setattr(mod, "resolve_llm_config", lambda _key: _fake_cfg())
-    monkeypatch.setattr(mod, "ChatOpenAI", lambda **_kwargs: FakeLLM())
-
-    def prepare(_png: bytes) -> bytes:
-        return _png_size(177, 66)
-
-    reader = mod.ContentReader(prepare_vision_prompt_png=prepare)
-
-    assert reader.read(_png_size(200, 100), "goal") == "ok"
-    assert captured["size"] == (177, 66)

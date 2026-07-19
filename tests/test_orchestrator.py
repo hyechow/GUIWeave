@@ -2,6 +2,7 @@ from pydantic import ValidationError
 import pytest
 
 from gui_agent.core.orchestrator import (
+    Acquire,
     Command,
     Condition,
     Data,
@@ -12,7 +13,9 @@ from gui_agent.core.orchestrator import (
     OutputSpec,
     Program,
     ProgramRunner,
+    RunRecord,
     ValueRef,
+    summarize_progress,
 )
 from gui_agent.core.schemas import StatementOutcome
 
@@ -41,13 +44,18 @@ def test_program_runner_owns_typed_branch_and_foreach_control_flow():
                         body=[
                             Interact(
                                 id="update",
-                                bind="updated",
                                 goal="update the current record",
                                 success="the current record reflects the requested value",
                                 inputs={
                                     "record": ValueRef(var="row"),
                                     "position": ValueRef(var="position"),
                                 },
+                            ),
+                            Data(
+                                id="verify",
+                                bind="updated",
+                                goal="verify the current record reflects the requested value",
+                                inputs={"record": ValueRef(var="row")},
                                 returns={"ok": OutputSpec(type="boolean")},
                             )
                         ],
@@ -66,21 +74,23 @@ def test_program_runner_owns_typed_branch_and_foreach_control_flow():
 
     def execute(invocation):
         calls.append(invocation)
-        if invocation.executor == "data":
+        if invocation.id == "select":
             return StatementOutcome.completed(
                 "selected",
                 outputs={"rows": [{"id": "a"}, {"id": "b"}]},
             )
         assert invocation.inputs["record"] in ({"id": "a"}, {"id": "b"})
-        return StatementOutcome.completed("updated", outputs={"ok": True})
+        return StatementOutcome.completed(
+            "updated", outputs={"ok": True} if invocation.id == "verify" else {}
+        )
 
     result = ProgramRunner(execute).run(program)
 
     assert result.failed is False
     assert result.reply == "updated [True, True]"
     assert result.env["results"] == [True, True]
-    assert [call.loop_path for call in calls] == [[], [0], [1]]
-    assert [call.inputs.get("position") for call in calls[1:]] == [0, 1]
+    assert [call.loop_path for call in calls] == [[], [0], [0], [1], [1]]
+    assert [call.inputs.get("position") for call in calls if call.id == "update"] == [0, 1]
     assert {call.task_goal for call in calls} == {"update each selected record"}
 
 
@@ -145,6 +155,76 @@ def test_failed_statement_stops_before_following_statement():
     result = ProgramRunner(execute).run(program)
     assert result.failed is True
     assert calls == ["first"]
+
+
+def test_interpreter_describes_complete_acquire_input_without_copying_it():
+    program = Program(statements=[
+        Acquire(
+            id="collect",
+            bind="orders",
+            goal="collect the scoped orders",
+            returns={
+                "rows": OutputSpec(type="list[record]", coverage="complete")
+            },
+        ),
+        Data(
+            id="rank",
+            goal="rank the customers",
+            inputs={"records": ValueRef(var="orders")},
+        ),
+    ])
+    calls = []
+
+    def execute(invocation):
+        calls.append(invocation)
+        if invocation.id == "collect":
+            return StatementOutcome.completed(
+                "collected",
+                verification="confirmed",
+                outputs={"rows": [{"Email": "a@example.test"}]},
+            )
+        descriptor = invocation.input_descriptors["records"]
+        assert descriptor.source_var == "orders"
+        assert descriptor.producer == "acquire"
+        assert descriptor.type == "list[record]"
+        assert descriptor.coverage == "complete"
+        assert descriptor.verification == "confirmed"
+        return StatementOutcome.completed("ranked")
+
+    assert ProgramRunner(execute).run(program).failed is False
+    assert len(calls) == 2
+
+
+def test_recompile_progress_summarizes_large_outputs_as_binding_manifest():
+    rows = [
+        {"Email": f"customer-{index}@example.test", "Status": "Complete"}
+        for index in range(308)
+    ]
+    program = Program(statements=[Acquire(
+        id="collect",
+        bind="orders",
+        goal="collect all scoped orders",
+        returns={"rows": OutputSpec(type="list[record]", coverage="complete")},
+    )])
+    run_log = [RunRecord(
+        node_id="collect",
+        executor="acquire",
+        name="collect all scoped orders",
+        var="orders",
+        result=StatementOutcome.completed(
+            "collected",
+            verification="confirmed",
+            outputs={"rows": rows},
+        ),
+    )]
+
+    experience, _remaining = summarize_progress(program, run_log)
+
+    assert "bind=orders" in experience
+    assert "count=308" in experience
+    assert "coverage=complete" in experience
+    assert "customer-307@example.test" not in experience
+    assert len(experience) < 1000
 
 
 def test_direct_cutover_rejects_old_dsl_and_function_shapes():

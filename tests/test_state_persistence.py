@@ -8,7 +8,6 @@ from pathlib import Path
 import pytest
 from pydantic import ValidationError
 
-from gui_agent.core.run.content import ReadState, store_chunk_note
 from gui_agent.core.run.result import make_result
 from gui_agent.core.run.turns import make_immediate_statement_turn
 from gui_agent.core.schemas import (
@@ -89,35 +88,6 @@ def test_immediate_outcome_event_strips_raw_observation_bytes_before_persist():
     context.model_dump(mode="json")  # the original crash site; must not raise
 
 
-def test_content_notes_and_dedupe_are_rebuilt_only_from_journal_events():
-    context = _context()
-    step = SupervisorStep(summary='read', statement_id='s1')
-    seen_rows: set[str] = set()
-    assert store_chunk_note(
-        "row one\nrow two",
-        context,
-        seen_rows,
-        turn_no=1,
-        sv_step=step,
-    )
-    raw = context.model_dump(mode="json")
-    assert "content_notes" not in raw
-    assert raw["journal"]["events"][0]["event_type"] == "content_note"
-
-    restored = PolicyContext.model_validate(raw)
-    rebuilt = ReadState._load_seen_rows(restored)
-    assert store_chunk_note(
-        "row one\nrow three",
-        restored,
-        rebuilt,
-        turn_no=2,
-        sv_step=step,
-    )
-    assert len(restored.journal.content_notes) == 2
-    assert "row one" not in restored.journal.content_notes[-1]
-    assert "row three" in restored.journal.content_notes[-1]
-
-
 def test_outer_result_exposes_phase_and_verification_only():
     context = _context()
     result = make_result(
@@ -158,7 +128,7 @@ def test_write_final_program_outcome_patches_outcome_block(tmp_path: Path):
             "goal": "g",
             "supervisor_policy_name": "m",
             "action_policy_name": "a",
-            "journal": {"schema_version": 3, "events": []},
+            "journal": {"schema_version": 4, "events": []},
         }),
         encoding="utf-8",
     )

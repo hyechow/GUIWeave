@@ -7,7 +7,7 @@ scope:
 owner: gui_agent.adapters.browser.webarena
 eval_suites:
 rendered: true
-version: 1
+version: 2
 ---
 Task intent (includes the required output format):
 {intent}
@@ -18,8 +18,8 @@ Verification: {verification}
 Run summary: {summary}
 Run output: {output}
 
-Collected notes:
-{notes_text}
+Runtime data context:
+{data_context_text}
 
 Auxiliary run evidence:
 {evidence_text}

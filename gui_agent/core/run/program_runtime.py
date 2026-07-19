@@ -34,7 +34,6 @@ class ProgramRuntime:
     _steps: Generator[StatementInvocation, StatementOutcome, str]
     current: StatementInvocation | None = None
     index: int = 0
-    notes_mark: int = 0
     _recovery: RecoveryLedger = field(default_factory=RecoveryLedger)
     _kickback_replans: int = 0
     reply: str | None = None
@@ -96,9 +95,6 @@ class ProgramRuntime:
         )
         pending: tuple[StatementOutcome, str] | None = None
         active_instance = ""
-        active_notes_mark = 0
-        next_notes_mark = 0
-        note_count = 0
         seen_start = False
 
         def apply_terminal() -> None:
@@ -133,7 +129,6 @@ class ProgramRuntime:
                     drop_failed_from_log=event.terminal_disposition == "record_then_drop",
                     _record_revision=False,
                 )
-                next_notes_mark = note_count
                 continue
             if isinstance(event, RecoveryJournalEvent):
                 if event.mechanism == "kickback_budget":
@@ -158,10 +153,6 @@ class ProgramRuntime:
                     )
                 if event.statement_instance_id != active_instance:
                     active_instance = event.statement_instance_id
-                    active_notes_mark = next_notes_mark
-                continue
-            if event.event_type == "content_note":
-                note_count += 1
                 continue
             if isinstance(event, StatementOutcomeEvent):
                 match = re.match(r"i(\d+):", event.statement_instance_id or "")
@@ -171,7 +162,6 @@ class ProgramRuntime:
                     apply_terminal()
                 pending = (event.outcome, event.statement_instance_id)
                 active_instance = ""
-                next_notes_mark = note_count
                 continue
             if not isinstance(event, PolicyTurn):
                 continue
@@ -182,14 +172,12 @@ class ProgramRuntime:
                 runtime._instance_seq = max(runtime._instance_seq, int(match.group(1)))
             if event.statement_instance_id and event.statement_instance_id != active_instance:
                 active_instance = event.statement_instance_id
-                active_notes_mark = next_notes_mark
 
         apply_terminal()
         if active_instance:
             if runtime.current is None:
                 raise ValueError(f"journal active instance {active_instance!r} has no statement")
             runtime.current_instance_id = active_instance
-            runtime.notes_mark = active_notes_mark
         return runtime
 
     @property
@@ -254,19 +242,10 @@ class ProgramRuntime:
     def recovery_summary(self) -> dict[str, Any]:
         return self._recovery.summary()
 
-    def mark_notes(self, note_count: int) -> None:
-        self.notes_mark = note_count
-
     def retry_current(self, invocation: StatementInvocation) -> None:
         if self.current is None:
             raise RuntimeError("cannot retry without an active statement")
         self.current = invocation
-
-    def next_return_attempt(self) -> int | None:
-        """Consume one bounded retry for the active typed-output contract."""
-        if self.current is None:
-            raise RuntimeError("cannot recover outputs without an active statement")
-        return self._recovery.next_attempt(self.index, self.current.statement)
 
     def restore_current_contract(self, contract: StatementContract) -> None:
         """Restore an active Interact contract from a persisted live turn."""
@@ -276,7 +255,6 @@ class ProgramRuntime:
             update={
                 "goal": contract.goal,
                 "success": contract.success,
-                "returns": dict(contract.returns),
             }
         )
         self.current = self.current.model_copy(update={"statement": statement})
@@ -297,10 +275,13 @@ class ProgramRuntime:
             dict(self.interpreter.binding_verifications) if inherit_env else {}
         )
         prev_log = list(self.interpreter.run_log) if inherit_run_log else []
+        prev_contracts = (
+            dict(self.interpreter.binding_contracts) if inherit_env else {}
+        )
         if drop_failed_from_log:
             prev_log = [record for record in prev_log if record.result.is_completed]
         self.program = program
-        self.interpreter = Interpreter(program)
+        self.interpreter = Interpreter(program, inherited_contracts=prev_contracts)
         self.interpreter.env = prev_env
         self.interpreter.binding_verifications = prev_verifications
         self.interpreter.run_log = prev_log
@@ -312,7 +293,6 @@ class ProgramRuntime:
             self.current = None
             self.reply = exc.value or ""
         self.index = 0
-        self.notes_mark = 0
         self.current_instance_id = ""
         if self._journal is not None and _record_revision:
             self._journal.append_program(

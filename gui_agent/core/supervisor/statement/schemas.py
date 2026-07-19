@@ -163,11 +163,6 @@ class _StatementTransitionResult(BaseModel):
         default="",
         description="kind=infeasible 时给 ProgramRuntime 的重规划约束；其他 kind 留空",
     )
-    read_instruction: Optional[str] = Field(
-        default=None,
-        description="collection/verification 当前帧的读取说明",
-    )
-
     @field_validator("summary", "page_identity", "kickback", mode="before")
     @classmethod
     def _coerce_str(cls, value):

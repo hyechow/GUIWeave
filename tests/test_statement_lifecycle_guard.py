@@ -29,8 +29,9 @@ def test_begin_statement_twice_is_rejected_until_end():
     assert policy._statement_rt.instance_id == "i2:s2"
 
 
-def test_return_retry_reuses_the_same_statement_instance():
+def test_statement_retry_requires_end_and_new_instance():
     policy = StatementSupervisorPolicy()
     policy.begin_statement(_contract(), instance_id="i1:s1")
-    policy.reset_for_return_retry(_contract(goal="continue reading output"))
-    assert policy._statement_rt.instance_id == "i1:s1"
+    policy.end_statement()
+    policy.begin_statement(_contract(goal="retry the UI postcondition"), instance_id="i2:s1")
+    assert policy._statement_rt.instance_id == "i2:s1"

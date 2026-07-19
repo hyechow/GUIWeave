@@ -60,7 +60,6 @@ class AgentResult(BaseModel):
     turns_count: int = 0
     turns_detail: list[AgentTurnDetail] = Field(default_factory=list)
     task_type: str | None = None
-    content_notes: list[str] | None = None
     collection_context: str | None = None
     collection_scope: dict[str, Any] | None = None
     orchestrator: dict[str, Any] | None = None
@@ -172,7 +171,6 @@ def make_result(
         turns_count=len(context.journal.turns),
         turns_detail=turns_detail,
         task_type=context.task_type,
-        content_notes=context.journal.content_notes or None,
         collection_context=collection_context,
         collection_scope=(
             context.collection_scope.model_dump(exclude_none=True)

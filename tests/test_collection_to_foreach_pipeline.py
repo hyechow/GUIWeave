@@ -61,9 +61,14 @@ def _program() -> Program:
                         body=[
                             Interact(
                                 id="apply",
-                                bind="updated",
                                 goal="apply the fixed operation to the current record",
                                 success="the current record has been updated",
+                                inputs={"record": ValueRef(var="record")},
+                            ),
+                            Data(
+                                id="verify",
+                                bind="updated",
+                                goal="verify the current record has been updated",
                                 inputs={"record": ValueRef(var="record")},
                                 returns={"ok": OutputSpec(type="boolean")},
                             )
@@ -98,7 +103,9 @@ def test_acquire_data_filter_if_foreach_runs_end_to_end():
             active = [row for row in rows if row.get("active") == "yes"]
             return StatementOutcome.completed("selected", outputs={"records": active})
         if invocation.id == "apply":
-            return StatementOutcome.completed("applied", outputs={"ok": True})
+            return StatementOutcome.completed("applied")
+        if invocation.id == "verify":
+            return StatementOutcome.completed("verified", outputs={"ok": True})
         raise AssertionError(f"unexpected invocation {invocation.id}")
 
     result = ProgramRunner(execute).run(_program())

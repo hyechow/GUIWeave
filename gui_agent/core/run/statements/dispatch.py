@@ -90,6 +90,7 @@ def drain_immediate_statements(
                 save_context=save_context,
                 say=say,
                 status=emit_status,
+                check_knowledge=check_knowledge,
             )
         elif isinstance(invocation.statement, Data):
             emit_status(f"Data 数据处理中：{invocation.goal}")

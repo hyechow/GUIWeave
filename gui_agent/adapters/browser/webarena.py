@@ -661,8 +661,6 @@ def _synthesize_response(
     from gui_agent.core.config import resolve_llm_config
     from llm.structured import invoke_structured
 
-    notes = result.content_notes or []
-    notes_text = "\n".join(f"- {n}" for n in notes) if notes else "(none collected)"
     evidence_text = _run_evidence_text(context_path)
     human = _WEBARENA_HUMAN.render(
         intent=intent,
@@ -671,7 +669,7 @@ def _synthesize_response(
         verification=result.verification,
         summary=result.summary,
         output=result.output,
-        notes_text=notes_text,
+        data_context_text="Data Statement outputs and evidence are included below.",
         evidence_text=evidence_text,
     )
     cfg = resolve_llm_config("output")
@@ -1239,6 +1237,7 @@ def main() -> int:
                             # supplied by the loop (summarize_progress over the interpreter's run_log).
                             def _redecompose(directive: str, context_reports=None, *, observation=None,
                                              prior_experience="", remaining_plan="",
+                                             available_bindings=None,
                                              _goal=intent, _know=knowledge, _file=file_section,
                                              _url=cur_url, _title=cur_title, _site=cur_site,
                                              _res=resolution):
@@ -1249,6 +1248,7 @@ def main() -> int:
                                     current_url=_cur_url2, current_title=_cur_title2, current_site=_site,
                                     corrective_directive=directive, resolution=_res,
                                     prior_experience=prior_experience, remaining_plan=remaining_plan,
+                                    available_bindings=available_bindings,
                                     context_reports=context_reports,
                                 )
 

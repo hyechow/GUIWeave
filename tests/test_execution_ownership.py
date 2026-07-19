@@ -1,3 +1,4 @@
+import ast
 import inspect
 from pathlib import Path
 
@@ -49,6 +50,20 @@ def test_acquire_memory_is_replay_projection_and_transition_has_no_collection_co
         assert "collection_view" not in (root / relative).read_text(encoding="utf-8")
 
 
+def test_interact_has_no_parallel_business_data_reader():
+    root = Path(__file__).resolve().parents[1]
+    assert not (root / "gui_agent/core/run/content.py").exists()
+    assert not (root / "gui_agent/core/llm/reader.py").exists()
+    for relative in (
+        "gui_agent/core/run/loop.py",
+        "gui_agent/core/supervisor/statement/policy.py",
+        "gui_agent/core/supervisor/statement/schemas.py",
+    ):
+        source = (root / relative).read_text(encoding="utf-8")
+        assert "read_instruction" not in source
+        assert "content_notes" not in source
+
+
 def test_statement_outcome_is_terminal_only():
     assert "running" not in StatementOutcome.model_fields["phase"].annotation.__args__
     assert hasattr(StatementOutcome, "completed")
@@ -78,3 +93,30 @@ def test_interpreter_has_no_runtime_subcompiler():
     assert "subdecompose" not in source
     assert "body_goal" not in source
     assert "expand" not in source
+
+
+def test_adapter_recompile_callbacks_preserve_runtime_bindings():
+    root = Path(__file__).resolve().parents[1]
+    for relative in (
+        "gui_agent/adapters/browser/webarena.py",
+        "gui_agent/adapters/android/mobileworld.py",
+    ):
+        tree = ast.parse((root / relative).read_text(encoding="utf-8"))
+        callbacks = [
+            node for node in ast.walk(tree)
+            if isinstance(node, (ast.FunctionDef, ast.AsyncFunctionDef))
+            and node.name == "_redecompose"
+        ]
+        assert callbacks
+        assert all(
+            "available_bindings" in {arg.arg for arg in node.args.kwonlyargs}
+            for node in callbacks
+        )
+        assert all(
+            any(
+                isinstance(child, ast.Call)
+                and any(keyword.arg == "available_bindings" for keyword in child.keywords)
+                for child in ast.walk(node)
+            )
+            for node in callbacks
+        )
