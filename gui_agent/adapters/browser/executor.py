@@ -11,6 +11,7 @@ Coordinates are normalized 0-1000 over the viewport; NO YOLO snap, NO picker.
 
 from __future__ import annotations
 
+import json
 import math
 import re
 from typing import Optional
@@ -18,32 +19,28 @@ from typing import Optional
 from gui_agent.adapters.browser.actions import BrowserAction
 from gui_agent.core.runtime.executor import VisionExecutor
 
-# Datepicker value set — directly writes el.value without firing events.
-# Avoids trigger('change') which fires Magento's AJAX filter refresh and
-# resets unsaved inputs in other date fields.
-# Primary path: parse ISO YYYY-MM-DD → Magento's mm/d/yy format (jQuery UI).
-# Fallback: jQuery datepicker('setDate') for non-ISO strings, no event trigger.
-_DATEPICKER_SET_JS = """(() => {{
+# jQuery UI datepicker capability. A non-bubbling ``change`` reaches the
+# widget's direct binding without triggering delegated form behavior.
+_JQUERY_DATEPICKER_SET_JS = r"""(() => {{
   const el = document.activeElement;
-  if (!el || !el.classList.contains('_has-datepicker')) return false;
-  const raw = '{value}';
-  // ISO YYYY-MM-DD — parse parts directly to avoid UTC/timezone shift
+  if (!el || !el.classList.contains('_has-datepicker') || !window.jQuery) return false;
+  const raw = {value};
   const iso = raw.match(/^(\d{{4}})-(\d{{2}})-(\d{{2}})$/);
+  let date;
   if (iso) {{
     const [, y, m, d] = iso;
-    // Magento/jQuery UI uses mm/d/yy (zero-padded month, bare day, 4-digit year)
-    el.value = String(parseInt(m)).padStart(2, '0') + '/' + parseInt(d) + '/' + y;
-    return true;
+    date = new Date(Number(y), Number(m) - 1, Number(d));
+  }} else {{
+    date = new Date(raw);
   }}
-  // Non-ISO: fall back to jQuery setDate without change event
-  if (!window.jQuery) return false;
+  if (isNaN(date.getTime())) return false;
   try {{
-    const dt = new Date(raw);
-    if (isNaN(dt.getTime())) return false;
-    jQuery(el).datepicker('setDate', dt);
-    // Do NOT trigger('change') — fires Magento AJAX and resets form state
-    return true;
-  }} catch(e) {{ return false; }}
+    jQuery(el).datepicker('setDate', date);
+  }} catch(e) {{
+    return false;
+  }}
+  el.dispatchEvent(new Event('change', {{bubbles: false}}));
+  return {{value: el.value, event: 'change'}};
 }})()"""
 
 def _should_accept_dom_snap(description: str, info: str, px: float, py: float, cx: float, cy: float) -> bool:
@@ -214,13 +211,10 @@ class BrowserExecutor(VisionExecutor):
             pass
 
     def _type_intercept(self, client, text: str) -> bool:
-        """Use jQuery datepicker API when the focused element is a date-picker input.
+        """Commit a focused jQuery UI datepicker through its public widget API.
 
-        Magento admin date filters use jQuery UI datepicker; the expected input format
-        is ``mm/d/yy`` (MM/DD/YYYY).  Typing ISO ``YYYY-MM-DD`` directly causes the
-        picker to reset the field to today's date.  This intercept calls
-        ``jQuery(el).datepicker('setDate', new Date('YYYY-MM-DD'))`` instead,
-        which is format-independent and triggers all picker callbacks correctly.
+        This is a narrow adapter capability, not a universal date-control path.
+        Unrecognized controls fall back to normal typing or visual interaction.
 
         Returns True (skip normal clear+type) when a date was set via the API.
         Falls back to normal typing for non-datepicker fields or when jQuery is absent.
@@ -229,9 +223,12 @@ class BrowserExecutor(VisionExecutor):
         if ev is None:
             return False
         try:
-            result = ev(_DATEPICKER_SET_JS.format(value=text.strip().replace("'", "\\'")))
-            if result is True:
-                print(f"  [datepicker] jQuery setDate({text!r}) OK")
+            result = ev(_JQUERY_DATEPICKER_SET_JS.format(value=json.dumps(text.strip())))
+            if isinstance(result, dict) and result.get("value"):
+                print(
+                    f"  [datepicker] value={result['value']!r} "
+                    "committed via local change"
+                )
                 return True
         except Exception:  # noqa: BLE001
             pass
