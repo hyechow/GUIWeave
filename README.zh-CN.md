@@ -104,6 +104,8 @@ flowchart TD
 | Adapter | 观察与设备 I/O | 目标语义 |
 
 Program checkpoint 与有序 journal 可在跨进程后重建 interpreter 与 recovery 状态；未完成 statement 内的实时 UI 状态故意不回放。
+使用 `bin/replay_run logs/<运行目录>` 可在不连接浏览器、设备、网络或 LLM 的情况下校验 checkpoint；
+追加 `--json` 输出机器可读结果。
 
 深读：[`docs/dsl_runtime_architecture.md`](docs/dsl_runtime_architecture.md)。
 
@@ -217,6 +219,7 @@ bin/mobileworld --list
 bin/mobileworld <task_name>
 bin/iphone_recon --app 微信 --depth 2
 bin/report logs/…
+bin/replay_run logs/… [--json]
 ```
 
 iPhone 截图服务 `bin/sck_server`（ScreenCaptureKit）避免每帧触发录屏指示灯。重编译：`swiftc sck/sck_stream_server.swift -o bin/sck_server`。

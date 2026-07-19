@@ -104,6 +104,8 @@ flowchart TD
 | Adapter | Observation and device I/O | Goal semantics |
 
 Program checkpoints plus the ordered journal can reconstruct interpreter and recovery state across a process boundary. Live UI state inside an unfinished statement is intentionally not replayed.
+Validate a saved checkpoint without a browser, device, network, or LLM with
+`bin/replay_run logs/<run-directory>`; add `--json` for machine-readable output.
 
 Deep dive: [`docs/dsl_runtime_architecture.md`](docs/dsl_runtime_architecture.md).
 
@@ -217,6 +219,7 @@ bin/mobileworld --list
 bin/mobileworld <task_name>
 bin/iphone_recon --app 微信 --depth 2
 bin/report logs/…
+bin/replay_run logs/… [--json]
 ```
 
 iPhone screenshot server (`bin/sck_server`, ScreenCaptureKit) avoids firing the recording indicator every frame. Rebuild: `swiftc sck/sck_stream_server.swift -o bin/sck_server`.
