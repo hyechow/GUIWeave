@@ -261,6 +261,17 @@ class Interpreter:
             if extras:
                 details.append(f"未声明输出 {extras}")
             return StatementOutcome.failed("输出合同不满足：" + "；".join(details))
+        # A complete-coverage list[record] output must be backed by confirmed evidence, not an
+        # unverified terminal guess (design: 「完整覆盖声明必须由可引用事实支持」). This reuses the
+        # existing verification grade structurally — no string-vocabulary matching.
+        complete_coverage = [
+            name for name, spec in statement.returns.items() if spec.coverage == "complete"
+        ]
+        if complete_coverage and outcome.verification != "confirmed":
+            return StatementOutcome.failed(
+                "输出合同不满足：完整覆盖声明缺少可信证据 "
+                f"{complete_coverage}（verification={outcome.verification}）"
+            )
         return outcome
 
     def _foreach(

@@ -51,6 +51,7 @@ from gui_agent.core.run.statements.outcome import StatementOutcome
 from gui_agent.core.run.interactive import (
     contract_for_interact,
     extract_interact_outputs,
+    project_interact_outputs,
     start_statement,
     statement_id,
     statement_info,
@@ -59,6 +60,7 @@ from gui_agent.core.run.turns import (
     emit_statement_fields,
     interactive_turn_count as _interactive_turn_count,
     make_statement_outcome_event,
+    record_collection_slice,
     record_interactive_turn,
     sync_turn_metadata,
 )
@@ -341,10 +343,17 @@ def run_agent_loop(
             ))
 
         def _read_completed_outputs(invocation, observation) -> dict:
-            """Extract an Interact's typed outputs from its terminal frame."""
-            return extract_interact_outputs(
+            """Project an Interact's typed outputs.
+
+            ``list[record]`` returns declared ``complete``/``best_effort`` come from the
+            Journal-projected CollectionView; the current frame was appended as a slice before
+            Transition. ``current_view`` and scalar returns still come from the terminal frame.
+            """
+            return project_interact_outputs(
                 invocation,
                 observation,
+                history=context.journal.events,
+                instance_id=getattr(rt, "current_instance_id", "") or "",
                 check_knowledge=getattr(supervisor, "_check_knowledge", "") or "",
                 prepare_vision_prompt_png=bundle.prepare_vision_prompt_png,
                 say=_say,
@@ -650,12 +659,22 @@ def run_agent_loop(
             while True:
                 _status(turn_no, f"使用 {supervisor.name} supervisor 决策中…")
                 _say("监督决策中...")
+                # Observation facts precede decisions. A statement completing on this frame
+                # therefore persists its terminal collection slice before Transition proposes
+                # completion and before outputs are materialized.
+                record_collection_slice(
+                    context=context,
+                    supervisor=supervisor,
+                    observation=observation,
+                    observation_url=observation_url_for_turn,
+                    save_context=_save_ctx,
+                )
                 if _budget_reconcile:
                     sv_step = supervisor.reconcile(
-                        observation, context.goal, context.journal.turns
+                        observation, context.goal, context.journal.events
                     )
                 else:
-                    sv_step = supervisor.step(observation, context.goal, context.journal.turns)
+                    sv_step = supervisor.step(observation, context.goal, context.journal.events)
                 _say(f"监督者: {sv_step.summary}")
                 _status(turn_no, sv_step.summary)
 
@@ -879,7 +898,7 @@ def run_agent_loop(
                     lambda rejected_step, reason: supervisor.replan_after_action_rejection(
                         observation,
                         context.goal,
-                        context.journal.turns,
+                        context.journal.events,
                         rejected_step,
                         reason,
                     )

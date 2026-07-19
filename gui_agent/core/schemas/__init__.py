@@ -52,6 +52,7 @@ ActionTargetStatus = Literal["on_target", "off_target", "unknown"]
 ActionResponseStatus = Literal["observed", "none_observed", "unobservable", "unknown"]
 PersistenceMode = Literal["immediate", "explicit_commit"]
 OutputType = Literal["text", "number", "boolean", "url", "record", "list[record]", "json"]
+Coverage = Literal["current_view", "complete", "best_effort"]
 CompletionStatus = Literal["confirmed", "accepted_unverified", "failed", "in_progress"]
 StatementPhase = Literal["completed", "failed", "exhausted", "infeasible", "interrupted"]
 Verification = Literal["confirmed", "accepted_unverified"]
@@ -68,6 +69,7 @@ class OutputSpec(BaseModel):
     type: OutputType = "text"
     required: bool = True
     description: str = ""
+    coverage: Coverage = "current_view"
 
 
 def target_value_options(value: TargetValue | object) -> tuple[str, ...]:
@@ -693,6 +695,49 @@ class TargetVerify(BaseModel):
     reason: str = Field(default="", description="一句话理由")
 
 
+CollectionBoundary = Literal["unknown", "at_end", "has_next_page", "not_at_end"]
+CollectionSource = Literal["table", "viewport", "visual"]
+
+
+class CollectionProvenance(BaseModel):
+    """Stable identity of the observed collection, excluding observation time."""
+
+    model_config = ConfigDict(frozen=True, extra="forbid")
+
+    surface_fingerprint: str = ""
+    filter_snapshot: dict[str, JsonValue] = Field(default_factory=dict)
+    schema_fingerprint: str = ""
+    route: str = ""
+    incomplete: bool = False
+
+
+class CollectionSliceEvent(BaseModel):
+    """One append-only normalized collection slice in the EventJournal.
+
+    This is an observation fact, not an observe-decide-act turn. It deliberately carries
+    neither a phase nor a next-action/completion decision.
+    """
+
+    model_config = ConfigDict(frozen=True, extra="forbid")
+
+    event_type: Literal["collection_slice"] = "collection_slice"
+    event_ref: str
+    after_turn: int = Field(default=0, ge=0)
+    timestamp: str = Field(default_factory=lambda: datetime.now().isoformat(timespec="seconds"))
+    statement_instance_id: str
+    statement_id: str
+    frame_ref: str
+    collection_key: str
+    provenance: CollectionProvenance
+    window_key: str = ""
+    content_key: str = ""
+    records: list[dict[str, JsonValue]] = Field(default_factory=list)
+    known_total: int | None = None
+    boundary: CollectionBoundary = "unknown"
+    source: CollectionSource = "table"
+    truncated: bool = False
+
+
 class PolicyTurn(BaseModel):
     """One observe-decide-act turn saved in continue mode."""
 
@@ -864,6 +909,7 @@ class RecoveryJournalEvent(BaseModel):
 JournalEvent = Annotated[
     Union[
         PolicyTurn,
+        CollectionSliceEvent,
         StatementOutcomeEvent,
         ProgramRevisionEvent,
         ContentNoteEvent,
@@ -897,6 +943,13 @@ class EventJournal(BaseModel):
         return [event.note for event in self.events if isinstance(event, ContentNoteEvent)]
 
     @property
+    def collection_slices(self) -> list[CollectionSliceEvent]:
+        return [
+            event for event in self.events
+            if isinstance(event, CollectionSliceEvent)
+        ]
+
+    @property
     def program_revisions(self) -> list[ProgramRevisionEvent]:
         return [
             event for event in self.events if isinstance(event, ProgramRevisionEvent)
@@ -914,6 +967,19 @@ class EventJournal(BaseModel):
         ]
 
     def append_turn(self, event: PolicyTurn) -> PolicyTurn:
+        self.events.append(event)
+        return event
+
+    def append_collection_slice(
+        self,
+        event: CollectionSliceEvent,
+    ) -> CollectionSliceEvent:
+        if event.after_turn != len(self.turns):
+            raise ValueError(
+                "CollectionSliceEvent.after_turn must equal the current turn count"
+            )
+        if any(existing.event_ref == event.event_ref for existing in self.collection_slices):
+            raise ValueError(f"duplicate collection event_ref {event.event_ref!r}")
         self.events.append(event)
         return event
 

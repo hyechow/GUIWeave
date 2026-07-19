@@ -2,6 +2,9 @@
 
 > Status: implemented. This document records the design decision behind the current runtime.
 
+The planned completion of cross-frame collection and deterministic data processing is specified in
+[Runtime Data Acquisition and Processing Design](data_acquisition_and_processing_design.md).
+
 ## Decision
 
 GUIWeave compiles a task into a small semantic Program and resolves UI and data details at runtime.

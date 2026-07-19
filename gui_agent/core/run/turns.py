@@ -9,18 +9,22 @@ from __future__ import annotations
 
 import json
 import time
+from hashlib import sha1
 from typing import Any, Callable
 
 from llm.structured import get_llm_call_count, get_llm_token_usage
 
 from gui_agent.core.config import resolve_llm_config
 from gui_agent.core.run.action_signals import build_action_signal
+from gui_agent.core.run.collection_view import project_collection_slice
 from gui_agent.core.run.context import (
     extract_transition,
 )
 from gui_agent.core.run.result import print_timings, print_turn_stats
 from gui_agent.core.schemas import (
     AtomicRole,
+    CollectionSliceEvent,
+    Observation,
     PolicyContext,
     PolicyTurn,
     StatementOutcome,
@@ -132,6 +136,49 @@ def make_interactive_turn(
         statement_instance_id=statement_instance_id,
         runtime_state=runtime_state,
     )
+
+
+def record_collection_slice(
+    *,
+    context: PolicyContext,
+    supervisor: Any,
+    observation: Observation,
+    observation_url: str,
+    save_context: Callable[[], None],
+) -> CollectionSliceEvent | None:
+    """Append the current collection observation before Transition sees the frame."""
+    rt = getattr(supervisor, "_statement_rt", None)
+    if rt is None:
+        return None
+    frame_ref = observation_url or (
+        "frame:" + sha1(getattr(observation, "png_bytes", b"")).hexdigest()
+    )
+    event = project_collection_slice(
+        observation,
+        rt.contract,
+        instance_id=rt.instance_id,
+        after_turn=len(context.journal.turns),
+        event_ref=f"collection:{len(context.journal.collection_slices) + 1}",
+        frame_ref=frame_ref,
+    )
+    if event is None:
+        return None
+    duplicate = next(
+        (
+            existing
+            for existing in reversed(context.journal.collection_slices)
+            if existing.statement_instance_id == event.statement_instance_id
+            and existing.frame_ref == event.frame_ref
+            and existing.collection_key == event.collection_key
+            and existing.content_key == event.content_key
+        ),
+        None,
+    )
+    if duplicate is not None:
+        return duplicate
+    context.journal.append_collection_slice(event)
+    save_context()
+    return event
 
 
 def make_statement_outcome_event(

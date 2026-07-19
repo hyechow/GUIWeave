@@ -8,12 +8,16 @@ application-specific business policy.
 from __future__ import annotations
 
 from collections.abc import Mapping
+from typing import Literal
 
 from ._validator.issue import ALL_CODES, IssueList, ValidationIssue
 from .program import Command, Data, Finish, ForEach, If, Interact, OutputSpec, Program, Stmt, ValueRef
 
 
 Scope = dict[str, Mapping[str, OutputSpec] | None]
+# Who produced a bound variable: used to keep numeric Finish results out of Interact.
+BindOrigin = Literal["interact", "data", "command", "foreach", "mixed"]
+Origins = dict[str, BindOrigin]
 
 
 def _check_ref(ref: ValueRef, scope: Scope, issues: IssueList, *, site: str) -> None:
@@ -35,13 +39,61 @@ def _check_ref(ref: ValueRef, scope: Scope, issues: IssueList, *, site: str) -> 
             )
 
 
+def _check_finish_numeric_from_data(
+    ref: ValueRef,
+    scope: Scope,
+    origins: Origins,
+    issues: IssueList,
+    *,
+    site: str,
+) -> None:
+    """Finish-consumed numbers must be produced by Data, not Interact.
+
+    Architectural invariant: GUI Interact establishes UI postconditions; numeric
+    derivation (count/sum/rank/…) belongs to Data. Task-15-class failure mode was
+    ``Interact(returns number) → Finish`` with brittle terminal scalar reads.
+    """
+    if ref.var not in scope:
+        return
+    declared = scope[ref.var]
+    if declared is None or not ref.path or not isinstance(ref.path[0], str):
+        return
+    field = ref.path[0]
+    spec = declared.get(field)
+    if spec is None or spec.type != "number":
+        return
+    origin = origins.get(ref.var)
+    if origin in {"interact", "mixed"}:
+        issues.add(
+            "FINISH_NUMERIC_FROM_DATA",
+            f"{site} 引用 number 字段「{ref.var}.{field}」，但其来源是 Interact"
+            f"（origin={origin}）。数值/计数/聚合结果必须由 Data 派生后进入 Finish；"
+            "Interact 只负责 UI 后置条件（筛选生效、页面可达、保存完成等），"
+            "不要把业务 number 挂在 Interact.returns 上直接 Finish。",
+            evidence=(site, ref.var, field, origin or ""),
+        )
+
+
+def _merge_origins(then_o: Origins, else_o: Origins, shared: set[str]) -> Origins:
+    merged: Origins = {}
+    for name in shared:
+        left = then_o.get(name)
+        right = else_o.get(name)
+        if left is None or right is None:
+            continue
+        merged[name] = left if left == right else "mixed"
+    return merged
+
+
 def _walk(
     statements: list[Stmt],
     scope: Scope,
+    origins: Origins,
     issues: IssueList,
     ids: set[str],
-) -> Scope:
+) -> tuple[Scope, Origins]:
     current = dict(scope)
+    current_origins = dict(origins)
     for statement in statements:
         if isinstance(statement, (Interact, Data, Command)):
             if not statement.id:
@@ -72,6 +124,15 @@ def _walk(
                     f"statement「{statement.goal_text}」声明 outputs 但没有 bind",
                     evidence=(statement.id,),
                 )
+            for name, spec in statement.returns.items():
+                if spec.coverage in {"complete", "best_effort"} and spec.type != "list[record]":
+                    issues.add(
+                        "COVERAGE_REQUIRES_LIST_RECORD",
+                        f"statement「{statement.goal_text}」声明 output「{name}」"
+                        f"coverage={spec.coverage}，但 type={spec.type}；"
+                        "coverage 仅可用于 type=list[record]",
+                        evidence=(statement.id, name),
+                    )
             for name, ref in statement.inputs.items():
                 _check_ref(ref, current, issues, site=f"{statement.id}.inputs.{name}")
             if isinstance(statement, Command):
@@ -117,17 +178,28 @@ def _walk(
                         evidence=(statement.bind,),
                     )
                 current[statement.bind] = statement.returns
+                if isinstance(statement, Interact):
+                    current_origins[statement.bind] = "interact"
+                elif isinstance(statement, Data):
+                    current_origins[statement.bind] = "data"
+                else:
+                    current_origins[statement.bind] = "command"
             continue
         if isinstance(statement, If):
             _check_ref(statement.cond.ref, current, issues, site="if.cond")
-            then_scope = _walk(statement.then, current, issues, ids)
-            else_scope = _walk(statement.otherwise, current, issues, ids)
+            then_scope, then_origins = _walk(
+                statement.then, current, current_origins, issues, ids
+            )
+            else_scope, else_origins = _walk(
+                statement.otherwise, current, current_origins, issues, ids
+            )
             shared = set(then_scope) & set(else_scope)
             current = {
                 name: then_scope[name]
                 for name in shared
                 if then_scope[name] == else_scope[name]
             }
+            current_origins = _merge_origins(then_origins, else_origins, set(current))
             continue
         if isinstance(statement, ForEach):
             if statement.items.var not in current:
@@ -153,10 +225,15 @@ def _walk(
                         evidence=(statement.items.var, *statement.items.path),
                     )
             body_scope = dict(current)
+            body_origins = dict(current_origins)
             body_scope[statement.item] = None
+            body_origins[statement.item] = "foreach"
             if statement.index:
                 body_scope[statement.index] = None
-            body_scope = _walk(statement.body, body_scope, issues, ids)
+                body_origins[statement.index] = "foreach"
+            body_scope, body_origins = _walk(
+                statement.body, body_scope, body_origins, issues, ids
+            )
             if statement.collect is not None:
                 if statement.collect.var not in body_scope:
                     issues.add(
@@ -174,11 +251,16 @@ def _walk(
                         evidence=(statement.into,),
                     )
                 current[statement.into] = None
+                current_origins[statement.into] = "foreach"
             continue
         if isinstance(statement, Finish):
             for name, ref in statement.outputs.items():
-                _check_ref(ref, current, issues, site=f"finish.outputs.{name}")
-    return current
+                site = f"finish.outputs.{name}"
+                _check_ref(ref, current, issues, site=site)
+                _check_finish_numeric_from_data(
+                    ref, current, current_origins, issues, site=site
+                )
+    return current, current_origins
 
 
 def validate_program(program: Program, resolution=None) -> IssueList:
@@ -187,7 +269,7 @@ def validate_program(program: Program, resolution=None) -> IssueList:
     if not program.statements:
         issues.add("EMPTY_PROGRAM", "Program 不能为空")
         return issues
-    _walk(program.statements, {}, issues, set())
+    _walk(program.statements, {}, {}, issues, set())
     return issues
 
 

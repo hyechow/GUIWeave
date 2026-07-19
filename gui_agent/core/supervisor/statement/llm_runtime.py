@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+from gui_agent.core.run.collection_view import CollectionView
 from gui_agent.core.run.statement_memory import StatementMemoryView, build_memory_view
 from gui_agent.core.schemas import StatementContract, Observation, PolicyTurn
 
@@ -35,6 +36,7 @@ class StatementLLMRuntimeMixin:
         *,
         memory_view: StatementMemoryView | None = None,
         observation_view: StatementObservationView | None = None,
+        collection_view: CollectionView | None = None,
     ) -> _StatementTransitionResult:
         """Unified LLM decision (Agentic pivot primary path)."""
         memory = memory_view if memory_view is not None else self._memory_view_for(
@@ -68,6 +70,7 @@ class StatementLLMRuntimeMixin:
             elements_knowledge=elements,
             initial_filters=self._initial_filters,
             observation_view=observation_view,
+            collection_view=collection_view,
         )
 
 

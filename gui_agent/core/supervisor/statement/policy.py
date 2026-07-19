@@ -5,11 +5,13 @@ from typing import Literal, Optional
 
 from llm.structured import StructuredOutputError
 
+from gui_agent.core.run.collection_view import build_collection_view, materialize_collection
 from gui_agent.core.run.statement_memory import available_event_refs, build_memory_view
 from gui_agent.core.run.statement_runtime import StatementRuntimeState
 from gui_agent.core.run.statement_transition import validate_evidence_references
 from gui_agent.core.schemas import (
     ActionIntent,
+    JournalEvent,
     JsonValue,
     Observation,
     PolicyTurn,
@@ -210,7 +212,7 @@ class StatementSupervisorPolicy(
         self,
         observation: Observation,
         goal: str,
-        history: list[PolicyTurn],
+        history: list[JournalEvent],
     ) -> SupervisorStep:
         del goal
         self._timings.clear()
@@ -234,7 +236,7 @@ class StatementSupervisorPolicy(
         self,
         observation: Observation,
         goal: str,
-        history: list[PolicyTurn],
+        history: list[JournalEvent],
     ) -> SupervisorStep:
         self._terminal_only = True
         try:
@@ -246,7 +248,7 @@ class StatementSupervisorPolicy(
         self,
         observation: Observation,
         goal: str,
-        history: list[PolicyTurn],
+        history: list[JournalEvent],
         rejected_step: SupervisorStep,
         rejection: str,
     ) -> SupervisorStep:
@@ -400,10 +402,29 @@ class StatementSupervisorPolicy(
         )
 
     @staticmethod
-    def _verification(decision: _StatementTransitionResult, memory) -> str:
+    def _verification(
+        decision: _StatementTransitionResult,
+        memory,
+        collection_view=None,
+    ) -> str:
         if any(item.source == "current_observation" for item in decision.evidence):
             return "confirmed"
         cited = {item.event_ref for item in decision.evidence}
+        collection_refs = {ref for ref in cited if ref.startswith("collection:")}
+        if collection_refs and collection_view is not None:
+            cited_segments = [
+                segment
+                for segment in collection_view.observed_segments
+                if segment.event_ref in collection_refs
+            ]
+            if (
+                cited_segments
+                and all(segment.source == "table" for segment in cited_segments)
+                and not collection_view.provenance_incomplete
+                and not collection_view.truncated
+                and not collection_view.total_drift
+            ):
+                return "confirmed"
         facts = [fact for fact in memory.durable_facts if fact.event_ref in cited]
         if any(
             fact.kind != "action_receipt"
@@ -428,7 +449,7 @@ class StatementSupervisorPolicy(
         self,
         statement: StatementContract,
         observation: Observation,
-        history: list[PolicyTurn],
+        history: list[JournalEvent],
         *,
         validation_retries: int = 1,
     ) -> SupervisorStep:
@@ -441,8 +462,9 @@ class StatementSupervisorPolicy(
 
         execution_scope = self._scope_for(statement, observation)
         self._rt.execution_scope = execution_scope
+        turn_history = [event for event in history if isinstance(event, PolicyTurn)]
         scoped_history = history_for_scope(
-            history,
+            turn_history,
             statement,
             observation,
             instance_id=self._active_instance_id,
@@ -450,10 +472,19 @@ class StatementSupervisorPolicy(
         memory = build_memory_view(
             instance_id=self._active_instance_id,
             contract=statement,
-            history=history,
+            history=turn_history,
             observation=observation,
         )
         view = build_observation_view(statement, observation, scoped_history)
+        collection_view = (
+            build_collection_view(
+                instance_id=self._active_instance_id,
+                contract=statement,
+                history=history,
+            )
+            if any(spec.type == "list[record]" for spec in statement.returns.values())
+            else None
+        )
         with _Timer(
             self._timings,
             self._timings_order,
@@ -467,6 +498,7 @@ class StatementSupervisorPolicy(
                     scoped_history,
                     memory_view=memory,
                     observation_view=view,
+                    collection_view=collection_view,
                 )
             except StructuredOutputError as exc:
                 message = f"Statement Transition output invalid: {exc}"
@@ -486,9 +518,15 @@ class StatementSupervisorPolicy(
             f"kind={decision.kind}: {decision.reason[:120]}"
         )
         if decision.kind in {"complete", "infeasible"}:
+            citable_refs = set(available_event_refs(memory))
+            if collection_view is not None:
+                citable_refs.update(
+                    evidence.event_ref
+                    for evidence in collection_view.boundary_evidence
+                )
             refs = validate_evidence_references(
                 decision.evidence,
-                available_refs=available_event_refs(memory),
+                available_refs=citable_refs,
             )
             if not refs.allowed:
                 return self._transition_failure(
@@ -499,9 +537,59 @@ class StatementSupervisorPolicy(
             executed = any(
                 turn.executed
                 and turn.statement_instance_id == self._active_instance_id
-                for turn in history
+                for turn in turn_history
             )
-            verification = self._verification(decision, memory)
+            complete_coverage = any(
+                spec.coverage == "complete" for spec in statement.returns.values()
+            )
+            # Mechanical coverage gate (design: Runtime 校验 complete 必须有可引用覆盖证据;
+            # 「已有明确『仍存在下一页』的证据时，不允许声称完整」). Structural — not a prompt
+            # plea. incomplete / conflicting / unknown all reject the complete proposal and
+            # re-decide on the same frame; only coverage_status=complete may proceed, and even
+            # then confirmation still depends on Transition citing real evidence.
+            coverage_state = "unknown"
+            if complete_coverage:
+                _records, coverage_state = materialize_collection(
+                    instance_id=self._active_instance_id,
+                    contract=statement,
+                    history=history,
+                )
+                if coverage_state != "complete":
+                    reason = (
+                        f"上一个 complete 提议被机械否决：集合覆盖状态={coverage_state}"
+                        "。完整采集要求 known_total 已满足或当前帧到达终点且无下一页；"
+                        "不得在仍有下一页、证据冲突或缺少边界证据时声称完整。继续滚动/翻页"
+                        "以暴露终点，或改为不提议 complete。"
+                    )
+                    if validation_retries > 0:
+                        self._static_constraints.append(reason)
+                        try:
+                            return self._run_single_turn(
+                                statement,
+                                observation,
+                                history,
+                                validation_retries=validation_retries - 1,
+                            )
+                        finally:
+                            self._static_constraints.pop()
+                    return self._transition_failure(
+                        statement,
+                        decision,
+                        f"complete 提议持续违反覆盖合同：coverage_status={coverage_state}",
+                        execution_scope=execution_scope,
+                    )
+            has_best_effort = any(
+                spec.coverage == "best_effort" for spec in statement.returns.values()
+            )
+            # best_effort coverage deliberately yields an unverified terminal: the result may be
+            # budget-bounded and must not be reported as confirmed (design: 「verification 必须
+            # 反映未完全确认」). complete coverage that passed the gate above may still be
+            # confirmed only when Transition cites real evidence via _verification.
+            verification = (
+                "accepted_unverified"
+                if has_best_effort
+                else self._verification(decision, memory, collection_view)
+            )
             summary = f"子目标「{statement.goal}」已完成。"
             return SupervisorStep(
                 outcome=StatementOutcome.completed(

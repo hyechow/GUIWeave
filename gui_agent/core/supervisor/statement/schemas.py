@@ -38,13 +38,19 @@ class _TransitionEvidence(BaseModel):
     claim: str = Field(min_length=1, description="该证据支持的可核验事实")
     event_ref: str = Field(
         default="",
-        description="source=journal 时必须是 StatementMemory 中存在的 turn:N",
+        description=(
+            "source=journal 时必须是决策包中存在的 turn:N 或 collection:N"
+        ),
     )
 
     @model_validator(mode="after")
     def _validate_reference(self) -> "_TransitionEvidence":
-        if self.source == "journal" and not self.event_ref.startswith("turn:"):
-            raise ValueError("journal transition evidence requires turn:N event_ref")
+        if self.source == "journal" and not self.event_ref.startswith(
+            ("turn:", "collection:")
+        ):
+            raise ValueError(
+                "journal transition evidence requires turn:N or collection:N event_ref"
+            )
         if self.source == "current_observation" and self.event_ref:
             raise ValueError("current observation evidence cannot carry event_ref")
         return self

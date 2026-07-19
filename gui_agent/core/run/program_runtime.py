@@ -15,6 +15,7 @@ from gui_agent.core.orchestrator.program import Interact, Program
 from gui_agent.core.orchestrator.recovery import MAX_KICKBACK_REPLANS, RecoveryLedger
 from gui_agent.core.orchestrator.runner import Interpreter, StatementInvocation
 from gui_agent.core.schemas import (
+    CollectionSliceEvent,
     EventJournal,
     PolicyTurn,
     ProgramRevisionEvent,
@@ -145,6 +146,18 @@ class ProgramRuntime:
                     detail=event.detail,
                     outcome=event.outcome,
                 )
+                continue
+            if isinstance(event, CollectionSliceEvent):
+                if pending is not None:
+                    apply_terminal()
+                match = re.match(r"i(\d+):", event.statement_instance_id or "")
+                if match:
+                    runtime._instance_seq = max(
+                        runtime._instance_seq, int(match.group(1))
+                    )
+                if event.statement_instance_id != active_instance:
+                    active_instance = event.statement_instance_id
+                    active_notes_mark = next_notes_mark
                 continue
             if event.event_type == "content_note":
                 note_count += 1

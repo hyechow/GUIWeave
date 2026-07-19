@@ -3,6 +3,9 @@
 本文描述当前生产实现。GUIWeave 只有一种执行入口：Compiler 生成语义 Program，
 Interpreter 解释显式控制流，三个 Statement executor 在运行时完成 UI、数据与平台能力。
 
+滚动、分页采集与数值/集合处理的能力边界及当前落地缺口，见
+[运行时数据采集与处理设计](data_acquisition_and_processing_design.md)。
+
 ## 第一性原理
 
 GUI 任务不是单纯的“看图并点击”。一个完整任务同时包含：

@@ -31,6 +31,35 @@ Runtime 不会替你选择路线、禁止重复动作或修补决定。错误的
 不得把未来动作、模型猜测或知识描述写成 `established_facts`。
 不得因为 URL、控件清单、表格或 affordances 缺失，就判定视觉中可见的状态不存在。
 
+## 跨页采集：`collection` 块（仅当合同声明 `list[record]` 返回时出现）
+
+当 TransitionFrame 含 `collection` 时，它是 EventJournal 跨帧投影出的**事实**，不是预先算好的
+完成判定或路线。它告诉你「已经累计采集到什么、覆盖证据如何」，由你决定继续采集、采集完毕还是
+不可行。字段：`record_count`、`records_preview`（最多 30 条已去重记录）、`known_total`（权威总数
+或空）、`coverage_status`、`boundary_evidence`（可按 `collection:N` 引证的边界事实）、
+`available_movements`（**当前帧**可见的滚动/分页能力，仅描述、不是命令）、`last_move_result`。
+
+`coverage_status` 是机械投影，含义如下，但**它不替你决策**：
+
+- `complete`：累计记录已达到 `known_total`，或当前帧已到边界（`at_end`）且无下一页信号。
+- `incomplete`：当前帧仍显示有下一页（`has_next_page`），或累计少于 `known_total`。
+- `conflicting`：累计记录数与权威 `known_total` 矛盾（采集到的比总数还多）。
+- `unknown`：既无总数也无边界信号。
+
+worked examples（按这些形态决策，不要写成「若 coverage=X 则必须 Y」的规则条文）：
+
+- `coverage_status=incomplete` 且 `available_movements=[{kind:"paged",can_forward:true}]`：
+  `assessment.status=in_progress`、`kind=act`，`action_family=iterate`/`activate` 翻到下一页或向下
+  滚动加载更多记录；不得此时 `complete`。
+- `coverage_status=complete` 且 `boundary_evidence=[{event_ref:"collection:7",kind:"at_end"}]`：
+  `assessment.status=satisfied`、`kind=complete`，`evidence` 用
+  `{source:"journal",event_ref:"collection:7",claim:"已到达集合终点，累计 N 条覆盖全部记录"}` 引用该边界帧。
+- `coverage_status=unknown`：当前既没有总数也没有边界证据，`kind=act` 继续探索（滚动或翻页以暴露
+  边界/总数），不要凭单帧臆断完整。
+
+采集记录只在终态经 `StatementOutcome.outputs` 进入 Program 环境；`collection` 不替代你对当前帧
+视觉目标的判断，也不得在 `collection` 之外编造记录。
+
 ## 第一步：assessment
 
 - `status=in_progress`：合同尚有缺口；`open_gaps` 至少列出一个具体缺口。

@@ -2,7 +2,7 @@
 
 from typing import Protocol
 
-from gui_agent.core.schemas import Observation, PolicyTurn, SupervisorStep
+from gui_agent.core.schemas import JournalEvent, Observation, SupervisorStep
 
 
 class SupervisorPolicy(Protocol):
@@ -14,7 +14,7 @@ class SupervisorPolicy(Protocol):
         self,
         observation: Observation,
         goal: str,
-        history: list[PolicyTurn],
+        history: list[JournalEvent],
     ) -> SupervisorStep:
         """Given current screen, goal, and full history, decide what to do next."""
 
@@ -22,6 +22,6 @@ class SupervisorPolicy(Protocol):
         self,
         observation: Observation,
         goal: str,
-        history: list[PolicyTurn],
+        history: list[JournalEvent],
     ) -> SupervisorStep:
         """Observe and arbitrate once without proposing or dispatching another action."""

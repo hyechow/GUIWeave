@@ -51,8 +51,8 @@ from typing import TYPE_CHECKING, Optional, Protocol, runtime_checkable
 from gui_agent.core.schemas import (
     Action,
     ActionDecision,
+    JournalEvent,
     Observation,
-    PolicyTurn,
     SupervisorStep,
 )
 
@@ -310,7 +310,7 @@ class SupervisorPolicy(Protocol):
         self,
         observation: Observation,
         goal: str,
-        history: list[PolicyTurn],
+        history: list[JournalEvent],
     ) -> SupervisorStep:
         """Given current screen, goal, and full history, decide what to do next."""
         ...
