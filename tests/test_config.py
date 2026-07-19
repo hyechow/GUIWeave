@@ -3,6 +3,14 @@ from __future__ import annotations
 from gui_agent.core import config
 
 
+def test_data_model_config_is_not_nested_under_supervisor():
+    llm = config.load_config()["llm"]
+
+    assert llm["data"]["model"]
+    assert "data" not in llm["supervisor"]
+    assert llm["supervisor"]["feasibility"]["model"]
+
+
 def test_recon_navigator_config_falls_back_to_legacy_back_nav(monkeypatch):
     monkeypatch.setattr(
         config,

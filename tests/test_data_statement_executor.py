@@ -34,6 +34,25 @@ def _invocation(returns):
     )
 
 
+def test_data_plan_trace_is_owned_by_statement_runtime(monkeypatch):
+    reports = []
+
+    def invoke(_llm, _messages, _schema, **kwargs):
+        assert kwargs["trace_label"] == "statement.data"
+        return DataPlan(operations=[EmitOp(values={})])
+
+    monkeypatch.setattr(module, "_llm", object)
+    monkeypatch.setattr(module, "invoke_structured", invoke)
+    module._plan(
+        _invocation({}),
+        Observation(png_bytes=b"png", source="browser"),
+        context_reports=reports,
+    )
+
+    snapshots = [report for report in reports if report.get("kind") == "prompt_snapshot"]
+    assert snapshots[0]["label"] == "statement.data"
+
+
 def test_data_executor_reads_current_observation_and_emits_declared_outputs(monkeypatch):
     plan = DataPlan(
         operations=[

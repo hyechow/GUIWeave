@@ -40,6 +40,7 @@ def test_immediate_dispatch_runs_data_then_command_and_records_one_fact_pair_eac
     runtime = ProgramRuntime.start(program, journal=context.journal)
     observation = Observation(png_bytes=b"png", source="browser")
     calls = []
+    statuses = []
 
     def data_executor(invocation, **_kwargs):
         calls.append(invocation.executor)
@@ -62,12 +63,14 @@ def test_immediate_dispatch_runs_data_then_command_and_records_one_fact_pair_eac
         context=context,
         save_context=lambda: None,
         say=lambda _message: None,
+        status=statuses.append,
         observation=observation,
         observation_url="screenshot_read_0.png",
     )
 
     assert result.reply == "done"
     assert calls == ["data", "command"]
+    assert statuses[0] == "Data 数据处理中：derive destination"
     assert len(context.journal.turns) == 2
     assert len(context.journal.statement_outcomes) == 2
     assert [turn.statement.executor for turn in context.journal.turns] == [
