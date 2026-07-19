@@ -15,7 +15,7 @@ the fact into app knowledge and genericize the shared text (use neutral placehol
 
 Scope note: this guards the *model-visible* shared surface only. Browser-adapter code that
 deliberately implements a Magento/admin-grid capability (``adapters/browser/filter_state.py``,
-``page_read.py``, ``executor.py`` datepicker, …) is intentionally NOT scanned — that is where
+``table_reader.py``, ``executor.py`` datepicker, …) is intentionally NOT scanned — that is where
 site-specific behavior is *allowed* to live, behind the adapter boundary.
 """
 from __future__ import annotations

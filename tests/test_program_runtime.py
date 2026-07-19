@@ -1,10 +1,9 @@
 import pytest
 
-from gui_agent.core.orchestrator import Data, Finish, Interact, OutputSpec, Program
+from gui_agent.core.orchestrator import Acquire, Data, Finish, Interact, OutputSpec, Program
 from gui_agent.core.run.program_runtime import ProgramRuntime
 from gui_agent.core.schemas import (
-    CollectionProvenance,
-    CollectionSliceEvent,
+    AcquisitionReceiptEvent,
     EventJournal,
     StatementOutcome,
     StatementOutcomeEvent,
@@ -89,38 +88,38 @@ def test_runtime_rejects_journal_without_initial_program_revision():
         ProgramRuntime.resume(_program(), journal)
 
 
-def test_runtime_recovers_active_instance_from_collection_slice_before_first_turn():
+def test_runtime_recovers_active_acquire_from_journal_receipt():
+    program = Program(
+        goal="collect",
+        statements=[
+            Acquire(
+                id="collect",
+                bind="collected",
+                goal="collect the scoped records",
+                returns={"rows": OutputSpec(type="list[record]", coverage="complete")},
+            ),
+            Finish(message="done"),
+        ],
+    )
     journal = EventJournal()
-    runtime = ProgramRuntime.start(_program(), journal=journal)
-    derive_iid = runtime.next_instance_id("derive")
-    outcome = StatementOutcome.completed("derived", outputs={"value": "ready"})
-    journal.append_statement_outcome(StatementOutcomeEvent(
+    runtime = ProgramRuntime.start(program, journal=journal)
+    acquire_iid = runtime.next_instance_id("collect")
+    journal.append_acquisition_receipt(AcquisitionReceiptEvent(
+        event_ref="acquire:1",
         after_turn=0,
-        statement_instance_id=derive_iid,
-        statement_id="derive",
-        outcome=outcome,
-    ))
-    runtime.send_outcome(outcome)
-    apply_iid = runtime.next_instance_id("apply")
-    journal.append_collection_slice(CollectionSliceEvent(
-        event_ref="collection:1",
-        after_turn=0,
-        statement_instance_id=apply_iid,
-        statement_id="apply",
-        frame_ref="frame:1",
-        collection_key="grid",
-        provenance=CollectionProvenance(
-            surface_fingerprint="table:grid",
-            schema_fingerprint="schema",
-            route="/grid",
-        ),
-        records=[{"id": "1"}],
+        statement_instance_id=acquire_iid,
+        statement_id="collect",
+        strategy="structured",
+        capability="bind:structured",
+        action_family="bind_region",
+        status="selected",
+        bound_region="table:grid",
     ))
 
-    resumed = ProgramRuntime.resume(_program(), journal)
+    resumed = ProgramRuntime.resume(program, journal)
 
-    assert resumed.current is not None and resumed.current.id == "apply"
-    assert resumed.current_instance_id == apply_iid
+    assert resumed.current is not None and resumed.current.id == "collect"
+    assert resumed.current_instance_id == acquire_iid
 
 
 def test_runtime_requires_one_active_statement_instance_at_a_time():

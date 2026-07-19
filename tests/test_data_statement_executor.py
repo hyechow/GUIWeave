@@ -5,6 +5,7 @@ from gui_agent.core.orchestrator import Data, OutputSpec
 from gui_agent.core.orchestrator.runner import StatementInvocation
 from gui_agent.core.run.statements import data as module
 from gui_agent.core.run.statements.data import (
+    DataInspection,
     DataPlan,
     DataRef,
     EmitOp,
@@ -16,7 +17,9 @@ from gui_agent.core.run.statements.data_kernel import (
     AggregateSpec,
     AggregateStep,
     FieldRef,
+    GroupStep,
     ProjectStep,
+    RankStep,
     SortKey,
     SortStep,
     TakeStep,
@@ -24,14 +27,54 @@ from gui_agent.core.run.statements.data_kernel import (
 from gui_agent.core.schemas import Observation
 
 
-def _invocation(returns):
+def _invocation(returns, *, inputs=None):
     return StatementInvocation(
         statement=Data(
             id="derive",
             goal="derive outputs from current runtime data",
             returns=returns,
+        ),
+        inputs=inputs or {},
+    )
+
+
+def _inspect_invocation():
+    return StatementInvocation(
+        statement=Data(
+            id="inspect",
+            goal="check whether identity and amount are readable",
+            mode="inspect",
+            required_fields=["customer identity", "final amount"],
+            returns={
+                "available": OutputSpec(type="boolean"),
+                "bindings": OutputSpec(type="record"),
+                "missing_fields": OutputSpec(type="json"),
+            },
         )
     )
+
+
+def test_data_inspect_returns_branchable_availability_without_ui_actions(monkeypatch):
+    monkeypatch.setattr(
+        module,
+        "_inspect",
+        lambda *_args, **_kwargs: DataInspection(
+            available=False,
+            bindings={"final amount": "Grand Total"},
+            missing_fields=["customer identity"],
+            reasoning="identity is not present in the current schema",
+        ),
+    )
+    outcome = execute_data_statement(
+        _inspect_invocation(),
+        observation=Observation(png_bytes=b"png", source="browser"),
+    )
+    assert outcome.is_completed
+    assert outcome.outputs == {
+        "available": False,
+        "bindings": {"final amount": "Grand Total"},
+        "missing_fields": ["customer identity"],
+    }
 
 
 def test_data_plan_trace_is_owned_by_statement_runtime(monkeypatch):
@@ -39,7 +82,7 @@ def test_data_plan_trace_is_owned_by_statement_runtime(monkeypatch):
 
     def invoke(_llm, _messages, _schema, **kwargs):
         assert kwargs["trace_label"] == "statement.data"
-        return DataPlan(operations=[EmitOp(values={})])
+        return DataPlan(decision="execute", operations=[EmitOp(values={})])
 
     monkeypatch.setattr(module, "_llm", object)
     monkeypatch.setattr(module, "invoke_structured", invoke)
@@ -55,6 +98,7 @@ def test_data_plan_trace_is_owned_by_statement_runtime(monkeypatch):
 
 def test_data_executor_reads_current_observation_and_emits_declared_outputs(monkeypatch):
     plan = DataPlan(
+        decision="execute",
         operations=[
             ReadObservationOp(kind="read_observation", name="location", source="url"),
             EmitOp(kind="emit", values={"url": DataRef(var="location")}),
@@ -77,6 +121,7 @@ def test_data_executor_reads_current_observation_and_emits_declared_outputs(monk
 
 def test_data_executor_can_transform_actual_table_snapshot(monkeypatch):
     plan = DataPlan(
+        decision="execute",
         operations=[
             ReadObservationOp(
                 kind="read_observation",
@@ -113,6 +158,7 @@ def test_data_executor_can_transform_actual_table_snapshot(monkeypatch):
 
 def test_data_executor_transforms_selected_table_as_row_records(monkeypatch):
     plan = DataPlan(
+        decision="execute",
         operations=[
             ReadObservationOp(name="terms_table", source="tables", path=[1]),
             TransformOp(
@@ -163,6 +209,7 @@ def test_data_executor_transforms_selected_table_as_row_records(monkeypatch):
 
 def test_data_executor_projects_structural_table_metadata(monkeypatch):
     plan = DataPlan(
+        decision="execute",
         operations=[
             ReadObservationOp(
                 name="total",
@@ -209,7 +256,7 @@ def test_data_executor_enforces_partial_source_coverage(
     phase,
     verification,
 ):
-    plan = DataPlan(operations=[
+    plan = DataPlan(decision="execute", operations=[
         ReadObservationOp(name="grid", source="tables", path=[0]),
         TransformOp(
             name="rows",
@@ -250,6 +297,7 @@ def test_data_executor_has_exactly_one_plan_repair(monkeypatch):
     def bad_plan(*_args, **kwargs):
         calls.append(kwargs.get("previous_error", ""))
         return DataPlan(
+            decision="execute",
             operations=[
                 EmitOp(
                     kind="emit",
@@ -268,3 +316,110 @@ def test_data_executor_has_exactly_one_plan_repair(monkeypatch):
     assert len(calls) == 2
     assert calls[0] == ""
     assert "data ref 未定义" in calls[1]
+
+
+def test_data_executor_repairs_wrong_output_shape_into_data_requirement(monkeypatch):
+    plans = iter([
+        DataPlan(
+            decision="execute",
+            operations=[
+                ReadObservationOp(name="orders", source="tables", path=[0]),
+                EmitOp(values={"emails": DataRef(var="orders")}),
+            ],
+        ),
+        DataPlan(
+            decision="unavailable",
+            reasoning="Orders 数据只有 20/153 行且没有客户邮箱字段",
+            missing_fields=["customer email"],
+            required_coverage="complete",
+        ),
+    ])
+    errors = []
+    messages = []
+    statuses = []
+
+    def plan(*_args, **kwargs):
+        errors.append(kwargs.get("previous_error", ""))
+        return next(plans)
+
+    monkeypatch.setattr(module, "_plan", plan)
+    outcome = execute_data_statement(
+        _invocation({"emails": OutputSpec(type="list[record]")}),
+        observation=Observation(
+            png_bytes=b"png",
+            source="browser",
+            tables=[{
+                "rows": [{"ID": "1", "Status": "Complete"}],
+                "total_records": 153,
+                "partial": True,
+            }],
+        ),
+        say=messages.append,
+        status=statuses.append,
+    )
+
+    assert outcome.phase == "infeasible"
+    assert "customer email" in (outcome.kickback or "")
+    assert "Data.inputs" in (outcome.kickback or "")
+    assert len(errors) == 2
+    assert "类型不符合合同" in errors[1]
+    assert any("计划 1/2 失败" in message for message in messages)
+    assert statuses[-1] == "Data 数据不足，正在请求重编排…"
+
+
+def test_data_executor_rejects_records_missing_declared_fields(monkeypatch):
+    plans = iter([
+        DataPlan(
+            decision="execute",
+            operations=[
+                TransformOp(
+                    name="ranked",
+                    source=DataRef(var="collection"),
+                    steps=[
+                        GroupStep(
+                            by={"display_name": FieldRef(path=["Display Name"])},
+                            values={"count": AggregateSpec(fn="count")},
+                        ),
+                        RankStep(
+                            keys=[SortKey(
+                                field=FieldRef(path=["count"], type="number"),
+                                direction="desc",
+                            )],
+                            position=2,
+                        ),
+                    ],
+                ),
+                EmitOp(values={"contacts": DataRef(var="ranked")}),
+            ],
+        ),
+        DataPlan(
+            decision="unavailable",
+            reasoning="The acquired records do not contain the required contact address.",
+            missing_fields=["contact address"],
+            required_coverage="complete",
+        ),
+    ])
+    errors = []
+
+    def plan(*_args, **kwargs):
+        errors.append(kwargs.get("previous_error", ""))
+        return next(plans)
+
+    monkeypatch.setattr(module, "_plan", plan)
+    outcome = execute_data_statement(
+        _invocation(
+            {"contacts": OutputSpec(type="list[record]", fields=["address"])},
+            inputs={
+                "collection": [
+                    {"Display Name": "A", "State": "Done"},
+                    {"Display Name": "A", "State": "Done"},
+                    {"Display Name": "B", "State": "Done"},
+                ],
+            },
+        ),
+        observation=None,
+    )
+
+    assert outcome.phase == "infeasible"
+    assert "contact address" in (outcome.kickback or "")
+    assert "类型不符合合同" in errors[1]

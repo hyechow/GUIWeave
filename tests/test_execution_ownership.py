@@ -3,6 +3,7 @@ from pathlib import Path
 
 from gui_agent.core.orchestrator.runner import Interpreter
 from gui_agent.core.run.action_exec import ActionExecutor
+from gui_agent.core.run.statements.acquire import AcquireMemoryView
 from gui_agent.core.run.program_runtime import ProgramRuntime
 from gui_agent.core.run.statement_memory import StatementMemoryView
 from gui_agent.core.schemas import StatementOutcome
@@ -35,6 +36,17 @@ def test_statement_transition_does_not_own_a_business_phase_machine():
     assert "_invoke_planner" not in source
     assert "_single_check" not in source
     assert "_invoke_statement_transition" in source
+
+
+def test_acquire_memory_is_replay_projection_and_transition_has_no_collection_context():
+    assert "phase" not in AcquireMemoryView.__dataclass_fields__
+    root = Path(__file__).resolve().parents[1]
+    for relative in (
+        "gui_agent/core/supervisor/statement/policy.py",
+        "gui_agent/core/supervisor/statement/model_io.py",
+        "gui_agent/core/supervisor/statement/llm_runtime.py",
+    ):
+        assert "collection_view" not in (root / relative).read_text(encoding="utf-8")
 
 
 def test_statement_outcome_is_terminal_only():

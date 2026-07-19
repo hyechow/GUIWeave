@@ -11,6 +11,7 @@ evidence.
 from __future__ import annotations
 
 from gui_agent.core.orchestrator import (
+    Acquire,
     Condition,
     Data,
     Finish,
@@ -37,11 +38,10 @@ def _program() -> Program:
     return Program(
         goal="apply to each active collected record",
         statements=[
-            Interact(
+            Acquire(
                 id="collect",
                 bind="observed",
                 goal="collect all records in scope",
-                success="all reachable records have been observed",
                 returns={"rows": OutputSpec(type="list[record]", coverage="complete")},
             ),
             Data(
@@ -81,7 +81,7 @@ def _program() -> Program:
     )
 
 
-def test_interact_collect_data_filter_if_foreach_runs_end_to_end():
+def test_acquire_data_filter_if_foreach_runs_end_to_end():
     calls: list = []
 
     def execute(invocation):

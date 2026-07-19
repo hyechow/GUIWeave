@@ -126,6 +126,29 @@ def test_in_progress_program_card_does_not_require_report_run_log():
     assert "prog-resolved" not in html
 
 
+def test_orchestrator_program_renders_value_ref_path_in_if_condition():
+    html = _render_program_section({
+        "program": {
+            "goal": "inspect then collect",
+            "statements": [
+                {
+                    "op": "if",
+                    "cond": {
+                        "ref": {"var": "source", "path": ["available"]},
+                        "cmp": "==",
+                        "value": False,
+                    },
+                    "then": [],
+                    "otherwise": [],
+                },
+            ],
+        },
+        "context_reports": [],
+    })
+
+    assert 'source["available"]' in html
+
+
 def test_thumb_time_only_renders_total_and_keeps_flags_searchable():
     html, search = _render_thumb_time(
         ReportStep(
@@ -366,4 +389,7 @@ def test_non_interactive_turn_renders_its_observation_frame(tmp_path):
     html = generate_html(data)
 
     assert data.pages[0].steps[0].raw_screenshot_url == "screenshot_read_0.png"
+    assert data.pages[0].steps[0].status == "✓ Data"
     assert '<img src="screenshot_read_0.png"' in html
+    assert "Data 数据处理" in html
+    assert "Data 处理" in html

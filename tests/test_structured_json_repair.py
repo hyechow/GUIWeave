@@ -170,3 +170,26 @@ def test_transition_can_disable_second_model_call_on_invalid_output():
             fallback_on_invalid=False,
         )
     assert llm.calls == 1
+
+
+def test_structured_fallback_log_is_one_concise_labeled_line(capsys):
+    class _Bound:
+        def __init__(self, owner):
+            self.owner = owner
+
+        def invoke(self, _messages):
+            return AIMessage(content=self.owner.responses.pop(0))
+
+    class _LLM:
+        responses = ['{"steps": []}', '{"goal": "done", "steps": []}']
+
+        def bind(self, **_kwargs):
+            return _Bound(self)
+
+    result = invoke_structured(_LLM(), [], _Plan, trace_label="statement.data")
+    lines = [line for line in capsys.readouterr().out.splitlines() if line.strip()]
+
+    assert result.goal == "done"
+    assert len(lines) == 1
+    assert lines[0].strip().startswith("[statement.data] json_object 校验失败")
+    assert len(lines[0]) < 300

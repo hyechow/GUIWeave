@@ -8,7 +8,6 @@ merge), boundary evidence, and rebuilds identically after Journal serialization.
 from __future__ import annotations
 
 import inspect
-from types import SimpleNamespace
 
 import gui_agent.core.run.collection_view as collection_view_module
 from gui_agent.core.run.collection_view import (
@@ -18,13 +17,10 @@ from gui_agent.core.run.collection_view import (
     coverage_status,
     project_collection_slice,
 )
-from gui_agent.core.run.statement_runtime import StatementRuntimeState
-from gui_agent.core.run.turns import record_collection_slice
 from gui_agent.core.schemas import (
     CollectionProvenance,
     Observation,
     OutputSpec,
-    PolicyContext,
     StatementContract,
 )
 
@@ -341,57 +337,6 @@ def test_replay_rebuild_is_identical_to_live_projection():
     assert [e.kind for e in replayed.boundary_evidence] == [e.kind for e in live.boundary_evidence]
     assert coverage_status(replayed) == "complete"
     assert replayed.last_move_result == "new_content"
-
-
-def test_current_observation_is_journaled_once_before_decision():
-    contract = _contract()
-    context = PolicyContext(
-        goal="collect",
-        supervisor_policy_name="statement",
-        action_policy_name="test",
-    )
-    supervisor = SimpleNamespace(
-        _statement_rt=StatementRuntimeState(
-            contract=contract,
-            instance_id="i1:collect",
-        )
-    )
-    observation = Observation.model_validate({
-        "png_bytes": b"frame",
-        "source": "browser",
-        "url": "https://example.test/grid?page=1",
-        "tables": [{
-            "headers": ["ID"],
-            "rows": [{"ID": "1"}],
-            "total_records": 1,
-            "traversal": {
-                "type": "paged",
-                "page_index": 1,
-                "has_next_page": False,
-            },
-        }],
-    })
-    saves: list[bool] = []
-
-    first = record_collection_slice(
-        context=context,
-        supervisor=supervisor,
-        observation=observation,
-        observation_url="frame-1.png",
-        save_context=lambda: saves.append(True),
-    )
-    second = record_collection_slice(
-        context=context,
-        supervisor=supervisor,
-        observation=observation,
-        observation_url="frame-1.png",
-        save_context=lambda: saves.append(True),
-    )
-
-    assert first is second
-    assert [event.event_type for event in context.journal.events] == ["collection_slice"]
-    assert context.journal.collection_slices[0].boundary == "at_end"
-    assert saves == [True]
 
 
 # --- sensor: project_collection_slice ---------------------------------------
