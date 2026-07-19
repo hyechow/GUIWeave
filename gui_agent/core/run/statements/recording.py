@@ -22,6 +22,7 @@ def record_statement_outcome(
     llm_calls_before: int,
     tokens_before: tuple[int, int],
     statement_instance_id: str = "",
+    observation_url: str | None = None,
 ) -> None:
     for notice in outcome.recovery_notices:
         program_runtime.record_recovery(
@@ -38,6 +39,7 @@ def record_statement_outcome(
     observation = outcome.observation
     calls_after = get_llm_call_count()
     tokens_after = get_llm_token_usage()
+    frame_ref = outcome.observation_url or observation_url or ""
     context.journal.append_turn(
         make_immediate_statement_turn(
             index=len(context.journal.turns) + 1,
@@ -53,7 +55,7 @@ def record_statement_outcome(
             bind=invocation.bind or "",
             outputs=dict(outcome.outputs),
             evidence=list(outcome.evidence),
-            observation_url=outcome.observation_url or "",
+            observation_url=frame_ref,
             started_at=started_at,
             llm_calls=calls_after - llm_calls_before,
             input_tokens=tokens_after[0] - tokens_before[0],
@@ -72,7 +74,7 @@ def record_statement_outcome(
                 if observation is not None
                 else "non_ui"
             ),
-            observation_url=outcome.observation_url or "",
+            observation_url=frame_ref,
             statement_instance_id=iid,
             statement_id=sid,
             outcome=outcome,

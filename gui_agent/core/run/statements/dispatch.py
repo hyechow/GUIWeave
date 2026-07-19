@@ -108,6 +108,7 @@ def drain_immediate_statements(
             llm_calls_before=calls_before,
             tokens_before=tokens_before,
             statement_instance_id=iid,
+            observation_url=cursor.observation_url,
         )
         save_context()
         failure_evidence = outcome.failure_evidence or failure_evidence
