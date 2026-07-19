@@ -2,7 +2,13 @@ import pytest
 
 from gui_agent.core.orchestrator import Data, Finish, Interact, OutputSpec, Program
 from gui_agent.core.run.program_runtime import ProgramRuntime
-from gui_agent.core.schemas import EventJournal, StatementOutcome, StatementOutcomeEvent
+from gui_agent.core.schemas import (
+    CollectionProvenance,
+    CollectionSliceEvent,
+    EventJournal,
+    StatementOutcome,
+    StatementOutcomeEvent,
+)
 
 
 def _program() -> Program:
@@ -81,6 +87,40 @@ def test_runtime_rejects_journal_without_initial_program_revision():
     )
     with pytest.raises(ValueError):
         ProgramRuntime.resume(_program(), journal)
+
+
+def test_runtime_recovers_active_instance_from_collection_slice_before_first_turn():
+    journal = EventJournal()
+    runtime = ProgramRuntime.start(_program(), journal=journal)
+    derive_iid = runtime.next_instance_id("derive")
+    outcome = StatementOutcome.completed("derived", outputs={"value": "ready"})
+    journal.append_statement_outcome(StatementOutcomeEvent(
+        after_turn=0,
+        statement_instance_id=derive_iid,
+        statement_id="derive",
+        outcome=outcome,
+    ))
+    runtime.send_outcome(outcome)
+    apply_iid = runtime.next_instance_id("apply")
+    journal.append_collection_slice(CollectionSliceEvent(
+        event_ref="collection:1",
+        after_turn=0,
+        statement_instance_id=apply_iid,
+        statement_id="apply",
+        frame_ref="frame:1",
+        collection_key="grid",
+        provenance=CollectionProvenance(
+            surface_fingerprint="table:grid",
+            schema_fingerprint="schema",
+            route="/grid",
+        ),
+        records=[{"id": "1"}],
+    ))
+
+    resumed = ProgramRuntime.resume(_program(), journal)
+
+    assert resumed.current is not None and resumed.current.id == "apply"
+    assert resumed.current_instance_id == apply_iid
 
 
 def test_runtime_requires_one_active_statement_instance_at_a_time():

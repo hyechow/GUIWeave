@@ -1,3 +1,6 @@
+import pytest
+from pydantic import ValidationError
+
 from gui_agent.core.orchestrator import Data, OutputSpec
 from gui_agent.core.orchestrator.runner import StatementInvocation
 from gui_agent.core.run.statements import data as module
@@ -72,6 +75,49 @@ def test_data_executor_can_query_actual_table_snapshot(monkeypatch):
     )
 
     assert outcome.outputs == {"count": 2}
+
+
+def test_data_executor_projects_structural_table_metadata(monkeypatch):
+    plan = DataPlan(
+        operations=[
+            ReadObservationOp(
+                name="total",
+                source="tables",
+                path=[0, "total_records"],
+            ),
+            EmitOp(values={"total_count": DataRef(var="total")}),
+        ]
+    )
+    monkeypatch.setattr(module, "_plan", lambda *_args, **_kwargs: plan)
+
+    outcome = execute_data_statement(
+        _invocation({"total_count": OutputSpec(type="number")}),
+        observation=Observation(
+            png_bytes=b"png",
+            source="browser",
+            tables=[{
+                "rows": [{"ID": "199"}, {"ID": "73"}],
+                "row_count": 2,
+                "total_records": 2,
+                "partial": False,
+            }],
+        ),
+    )
+
+    assert outcome.is_completed
+    assert outcome.outputs == {"total_count": 2}
+    assert outcome.evidence == [
+        "read_observation:tables[0, 'total_records']->total"
+    ]
+
+
+def test_non_visual_observation_read_rejects_ignored_fields():
+    with pytest.raises(ValidationError, match="use path for structural projection"):
+        ReadObservationOp(
+            name="table_meta",
+            source="tables",
+            fields={"total_count": "Extract total_records"},
+        )
 
 
 def test_data_executor_has_exactly_one_plan_repair(monkeypatch):

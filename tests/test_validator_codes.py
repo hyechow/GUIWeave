@@ -1,6 +1,7 @@
 from gui_agent.core.orchestrator import (
     Command,
     Data,
+    Finish,
     ForEach,
     Interact,
     OutputSpec,
@@ -94,6 +95,31 @@ def test_all_emitted_codes_are_registered():
         Program(),
         Program(statements=[Interact(id="", goal="", success="")]),
         Program(statements=[Command(id="open", capability="open_url")]),
+        Program(
+            statements=[
+                Interact(
+                    id="read",
+                    bind="title",
+                    goal="read title",
+                    success="title read",
+                    returns={"title": OutputSpec(type="text", coverage="complete")},
+                ),
+            ]
+        ),
+        # Trigger sample for FINISH_NUMERIC_FROM_DATA (Interact number → Finish).
+        Program(
+            statements=[
+                Interact(
+                    id="filter",
+                    bind="counts",
+                    goal="filter and count",
+                    success="filtered",
+                    returns={"total": OutputSpec(type="number")},
+                ),
+                Finish(outputs={"result": ValueRef(var="counts", path=["total"])}),
+            ]
+        ),
     ]
     emitted = {issue.code for program in programs for issue in validate_program(program)}
     assert emitted <= ALL_CODES
+    assert "FINISH_NUMERIC_FROM_DATA" in emitted

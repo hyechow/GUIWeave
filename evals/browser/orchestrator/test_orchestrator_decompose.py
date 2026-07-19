@@ -39,6 +39,8 @@ class Case:
     goal: str
     required_text: tuple[str, ...] = ()
     expect_foreach: bool = False
+    # Finish-consumed numbers must be defined by Data (AST/dataflow, not word lists).
+    expect_finish_number_from_data: bool = False
 
 
 CASES = (
@@ -61,6 +63,17 @@ CASES = (
         "From the currently available record data, select all records marked pending and apply the same archive operation to each selected record.",
         expect_foreach=True,
     ),
+    Case(
+        "count-after-filter",
+        "Get the total number of reviews in the store that mention the term best.",
+        ("best",),
+        expect_finish_number_from_data=True,
+    ),
+    Case(
+        "rank-customer",
+        "Get the customer email who completed the second most number of orders in the entire history.",
+        expect_finish_number_from_data=False,  # answer may be text email; still needs Data for ranking
+    ),
 )
 
 
@@ -72,6 +85,43 @@ def _walk(statements: list[Stmt]):
             yield from _walk(statement.otherwise)
         elif isinstance(statement, ForEach):
             yield from _walk(statement.body)
+
+
+def _bind_origins(statements: list[Stmt]) -> dict[str, str]:
+    """Map bind name → producing op (interact/data/command). Ignores If/ForEach merges."""
+    origins: dict[str, str] = {}
+    for node in _walk(statements):
+        if isinstance(node, (Interact, Data, Command)) and node.bind:
+            origins[node.bind] = node.op
+    return origins
+
+
+def _check_finish_numbers_from_data(program: Program) -> list[str]:
+    """AST invariant: every Finish-cited number field's bind is produced by Data."""
+    errors: list[str] = []
+    origins = _bind_origins(program.statements)
+    returns_by_bind: dict[str, dict] = {}
+    for node in _walk(program.statements):
+        if isinstance(node, (Interact, Data, Command)) and node.bind:
+            returns_by_bind[node.bind] = dict(node.returns)
+
+    for node in _walk(program.statements):
+        if not isinstance(node, Finish):
+            continue
+        for out_name, ref in node.outputs.items():
+            if not ref.path or not isinstance(ref.path[0], str):
+                continue
+            field = ref.path[0]
+            spec = (returns_by_bind.get(ref.var) or {}).get(field)
+            if spec is None or getattr(spec, "type", None) != "number":
+                continue
+            origin = origins.get(ref.var)
+            if origin != "data":
+                errors.append(
+                    f"finish.outputs.{out_name} cites number {ref.var}.{field} "
+                    f"from op={origin!r}; expected Data (FINISH_NUMERIC_FROM_DATA)"
+                )
+    return errors
 
 
 def _check(case: Case, program: Program) -> list[str]:
@@ -91,6 +141,33 @@ def _check(case: Case, program: Program) -> list[str]:
             errors.append("ForEach body is empty")
         if any(hasattr(loop, field) for field in ("body_goal", "member_desc")):
             errors.append("ForEach exposes retired runtime expansion fields")
+    # Always enforce the structural number gate on live programs (same as compile-time).
+    errors.extend(_check_finish_numbers_from_data(program))
+    if case.expect_finish_number_from_data:
+        if not any(isinstance(node, Data) for node in nodes):
+            errors.append("count/aggregate goal expected at least one Data statement")
+        if not any(isinstance(node, Interact) for node in nodes):
+            errors.append("count-after-filter goal expected an Interact for UI scope")
+        has_finish_number = False
+        for node in nodes:
+            if not isinstance(node, Finish):
+                continue
+            for ref in node.outputs.values():
+                if not ref.path or not isinstance(ref.path[0], str):
+                    continue
+                bind_returns = {}
+                for n in nodes:
+                    if isinstance(n, (Interact, Data, Command)) and n.bind == ref.var:
+                        bind_returns = dict(n.returns)
+                        break
+                spec = bind_returns.get(ref.path[0])
+                if spec is not None and getattr(spec, "type", None) == "number":
+                    has_finish_number = True
+        if not has_finish_number:
+            errors.append("expected Finish to cite a number field from Data")
+    if case.label == "rank-customer":
+        if not any(isinstance(node, Data) for node in nodes):
+            errors.append("rank/group goal expected a Data statement for ranking/aggregation")
     return errors
 
 
