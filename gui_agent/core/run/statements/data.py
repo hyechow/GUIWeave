@@ -43,15 +43,24 @@ class ReadObservationOp(BaseModel):
     kind: Literal["read_observation"] = "read_observation"
     name: str
     source: Literal["tables", "form_controls", "url", "title", "visual"]
+    path: list[str | int] = Field(
+        default_factory=list,
+        description="non-visual source only: structural path projected from the source",
+    )
     fields: dict[str, str] = Field(
         default_factory=dict,
         description="visual source only: output field -> evidence/read description",
     )
 
     @model_validator(mode="after")
-    def _require_visual_fields(self) -> "ReadObservationOp":
-        if self.source == "visual" and not self.fields:
-            raise ValueError("visual read requires fields")
+    def _validate_projection(self) -> "ReadObservationOp":
+        if self.source == "visual":
+            if not self.fields:
+                raise ValueError("visual read requires fields")
+            if self.path:
+                raise ValueError("visual read cannot carry a structural path")
+        elif self.fields:
+            raise ValueError("non-visual read cannot carry fields; use path for structural projection")
         return self
 
 
@@ -245,6 +254,14 @@ def _coerce(value: JsonValue, spec: OutputSpec) -> JsonValue:
     return value
 
 
+def _derive_require_complete(invocation: StatementInvocation, operation: SqlOp) -> bool:
+    return not any(
+        (spec := invocation.statement.returns.get(name)) is not None
+        and spec.coverage == "best_effort"
+        for name in operation.returns
+    )
+
+
 def _execute(
     plan: DataPlan,
     invocation: StatementInvocation,
@@ -260,15 +277,7 @@ def _execute(
         if isinstance(operation, ReadObservationOp):
             if observation is None:
                 raise DataQueryError("当前 Data statement 没有 observation")
-            if operation.source == "tables":
-                value = _jsonable(getattr(observation, "tables", None) or [])
-            elif operation.source == "form_controls":
-                value = _jsonable(getattr(observation, "form_controls", None) or [])
-            elif operation.source == "url":
-                value = str(getattr(observation, "url", "") or "")
-            elif operation.source == "title":
-                value = str(getattr(observation, "title", "") or "")
-            else:
+            if operation.source == "visual":
                 from gui_agent.core.orchestrator.primitives.structured_read import structured_read
 
                 fields = list(operation.fields)
@@ -283,8 +292,16 @@ def _execute(
                     prepare_vision_prompt_png=prepare_vision_prompt_png,
                 )
                 visual_used = True
+            else:
+                empty: JsonValue = [] if operation.source in {"tables", "form_controls"} else ""
+                source = _jsonable(getattr(observation, operation.source, None) or empty)
+                value = _resolve(
+                    DataRef(var=operation.source, path=operation.path),
+                    {operation.source: source},
+                )
             bindings[operation.name] = _jsonable(value)
-            trace.append(f"read_observation:{operation.source}->{operation.name}")
+            path = f"{operation.path}" if operation.path else ""
+            trace.append(f"read_observation:{operation.source}{path}->{operation.name}")
             continue
         if isinstance(operation, SqlOp):
             if operation.source not in bindings:
@@ -293,7 +310,7 @@ def _execute(
                 _table_snapshots(bindings[operation.source], operation.source),
                 operation.sql,
                 operation.returns,
-                require_complete=True,
+                require_complete=_derive_require_complete(invocation, operation),
             )
             bindings[operation.name] = {
                 name: _parse_scalar(value) for name, value in rows.items()
