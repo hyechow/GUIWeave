@@ -33,6 +33,14 @@ _ACTIVATABLE_ROLES = frozenset({
 })
 _INPUT_ROLES = frozenset({"textbox", "searchbox", "input"})
 _SELECT_ROLES = frozenset({"combobox", "listbox", "option"})
+_SELECT_CONTROL_KINDS = frozenset({
+    "select",
+    "native_select",
+    "selectmenu",
+    "combobox",
+    "listbox",
+    "option",
+})
 
 
 @dataclass(frozen=True)
@@ -142,7 +150,7 @@ def _control_affordance(control: dict) -> dict | None:
     visibility = _visibility(control)
     if visibility == "offscreen":
         operations: list[TransitionOperation] = ["iterate"]
-    elif kind in {"select", "combobox", "listbox", "option"}:
+    elif kind in _SELECT_CONTROL_KINDS:
         operations = ["select"]
     elif kind in {
         "input",
@@ -158,15 +166,23 @@ def _control_affordance(control: dict) -> dict | None:
         operations = ["activate"]
     else:
         return None
+    refs = [
+        value
+        for value in dict.fromkeys(
+            str(control.get(field) or "").strip()
+            for field in ("ref", "id", "name")
+        )
+        if value
+    ]
     result = {
         "label": label,
-        "ref": str(
-            control.get("ref") or control.get("name") or control.get("id") or ""
-        ).strip(),
+        "ref": refs[0] if refs else "",
         "role": kind,
         "visibility": visibility,
         "supported_operations": operations,
     }
+    if len(refs) > 1:
+        result["ref_aliases"] = refs[1:]
     for key in ("name", "id", "value", "options", "group_id"):
         value = control.get(key)
         if value is not None and value != "":

@@ -318,10 +318,16 @@ class StatementSupervisorPolicy(
             candidates = [
                 item
                 for item in view.affordances
-                if str(item.get("ref") or "") == plan.target_ref
+                if plan.target_ref
+                in {
+                    str(item.get("ref") or ""),
+                    *(str(value) for value in (item.get("ref_aliases") or [])),
+                }
             ]
-            if len(candidates) != 1:
-                return f"target_ref {plan.target_ref!r} is not unique in current frame"
+            if not candidates:
+                return f"target_ref {plan.target_ref!r} is absent from current frame"
+            if len(candidates) > 1:
+                return f"target_ref {plan.target_ref!r} is ambiguous in current frame"
         if candidates and not any(
             plan.action_family in (item.get("supported_operations") or [])
             for item in candidates
