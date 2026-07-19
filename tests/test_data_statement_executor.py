@@ -60,7 +60,7 @@ def test_data_executor_can_query_actual_table_snapshot(monkeypatch):
             ),
             EmitOp(
                 kind="emit",
-                values={"count": DataRef(var="answer", path=["count"])},
+                values={"count": DataRef(var="answer", path=[0, "count"])},
             ),
         ]
     )
@@ -75,6 +75,50 @@ def test_data_executor_can_query_actual_table_snapshot(monkeypatch):
     )
 
     assert outcome.outputs == {"count": 2}
+
+
+def test_data_executor_queries_selected_table_as_row_records(monkeypatch):
+    plan = DataPlan(
+        operations=[
+            ReadObservationOp(name="terms_table", source="tables", path=[1]),
+            SqlOp(
+                name="ranked",
+                source="terms_table",
+                sql=(
+                    'SELECT "Search Term" AS term, CAST("Uses" AS INTEGER) AS count '
+                    'FROM data ORDER BY CAST("Uses" AS INTEGER) DESC LIMIT 2'
+                ),
+                returns=["term", "count"],
+            ),
+            EmitOp(values={"terms": DataRef(var="ranked")}),
+        ]
+    )
+    monkeypatch.setattr(module, "_plan", lambda *_args, **_kwargs: plan)
+    outcome = execute_data_statement(
+        _invocation({"terms": OutputSpec(type="list[record]")}),
+        observation=Observation(
+            png_bytes=b"png",
+            source="browser",
+            tables=[
+                {"caption": "Other", "rows": [{"value": "ignore"}]},
+                {
+                    "caption": "Ranked terms",
+                    "rows": [
+                        {"Search Term": "small", "Uses": "4"},
+                        {"Search Term": "large", "Uses": "19"},
+                        {"Search Term": "medium", "Uses": "12"},
+                    ],
+                },
+            ],
+        ),
+    )
+
+    assert outcome.outputs == {
+        "terms": [
+            {"term": "large", "count": 19},
+            {"term": "medium", "count": 12},
+        ]
+    }
 
 
 def test_data_executor_projects_structural_table_metadata(monkeypatch):

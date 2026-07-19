@@ -81,6 +81,7 @@ def test_program_runner_owns_typed_branch_and_foreach_control_flow():
     assert result.env["results"] == [True, True]
     assert [call.loop_path for call in calls] == [[], [0], [1]]
     assert [call.inputs.get("position") for call in calls[1:]] == [0, 1]
+    assert {call.task_goal for call in calls} == {"update each selected record"}
 
 
 def test_command_arguments_use_explicit_literal_and_reference_channels():

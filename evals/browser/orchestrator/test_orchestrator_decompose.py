@@ -23,6 +23,7 @@ sys.path.insert(0, str(PROJECT_ROOT))
 from gui_agent.core.orchestrator import (
     Command,
     Data,
+    Finish,
     ForEach,
     If,
     Interact,
@@ -38,6 +39,7 @@ class Case:
     label: str
     goal: str
     required_text: tuple[str, ...] = ()
+    required_data_text: tuple[str, ...] = ()
     expect_foreach: bool = False
     # Finish-consumed numbers must be defined by Data (AST/dataflow, not word lists).
     expect_finish_number_from_data: bool = False
@@ -73,6 +75,11 @@ CASES = (
         "rank-customer",
         "Get the customer email who completed the second most number of orders in the entire history.",
         expect_finish_number_from_data=False,  # answer may be text email; still needs Data for ranking
+    ),
+    Case(
+        "data-top-n",
+        "From the current result data, return the top 2 labels ranked by usage.",
+        required_data_text=("top 2",),
     ),
 )
 
@@ -134,6 +141,10 @@ def _check(case: Case, program: Program) -> list[str]:
     for value in case.required_text:
         if value.casefold() not in payload:
             errors.append(f"required value was dropped: {value!r}")
+    data_payload = " ".join(node.goal for node in nodes if isinstance(node, Data)).casefold()
+    for value in case.required_data_text:
+        if value.casefold() not in data_payload:
+            errors.append(f"Data goal dropped semantic constant: {value!r}")
     if case.expect_foreach and not any(isinstance(node, ForEach) for node in nodes):
         errors.append("expected explicit ForEach over materialized data")
     for loop in (node for node in nodes if isinstance(node, ForEach)):

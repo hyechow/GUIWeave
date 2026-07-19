@@ -5,7 +5,7 @@ from gui_agent.reports.builder import _group_steps_by_statement
 from gui_agent.reports.models import ReportStep
 from gui_agent.reports.orchestrator_html import _render_program_section
 from gui_agent.reports.prompt_html import _render_module_io_html
-from gui_agent.reports.runner_html import _render_thumb_time, _turn_elapsed_seconds
+from gui_agent.reports.runner_html import generate_html, _render_thumb_time, _turn_elapsed_seconds
 
 
 def test_module_io_renders_summary_collapsed_schema_and_tokens():
@@ -326,3 +326,44 @@ def test_terminal_event_attaches_to_statement_without_empty_report_turn(tmp_path
     assert data.pages[0].steps == []
     assert data.pages[0].verify_url == "screenshot_turn_1.png"
     assert [step.label for step in data.pages[1].steps] == ["Turn 1"]
+
+
+def test_non_interactive_turn_renders_its_observation_frame(tmp_path):
+    (tmp_path / "screenshot_read_0.png").write_bytes(b"png")
+    (tmp_path / "context.json").write_text(
+        json.dumps({
+            "goal": "read current data",
+            "journal": {
+                "schema_version": 3,
+                "events": [{
+                    "event_type": "turn",
+                    "index": 1,
+                    "operation_mode": "non_interactive",
+                    "observation_source": "browser",
+                    "observation_url": "screenshot_read_0.png",
+                    "statement_instance_id": "i1:data",
+                    "statement": {
+                        "id": "data",
+                        "executor": "data",
+                        "goal": "read current data",
+                        "success": "data returned",
+                    },
+                    "supervisor": {"summary": "data returned", "statement_id": "data"},
+                    "non_ui": {
+                        "executor": "data",
+                        "goal": "read current data",
+                        "summary": "data returned",
+                        "observation_url": "screenshot_read_0.png",
+                    },
+                    "executed": True,
+                }],
+            },
+        }),
+        encoding="utf-8",
+    )
+
+    data = RunnerReportBuilder().build(tmp_path)
+    html = generate_html(data)
+
+    assert data.pages[0].steps[0].raw_screenshot_url == "screenshot_read_0.png"
+    assert '<img src="screenshot_read_0.png"' in html

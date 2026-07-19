@@ -182,6 +182,46 @@ def test_wrong_target_ref_gets_one_same_frame_transition_retry(monkeypatch) -> N
     assert step.outcome is not None and "target_ref" in step.outcome.summary
 
 
+@pytest.mark.parametrize("target_ref", ["WACSU99", "status"])
+def test_native_select_id_and_name_are_the_same_select_affordance(
+    monkeypatch, target_ref
+) -> None:
+    statement = StatementContract(
+        id="s1",
+        goal="filter completed orders",
+        success="only completed orders are visible",
+    )
+    policy = _policy(statement)
+    monkeypatch.setattr(
+        policy,
+        "_invoke_statement_transition",
+        lambda *_args, **_kwargs: _act(
+            family="select",
+            control="Status",
+            value="Complete",
+            target_ref=target_ref,
+        ),
+    )
+
+    step = policy._run_single_turn(
+        statement,
+        _observation(form_controls=[{
+            "kind": "native_select",
+            "label": "notice-WACSU99",
+            "name": "status",
+            "id": "WACSU99",
+            "options": ["Pending", "Complete"],
+            "rect": {"x": 856, "y": 526, "w": 246, "h": 32},
+        }]),
+        [],
+    )
+
+    assert step.outcome is None
+    assert step.action_intent is not None
+    assert step.action_intent.family == "select"
+    assert step.action_intent.target_value == "Complete"
+
+
 def test_invalid_contract_write_value_fails_without_fuzzy_field_binding(monkeypatch) -> None:
     statement = StatementContract(
         id="s1",

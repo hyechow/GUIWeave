@@ -63,6 +63,7 @@ def test_immediate_dispatch_runs_data_then_command_and_records_one_fact_pair_eac
         save_context=lambda: None,
         say=lambda _message: None,
         observation=observation,
+        observation_url="screenshot_read_0.png",
     )
 
     assert result.reply == "done"
@@ -72,4 +73,12 @@ def test_immediate_dispatch_runs_data_then_command_and_records_one_fact_pair_eac
     assert [turn.statement.executor for turn in context.journal.turns] == [
         "data",
         "command",
+    ]
+    assert [turn.observation_url for turn in context.journal.turns] == [
+        "screenshot_read_0.png",
+        "screenshot_read_0.png",
+    ]
+    assert [event.observation_url for event in context.journal.statement_outcomes] == [
+        "screenshot_read_0.png",
+        "screenshot_read_0.png",
     ]
