@@ -1,6 +1,7 @@
 import json
+from types import SimpleNamespace
 
-from gui_agent.core.orchestrator import Acquire, Finish, OutputSpec, Program
+from gui_agent.core.orchestrator import Acquire, Finish, Interact, OutputSpec, Program
 from gui_agent.core.run.context import save_context, save_observation_snapshot
 from gui_agent.core.run.program_runtime import ProgramRuntime
 from gui_agent.core.run.replay import main, replay_log
@@ -12,6 +13,7 @@ from gui_agent.core.schemas import (
     StatementOutcome,
     StatementOutcomeEvent,
 )
+from replay.run import _statement_for_terminal_observation, _statement_for_turn
 
 
 def _checkpoint(tmp_path, *, with_snapshot=True):
@@ -104,3 +106,35 @@ def test_replay_cli_emits_json_and_fails_on_broken_snapshot(tmp_path, capsys):
     failure = json.loads(capsys.readouterr().out)
     assert failure["valid"] is False
     assert "replay screenshot not found" in failure["error"]
+
+
+def test_turn_replay_reads_current_statement_info_and_program_ids():
+    statement = {
+        "id": "show-field",
+        "executor": "interact",
+        "goal": "show the required field",
+        "success": "the field is visible",
+        "required_values": {"field": "priority"},
+        "observe_fields": ["priority"],
+    }
+    contract = _statement_for_turn({}, SimpleNamespace(
+        index=16,
+        supervisor=SimpleNamespace(statement_id="show-field"),
+        statement=statement,
+        statement_instance_id="i1:show-field",
+    ))
+    assert contract.required_values == {"field": "priority"}
+    assert contract.observe_fields == ["priority"]
+
+    program = Program(statements=[Interact(
+        id="show-field",
+        goal="show the required field",
+        success="the field is visible",
+        observe_fields=["priority"],
+    )])
+    terminal = _statement_for_terminal_observation(
+        {"orchestrator": {"program": program.model_dump(mode="json")}},
+        statement_id="show-field",
+    )
+    assert terminal.id == "show-field"
+    assert terminal.observe_fields == ["priority"]

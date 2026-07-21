@@ -6,8 +6,8 @@ from gui_agent.core import config
 def test_data_model_config_is_not_nested_under_supervisor():
     llm = config.load_config()["llm"]
 
-    assert llm["data"]["model"]
-    assert "data" not in llm["supervisor"]
+    assert llm["observation"]["model"]
+    assert "observation" not in llm["supervisor"]
     assert llm["supervisor"]["feasibility"]["model"]
 
 

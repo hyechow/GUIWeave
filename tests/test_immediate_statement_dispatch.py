@@ -1,6 +1,6 @@
 from types import SimpleNamespace
 
-from gui_agent.core.orchestrator import Acquire, Command, Data, Finish, OutputSpec, Program
+from gui_agent.core.orchestrator import Acquire, Command, Read, Finish, OutputSpec, Program
 from gui_agent.core.run.program_runtime import ProgramRuntime
 from gui_agent.core.run.statements.dispatch import (
     drain_immediate_statements,
@@ -11,7 +11,7 @@ from gui_agent.core.schemas import Observation, PolicyContext, StatementOutcome
 
 def test_acquire_data_and_command_bypass_the_gui_react_loop():
     runtime = ProgramRuntime.start(
-        Program(statements=[Data(id="data", goal="derive")])
+        Program(statements=[Read(id="read")])
     )
     assert is_immediate_statement(runtime.current, object()) is True
     acquire = ProgramRuntime.start(Program(statements=[
@@ -30,7 +30,7 @@ def test_immediate_dispatch_runs_data_then_command_and_records_one_fact_pair_eac
 
     program = Program(
         statements=[
-            Data(id="data", goal="derive destination"),
+            Read(id="read"),
             Command(
                 id="open",
                 capability="open_url",
@@ -57,7 +57,7 @@ def test_immediate_dispatch_runs_data_then_command_and_records_one_fact_pair_eac
         calls.append(invocation.executor)
         return StatementOutcome.completed("opened", observation=observation)
 
-    monkeypatch.setattr(dispatch, "execute_data_statement", data_executor)
+    monkeypatch.setattr(dispatch, "execute_read", data_executor)
     monkeypatch.setattr(dispatch, "execute_command", command_executor)
     bundle = SimpleNamespace(prepare_vision_prompt_png=lambda value: value)
 
@@ -76,12 +76,12 @@ def test_immediate_dispatch_runs_data_then_command_and_records_one_fact_pair_eac
     )
 
     assert result.reply == "done"
-    assert calls == ["data", "command"]
-    assert statuses[0] == "Data 页面数据读取中：derive destination"
+    assert calls == ["read", "command"]
+    assert statuses[0] == "Read 观察绑定中：绑定当前 observation："
     assert len(context.journal.turns) == 2
     assert len(context.journal.statement_outcomes) == 2
     assert [turn.statement.executor for turn in context.journal.turns] == [
-        "data",
+        "read",
         "command",
     ]
     assert [turn.observation_url for turn in context.journal.turns] == [
@@ -103,14 +103,14 @@ def test_data_requirement_propagates_kickback_to_program_recovery(monkeypatch, t
         action_policy_name="test",
     )
     runtime = ProgramRuntime.start(
-        Program(statements=[Data(id="rank", goal="rank all records")]),
+        Program(statements=[Read(id="rank")]),
         journal=context.journal,
     )
     observation = Observation(png_bytes=b"png", source="browser")
 
     monkeypatch.setattr(
         dispatch,
-        "execute_data_statement",
+        "execute_read",
         lambda *_args, **_kwargs: StatementOutcome.infeasible(
             "missing email",
             kickback="collect complete rows with customer email",

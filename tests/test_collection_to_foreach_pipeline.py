@@ -1,7 +1,7 @@
-"""End-to-end materialized-records pipeline: collect -> Data filter -> If -> ForEach -> Finish.
+"""End-to-end materialized-records pipeline: Acquire -> Compute -> If -> ForEach.
 
 Proves the design's canonical chain (docs/data_acquisition_and_processing_design.md:113-119):
-a complete-coverage collection output materializes as list[record], flows into a Data node
+a complete-coverage collection output materializes as list[record], flows into a Compute node
 that filters it, an If guards the empty case, and a ForEach iterates the materialized records
 with a fixed body. Deterministic: a stub executor stands in for the GUI/Transition layer while
 the real Interpreter owns control flow and the real validation gate enforces complete-coverage
@@ -12,8 +12,10 @@ from __future__ import annotations
 
 from gui_agent.core.orchestrator import (
     Acquire,
+    Compute,
+    ComputeRef,
     Condition,
-    Data,
+    Read,
     Finish,
     ForEach,
     If,
@@ -23,6 +25,7 @@ from gui_agent.core.orchestrator import (
     ProgramRunner,
     ValueRef,
 )
+from gui_agent.core.data_types import FieldRef, FilterStep
 from gui_agent.core.schemas import StatementOutcome
 
 
@@ -44,11 +47,16 @@ def _program() -> Program:
                 goal="collect all records in scope",
                 returns={"rows": OutputSpec(type="list[record]", coverage="complete")},
             ),
-            Data(
+            Compute(
                 id="select",
                 bind="selection",
                 goal="select the active records",
+                source="rows",
                 inputs={"rows": ValueRef(var="observed", path=["rows"])},
+                steps=[FilterStep(
+                    field=FieldRef(path=["active"]), cmp="eq", value="yes"
+                )],
+                outputs={"records": ComputeRef()},
                 returns={"records": OutputSpec(type="list[record]")},
             ),
             If(
@@ -65,11 +73,9 @@ def _program() -> Program:
                                 success="the current record has been updated",
                                 inputs={"record": ValueRef(var="record")},
                             ),
-                            Data(
+                            Read(
                                 id="verify",
                                 bind="updated",
-                                goal="verify the current record has been updated",
-                                inputs={"record": ValueRef(var="record")},
                                 returns={"ok": OutputSpec(type="boolean")},
                             )
                         ],
@@ -97,7 +103,7 @@ def test_acquire_data_filter_if_foreach_runs_end_to_end():
                 "collected", verification="confirmed", outputs={"rows": ROWS},
             )
         if invocation.id == "select":
-            # Data consumes the materialized list[record] from collect's output and filters it.
+            # Compute consumes the materialized list[record] and filters it.
             rows = invocation.inputs["rows"]
             assert {row["id"] for row in rows} == {"1", "2", "3", "4"}
             active = [row for row in rows if row.get("active") == "yes"]

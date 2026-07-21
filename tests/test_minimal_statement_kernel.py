@@ -7,7 +7,14 @@ import io
 from PIL import Image
 import pytest
 
-from gui_agent.core.schemas import Observation, StatementContract
+from llm.structured import StructuredOutputError
+from gui_agent.core.schemas import (
+    ActionIntent,
+    Observation,
+    PolicyTurn,
+    StatementContract,
+    SupervisorStep,
+)
 from gui_agent.core.supervisor.statement import policy as policy_module
 from gui_agent.core.supervisor.statement.policy import StatementSupervisorPolicy
 from gui_agent.core.supervisor.statement.schemas import (
@@ -245,6 +252,251 @@ def test_invalid_contract_write_value_fails_without_fuzzy_field_binding(monkeypa
 
     assert step.outcome is not None
     assert "outside required_values" in step.outcome.summary
+
+
+def test_observed_field_cannot_be_selected_even_as_prepare_action(monkeypatch) -> None:
+    statement = StatementContract(
+        id="s1",
+        goal="locate the owner and expose its current priority",
+        success="the owner's current priority is visible",
+        inputs={"owner_identity": "account-east"},
+        observe_fields=["Priority"],
+    )
+    policy = _policy(statement)
+    monkeypatch.setattr(
+        policy,
+        "_invoke_statement_transition",
+        lambda *a, **k: _act(
+            family="select",
+            control="Priority",
+            value="High",
+            role="prepare",
+        ),
+    )
+
+    step = policy._run_single_turn(statement, _observation(), [])
+
+    assert step.outcome is not None
+    assert "read-only" in step.outcome.summary
+
+
+def test_offscreen_observed_field_bypasses_transition_with_deterministic_iterate(
+    monkeypatch,
+) -> None:
+    statement = StatementContract(
+        id="s1",
+        goal="expose the current Material value",
+        success="Material is visible",
+        observe_fields=["Material"],
+    )
+    policy = _policy(statement)
+    monkeypatch.setattr(
+        policy,
+        "_invoke_statement_transition",
+        lambda *_args, **_kwargs: pytest.fail("offscreen transport must not invoke Transition"),
+    )
+
+    step = policy._run_single_turn(
+        statement,
+        _observation(form_control_state=[{
+            "kind": "native_select",
+            "label": "Material",
+            "value": "33",
+            "selected_text": "Cotton, Lycra",
+            "rect": {"x": 414, "y": -27, "w": 250, "h": 176},
+        }]),
+        [],
+    )
+
+    assert step.action_intent is not None
+    assert step.action_intent.family == "iterate"
+    assert step.action_intent.target_control == "Material"
+    assert step.action_intent.direction == "up"
+
+
+def test_complete_rejects_prefix_match_for_runtime_input(monkeypatch) -> None:
+    statement = StatementContract(
+        id="s1",
+        goal="locate the exact account",
+        success="the exact account is open",
+        inputs={"Account Code": "account-east"},
+    )
+    policy = _policy(statement)
+    monkeypatch.setattr(
+        policy,
+        "_invoke_statement_transition",
+        lambda *a, **k: _complete("the account is open"),
+    )
+
+    step = policy._run_single_turn(
+        statement,
+        _observation(form_controls=[{
+            "kind": "text_input",
+            "label": "Account Code",
+            "value": "account-east-user",
+        }]),
+        [],
+    )
+
+    assert step.outcome is not None
+    assert "does not exactly match" in step.outcome.summary
+
+
+def test_complete_rejects_inherited_filter_outside_declared_scope(monkeypatch) -> None:
+    statement = StatementContract(
+        id="s1",
+        goal="filter records by quantity",
+        success="only quantity 3 records remain",
+        required_values={"quantity_filter": 3},
+    )
+    policy = _policy(statement)
+    decisions = iter([
+        _complete("the quantity filter is visible"),
+        _act(family="activate", control="Clear all"),
+    ])
+    monkeypatch.setattr(
+        policy,
+        "_invoke_statement_transition",
+        lambda *_args, **_kwargs: next(decisions),
+    )
+
+    step = policy._run_single_turn(
+        statement,
+        _observation(applied_filters={"Keyword": "old", "Quantity": "3 - 3"}),
+        [],
+    )
+
+    assert step.action_intent is not None
+    assert step.action_intent.target_control == "Clear all"
+
+
+def test_staged_query_activates_matching_submit_before_pagination(monkeypatch) -> None:
+    statement = StatementContract(
+        id="s1",
+        goal="locate the exact owner",
+        success="the exact owner is open",
+        inputs={"SKU": "WS08"},
+    )
+    policy = _policy(statement)
+    monkeypatch.setattr(
+        policy,
+        "_invoke_statement_transition",
+        lambda *_args, **_kwargs: pytest.fail("staged submission must bypass Transition"),
+    )
+    prior = PolicyTurn(
+        index=1,
+        observation_source="browser",
+        statement_instance_id=INSTANCE,
+        executed=True,
+        supervisor=SupervisorStep(
+            action_intent=ActionIntent(
+                instruction="type the query",
+                role="prepare",
+                family="input",
+                target_control="Search by keyword",
+                target_value="WS08",
+            ),
+            summary="query entered",
+            statement_id="s1",
+        ),
+    )
+
+    step = policy._run_single_turn(
+        statement,
+        _observation(
+            applied_filters=None,
+            form_control_state=[{
+                "kind": "text_input",
+                "label": "Search by keyword",
+                "value": "WS08",
+            }],
+            semantic_tree=[{
+                "role": "button",
+                "key": "Search",
+                "ref": 42,
+                "in_viewport": True,
+            }],
+        ),
+        [prior],
+    )
+
+    assert step.action_intent is not None
+    assert step.action_intent.family == "activate"
+    assert step.action_intent.target_control == "Search"
+    assert step.action_intent.target_ref == "42"
+
+
+def test_regular_form_input_does_not_trigger_mechanical_submission(monkeypatch) -> None:
+    statement = StatementContract(id="s1", goal="update status", success="status saved")
+    policy = _policy(statement)
+    calls = 0
+
+    def decide(*_args, **_kwargs):
+        nonlocal calls
+        calls += 1
+        return _act(family="activate", control="Save Status")
+
+    monkeypatch.setattr(policy, "_invoke_statement_transition", decide)
+    prior = PolicyTurn(
+        index=1,
+        observation_source="browser",
+        statement_instance_id=INSTANCE,
+        executed=True,
+        supervisor=SupervisorStep(
+            action_intent=ActionIntent(
+                instruction="type status",
+                role="write",
+                family="input",
+                target_control="Status",
+                target_value="Active",
+            ),
+            summary="status entered",
+            statement_id="s1",
+        ),
+    )
+
+    policy._run_single_turn(
+        statement,
+        _observation(
+            form_control_state=[{
+                "kind": "text_input", "label": "Status", "value": "Active",
+            }],
+            semantic_tree=[{
+                "role": "button", "key": "Save Status", "in_viewport": True,
+            }],
+        ),
+        [prior],
+    )
+
+    assert calls == 1
+
+
+def test_invalid_structured_transition_retries_once(monkeypatch) -> None:
+    statement = StatementContract(
+        id="s1",
+        goal="locate the exact account",
+        success="the exact account is open",
+        inputs={"Account Code": "account-east"},
+    )
+    policy = _policy(statement)
+    decisions = iter([
+        StructuredOutputError("infeasible transition requires cited evidence"),
+        _act(family="activate", control="Back"),
+    ])
+
+    def transition(*_args, **_kwargs):
+        decision = next(decisions)
+        if isinstance(decision, Exception):
+            raise decision
+        return decision
+
+    monkeypatch.setattr(policy, "_invoke_statement_transition", transition)
+
+    step = policy._run_single_turn(statement, _observation(), [])
+
+    assert step.outcome is None
+    assert step.action_intent is not None
+    assert step.action_intent.target_control == "Back"
 
 
 def test_adaptive_ui_field_name_is_allowed_when_value_matches_contract(monkeypatch) -> None:

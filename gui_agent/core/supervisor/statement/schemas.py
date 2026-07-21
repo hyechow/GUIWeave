@@ -102,7 +102,8 @@ class _TransitionAction(BaseModel):
         default="",
         description=(
             "动作所针对的当前控件或入口可读名称；具名 activate/navigate 以及 "
-            "input/select 必填；target_ref 存在时由 ref 承担精确身份"
+            "input/select/iterate 必填；iterate 填写要带入视口的 offscreen 目标名，"
+            "target_ref 存在时由 ref 承担精确身份"
         ),
     )
     target_value: str = Field(

@@ -31,9 +31,8 @@ load_dotenv(PROJECT_ROOT / ".env")
 from gui_agent.adapters.browser.factory import _build_action_policy, _build_supervisor
 from gui_agent.adapters.browser.target_binding import BrowserTargetBinder
 from gui_agent.core.run.context import load_observation_snapshot
-from gui_agent.core.run.interactive import contract_for_run
 from gui_agent.core.run.target_binding import bind_action_target
-from gui_agent.core.orchestrator.program import Run
+from gui_agent.core.orchestrator.program import Interact
 from gui_agent.core.schemas import StatementContract, PolicyContext, PolicyTurn
 from gui_agent.core.self_learning.app_summary import load_knowledge_for_app
 
@@ -58,7 +57,9 @@ def _statement_for_turn(raw: dict[str, Any], turn: PolicyTurn) -> StatementContr
             f"statement invocation {turn.statement_instance_id!r} has no StatementInfo"
         )
     if hasattr(info, "model_dump"):
-        info = info.model_dump(mode="json")
+        info = info.model_dump(mode="json", exclude={"executor"})
+    elif isinstance(info, dict):
+        info = {key: value for key, value in info.items() if key != "executor"}
     return StatementContract.model_validate(info)
 
 
@@ -74,7 +75,7 @@ def _statement_for_terminal_observation(
 
     def find(items: list[dict[str, Any]]) -> dict[str, Any] | None:
         for item in items:
-            if item.get("statement_id") == statement_id:
+            if item.get("id") == statement_id or item.get("statement_id") == statement_id:
                 return item
             for key in ("then", "otherwise", "body"):
                 if isinstance(item.get(key), list) and (match := find(item[key])):
@@ -82,9 +83,17 @@ def _statement_for_terminal_observation(
         return None
 
     blocks = [program_raw.get("statements") or []]
-    blocks.extend(function.get("body") or [] for function in program_raw.get("functions") or [])
     if match := next(filter(None, (find(block) for block in blocks)), None):
-        return contract_for_run(Run.model_validate(match), 0)
+        statement = Interact.model_validate(match)
+        return StatementContract(
+            id=statement.id,
+            goal=statement.goal,
+            success=statement.success,
+            inputs={},
+            required_values=dict(statement.required_values),
+            observe_fields=list(statement.observe_fields),
+            persistence=statement.persistence,
+        )
     raise ValueError(f"statement {statement_id!r} is absent from orchestrator.program")
 
 

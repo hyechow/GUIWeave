@@ -2,10 +2,11 @@ from decimal import Decimal
 
 import pytest
 
-from gui_agent.core.run.statements.data_kernel import (
+from gui_agent.core.run.statements.compute_kernel import (
     AggregateSpec,
     AggregateStep,
-    DataKernelError,
+    BuildRecordStep,
+    ComputeKernelError,
     DateBucketStep,
     DistinctStep,
     FieldRef,
@@ -17,9 +18,18 @@ from gui_agent.core.run.statements.data_kernel import (
     SortStep,
     TakeStep,
     TextSplitStep,
-    describe_datasets,
     execute_pipeline,
 )
+
+
+def test_pipeline_builds_record_from_scalar():
+    result, trace = execute_pipeline(
+        "Fleece",
+        [BuildRecordStep(fields={"Material": FieldRef(path=[])})],
+    )
+
+    assert result == [{"Material": "Fleece"}]
+    assert trace == ["build_record:1->1"]
 
 
 def test_pipeline_filters_sorts_takes_projects_and_deduplicates():
@@ -126,32 +136,8 @@ def test_pipeline_buckets_groups_and_dense_ranks_with_ties():
 
 
 def test_pipeline_reports_missing_fields_instead_of_guessing():
-    with pytest.raises(DataKernelError, match="field path does not exist"):
+    with pytest.raises(ComputeKernelError, match="field path does not exist"):
         execute_pipeline(
             [{"real": "value"}],
             [ProjectStep(fields={"x": FieldRef(path=["guessed"])})],
         )
-
-
-def test_dataset_schema_exposes_exact_fields_types_and_coverage():
-    schemas = describe_datasets([{
-        "caption": "Orders",
-        "rows": [{
-            "Purchase Date": "May 19, 2023",
-            "Grand Total": "$93.40",
-            "ID": "42",
-            "Enabled": "Yes",
-        }],
-        "total_records": 153,
-        "partial": True,
-    }])
-
-    fields = {field["name"]: field["type"] for field in schemas[0]["fields"]}
-    assert fields == {
-        "Purchase Date": "datetime",
-        "Grand Total": "money",
-        "ID": "number",
-        "Enabled": "boolean",
-    }
-    assert schemas[0]["partial"] is True
-    assert schemas[0]["total_records"] == 153

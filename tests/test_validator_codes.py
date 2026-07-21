@@ -1,12 +1,13 @@
 from gui_agent.core.orchestrator import (
     Acquire,
     Command,
-    Data,
+    Read,
     Finish,
     ForEach,
     Interact,
     OutputSpec,
     Program,
+    SourceCheck,
     ValueRef,
     validate_program,
 )
@@ -35,10 +36,9 @@ def test_validator_is_structural_and_accepts_semantic_ui_goals():
 def test_validator_checks_typed_reference_and_bind_flow():
     program = Program(
         statements=[
-            Data(
+            Read(
                 id="select",
                 bind="selection",
-                goal="select records",
                 returns={"rows": OutputSpec(type="list[record]")},
             ),
             Interact(
@@ -55,10 +55,9 @@ def test_validator_checks_typed_reference_and_bind_flow():
 def test_validator_checks_foreach_collection_type_and_collect_scope():
     program = Program(
         statements=[
-            Data(
+            Read(
                 id="count",
                 bind="answer",
-                goal="derive count",
                 returns={"count": OutputSpec(type="number")},
             ),
             ForEach(
@@ -92,7 +91,7 @@ def test_validator_checks_command_capability_contract():
 
 
 def test_interact_schema_rejects_business_outputs():
-    with pytest.raises(ValidationError, match="adjacent Data"):
+    with pytest.raises(ValidationError, match="adjacent Read"):
         Interact(
             id="read", bind="value", goal="read", success="visible",
             returns={"value": OutputSpec(type="text")},
@@ -111,14 +110,8 @@ def test_validator_keeps_collection_ownership_on_acquire():
 
 def test_validator_rejects_record_fields_on_raw_acquire_output():
     program = Program(statements=[
-        Data(
-            id="inspect", bind="schema", goal="inspect identity",
-            mode="inspect", required_fields=["identity"],
-            returns={
-                "available": OutputSpec(type="boolean"),
-                "bindings": OutputSpec(type="record"),
-                "missing_fields": OutputSpec(type="json"),
-            },
+        SourceCheck(
+            id="inspect", bind="schema", required_fields=["identity"],
         ),
         Acquire(
             id="collect", bind="rows", goal="collect raw rows",
@@ -136,14 +129,8 @@ def test_validator_rejects_record_fields_on_raw_acquire_output():
 
 def test_validator_accepts_inspect_if_acquire_contract():
     program = Program(statements=[
-        Data(
-            id="inspect", bind="schema", goal="inspect required fields",
-            mode="inspect", required_fields=["identity", "amount"],
-            returns={
-                "available": OutputSpec(type="boolean"),
-                "bindings": OutputSpec(type="record"),
-                "missing_fields": OutputSpec(type="json"),
-            },
+        SourceCheck(
+            id="inspect", bind="schema", required_fields=["identity", "amount"],
         ),
         Acquire(
             id="collect", bind="rows", goal="collect scoped rows",
@@ -158,18 +145,12 @@ def test_validator_accepts_inspect_if_acquire_contract():
 
 def test_validator_routes_missing_inspect_fields_through_repair_issue():
     program = Program(statements=[
-        Data(
-            id="inspect", bind="schema", goal="inspect source schema",
-            mode="inspect",
-            returns={
-                "available": OutputSpec(type="boolean"),
-                "bindings": OutputSpec(type="record"),
-                "missing_fields": OutputSpec(type="json"),
-            },
+        SourceCheck(
+            id="inspect", bind="schema",
         ),
     ])
 
-    assert "DATA_INSPECT_FIELDS_REQUIRED" in _codes(program)
+    assert "SOURCE_CHECK_FIELDS_REQUIRED" in _codes(program)
 
 
 def test_validator_requires_acquire_to_use_data_inspect_result():
@@ -187,8 +168,8 @@ def test_validator_requires_acquire_to_use_data_inspect_result():
 
 def test_validator_rejects_inspection_shaped_output_from_derive_data():
     program = Program(statements=[
-        Data(
-            id="fake", bind="schema", goal="derive a similarly shaped record",
+        Read(
+            id="fake", bind="schema",
             returns={
                 "available": OutputSpec(type="boolean"),
                 "bindings": OutputSpec(type="record"),
@@ -209,34 +190,28 @@ def test_validator_rejects_inspection_shaped_output_from_derive_data():
 
 def test_validator_requires_data_record_output_fields():
     missing = Program(statements=[
-        Data(
-            id="rank", bind="result", goal="return ranked identities",
+        Read(
+            id="rank", bind="result",
             returns={"rows": OutputSpec(type="list[record]")},
         ),
     ])
     declared = Program(statements=[
-        Data(
-            id="rank", bind="result", goal="return ranked identities",
+        Read(
+            id="rank", bind="result",
             returns={
                 "rows": OutputSpec(type="list[record]", fields=["identity"]),
             },
         ),
     ])
 
-    assert "DATA_RECORD_FIELDS_REQUIRED" in _codes(missing)
+    assert "READ_RECORD_FIELDS_REQUIRED" in _codes(missing)
     assert validate_program(declared) == []
 
 
 def _acquire_then_data(*, inspected_fields, required_fields):
     return Program(statements=[
-        Data(
-            id="inspect", bind="schema", goal="inspect semantic source fields",
-            mode="inspect", required_fields=inspected_fields,
-            returns={
-                "available": OutputSpec(type="boolean"),
-                "bindings": OutputSpec(type="record"),
-                "missing_fields": OutputSpec(type="json"),
-            },
+        SourceCheck(
+            id="inspect", bind="schema", required_fields=inspected_fields,
         ),
         Acquire(
             id="collect", bind="collection", goal="collect scoped records",
@@ -245,10 +220,9 @@ def _acquire_then_data(*, inspected_fields, required_fields):
                 "rows": OutputSpec(type="list[record]", coverage="complete"),
             },
         ),
-        Data(
-            id="rank", bind="result", goal="rank records by identity frequency",
+        Read(
+            id="rank", bind="result",
             inputs={"rows": ValueRef(var="collection", path=["rows"])},
-            required_fields=required_fields,
             returns={"count": OutputSpec(type="number")},
         ),
     ])
@@ -266,17 +240,17 @@ def test_validator_rejects_data_processing_after_acquire():
         required_fields=["customer email"],
     )
 
-    assert "DATA_READ_INPUT_FORBIDDEN" in _codes(missing_declaration)
-    assert "DATA_READ_INPUT_FORBIDDEN" in _codes(mismatched)
-    assert "DATA_READ_INPUT_FORBIDDEN" in _codes(aligned)
+    assert "READ_INPUT_FORBIDDEN" in _codes(missing_declaration)
+    assert "READ_INPUT_FORBIDDEN" in _codes(mismatched)
+    assert "READ_INPUT_FORBIDDEN" in _codes(aligned)
 
 
 def test_validator_rejects_outputless_data_transform():
     program = Program(statements=[
-        Data(id="noop", bind="rows", goal="materialize records"),
+        Read(id="noop", bind="rows"),
     ])
 
-    assert "DATA_OUTPUT_REQUIRED" in _codes(program)
+    assert "READ_OUTPUT_REQUIRED" in _codes(program)
 
 
 def test_all_emitted_codes_are_registered():
@@ -286,10 +260,9 @@ def test_all_emitted_codes_are_registered():
         Program(statements=[Command(id="open", capability="open_url")]),
         Program(
             statements=[
-                Data(
+                Read(
                     id="read",
                     bind="title",
-                    goal="read title",
                     returns={"title": OutputSpec(type="text", coverage="complete")},
                 ),
             ]

@@ -90,7 +90,7 @@ def _search_term_scalar(item: object) -> object | None:
 
 def _single_column_scalars(data: list) -> list | None:
     """A single-column result — every item a dict with the SAME one key — is scalar values, never
-    the intended RETRIEVE answer. A one-field Data result can yield rows
+    the intended RETRIEVE answer. A one-field Read result can yield rows
     ``[{"material": "cotton"}, {"material": "fleece"}]``; WebArena expects ``[cotton, fleece]``,
     so the ``{"material": …}`` wrapper must be unwrapped (live 185 returned the stringified dicts and
     scored 0). Returns None unless EVERY item is a dict with exactly one key and all share that key —
@@ -669,7 +669,7 @@ def _synthesize_response(
         verification=result.verification,
         summary=result.summary,
         output=result.output,
-        data_context_text="Data Statement outputs and evidence are included below.",
+        data_context_text="Read/Compute outputs and evidence are included below.",
         evidence_text=evidence_text,
     )
     cfg = resolve_llm_config("output")
@@ -801,8 +801,8 @@ def _print_program(program) -> None:
     """Print the semantic Program before execution."""
     def emit(s, indent: str = "  ") -> None:
         nm = type(s).__name__
-        if nm in {"Interact", "Acquire", "Data"}:
-            line = f"{indent}[{s.op}] {s.goal}"
+        if nm in {"Interact", "Acquire", "Read", "SourceCheck", "Compute"}:
+            line = f"{indent}[{s.op}] {s.goal_text}"
             if s.bind:
                 line += f"  → {s.bind}"
             if s.returns:

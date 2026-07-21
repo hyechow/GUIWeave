@@ -208,7 +208,11 @@ def build_observation_view(
         if key not in seen:
             seen.add(key)
             affordances.append(item)
-    for raw in observation.form_controls or []:
+    controls = [
+        *(observation.form_control_state or []),
+        *(observation.form_controls or []),
+    ]
+    for raw in controls:
         item = _control_affordance(raw) if isinstance(raw, dict) else None
         if item is None:
             continue

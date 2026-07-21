@@ -23,6 +23,7 @@ def contract_for_interact(
         success=statement.success,
         inputs=dict(invocation.inputs),
         required_values=dict(statement.required_values),
+        observe_fields=list(statement.observe_fields),
         persistence=statement.persistence,
     )
 
@@ -40,6 +41,7 @@ def statement_info(
             success=contract.success,
             inputs=dict(contract.inputs),
             required_values=dict(contract.required_values),
+            observe_fields=list(contract.observe_fields),
             persistence=contract.persistence,
         )
     return StatementInfo(
@@ -60,6 +62,7 @@ def statement_info_from_contract(contract: StatementContract) -> StatementInfo:
         success=contract.success,
         inputs=dict(contract.inputs),
         required_values=dict(contract.required_values),
+        observe_fields=list(contract.observe_fields),
         persistence=contract.persistence,
     )
 

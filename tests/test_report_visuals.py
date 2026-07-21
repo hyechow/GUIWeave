@@ -60,10 +60,10 @@ def test_orchestrator_program_renders_foreach_block_and_body():
                 "goal": "找 rating<=3 昵称",
                 "statements": [
                     {
-                        "op": "data",
+                        "op": "read",
                         "id": "s1",
                         "bind": "selection",
-                        "goal": "选择 rating<=3 的评论",
+                        "reads": {"rows": {"source": "dataset", "name": "rows"}},
                         "returns": {"rows": {"type": "list[record]"}},
                     },
                     {
@@ -142,10 +142,10 @@ def test_in_progress_program_card_does_not_require_report_run_log():
             "goal": "open one row",
             "statements": [
                 {
-                    "op": "data",
+                    "op": "read",
                     "id": "s1",
                     "bind": "row",
-                    "goal": "read row",
+                    "reads": {"id": {"source": "field", "name": "row id"}},
                     "returns": {"id": {"type": "text"}},
                 },
                 {
@@ -160,7 +160,7 @@ def test_in_progress_program_card_does_not_require_report_run_log():
         "context_reports": [],
     })
 
-    assert "read row" in html
+    assert "row id" in html
     assert "open selected row" in html
     assert "prog-resolved" not in html
 
@@ -194,8 +194,8 @@ def test_orchestrator_program_collapses_compiler_acquire_macro():
             "goal": "count records by month",
             "statements": [
                 {
-                    "op": "data", "mode": "inspect", "bind": "__source_initial",
-                    "goal": "inspect fields", "required_fields": ["date", "status"],
+                    "op": "source_check", "bind": "__source_initial",
+                    "required_fields": ["date", "status"],
                 },
                 {
                     "op": "if",
@@ -207,8 +207,8 @@ def test_orchestrator_program_collapses_compiler_acquire_macro():
                     "otherwise": [],
                 },
                 {
-                    "op": "data", "mode": "inspect", "bind": "__source_final",
-                    "goal": "inspect fields again", "required_fields": ["date", "status"],
+                    "op": "source_check", "bind": "__source_final",
+                    "required_fields": ["date", "status"],
                 },
                 {
                     "op": "acquire", "bind": "__collection",
@@ -456,16 +456,16 @@ def test_non_interactive_turn_renders_its_observation_frame(tmp_path):
                     "operation_mode": "non_interactive",
                     "observation_source": "browser",
                     "observation_url": "screenshot_read_0.png",
-                    "statement_instance_id": "i1:data",
+                    "statement_instance_id": "i1:read",
                     "statement": {
-                        "id": "data",
-                        "executor": "data",
+                        "id": "read",
+                        "executor": "read",
                         "goal": "read current data",
                         "success": "data returned",
                     },
-                    "supervisor": {"summary": "data returned", "statement_id": "data"},
+                    "supervisor": {"summary": "data returned", "statement_id": "read"},
                     "non_ui": {
-                        "executor": "data",
+                        "executor": "read",
                         "goal": "read current data",
                         "summary": "data returned",
                         "observation_url": "screenshot_read_0.png",
@@ -481,7 +481,6 @@ def test_non_interactive_turn_renders_its_observation_frame(tmp_path):
     html = generate_html(data)
 
     assert data.pages[0].steps[0].raw_screenshot_url == "screenshot_read_0.png"
-    assert data.pages[0].steps[0].status == "✓ Data"
+    assert data.pages[0].steps[0].status == "✓ Read"
     assert '<img src="screenshot_read_0.png"' in html
-    assert "Data 数据处理" in html
-    assert "Data 处理" in html
+    assert "Read 观察绑定" in html

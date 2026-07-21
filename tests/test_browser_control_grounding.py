@@ -218,6 +218,26 @@ def test_native_select_can_bypass_visual_policy() -> None:
     assert decision.action.text == "Complete"
 
 
+def test_offscreen_form_control_uses_bounded_directional_scroll() -> None:
+    decision = resolve_native_control_action(
+        [{
+            "label": "Material",
+            "kind": "native_select",
+            "rect": {"x": 414, "y": -27, "w": 250, "h": 176},
+        }],
+        target_control="Material",
+        target_value="",
+        target_group_id="",
+        action_family="iterate",
+        instruction="将 Material 字段带入视口",
+    )
+
+    assert decision is not None
+    assert decision.action.action_type == "scroll"
+    assert decision.action.direction == "up"
+    assert decision.action.amount == "medium"
+
+
 def test_rendered_input_never_bypasses_visual_policy() -> None:
     decision = resolve_native_control_action(
         _description_controls(),

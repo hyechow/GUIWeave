@@ -6,7 +6,8 @@ from gui_agent.core.orchestrator import (
     Compute,
     ComputeRef,
     Command,
-    Data,
+    Read,
+    SourceCheck,
     Finish,
     ForEach,
     If,
@@ -25,6 +26,8 @@ from gui_agent.core.data_types import (
     ProjectStep,
 )
 from gui_agent.core.orchestrator._decomposer.draft import (
+    _OwnershipPlanDraft,
+    _OwnershipScopeStep,
     _PlanDraft,
     _StepDraft,
     to_program,
@@ -44,7 +47,7 @@ def test_draft_converts_only_the_six_semantic_nodes():
         goal="update selected records",
         steps=[
             _StepDraft(
-                op="data",
+                op="read",
                 bind="selection",
                 goal="select records that need a change",
                 coverage="current_view",
@@ -76,7 +79,7 @@ def test_draft_converts_only_the_six_semantic_nodes():
 
     program = to_program(draft)
 
-    assert isinstance(program.statements[0], Data)
+    assert isinstance(program.statements[0], Read)
     assert isinstance(program.statements[1], ForEach)
     assert isinstance(program.statements[1].body[0], Interact)
     assert isinstance(program.statements[2], Command)
@@ -122,12 +125,23 @@ output_policy: distinct_nonempty_values
     assert loop.body[0].arg_refs["url"] == ValueRef(
         var="item", path=["profile_url"]
     )
-    branch = loop.body[2]
+    reveal = loop.body[1]
+    assert isinstance(reveal, Interact)
+    assert reveal.observe_fields == ["Billing Region"]
+    assert isinstance(loop.body[2], Read)
+    assert loop.body[2].reads["value"].name == "Billing Region"
+    branch = loop.body[3]
     assert isinstance(branch, If)
     assert isinstance(branch.then[0], Interact)
-    assert branch.then[0].inputs["owner_identity"] == ValueRef(
+    assert branch.then[0].inputs["Team Code"] == ValueRef(
         var="item", path=["account_code"]
     )
+    assert "inputs['Team Code']" in branch.then[0].goal
+    assert branch.then[0].observe_fields == []
+    assert branch.then[1].observe_fields == ["Billing Region"]
+    assert branch.then[2].reads["value"].name == "Billing Region"
+    assert isinstance(branch.then[3], Compute)
+    assert isinstance(branch.otherwise[0], Compute)
     assert loop.into == "__owned_field_values"
     compute = next(
         node for node in reversed(program.statements) if isinstance(node, Compute)
@@ -136,9 +150,53 @@ output_policy: distinct_nonempty_values
     assert validate_program(program) == []
 
 
+def test_decompose_uses_scope_only_schema_for_owned_field(monkeypatch):
+    from gui_agent.core.orchestrator import decomposer as module
+
+    knowledge = """```field_ownership
+field: Material
+member_detail_source_field: Action_url
+member_detail_output_field: detail_url
+owner_identity_source_field: SKU
+owner_identity_output_field: parent_sku
+owner_identity_transform:
+  op: text_split
+  separator: "-"
+  direction: right
+  maxsplit: 2
+  index: 0
+owner_scope: exact SKU equals parent_sku and Type equals Configurable Product
+policy: member_then_owner_if_empty
+output_policy: distinct_nonempty_values
+```"""
+    schemas = []
+    monkeypatch.setattr(module, "ChatOpenAI", lambda **_kwargs: object())
+
+    def invoke(_llm, _messages, schema, **_kwargs):
+        schemas.append(schema)
+        return _OwnershipPlanDraft(steps=[_OwnershipScopeStep(
+            goal="filter products by exact quantity",
+            success="only products with quantity 3 remain",
+            required_values={"quantity_filter": 3},
+        )])
+
+    monkeypatch.setattr(module, "invoke_structured", invoke)
+
+    program = decompose(
+        "Give me the material of the products that have 3 units left",
+        knowledge=knowledge,
+    )
+
+    assert schemas == [_OwnershipPlanDraft]
+    assert isinstance(program.statements[0], Interact)
+    assert program.statements[0].required_values == {"quantity_filter": 3}
+    assert any(isinstance(node, ForEach) for node in program.statements)
+    assert validate_program(program) == []
+
+
 def test_complete_data_draft_is_rejected_as_runtime_computation():
     draft = _PlanDraft(steps=[_StepDraft(
-        op="data", bind="result", goal="select identities",
+        op="read", bind="result", goal="select identities",
         coverage="complete",
         prepare_source="make the required semantic fields readable",
         required_fields=["identity"],
@@ -146,7 +204,7 @@ def test_complete_data_draft_is_rejected_as_runtime_computation():
     )])
     program = to_program(_PlanDraft(steps=[
         _StepDraft(
-            op="data", bind="result", goal="select identities",
+            op="read", bind="result", goal="select identities",
             coverage="complete",
             prepare_source="make the required semantic fields readable",
             required_fields=["identity"],
@@ -154,10 +212,10 @@ def test_complete_data_draft_is_rejected_as_runtime_computation():
         ),
     ]))
 
-    assert "DATA_READ_COVERAGE_INVALID" in {
+    assert "READ_COVERAGE_INVALID" in {
         issue.code for issue in _draft_data_flow_issues(draft)
     }
-    assert "DATA_READ_INPUT_FORBIDDEN" in {
+    assert "READ_INPUT_FORBIDDEN" in {
         issue.code for issue in validate_program(program)
     }
 
@@ -168,7 +226,7 @@ def test_compiler_rejects_consecutive_data_in_one_linear_block():
         cond_ref=ValueRef(var="orders", path=["available"]),
         then=[
             _StepDraft(
-                op="data",
+                op="read",
                 bind="completed_orders",
                 goal="group completed orders by customer",
                 coverage="complete",
@@ -180,7 +238,7 @@ def test_compiler_rejects_consecutive_data_in_one_linear_block():
                 },
             ),
             _StepDraft(
-                op="data",
+                op="read",
                 bind="ranked_customers",
                 goal="rank customers by completed order count",
                 coverage="current_view",
@@ -198,8 +256,8 @@ def test_compiler_rejects_consecutive_data_in_one_linear_block():
     issues = _draft_data_flow_issues(draft)
 
     assert [issue.code for issue in issues] == [
-        "DATA_CHAIN_NOT_FUSED",
-        "DATA_READ_COVERAGE_INVALID",
+        "COMPUTE_CHAIN_NOT_FUSED",
+        "READ_COVERAGE_INVALID",
     ]
     assert issues[0].evidence == ("completed_orders", "ranked_customers")
 
@@ -207,7 +265,7 @@ def test_compiler_rejects_consecutive_data_in_one_linear_block():
 def test_lowering_does_not_assume_rows_for_data_owned_record_lists():
     program = to_program(_PlanDraft(steps=[
         _StepDraft(
-            op="data",
+            op="read",
             bind="ranked",
             goal="derive ranked identities",
             coverage="current_view",
@@ -220,7 +278,7 @@ def test_lowering_does_not_assume_rows_for_data_owned_record_lists():
             cond_ref=ValueRef(var="ranked", path=["emails"]),
             cond_cmp="exists",
             then=[_StepDraft(
-                op="data",
+                op="read",
                 bind="counted",
                 goal="count the ranked identities",
                 inputs={"source": ValueRef(var="ranked")},
@@ -230,7 +288,7 @@ def test_lowering_does_not_assume_rows_for_data_owned_record_lists():
     ]))
 
     branch = program.statements[1]
-    assert isinstance(branch, If) and isinstance(branch.then[0], Data)
+    assert isinstance(branch, If) and isinstance(branch.then[0], Read)
     assert branch.then[0].inputs["source"] == ValueRef(var="ranked")
 
 
@@ -261,13 +319,13 @@ def test_lowering_expands_router_owned_exact_then_fallback_lookup():
     assert isinstance(exact, Interact)
     assert exact.required_values["query"] == "Diana Tights"
     assert exact.required_values["match_mode"] == "exact"
-    assert isinstance(count, Data)
+    assert isinstance(count, Read)
     assert count.returns["match_count"].type == "number"
     assert isinstance(fallback, If)
     assert fallback.cond.value == 0
     assert fallback.then[0].required_values["query"] == "Diana"
     assert fallback.then[0].required_values["lookup_field"] == "product identity"
-    assert isinstance(final_count, Data)
+    assert isinstance(final_count, Read)
     assert isinstance(existence, If) and existence.cond.cmp == ">"
     assert isinstance(existence.then[0], Interact)
     assert isinstance(existence.otherwise[0], Finish)
@@ -290,7 +348,7 @@ def test_router_contract_rejects_phantom_lookup_for_generic_noun():
 
 def test_complete_data_is_invalid_but_current_view_read_is_not_acquired():
     complete = to_program(_PlanDraft(steps=[_StepDraft(
-        op="data",
+        op="read",
         bind="answer",
         goal="rank all records by identity frequency",
         coverage="complete",
@@ -298,7 +356,7 @@ def test_complete_data_is_invalid_but_current_view_read_is_not_acquired():
         returns={"count": OutputSpec(type="number")},
     )]))
     current = to_program(_PlanDraft(steps=[_StepDraft(
-        op="data",
+        op="read",
         bind="answer",
         goal="count the records visible now",
         coverage="current_view",
@@ -306,10 +364,10 @@ def test_complete_data_is_invalid_but_current_view_read_is_not_acquired():
     )]))
 
     assert any(isinstance(node, Acquire) for node in complete.statements)
-    assert isinstance(complete.statements[-1], Data)
+    assert isinstance(complete.statements[-1], Read)
     assert complete.statements[-1].inputs["records"].path == ["rows"]
     assert not any(isinstance(node, Acquire) for node in current.statements)
-    assert "DATA_READ_INPUT_FORBIDDEN" in {
+    assert "READ_INPUT_FORBIDDEN" in {
         issue.code for issue in validate_program(complete)
     }
     assert validate_program(current) == []
@@ -317,7 +375,7 @@ def test_complete_data_is_invalid_but_current_view_read_is_not_acquired():
 
 def test_observation_data_defaults_to_current_view_coverage():
     draft = _StepDraft.model_validate({
-        "op": "data",
+        "op": "read",
         "bind": "visible_orders",
         "goal": "read visible order fields",
         "required_fields": ["purchase_date", "status"],
@@ -332,7 +390,7 @@ def test_observation_data_defaults_to_current_view_coverage():
     assert draft.coverage == "current_view"
     program = to_program(_PlanDraft(steps=[draft]))
     assert len(program.statements) == 1
-    assert isinstance(program.statements[0], Data)
+    assert isinstance(program.statements[0], Read)
     assert not any(isinstance(node, Acquire) for node in program.statements)
     assert validate_program(program) == []
 
@@ -342,7 +400,7 @@ def test_data_read_rejects_typed_collection_input_without_reacquiring():
         "rows": OutputSpec(type="list[record]", coverage="complete")
     }
     draft = _StepDraft(
-        op="data",
+        op="read",
         bind="answer",
         goal="rank the already collected records",
         required_fields=["customer email"],
@@ -358,9 +416,9 @@ def test_data_read_rejects_typed_collection_input_without_reacquiring():
 
     assert draft.coverage is None
     assert len(program.statements) == 1
-    assert isinstance(program.statements[0], Data)
+    assert isinstance(program.statements[0], Read)
     assert program.statements[0].inputs["records"].var == "orders"
-    assert "DATA_READ_INPUT_FORBIDDEN" in {
+    assert "READ_INPUT_FORBIDDEN" in {
         issue.code
         for issue in validate_program(program, initial_scope={"orders": contract})
     }
@@ -369,7 +427,7 @@ def test_data_read_rejects_typed_collection_input_without_reacquiring():
 def test_lowering_names_anonymous_typed_producer_from_finish_reference():
     program = to_program(_PlanDraft(steps=[
         _StepDraft(
-            op="data",
+            op="read",
             goal="derive the requested answer",
             coverage="current_view",
             returns={"result": OutputSpec(type="text")},
@@ -388,7 +446,7 @@ def test_lowering_names_anonymous_typed_producer_from_finish_reference():
     "payload",
         [
             {"op": "run", "goal": "legacy"},
-            {"op": "data"},
+            {"op": "read"},
             {"op": "command"},
         {"op": "if"},
         {"op": "foreach", "items": {"var": "rows"}, "body": []},
@@ -421,12 +479,12 @@ def test_lowering_moves_interact_terminal_read_to_adjacent_data():
     interact, read = program.statements
     assert isinstance(interact, Interact)
     assert interact.bind is None and interact.returns == {}
-    assert isinstance(read, Data)
+    assert isinstance(read, Read)
     assert read.bind == "read_result"
     assert read.returns == {
         "amount": OutputSpec(type="number", description="visible final amount")
     }
-    assert "终态 observation" in read.goal
+    assert read.reads["amount"].name == "amount"
     assert validate_program(program) == []
 
 
@@ -449,7 +507,7 @@ def test_lowering_inserts_semantic_binding_before_deterministic_compute():
     )]))
 
     inspect, compute = program.statements
-    assert isinstance(inspect, Data) and inspect.mode == "inspect"
+    assert isinstance(inspect, SourceCheck)
     assert isinstance(compute, Compute)
     assert compute.inputs["bindings"].var == inspect.bind
     assert compute.steps[0].values["total"].field.semantic is True
@@ -516,11 +574,11 @@ def test_compute_unions_declared_and_referenced_semantic_fields_before_acquire()
     inspect = next(
         statement
         for statement in program.statements
-        if isinstance(statement, Data) and statement.mode == "inspect"
+        if isinstance(statement, SourceCheck)
     )
     compute = next(statement for statement in program.statements if isinstance(statement, Compute))
     assert acquired.required_fields == ["purchase date", "status"]
-    assert isinstance(inspect, Data)
+    assert isinstance(inspect, SourceCheck)
     assert inspect.required_fields == ["purchase date", "status"]
     assert isinstance(compute, Compute)
     assert compute.required_fields == ["purchase date", "status"]
@@ -586,7 +644,7 @@ def test_draft_normalizes_nonempty_condition_alias():
 def test_compute_infers_prior_single_output_source_and_semantic_fields():
     program = to_program(_PlanDraft(steps=[
         _StepDraft(
-            op="data",
+            op="read",
             bind="orders_data",
             goal="read filtered orders",
             coverage="current_view",
@@ -608,7 +666,7 @@ def test_compute_infers_prior_single_output_source_and_semantic_fields():
     ]))
 
     inspect, compute = program.statements[-2:]
-    assert isinstance(inspect, Data)
+    assert isinstance(inspect, SourceCheck)
     assert inspect.required_fields == ["status"]
     assert isinstance(compute, Compute)
     assert compute.source == "records"
@@ -664,7 +722,7 @@ def test_complete_compute_lowers_directly_to_acquire():
 def test_redundant_complete_data_source_is_folded_into_compute_acquire():
     draft = _PlanDraft(steps=[
         _StepDraft(
-            op="data",
+            op="read",
             goal="read all filtered records",
             coverage="complete",
             required_fields=["purchase date"],
@@ -708,7 +766,7 @@ def test_redundant_complete_data_source_is_folded_into_compute_acquire():
     acquire = next(statement for statement in program.statements if isinstance(statement, Acquire))
     compute = program.statements[-1]
     assert not any(
-        isinstance(statement, Data) and statement.mode == "read"
+        isinstance(statement, Read) and statement.mode == "read"
         for statement in program.statements
     )
     assert isinstance(compute, Compute)
@@ -725,12 +783,12 @@ def test_decompose_repairs_at_most_once(monkeypatch):
             _PlanDraft(
                 steps=[
                     _StepDraft(
-                        op="data", bind="counts", goal="group records",
+                        op="read", bind="counts", goal="group records",
                         coverage="current_view",
                         returns={"rows": OutputSpec(type="list[record]", fields=["id"])},
                     ),
                     _StepDraft(
-                        op="data", bind="answer", goal="rank grouped records",
+                        op="read", bind="answer", goal="rank grouped records",
                         coverage="current_view",
                         returns={"rows": OutputSpec(type="list[record]", fields=["id"])},
                     ),
@@ -743,7 +801,7 @@ def test_decompose_repairs_at_most_once(monkeypatch):
             _PlanDraft(
                 steps=[
                     _StepDraft(
-                        op="data", bind="answer", goal="group and rank records",
+                        op="read", bind="answer", goal="group and rank records",
                         coverage="current_view",
                         returns={"rows": OutputSpec(type="list[record]", fields=["id"])},
                     ),
@@ -766,5 +824,5 @@ def test_decompose_repairs_at_most_once(monkeypatch):
     program = decompose("return ranked records")
 
     assert len(calls) == 2
-    assert isinstance(program.statements[0], Data)
-    assert program.statements[0].goal == "group and rank records"
+    assert isinstance(program.statements[0], Read)
+    assert program.statements[0].reads["rows"].name == "rows"

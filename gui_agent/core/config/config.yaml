@@ -25,7 +25,7 @@ llm:
       # statement 可行性判定（给上层踢回重编排）——要看截图判导航入口/页面结构，必须是 vision 模型
       provider: dashscope
       model: qwen3.5-35b-a3b
-  data:
+  observation:
     # Data Statement runtime plan; falls back to supervisor.decompose when omitted.
     provider: dashscope
     model: qwen3.5-35b-a3b

@@ -1,6 +1,6 @@
 from gui_agent.core.orchestrator import (
     Command,
-    Data,
+    Read,
     ForEach,
     If,
     Interact,
@@ -14,7 +14,7 @@ from gui_agent.core.orchestrator.program import Condition
 def test_budget_counts_executor_costs_without_ui_phase_prediction():
     program = Program(
         statements=[
-            Data(id="data", goal="derive data"),
+            Read(id="read"),
             Command(id="back", capability="back"),
             Interact(id="edit", goal="edit", success="edited"),
         ]

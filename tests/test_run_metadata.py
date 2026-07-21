@@ -39,7 +39,7 @@ def test_sync_turn_metadata_records_models_statements_and_task_type(monkeypatch)
     )
 
     assert ctx.models["supervisor"] == "model:supervisor"
-    assert ctx.models["data"] == "model:data"
+    assert ctx.models["observation"] == "model:observation"
     assert ctx.models["recon.navigator"] == "model:recon.navigator"
     # statements field retired
     assert ctx.task_type == "analysis"

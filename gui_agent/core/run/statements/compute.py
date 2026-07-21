@@ -10,7 +10,7 @@ from gui_agent.core.orchestrator.program import Compute, ComputeRef
 from gui_agent.core.orchestrator.runner import StatementInvocation, matches_output_spec
 from gui_agent.core.schemas import Observation, StatementOutcome
 
-from .data_kernel import DataKernelError, DataStep, execute_pipeline, json_value
+from .compute_kernel import ComputeKernelError, ComputeStep, execute_pipeline, json_value
 
 
 def _resolve(value: Any, ref: ComputeRef) -> Any:
@@ -19,15 +19,15 @@ def _resolve(value: Any, ref: ComputeRef) -> Any:
             try:
                 value = value[part]
             except IndexError as exc:
-                raise DataKernelError(f"compute output ref out of range: {ref.path!r}") from exc
+                raise ComputeKernelError(f"compute output ref out of range: {ref.path!r}") from exc
         elif isinstance(part, str) and isinstance(value, dict) and part in value:
             value = value[part]
         else:
-            raise DataKernelError(f"compute output ref does not exist: {ref.path!r}")
+            raise ComputeKernelError(f"compute output ref does not exist: {ref.path!r}")
     return value
 
 
-def _bind_semantic_fields(steps: list[DataStep], bindings: dict[str, Any]) -> list[DataStep]:
+def _bind_semantic_fields(steps: list[ComputeStep], bindings: dict[str, Any]) -> list[ComputeStep]:
     """Resolve compiler-owned semantic field names before kernel execution."""
 
     def visit(value: Any) -> Any:
@@ -36,12 +36,12 @@ def _bind_semantic_fields(steps: list[DataStep], bindings: dict[str, Any]) -> li
             if result.get("semantic") is True and isinstance(result.get("path"), list):
                 path = list(result["path"])
                 if not path or not isinstance(path[0], str) or path[0] not in bindings:
-                    raise DataKernelError(
+                    raise ComputeKernelError(
                         f"semantic field is not bound: {path[0] if path else '<empty>'}"
                     )
                 actual = bindings[path[0]]
                 if not isinstance(actual, str) or not actual:
-                    raise DataKernelError(f"semantic field has invalid binding: {path[0]}")
+                    raise ComputeKernelError(f"semantic field has invalid binding: {path[0]}")
                 result["path"] = [actual, *path[1:]]
                 result["semantic"] = False
             return result
@@ -65,24 +65,23 @@ def execute_compute_statement(
     statement = invocation.statement
     try:
         if statement.source not in invocation.inputs:
-            raise DataKernelError(f"compute source is not an input: {statement.source}")
+            raise ComputeKernelError(f"compute source is not an input: {statement.source}")
         bindings = invocation.inputs.get("bindings", {})
         if not isinstance(bindings, dict):
-            raise DataKernelError("compute bindings input must be a record")
+            raise ComputeKernelError("compute bindings input must be a record")
         steps = _bind_semantic_fields(statement.steps, bindings)
         source = invocation.inputs[statement.source]
         descriptor = invocation.input_descriptors.get(statement.source)
-        partial = (
+        source_incomplete = (
             isinstance(source, dict) and bool(source.get("partial"))
-        ) or (
-            descriptor is not None
-            and (
-                descriptor.coverage != "complete"
-                or descriptor.verification != "confirmed"
-            )
+        ) or (descriptor is not None and descriptor.coverage != "complete")
+        input_unverified = (
+            descriptor is not None and descriptor.verification != "confirmed"
         )
-        if partial and any(spec.coverage == "complete" for spec in statement.returns.values()):
-            raise DataKernelError("compute source is partial but output requires complete coverage")
+        if (source_incomplete or input_unverified) and any(
+            spec.coverage == "complete" for spec in statement.returns.values()
+        ):
+            raise ComputeKernelError("compute source is partial but output requires complete coverage")
         result, trace = execute_pipeline(source, steps)
         outputs: dict[str, JsonValue] = {
             name: json_value(_resolve(result, ref))
@@ -97,17 +96,17 @@ def execute_compute_statement(
             if name in outputs and not matches_output_spec(outputs[name], spec)
         ]
         if missing or invalid:
-            raise DataKernelError(
+            raise ComputeKernelError(
                 f"compute output contract failed: missing={missing}, invalid={invalid}"
             )
-    except DataKernelError as exc:
+    except ComputeKernelError as exc:
         message = str(exc)
         if message.startswith("semantic field"):
             status("Compute 缺少字段绑定，正在请求重编排…")
             return StatementOutcome.infeasible(
                 f"Compute 数据源不足：{message}",
                 kickback=(
-                    "Compute 所需语义字段无法绑定到当前输入。请先用 Data inspect 判断字段可读性；"
+                    "Compute 所需语义字段无法绑定到当前输入。请先用 SourceCheck 判断字段可读性；"
                     "必要时由 Interact 暴露字段或由 Acquire 取得包含该字段的集合。"
                 ),
                 observation=observation,
@@ -120,7 +119,7 @@ def execute_compute_statement(
             failure_evidence=message,
         )
 
-    verification = "accepted_unverified" if partial else "confirmed"
+    verification = "accepted_unverified" if input_unverified else "confirmed"
     say(f"  [Compute] 完成：{', '.join(outputs)}")
     status("Compute 数据计算完成")
     return StatementOutcome.completed(

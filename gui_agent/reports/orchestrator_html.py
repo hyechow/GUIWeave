@@ -13,7 +13,8 @@ from .prompt_html import _render_module_io_html
 _PROG_KIND_BADGE = {
     "interact": "statement-badge-action",
     "acquire": "statement-badge-collection",
-    "data": "statement-badge-collection",
+    "read": "statement-badge-collection",
+    "source_check": "statement-badge-collection",
     "command": "statement-badge-navigation",
 }
 
@@ -24,7 +25,7 @@ def _program_run_items(stmts: list) -> list[dict]:
         if not isinstance(s, dict):
             continue
         op = s.get("op", "")
-        if op in {"interact", "acquire", "data", "command"}:
+        if op in {"interact", "acquire", "read", "source_check", "command"}:
             out.append(s)
         elif op == "if":
             out.extend(_program_run_items(s.get("then", [])))
@@ -76,7 +77,8 @@ def _render_non_ui_detail(non_ui: dict) -> str:
     kind = str(non_ui.get("executor") or "non_ui")
     mode = {
         "acquire": "Acquire 集合采集",
-        "data": "Data 数据处理",
+        "read": "Read 观察绑定",
+        "source_check": "SourceCheck 字段检查",
         "command": "确定性命令",
     }.get(kind, "非交互")
     outputs = non_ui.get("outputs") if isinstance(non_ui.get("outputs"), dict) else {}
@@ -217,6 +219,13 @@ def _render_program_card(
         kind = s.get("op", "interact")
         badge = _PROG_KIND_BADGE.get(kind, "statement-badge-default")
         name = s.get("goal") or s.get("capability", "")
+        if not name and kind == "read":
+            name = "、".join(
+                str(binding.get("name") or output)
+                for output, binding in (s.get("reads") or {}).items()
+            )
+        if not name and kind == "source_check":
+            name = "、".join(str(field) for field in s.get("required_fields") or [])
         return (
             f'<div class="prog-step">'
             f'<span class="prog-n">{counter[0]}</span>'
@@ -231,8 +240,8 @@ def _render_program_card(
             return None
         initial, branch, final, acquire = nodes
         if not (
-            [node.get("op") for node in nodes] == ["data", "if", "data", "acquire"]
-            and initial.get("mode") == final.get("mode") == "inspect"
+            [node.get("op") for node in nodes]
+            == ["source_check", "if", "source_check", "acquire"]
             and str(initial.get("bind") or "").startswith("__source_")
             and str(final.get("bind") or "").startswith("__source_")
             and (acquire.get("source_check") or {}).get("var") == final.get("bind")
@@ -292,13 +301,13 @@ def _render_program_card(
                 consumer = items[index + 4] if index + 4 < len(items) else None
                 out.append(_acquire_macro_row(
                     macro,
-                    consumer if isinstance(consumer, dict) and consumer.get("op") == "data" else None,
+                    consumer if isinstance(consumer, dict) and consumer.get("op") == "read" else None,
                 ))
                 index += 4
                 continue
             s = items[index]
             op = s.get("op", "")
-            if op in {"interact", "acquire", "data", "command"}:
+            if op in {"interact", "acquire", "read", "source_check", "command"}:
                 out.append(_run_row(s))
             elif op == "if":
                 cond = s.get("cond", {})

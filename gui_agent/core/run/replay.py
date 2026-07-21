@@ -104,6 +104,7 @@ def _contract_for_instance(
             success=info.success,
             inputs=dict(info.inputs),
             required_values=dict(info.required_values),
+            observe_fields=list(info.observe_fields),
             returns=dict(info.returns),
             persistence=info.persistence,
         )
@@ -116,6 +117,7 @@ def _contract_for_instance(
             goal=node.goal_text,
             success=str(getattr(node, "success", node.goal_text)),
             required_values=dict(getattr(node, "required_values", {})),
+            observe_fields=list(getattr(node, "observe_fields", [])),
             returns=dict(node.returns),
             persistence=getattr(node, "persistence", "immediate"),
         )

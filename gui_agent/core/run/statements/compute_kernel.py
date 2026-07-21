@@ -13,7 +13,8 @@ from pydantic import BaseModel, JsonValue
 from gui_agent.core.data_types import (
     AggregateSpec,
     AggregateStep,
-    DataStep,
+    BuildRecordStep,
+    ComputeStep,
     DateBucketStep,
     DistinctStep,
     FieldRef,
@@ -28,7 +29,7 @@ from gui_agent.core.data_types import (
 )
 
 
-class DataKernelError(ValueError):
+class ComputeKernelError(ValueError):
     """A typed data operation could not be applied to its runtime records."""
 
 
@@ -60,7 +61,7 @@ _DATETIME_FORMATS = (
 
 def _decimal(value: Any, *, money: bool = False) -> Decimal:
     if isinstance(value, bool) or value is None:
-        raise DataKernelError(f"cannot parse {value!r} as {'money' if money else 'number'}")
+        raise ComputeKernelError(f"cannot parse {value!r} as {'money' if money else 'number'}")
     text = str(value).strip().replace("−", "-")
     negative = text.startswith("(") and text.endswith(")")
     if negative:
@@ -73,14 +74,14 @@ def _decimal(value: Any, *, money: bool = False) -> Decimal:
     try:
         result = Decimal(text)
     except InvalidOperation as exc:
-        raise DataKernelError(f"cannot parse {value!r} as {'money' if money else 'number'}") from exc
+        raise ComputeKernelError(f"cannot parse {value!r} as {'money' if money else 'number'}") from exc
     return -result if negative else result
 
 
 def _datetime(value: Any) -> datetime:
     text = re.sub(r"\s+", " ", str(value or "").strip())
     if not text:
-        raise DataKernelError(f"cannot parse {value!r} as datetime")
+        raise ComputeKernelError(f"cannot parse {value!r} as datetime")
     normalized = re.sub(r"\bSept\b", "Sep", text, flags=re.IGNORECASE)
     try:
         parsed = datetime.fromisoformat(normalized.replace("Z", "+00:00"))
@@ -94,7 +95,7 @@ def _datetime(value: Any) -> datetime:
             except ValueError:
                 continue
     if parsed is None:
-        raise DataKernelError(f"cannot parse {value!r} as datetime")
+        raise ComputeKernelError(f"cannot parse {value!r} as datetime")
     return parsed if parsed.tzinfo else parsed.replace(tzinfo=timezone.utc)
 
 
@@ -116,7 +117,7 @@ def _typed(value: Any, value_type: ValueType) -> Any:
         return True
     if text in {"false", "no", "0", "off", "否"}:
         return False
-    raise DataKernelError(f"cannot parse {value!r} as boolean")
+    raise ComputeKernelError(f"cannot parse {value!r} as boolean")
 
 
 def _resolve(value: Any, ref: FieldRef) -> Any:
@@ -127,7 +128,7 @@ def _resolve(value: Any, ref: FieldRef) -> Any:
         elif isinstance(part, int) and isinstance(current, list) and 0 <= part < len(current):
             current = current[part]
         else:
-            raise DataKernelError(f"field path does not exist: {ref.path}")
+            raise ComputeKernelError(f"field path does not exist: {ref.path}")
     return _typed(current, ref.type)
 
 
@@ -135,7 +136,7 @@ def _records(value: Any) -> list[dict[str, Any]]:
     if isinstance(value, dict) and isinstance(value.get("rows"), list):
         value = value["rows"]
     if not isinstance(value, list) or not all(isinstance(item, dict) for item in value):
-        raise DataKernelError("transform source must be record list or table snapshot")
+        raise ComputeKernelError("transform source must be record list or table snapshot")
     return [dict(item) for item in value]
 
 
@@ -158,7 +159,7 @@ def _is_empty(value: Any) -> bool:
 def _matches(row: dict[str, Any], step: FilterStep) -> bool:
     try:
         actual = _resolve(row, step.field)
-    except DataKernelError:
+    except ComputeKernelError:
         if step.cmp == "empty":
             return True
         if step.cmp == "exists":
@@ -171,7 +172,7 @@ def _matches(row: dict[str, Any], step: FilterStep) -> bool:
     expected = step.value
     if step.cmp in {"in", "not_in"}:
         if not isinstance(expected, list):
-            raise DataKernelError(f"{step.cmp} filter requires list value")
+            raise ComputeKernelError(f"{step.cmp} filter requires list value")
         values = [_typed(item, step.field.type) for item in expected]
         result = actual in values
         return result if step.cmp == "in" else not result
@@ -198,7 +199,7 @@ def _sort(rows: list[dict[str, Any]], keys: list[SortKey]) -> list[dict[str, Any
         for row in result:
             try:
                 value = _resolve(row, key.field)
-            except DataKernelError:
+            except ComputeKernelError:
                 missing.append(row)
                 continue
             if _is_empty(value):
@@ -234,7 +235,7 @@ def _bucket(value: Any, step: DateBucketStep) -> str:
     assert isinstance(parsed, datetime)
     if step.format == "month_name":
         if step.unit != "month":
-            raise DataKernelError("month_name format requires month date bucket")
+            raise ComputeKernelError("month_name format requires month date bucket")
         return calendar.month_name[parsed.month]
     if step.unit == "day":
         return parsed.strftime("%Y-%m-%d")
@@ -250,16 +251,20 @@ def _split_text(value: Any, step: TextSplitStep) -> str:
     try:
         return parts[step.index]
     except IndexError as exc:
-        raise DataKernelError(
+        raise ComputeKernelError(
             f"text split index out of range: index={step.index}, parts={len(parts)}"
         ) from exc
 
 
-def execute_pipeline(source: Any, steps: list[DataStep]) -> tuple[Any, list[str]]:
+def execute_pipeline(source: Any, steps: list[ComputeStep]) -> tuple[Any, list[str]]:
     """Execute a bounded linear transformation and return its trace."""
-    current: Any = _records(source)
+    current: Any = source if steps and isinstance(steps[0], BuildRecordStep) else _records(source)
     trace: list[str] = []
     for step in steps:
+        if isinstance(step, BuildRecordStep):
+            current = [{name: _resolve(current, ref) for name, ref in step.fields.items()}]
+            trace.append("build_record:1->1")
+            continue
         rows = _records(current)
         before = len(rows)
         if isinstance(step, FilterStep):
@@ -326,47 +331,3 @@ def execute_pipeline(source: Any, steps: list[DataStep]) -> tuple[Any, list[str]
         trace.append(f"{step.op}:{before}->{after}")
     return current, trace
 
-
-def describe_datasets(tables: Any) -> list[dict[str, Any]]:
-    """Expose exact runtime fields and inferred value types to the Data planner."""
-    result: list[dict[str, Any]] = []
-    for index, table in enumerate(tables or []):
-        if not isinstance(table, dict):
-            continue
-        rows = [row for row in table.get("rows") or [] if isinstance(row, dict)]
-        fields: list[dict[str, Any]] = []
-        names = list(dict.fromkeys(str(key) for row in rows for key in row))
-        for name in names:
-            values = [row.get(name) for row in rows if not _is_empty(row.get(name))]
-            samples = list(dict.fromkeys(str(value) for value in values))[:3]
-            inferred = "text"
-            if values:
-                if sum(_can_parse(value, "datetime") for value in values) * 5 >= len(values) * 4:
-                    inferred = "datetime"
-                elif all(_can_parse(value, "boolean") for value in values):
-                    inferred = "boolean"
-                elif any(_CURRENCY_RE.search(str(value)) for value in values) and all(
-                    _can_parse(value, "money") for value in values
-                ):
-                    inferred = "money"
-                elif sum(_can_parse(value, "number") for value in values) * 5 >= len(values) * 4:
-                    inferred = "number"
-            fields.append({"name": name, "type": inferred, "examples": samples})
-        result.append({
-            "path": [index],
-            "caption": table.get("caption") or "",
-            "row_count": len(rows),
-            "total_records": table.get("total_records"),
-            "partial": bool(table.get("partial")),
-            "traversal": table.get("traversal") or {},
-            "fields": fields,
-        })
-    return result
-
-
-def _can_parse(value: Any, value_type: ValueType) -> bool:
-    try:
-        _typed(value, value_type)
-        return True
-    except DataKernelError:
-        return False

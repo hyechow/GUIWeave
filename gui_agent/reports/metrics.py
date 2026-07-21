@@ -12,7 +12,6 @@ from gui_agent.core.config import model_price
 _MODULE_CFG: dict[str, str] = {
     "transition": "supervisor",
     "decompose": "supervisor.decompose", "orchestrator.decompose": "supervisor.decompose",
-    "statement.data": "data",
     "action_policy": "action_policy",
 }
 

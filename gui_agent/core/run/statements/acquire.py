@@ -508,7 +508,7 @@ class _AcquireExecutor:
         if check is False or (isinstance(check, dict) and check.get("available") is False):
             return StatementOutcome.infeasible(
                 "上游数据可用性检查未通过",
-                kickback="用 Data inspect + Program If 处理缺列/集合未圈定，再进入 Acquire",
+                kickback="用 SourceCheck + Program If 处理缺列/集合未圈定，再进入 Acquire",
             )
         self.cursor.ensure(0)
         while True:

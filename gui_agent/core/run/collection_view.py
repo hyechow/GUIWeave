@@ -41,7 +41,7 @@ from gui_agent.core.run.observation_materializer import (
 )
 
 # Per-frame transport budget. Frames exceeding this set are marked truncated and keep the
-# first MAX_FRAME_RECORDS records; semantic filtering remains the Data executor's job.
+# first MAX_FRAME_RECORDS records; semantic filtering remains a compiled Compute step.
 MAX_FRAME_RECORDS = 200
 
 BoundaryKind = Literal["known_total", "at_end", "has_next_page", "not_at_end", "unknown"]
@@ -116,7 +116,7 @@ class CollectionView:
 # the collection layer performs NO business-key dedup. Cross-frame dedup is slice-level — a
 # frame already absorbed (same surface_id + content_key) is not re-counted. Within a frame,
 # rows carry a positional id ``row:<ordinal>``. Overlapping windows are allowed to repeat;
-# business dedup (same name different record, etc.) is left to the Data executor.
+# business dedup (same name different record, etc.) is left to a compiled Compute step.
 
 
 def _norm(value: Any) -> str:

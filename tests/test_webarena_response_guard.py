@@ -11,11 +11,28 @@ from gui_agent.adapters.browser.webarena import (
     _run_official_eval,
     _synthesize_response,
     _official_eval_summary,
+    _print_program,
     _task_for_eval_compat,
     _warn_if_pre_loop_page_changed,
     _write_webarena_report_context,
 )
+from gui_agent.core.orchestrator import ObservationBinding, OutputSpec, Program, Read, SourceCheck
 from gui_agent.core.run.result import AgentResult
+
+
+def test_print_program_uses_uniform_goal_text_for_binding_nodes(capsys):
+    _print_program(Program(statements=[
+        SourceCheck(id="check", required_fields=["SKU"]),
+        Read(
+            id="read",
+            reads={"value": ObservationBinding(source="field", name="Material")},
+            returns={"value": OutputSpec(type="text", required=False)},
+        ),
+    ]))
+
+    output = capsys.readouterr().out
+    assert "[source_check] 检查 source fields：SKU" in output
+    assert "[read] 绑定当前 observation：value<-field.Material" in output
 
 
 def _result(**updates) -> AgentResult:
@@ -371,7 +388,7 @@ def test_search_term_rows_keep_objects_when_intent_asks_metric():
 
 
 def test_single_column_rows_are_unwrapped_to_scalars():
-    # Live 185: a one-field Data result yields row dicts; WebArena expects
+    # Live 185: a one-field Read result yields row dicts; WebArena expects
     # flat scalars, so [{"material":"cotton"},{"material":"fleece"}] must become [cotton, fleece]
     # regardless of intent (the {"material":…} wrapper is never the wanted RETRIEVE answer; the run
     # shipped stringified dicts and scored 0).

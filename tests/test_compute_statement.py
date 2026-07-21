@@ -1,3 +1,5 @@
+import pytest
+
 from gui_agent.core.data_types import AggregateSpec, AggregateStep, FieldRef, ProjectStep
 from gui_agent.core.orchestrator import Compute, ComputeRef, OutputSpec, ValueRef
 from gui_agent.core.orchestrator.runner import InputDescriptor, StatementInvocation
@@ -71,10 +73,17 @@ def test_compute_reports_missing_semantic_binding_without_retrying_a_plan():
 
     assert outcome.phase == "infeasible"
     assert "semantic field is not bound: customer email" in outcome.summary
-    assert outcome.kickback and "Data inspect" in outcome.kickback
+    assert outcome.kickback and "SourceCheck" in outcome.kickback
 
 
-def test_compute_preserves_best_effort_input_verification():
+@pytest.mark.parametrize(
+    ("coverage", "verification", "expected"),
+    [
+        ("best_effort", "accepted_unverified", "accepted_unverified"),
+        ("current_view", "confirmed", "confirmed"),
+    ],
+)
+def test_compute_preserves_input_verification(coverage, verification, expected):
     statement = Compute(
         id="count",
         bind="answer",
@@ -98,8 +107,8 @@ def test_compute_preserves_best_effort_input_verification():
                 "records": InputDescriptor(
                     source_var="rows",
                     type="list[record]",
-                    coverage="best_effort",
-                    verification="accepted_unverified",
+                    coverage=coverage,
+                    verification=verification,
                 )
             },
         ),
@@ -107,4 +116,4 @@ def test_compute_preserves_best_effort_input_verification():
     )
 
     assert outcome.is_completed
-    assert outcome.verification == "accepted_unverified"
+    assert outcome.verification == expected

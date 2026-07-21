@@ -73,7 +73,7 @@ def test_decomposer_contract_exposes_semantic_ir_not_runtime_components():
                 f"decomposer {source_name} leaks runtime term {term!r}"
             )
 
-    for dsl_term in ("interact", "data", "command", "foreach"):
+    for dsl_term in ("interact", "read", "command", "foreach"):
         assert dsl_term in prompt
         assert dsl_term in schema
     for retired in ("data_query", "body_goal", "covers_set", "function", "call"):

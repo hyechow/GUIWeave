@@ -1,9 +1,8 @@
 """Semantic Program IR.
 
-The compiler describes business intent, typed data flow and explicit control
-flow.  It deliberately does not describe page paths, controls, SQL, Python
-expressions, or statement-internal branches.  Runtime executors decide those
-details against the real UI or data context.
+The compiler describes business intent, typed data flow, observation bindings
+and explicit control flow. It deliberately does not describe page paths,
+controls, SQL, Python expressions, or statement-internal branches.
 """
 
 from __future__ import annotations
@@ -13,7 +12,7 @@ from typing import Annotated, Literal, TypeAlias, Union
 from pydantic import BaseModel, ConfigDict, Field, JsonValue, model_validator
 
 from gui_agent.core.schemas import OutputSpec, PersistenceMode
-from gui_agent.core.data_types import DataStep
+from gui_agent.core.data_types import ComputeStep
 
 
 SurfaceName = Literal["main"]
@@ -66,6 +65,7 @@ class Interact(StatementNode):
     success: str
     on: SurfaceName = "main"
     required_values: dict[str, JsonValue] = Field(default_factory=dict)
+    observe_fields: list[str] = Field(default_factory=list)
     scope: str = ""
     persistence: PersistenceMode = "immediate"
 
@@ -73,7 +73,7 @@ class Interact(StatementNode):
     def _ui_postcondition_only(self) -> "Interact":
         if self.bind is not None or self.returns:
             raise ValueError(
-                "Interact cannot bind business outputs; add an adjacent Data statement"
+                "Interact cannot bind business outputs; add an adjacent Read node"
             )
         return self
 
@@ -82,17 +82,69 @@ class Interact(StatementNode):
         return self.goal
 
 
-class Data(StatementNode):
-    """Read the current observation or bind its semantic source fields."""
+class ObservationBinding(BaseModel):
+    """Declared source of one Read output in the current observation."""
 
-    op: Literal["data"] = "data"
-    goal: str
-    mode: Literal["read", "inspect"] = "read"
-    required_fields: list[str] = Field(default_factory=list)
+    model_config = ConfigDict(frozen=True, extra="forbid")
+
+    source: Literal["field", "page", "dataset"] = "field"
+    name: str
+
+
+class Read(StatementNode):
+    """Bind declared facts from the current observation."""
+
+    op: Literal["read"] = "read"
+    reads: dict[str, ObservationBinding] = Field(default_factory=dict)
+
+    @model_validator(mode="after")
+    def _declare_observation_reads(self) -> "Read":
+        if self.reads or not self.returns:
+            return self
+        outputs = list(self.returns)
+        self.reads = {
+            output: ObservationBinding(
+                source=(
+                    "dataset"
+                    if self.returns[output].type == "list[record]"
+                    else "page"
+                    if output.casefold() in {"url", "title"}
+                    else "field"
+                ),
+                name=("rows" if self.returns[output].type == "list[record]" else output),
+            )
+            for output in outputs
+        }
+        return self
 
     @property
     def goal_text(self) -> str:
-        return self.goal
+        return "绑定当前 observation：" + "、".join(
+            f"{output}<-{binding.source}.{binding.name}"
+            for output, binding in self.reads.items()
+        )
+
+
+class SourceCheck(StatementNode):
+    """Check whether declared semantic fields exist in one structural source."""
+
+    op: Literal["source_check"] = "source_check"
+    required_fields: list[str] = Field(default_factory=list)
+
+    @model_validator(mode="after")
+    def _fixed_outputs(self) -> "SourceCheck":
+        expected = {
+            "available": OutputSpec(type="boolean"),
+            "bindings": OutputSpec(type="record"),
+            "missing_fields": OutputSpec(type="json"),
+        }
+        if not self.returns:
+            self.returns = expected
+        return self
+
+    @property
+    def goal_text(self) -> str:
+        return "检查 source fields：" + "、".join(self.required_fields)
 
 
 class ComputeRef(BaseModel):
@@ -110,7 +162,7 @@ class Compute(StatementNode):
     goal: str
     source: str
     required_fields: list[str] = Field(default_factory=list)
-    steps: list[DataStep] = Field(min_length=1, max_length=10)
+    steps: list[ComputeStep] = Field(min_length=1, max_length=10)
     outputs: dict[str, ComputeRef] = Field(min_length=1)
 
     @property
@@ -151,7 +203,7 @@ class Command(StatementNode):
         return self.capability
 
 
-ExecutableStatement: TypeAlias = Interact | Acquire | Data | Compute | Command
+ExecutableStatement: TypeAlias = Interact | Acquire | Read | SourceCheck | Compute | Command
 
 
 class Condition(BaseModel):
@@ -211,7 +263,7 @@ class Finish(BaseModel):
 
 
 Stmt = Annotated[
-    Union[Interact, Acquire, Data, Compute, Command, If, ForEach, Finish],
+    Union[Interact, Acquire, Read, SourceCheck, Compute, Command, If, ForEach, Finish],
     Field(discriminator="op"),
 ]
 
@@ -232,7 +284,7 @@ def assign_statement_ids(program: Program) -> Program:
     def visit(statements: list[Stmt]) -> None:
         nonlocal counter
         for statement in statements:
-            if isinstance(statement, (Interact, Acquire, Data, Compute, Command)):
+            if isinstance(statement, (Interact, Acquire, Read, SourceCheck, Compute, Command)):
                 counter += 1
                 if not statement.id:
                     statement.id = f"s{counter}"
@@ -258,15 +310,17 @@ __all__ = [
     "Compute",
     "ComputeRef",
     "Condition",
-    "Data",
     "ExecutableStatement",
     "Finish",
     "ForEach",
     "If",
     "Interact",
+    "ObservationBinding",
     "OutputSpec",
     "Program",
     "StatementNode",
+    "Read",
+    "SourceCheck",
     "Stmt",
     "ValueRef",
     "assign_statement_ids",

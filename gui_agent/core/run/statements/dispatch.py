@@ -1,4 +1,4 @@
-"""Drain consecutive Acquire, Data, Compute and Command statements outside the GUI React loop."""
+"""Drain non-Interact Program nodes outside the GUI React loop."""
 
 from __future__ import annotations
 
@@ -9,7 +9,7 @@ from typing import Any, Callable
 
 from llm.structured import get_llm_call_count, get_llm_token_usage
 
-from gui_agent.core.orchestrator.program import Acquire, Command, Compute, Data
+from gui_agent.core.orchestrator.program import Acquire, Command, Compute, Read, SourceCheck
 from gui_agent.core.run.interactive import statement_id
 from gui_agent.core.run.program_runtime import ProgramRuntime
 from gui_agent.core.schemas import Observation, PolicyContext
@@ -17,7 +17,7 @@ from gui_agent.core.schemas import Observation, PolicyContext
 from .command import execute_command
 from .compute import execute_compute_statement
 from .acquire import execute_acquire_statement
-from .data import execute_data_statement
+from .binding import execute_read, execute_source_check
 from .observation import ObservationCursor
 from .recording import record_statement_outcome
 
@@ -35,7 +35,7 @@ def is_immediate_statement(invocation, platform: Any, *, allow_navigation: bool 
     del platform, allow_navigation
     return bool(
         invocation is not None
-        and isinstance(invocation.statement, (Acquire, Data, Compute, Command))
+        and isinstance(invocation.statement, (Acquire, Read, SourceCheck, Compute, Command))
     )
 
 
@@ -93,17 +93,25 @@ def drain_immediate_statements(
                 status=emit_status,
                 check_knowledge=check_knowledge,
             )
-        elif isinstance(invocation.statement, Data):
-            emit_status(f"Data 页面数据读取中：{invocation.goal}")
+        elif isinstance(invocation.statement, Read):
+            emit_status(f"Read 观察绑定中：{invocation.goal}")
             if cursor.observation is None:
                 cursor.ensure(program_runtime.index)
-            reports: list[dict] = []
-            outcome = execute_data_statement(
+            outcome = execute_read(
                 invocation,
                 observation=cursor.observation,
                 check_knowledge=check_knowledge,
                 prepare_vision_prompt_png=getattr(bundle, "prepare_vision_prompt_png", None),
-                context_reports=reports,
+                say=say,
+                status=emit_status,
+            )
+        elif isinstance(invocation.statement, SourceCheck):
+            emit_status(f"SourceCheck 检查中：{invocation.goal}")
+            if cursor.observation is None and not invocation.inputs:
+                cursor.ensure(program_runtime.index)
+            outcome = execute_source_check(
+                invocation,
+                observation=cursor.observation,
                 say=say,
                 status=emit_status,
             )

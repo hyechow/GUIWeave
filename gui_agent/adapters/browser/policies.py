@@ -110,8 +110,15 @@ class BrowserActionPolicy(BaseActionPolicy):
             instruction=instruction,
         )
         if decision is None:
+            controls = (
+                getattr(observation, "form_control_state", None)
+                or getattr(observation, "form_controls", None)
+            ) if action_family == "iterate" else (
+                getattr(observation, "form_controls", None)
+                or getattr(observation, "form_control_state", None)
+            )
             decision = resolve_native_control_action(
-                getattr(observation, "form_controls", None),
+                controls,
                 target_control=target_control,
                 target_value=target_value,
                 target_group_id=target_group_id,

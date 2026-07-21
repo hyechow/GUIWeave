@@ -2,13 +2,25 @@
 
 from __future__ import annotations
 
-from .program import Acquire, Command, Compute, Data, Finish, ForEach, If, Interact, Program, Stmt
+from .program import (
+    Acquire,
+    Command,
+    Compute,
+    Finish,
+    ForEach,
+    If,
+    Interact,
+    Program,
+    Read,
+    SourceCheck,
+    Stmt,
+)
 
 
 def _statement_turns(statement: Stmt) -> int:
     if isinstance(statement, Interact):
         return 4
-    if isinstance(statement, (Acquire, Data, Compute, Command)):
+    if isinstance(statement, (Acquire, Read, SourceCheck, Compute, Command)):
         return 1
     if isinstance(statement, If):
         return max(

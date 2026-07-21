@@ -1,6 +1,7 @@
 """Agentic control owner for one interactive Statement."""
 
 from collections.abc import Callable, Iterable
+import re
 from typing import Literal, Optional
 
 from llm.structured import StructuredOutputError
@@ -34,6 +35,11 @@ from .schemas import (
 )
 
 
+_QUERY_MARKERS = (
+    "search", "query", "filter", "搜索", "查询", "筛选", "查找", "检索",
+)
+
+
 def _declared_string_values(values: dict[str, JsonValue]) -> set[str]:
     result: set[str] = set()
 
@@ -50,6 +56,10 @@ def _declared_string_values(values: dict[str, JsonValue]) -> set[str]:
     for value in values.values():
         visit(value)
     return {value for value in result if value}
+
+
+def _semantic_terms(value: str) -> set[str]:
+    return set(re.findall(r"[\w]+", value.casefold().replace("_", " ")))
 
 
 class StatementSupervisorPolicy(
@@ -138,6 +148,7 @@ class StatementSupervisorPolicy(
     ) -> None:
         if self._statement_rt is not None:
             raise RuntimeError("end the active statement before beginning another")
+        self._initial_filters = None
         self._statement_rt = StatementRuntimeState(
             contract=contract,
             instance_id=instance_id,
@@ -307,6 +318,348 @@ class StatementSupervisorPolicy(
         return ""
 
     @staticmethod
+    def _validate_observed_field_write(
+        statement: StatementContract,
+        plan: _ActionDraft,
+    ) -> str:
+        if plan.action_family not in {"input", "select"}:
+            return ""
+        target = plan.target_control.strip().casefold()
+        observed = {field.strip().casefold() for field in statement.observe_fields}
+        if target in observed:
+            return f"observed field {plan.target_control!r} is read-only"
+        return ""
+
+    @staticmethod
+    def _validate_observed_field_visibility(
+        statement: StatementContract,
+        observation: Observation,
+        plan: _ActionDraft,
+    ) -> str:
+        target = StatementSupervisorPolicy._offscreen_observed_field(
+            statement, observation
+        )
+        if target is None:
+            return ""
+        field, position = target
+        if plan.action_family != "iterate":
+            return (
+                f"observed field {field!r} is offscreen {position}; "
+                "only iterate toward that field is allowed"
+            )
+        if plan.target_control.strip().casefold() != field.strip().casefold():
+            return f"iterate must target the offscreen observed field {field!r}"
+        expected_direction = "up" if position == "above" else "down"
+        if plan.direction is not None and plan.direction != expected_direction:
+            return (
+                f"observed field {field!r} is {position}; "
+                f"iterate direction must be {expected_direction}"
+            )
+        plan.direction = expected_direction
+        return ""
+
+    @staticmethod
+    def _offscreen_observed_field(
+        statement: StatementContract,
+        observation: Observation,
+    ) -> tuple[str, str] | None:
+        controls = observation.form_control_state or observation.form_controls or []
+        for field in statement.observe_fields:
+            target = field.strip().casefold()
+            for control in controls:
+                if not isinstance(control, dict):
+                    continue
+                identities = {
+                    str(control.get(key) or "").strip().casefold()
+                    for key in ("label", "name", "id", "group_field")
+                }
+                position = str(control.get("viewport_pos") or "").strip().casefold()
+                rect = control.get("rect") or {}
+                if not position and isinstance(rect.get("y"), (int, float)):
+                    if rect["y"] < 0:
+                        position = "above"
+                if target in identities and position in {"above", "below"}:
+                    return field, position
+        return None
+
+    def _offscreen_observed_field_step(
+        self,
+        statement: StatementContract,
+        observation: Observation,
+        *,
+        execution_scope: str,
+    ) -> SupervisorStep | None:
+        target = self._offscreen_observed_field(statement, observation)
+        if target is None:
+            return None
+        field, position = target
+        direction = "up" if position == "above" else "down"
+        direction_text = "向上" if direction == "up" else "向下"
+        summary = f"{field} 字段位于当前视口{direction_text}方，需定向滚动"
+        instruction = f"在当前页面{direction_text}滚动，将 {field} 字段带入可观察视口。"
+        return self._mechanical_step(
+            statement,
+            execution_scope=execution_scope,
+            summary=summary,
+            established=f"结构化控件状态确认 {field} 位于视口 {position}。",
+            gap=f"{field} 尚未进入可观察视口。",
+            reason="offscreen observed fields use deterministic viewport transport",
+            instruction=instruction,
+            role="iterate",
+            family="iterate",
+            target_control=field,
+            expected_result=f"{field} 字段进入当前视口并可读取。",
+            direction=direction,
+        )
+
+    def _mechanical_step(
+        self,
+        statement: StatementContract,
+        *,
+        execution_scope: str,
+        summary: str,
+        established: str,
+        gap: str,
+        reason: str,
+        instruction: str,
+        role: Literal["prepare", "write", "commit", "iterate"],
+        family: Literal["input", "select", "activate", "navigate", "iterate"],
+        target_control: str,
+        expected_result: str,
+        target_ref: str = "",
+        direction: Literal["up", "down"] | None = None,
+    ) -> SupervisorStep:
+        action = {
+            "instruction": instruction,
+            "atomic_role": role,
+            "action_family": family,
+            "target_control": target_control,
+            "target_value": "",
+            "target_ref": target_ref,
+            "expected_result": expected_result,
+        }
+        if direction is not None:
+            action["direction"] = direction
+        self._last_transition_record = {
+            "proposal": {
+                "assessment": {
+                    "status": "in_progress",
+                    "summary": summary,
+                    "established_facts": [established],
+                    "open_gaps": [gap],
+                    "last_action_effect": "unknown",
+                },
+                "kind": "act",
+                "reason": reason,
+                "action": action,
+            },
+            "validation_error": "",
+        }
+        return SupervisorStep(
+            action_intent=ActionIntent(
+                instruction=instruction,
+                role=role,
+                family=family,
+                target_control=target_control,
+                target_ref=target_ref,
+                expected_result=expected_result,
+                direction=direction,
+            ),
+            summary=summary,
+            execution_scope=execution_scope,
+            **_ctx(statement),
+        )
+
+    @staticmethod
+    def _validate_input_matches(
+        statement: StatementContract,
+        observation: Observation,
+    ) -> str:
+        controls = [
+            control
+            for control in observation.form_controls or []
+            if isinstance(control, dict)
+        ]
+        for field, expected in statement.inputs.items():
+            if not isinstance(expected, (str, int, float, bool)):
+                continue
+            target = field.strip().casefold()
+            for control in controls:
+                identities = {
+                    str(control.get(key) or "").strip().casefold()
+                    for key in ("label", "name", "id", "group_field")
+                }
+                if target not in identities:
+                    continue
+                key = "selected_text" if "selected_text" in control else "value"
+                if key not in control:
+                    continue
+                actual = str(control[key]).strip()
+                if actual.casefold() != str(expected).strip().casefold():
+                    return (
+                        f"current {field!r} value {actual!r} does not exactly match "
+                        f"input {expected!r}"
+                    )
+        return ""
+
+    @staticmethod
+    def _validate_filter_scope(
+        statement: StatementContract,
+        observation: Observation,
+    ) -> str:
+        declared: list[tuple[set[str], JsonValue]] = []
+        for name, value in statement.required_values.items():
+            terms = _semantic_terms(name)
+            if "filter" not in terms:
+                continue
+            field_terms = terms - {"filter", "from", "to", "min", "max"}
+            if field_terms:
+                declared.append((field_terms, value))
+        if not declared or not observation.applied_filters:
+            return ""
+
+        actual = {
+            name: (_semantic_terms(name), str(value).strip().casefold())
+            for name, value in observation.applied_filters.items()
+        }
+        matched: set[str] = set()
+        missing: list[str] = []
+        mismatched: list[str] = []
+        for expected_terms, expected in declared:
+            candidate = next(
+                (
+                    (name, value)
+                    for name, (terms, value) in actual.items()
+                    if expected_terms <= terms or terms <= expected_terms
+                ),
+                None,
+            )
+            label = " ".join(sorted(expected_terms))
+            if candidate is None:
+                missing.append(label)
+                continue
+            name, value = candidate
+            matched.add(name)
+            expected_value = str(expected).strip().casefold()
+            endpoints = [part.strip() for part in value.split("-")]
+            if value != expected_value and not (
+                len(endpoints) == 2
+                and all(endpoint == expected_value for endpoint in endpoints)
+            ):
+                mismatched.append(f"{name}={value!r}")
+
+        unexpected = [name for name in actual if name not in matched]
+        problems = []
+        if missing:
+            problems.append("missing " + ", ".join(missing))
+        if mismatched:
+            problems.append("mismatched " + ", ".join(mismatched))
+        if unexpected:
+            problems.append("unexpected " + ", ".join(unexpected))
+        if not problems:
+            return ""
+        return "filter scope does not exactly match the contract: " + "; ".join(
+            problems
+        )
+
+    @staticmethod
+    def _staged_input_submission(
+        observation: Observation,
+        history: list[PolicyTurn],
+        view: StatementObservationView,
+    ) -> tuple[PolicyTurn, dict] | None:
+        prior = next((turn for turn in reversed(history) if turn.executed), None)
+        if prior is None or prior.supervisor is None:
+            return None
+        intent = prior.supervisor.action_intent
+        if intent is None or intent.family != "input" or not intent.target_value:
+            return None
+        target_label = intent.target_control.strip().casefold()
+        if not any(marker in target_label for marker in _QUERY_MARKERS):
+            return None
+
+        current_value = ""
+        controls = [
+            *(observation.form_control_state or []),
+            *(observation.form_controls or []),
+        ]
+        for control in controls:
+            if not isinstance(control, dict):
+                continue
+            identities = {
+                str(control.get(key) or "").strip().casefold()
+                for key in ("label", "name", "id", "group_field")
+            }
+            if target_label in identities:
+                current_value = str(control.get("value") or "").strip()
+                break
+        expected = intent.target_value.strip().casefold()
+        if current_value.casefold() != expected:
+            return None
+        if any(
+            expected in str(value).strip().casefold()
+            for value in (observation.applied_filters or {}).values()
+        ):
+            return None
+
+        target_terms = _semantic_terms(intent.target_control)
+        candidates: list[tuple[int, dict]] = []
+        for affordance in view.affordances:
+            if "activate" not in (affordance.get("supported_operations") or []):
+                continue
+            label = str(affordance.get("label") or "").strip()
+            if not label:
+                continue
+            overlap = len(target_terms & _semantic_terms(label))
+            substring = label.casefold() in intent.target_control.casefold()
+            if overlap or substring:
+                candidates.append((overlap + int(substring), affordance))
+        if not candidates:
+            return None
+        candidates.sort(key=lambda item: item[0], reverse=True)
+        return prior, candidates[0][1]
+
+    def _staged_input_submission_step(
+        self,
+        statement: StatementContract,
+        observation: Observation,
+        history: list[PolicyTurn],
+        view: StatementObservationView,
+        *,
+        execution_scope: str,
+    ) -> SupervisorStep | None:
+        staged = self._staged_input_submission(observation, history, view)
+        if staged is None:
+            return None
+        prior, submit = staged
+        prior_intent = prior.supervisor.action_intent
+        assert prior_intent is not None
+        target = str(submit.get("label") or "").strip()
+        target_ref = str(submit.get("ref") or "").strip()
+        instruction = (
+            f"激活当前界面的 {target}，提交 {prior_intent.target_control} "
+            "中已经填写的查询值。"
+        )
+        expected = "查询提交后，结果作用域刷新并显示与该查询一致的生效状态。"
+        return self._mechanical_step(
+            statement,
+            execution_scope=execution_scope,
+            summary="查询值已填写但尚未提交",
+            established=(
+                f"最近一次输入已将 {prior_intent.target_control} 设置为 "
+                f"{prior_intent.target_value!r}。"
+            ),
+            gap="当前查询仍需通过提交控件生效。",
+            reason="populated query controls are staged until submitted",
+            instruction=instruction,
+            role="prepare",
+            family="activate",
+            target_control=target,
+            target_ref=target_ref,
+            expected_result=expected,
+        )
+
+    @staticmethod
     def _validate_action_capability(
         view: StatementObservationView,
         plan: _ActionDraft,
@@ -352,6 +705,14 @@ class StatementSupervisorPolicy(
         if plan is None:
             return None, rejection
         rejection = self._validate_declared_write(statement, plan)
+        if rejection:
+            return None, rejection
+        rejection = self._validate_observed_field_write(statement, plan)
+        if rejection:
+            return None, rejection
+        rejection = self._validate_observed_field_visibility(
+            statement, observation, plan
+        )
         if rejection:
             return None, rejection
         rejection = self._validate_action_capability(
@@ -455,6 +816,13 @@ class StatementSupervisorPolicy(
 
         execution_scope = self._scope_for(statement, observation)
         self._rt.execution_scope = execution_scope
+        transport = self._offscreen_observed_field_step(
+            statement,
+            observation,
+            execution_scope=execution_scope,
+        )
+        if transport is not None:
+            return transport
         turn_history = [event for event in history if isinstance(event, PolicyTurn)]
         scoped_history = history_for_scope(
             turn_history,
@@ -469,6 +837,15 @@ class StatementSupervisorPolicy(
             observation=observation,
         )
         view = build_observation_view(statement, observation, scoped_history)
+        submission = self._staged_input_submission_step(
+            statement,
+            observation,
+            scoped_history,
+            view,
+            execution_scope=execution_scope,
+        )
+        if submission is not None:
+            return submission
         with _Timer(
             self._timings,
             self._timings_order,
@@ -485,6 +862,21 @@ class StatementSupervisorPolicy(
                 )
             except StructuredOutputError as exc:
                 message = f"Statement Transition output invalid: {exc}"
+                if validation_retries > 0:
+                    self._static_constraints.append(
+                        "上一个 Transition 输出未通过结构化合同校验："
+                        f"{exc}。保持原 statement 目标，修正 kind 对应的必填字段后重新决策；"
+                        "若当前仍有可执行路径，必须返回 act 而不是 infeasible。"
+                    )
+                    try:
+                        return self._run_single_turn(
+                            statement,
+                            observation,
+                            history,
+                            validation_retries=validation_retries - 1,
+                        )
+                    finally:
+                        self._static_constraints.pop()
                 self._last_transition_record = {
                     "proposal": {},
                     "validation_error": message,
@@ -511,6 +903,30 @@ class StatementSupervisorPolicy(
                     statement, decision, refs.reason, execution_scope=execution_scope
                 )
         if decision.kind == "complete":
+            rejection = self._validate_filter_scope(statement, observation)
+            if not rejection:
+                rejection = self._validate_input_matches(statement, observation)
+            if rejection:
+                if validation_retries > 0:
+                    self._static_constraints.append(
+                        "上一个 complete 候选未通过确定性终态校验："
+                        f"{rejection}。继续执行动作，使当前 UI 状态精确满足合同。"
+                    )
+                    try:
+                        return self._run_single_turn(
+                            statement,
+                            observation,
+                            history,
+                            validation_retries=validation_retries - 1,
+                        )
+                    finally:
+                        self._static_constraints.pop()
+                return self._transition_failure(
+                    statement,
+                    decision,
+                    rejection,
+                    execution_scope=execution_scope,
+                )
             self._record_transition(decision)
             executed = any(
                 turn.executed

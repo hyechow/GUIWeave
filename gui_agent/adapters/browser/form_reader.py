@@ -320,11 +320,11 @@ def form_controls_js() -> str:
     if (requiredOf(el)) item.required = true;
     if (el.tagName === 'SELECT') {
       const opts = Array.from(el.options || []);
-      // 取「全部已选项」(multiple 时可能多选)而非仅第一个选中项,join 成可读文本;
-      // 多选属性(如 Material)否则只读到第一个选中值,漏掉其余。
       const selOpts = Array.from(el.selectedOptions || []);
+      const selTexts = selOpts.map(o => o.textContent || o.label || o.value).filter(Boolean);
       item.value = cut(el.value, 80);
-      item.selected_text = cut(selOpts.map(o => o.textContent || o.label || o.value).filter(Boolean).join(', '), 80);
+      item.selected_text = cut(selTexts.join(', '), 80);
+      item.selected_text_primary = cut(selTexts[0] || '', 80);
       item.options = opts.map(o => cut(o.textContent || o.label || o.value, 80)).filter(Boolean).slice(0, 60);
     } else if (kind === 'selectmenu') {
       // selectmenu:value=input 显示值;options 从 .selectmenu-items 选项 button 文本抓
@@ -412,10 +412,15 @@ def normalize_form_control_snapshot(
         placeholder = _text(item.get("placeholder"), MAX_TEXT)
         value = _text(item.get("value"), MAX_TEXT)
         selected_text = _text(item.get("selected_text"), MAX_TEXT)
+        selected_text_primary = _text(item.get("selected_text_primary"), MAX_TEXT)
         options = _string_list(item.get("options"))
-        if not any([kind, label, name, control_id, placeholder, value, selected_text, options]):
+        if not any([
+            kind, label, name, control_id, placeholder, value, selected_text,
+            selected_text_primary, options,
+        ]):
             continue
         norm: dict[str, Any] = {"kind": kind or "control"}
+        select_like = kind in {"native_select", "select", "selectmenu", "combobox", "listbox"}
         if label:
             norm["label"] = label
         if name:
@@ -426,8 +431,14 @@ def normalize_form_control_snapshot(
             norm["placeholder"] = placeholder
         if value:
             norm["value"] = value
-        if selected_text:
+        if selected_text or (
+            "selected_text" in item and select_like
+        ):
             norm["selected_text"] = selected_text
+        if selected_text_primary or (
+            "selected_text_primary" in item and select_like
+        ):
+            norm["selected_text_primary"] = selected_text_primary
         if options:
             norm["options"] = options
         if item.get("focused") is True:

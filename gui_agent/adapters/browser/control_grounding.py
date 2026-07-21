@@ -212,15 +212,15 @@ def resolve_native_control_action(
     action_family: str,
     instruction: str = "",
 ) -> BrowserActionDecision | None:
-    """Directly execute a target only when it is a browser-native select.
+    """Directly execute native selection or transport an offscreen form control.
 
     Native select options are not reliably rendered into the page screenshot, so the visual
     policy cannot interact with them faithfully. Ordinary inputs, textareas, buttons, and scroll
     targets remain visual interactions and must go through the action policy.
     """
-    if action_family != "select":
+    if action_family not in {"select", "iterate"}:
         return None
-    if not target_control or not target_value:
+    if not target_control or (action_family == "select" and not target_value):
         return None
 
     candidates: list[dict] = []
@@ -232,13 +232,29 @@ def resolve_native_control_action(
         if not matches_target_control(control, target_control):
             continue
         kind = str(control.get("kind") or "").lower()
-        if kind != "native_select":
+        if action_family == "select" and kind != "native_select":
             continue
         candidates.append(control)
     if len(candidates) != 1:
         return None
 
     control = candidates[0]
+    if action_family == "iterate":
+        position = str(control.get("viewport_pos") or "").strip().casefold()
+        rect = control.get("rect") or {}
+        if not position and isinstance(rect.get("y"), (int, float)) and rect["y"] < 0:
+            position = "above"
+        if position not in {"above", "below"}:
+            return None
+        direction = "up" if position == "above" else "down"
+        return BrowserActionDecision(
+            action=BrowserAction(
+                action_type="scroll",
+                direction=direction,
+                amount="medium",
+                description=instruction or f"将 {target_control} 移入视口",
+            )
+        )
     if control.get("in_viewport") is False:
         return None
     rect = control.get("rect") or {}

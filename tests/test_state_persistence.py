@@ -66,7 +66,7 @@ def test_immediate_outcome_event_strips_raw_observation_bytes_before_persist():
         summary="read",
         statement_id="s1",
         observation_source="browser",
-        executor="data",
+        executor="read",
         goal="query",
         observation_url="/tmp/collect_grid.png",
     )

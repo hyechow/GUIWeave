@@ -547,7 +547,8 @@ class RunnerReportBuilder:
             if operation_mode == "non_interactive":
                 label = {
                     "acquire": "Acquire",
-                    "data": "Data",
+                    "read": "Read",
+                    "source_check": "SourceCheck",
                     "command": "Command",
                 }.get(atype, "non-UI")
                 status = f"{'✓' if executed else '✗'} {label}"

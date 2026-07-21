@@ -1,6 +1,6 @@
 """Steppable interpreter for the semantic Program IR.
 
-Only ``Interact``, ``Acquire``, ``Data``, ``Compute`` and ``Command`` cross an executor boundary.  The
+Only world-facing nodes cross an executor boundary. The
 interpreter owns all explicit branching, deterministic iteration and typed
 value binding.  It never collects UI rows, writes SQL or asks an LLM to expand
 the Program at runtime.
@@ -20,7 +20,6 @@ from .program import (
     Command,
     Compute,
     Condition,
-    Data,
     ExecutableStatement,
     Finish,
     ForEach,
@@ -28,13 +27,17 @@ from .program import (
     Interact,
     OutputSpec,
     Program,
+    Read,
+    SourceCheck,
     StatementNode,
     Stmt,
     ValueRef,
 )
 
 
-ExecutorKind = Literal["interact", "acquire", "data", "compute", "command", "program"]
+ExecutorKind = Literal[
+    "interact", "acquire", "read", "source_check", "compute", "command", "program"
+]
 StatementExecutor = Callable[["StatementInvocation"], StatementOutcome]
 
 
@@ -74,7 +77,9 @@ class StatementInvocation(BaseModel):
         return self.statement.goal_text
 
     @property
-    def executor(self) -> Literal["interact", "acquire", "data", "compute", "command"]:
+    def executor(self) -> Literal[
+        "interact", "acquire", "read", "source_check", "compute", "command"
+    ]:
         return self.statement.op
 
 
@@ -246,7 +251,7 @@ class Interpreter:
         loop_path: list[int],
     ) -> Generator[StatementInvocation, StatementOutcome, str | None]:
         for statement in statements:
-            if isinstance(statement, (Interact, Acquire, Data, Compute, Command)):
+            if isinstance(statement, (Interact, Acquire, Read, SourceCheck, Compute, Command)):
                 invocation, error = self._invocation(statement, frames, loop_path)
                 if error:
                     outcome = StatementOutcome.failed(error)

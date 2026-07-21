@@ -1,4 +1,12 @@
-from gui_agent.core.orchestrator import Data, Finish, Interact, OutputSpec, Program, ValueRef
+from gui_agent.core.orchestrator import (
+    Finish,
+    Interact,
+    OutputSpec,
+    Program,
+    Read,
+    SourceCheck,
+    ValueRef,
+)
 from gui_agent.core.run.flow import finish_terminal_step
 from gui_agent.core.run.program_runtime import ProgramRuntime
 from gui_agent.core.run.result import make_result, orchestration_result
@@ -78,17 +86,15 @@ def test_program_verification_uses_finish_output_lineage_not_unrelated_preflight
     runtime = ProgramRuntime.start(Program(
         goal="return an answer",
         statements=[
-            Data(
+            SourceCheck(
                 id="inspect",
                 bind="probe",
-                goal="inspect source",
-                mode="inspect",
+                required_fields=[],
                 returns={"available": OutputSpec(type="boolean")},
             ),
-            Data(
+            Read(
                 id="answer",
                 bind="answer",
-                goal="derive answer",
                 returns={"value": OutputSpec(type="text")},
             ),
             Finish(outputs={"result": ValueRef(var="answer", path=["value"])}),
@@ -122,16 +128,14 @@ def test_program_verification_propagates_unverified_finish_input(monkeypatch):
     runtime = ProgramRuntime.start(Program(
         goal="return a derived answer",
         statements=[
-            Data(
+            Read(
                 id="read",
                 bind="source",
-                goal="read source",
                 returns={"value": OutputSpec(type="text")},
             ),
-            Data(
+            Read(
                 id="derive",
                 bind="answer",
-                goal="derive answer",
                 inputs={"source": ValueRef(var="source", path=["value"])},
                 returns={"value": OutputSpec(type="text")},
             ),

@@ -1,4 +1,4 @@
-"""Business values are produced by Data, never by Interact."""
+"""Business values are produced by Read, never by Interact."""
 
 from __future__ import annotations
 
@@ -6,7 +6,7 @@ import pytest
 from pydantic import ValidationError
 
 from gui_agent.core.orchestrator import (
-    Data,
+    Read,
     Finish,
     Interact,
     OutputSpec,
@@ -22,7 +22,7 @@ def _codes(program: Program) -> set[str]:
 
 @pytest.mark.parametrize("output_type", ["text", "number", "boolean", "record", "list[record]"])
 def test_interact_rejects_every_business_output(output_type):
-    with pytest.raises(ValidationError, match="adjacent Data"):
+    with pytest.raises(ValidationError, match="adjacent Read"):
         Interact(
             id="read",
             bind="value",
@@ -42,10 +42,9 @@ def test_finish_number_from_adjacent_data_is_accepted():
                 success="the filtered review list is visible",
                 required_values={"search_term": "best"},
             ),
-            Data(
+            Read(
                 id="count",
                 bind="answer",
-                goal="read the total number of reviews in the current filtered scope",
                 returns={"total": OutputSpec(type="number")},
             ),
             Finish(outputs={"result": ValueRef(var="answer", path=["total"])}),
@@ -57,10 +56,9 @@ def test_finish_number_from_adjacent_data_is_accepted():
 def test_finish_text_from_adjacent_data_is_accepted():
     program = Program(statements=[
         Interact(id="open", goal="open detail", success="detail is visible"),
-        Data(
+        Read(
             id="read",
             bind="page",
-            goal="read the visible title",
             returns={"title": OutputSpec(type="text")},
         ),
         Finish(outputs={"result": ValueRef(var="page", path=["title"])}),

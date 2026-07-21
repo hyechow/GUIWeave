@@ -17,13 +17,19 @@ from gui_agent.context.runtime import (
     task_goal_block,
 )
 from gui_agent.core.config import resolve_llm_config
-from gui_agent.core.data_types import DataStep, DistinctStep, FieldRef, FilterStep, ProjectStep
+from gui_agent.core.data_types import ComputeStep, DistinctStep, FieldRef, FilterStep, ProjectStep
 from gui_agent.core.llm.messages import assemble_messages
 from gui_agent.core.router import IntentResolution
 from gui_agent.prompts import load_prompt_text
 from llm.structured import invoke_structured
 
-from ._decomposer.draft import _PlanDraft, _StepDraft, _to_stmts, to_program
+from ._decomposer.draft import (
+    _OwnershipPlanDraft,
+    _PlanDraft,
+    _StepDraft,
+    _to_stmts,
+    to_program,
+)
 from ._validator.issue import ValidationIssue
 from .program import ComputeRef, ForEach, If, Interact, OutputSpec, Program, Stmt, ValueRef
 from .validator import validate_program
@@ -32,7 +38,7 @@ from .validator import validate_program
 _SYSTEM = load_prompt_text("task.orchestrator.decomposer")
 _REDECOMPOSE_SYSTEM = _SYSTEM + "\n\n" + load_prompt_text("task.orchestrator.redecomposer")
 _MAX_REPAIRS = 1
-_DATA_STEP_ADAPTER = TypeAdapter(DataStep)
+_COMPUTE_STEP_ADAPTER = TypeAdapter(ComputeStep)
 _FIELD_OWNERSHIP_RE = re.compile(
     r"```field_ownership\s*\n(.*?)\n```", re.DOTALL | re.IGNORECASE
 )
@@ -176,9 +182,9 @@ def _draft_data_flow_issues(draft: _PlanDraft) -> list[ValidationIssue]:
             if step.op == "compute" and step.compute_source
         }
         for previous, current in zip(steps, steps[1:]):
-            if previous.op == current.op and current.op in {"data", "compute"}:
+            if previous.op == current.op and current.op in {"read", "compute"}:
                 issues.append(ValidationIssue(
-                    "DATA_CHAIN_NOT_FUSED",
+                    "COMPUTE_CHAIN_NOT_FUSED",
                     "同一直线 block 中连续数据处理节点之间没有新的 UI、采集或控制流事实；"
                     "请合并为一个 Compute，由它从原始输入完成筛选、分组、聚合、排序、"
                     "排名和最终投影，并只声明最终消费者实际需要的 returns",
@@ -188,10 +194,10 @@ def _draft_data_flow_issues(draft: _PlanDraft) -> list[ValidationIssue]:
                     ),
                 ))
         for step in steps:
-            if step.op == "data" and step.inputs:
+            if step.op == "read" and step.inputs:
                 issues.append(ValidationIssue(
-                    "DATA_READ_INPUT_FORBIDDEN",
-                    "Data 只能从当前 observation 读取事实或绑定字段，不能消费 typed inputs；"
+                    "READ_INPUT_FORBIDDEN",
+                    "Read 只能从当前 observation 绑定声明字段，不能消费 typed inputs；"
                     "请把完整确定性逻辑写入一个 Compute 的 compute_steps",
                     evidence=(step.bind or step.goal, *step.inputs),
                 ))
@@ -203,13 +209,13 @@ def _draft_data_flow_issues(draft: _PlanDraft) -> list[ValidationIssue]:
                 and next(iter(step.returns.values())).type == "list[record]"
             )
             if (
-                step.op == "data"
+                step.op == "read"
                 and step.coverage in {"complete", "best_effort"}
                 and not materializes_compute_source
             ):
                 issues.append(ValidationIssue(
-                    "DATA_READ_COVERAGE_INVALID",
-                    "Data 只能读取 current_view；跨窗口集合必须由 compute(coverage=complete|best_effort) "
+                    "READ_COVERAGE_INVALID",
+                    "Read 只能绑定 current_view；跨窗口集合必须由 compute(coverage=complete|best_effort) "
                     "声明，Compiler 会生成 Acquire，确定性处理由 Compute 执行",
                     evidence=(step.bind or step.goal, step.coverage),
                 ))
@@ -235,7 +241,7 @@ def _apply_ownership_contract(draft: _PlanDraft, contract: dict | None) -> None:
     detail_output = str(contract["member_detail_output_field"])
     identity_source = str(contract["owner_identity_source_field"])
     identity_output = str(contract["owner_identity_output_field"])
-    transform = _DATA_STEP_ADAPTER.validate_python({
+    transform = _COMPUTE_STEP_ADAPTER.validate_python({
         **contract["owner_identity_transform"],
         "field": {"path": [identity_source], "type": "text", "semantic": True},
         "output": identity_output,
@@ -266,6 +272,7 @@ def _apply_ownership_contract(draft: _PlanDraft, contract: dict | None) -> None:
         member_detail_field=detail_output,
         field=field,
         owner_identity_field=identity_output,
+        owner_match_field=identity_source,
         owner_scope=str(contract["owner_scope"]),
     )
     result = _StepDraft(
@@ -335,12 +342,17 @@ def _compile(
             context_reports=context_reports,
             decision_text="",
         )
-        draft = invoke_structured(
+        raw_draft = invoke_structured(
             llm,
             messages,
-            _PlanDraft,
+            _OwnershipPlanDraft if ownership_contract else _PlanDraft,
             trace_sink=context_reports,
             trace_label=label,
+        )
+        draft = (
+            raw_draft.to_plan()
+            if isinstance(raw_draft, _OwnershipPlanDraft)
+            else raw_draft
         )
         previous = draft.model_dump_json(exclude_defaults=True, exclude_none=True)
         _apply_ownership_contract(draft, ownership_contract)

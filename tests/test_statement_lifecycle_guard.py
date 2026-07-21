@@ -35,3 +35,14 @@ def test_statement_retry_requires_end_and_new_instance():
     policy.end_statement()
     policy.begin_statement(_contract(goal="retry the UI postcondition"), instance_id="i2:s1")
     assert policy._statement_rt.instance_id == "i2:s1"
+
+
+def test_initial_filters_are_scoped_to_one_statement():
+    policy = StatementSupervisorPolicy()
+    policy.begin_statement(_contract("s1"), instance_id="i1:s1")
+    policy._initial_filters = {"Status": "Pending"}
+    policy.end_statement()
+
+    policy.begin_statement(_contract("s2"), instance_id="i2:s2")
+
+    assert policy._initial_filters is None

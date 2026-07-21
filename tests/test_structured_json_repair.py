@@ -186,10 +186,10 @@ def test_structured_fallback_log_is_one_concise_labeled_line(capsys):
         def bind(self, **_kwargs):
             return _Bound(self)
 
-    result = invoke_structured(_LLM(), [], _Plan, trace_label="statement.data")
+    result = invoke_structured(_LLM(), [], _Plan, trace_label="statement.example")
     lines = [line for line in capsys.readouterr().out.splitlines() if line.strip()]
 
     assert result.goal == "done"
     assert len(lines) == 1
-    assert lines[0].strip().startswith("[statement.data] json_object 校验失败")
+    assert lines[0].strip().startswith("[statement.example] json_object 校验失败")
     assert len(lines[0]) < 300

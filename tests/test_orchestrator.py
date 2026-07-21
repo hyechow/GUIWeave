@@ -5,7 +5,7 @@ from gui_agent.core.orchestrator import (
     Acquire,
     Command,
     Condition,
-    Data,
+    Read,
     Finish,
     ForEach,
     If,
@@ -24,10 +24,9 @@ def test_program_runner_owns_typed_branch_and_foreach_control_flow():
     program = Program(
         goal="update each selected record",
         statements=[
-            Data(
+            Read(
                 id="select",
                 bind="selection",
-                goal="select the records that need an update",
                 returns={"rows": OutputSpec(type="list[record]")},
             ),
             If(
@@ -51,10 +50,9 @@ def test_program_runner_owns_typed_branch_and_foreach_control_flow():
                                     "position": ValueRef(var="position"),
                                 },
                             ),
-                            Data(
+                            Read(
                                 id="verify",
                                 bind="updated",
-                                goal="verify the current record reflects the requested value",
                                 inputs={"record": ValueRef(var="row")},
                                 returns={"ok": OutputSpec(type="boolean")},
                             )
@@ -97,10 +95,9 @@ def test_program_runner_owns_typed_branch_and_foreach_control_flow():
 def test_command_arguments_use_explicit_literal_and_reference_channels():
     program = Program(
         statements=[
-            Data(
+            Read(
                 id="route",
                 bind="route",
-                goal="resolve destination",
                 returns={"url": OutputSpec(type="url")},
             ),
             Command(
@@ -112,7 +109,7 @@ def test_command_arguments_use_explicit_literal_and_reference_channels():
     )
 
     def execute(invocation):
-        if invocation.executor == "data":
+        if invocation.executor == "read":
             return StatementOutcome.completed(
                 "resolved", outputs={"url": "https://example.test/records"}
             )
@@ -123,10 +120,9 @@ def test_command_arguments_use_explicit_literal_and_reference_channels():
 
 
 def test_output_contract_rejects_missing_wrong_and_extra_values():
-    statement = Data(
-        id="data",
+    statement = Read(
+        id="read",
         bind="answer",
-        goal="derive answer",
         returns={"count": OutputSpec(type="number")},
     )
     for outputs in ({}, {"count": "one"}, {"count": 1, "extra": True}):
@@ -167,9 +163,8 @@ def test_interpreter_describes_complete_acquire_input_without_copying_it():
                 "rows": OutputSpec(type="list[record]", coverage="complete")
             },
         ),
-        Data(
+        Read(
             id="rank",
-            goal="rank the customers",
             inputs={"records": ValueRef(var="orders")},
         ),
     ])

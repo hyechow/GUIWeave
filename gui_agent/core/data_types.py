@@ -68,6 +68,11 @@ class ProjectStep(_KernelModel):
         }
 
 
+class BuildRecordStep(_KernelModel):
+    op: Literal["build_record"] = "build_record"
+    fields: dict[str, FieldRef] = Field(min_length=1)
+
+
 class DistinctStep(_KernelModel):
     op: Literal["distinct"] = "distinct"
     fields: list[FieldRef] = Field(default_factory=list)
@@ -119,8 +124,9 @@ class RankStep(_KernelModel):
     position: int = Field(ge=1)
 
 
-DataStep = Annotated[
+ComputeStep = Annotated[
     Union[
+        BuildRecordStep,
         FilterStep,
         SortStep,
         TakeStep,
@@ -139,7 +145,8 @@ DataStep = Annotated[
 __all__ = [
     "AggregateSpec",
     "AggregateStep",
-    "DataStep",
+    "BuildRecordStep",
+    "ComputeStep",
     "DateBucketStep",
     "DistinctStep",
     "FieldRef",

@@ -27,7 +27,8 @@ from gui_agent.core.orchestrator import (
     Acquire,
     Command,
     Compute,
-    Data,
+    Read,
+    SourceCheck,
     Finish,
     ForEach,
     If,
@@ -141,7 +142,7 @@ def _bind_origins(statements: list[Stmt]) -> dict[str, str]:
     """Map bind name to its producing operation. Ignores If/ForEach merges."""
     origins: dict[str, str] = {}
     for node in _walk(statements):
-        if isinstance(node, (Interact, Acquire, Data, Compute, Command)) and node.bind:
+        if isinstance(node, (Interact, Acquire, Read, SourceCheck, Compute, Command)) and node.bind:
             origins[node.bind] = node.op
     return origins
 
@@ -152,7 +153,7 @@ def _check_finish_numbers_from_compute(program: Program) -> list[str]:
     origins = _bind_origins(program.statements)
     returns_by_bind: dict[str, dict] = {}
     for node in _walk(program.statements):
-        if isinstance(node, (Interact, Acquire, Data, Compute, Command)) and node.bind:
+        if isinstance(node, (Interact, Acquire, Read, SourceCheck, Compute, Command)) and node.bind:
             returns_by_bind[node.bind] = dict(node.returns)
 
     for node in _walk(program.statements):
@@ -179,7 +180,7 @@ def _check(case: Case, program: Program) -> list[str]:
     nodes = list(_walk(program.statements))
     executors = [
         node for node in nodes
-        if isinstance(node, (Interact, Acquire, Data, Compute, Command))
+        if isinstance(node, (Interact, Acquire, Read, SourceCheck, Compute, Command))
     ]
     if not executors:
         errors.append("Program contains no executor-backed statement")
@@ -216,7 +217,7 @@ def _check(case: Case, program: Program) -> list[str]:
                     continue
                 bind_returns = {}
                 for n in nodes:
-                    if isinstance(n, (Interact, Acquire, Data, Compute, Command)) and n.bind == ref.var:
+                    if isinstance(n, (Interact, Acquire, Read, SourceCheck, Compute, Command)) and n.bind == ref.var:
                         bind_returns = dict(n.returns)
                         break
                 spec = bind_returns.get(ref.path[0])
@@ -301,7 +302,7 @@ def _check(case: Case, program: Program) -> list[str]:
             errors.append("Compute must consume the materialized complete collection via inputs")
         if unchecked_acquires:
             errors.append(
-                "Acquire must consume a Data inspect availability check: "
+                "Acquire must consume a SourceCheck availability result: "
                 + ", ".join(unchecked_acquires)
             )
         collection_contract = " ".join(spec.description for spec in collection_specs).casefold()
@@ -383,6 +384,18 @@ def _check(case: Case, program: Program) -> list[str]:
             errors.append("parent SKU must be derived by Compute text_split('-', right, 2, 0)")
         loop_nodes = [node for loop in loops for node in _walk(loop.body)]
         if not any(
+            isinstance(loop.body[index], Command)
+            and loop.body[index].capability == "open_url"
+            and isinstance(loop.body[index + 1], Interact)
+            and loop.body[index + 1].observe_fields == ["Material"]
+            and isinstance(loop.body[index + 2], Read)
+            for loop in loops
+            for index in range(len(loop.body) - 2)
+        ):
+            errors.append(
+                "detail reads must expose the owned field through Interact before Read"
+            )
+        if not any(
             isinstance(node, Interact)
             and "configurable" in node.model_dump_json().casefold()
             and "sku" in node.model_dump_json().casefold()
@@ -390,8 +403,7 @@ def _check(case: Case, program: Program) -> list[str]:
         ):
             errors.append("fallback branch must establish the configurable parent SKU scope")
         if not any(
-            isinstance(node, Data)
-            and node.mode == "read"
+            isinstance(node, Read)
             and "material" in node.model_dump_json().casefold()
             for node in loop_nodes
         ):
@@ -409,7 +421,7 @@ def _check(case: Case, program: Program) -> list[str]:
 def _print_program(program: Program) -> None:
     def visit(statements: list[Stmt], indent: str = "") -> None:
         for statement in statements:
-            if isinstance(statement, (Interact, Acquire, Data, Compute, Command)):
+            if isinstance(statement, (Interact, Acquire, Read, SourceCheck, Compute, Command)):
                 print(f"{indent}[{statement.op}] {statement.id}: {statement.goal_text}")
             elif isinstance(statement, If):
                 print(f"{indent}[if] {statement.cond.ref.var} {statement.cond.cmp}")

@@ -1,6 +1,6 @@
 import pytest
 
-from gui_agent.core.orchestrator import Acquire, Data, Finish, Interact, OutputSpec, Program
+from gui_agent.core.orchestrator import Acquire, Read, Finish, Interact, OutputSpec, Program
 from gui_agent.core.run.program_runtime import ProgramRuntime
 from gui_agent.core.schemas import (
     AcquisitionReceiptEvent,
@@ -14,10 +14,9 @@ def _program() -> Program:
     return Program(
         goal="two steps",
         statements=[
-            Data(
+            Read(
                 id="derive",
                 bind="derived",
-                goal="derive value",
                 returns={"value": OutputSpec(type="text")},
             ),
             Interact(

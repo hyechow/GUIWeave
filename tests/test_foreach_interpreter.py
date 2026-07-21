@@ -1,5 +1,8 @@
+import pytest
+
 from gui_agent.core.orchestrator import (
-    Data,
+    Interpreter,
+    Read,
     Finish,
     ForEach,
     Interact,
@@ -14,10 +17,9 @@ from gui_agent.core.schemas import StatementOutcome
 def _program() -> Program:
     return Program(
         statements=[
-            Data(
+            Read(
                 id="members",
                 bind="members",
-                goal="materialize members",
                 returns={"rows": OutputSpec(type="list[record]")},
             ),
             ForEach(
@@ -30,10 +32,9 @@ def _program() -> Program:
                         success="this member reflects the requested value",
                         inputs={"member": ValueRef(var="member")},
                     ),
-                    Data(
+                    Read(
                         id="read_result",
                         bind="result",
-                        goal="read the changed member identity",
                         inputs={"member": ValueRef(var="member")},
                         returns={"id": OutputSpec(type="text")},
                     )
@@ -89,10 +90,9 @@ def test_foreach_empty_collection_skips_body_and_binds_empty_result():
 def test_foreach_fails_when_runtime_value_is_not_a_list():
     program = Program(
         statements=[
-            Data(
+            Read(
                 id="members",
                 bind="members",
-                goal="materialize members",
                 returns={"value": OutputSpec(type="json")},
             ),
             ForEach(
@@ -109,3 +109,20 @@ def test_foreach_fails_when_runtime_value_is_not_a_list():
 
     assert result.failed is True
     assert "foreach 只接受 list" in result.reply
+
+
+@pytest.mark.parametrize("verification", ["confirmed", "accepted_unverified"])
+def test_foreach_collect_preserves_value_verification(verification):
+    interpreter = Interpreter(_program())
+
+    def execute(invocation):
+        if invocation.id == "members":
+            return StatementOutcome.completed("members", outputs={"rows": [{"id": "a"}]})
+        if invocation.id == "apply":
+            return StatementOutcome.completed("changed")
+        return StatementOutcome.completed(
+            "read", verification=verification, outputs={"id": "a"}
+        )
+
+    assert interpreter.drive(execute).failed is False
+    assert interpreter.terminal_verification == verification

@@ -80,7 +80,7 @@ class OutputSpec(BaseModel):
     coverage: Coverage = "current_view"
     fields: tuple[str, ...] = Field(
         default_factory=tuple,
-        description="required record keys for Data-produced record/list[record] outputs",
+        description="required record keys for typed record/list[record] outputs",
     )
 
     @field_validator("fields", mode="before")
@@ -674,6 +674,7 @@ class StatementContract(BaseModel):
     on: Literal["main"] = "main"
     inputs: dict[str, JsonValue] = Field(default_factory=dict)
     required_values: dict[str, JsonValue] = Field(default_factory=dict)
+    observe_fields: list[str] = Field(default_factory=list)
     returns: dict[str, OutputSpec] = Field(default_factory=dict)
     persistence: PersistenceMode = "immediate"
 
@@ -684,12 +685,15 @@ class StatementInfo(BaseModel):
     model_config = ConfigDict(frozen=True, extra="forbid")
 
     id: str = ""
-    executor: Literal["interact", "acquire", "data", "compute", "command"] = "interact"
+    executor: Literal[
+        "interact", "acquire", "read", "source_check", "compute", "command"
+    ] = "interact"
     goal: str = ""
     success: str = ""
     on: Literal["main"] = "main"
     inputs: dict[str, JsonValue] = Field(default_factory=dict)
     required_values: dict[str, JsonValue] = Field(default_factory=dict)
+    observe_fields: list[str] = Field(default_factory=list)
     persistence: PersistenceMode = "immediate"
     returns: dict[str, OutputSpec] = Field(default_factory=dict)
 
@@ -800,7 +804,7 @@ class PolicyTurn(BaseModel):
     operation_mode: Literal["interactive", "observation", "non_interactive"] = Field(
         default="interactive",
         description=(
-            "本轮是 UI 交互执行、无动作观察仲裁，还是 Data/Command 非交互执行"
+            "本轮是 UI 交互执行、无动作观察仲裁，还是 Read/SourceCheck/Command 非交互执行"
         ),
     )
     observation_source: str

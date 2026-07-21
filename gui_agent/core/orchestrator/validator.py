@@ -9,7 +9,21 @@ from __future__ import annotations
 
 from collections.abc import Mapping
 from ._validator.issue import ALL_CODES, IssueList, ValidationIssue
-from .program import Acquire, Command, Compute, Data, Finish, ForEach, If, Interact, OutputSpec, Program, Stmt, ValueRef
+from .program import (
+    Acquire,
+    Command,
+    Compute,
+    Finish,
+    ForEach,
+    If,
+    Interact,
+    OutputSpec,
+    Program,
+    Read,
+    SourceCheck,
+    Stmt,
+    ValueRef,
+)
 
 
 Scope = dict[str, Mapping[str, OutputSpec] | None]
@@ -22,7 +36,7 @@ _INSPECTION_OUTPUTS = {
 
 def _executor_nodes(statements: list[Stmt]):
     for statement in statements:
-        if isinstance(statement, (Interact, Acquire, Data, Compute, Command)):
+        if isinstance(statement, (Interact, Acquire, Read, SourceCheck, Compute, Command)):
             yield statement
         elif isinstance(statement, If):
             yield from _executor_nodes(statement.then)
@@ -40,7 +54,7 @@ def _check_acquired_field_flow(program: Program, issues: IssueList) -> None:
     nodes = list(_executor_nodes(program.statements))
     inspections: dict[str, list[frozenset[str]]] = {}
     for node in nodes:
-        if isinstance(node, Data) and node.mode == "inspect" and node.bind:
+        if isinstance(node, SourceCheck) and node.bind:
             inspections.setdefault(node.bind, []).append(
                 _semantic_fields(node.required_fields)
             )
@@ -53,7 +67,7 @@ def _check_acquired_field_flow(program: Program, issues: IssueList) -> None:
         if not checked:
             issues.add(
                 "ACQUIRE_SOURCE_CHECK_INVALID",
-                f"Acquire「{node.goal}」的 source_check 不是 Data inspect 结果",
+                f"Acquire「{node.goal}」的 source_check 不是 SourceCheck 结果",
                 evidence=(node.id, node.source_check.var),
             )
             continue
@@ -68,7 +82,7 @@ def _check_acquired_field_flow(program: Program, issues: IssueList) -> None:
         required = _semantic_fields(node.required_fields)
         if not required:
             issues.add(
-                "DATA_REQUIRED_FIELDS_REQUIRED",
+                "COMPUTE_REQUIRED_FIELDS_REQUIRED",
                 f"{node.op}「{node.goal}」消费 Acquire 集合 {sources}，必须用 required_fields "
                 "声明分组、筛选、排序和最终输出所需的语义源字段",
                 evidence=(node.id, *sources),
@@ -79,9 +93,9 @@ def _check_acquired_field_flow(program: Program, issues: IssueList) -> None:
                 missing = sorted(required - checked)
                 if missing:
                     issues.add(
-                        "DATA_REQUIRED_FIELDS_NOT_ACQUIRED",
+                        "COMPUTE_FIELDS_NOT_ACQUIRED",
                         f"{node.op}「{node.goal}」需要语义字段 {missing}，但 Acquire 集合「{source}」"
-                        "引用的 Data inspect 没有覆盖它们",
+                        "引用的 SourceCheck 没有覆盖它们",
                         evidence=(node.id, source, *missing),
                     )
 
@@ -113,7 +127,7 @@ def _walk(
 ) -> Scope:
     current = dict(scope)
     for statement in statements:
-        if isinstance(statement, (Interact, Acquire, Data, Compute, Command)):
+        if isinstance(statement, (Interact, Acquire, Read, SourceCheck, Compute, Command)):
             if not statement.id:
                 issues.add("EMPTY_STATEMENT_GOAL", "executor statement 缺少稳定 id")
             elif statement.id in ids:
@@ -158,7 +172,7 @@ def _walk(
                     issues.add(
                         "ACQUIRE_RAW_FIELDS_FORBIDDEN",
                         f"Acquire「{statement.goal}」搬运 observation 原始记录，output 不得声明 fields；"
-                        "所需语义源字段只写在 Data inspect 或 Compute.required_fields",
+                        "所需语义源字段只写在 SourceCheck 或 Compute.required_fields",
                         evidence=(
                             statement.id,
                             collection_outputs[0][0],
@@ -168,7 +182,7 @@ def _walk(
                 if statement.source_check is None:
                     issues.add(
                         "ACQUIRE_SOURCE_CHECK_REQUIRED",
-                        f"Acquire「{statement.goal}」启动前必须引用 Data inspect 的 available；"
+                        f"Acquire「{statement.goal}」启动前必须引用 SourceCheck.available；"
                         "字段不可用分支应先由 Interact 修正界面、重新 inspect，再进入 Acquire",
                         evidence=(statement.id,),
                     )
@@ -194,48 +208,55 @@ def _walk(
                     ):
                         issues.add(
                             "ACQUIRE_SOURCE_CHECK_INVALID",
-                            "Acquire.source_check 必须引用 Data inspect 产出的 boolean 字段",
+                            "Acquire.source_check 必须引用 SourceCheck 产出的 boolean 字段",
                             evidence=(statement.id,),
                         )
-            if isinstance(statement, Data) and statement.mode == "inspect":
+            if isinstance(statement, SourceCheck):
                 if not statement.required_fields:
                     issues.add(
-                        "DATA_INSPECT_FIELDS_REQUIRED",
-                        f"Data inspect「{statement.goal}」必须用 required_fields 声明要检查的语义源字段",
+                        "SOURCE_CHECK_FIELDS_REQUIRED",
+                        "SourceCheck 必须用 required_fields 声明要检查的语义源字段",
                         evidence=(statement.id,),
                     )
                 actual = {name: spec.type for name, spec in statement.returns.items()}
                 if actual != _INSPECTION_OUTPUTS:
                     issues.add(
-                        "DATA_INSPECT_OUTPUT_CONTRACT",
-                        "Data inspect 必须声明 available:boolean、bindings:record、"
+                        "SOURCE_CHECK_OUTPUT_CONTRACT",
+                        "SourceCheck 必须声明 available:boolean、bindings:record、"
                         "missing_fields:json 三个 outputs",
                         evidence=(statement.id,),
                     )
-            if isinstance(statement, Data):
-                if statement.mode == "read" and statement.inputs:
+            if isinstance(statement, Read):
+                if statement.inputs:
                     issues.add(
-                        "DATA_READ_INPUT_FORBIDDEN",
-                        f"Data read「{statement.goal}」只能读取当前 observation，不能消费 typed inputs；"
+                        "READ_INPUT_FORBIDDEN",
+                        "Read 只能绑定当前 observation，不能消费 typed inputs；"
                         "请由编排器把确定性筛选、分组、聚合、排序和投影写成 Compute",
                         evidence=(statement.id, *statement.inputs),
                     )
                 invalid_coverage = [
                     name for name, spec in statement.returns.items()
-                    if statement.mode == "read" and spec.coverage != "current_view"
+                    if spec.coverage != "current_view"
                 ]
                 if invalid_coverage:
                     issues.add(
-                        "DATA_READ_COVERAGE_INVALID",
-                        f"Data read「{statement.goal}」只能声明 current_view outputs；"
+                        "READ_COVERAGE_INVALID",
+                        "Read 只能声明 current_view outputs；"
                         f"{invalid_coverage} 的跨窗口覆盖必须由 Acquire + Compute 表达",
                         evidence=(statement.id, *invalid_coverage),
                     )
-                if statement.mode == "read" and not statement.returns:
+                if not statement.returns:
                     issues.add(
-                        "DATA_OUTPUT_REQUIRED",
-                        f"Data read「{statement.goal}」必须声明从当前 observation 读取的 typed returns",
+                        "READ_OUTPUT_REQUIRED",
+                        "Read 必须声明从当前 observation 绑定的 typed returns",
                         evidence=(statement.id,),
+                    )
+                if set(statement.reads) != set(statement.returns):
+                    issues.add(
+                        "READ_BINDINGS_INVALID",
+                        "Read 必须为每个 typed return 声明且仅声明一个 "
+                        "observation binding",
+                        evidence=(statement.id, *statement.reads),
                     )
                 missing_record_fields = [
                     name for name, spec in statement.returns.items()
@@ -243,8 +264,8 @@ def _walk(
                 ]
                 if missing_record_fields:
                     issues.add(
-                        "DATA_RECORD_FIELDS_REQUIRED",
-                        f"Data「{statement.goal}」的 list[record] outputs "
+                        "READ_RECORD_FIELDS_REQUIRED",
+                        f"Read 的 list[record] outputs "
                         f"{missing_record_fields} 必须声明 fields；"
                         "例如 fields=['email']，使运行时能校验逐条记录形状",
                         evidence=(statement.id, *missing_record_fields),

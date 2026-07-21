@@ -3,7 +3,7 @@
 from __future__ import annotations
 
 from gui_agent.core.orchestrator import (
-    Data,
+    Read,
     OutputSpec,
     Program,
     ValueRef,
@@ -26,10 +26,9 @@ def test_coverage_field_defaults_to_current_view():
     # round-trips through the validator unchanged
     program = Program(
         statements=[
-            Data(
+            Read(
                 id="read",
                 bind="title",
-                goal="read title",
                 returns={"title": OutputSpec(type="text")},
             ),
         ]
@@ -43,10 +42,9 @@ def test_coverage_field_defaults_to_current_view():
 def test_validator_rejects_complete_coverage_on_non_list_return():
     program = Program(
         statements=[
-            Data(
+            Read(
                 id="read",
                 bind="title",
-                goal="read title",
                 returns={"title": OutputSpec(type="text", coverage="complete")},
             ),
         ]
@@ -57,10 +55,9 @@ def test_validator_rejects_complete_coverage_on_non_list_return():
 def test_validator_accepts_complete_coverage_on_list_record_return():
     program = Program(
         statements=[
-            Data(
+            Read(
                 id="collect",
                 bind="rows",
-                goal="collect rows",
                 returns={"rows": OutputSpec(
                     type="list[record]", coverage="complete", fields=["id"]
                 )},
@@ -82,10 +79,9 @@ def _complete_outcome(verification: str) -> StatementOutcome:
 
 
 def test_validated_outcome_accepts_complete_list_with_confirmed_verification():
-    statement = Data(
+    statement = Read(
         id="collect",
         bind="rows",
-        goal="collect rows",
         returns={"rows": OutputSpec(
             type="list[record]", coverage="complete", fields=["id"]
         )},
@@ -96,10 +92,9 @@ def test_validated_outcome_accepts_complete_list_with_confirmed_verification():
 
 
 def test_validated_outcome_rejects_complete_list_without_confirmed_verification():
-    statement = Data(
+    statement = Read(
         id="collect",
         bind="rows",
-        goal="collect rows",
         returns={"rows": OutputSpec(
             type="list[record]", coverage="complete", fields=["id"]
         )},
@@ -112,10 +107,9 @@ def test_validated_outcome_rejects_complete_list_without_confirmed_verification(
 
 def test_validated_outcome_does_not_gate_current_view_or_best_effort_coverage():
     # current_view and best_effort outputs are not subject to the confirmed-evidence gate.
-    statement = Data(
+    statement = Read(
         id="collect",
         bind="rows",
-        goal="collect rows",
         returns={"rows": OutputSpec(
             type="list[record]", coverage="best_effort", fields=["id"]
         )},

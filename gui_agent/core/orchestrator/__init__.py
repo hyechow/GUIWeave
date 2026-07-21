@@ -1,7 +1,7 @@
 """Semantic Program compiler and runtime.
 
-The public surface intentionally mirrors the semantic IR.  Concrete UI and
-data operations live behind runtime executors rather than in this package API.
+The public surface intentionally mirrors the semantic IR. Concrete UI actions,
+observation bindings and pure evaluation remain separate runtime concerns.
 """
 
 from gui_agent.core.schemas import StatementOutcome
@@ -12,13 +12,15 @@ from .program import (
     Compute,
     ComputeRef,
     Condition,
-    Data,
     Finish,
     ForEach,
     If,
     Interact,
+    ObservationBinding,
     OutputSpec,
     Program,
+    Read,
+    SourceCheck,
     Stmt,
     ValueRef,
 )
@@ -42,13 +44,15 @@ __all__ = [
     "Compute",
     "ComputeRef",
     "Condition",
-    "Data",
     "Finish",
     "ForEach",
     "If",
     "Interact",
+    "ObservationBinding",
     "OutputSpec",
     "Program",
+    "Read",
+    "SourceCheck",
     "Stmt",
     "ValueRef",
     "StatementOutcome",

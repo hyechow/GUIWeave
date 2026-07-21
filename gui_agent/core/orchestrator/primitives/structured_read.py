@@ -174,7 +174,7 @@ def structured_read(
         return {}
     from llm.provider_config import dashscope_extra_body
 
-    cfg = resolve_llm_config("data")
+    cfg = resolve_llm_config("observation")
     llm = ChatOpenAI(
         model=cfg.model, api_key=cfg.api_key, base_url=cfg.base_url,
         extra_body=dashscope_extra_body(cfg.model),
@@ -183,7 +183,7 @@ def structured_read(
         ContextBlock(
             id="runtime.data.requested_fields",
             source_type="runtime_state",
-            source="statement.data.visual",
+            source="statement.observation.visual",
             ttl="turn",
             priority=20,
             content=f"读取以下字段的当前值：{'、'.join(returns)}。",
@@ -204,7 +204,7 @@ def structured_read(
             priority=50,
             content="【界面信号参考】（应用约定，某字段若以图标/颜色/位置表示可据此判读成文字值）：\n" + check_knowledge,
         ) if check_knowledge else None,
-    ], label="statement.data.visual", report_sink=context_reports)
+    ], label="statement.observation.visual", report_sink=context_reports)
     prepare_png = prepare_vision_prompt_png or (lambda b: b)
     prepared = prepare_png(png_bytes)
     b64 = base64.b64encode(prepared).decode()
@@ -219,7 +219,7 @@ def structured_read(
         image_text = f"[image_url omitted: image/png, {len(prepared)} bytes]"
         context_reports.append({
             "kind": "prompt_snapshot",
-            "label": "statement.data.visual",
+            "label": "statement.observation.visual",
             "roles": [
                 {
                     "role": "system",
@@ -236,7 +236,7 @@ def structured_read(
                     "role": "human",
                     "parts": [
                         {
-                            "label": "statement.data.visual",
+                            "label": "statement.observation.visual",
                             "source_type": "prompt_context",
                             "source": "render_prompt_context",
                             "type": "text",
@@ -260,7 +260,7 @@ def structured_read(
         messages,
         _StructuredRead,
         trace_sink=context_reports,
-        trace_label="statement.data.visual",
+        trace_label="statement.observation.visual",
     )
     # Keep only requested fields; default any missing to "" (当没有).
     by_field = {fr.field: (fr.value or "") for fr in result.reads}
@@ -290,7 +290,7 @@ def structured_read_rows(
         return []
     from llm.provider_config import dashscope_extra_body
 
-    cfg = resolve_llm_config("data")
+    cfg = resolve_llm_config("observation")
     llm = ChatOpenAI(
         model=cfg.model, api_key=cfg.api_key, base_url=cfg.base_url,
         extra_body=dashscope_extra_body(cfg.model),
@@ -299,7 +299,7 @@ def structured_read_rows(
         ContextBlock(
             id="runtime.data.requested_fields",
             source_type="runtime_state",
-            source="statement.data.visual",
+            source="statement.observation.visual",
             ttl="turn",
             priority=20,
             content=(
@@ -323,7 +323,7 @@ def structured_read_rows(
             priority=50,
             content="【界面信号参考】（应用约定，某字段若以图标/颜色/位置表示可据此判读成文字值）：\n" + check_knowledge,
         ) if check_knowledge else None,
-    ], label="statement.data.visual_rows", report_sink=context_reports)
+    ], label="statement.observation.visual_rows", report_sink=context_reports)
     prepare_png = prepare_vision_prompt_png or (lambda b: b)
     prepared = prepare_png(png_bytes)
     b64 = base64.b64encode(prepared).decode()
@@ -336,7 +336,7 @@ def structured_read_rows(
     ]
     result = invoke_structured(
         llm, messages, _RowsRead,
-        trace_sink=context_reports, trace_label="statement.data.visual_rows",
+        trace_sink=context_reports, trace_label="statement.observation.visual_rows",
     )
     rows: list[dict[str, str]] = []
     for row in result.rows:

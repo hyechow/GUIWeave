@@ -622,7 +622,7 @@ def _link_headers(raw_links: list[Any], headers: list[str], width: int) -> dict[
 
     A column is link-bearing if ANY row has a non-empty href in that cell; the whole column then
     gets a sibling URL column (rectangular: rows without a link store ""). Names are deduped
-    against the existing text headers and each other so Data sees distinct fields."""
+    against the existing text headers and each other so bindings see distinct fields."""
     has_link = [False] * width
     for link_row in raw_links:
         if not isinstance(link_row, list):

@@ -55,7 +55,7 @@ def test_normalize_table_snapshots_maps_rows_to_headers():
 
 def test_normalize_folds_cell_hrefs_into_sibling_url_columns():
     # A linked column carries its href as a "<col>_url" sibling column — no preset "the url"
-    # field, and the new column must land in headers so Data can project it.
+    # field, and the new column must land in headers so SourceCheck can bind it.
     raw = {
         "url": "http://example.test/admin/orders",
         "title": "Orders",

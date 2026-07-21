@@ -34,15 +34,13 @@ def test_form_progress_fingerprint_excludes_transient_focus() -> None:
 
 def test_form_controls_js_reads_below_fold_selects_and_multiselect():
     """WebArena 185 regression: <select> values must be captured below-fold (not gated
-    on viewport) and multiselect selected_text joins ALL selected options, so a
-    Material multiselect read never falls to vision and mis-picks the first option."""
+    on viewport) and expose the exact primary selected option."""
     js = form_controls_js()
     # below-fold selects/textareas captured for value-read (not viewport-gated)
     assert "keepForRead" in js
     assert "selectedOptions" in js
-    # multiselect: join all selected options, not just selectedOptions[0]
     assert "selectedOptions[0]" not in js
-    assert ".join(" in js
+    assert "selected_text_primary" in js
 
 
 def test_normalize_form_controls_keeps_multiselect_selected_text():
@@ -52,11 +50,13 @@ def test_normalize_form_controls_keeps_multiselect_selected_text():
             "kind": "native_select",
             "value": "33",
             "selected_text": "Cotton, Fleece",
+            "selected_text_primary": "Cotton",
             "options": ["Burlap", "Canvas", "Cotton", "Fleece", "Wool"],
             "rect": {"x": 500.0, "y": 1800.0, "w": 200, "h": 80},
         }]
     })
     assert controls[0]["selected_text"] == "Cotton, Fleece"
+    assert controls[0]["selected_text_primary"] == "Cotton"
     assert controls[0]["label"] == "Material"
 
 
@@ -76,6 +76,7 @@ def test_normalize_form_controls_keeps_native_select_options():
     assert controls == [{
         "kind": "native_select",
         "label": "Status",
+        "selected_text": "",
         "options": ["Canceled", "Complete", "Processing"],
         "focused": True,
         "rect": {"x": 856, "y": 509, "w": 246, "h": 32},

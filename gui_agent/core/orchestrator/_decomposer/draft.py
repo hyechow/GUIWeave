@@ -5,7 +5,14 @@ from __future__ import annotations
 from dataclasses import dataclass, field
 from typing import Any, Literal
 
-from pydantic import BaseModel, Field, JsonValue, field_validator, model_validator
+from pydantic import (
+    BaseModel,
+    ConfigDict,
+    Field,
+    JsonValue,
+    field_validator,
+    model_validator,
+)
 
 from ..program import (
     Acquire,
@@ -13,30 +20,32 @@ from ..program import (
     Compute,
     ComputeRef,
     Condition,
-    Data,
     Finish,
     ForEach,
     If,
     Interact,
+    ObservationBinding,
     OutputSpec,
     Program,
+    Read,
+    SourceCheck,
     Stmt,
     ValueRef,
     assign_statement_ids,
 )
 from gui_agent.core.router import IntentResolution
-from gui_agent.core.data_types import DataStep
+from gui_agent.core.data_types import BuildRecordStep, ComputeStep, FieldRef
 
 
 class _StepDraft(BaseModel):
     """Flat structured-output shape; ``op`` selects the relevant fields."""
 
     op: Literal[
-        "interact", "lookup", "data", "compute", "command", "if", "foreach", "finish"
+        "interact", "lookup", "read", "compute", "command", "if", "foreach", "finish"
     ] = Field(
         default="interact",
         description=(
-            '"interact" | "lookup" | "data" | "compute" | "command" | "if" | '
+            '"interact" | "lookup" | "read" | "compute" | "command" | "if" | '
             '"foreach" | "finish"'
         ),
     )
@@ -44,12 +53,16 @@ class _StepDraft(BaseModel):
     goal: str = Field(
         default="",
         description=(
-            "interact 的单一 UI 后置条件，或 data 要从当前 observation 直接读取的事实"
+            "interact 的单一 UI 后置条件，或 read 绑定的 observation 事实摘要"
         ),
     )
     required_fields: list[str] = Field(
         default_factory=list,
-        description="compute 源记录依赖，或 data inspect 要绑定的语义字段",
+        description="compute/Acquire 源记录依赖，或 read 要绑定的语义字段",
+    )
+    reads: dict[str, ObservationBinding] = Field(
+        default_factory=dict,
+        description="read output -> 当前 observation 中的声明式 fact binding",
     )
     success: str = Field(
         default="",
@@ -63,6 +76,10 @@ class _StepDraft(BaseModel):
         default_factory=dict,
         description="interact 不可改写的目标值、范围和实体事实",
     )
+    observe_fields: list[str] = Field(
+        default_factory=list,
+        description="interact 只暴露并读取、不得修改的语义字段",
+    )
     scope: str = Field(default="", description="interact 的业务对象/范围说明")
     lookup_entity: str = Field(
         default="",
@@ -75,6 +92,7 @@ class _StepDraft(BaseModel):
     member_detail_field: str = ""
     field: str = ""
     owner_identity_field: str = ""
+    owner_match_field: str = ""
     owner_scope: str = ""
     prepare_source: str = Field(
         default="",
@@ -83,7 +101,7 @@ class _StepDraft(BaseModel):
     coverage: Literal["current_view", "complete", "best_effort"] | None = Field(
         default=None,
         description=(
-            "data read 省略时归一为 current_view，且不能使用其他值；"
+            "read 省略时归一为 current_view，且不能使用其他值；"
             "compute 跨窗口集合运算用 complete，"
             "消费已有 typed input 时留空并继承输入合同"
         ),
@@ -100,7 +118,7 @@ class _StepDraft(BaseModel):
         default="",
         description="compute: inputs 中作为 record list/table 的确定性变换来源",
     )
-    compute_steps: list[DataStep] = Field(
+    compute_steps: list[ComputeStep] = Field(
         default_factory=list,
         description="compute: 按固定顺序执行的数据内核步骤；字段可标记 semantic=true",
     )
@@ -160,9 +178,9 @@ class _StepDraft(BaseModel):
     def _validate_selected_shape(self) -> "_StepDraft":
         if self.op == "interact" and not (self.goal.strip() or self.success.strip()):
             raise ValueError("interact requires goal or success")
-        if self.op == "data" and not self.goal.strip() and not self.returns:
-            raise ValueError("data requires goal or typed returns")
-        if self.op == "data" and not self.inputs and self.coverage is None:
+        if self.op == "read" and not self.returns:
+            raise ValueError("read requires typed returns")
+        if self.op == "read" and not self.inputs and self.coverage is None:
             self.coverage = "current_view"
         if self.op == "compute":
             if not self.compute_steps or not self.compute_outputs or not self.returns:
@@ -197,31 +215,49 @@ class _PlanDraft(BaseModel):
     steps: list[_StepDraft] = Field(default_factory=list)
 
 
+class _OwnershipScopeStep(BaseModel):
+    """LLM-owned collection scope before compiler-owned field resolution."""
+
+    model_config = ConfigDict(extra="forbid")
+
+    op: Literal["interact"] = "interact"
+    goal: str
+    success: str
+    required_values: dict[str, JsonValue] = Field(default_factory=dict)
+    scope: str = ""
+    persistence: Literal["immediate", "explicit_commit"] = "immediate"
+
+
+class _OwnershipPlanDraft(BaseModel):
+    """Reduced draft used when a field_ownership contract owns data flow."""
+
+    model_config = ConfigDict(extra="forbid")
+
+    reasoning: str = Field(
+        default="",
+        description=(
+            "只说明用户要求的集合范围及其筛选值；字段读取、owner 回退、循环和去重由 Compiler 生成"
+        ),
+    )
+    goal: str = ""
+    steps: list[_OwnershipScopeStep] = Field(min_length=1)
+
+    def to_plan(self) -> _PlanDraft:
+        return _PlanDraft(
+            reasoning=self.reasoning,
+            goal=self.goal,
+            steps=[_StepDraft.model_validate(step.model_dump()) for step in self.steps],
+        )
+
+
 _StepDraft.model_rebuild()
-
-
-def _inspection_returns() -> dict[str, OutputSpec]:
-    return {
-        "available": OutputSpec(
-            type="boolean",
-            description="whether every required semantic source field is readable",
-        ),
-        "bindings": OutputSpec(
-            type="record",
-            description="semantic source field to runtime field binding",
-        ),
-        "missing_fields": OutputSpec(
-            type="json",
-            description="required semantic source fields that are not readable",
-        ),
-    }
 
 
 def _match_count_returns(description: str) -> dict[str, OutputSpec]:
     return {"match_count": OutputSpec(type="number", description=description)}
 
 
-def _data_goal(draft: _StepDraft) -> str:
+def _read_summary(draft: _StepDraft) -> str:
     if draft.goal.strip():
         return draft.goal.strip()
     outputs = "、".join(
@@ -230,7 +266,31 @@ def _data_goal(draft: _StepDraft) -> str:
     return f"从当前 observation 直接读取这些 typed outputs：{outputs}"
 
 
-def _compute_required_fields(steps: list[DataStep]) -> list[str]:
+def _observation_reads(draft: _StepDraft) -> dict[str, ObservationBinding]:
+    if draft.reads:
+        return dict(draft.reads)
+    outputs = list(draft.returns)
+    names = (
+        list(draft.required_fields)
+        if draft.required_fields and len(draft.required_fields) == len(outputs)
+        else outputs
+    )
+    return {
+        output: ObservationBinding(
+            source=(
+                "dataset"
+                if draft.returns[output].type == "list[record]"
+                else "page"
+                if name.casefold() in {"url", "title"}
+                else "field"
+            ),
+            name=("rows" if draft.returns[output].type == "list[record]" else name),
+        )
+        for output, name in zip(outputs, names, strict=True)
+    }
+
+
+def _compute_required_fields(steps: list[ComputeStep]) -> list[str]:
     """Derive source-field dependencies from compiler-owned semantic references."""
 
     fields: list[str] = []
@@ -354,7 +414,7 @@ def _normalize_compute_sources(drafts: list[_StepDraft]) -> None:
             if spec.type == "list[record]"
         ]
         if not (
-            source.op == "data"
+            source.op == "read"
             and source.coverage in {"complete", "best_effort"}
             and not source.inputs
             and len(source.returns) == 1
@@ -425,9 +485,11 @@ def _lookup_stmts(draft: _StepDraft, ctx: _LoweringContext) -> list[Stmt]:
     )
     prefix = ctx.next_macro("lookup")
     count_bind = f"{prefix}_exact"
-    count = Data(
+    count = Read(
         bind=count_bind,
-        goal=f"读取使用完整值「{exact}」后的匹配记录数量",
+        reads={
+            "match_count": ObservationBinding(source="dataset", name="total_records")
+        },
         returns=_match_count_returns("当前精确检索结果中的匹配记录数量"),
     )
     statements: list[Stmt] = [exact_step, count]
@@ -456,9 +518,11 @@ def _lookup_stmts(draft: _StepDraft, ctx: _LoweringContext) -> list[Stmt]:
             )],
         ))
         final_bind = f"{prefix}_final"
-        statements.append(Data(
+        statements.append(Read(
             bind=final_bind,
-            goal=f"读取实体「{exact}」最终检索结果的匹配记录数量",
+            reads={
+                "match_count": ObservationBinding(source="dataset", name="total_records")
+            },
             returns=_match_count_returns("精确检索及可选回退后的最终匹配记录数量"),
         ))
     statements.append(If(
@@ -491,7 +555,6 @@ def _acquire_stmts(
         f"物化当前已圈定的业务集合「{bind}」",
     )
     field_text = "、".join(required) or "下游计算所需语义字段"
-    inspect_goal = f"检查当前「{goal}」数据源能否读取：{field_text}"
     prepare_goal = draft.prepare_source.strip() or (
         f"保持当前业务集合范围不变，使其数据源可读取这些语义字段：{field_text}"
     )
@@ -505,12 +568,9 @@ def _acquire_stmts(
     )
     ctx.register_collection(bind, required, final_bind)
     return [
-        Data(
+        SourceCheck(
             bind=initial_bind,
-            goal=inspect_goal,
-            mode="inspect",
             required_fields=required,
-            returns=_inspection_returns(),
         ),
         If(
             cond=Condition(
@@ -530,12 +590,9 @@ def _acquire_stmts(
                 )
             ],
         ),
-        Data(
+        SourceCheck(
             bind=final_bind,
-            goal=inspect_goal,
-            mode="inspect",
             required_fields=required,
-            returns=_inspection_returns(),
         ),
         Acquire(
             bind=bind,
@@ -582,12 +639,13 @@ def _to_stmts(
                     success=draft.success.strip() or goal,
                     inputs=dict(draft.inputs),
                     required_values=dict(draft.required_values),
+                    observe_fields=list(draft.observe_fields),
                     scope=draft.scope,
                     persistence=draft.persistence,
                 )
             )
             # The LLM-facing draft may attach a terminal read to an UI step for
-            # convenience.  Program IR never does: lower it to an adjacent Data
+            # convenience. Program IR never does: lower it to an adjacent Read
             # statement so UI completion and data acceptance remain independent.
             if draft.returns:
                 coverage = (
@@ -598,7 +656,7 @@ def _to_stmts(
                     else "current_view"
                 )
                 read_draft = draft.model_copy(update={
-                    "op": "data",
+                    "op": "read",
                     "goal": (
                         "从上一 UI 后置条件的终态 observation 直接读取："
                         + "、".join(
@@ -608,6 +666,7 @@ def _to_stmts(
                     ),
                     "success": "",
                     "required_values": {},
+                    "observe_fields": [],
                     "coverage": coverage,
                 })
                 statements.extend(_to_stmts([read_draft], _ctx=ctx))
@@ -617,6 +676,7 @@ def _to_stmts(
             assert draft.items is not None
             item = draft.item or "item"
             current_bind = ctx.next_macro("current_value")
+            owner_bind = ctx.next_macro("owner_value")
             effective_bind = ctx.next_macro("effective_value")
             value = draft.field.strip()
             result_spec = OutputSpec(
@@ -638,9 +698,19 @@ def _to_stmts(
                         },
                     ),
                     _StepDraft(
-                        op="data",
+                        op="interact",
+                        goal=f"使当前成员详情中的语义字段「{value}」进入可观察视口",
+                        success=(
+                            f"当前成员详情中的 {value} 已在当前视口中，"
+                            "其当前值（包括空值）可直接读取"
+                        ),
+                        observe_fields=[value],
+                    ),
+                    _StepDraft(
+                        op="read",
                         bind=current_bind,
                         goal=f"从当前成员详情读取 {value}",
+                        required_fields=[value],
                         returns={
                             "value": OutputSpec(
                                 type="text",
@@ -656,31 +726,72 @@ def _to_stmts(
                         then=[
                             _StepDraft(
                                 op="interact",
-                                goal=draft.owner_scope.strip(),
-                                success=f"owner 记录已锁定且其 {value} 可读取",
+                                goal=(
+                                    f"使用本次调用 inputs[{draft.owner_match_field!r}] 的精确值定位 "
+                                    "owner 记录；owner 范围："
+                                    f"{draft.owner_scope.strip()}"
+                                ),
+                                success=(
+                                    f"当前 owner 详情中的 {draft.owner_match_field} 与本次调用输入"
+                                    "精确相等，且 owner 范围条件已确认"
+                                ),
                                 inputs={
-                                    "owner_identity": ValueRef(
+                                    draft.owner_match_field: ValueRef(
                                         var=item,
                                         path=[draft.owner_identity_field.strip()],
                                     )
                                 },
-                                required_values={
-                                    "field": value,
-                                    "owner_identity_field": draft.owner_identity_field.strip(),
+                            ),
+                            _StepDraft(
+                                op="interact",
+                                goal=f"使 owner 详情中的语义字段「{value}」进入可观察视口",
+                                success=(
+                                    f"owner 详情中的 {value} 已在当前视口中，"
+                                    "其当前值（包括空值）可直接读取"
+                                ),
+                                observe_fields=[value],
+                            ),
+                            _StepDraft(
+                                op="read",
+                                bind=owner_bind,
+                                goal=f"从 owner 详情读取 {value}",
+                                required_fields=[value],
+                                returns={
+                                    "value": OutputSpec(
+                                        type="text",
+                                        required=False,
+                                        description=f"owner {value}",
+                                    )
                                 },
                             ),
                             _StepDraft(
-                                op="data",
+                                op="compute",
                                 bind=effective_bind,
-                                goal=f"从 owner 详情读取 {value} record",
+                                goal=f"绑定 owner {value} record",
+                                inputs={
+                                    "value": ValueRef(var=owner_bind, path=["value"])
+                                },
+                                compute_source="value",
+                                compute_steps=[BuildRecordStep(
+                                    fields={value: FieldRef(path=[])},
+                                )],
+                                compute_outputs={"result": ComputeRef(path=[0])},
                                 returns={"result": result_spec},
                             ),
                         ],
                         otherwise=[
                             _StepDraft(
-                                op="data",
+                                op="compute",
                                 bind=effective_bind,
-                                goal=f"从当前成员详情读取 {value} record",
+                                goal=f"绑定当前成员 {value} record",
+                                inputs={
+                                    "value": ValueRef(var=current_bind, path=["value"])
+                                },
+                                compute_source="value",
+                                compute_steps=[BuildRecordStep(
+                                    fields={value: FieldRef(path=[])},
+                                )],
+                                compute_outputs={"result": ComputeRef(path=[0])},
                                 returns={"result": result_spec},
                             )
                         ],
@@ -689,8 +800,8 @@ def _to_stmts(
                 collect=ValueRef(var=effective_bind, path=["result"]),
             )
             statements.extend(_to_stmts([loop], _ctx=ctx))
-        elif draft.op == "data":
-            goal = _data_goal(draft)
+        elif draft.op == "read":
+            summary = _read_summary(draft)
             materializes_compute_source = bool(
                 draft.bind
                 and draft.bind in compute_sources
@@ -713,23 +824,17 @@ def _to_stmts(
                 source_bind = ctx.next_macro("collection")
                 statements.extend(_acquire_stmts(
                     draft.model_copy(update={
-                        "goal": f"物化「{goal}」所需的同一业务集合",
+                        "goal": f"物化「{summary}」所需的同一业务集合",
                         "returns": {},
                     }),
                     source_bind,
                     ctx,
                 ))
                 inputs["records"] = ValueRef(var=source_bind, path=["rows"])
-            inherited_fields = list(dict.fromkeys(
-                field
-                for ref in inputs.values()
-                for field in ctx.collection_fields.get(ref.var, ())
-            ))
             statements.append(
-                Data(
+                Read(
                     bind=draft.bind or None,
-                    goal=goal,
-                    required_fields=list(draft.required_fields) or inherited_fields,
+                    reads=_observation_reads(draft),
                     inputs=inputs,
                     returns=dict(draft.returns),
                 )
@@ -778,13 +883,10 @@ def _to_stmts(
                 )
                 if not inspection_bind:
                     inspection_bind = ctx.next_macro("compute_fields")
-                    statements.append(Data(
+                    statements.append(SourceCheck(
                         bind=inspection_bind,
-                        goal=f"检查 Compute「{goal}」的语义字段绑定",
-                        mode="inspect",
                         required_fields=required_fields,
                         inputs=dict(inputs),
-                        returns=_inspection_returns(),
                     ))
                 inputs["bindings"] = ValueRef(var=inspection_bind, path=["bindings"])
             statements.append(Compute(
