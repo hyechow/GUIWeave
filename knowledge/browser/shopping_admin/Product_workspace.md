@@ -75,7 +75,8 @@ generating the row, and clicking the final Save remain runtime steps inside that
 Size and Color belong to the variation. Material can be inherited/owned by the configurable parent
 and may be empty on a Simple child. Variation SKUs commonly append size and color segments to the
 parent SKU; the parent record is identified by the base SKU together with
-`Type=Configurable Product`.
+`Type=Configurable Product`. For a Material query, an empty child value must fall back to that
+verified parent; filtering out the empty child without reading the parent is incorrect.
 
 **Stock Status** (`In Stock` / `Out of Stock`) and **Quantity** are distinct resources. Marking a
 product out of stock changes Stock Status; setting Quantity to zero is not equivalent. For a

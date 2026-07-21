@@ -30,9 +30,33 @@ Quantity, Size, and Color belong to the simple child. Each row's Action/Edit lin
 detail entry.
 
 The Columns control can expose **Color**, but this grid does not expose Material or Size as optional
-columns in this environment. Material/Size requests that are absent from the grid require the
-relevant product detail; an empty child Material can require resolving the configurable parent by
-base SKU and Type.
+columns in this environment. Material and Size therefore require a product detail observation.
+
+Material has this ownership relationship in the configurable product family:
+
+```field_ownership
+field: Material
+output_field: material
+member_entity: Simple Product variation
+member_identity_field: SKU
+member_detail_source_field: Action_url
+member_detail_output_field: detail_url
+owner_entity: Configurable Product parent
+owner_identity_source_field: SKU
+owner_identity_output_field: parent_sku
+owner_identity_transform:
+  op: text_split
+  separator: "-"
+  direction: right
+  maxsplit: 2
+  index: 0
+owner_scope: exact SKU equals parent_sku and Type equals Configurable Product
+policy: member_then_owner_if_empty
+output_policy: distinct_nonempty_values
+```
+
+A base SKU is an identity value, not a URL. An empty Simple child Material is not a missing answer
+and the child must not be dropped before applying the ownership relationship.
 
 ## Limit product display
 

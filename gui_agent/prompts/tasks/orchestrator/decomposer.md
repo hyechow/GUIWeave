@@ -21,7 +21,7 @@ Program 描述业务后置条件、数据依赖、确定性计算和显式控制
 - `lookup`：Compiler macro，只用于 Router 明确标记为 lookup 的实体。
 - `data`：只从当前 observation 直接读取页面事实。它不消费 typed inputs，不做数据变换；coverage
   可省略，Compiler 会归一为 `current_view`，显式声明时也只能是 `current_view`。
-- `compute`：声明全部确定性筛选、映射、排序、截取、去重、日期分桶、分组、聚合、排名和投影。
+- `compute`：声明全部确定性筛选、映射、排序、截取、去重、文本拆分、日期分桶、分组、聚合、排名和投影。
 - `command`：`open_url | back | launch_app` 等无需理解当前页面的确定性平台能力。
 - `if`：业务数据决定不同后续目标时的显式分支。
 - `foreach`：对已物化的 typed collection 逐项执行同一个固定 body。
@@ -59,6 +59,7 @@ input，Compiler 会创建 Acquire 并注入 source；不要自己生成 Data �
 - `take`: `count + offset`
 - `project`: 输出字段名到 FieldRef
 - `distinct`: FieldRef 列表
+- `text_split`: 从字段文本按 separator 拆分并写入 output；direction=`left|right`，maxsplit 与 index 显式声明
 - `date_bucket`: 日期字段、output、unit、format
 - `group`: `by + values(count|sum|min|max|avg)`
 - `aggregate`: 最终标量聚合 record
@@ -100,6 +101,10 @@ ValueRef 形状：
 }
 ```
 
+ValueRef.var 必须逐字等于此前某个 statement 的 bind、当前 ForEach.item，或此前 ForEach.into；禁止为同一个
+值另造近义变量名。If.cond_ref 引用前一 Data/Compute bind，ForEach.collect 引用 body 内实际 bind，循环后的
+Compute inputs 引用该 ForEach.into。
+
 Data 和 Compute 可以声明业务 returns。Data returns 只描述 observation 中直接存在的结果；Compute returns
 描述确定性 pipeline 输出。不要返回后续和 Finish 都不消费的字段。
 
@@ -109,6 +114,13 @@ Data 和 Compute 可以声明业务 returns。Data returns 只描述 observation
 - `foreach.items` 必须引用前面已物化的 `list[record]`。筛选、排序、去重必须先由 Compute 完成。
 - foreach body 编译一次并固定；每轮只通过 `item` 和可选 `index` 引用当前值。
 - `command.args` 放常量，`arg_refs` 放 ValueRef；同一个参数不得同时出现在两处。
+
+### Owner 字段解析
+
+知识中的 `field_ownership` 是 Compiler 消费的权威关系合同。目标命中该合同的 field 时，草稿只负责用
+Interact 建立用户要求的业务集合范围并保留筛选值；不要输出候选 Data/Compute、`resolve_owned_field`、
+ForEach 或最终数据处理。Compiler 会从合同生成 complete Acquire、identity Compute、固定 owner 回退和
+输出 Compute，Data 仍只读取成员/owner 详情 observation。
 
 ## Router facts
 
@@ -125,6 +137,7 @@ Data 和 Compute 可以声明业务 returns。Data returns 只描述 observation
 - Data 后没有新的 UI 或 observation 时，不要再接 Data。
 - 只有业务结果确实改变后续目标时才使用 If。
 - 只有对多个已知成员重复同一个 UI body 时才使用 ForEach。
+- 字段命中 `field_ownership` 合同时只编排 UI scope，数据 Program 由 Compiler 生成。
 
 ## Canonical example
 

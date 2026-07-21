@@ -38,5 +38,8 @@ Interact 后置条件再重读。若 Compute kickback 证明集合缺少语义�
 Interact → Acquire。列/视图暴露属于 Interact；同一已绑定集合内的滚动、翻页属于 Acquire。两者都不在
 Program 中写具体控件或页面路径。
 
+知识若包含命中目标字段的 `field_ownership` 合同，只修正剩余 UI scope；Compiler 会重新生成 identity
+Compute、显式 owner If/ForEach 和输出 Compute，Data 仍只读取当前 observation。
+
 若检索 kickback/已完成事实表明完整 mention 或 Router search_hint 已确认零结果，把它当作 no-result 事实，
 不要重复同一 lookup。需要尝试另一业务来源时才换 Program 路线；不得让 Statement 自行换语义字段。

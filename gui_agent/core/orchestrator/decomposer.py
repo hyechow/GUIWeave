@@ -2,9 +2,12 @@
 
 from __future__ import annotations
 
+import re
 from collections.abc import Callable
 
 from langchain_openai import ChatOpenAI
+from pydantic import TypeAdapter
+import yaml
 
 from gui_agent.context import ContextBlock
 from gui_agent.context.runtime import (
@@ -14,6 +17,7 @@ from gui_agent.context.runtime import (
     task_goal_block,
 )
 from gui_agent.core.config import resolve_llm_config
+from gui_agent.core.data_types import DataStep, DistinctStep, FieldRef, FilterStep, ProjectStep
 from gui_agent.core.llm.messages import assemble_messages
 from gui_agent.core.router import IntentResolution
 from gui_agent.prompts import load_prompt_text
@@ -21,13 +25,39 @@ from llm.structured import invoke_structured
 
 from ._decomposer.draft import _PlanDraft, _StepDraft, _to_stmts, to_program
 from ._validator.issue import ValidationIssue
-from .program import ForEach, If, Interact, OutputSpec, Program, Stmt
+from .program import ComputeRef, ForEach, If, Interact, OutputSpec, Program, Stmt, ValueRef
 from .validator import validate_program
 
 
 _SYSTEM = load_prompt_text("task.orchestrator.decomposer")
 _REDECOMPOSE_SYSTEM = _SYSTEM + "\n\n" + load_prompt_text("task.orchestrator.redecomposer")
 _MAX_REPAIRS = 1
+_DATA_STEP_ADAPTER = TypeAdapter(DataStep)
+_FIELD_OWNERSHIP_RE = re.compile(
+    r"```field_ownership\s*\n(.*?)\n```", re.DOTALL | re.IGNORECASE
+)
+
+
+def _active_field_ownership(knowledge: str, goal: str) -> dict | None:
+    required = {
+        "field", "member_detail_source_field", "member_detail_output_field",
+        "owner_identity_source_field", "owner_identity_output_field",
+        "owner_identity_transform", "owner_scope", "policy", "output_policy",
+    }
+    folded_goal = goal.casefold()
+    for index, match in enumerate(_FIELD_OWNERSHIP_RE.finditer(knowledge), 1):
+        raw = yaml.safe_load(match.group(1))
+        if not isinstance(raw, dict) or any(not raw.get(name) for name in required):
+            raise ValueError(f"invalid field_ownership contract #{index}")
+        if not isinstance(raw["owner_identity_transform"], dict):
+            raise ValueError(f"invalid owner_identity_transform in contract #{index}")
+        aliases = raw.get("aliases") or []
+        if isinstance(aliases, str):
+            aliases = [aliases]
+        names = [str(raw["field"]), *(str(alias) for alias in aliases)]
+        if any(name.casefold() in folded_goal for name in names):
+            return raw
+    return None
 
 
 class OrchestratorCompileError(RuntimeError):
@@ -191,6 +221,84 @@ def _draft_data_flow_issues(draft: _PlanDraft) -> list[ValidationIssue]:
     return issues
 
 
+def _apply_ownership_contract(draft: _PlanDraft, contract: dict | None) -> None:
+    if not contract:
+        return
+    if (
+        contract["policy"] != "member_then_owner_if_empty"
+        or contract["output_policy"] != "distinct_nonempty_values"
+    ):
+        raise ValueError("unsupported field_ownership policy")
+    field = str(contract["field"])
+    output = str(contract.get("output_field") or field)
+    detail_source = str(contract["member_detail_source_field"])
+    detail_output = str(contract["member_detail_output_field"])
+    identity_source = str(contract["owner_identity_source_field"])
+    identity_output = str(contract["owner_identity_output_field"])
+    transform = _DATA_STEP_ADAPTER.validate_python({
+        **contract["owner_identity_transform"],
+        "field": {"path": [identity_source], "type": "text", "semantic": True},
+        "output": identity_output,
+    })
+    candidates = _StepDraft(
+        op="compute",
+        bind="__owned_field_candidates",
+        goal=f"准备 {field} ownership 候选记录",
+        coverage="complete",
+        compute_source="records",
+        required_fields=[detail_source, identity_source],
+        compute_steps=[
+            transform,
+            ProjectStep(fields={
+                detail_output: FieldRef(path=[detail_source], semantic=True),
+                identity_output: FieldRef(path=[identity_output]),
+            }),
+        ],
+        compute_outputs={"result": ComputeRef()},
+        returns={"result": OutputSpec(
+            type="list[record]", fields=[detail_output, identity_output]
+        )},
+    )
+    resolved = _StepDraft.model_construct(
+        op="resolve_owned_field",
+        bind="__owned_field_values",
+        items=ValueRef(var=candidates.bind, path=["result"]),
+        member_detail_field=detail_output,
+        field=field,
+        owner_identity_field=identity_output,
+        owner_scope=str(contract["owner_scope"]),
+    )
+    result = _StepDraft(
+        op="compute",
+        bind="__owned_field_result",
+        goal=f"返回非空且不重复的 {field} 值",
+        inputs={"records": ValueRef(var=resolved.bind)},
+        compute_source="records",
+        compute_steps=[
+            FilterStep(field=FieldRef(path=[field]), cmp="exists"),
+            ProjectStep(fields={output: FieldRef(path=[field])}),
+            DistinctStep(fields=[FieldRef(path=[output])]),
+        ],
+        compute_outputs={"result": ComputeRef()},
+        returns={"result": OutputSpec(type="list[record]", fields=[output])},
+    )
+    scope = []
+    for step in draft.steps:
+        if step.op not in {"interact", "lookup"}:
+            break
+        scope.append(step)
+    draft.steps = [
+        *scope,
+        candidates,
+        resolved,
+        result,
+        _StepDraft(
+            op="finish",
+            outputs={"result": ValueRef(var=result.bind, path=["result"])},
+        ),
+    ]
+
+
 def _compile(
     *,
     system_prompt: str,
@@ -199,6 +307,7 @@ def _compile(
     context_reports: list[dict] | None,
     resolution: IntentResolution | None,
     label: str,
+    ownership_contract: dict | None = None,
     initial_scope: dict[str, dict[str, OutputSpec]] | None = None,
     attempt_observer: Callable[[int, list[ValidationIssue]], None] | None = None,
 ) -> Program:
@@ -234,6 +343,7 @@ def _compile(
             trace_label=label,
         )
         previous = draft.model_dump_json(exclude_defaults=True, exclude_none=True)
+        _apply_ownership_contract(draft, ownership_contract)
         program = to_program(
             draft,
             goal,
@@ -275,6 +385,7 @@ def decompose(
     attempt_observer: Callable[[int, list[ValidationIssue]], None] | None = None,
     initial_scope: dict[str, dict[str, OutputSpec]] | None = None,
 ) -> Program:
+    ownership_contract = _active_field_ownership(knowledge, goal)
     corrective = (
         ContextBlock(
             id="runtime.corrective_directive",
@@ -302,6 +413,7 @@ def decompose(
         context_reports=context_reports,
         resolution=resolution,
         label="orchestrator.decompose",
+        ownership_contract=ownership_contract,
         initial_scope=initial_scope,
         attempt_observer=attempt_observer,
     )

@@ -36,8 +36,8 @@ class _StepDraft(BaseModel):
     ] = Field(
         default="interact",
         description=(
-            '"interact" | "lookup" | "data" | "compute" | "command" | '
-            '"if" | "foreach" | "finish"'
+            '"interact" | "lookup" | "data" | "compute" | "command" | "if" | '
+            '"foreach" | "finish"'
         ),
     )
     bind: str = ""
@@ -72,6 +72,10 @@ class _StepDraft(BaseModel):
         default="",
         description="lookup: 承载实体的语义字段，不是真实列名或控件",
     )
+    member_detail_field: str = ""
+    field: str = ""
+    owner_identity_field: str = ""
+    owner_scope: str = ""
     prepare_source: str = Field(
         default="",
         description="data source 字段当前不可读时要达到的线性 UI 后置条件",
@@ -141,6 +145,16 @@ class _StepDraft(BaseModel):
         if isinstance(value, dict) and "type" in value:
             return {"result": value}
         return value
+
+    @field_validator("coverage", mode="before")
+    @classmethod
+    def _normalize_empty_coverage(cls, value: Any) -> Any:
+        return None if value == "" else value
+
+    @field_validator("cond_cmp", mode="before")
+    @classmethod
+    def _normalize_nonempty_condition(cls, value: Any) -> Any:
+        return "exists" if value in {"not_empty", "nonempty", "is_not_empty"} else value
 
     @model_validator(mode="after")
     def _validate_selected_shape(self) -> "_StepDraft":
@@ -599,6 +613,82 @@ def _to_stmts(
                 statements.extend(_to_stmts([read_draft], _ctx=ctx))
         elif draft.op == "lookup":
             statements.extend(_lookup_stmts(draft, ctx))
+        elif draft.op == "resolve_owned_field":
+            assert draft.items is not None
+            item = draft.item or "item"
+            current_bind = ctx.next_macro("current_value")
+            effective_bind = ctx.next_macro("effective_value")
+            value = draft.field.strip()
+            result_spec = OutputSpec(
+                type="record",
+                description=f"resolved {value} value",
+                fields=[value],
+            )
+            loop = _StepDraft(
+                op="foreach",
+                items=draft.items,
+                item=item,
+                into=draft.bind,
+                body=[
+                    _StepDraft(
+                        op="command",
+                        capability="open_url",
+                        arg_refs={
+                            "url": ValueRef(var=item, path=[draft.member_detail_field.strip()])
+                        },
+                    ),
+                    _StepDraft(
+                        op="data",
+                        bind=current_bind,
+                        goal=f"从当前成员详情读取 {value}",
+                        returns={
+                            "value": OutputSpec(
+                                type="text",
+                                required=False,
+                                description=f"current member {value}",
+                            )
+                        },
+                    ),
+                    _StepDraft(
+                        op="if",
+                        cond_ref=ValueRef(var=current_bind, path=["value"]),
+                        cond_cmp="empty",
+                        then=[
+                            _StepDraft(
+                                op="interact",
+                                goal=draft.owner_scope.strip(),
+                                success=f"owner 记录已锁定且其 {value} 可读取",
+                                inputs={
+                                    "owner_identity": ValueRef(
+                                        var=item,
+                                        path=[draft.owner_identity_field.strip()],
+                                    )
+                                },
+                                required_values={
+                                    "field": value,
+                                    "owner_identity_field": draft.owner_identity_field.strip(),
+                                },
+                            ),
+                            _StepDraft(
+                                op="data",
+                                bind=effective_bind,
+                                goal=f"从 owner 详情读取 {value} record",
+                                returns={"result": result_spec},
+                            ),
+                        ],
+                        otherwise=[
+                            _StepDraft(
+                                op="data",
+                                bind=effective_bind,
+                                goal=f"从当前成员详情读取 {value} record",
+                                returns={"result": result_spec},
+                            )
+                        ],
+                    ),
+                ],
+                collect=ValueRef(var=effective_bind, path=["result"]),
+            )
+            statements.extend(_to_stmts([loop], _ctx=ctx))
         elif draft.op == "data":
             goal = _data_goal(draft)
             materializes_compute_source = bool(
@@ -645,6 +735,9 @@ def _to_stmts(
                 )
             )
         elif draft.op == "compute":
+            goal = draft.goal.strip() or "计算并产出：" + "、".join(
+                spec.description.strip() or name for name, spec in draft.returns.items()
+            )
             required_fields = list(dict.fromkeys([
                 *draft.required_fields,
                 *_compute_required_fields(draft.compute_steps),
@@ -669,7 +762,7 @@ def _to_stmts(
                 source_bind = ctx.next_macro("collection")
                 statements.extend(_acquire_stmts(
                     draft.model_copy(update={
-                        "goal": f"物化「{draft.goal}」所需的同一业务集合",
+                        "goal": f"物化「{goal}」所需的同一业务集合",
                         "required_fields": required_fields,
                         "returns": {},
                     }),
@@ -687,7 +780,7 @@ def _to_stmts(
                     inspection_bind = ctx.next_macro("compute_fields")
                     statements.append(Data(
                         bind=inspection_bind,
-                        goal=f"检查 Compute「{draft.goal}」的语义字段绑定",
+                        goal=f"检查 Compute「{goal}」的语义字段绑定",
                         mode="inspect",
                         required_fields=required_fields,
                         inputs=dict(inputs),
@@ -696,7 +789,7 @@ def _to_stmts(
                 inputs["bindings"] = ValueRef(var=inspection_bind, path=["bindings"])
             statements.append(Compute(
                 bind=draft.bind or None,
-                goal=draft.goal,
+                goal=goal,
                 source=source,
                 required_fields=required_fields,
                 steps=list(draft.compute_steps),
