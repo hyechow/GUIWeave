@@ -16,6 +16,7 @@ from gui_agent.core.run.statements.data_kernel import (
     SortKey,
     SortStep,
     TakeStep,
+    TextSplitStep,
     describe_datasets,
     execute_pipeline,
 )
@@ -50,6 +51,23 @@ def test_pipeline_filters_sorts_takes_projects_and_deduplicates():
         {"name": "medium", "count": Decimal("12")},
     ]
     assert trace[-1] == "project:2->2"
+
+
+def test_pipeline_derives_related_identity_with_right_text_split():
+    result, trace = execute_pipeline(
+        [{"member_code": "account-east-user"}],
+        [TextSplitStep(
+            field=FieldRef(path=["member_code"], type="text"),
+            output="account_code",
+            separator="-",
+            direction="right",
+            maxsplit=1,
+            index=0,
+        )],
+    )
+
+    assert result == [{"member_code": "account-east-user", "account_code": "account-east"}]
+    assert trace == ["text_split:1->1"]
 
 
 def test_pipeline_replays_recent_completed_order_total_case():

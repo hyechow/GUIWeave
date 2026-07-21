@@ -32,12 +32,14 @@ from gui_agent.core.orchestrator import (
     ForEach,
     If,
     Interact,
+    OrchestratorCompileError,
     Program,
     decompose,
     validate_program,
 )
 from gui_agent.core.orchestrator.program import Stmt
 from gui_agent.core.router import EntityRef, IntentResolution
+from gui_agent.core.self_learning.app_summary import load_knowledge_for_app
 
 
 @dataclass(frozen=True)
@@ -53,6 +55,8 @@ class Case:
     required_materialized_text: tuple[str, ...] = ()
     resolution: IntentResolution | None = None
     expect_lookup_fallback: bool = False
+    knowledge_app: str = ""
+    expect_relational_fallback: bool = False
 
 
 CASES = (
@@ -110,6 +114,15 @@ CASES = (
             search_key="Aurora",
         )]),
         expect_lookup_fallback=True,
+    ),
+    Case(
+        "product-material-owner-fallback",
+        "Give me the material of the products that have 3 units left",
+        required_text=("material", "3"),
+        expect_foreach=True,
+        expect_materialized_data=True,
+        knowledge_app="shopping_admin",
+        expect_relational_fallback=True,
     ),
 )
 
@@ -334,6 +347,62 @@ def _check(case: Case, program: Program) -> list[str]:
             errors.append(
                 "approximate lookup must lower to exact -> count==0 -> fallback -> existence If"
             )
+    if case.expect_relational_fallback:
+        loops = [node for node in nodes if isinstance(node, ForEach)]
+        acquired_fields = {
+            field.casefold()
+            for node in nodes
+            if isinstance(node, Acquire)
+            for field in node.required_fields
+        }
+        if "material" in acquired_fields:
+            errors.append("initial Acquire must not require detail-only material")
+        if not any("sku" in field for field in acquired_fields):
+            errors.append("candidate Acquire must preserve product SKU identity")
+        if not loops or not any(loop.collect is not None and loop.into for loop in loops):
+            errors.append("related-field fallback requires a collecting ForEach")
+        if not any(
+            isinstance(node, If) and node.cond.cmp == "empty"
+            for loop in loops for node in _walk(loop.body)
+        ):
+            errors.append("related-field fallback requires an explicit empty-value If")
+        split_steps = [
+            step
+            for node in nodes
+            if isinstance(node, Compute)
+            for step in node.steps
+            if step.op == "text_split"
+        ]
+        if not any(
+            step.separator == "-"
+            and step.direction == "right"
+            and step.maxsplit == 2
+            and step.index == 0
+            for step in split_steps
+        ):
+            errors.append("parent SKU must be derived by Compute text_split('-', right, 2, 0)")
+        loop_nodes = [node for loop in loops for node in _walk(loop.body)]
+        if not any(
+            isinstance(node, Interact)
+            and "configurable" in node.model_dump_json().casefold()
+            and "sku" in node.model_dump_json().casefold()
+            for node in loop_nodes
+        ):
+            errors.append("fallback branch must establish the configurable parent SKU scope")
+        if not any(
+            isinstance(node, Data)
+            and node.mode == "read"
+            and "material" in node.model_dump_json().casefold()
+            for node in loop_nodes
+        ):
+            errors.append("ForEach must read material from product detail observations")
+        final_compute_steps = [
+            [step.op for step in node.steps]
+            for node in program.statements
+            if isinstance(node, Compute)
+        ]
+        if not any("filter" in steps and "distinct" in steps for steps in final_compute_steps):
+            errors.append("resolved materials must be filtered and deduplicated after ForEach")
     return errors
 
 
@@ -368,9 +437,20 @@ def main() -> int:
     for case in selected:
         print(f"\n=== {case.label}: {case.goal}")
         try:
-            program = decompose(case.goal, resolution=case.resolution)
+            knowledge = (
+                load_knowledge_for_app(case.knowledge_app, "browser")
+                if case.knowledge_app else None
+            )
+            program = decompose(
+                case.goal,
+                resolution=case.resolution,
+                knowledge=knowledge.decompose_context(case.goal) if knowledge else "",
+            )
             _print_program(program)
             errors = _check(case, program)
+        except OrchestratorCompileError as exc:
+            _print_program(exc.program)
+            errors = [str(exc)]
         except Exception as exc:  # live provider/compiler boundary
             errors = [str(exc)]
         if errors:

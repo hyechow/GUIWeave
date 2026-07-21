@@ -19,6 +19,7 @@ from gui_agent.core.data_types import (
     AggregateSpec,
     AggregateStep,
     DateBucketStep,
+    DistinctStep,
     FieldRef,
     GroupStep,
     ProjectStep,
@@ -29,6 +30,8 @@ from gui_agent.core.orchestrator._decomposer.draft import (
     to_program,
 )
 from gui_agent.core.orchestrator.decomposer import (
+    _active_field_ownership,
+    _apply_ownership_contract,
     _draft_data_flow_issues,
     _value_contract_issues,
     decompose,
@@ -83,6 +86,54 @@ def test_draft_converts_only_the_six_semantic_nodes():
         program.statements[1].body[0].id,
         program.statements[2].id,
     ] == ["s1", "s2", "s3"]
+
+
+def test_field_ownership_contract_compiles_generic_owner_fallback_program():
+    knowledge = """```field_ownership
+field: Billing Region
+output_field: billing_region
+member_detail_source_field: Profile_url
+member_detail_output_field: profile_url
+owner_identity_source_field: Team Code
+owner_identity_output_field: account_code
+owner_identity_transform:
+  op: text_split
+  separator: "-"
+  direction: right
+  maxsplit: 1
+  index: 0
+owner_scope: locate the owning account by exact account_code
+policy: member_then_owner_if_empty
+output_policy: distinct_nonempty_values
+```"""
+    contract = _active_field_ownership(knowledge, "Return each billing region")
+    draft = _PlanDraft(steps=[_StepDraft(
+        op="interact",
+        goal="scope active profiles",
+        success="only active profiles are visible",
+    )])
+
+    _apply_ownership_contract(draft, contract)
+    program = to_program(draft)
+
+    loop = next(node for node in program.statements if isinstance(node, ForEach))
+    assert isinstance(loop, ForEach)
+    assert isinstance(loop.body[0], Command)
+    assert loop.body[0].arg_refs["url"] == ValueRef(
+        var="item", path=["profile_url"]
+    )
+    branch = loop.body[2]
+    assert isinstance(branch, If)
+    assert isinstance(branch.then[0], Interact)
+    assert branch.then[0].inputs["owner_identity"] == ValueRef(
+        var="item", path=["account_code"]
+    )
+    assert loop.into == "__owned_field_values"
+    compute = next(
+        node for node in reversed(program.statements) if isinstance(node, Compute)
+    )
+    assert [step.op for step in compute.steps] == ["filter", "project", "distinct"]
+    assert validate_program(program) == []
 
 
 def test_complete_data_draft_is_rejected_as_runtime_computation():
@@ -506,6 +557,30 @@ def test_draft_normalizes_single_output_return_shorthand():
     })
 
     assert draft.returns == {"result": OutputSpec(type="number", description="record count")}
+
+
+def test_draft_normalizes_empty_coverage():
+    draft = _StepDraft.model_validate({
+        "op": "compute",
+        "goal": "count rows",
+        "coverage": "",
+        "compute_source": "records",
+        "compute_steps": [{"op": "aggregate", "values": {"count": {"fn": "count"}}}],
+        "compute_outputs": {"result": {"path": ["count"]}},
+        "returns": {"result": {"type": "number"}},
+    })
+
+    assert draft.coverage is None
+
+
+def test_draft_normalizes_nonempty_condition_alias():
+    draft = _StepDraft.model_validate({
+        "op": "if",
+        "cond_ref": {"var": "value"},
+        "cond_cmp": "not_empty",
+    })
+
+    assert draft.cond_cmp == "exists"
 
 
 def test_compute_infers_prior_single_output_source_and_semantic_fields():
