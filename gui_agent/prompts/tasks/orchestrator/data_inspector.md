@@ -3,10 +3,10 @@ id: task.orchestrator.data_inspector
 source_type: task_template
 platform: shared
 scope:
-  - data_executor
+  - observation_reader
 owner: gui_agent.core.run.statements.data
 schema: DataInspection
-version: 1
+version: 2
 ---
 判断当前 DataContextView 是否已经包含每个 `required_fields` 语义字段。
 

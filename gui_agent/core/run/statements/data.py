@@ -1,15 +1,8 @@
-"""Runtime semantic data executor.
-
-The Program carries only a data goal and typed inputs/outputs.  At execution
-time one LLM call proposes a small plan against the real ``DataContextView``;
-the restricted data kernel executes it.  A failed plan gets at most one repair.
-"""
+"""Runtime observation reader and semantic field inspector."""
 
 from __future__ import annotations
 
 import json
-from datetime import datetime
-from decimal import Decimal
 from typing import Annotated, Any, Callable, Literal, Union
 
 from langchain_openai import ChatOpenAI
@@ -29,15 +22,10 @@ from gui_agent.core.run.observation_materializer import materialize_observation
 from gui_agent.prompts import load_prompt_text
 from llm.structured import invoke_structured
 
-from .data_kernel import (
-    DataKernelError,
-    DataStep,
-    describe_datasets,
-    execute_pipeline,
-)
+from .data_kernel import DataKernelError, describe_datasets, json_value
 
 
-_SYSTEM = load_prompt_text("task.statement.data_executor")
+_SYSTEM = load_prompt_text("task.statement.observation_reader")
 _INSPECT_SYSTEM = load_prompt_text("task.orchestrator.data_inspector")
 _TRACE_LABEL = "statement.data"
 
@@ -80,22 +68,6 @@ class ReadObservationOp(BaseModel):
         return self
 
 
-class TransformOp(BaseModel):
-    model_config = ConfigDict(extra="forbid")
-
-    kind: Literal["transform"] = "transform"
-    name: str
-    source: DataRef
-    steps: list[DataStep] = Field(min_length=1, max_length=10)
-
-    @model_validator(mode="after")
-    def _validate_steps(self) -> "TransformOp":
-        terminal = [index for index, step in enumerate(self.steps) if step.op == "aggregate"]
-        if terminal and terminal != [len(self.steps) - 1]:
-            raise ValueError("aggregate must be the final transform step")
-        return self
-
-
 class EmitOp(BaseModel):
     model_config = ConfigDict(extra="forbid")
 
@@ -103,30 +75,29 @@ class EmitOp(BaseModel):
     values: dict[str, DataRef]
 
 
-DataOp = Annotated[
-    Union[ReadObservationOp, TransformOp, EmitOp],
+ObservationReadOp = Annotated[
+    Union[ReadObservationOp, EmitOp],
     Field(discriminator="kind"),
 ]
 
 
-class DataPlan(BaseModel):
+class ObservationReadPlan(BaseModel):
     model_config = ConfigDict(extra="forbid")
 
     decision: Literal["execute", "unavailable"]
     reasoning: str = ""
-    operations: list[DataOp] = Field(default_factory=list)
+    operations: list[ObservationReadOp] = Field(default_factory=list)
     missing_fields: list[str] = Field(default_factory=list)
-    required_coverage: Literal["current_view", "complete"] = "current_view"
 
     @model_validator(mode="after")
-    def _validate_shape(self) -> "DataPlan":
+    def _validate_shape(self) -> "ObservationReadPlan":
         if self.decision == "unavailable":
             if not self.reasoning.strip():
                 raise ValueError("unavailable data plan requires reasoning")
             if self.operations:
                 raise ValueError("unavailable data plan cannot carry operations")
             return self
-        if self.missing_fields or self.required_coverage != "current_view":
+        if self.missing_fields:
             raise ValueError("execute data plan cannot carry unavailable fields")
         if not self.operations or len(self.operations) > 6:
             raise ValueError("data plan requires 1..6 operations")
@@ -157,131 +128,28 @@ class DataInspection(BaseModel):
         return self
 
 
-_DataShape = Literal["scalar", "record", "record_list", "table", "list", "unknown"]
-
-
-def _jsonable(value: Any) -> JsonValue:
-    if isinstance(value, BaseModel):
-        return value.model_dump(mode="json")
-    if isinstance(value, list):
-        return [_jsonable(item) for item in value]
-    if isinstance(value, dict):
-        return {str(key): _jsonable(item) for key, item in value.items()}
-    if isinstance(value, Decimal):
-        return int(value) if value == value.to_integral_value() else float(value)
-    if isinstance(value, datetime):
-        return value.isoformat()
-    if value is None or isinstance(value, (str, int, float, bool)):
-        return value
-    return str(value)
-
-
-def _shape_of(value: Any) -> _DataShape:
-    if isinstance(value, dict) and isinstance(value.get("rows"), list):
-        return "table"
-    if isinstance(value, dict):
-        return "record"
-    if isinstance(value, list):
-        return "record_list" if all(isinstance(row, dict) for row in value) else "list"
-    if value is None:
-        return "unknown"
-    return "scalar"
-
-
-def _ref_shape(
-    ref: DataRef,
-    shapes: dict[str, _DataShape],
-    *,
-    site: str,
-) -> _DataShape:
-    if ref.var not in shapes:
-        raise DataKernelError(f"{site}: data ref 未定义: {ref.var}")
-    shape = shapes[ref.var]
-    for part in ref.path:
-        if shape == "record_list" and not isinstance(part, int):
-            raise DataKernelError(
-                f"{site}: {ref.var} 是 list[record]，不能取字段 path={ref.path!r}；"
-                "输出记录列表请使用 path=[]，需要裁剪或改名时先使用 transform.project"
-            )
-        if shape in {"record_list", "list"} and isinstance(part, int):
-            shape = "record" if shape == "record_list" else "unknown"
-            continue
-        if shape == "table" and isinstance(part, str):
-            shape = "record_list" if part == "rows" else "unknown"
-            continue
-        if shape == "record" and isinstance(part, str):
-            shape = "unknown"
-            continue
-        if shape == "unknown":
-            continue
-        raise DataKernelError(
-            f"{site}: {ref.var} 是 {shape}，path={ref.path!r} 不合法"
-        )
-    return shape
-
-
-def _preflight_data_plan(
-    plan: DataPlan,
+def _inspection_verification(
     invocation: StatementInvocation,
     observation: Observation | None,
-) -> None:
-    """Type-check plan references against real inputs without executing transforms."""
-    shapes = {name: _shape_of(value) for name, value in invocation.inputs.items()}
+    inspection: DataInspection,
+) -> Literal["confirmed", "accepted_unverified"]:
+    if not inspection.available or not inspection.bindings:
+        return "accepted_unverified"
+    fields: set[str] = set()
+    for value in invocation.inputs.values():
+        rows = value.get("rows") if isinstance(value, dict) else value
+        if isinstance(rows, list):
+            for row in rows:
+                if isinstance(row, dict):
+                    fields.update(str(name) for name in row)
     normalized = materialize_observation(observation)
-    for operation in plan.operations:
-        if isinstance(operation, ReadObservationOp):
-            if operation.name in shapes:
-                raise DataKernelError(f"data binding 重复定义: {operation.name}")
-            if operation.source == "visual":
-                shapes[operation.name] = "record"
-            else:
-                source = normalized.source(operation.source)
-                value = _resolve(
-                    DataRef(var=operation.source, path=operation.path),
-                    {operation.source: source},
-                )
-                shapes[operation.name] = _shape_of(value)
-            continue
-        if isinstance(operation, TransformOp):
-            if operation.name in shapes:
-                raise DataKernelError(f"data binding 重复定义: {operation.name}")
-            source = _ref_shape(
-                operation.source,
-                shapes,
-                site=f"transform {operation.name!r}",
-            )
-            if source not in {"record_list", "table"}:
-                raise DataKernelError(
-                    f"transform {operation.name!r}: source 必须是 list[record] 或 table，"
-                    f"实际为 {source}"
-                )
-            shapes[operation.name] = (
-                "record" if operation.steps[-1].op == "aggregate" else "record_list"
-            )
-            continue
-
-        extras = sorted(set(operation.values) - set(invocation.statement.returns))
-        if extras:
-            declared = sorted(invocation.statement.returns)
-            raise DataKernelError(
-                f"emit 包含未声明 outputs: {extras}；合法 outputs 仅为 {declared}"
-            )
-        for name, ref in operation.values.items():
-            spec = invocation.statement.returns[name]
-            actual = _ref_shape(
-                ref,
-                shapes,
-                site=f"emit output {name!r} expects {spec.type}",
-            )
-            expected = {
-                "record": "record",
-                "list[record]": "record_list",
-            }.get(spec.type, "scalar" if spec.type != "json" else None)
-            if expected is not None and actual not in {expected, "unknown"}:
-                raise DataKernelError(
-                    f"emit output {name!r} 类型不符合合同：期望 {spec.type}，"
-                    f"ref {ref.var}.{ref.path!r} 实际为 {actual}"
-                )
+    for dataset in normalized.datasets:
+        for row in dataset.records:
+            fields.update(str(name) for name in row)
+    actual = list(inspection.bindings.values())
+    if actual and all(isinstance(name, str) and name in fields for name in actual):
+        return "confirmed"
+    return "accepted_unverified"
 
 
 def _is_dataset_input(
@@ -390,22 +258,6 @@ def _context_summary(invocation: StatementInvocation, observation: Observation |
     return json.dumps(payload, ensure_ascii=False, default=str)
 
 
-def _has_materialized_dataset(invocation: StatementInvocation) -> bool:
-    return any(
-        _is_dataset_input(value, invocation.input_descriptors.get(name))
-        for name, value in invocation.inputs.items()
-    )
-
-
-def _has_confirmed_complete_input(invocation: StatementInvocation) -> bool:
-    return any(
-        descriptor.type == "list[record]"
-        and descriptor.coverage == "complete"
-        and descriptor.verification == "confirmed"
-        for descriptor in invocation.input_descriptors.values()
-    )
-
-
 def _llm() -> ChatOpenAI:
     cfg = resolve_llm_config("data")
     if not cfg.model:
@@ -422,13 +274,13 @@ def _llm() -> ChatOpenAI:
     )
 
 
-def _plan(
+def _plan_read(
     invocation: StatementInvocation,
     observation: Observation | None,
     *,
     previous_error: str = "",
     context_reports: list[dict] | None = None,
-) -> DataPlan:
+) -> ObservationReadPlan:
     blocks = [
         ContextBlock(
             id="runtime.data_context",
@@ -446,7 +298,7 @@ def _plan(
                 id="runtime.data_plan_error",
                 budget="required",
                 source_type="runtime_state",
-                source="data_executor",
+                source="observation_reader",
                 ttl="turn",
                 priority=5,
                 content="## Prior plan execution error\n" + previous_error,
@@ -454,17 +306,17 @@ def _plan(
         )
     messages = assemble_messages(
         _SYSTEM,
-        None if _has_materialized_dataset(invocation) else observation,
+        observation,
         human_blocks=blocks,
         image_resize="none",
         label=_TRACE_LABEL,
         context_reports=context_reports,
-        decision_text="生成一次可执行的数据计划。",
+        decision_text="生成一次当前 observation 的读取计划。",
     )
     return invoke_structured(
         _llm(),
         messages,
-        DataPlan,
+        ObservationReadPlan,
         trace_sink=context_reports,
         trace_label=_TRACE_LABEL,
     )
@@ -521,7 +373,7 @@ def _resolve(ref: DataRef, bindings: dict[str, Any]) -> Any:
 
 
 def _coerce(value: Any, spec: OutputSpec) -> JsonValue:
-    value = _jsonable(value)
+    value = json_value(value)
     if spec.type == "number" and isinstance(value, str):
         try:
             parsed = float(value.replace(",", ""))
@@ -537,14 +389,14 @@ def _coerce(value: Any, spec: OutputSpec) -> JsonValue:
 
 
 def _execute(
-    plan: DataPlan,
+    plan: ObservationReadPlan,
     invocation: StatementInvocation,
     observation: Observation | None,
     *,
     check_knowledge: str,
     prepare_vision_prompt_png,
 ) -> tuple[dict[str, JsonValue], list[str], bool]:
-    bindings: dict[str, Any] = dict(invocation.inputs)
+    bindings: dict[str, Any] = {}
     normalized = materialize_observation(observation)
     trace: list[str] = []
     unverified = False
@@ -581,35 +433,22 @@ def _execute(
                     DataRef(var=operation.source, path=operation.path),
                     {operation.source: source},
                 )
-            bindings[operation.name] = _jsonable(value)
+            bindings[operation.name] = json_value(value)
             path = f"{operation.path}" if operation.path else ""
             trace.append(f"read_observation:{operation.source}{path}->{operation.name}")
             continue
-        if isinstance(operation, TransformOp):
-            source = _resolve(operation.source, bindings)
-            partial = isinstance(source, dict) and bool(source.get("partial"))
-            if partial and any(
-                spec.coverage == "complete"
-                for spec in invocation.statement.returns.values()
-            ):
-                raise DataKernelError(
-                    "transform source is partial but Data return requires complete coverage"
-                )
-            if partial and any(
-                spec.coverage == "best_effort"
-                for spec in invocation.statement.returns.values()
-            ):
-                unverified = True
-            value, step_trace = execute_pipeline(source, operation.steps)
-            bindings[operation.name] = value
-            trace.extend(f"transform:{operation.name}:{item}" for item in step_trace)
-            continue
+        extras = sorted(set(operation.values) - set(invocation.statement.returns))
+        if extras:
+            raise DataKernelError(
+                f"emit 包含未声明 outputs: {extras}；"
+                f"合法 outputs 仅为 {sorted(invocation.statement.returns)}"
+            )
         values = {
             name: _coerce(_resolve(ref, bindings), invocation.statement.returns[name])
             for name, ref in operation.values.items()
         }
         return values, trace, unverified
-    raise DataKernelError("data plan did not emit outputs")
+    raise DataKernelError("observation read plan did not emit outputs")
 
 
 def execute_data_statement(
@@ -649,48 +488,43 @@ def execute_data_statement(
         status("Data 数据可用性检查完成")
         return StatementOutcome.completed(
             inspected.reasoning or invocation.goal,
-            verification="accepted_unverified",
+            verification=_inspection_verification(invocation, observation, inspected),
             outputs=outputs,
             evidence=[f"schema:{name}->{field}" for name, field in inspected.bindings.items()],
             observation=observation,
             context_reports=list(context_reports or []),
         )
+    if invocation.inputs:
+        return StatementOutcome.exhausted(
+            "Data read 不能消费 typed inputs；确定性数据处理必须由 Compute 执行",
+            observation=observation,
+            failure_evidence="data read received typed inputs",
+            context_reports=list(context_reports or []),
+        )
     error = ""
     for attempt in range(2):
         try:
-            plan = _plan(
+            plan = _plan_read(
                 invocation,
                 observation,
                 previous_error=error,
                 context_reports=context_reports,
             )
             steps = " → ".join(op.kind for op in plan.operations) or plan.decision
-            say(f"  [Data] 计划 {attempt + 1}/2：{steps}")
+            say(f"  [Data] 读取计划 {attempt + 1}/2：{steps}")
             if plan.decision == "unavailable":
-                if (
-                    plan.required_coverage == "complete"
-                    and not plan.missing_fields
-                    and _has_confirmed_complete_input(invocation)
-                ):
-                    raise DataKernelError(
-                        "Data plan ignored a confirmed complete materialized input; "
-                        "plan against the input binding instead of the current observation"
-                    )
-                fields = ", ".join(plan.missing_fields) or "目标计算所需字段"
-                coverage = "完整集合" if plan.required_coverage == "complete" else "当前视图"
+                fields = ", ".join(plan.missing_fields) or "目标读取所需字段"
                 say(f"  [Data] 数据源不足：{plan.reasoning}")
                 status("Data 数据不足，正在请求重编排…")
                 return StatementOutcome.infeasible(
                     f"Data 数据源不足：{plan.reasoning}",
                     kickback=(
-                        f"当前 Data 缺少 {fields}（需要{coverage}覆盖）。请用 Data inspect + Program If "
-                        "决定是否由 Interact 暴露字段；需要跨窗口记录时再用 Acquire 物化 list[record] "
-                        "并通过 Data.inputs 传入。"
+                        f"当前 observation 缺少 {fields}。请用 Data inspect + Program If 决定是否由 "
+                        "Interact 暴露字段；确定性集合处理必须由编排器生成 Compute。"
                     ),
                     observation=observation,
                     context_reports=list(context_reports or []),
                 )
-            _preflight_data_plan(plan, invocation, observation)
             outputs, trace, unverified = _execute(
                 plan,
                 invocation,
@@ -713,7 +547,7 @@ def execute_data_statement(
             if invalid:
                 raise DataKernelError(f"emit outputs 类型不符合合同: {invalid}")
             say(f"  [Data] 完成：{', '.join(outputs) or '无输出'}")
-            status("Data 数据处理完成")
+            status("Data 页面数据读取完成")
             return StatementOutcome.completed(
                 invocation.goal,
                 verification="accepted_unverified" if unverified else "confirmed",
@@ -735,13 +569,13 @@ def execute_data_statement(
             )
         except Exception as exc:  # noqa: BLE001 - one bounded semantic plan repair
             error = str(exc)
-            say(f"  [Data] 计划 {attempt + 1}/2 失败：{error[:240]}")
+            say(f"  [Data] 读取计划 {attempt + 1}/2 失败：{error[:240]}")
             if attempt == 0:
-                status("Data 计划执行失败，正在修复一次…")
+                status("Data 读取失败，正在修复一次…")
                 continue
     status("Data 数据处理失败")
     return StatementOutcome.exhausted(
-        f"Data statement 两次计划均失败：{error}",
+        f"Data statement 两次读取均失败：{error}",
         observation=observation,
         failure_evidence=error,
         context_reports=list(context_reports or []),
@@ -749,11 +583,10 @@ def execute_data_statement(
 
 
 __all__ = [
-    "DataPlan",
     "DataInspection",
     "DataRef",
     "EmitOp",
+    "ObservationReadPlan",
     "ReadObservationOp",
-    "TransformOp",
     "execute_data_statement",
 ]

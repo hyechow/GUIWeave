@@ -3,13 +3,15 @@
 from __future__ import annotations
 
 from dataclasses import dataclass, field
-from typing import Literal
+from typing import Any, Literal
 
-from pydantic import BaseModel, Field, JsonValue, model_validator
+from pydantic import BaseModel, Field, JsonValue, field_validator, model_validator
 
 from ..program import (
     Acquire,
     Command,
+    Compute,
+    ComputeRef,
     Condition,
     Data,
     Finish,
@@ -23,17 +25,18 @@ from ..program import (
     assign_statement_ids,
 )
 from gui_agent.core.router import IntentResolution
+from gui_agent.core.data_types import DataStep
 
 
 class _StepDraft(BaseModel):
     """Flat structured-output shape; ``op`` selects the relevant fields."""
 
     op: Literal[
-        "interact", "lookup", "data", "command", "if", "foreach", "finish"
+        "interact", "lookup", "data", "compute", "command", "if", "foreach", "finish"
     ] = Field(
         default="interact",
         description=(
-            '"interact" | "lookup" | "data" | "command" | '
+            '"interact" | "lookup" | "data" | "compute" | "command" | '
             '"if" | "foreach" | "finish"'
         ),
     )
@@ -41,12 +44,12 @@ class _StepDraft(BaseModel):
     goal: str = Field(
         default="",
         description=(
-            "interact/data 的单一语义后置条件；不写页面路径、控件、SQL、表达式或候选分支"
+            "interact 的单一 UI 后置条件，或 data 要从当前 observation 直接读取的事实"
         ),
     )
     required_fields: list[str] = Field(
         default_factory=list,
-        description="data 运行前原始记录必须已携带的语义字段",
+        description="compute 源记录依赖，或 data inspect 要绑定的语义字段",
     )
     success: str = Field(
         default="",
@@ -76,8 +79,9 @@ class _StepDraft(BaseModel):
     coverage: Literal["current_view", "complete", "best_effort"] | None = Field(
         default=None,
         description=(
-            "Data 直读 observation 时必须声明物理覆盖；current_view 仅是当前窗口，"
-            "跨窗口集合运算用 complete；仅消费 typed inputs 时留空并继承输入合同"
+            "data read 省略时归一为 current_view，且不能使用其他值；"
+            "compute 跨窗口集合运算用 complete，"
+            "消费已有 typed input 时留空并继承输入合同"
         ),
     )
     persistence: Literal["immediate", "explicit_commit"] = Field(
@@ -87,6 +91,18 @@ class _StepDraft(BaseModel):
     returns: dict[str, OutputSpec] = Field(
         default_factory=dict,
         description="typed output contract：字段名 → type/required/description",
+    )
+    compute_source: str = Field(
+        default="",
+        description="compute: inputs 中作为 record list/table 的确定性变换来源",
+    )
+    compute_steps: list[DataStep] = Field(
+        default_factory=list,
+        description="compute: 按固定顺序执行的数据内核步骤；字段可标记 semantic=true",
+    )
+    compute_outputs: dict[str, ComputeRef] = Field(
+        default_factory=dict,
+        description="compute: output 名到最终 pipeline 结果的路径",
     )
     capability: Literal["", "open_url", "back", "launch_app"] = Field(
         default="",
@@ -118,6 +134,14 @@ class _StepDraft(BaseModel):
     message: str = ""
     outputs: dict[str, ValueRef] = Field(default_factory=dict)
 
+    @field_validator("returns", mode="before")
+    @classmethod
+    def _normalize_single_return(cls, value: Any) -> Any:
+        """Accept a common LLM shorthand for one typed output."""
+        if isinstance(value, dict) and "type" in value:
+            return {"result": value}
+        return value
+
     @model_validator(mode="after")
     def _validate_selected_shape(self) -> "_StepDraft":
         if self.op == "interact" and not (self.goal.strip() or self.success.strip()):
@@ -125,7 +149,10 @@ class _StepDraft(BaseModel):
         if self.op == "data" and not self.goal.strip() and not self.returns:
             raise ValueError("data requires goal or typed returns")
         if self.op == "data" and not self.inputs and self.coverage is None:
-            raise ValueError("observation-backed data requires explicit source coverage")
+            self.coverage = "current_view"
+        if self.op == "compute":
+            if not self.compute_steps or not self.compute_outputs or not self.returns:
+                raise ValueError("compute requires steps, outputs and typed returns")
         if self.op == "lookup" and (
             not self.lookup_entity.strip() or not self.lookup_field.strip()
         ):
@@ -186,7 +213,44 @@ def _data_goal(draft: _StepDraft) -> str:
     outputs = "、".join(
         spec.description.strip() or name for name, spec in draft.returns.items()
     )
-    return f"根据声明的数据依赖派生这些 typed outputs：{outputs}"
+    return f"从当前 observation 直接读取这些 typed outputs：{outputs}"
+
+
+def _compute_required_fields(steps: list[DataStep]) -> list[str]:
+    """Derive source-field dependencies from compiler-owned semantic references."""
+
+    fields: list[str] = []
+
+    def visit(value: Any) -> None:
+        if isinstance(value, dict):
+            path = value.get("path")
+            if (
+                value.get("semantic") is True
+                and isinstance(path, list)
+                and path
+                and isinstance(path[0], str)
+            ):
+                fields.append(path[0])
+            for item in value.values():
+                visit(item)
+        elif isinstance(value, list):
+            for item in value:
+                visit(item)
+
+    for step in steps:
+        visit(step.model_dump(mode="json"))
+    return list(dict.fromkeys(fields))
+
+
+def _compute_outputs(draft: _StepDraft) -> dict[str, ComputeRef]:
+    """Normalize legacy named-result aliases into Compute's one result value."""
+
+    outputs = dict(draft.compute_outputs)
+    for name, spec in draft.returns.items():
+        ref = outputs.get(name)
+        if spec.type == "list[record]" and ref is not None and ref.path:
+            outputs[name] = ComputeRef()
+    return outputs
 
 
 @dataclass
@@ -194,15 +258,23 @@ class _LoweringContext:
     resolution: IntentResolution | None
     collection_binds: frozenset[str] = frozenset()
     collection_fields: dict[str, tuple[str, ...]] = field(default_factory=dict)
+    collection_bindings: dict[str, str] = field(default_factory=dict)
     macro_seq: int = 0
 
     def next_macro(self, kind: str) -> str:
         self.macro_seq += 1
         return f"__{kind}_{self.macro_seq}"
 
-    def register_collection(self, bind: str, required_fields: list[str]) -> None:
+    def register_collection(
+        self,
+        bind: str,
+        required_fields: list[str],
+        bindings: str = "",
+    ) -> None:
         self.collection_binds = self.collection_binds | {bind}
         self.collection_fields[bind] = tuple(required_fields)
+        if bindings:
+            self.collection_bindings[bind] = bindings
 
 
 def _collection_input(ref: ValueRef, ctx: _LoweringContext) -> ValueRef:
@@ -257,6 +329,34 @@ def _infer_missing_binds(drafts: list[_StepDraft]) -> None:
             step.bind = unresolved.pop()
         else:
             step.bind = f"__value_{index}"
+
+
+def _normalize_compute_sources(drafts: list[_StepDraft]) -> None:
+    """Fold a redundant complete collection read into its adjacent Compute."""
+
+    for index, (source, consumer) in enumerate(zip(drafts, drafts[1:]), 1):
+        collection_outputs = [
+            name for name, spec in source.returns.items()
+            if spec.type == "list[record]"
+        ]
+        if not (
+            source.op == "data"
+            and source.coverage in {"complete", "best_effort"}
+            and not source.inputs
+            and len(source.returns) == 1
+            and len(collection_outputs) == 1
+            and consumer.op == "compute"
+            and not consumer.inputs
+            and consumer.compute_source
+            in {"", "records", collection_outputs[0], source.bind}
+        ):
+            continue
+        source.bind = source.bind or f"__compute_source_{index}"
+        consumer.compute_source = source.bind
+    for step in drafts:
+        _normalize_compute_sources(step.then)
+        _normalize_compute_sources(step.otherwise)
+        _normalize_compute_sources(step.body)
 
 
 def _collection_binds(drafts: list[_StepDraft]) -> frozenset[str]:
@@ -389,6 +489,7 @@ def _acquire_stmts(
         ),
         goal,
     )
+    ctx.register_collection(bind, required, final_bind)
     return [
         Data(
             bind=initial_bind,
@@ -445,8 +546,19 @@ def _to_stmts(
     *,
     _ctx: _LoweringContext | None = None,
 ) -> list[Stmt]:
+    _normalize_compute_sources(drafts)
     ctx = _ctx or _LoweringContext(None, _collection_binds(drafts))
     statements: list[Stmt] = []
+    declared_outputs = {
+        draft.bind: draft.returns
+        for draft in drafts
+        if draft.bind and draft.returns
+    }
+    compute_sources = {
+        draft.compute_source
+        for draft in drafts
+        if draft.op == "compute" and draft.compute_source
+    }
     for draft in drafts:
         if draft.op == "interact":
             goal = draft.goal.strip() or draft.success.strip()
@@ -474,7 +586,7 @@ def _to_stmts(
                 read_draft = draft.model_copy(update={
                     "op": "data",
                     "goal": (
-                        "从上一 UI 后置条件的终态观察读取并派生："
+                        "从上一 UI 后置条件的终态 observation 直接读取："
                         + "、".join(
                             spec.description.strip() or name
                             for name, spec in draft.returns.items()
@@ -489,6 +601,17 @@ def _to_stmts(
             statements.extend(_lookup_stmts(draft, ctx))
         elif draft.op == "data":
             goal = _data_goal(draft)
+            materializes_compute_source = bool(
+                draft.bind
+                and draft.bind in compute_sources
+                and draft.coverage in {"complete", "best_effort"}
+                and not draft.inputs
+                and len(draft.returns) == 1
+                and next(iter(draft.returns.values())).type == "list[record]"
+            )
+            if materializes_compute_source:
+                statements.extend(_acquire_stmts(draft, draft.bind, ctx))
+                continue
             inputs = {
                 name: _collection_input(ref, ctx)
                 for name, ref in draft.inputs.items()
@@ -506,7 +629,6 @@ def _to_stmts(
                     source_bind,
                     ctx,
                 ))
-                ctx.register_collection(source_bind, draft.required_fields)
                 inputs["records"] = ValueRef(var=source_bind, path=["rows"])
             inherited_fields = list(dict.fromkeys(
                 field
@@ -522,6 +644,66 @@ def _to_stmts(
                     returns=dict(draft.returns),
                 )
             )
+        elif draft.op == "compute":
+            required_fields = list(dict.fromkeys([
+                *draft.required_fields,
+                *_compute_required_fields(draft.compute_steps),
+            ]))
+            inputs = {
+                name: _collection_input(ref, ctx)
+                for name, ref in draft.inputs.items()
+            }
+            source = draft.compute_source or "records"
+            source_contract = declared_outputs.get(source, {})
+            if source not in inputs and source in ctx.collection_fields:
+                inputs["records"] = ValueRef(var=source, path=["rows"])
+                source = "records"
+            elif source not in inputs and len(source_contract) == 1:
+                output_name = next(iter(source_contract))
+                inputs["records"] = ValueRef(var=source, path=[output_name])
+                source = "records"
+            has_materialized_input = any(
+                ref.var in ctx.collection_binds for ref in inputs.values()
+            )
+            if draft.coverage in {"complete", "best_effort"} and not has_materialized_input:
+                source_bind = ctx.next_macro("collection")
+                statements.extend(_acquire_stmts(
+                    draft.model_copy(update={
+                        "goal": f"物化「{draft.goal}」所需的同一业务集合",
+                        "required_fields": required_fields,
+                        "returns": {},
+                    }),
+                    source_bind,
+                    ctx,
+                ))
+                inputs[source] = ValueRef(var=source_bind, path=["rows"])
+            if required_fields:
+                source_ref = inputs.get(source)
+                inspection_bind = (
+                    ctx.collection_bindings.get(source_ref.var, "")
+                    if source_ref is not None else ""
+                )
+                if not inspection_bind:
+                    inspection_bind = ctx.next_macro("compute_fields")
+                    statements.append(Data(
+                        bind=inspection_bind,
+                        goal=f"检查 Compute「{draft.goal}」的语义字段绑定",
+                        mode="inspect",
+                        required_fields=required_fields,
+                        inputs=dict(inputs),
+                        returns=_inspection_returns(),
+                    ))
+                inputs["bindings"] = ValueRef(var=inspection_bind, path=["bindings"])
+            statements.append(Compute(
+                bind=draft.bind or None,
+                goal=draft.goal,
+                source=source,
+                required_fields=required_fields,
+                steps=list(draft.compute_steps),
+                outputs=_compute_outputs(draft),
+                inputs=inputs,
+                returns=dict(draft.returns),
+            ))
         elif draft.op == "command":
             assert draft.capability
             statements.append(

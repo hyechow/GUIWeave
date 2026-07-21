@@ -1,4 +1,4 @@
-"""Drain consecutive Acquire, Data and Command statements outside the GUI React loop."""
+"""Drain consecutive Acquire, Data, Compute and Command statements outside the GUI React loop."""
 
 from __future__ import annotations
 
@@ -9,12 +9,13 @@ from typing import Any, Callable
 
 from llm.structured import get_llm_call_count, get_llm_token_usage
 
-from gui_agent.core.orchestrator.program import Acquire, Command, Data
+from gui_agent.core.orchestrator.program import Acquire, Command, Compute, Data
 from gui_agent.core.run.interactive import statement_id
 from gui_agent.core.run.program_runtime import ProgramRuntime
 from gui_agent.core.schemas import Observation, PolicyContext
 
 from .command import execute_command
+from .compute import execute_compute_statement
 from .acquire import execute_acquire_statement
 from .data import execute_data_statement
 from .observation import ObservationCursor
@@ -34,7 +35,7 @@ def is_immediate_statement(invocation, platform: Any, *, allow_navigation: bool 
     del platform, allow_navigation
     return bool(
         invocation is not None
-        and isinstance(invocation.statement, (Acquire, Data, Command))
+        and isinstance(invocation.statement, (Acquire, Data, Compute, Command))
     )
 
 
@@ -93,7 +94,7 @@ def drain_immediate_statements(
                 check_knowledge=check_knowledge,
             )
         elif isinstance(invocation.statement, Data):
-            emit_status(f"Data 数据处理中：{invocation.goal}")
+            emit_status(f"Data 页面数据读取中：{invocation.goal}")
             if cursor.observation is None:
                 cursor.ensure(program_runtime.index)
             reports: list[dict] = []
@@ -103,6 +104,14 @@ def drain_immediate_statements(
                 check_knowledge=check_knowledge,
                 prepare_vision_prompt_png=getattr(bundle, "prepare_vision_prompt_png", None),
                 context_reports=reports,
+                say=say,
+                status=emit_status,
+            )
+        elif isinstance(invocation.statement, Compute):
+            emit_status(f"Compute 数据计算中：{invocation.goal}")
+            outcome = execute_compute_statement(
+                invocation,
+                observation=cursor.observation,
                 say=say,
                 status=emit_status,
             )

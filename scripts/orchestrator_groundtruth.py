@@ -6,12 +6,11 @@ decompose) — statement-level react is basically adequate. WebArena's dataset
 (webarena-verified/assets/dataset/webarena-verified.json, 812 tasks × 5 sites) carries per-task
 evaluator references that double as PLAN-level ground truth, no hand-written cases needed:
 
-  - AgentResponse expected.task_type=retrieve with retrieved_data → the plan must produce a result
-    (returns / data_query / foreach returns) AND have a finish.
+  - AgentResponse expected.task_type=retrieve with retrieved_data → the plan must produce a typed
+    executor result and have a finish.
   - N NetworkEventEvaluators with N>1 distinct save URLs → the task is multi-target → the plan must
     iterate (foreach), not act once (WebArena 778: 3 variant saves, single-variant plan = 1/3).
-  - Router resolution + preflight: the router's semantic decisions must survive into the plan
-    (validate_orchestration_preflight).
+  - The current Program validator must accept the compiled typed data flow.
 
 Per task we sample decompose K times (LLM variance is the disease being measured), grade every
 sample with the deterministic gates, and report pass@1 vs pass@K per family + top failure codes.
@@ -45,13 +44,15 @@ from dotenv import load_dotenv
 load_dotenv(PROJECT_ROOT / ".env")
 
 from gui_agent.core.orchestrator import (  # noqa: E402
+    Acquire,
+    Command,
+    Compute,
+    Data,
     ForEach,
     If,
+    Interact,
     Program,
-    Run,
-    RunLike,
     decompose,
-    validate_orchestration_preflight,
     validate_program,
 )
 from gui_agent.core.router import resolve_intent  # noqa: E402
@@ -92,16 +93,16 @@ def derive_ground_truth(task: dict) -> dict:
 
 # ---------------------------------------------------------------- program shape helpers
 
-def _iter_runs(stmts: list) -> list[Run]:
-    out: list[Run] = []
+def _iter_executors(stmts: list) -> list:
+    out: list = []
     for s in stmts:
-        if isinstance(s, RunLike):
+        if isinstance(s, (Interact, Acquire, Data, Compute, Command)):
             out.append(s)
         elif isinstance(s, If):
-            out.extend(_iter_runs(s.then))
-            out.extend(_iter_runs(s.otherwise))
+            out.extend(_iter_executors(s.then))
+            out.extend(_iter_executors(s.otherwise))
         elif isinstance(s, ForEach):
-            out.extend(_iter_runs(s.body))
+            out.extend(_iter_executors(s.body))
     return out
 
 
@@ -129,19 +130,8 @@ def _has_finish(program: Program) -> bool:
 
 
 def _has_result_source(program: Program) -> bool:
-    runs = _iter_runs(program.statements)
-    if any(r.returns or r.kind == "data_query" for r in runs):
-        return True
-
-    def fe(stmts: list) -> bool:
-        for s in stmts:
-            if isinstance(s, ForEach) and (s.returns or fe(s.body)):
-                return True
-            if isinstance(s, If) and (fe(s.then) or fe(s.otherwise)):
-                return True
-        return False
-
-    return fe(program.statements)
+    executors = _iter_executors(program.statements)
+    return any(statement.returns for statement in executors)
 
 
 # ---------------------------------------------------------------- grading
@@ -150,13 +140,8 @@ def grade_program(program: Program, gt: dict) -> list[str]:
     """Deterministic plan-level failures (empty = the plan is consistent with ground truth)."""
     fails: list[str] = []
 
-    issues = validate_program(program)
-    for i in getattr(issues, "issues", []) or []:
+    for i in validate_program(program):
         fails.append(f"VALIDATOR:{i.code}")
-
-    pf = validate_orchestration_preflight(program.goal or "", program)
-    for i in pf.blocking_issues:
-        fails.append(f"PREFLIGHT:{i.code}")
 
     if gt["task_type"] == "retrieve" and gt["wants_retrieved_data"]:
         if not _has_result_source(program):

@@ -9,6 +9,8 @@ from gui_agent.core.schemas import StatementOutcome
 from .program import (
     Acquire,
     Command,
+    Compute,
+    ComputeRef,
     Condition,
     Data,
     Finish,
@@ -37,6 +39,8 @@ from .validator import IssueList, ValidationIssue, validate_program
 __all__ = [
     "Acquire",
     "Command",
+    "Compute",
+    "ComputeRef",
     "Condition",
     "Data",
     "Finish",

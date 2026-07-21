@@ -9,7 +9,7 @@ from __future__ import annotations
 
 from collections.abc import Mapping
 from ._validator.issue import ALL_CODES, IssueList, ValidationIssue
-from .program import Acquire, Command, Data, Finish, ForEach, If, Interact, OutputSpec, Program, Stmt, ValueRef
+from .program import Acquire, Command, Compute, Data, Finish, ForEach, If, Interact, OutputSpec, Program, Stmt, ValueRef
 
 
 Scope = dict[str, Mapping[str, OutputSpec] | None]
@@ -22,7 +22,7 @@ _INSPECTION_OUTPUTS = {
 
 def _executor_nodes(statements: list[Stmt]):
     for statement in statements:
-        if isinstance(statement, (Interact, Acquire, Data, Command)):
+        if isinstance(statement, (Interact, Acquire, Data, Compute, Command)):
             yield statement
         elif isinstance(statement, If):
             yield from _executor_nodes(statement.then)
@@ -60,7 +60,7 @@ def _check_acquired_field_flow(program: Program, issues: IssueList) -> None:
         acquired.setdefault(node.bind, []).extend(checked)
 
     for node in nodes:
-        if not isinstance(node, Data) or node.mode != "derive":
+        if not isinstance(node, Compute):
             continue
         sources = sorted({ref.var for ref in node.inputs.values()} & set(acquired))
         if not sources:
@@ -69,7 +69,7 @@ def _check_acquired_field_flow(program: Program, issues: IssueList) -> None:
         if not required:
             issues.add(
                 "DATA_REQUIRED_FIELDS_REQUIRED",
-                f"Data「{node.goal}」消费 Acquire 集合 {sources}，必须用 required_fields "
+                f"{node.op}「{node.goal}」消费 Acquire 集合 {sources}，必须用 required_fields "
                 "声明分组、筛选、排序和最终输出所需的语义源字段",
                 evidence=(node.id, *sources),
             )
@@ -80,7 +80,7 @@ def _check_acquired_field_flow(program: Program, issues: IssueList) -> None:
                 if missing:
                     issues.add(
                         "DATA_REQUIRED_FIELDS_NOT_ACQUIRED",
-                        f"Data「{node.goal}」需要语义字段 {missing}，但 Acquire 集合「{source}」"
+                        f"{node.op}「{node.goal}」需要语义字段 {missing}，但 Acquire 集合「{source}」"
                         "引用的 Data inspect 没有覆盖它们",
                         evidence=(node.id, source, *missing),
                     )
@@ -113,7 +113,7 @@ def _walk(
 ) -> Scope:
     current = dict(scope)
     for statement in statements:
-        if isinstance(statement, (Interact, Acquire, Data, Command)):
+        if isinstance(statement, (Interact, Acquire, Data, Compute, Command)):
             if not statement.id:
                 issues.add("EMPTY_STATEMENT_GOAL", "executor statement 缺少稳定 id")
             elif statement.id in ids:
@@ -158,7 +158,7 @@ def _walk(
                     issues.add(
                         "ACQUIRE_RAW_FIELDS_FORBIDDEN",
                         f"Acquire「{statement.goal}」搬运 observation 原始记录，output 不得声明 fields；"
-                        "所需语义源字段只写在 Data inspect/derive.required_fields",
+                        "所需语义源字段只写在 Data inspect 或 Compute.required_fields",
                         evidence=(
                             statement.id,
                             collection_outputs[0][0],
@@ -213,11 +213,28 @@ def _walk(
                         evidence=(statement.id,),
                     )
             if isinstance(statement, Data):
-                if statement.mode == "derive" and not statement.returns:
+                if statement.mode == "read" and statement.inputs:
+                    issues.add(
+                        "DATA_READ_INPUT_FORBIDDEN",
+                        f"Data read「{statement.goal}」只能读取当前 observation，不能消费 typed inputs；"
+                        "请由编排器把确定性筛选、分组、聚合、排序和投影写成 Compute",
+                        evidence=(statement.id, *statement.inputs),
+                    )
+                invalid_coverage = [
+                    name for name, spec in statement.returns.items()
+                    if statement.mode == "read" and spec.coverage != "current_view"
+                ]
+                if invalid_coverage:
+                    issues.add(
+                        "DATA_READ_COVERAGE_INVALID",
+                        f"Data read「{statement.goal}」只能声明 current_view outputs；"
+                        f"{invalid_coverage} 的跨窗口覆盖必须由 Acquire + Compute 表达",
+                        evidence=(statement.id, *invalid_coverage),
+                    )
+                if statement.mode == "read" and not statement.returns:
                     issues.add(
                         "DATA_OUTPUT_REQUIRED",
-                        f"Data「{statement.goal}」是纯数据变换，必须声明 typed returns；"
-                        "若该步骤只要求完整物化集合，应由 Compiler 直接降低为 Acquire",
+                        f"Data read「{statement.goal}」必须声明从当前 observation 读取的 typed returns",
                         evidence=(statement.id,),
                     )
                 missing_record_fields = [
@@ -231,6 +248,25 @@ def _walk(
                         f"{missing_record_fields} 必须声明 fields；"
                         "例如 fields=['email']，使运行时能校验逐条记录形状",
                         evidence=(statement.id, *missing_record_fields),
+                    )
+            if isinstance(statement, Compute):
+                if statement.source not in statement.inputs:
+                    issues.add(
+                        "COMPUTE_SOURCE_INPUT_REQUIRED",
+                        f"Compute「{statement.goal}」的 source 必须引用 inputs 中的数据来源",
+                        evidence=(statement.id, statement.source),
+                    )
+                extras = sorted(set(statement.outputs) - set(statement.returns))
+                missing = sorted(
+                    name for name, spec in statement.returns.items()
+                    if spec.required and name not in statement.outputs
+                )
+                if extras or missing:
+                    issues.add(
+                        "COMPUTE_OUTPUT_CONTRACT",
+                        f"Compute「{statement.goal}」的 outputs 与 returns 不一致："
+                        f"extras={extras}, missing={missing}",
+                        evidence=(statement.id, *extras, *missing),
                     )
             if statement.returns and not statement.bind:
                 issues.add(

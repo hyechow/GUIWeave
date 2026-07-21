@@ -17,12 +17,16 @@ import sys
 from dataclasses import dataclass
 from pathlib import Path
 
+from dotenv import load_dotenv
+
 PROJECT_ROOT = Path(__file__).resolve().parents[3]
 sys.path.insert(0, str(PROJECT_ROOT))
+load_dotenv(PROJECT_ROOT / ".env")
 
 from gui_agent.core.orchestrator import (
     Acquire,
     Command,
+    Compute,
     Data,
     Finish,
     ForEach,
@@ -41,10 +45,10 @@ class Case:
     label: str
     goal: str
     required_text: tuple[str, ...] = ()
-    required_data_text: tuple[str, ...] = ()
+    required_compute_text: tuple[str, ...] = ()
     expect_foreach: bool = False
-    # Finish-consumed numbers must be defined by Data (AST/dataflow, not word lists).
-    expect_finish_number_from_data: bool = False
+    # Finish-consumed numbers must be defined by Compute (AST/dataflow, not word lists).
+    expect_finish_number_from_compute: bool = False
     expect_materialized_data: bool = False
     required_materialized_text: tuple[str, ...] = ()
     resolution: IntentResolution | None = None
@@ -75,12 +79,12 @@ CASES = (
         "count-after-filter",
         "Get the total number of reviews in the store that mention the term best.",
         ("best",),
-        expect_finish_number_from_data=True,
+        expect_finish_number_from_compute=True,
     ),
     Case(
         "rank-customer",
         "Get customer email(s) who completed the second most number of orders in the entire history.",
-        expect_finish_number_from_data=False,  # answer is a tie-preserving record list, not a number
+        expect_finish_number_from_compute=False,  # answer is a tie-preserving record list
         expect_materialized_data=True,
     ),
     Case(
@@ -93,7 +97,7 @@ CASES = (
     Case(
         "data-top-n",
         "From the current result data, return the top 2 labels ranked by usage.",
-        required_data_text=("top 2",),
+        required_compute_text=("top 2",),
     ),
     Case(
         "lookup-fallback",
@@ -121,21 +125,21 @@ def _walk(statements: list[Stmt]):
 
 
 def _bind_origins(statements: list[Stmt]) -> dict[str, str]:
-    """Map bind name → producing op (interact/data/command). Ignores If/ForEach merges."""
+    """Map bind name to its producing operation. Ignores If/ForEach merges."""
     origins: dict[str, str] = {}
     for node in _walk(statements):
-        if isinstance(node, (Interact, Acquire, Data, Command)) and node.bind:
+        if isinstance(node, (Interact, Acquire, Data, Compute, Command)) and node.bind:
             origins[node.bind] = node.op
     return origins
 
 
-def _check_finish_numbers_from_data(program: Program) -> list[str]:
-    """AST invariant: every Finish-cited number field's bind is produced by Data."""
+def _check_finish_numbers_from_compute(program: Program) -> list[str]:
+    """AST invariant: every Finish-cited number field's bind is produced by Compute."""
     errors: list[str] = []
     origins = _bind_origins(program.statements)
     returns_by_bind: dict[str, dict] = {}
     for node in _walk(program.statements):
-        if isinstance(node, (Interact, Acquire, Data, Command)) and node.bind:
+        if isinstance(node, (Interact, Acquire, Data, Compute, Command)) and node.bind:
             returns_by_bind[node.bind] = dict(node.returns)
 
     for node in _walk(program.statements):
@@ -149,10 +153,10 @@ def _check_finish_numbers_from_data(program: Program) -> list[str]:
             if spec is None or getattr(spec, "type", None) != "number":
                 continue
             origin = origins.get(ref.var)
-            if origin != "data":
+            if origin != "compute":
                 errors.append(
                     f"finish.outputs.{out_name} cites number {ref.var}.{field} "
-                    f"from op={origin!r}; expected Data (FINISH_NUMERIC_FROM_DATA)"
+                    f"from op={origin!r}; expected Compute (FINISH_NUMERIC_FROM_COMPUTE)"
                 )
     return errors
 
@@ -160,17 +164,22 @@ def _check_finish_numbers_from_data(program: Program) -> list[str]:
 def _check(case: Case, program: Program) -> list[str]:
     errors = [f"{issue.code}: {issue}" for issue in validate_program(program)]
     nodes = list(_walk(program.statements))
-    executors = [node for node in nodes if isinstance(node, (Interact, Acquire, Data, Command))]
+    executors = [
+        node for node in nodes
+        if isinstance(node, (Interact, Acquire, Data, Compute, Command))
+    ]
     if not executors:
         errors.append("Program contains no executor-backed statement")
     payload = program.model_dump_json().casefold()
     for value in case.required_text:
         if value.casefold() not in payload:
             errors.append(f"required value was dropped: {value!r}")
-    data_payload = " ".join(node.goal for node in nodes if isinstance(node, Data)).casefold()
-    for value in case.required_data_text:
-        if value.casefold() not in data_payload:
-            errors.append(f"Data goal dropped semantic constant: {value!r}")
+    compute_payload = " ".join(
+        node.model_dump_json() for node in nodes if isinstance(node, Compute)
+    ).casefold()
+    for value in case.required_compute_text:
+        if value.casefold() not in compute_payload:
+            errors.append(f"Compute dropped semantic constant: {value!r}")
     if case.expect_foreach and not any(isinstance(node, ForEach) for node in nodes):
         errors.append("expected explicit ForEach over materialized data")
     for loop in (node for node in nodes if isinstance(node, ForEach)):
@@ -179,10 +188,10 @@ def _check(case: Case, program: Program) -> list[str]:
         if any(hasattr(loop, field) for field in ("body_goal", "member_desc")):
             errors.append("ForEach exposes retired runtime expansion fields")
     # Always enforce the structural number gate on live programs (same as compile-time).
-    errors.extend(_check_finish_numbers_from_data(program))
-    if case.expect_finish_number_from_data:
-        if not any(isinstance(node, Data) for node in nodes):
-            errors.append("count/aggregate goal expected at least one Data statement")
+    errors.extend(_check_finish_numbers_from_compute(program))
+    if case.expect_finish_number_from_compute:
+        if not any(isinstance(node, Compute) for node in nodes):
+            errors.append("count/aggregate goal expected at least one Compute statement")
         if not any(isinstance(node, Interact) for node in nodes):
             errors.append("count-after-filter goal expected an Interact for UI scope")
         has_finish_number = False
@@ -194,14 +203,14 @@ def _check(case: Case, program: Program) -> list[str]:
                     continue
                 bind_returns = {}
                 for n in nodes:
-                    if isinstance(n, (Interact, Acquire, Data, Command)) and n.bind == ref.var:
+                    if isinstance(n, (Interact, Acquire, Data, Compute, Command)) and n.bind == ref.var:
                         bind_returns = dict(n.returns)
                         break
                 spec = bind_returns.get(ref.path[0])
                 if spec is not None and getattr(spec, "type", None) == "number":
                     has_finish_number = True
         if not has_finish_number:
-            errors.append("expected Finish to cite a number field from Data")
+            errors.append("expected Finish to cite a number field from Compute")
     if case.label == "rank-customer":
         completed_filter = any(
             any("complete" in str(value).casefold() for value in node.required_values.values())
@@ -212,10 +221,10 @@ def _check(case: Case, program: Program) -> list[str]:
             errors.append(
                 "user-specified completed status must be pushed into the UI scope before Acquire"
             )
-        data_nodes = [node for node in nodes if isinstance(node, Data) and node.mode == "derive"]
-        if not data_nodes:
-            errors.append("rank/group goal expected a Data statement for ranking/aggregation")
-        rank_outputs = [spec for node in data_nodes for spec in node.returns.values()]
+        compute_nodes = [node for node in nodes if isinstance(node, Compute)]
+        if not compute_nodes:
+            errors.append("rank/group goal expected a Compute statement for ranking/aggregation")
+        rank_outputs = [spec for node in compute_nodes for spec in node.returns.values()]
         if not any(
             spec.type == "list[record]"
             and any("email" in field.casefold() for field in spec.fields)
@@ -226,12 +235,12 @@ def _check(case: Case, program: Program) -> list[str]:
             )
         if not any(
             any("email" in field.casefold() for field in node.required_fields)
-            for node in data_nodes
+            for node in compute_nodes
         ):
-            errors.append("rank Data must require a customer email source field")
+            errors.append("rank Compute must require a customer email source field")
         source_fields = {
             field.casefold()
-            for node in data_nodes
+            for node in compute_nodes
             for field in node.required_fields
         }
         if any("count" in field or "rank" in field for field in source_fields):
@@ -262,10 +271,10 @@ def _check(case: Case, program: Program) -> list[str]:
                 for spec in node.returns.values()
             )
         }
-        data_inputs = {
+        compute_inputs = {
             ref.var
             for node in nodes
-            if isinstance(node, Data)
+            if isinstance(node, Compute)
             for ref in node.inputs.values()
         }
         unchecked_acquires = [
@@ -275,8 +284,8 @@ def _check(case: Case, program: Program) -> list[str]:
         ]
         if not collection_binds:
             errors.append("full-scope aggregation requires complete Acquire collection output")
-        elif collection_binds.isdisjoint(data_inputs):
-            errors.append("Data must consume the materialized complete collection via inputs")
+        elif collection_binds.isdisjoint(compute_inputs):
+            errors.append("Compute must consume the materialized complete collection via inputs")
         if unchecked_acquires:
             errors.append(
                 "Acquire must consume a Data inspect availability check: "
@@ -288,15 +297,15 @@ def _check(case: Case, program: Program) -> list[str]:
                 errors.append(
                     f"complete collection contract dropped required field: {value!r}"
                 )
-        data_record_specs = [
+        compute_record_specs = [
             spec
             for node in nodes
-            if isinstance(node, Data)
+            if isinstance(node, Compute)
             for spec in node.returns.values()
             if spec.type == "list[record]"
         ]
-        if data_record_specs and any(not spec.fields for spec in data_record_specs):
-            errors.append("Data list[record] output must declare fields")
+        if compute_record_specs and any(not spec.fields for spec in compute_record_specs):
+            errors.append("Compute list[record] output must declare fields")
     if case.expect_lookup_fallback:
         exact = [
             node for node in nodes
@@ -331,7 +340,7 @@ def _check(case: Case, program: Program) -> list[str]:
 def _print_program(program: Program) -> None:
     def visit(statements: list[Stmt], indent: str = "") -> None:
         for statement in statements:
-            if isinstance(statement, (Interact, Acquire, Data, Command)):
+            if isinstance(statement, (Interact, Acquire, Data, Compute, Command)):
                 print(f"{indent}[{statement.op}] {statement.id}: {statement.goal_text}")
             elif isinstance(statement, If):
                 print(f"{indent}[if] {statement.cond.ref.var} {statement.cond.cmp}")

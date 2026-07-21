@@ -684,7 +684,7 @@ class StatementInfo(BaseModel):
     model_config = ConfigDict(frozen=True, extra="forbid")
 
     id: str = ""
-    executor: Literal["interact", "acquire", "data", "command"] = "interact"
+    executor: Literal["interact", "acquire", "data", "compute", "command"] = "interact"
     goal: str = ""
     success: str = ""
     on: Literal["main"] = "main"

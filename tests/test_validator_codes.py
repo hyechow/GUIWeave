@@ -254,7 +254,7 @@ def _acquire_then_data(*, inspected_fields, required_fields):
     ])
 
 
-def test_validator_propagates_data_fields_through_acquire_check():
+def test_validator_rejects_data_processing_after_acquire():
     missing_declaration = _acquire_then_data(
         inspected_fields=["customer email"], required_fields=[],
     )
@@ -266,9 +266,9 @@ def test_validator_propagates_data_fields_through_acquire_check():
         required_fields=["customer email"],
     )
 
-    assert "DATA_REQUIRED_FIELDS_REQUIRED" in _codes(missing_declaration)
-    assert "DATA_REQUIRED_FIELDS_NOT_ACQUIRED" in _codes(mismatched)
-    assert validate_program(aligned) == []
+    assert "DATA_READ_INPUT_FORBIDDEN" in _codes(missing_declaration)
+    assert "DATA_READ_INPUT_FORBIDDEN" in _codes(mismatched)
+    assert "DATA_READ_INPUT_FORBIDDEN" in _codes(aligned)
 
 
 def test_validator_rejects_outputless_data_transform():

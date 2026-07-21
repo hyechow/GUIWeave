@@ -13,6 +13,7 @@ from typing import Annotated, Literal, TypeAlias, Union
 from pydantic import BaseModel, ConfigDict, Field, JsonValue, model_validator
 
 from gui_agent.core.schemas import OutputSpec, PersistenceMode
+from gui_agent.core.data_types import DataStep
 
 
 SurfaceName = Literal["main"]
@@ -82,12 +83,35 @@ class Interact(StatementNode):
 
 
 class Data(StatementNode):
-    """Derive typed outputs from the runtime's real data context."""
+    """Read the current observation or bind its semantic source fields."""
 
     op: Literal["data"] = "data"
     goal: str
-    mode: Literal["derive", "inspect"] = "derive"
+    mode: Literal["read", "inspect"] = "read"
     required_fields: list[str] = Field(default_factory=list)
+
+    @property
+    def goal_text(self) -> str:
+        return self.goal
+
+
+class ComputeRef(BaseModel):
+    """Reference a value produced by a deterministic Compute pipeline."""
+
+    model_config = ConfigDict(frozen=True, extra="forbid")
+
+    path: list[str | int] = Field(default_factory=list)
+
+
+class Compute(StatementNode):
+    """Execute a Program-defined, side-effect-free data transformation."""
+
+    op: Literal["compute"] = "compute"
+    goal: str
+    source: str
+    required_fields: list[str] = Field(default_factory=list)
+    steps: list[DataStep] = Field(min_length=1, max_length=10)
+    outputs: dict[str, ComputeRef] = Field(min_length=1)
 
     @property
     def goal_text(self) -> str:
@@ -98,7 +122,7 @@ class Acquire(StatementNode):
     """Materialize one already-scoped collection across reachable windows.
 
     Acquire never changes the business scope, exposes columns, opens records or
-    performs data transforms.  Those choices belong to Interact / Data / Program
+    performs data transforms.  Those choices belong to Interact / Compute / Program
     control flow respectively.
     """
 
@@ -127,7 +151,7 @@ class Command(StatementNode):
         return self.capability
 
 
-ExecutableStatement: TypeAlias = Interact | Acquire | Data | Command
+ExecutableStatement: TypeAlias = Interact | Acquire | Data | Compute | Command
 
 
 class Condition(BaseModel):
@@ -156,7 +180,7 @@ class ForEach(BaseModel):
     ``items`` must resolve to a list.  Each iteration gets lexical ``item`` and
     optional ``index`` bindings.  When ``collect`` is set, that one value is
     appended to ``into`` after the body completes.  Membership selection,
-    sorting and deduplication belong in a preceding Data statement.
+    sorting and deduplication belong in a preceding Compute statement.
     """
 
     model_config = ConfigDict(extra="forbid")
@@ -187,7 +211,7 @@ class Finish(BaseModel):
 
 
 Stmt = Annotated[
-    Union[Interact, Acquire, Data, Command, If, ForEach, Finish],
+    Union[Interact, Acquire, Data, Compute, Command, If, ForEach, Finish],
     Field(discriminator="op"),
 ]
 
@@ -208,7 +232,7 @@ def assign_statement_ids(program: Program) -> Program:
     def visit(statements: list[Stmt]) -> None:
         nonlocal counter
         for statement in statements:
-            if isinstance(statement, (Interact, Acquire, Data, Command)):
+            if isinstance(statement, (Interact, Acquire, Data, Compute, Command)):
                 counter += 1
                 if not statement.id:
                     statement.id = f"s{counter}"
@@ -231,6 +255,8 @@ __all__ = [
     "Acquire",
     "Command",
     "CommandCapability",
+    "Compute",
+    "ComputeRef",
     "Condition",
     "Data",
     "ExecutableStatement",

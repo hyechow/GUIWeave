@@ -1,4 +1,4 @@
-"""Typed, side-effect-free transformations for runtime Data statements."""
+"""Typed, side-effect-free transformations for Program Compute statements."""
 
 from __future__ import annotations
 
@@ -6,113 +6,45 @@ import calendar
 import re
 from datetime import datetime, timezone
 from decimal import Decimal, InvalidOperation
-from typing import Annotated, Any, Literal, Union
+from typing import Any
 
-from pydantic import BaseModel, ConfigDict, Field, JsonValue, model_validator
+from pydantic import BaseModel, JsonValue
+
+from gui_agent.core.data_types import (
+    AggregateSpec,
+    AggregateStep,
+    DataStep,
+    DateBucketStep,
+    DistinctStep,
+    FieldRef,
+    FilterStep,
+    GroupStep,
+    ProjectStep,
+    RankStep,
+    SortKey,
+    SortStep,
+    TakeStep,
+)
 
 
 class DataKernelError(ValueError):
     """A typed data operation could not be applied to its runtime records."""
 
 
-ValueType = Literal["auto", "text", "number", "money", "datetime", "boolean"]
-
-
-class _KernelModel(BaseModel):
-    model_config = ConfigDict(extra="forbid")
-
-
-class FieldRef(_KernelModel):
-    path: list[str | int]
-    type: ValueType = "auto"
-
-
-class FilterStep(_KernelModel):
-    op: Literal["filter"] = "filter"
-    field: FieldRef
-    cmp: Literal[
-        "eq", "ne", "lt", "lte", "gt", "gte",
-        "contains", "not_contains", "in", "not_in", "exists", "empty",
-    ] = "eq"
-    value: JsonValue = None
-
-
-class SortKey(_KernelModel):
-    field: FieldRef
-    direction: Literal["asc", "desc"] = "asc"
-
-
-class SortStep(_KernelModel):
-    op: Literal["sort"] = "sort"
-    keys: list[SortKey] = Field(min_length=1)
-
-
-class TakeStep(_KernelModel):
-    op: Literal["take"] = "take"
-    count: int = Field(ge=1)
-    offset: int = Field(default=0, ge=0)
-
-
-class ProjectStep(_KernelModel):
-    op: Literal["project"] = "project"
-    fields: dict[str, FieldRef] = Field(min_length=1)
-
-
-class DistinctStep(_KernelModel):
-    op: Literal["distinct"] = "distinct"
-    fields: list[FieldRef] = Field(default_factory=list)
-
-
-class DateBucketStep(_KernelModel):
-    op: Literal["date_bucket"] = "date_bucket"
-    field: FieldRef
-    output: str
-    unit: Literal["day", "month", "year"] = "month"
-    format: Literal["iso", "month_name"] = "iso"
-
-
-class AggregateSpec(_KernelModel):
-    fn: Literal["count", "sum", "min", "max", "avg"]
-    field: FieldRef | None = None
-
-    @model_validator(mode="after")
-    def _field_required(self) -> "AggregateSpec":
-        if self.fn != "count" and self.field is None:
-            raise ValueError(f"{self.fn} aggregate requires field")
-        return self
-
-
-class AggregateStep(_KernelModel):
-    op: Literal["aggregate"] = "aggregate"
-    values: dict[str, AggregateSpec] = Field(min_length=1)
-
-
-class GroupStep(_KernelModel):
-    op: Literal["group"] = "group"
-    by: dict[str, FieldRef] = Field(min_length=1)
-    values: dict[str, AggregateSpec] = Field(min_length=1)
-
-
-class RankStep(_KernelModel):
-    op: Literal["rank"] = "rank"
-    keys: list[SortKey] = Field(min_length=1)
-    position: int = Field(ge=1)
-
-
-DataStep = Annotated[
-    Union[
-        FilterStep,
-        SortStep,
-        TakeStep,
-        ProjectStep,
-        DistinctStep,
-        DateBucketStep,
-        AggregateStep,
-        GroupStep,
-        RankStep,
-    ],
-    Field(discriminator="op"),
-]
+def json_value(value: Any) -> JsonValue:
+    if isinstance(value, BaseModel):
+        return value.model_dump(mode="json")
+    if isinstance(value, list):
+        return [json_value(item) for item in value]
+    if isinstance(value, dict):
+        return {str(key): json_value(item) for key, item in value.items()}
+    if isinstance(value, Decimal):
+        return int(value) if value == value.to_integral_value() else float(value)
+    if isinstance(value, datetime):
+        return value.isoformat()
+    if value is None or isinstance(value, (str, int, float, bool)):
+        return value
+    return str(value)
 
 
 _CURRENCY_RE = re.compile(r"[$€£¥₹₩₪₫฿₽₺₦₱]")

@@ -77,7 +77,7 @@ def test_immediate_dispatch_runs_data_then_command_and_records_one_fact_pair_eac
 
     assert result.reply == "done"
     assert calls == ["data", "command"]
-    assert statuses[0] == "Data 数据处理中：derive destination"
+    assert statuses[0] == "Data 页面数据读取中：derive destination"
     assert len(context.journal.turns) == 2
     assert len(context.journal.statement_outcomes) == 2
     assert [turn.statement.executor for turn in context.journal.turns] == [

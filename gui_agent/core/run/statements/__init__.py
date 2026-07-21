@@ -6,6 +6,7 @@ from .dispatch import (
     is_immediate_statement,
 )
 from .acquire import execute_acquire_statement
+from .compute import execute_compute_statement
 from .outcome import (
     RecoveryNotice,
     StatementOutcome,
@@ -17,5 +18,6 @@ __all__ = [
     "StatementOutcome",
     "drain_immediate_statements",
     "execute_acquire_statement",
+    "execute_compute_statement",
     "is_immediate_statement",
 ]
