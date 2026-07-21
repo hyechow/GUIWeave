@@ -96,6 +96,21 @@ class TextSplitStep(_KernelModel):
     index: int
 
 
+class ArithmeticStep(_KernelModel):
+    op: Literal["arithmetic"] = "arithmetic"
+    field: FieldRef
+    operator: Literal["add", "subtract", "multiply", "divide"]
+    operand: float
+    output: str = ""
+    round_digits: int | None = Field(default=None, ge=0, le=12)
+
+    @model_validator(mode="after")
+    def _scalar_root_is_not_semantic(self) -> "ArithmeticStep":
+        if not self.field.path and self.field.semantic:
+            self.field = self.field.model_copy(update={"semantic": False})
+        return self
+
+
 class AggregateSpec(_KernelModel):
     fn: Literal["count", "sum", "min", "max", "avg"]
     field: FieldRef | None = None
@@ -134,6 +149,7 @@ ComputeStep = Annotated[
         DistinctStep,
         DateBucketStep,
         TextSplitStep,
+        ArithmeticStep,
         AggregateStep,
         GroupStep,
         RankStep,
@@ -145,6 +161,7 @@ ComputeStep = Annotated[
 __all__ = [
     "AggregateSpec",
     "AggregateStep",
+    "ArithmeticStep",
     "BuildRecordStep",
     "ComputeStep",
     "DateBucketStep",

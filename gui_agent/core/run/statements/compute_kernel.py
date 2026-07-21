@@ -5,7 +5,7 @@ from __future__ import annotations
 import calendar
 import re
 from datetime import datetime, timezone
-from decimal import Decimal, InvalidOperation
+from decimal import ROUND_HALF_UP, Decimal, InvalidOperation
 from typing import Any
 
 from pydantic import BaseModel, JsonValue
@@ -13,6 +13,7 @@ from pydantic import BaseModel, JsonValue
 from gui_agent.core.data_types import (
     AggregateSpec,
     AggregateStep,
+    ArithmeticStep,
     BuildRecordStep,
     ComputeStep,
     DateBucketStep,
@@ -256,14 +257,60 @@ def _split_text(value: Any, step: TextSplitStep) -> str:
         ) from exc
 
 
+def _arithmetic(value: Any, step: ArithmeticStep) -> Decimal:
+    left = _resolve(value, step.field)
+    if not isinstance(left, Decimal):
+        left = _decimal(left)
+    operand = _decimal(step.operand)
+    if step.operator == "add":
+        result = left + operand
+    elif step.operator == "subtract":
+        result = left - operand
+    elif step.operator == "multiply":
+        result = left * operand
+    else:
+        if operand == 0:
+            raise ComputeKernelError("arithmetic divide operand cannot be zero")
+        result = left / operand
+    if step.round_digits is not None:
+        quantum = Decimal(1).scaleb(-step.round_digits)
+        result = result.quantize(quantum, rounding=ROUND_HALF_UP)
+    return result
+
+
 def execute_pipeline(source: Any, steps: list[ComputeStep]) -> tuple[Any, list[str]]:
     """Execute a bounded linear transformation and return its trace."""
-    current: Any = source if steps and isinstance(steps[0], BuildRecordStep) else _records(source)
+    scalar_first = steps and isinstance(steps[0], (ArithmeticStep, BuildRecordStep))
+    current: Any = source if scalar_first else _records(source)
     trace: list[str] = []
     for step in steps:
         if isinstance(step, BuildRecordStep):
             current = [{name: _resolve(current, ref) for name, ref in step.fields.items()}]
             trace.append("build_record:1->1")
+            continue
+        if isinstance(step, ArithmeticStep):
+            if isinstance(current, list):
+                rows = _records(current)
+                if not step.output:
+                    raise ComputeKernelError(
+                        "arithmetic over record list requires output field"
+                    )
+                current = [
+                    {**row, step.output: _arithmetic(row, step)}
+                    for row in rows
+                ]
+                trace.append(f"arithmetic:{len(rows)}->{len(rows)}")
+            elif step.output:
+                result = _arithmetic(current, step)
+                current = (
+                    {**current, step.output: result}
+                    if isinstance(current, dict)
+                    else {step.output: result}
+                )
+                trace.append("arithmetic:1->1")
+            else:
+                current = _arithmetic(current, step)
+                trace.append(f"arithmetic:{step.operator}")
             continue
         rows = _records(current)
         before = len(rows)
@@ -330,4 +377,3 @@ def execute_pipeline(source: Any, steps: list[ComputeStep]) -> tuple[Any, list[s
         after = len(current) if isinstance(current, list) else 1
         trace.append(f"{step.op}:{before}->{after}")
     return current, trace
-

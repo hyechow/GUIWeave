@@ -5,6 +5,7 @@ import pytest
 from gui_agent.core.run.statements.compute_kernel import (
     AggregateSpec,
     AggregateStep,
+    ArithmeticStep,
     BuildRecordStep,
     ComputeKernelError,
     DateBucketStep,
@@ -30,6 +31,93 @@ def test_pipeline_builds_record_from_scalar():
 
     assert result == [{"Material": "Fleece"}]
     assert trace == ["build_record:1->1"]
+
+
+def test_pipeline_applies_rounded_scalar_arithmetic():
+    result, trace = execute_pipeline(
+        "$75.00",
+        [ArithmeticStep(
+            field=FieldRef(path=[], type="money"),
+            operator="multiply",
+            operand=0.865,
+            round_digits=2,
+        )],
+    )
+
+    assert result == Decimal("64.88")
+    assert trace == ["arithmetic:multiply"]
+
+
+def test_scalar_arithmetic_can_name_its_result():
+    result, trace = execute_pipeline(
+        "$75.00",
+        [ArithmeticStep(
+            field=FieldRef(path=[], type="money"),
+            operator="multiply",
+            operand=0.865,
+            output="new_price",
+            round_digits=2,
+        )],
+    )
+
+    assert result == {"new_price": Decimal("64.88")}
+    assert trace == ["arithmetic:1->1"]
+
+
+def test_arithmetic_root_field_cannot_request_semantic_binding():
+    step = ArithmeticStep(
+        field=FieldRef(path=[], type="number", semantic=True),
+        operator="add",
+        operand=1,
+    )
+
+    assert step.field.semantic is False
+
+
+def test_arithmetic_maps_record_list_and_preserves_identity():
+    result, trace = execute_pipeline(
+        [
+            {"id": "a", "price": "$75.00"},
+            {"id": "b", "price": "$100.00"},
+        ],
+        [ArithmeticStep(
+            field=FieldRef(path=["price"], type="money"),
+            operator="multiply",
+            operand=0.865,
+            output="new_price",
+            round_digits=2,
+        )],
+    )
+
+    assert result == [
+        {"id": "a", "price": "$75.00", "new_price": Decimal("64.88")},
+        {"id": "b", "price": "$100.00", "new_price": Decimal("86.50")},
+    ]
+    assert trace == ["arithmetic:2->2"]
+
+
+def test_arithmetic_record_list_requires_output_field():
+    with pytest.raises(ComputeKernelError, match="requires output field"):
+        execute_pipeline(
+            [{"price": 10}],
+            [ArithmeticStep(
+                field=FieldRef(path=["price"], type="number"),
+                operator="add",
+                operand=1,
+            )],
+        )
+
+
+def test_pipeline_rejects_division_by_zero():
+    with pytest.raises(ComputeKernelError, match="divide operand cannot be zero"):
+        execute_pipeline(
+            10,
+            [ArithmeticStep(
+                field=FieldRef(path=[], type="number"),
+                operator="divide",
+                operand=0,
+            )],
+        )
 
 
 def test_pipeline_filters_sorts_takes_projects_and_deduplicates():

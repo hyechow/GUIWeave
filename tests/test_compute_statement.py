@@ -1,6 +1,12 @@
 import pytest
 
-from gui_agent.core.data_types import AggregateSpec, AggregateStep, FieldRef, ProjectStep
+from gui_agent.core.data_types import (
+    AggregateSpec,
+    AggregateStep,
+    ArithmeticStep,
+    FieldRef,
+    ProjectStep,
+)
 from gui_agent.core.orchestrator import Compute, ComputeRef, OutputSpec, ValueRef
 from gui_agent.core.orchestrator.runner import InputDescriptor, StatementInvocation
 from gui_agent.core.run.statements.compute import execute_compute_statement
@@ -43,6 +49,50 @@ def test_compute_executes_program_defined_semantic_field_pipeline_without_llm():
     assert outcome.is_completed
     assert outcome.outputs == {"total": 19.75}
     assert outcome.evidence == ["compute:aggregate:2->1"]
+
+
+def test_compute_maps_arithmetic_over_semantically_bound_records():
+    statement = Compute(
+        id="discount",
+        bind="discounted",
+        goal="calculate adjusted values",
+        source="records",
+        required_fields=["price"],
+        inputs={
+            "records": ValueRef(var="products", path=["rows"]),
+            "bindings": ValueRef(var="field_map", path=["bindings"]),
+        },
+        steps=[ArithmeticStep(
+            field=FieldRef(path=["price"], type="money", semantic=True),
+            operator="multiply",
+            operand=0.865,
+            output="new_price",
+            round_digits=2,
+        )],
+        outputs={"rows": ComputeRef()},
+        returns={
+            "rows": OutputSpec(
+                type="list[record]",
+                fields=["id", "new_price"],
+            )
+        },
+    )
+
+    outcome = execute_compute_statement(
+        StatementInvocation(
+            statement=statement,
+            inputs={
+                "records": [{"id": "a", "Price": "$75.00"}],
+                "bindings": {"price": "Price"},
+            },
+        ),
+        observation=None,
+    )
+
+    assert outcome.is_completed
+    assert outcome.outputs["rows"] == [
+        {"id": "a", "Price": "$75.00", "new_price": 64.88}
+    ]
 
 
 def test_compute_reports_missing_semantic_binding_without_retrying_a_plan():
