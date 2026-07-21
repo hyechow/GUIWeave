@@ -253,10 +253,25 @@ class _AcquireExecutor:
             ),
             None,
         )
-        if duplicate is None:
+        previous = next(
+            (
+                old for old in reversed(self.journal.collection_slices)
+                if old.statement_instance_id == self.instance_id
+                and old.collection_key == event.collection_key
+            ),
+            None,
+        )
+        revisited_window = bool(
+            duplicate is not None
+            and event.window_key
+            and previous is not None
+            and previous.window_key != event.window_key
+        )
+        if duplicate is None or revisited_window:
             self.journal.append_collection_slice(event)
             self.save_context()
-        return duplicate or event
+            return event
+        return duplicate
 
     def completed(self, summary: str, verification: str = "confirmed") -> StatementOutcome:
         view = self.view()
@@ -327,7 +342,20 @@ class _AcquireExecutor:
 
     def structured_move(self, candidate: dict, current: Any, index: int) -> bool:
         traversal = candidate["table"].get("traversal") or {}
-        family = "paginate_next" if traversal.get("type") == "paged" else "scroll_forward"
+        family = "scroll_forward"
+        if traversal.get("type") == "paged":
+            try:
+                page_index = int(traversal.get("page_index"))
+            except (TypeError, ValueError):
+                page_index = 1
+            page_one_seen = any(
+                "|page:1|" in slice_key for slice_key in self.view().seen_slice_keys
+            )
+            family = (
+                "paginate_prev"
+                if page_index > 1 and not page_one_seen
+                else "paginate_next"
+            )
         before = current.content_key if current else ""
         capability = f"structured:{candidate['surface_fingerprint']}:{before}:{family}"
         memory = self.memory()
