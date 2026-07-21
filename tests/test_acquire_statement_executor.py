@@ -117,6 +117,59 @@ def test_structured_acquire_pages_without_policy_calls(tmp_path):
     )
 
 
+def test_structured_acquire_rewinds_persisted_pager_before_forward_traversal(tmp_path):
+    page_one = _observation(1, has_next=True, total=38)
+    page_one.tables[0]["rows"] = [
+        {"ID": str(index), "Value": f"v{index}"} for index in range(1, 21)
+    ]
+    page_two = _observation(2, has_next=False, total=38)
+    page_two.tables[0]["rows"] = [
+        {"ID": str(index), "Value": f"v{index}"} for index in range(21, 39)
+    ]
+    observations = [page_one, page_two]
+    moves = []
+
+    def make_perception(_platform, _path):
+        return _Perception(observations.pop(0))
+
+    bundle = SimpleNamespace(
+        make_perception=make_perception,
+        move_collection=lambda _platform, _table, family: moves.append(family) or True,
+        make_action_policy=lambda _name: (_ for _ in ()).throw(
+            AssertionError("structured acquisition must not call a policy")
+        ),
+        validate_collection_action=None,
+        default_action_policy="unused",
+    )
+    context = PolicyContext(goal="collect", supervisor_policy_name="s", action_policy_name="a")
+    outcome = execute_acquire_statement(
+        _invocation(),
+        cursor=ObservationCursor(
+            bundle=bundle,
+            platform=object(),
+            log_dir=tmp_path,
+            observation=page_two,
+            observation_url="page2-initial.png",
+        ),
+        bundle=bundle,
+        platform=object(),
+        context=context,
+        instance_id="i1:collect",
+        save_context=lambda: None,
+        say=lambda _message: None,
+        status=lambda _message: None,
+    )
+
+    assert outcome.is_completed
+    assert outcome.verification == "confirmed"
+    assert [record["ID"] for record in outcome.outputs["records"]] == [
+        *[str(index) for index in range(21, 39)],
+        *[str(index) for index in range(1, 21)],
+    ]
+    assert moves == ["paginate_prev", "paginate_next"]
+    assert len(context.journal.collection_slices) == 3
+
+
 def test_structured_empty_collection_is_confirmed_without_policy(tmp_path):
     observation = _observation(1, has_next=False, total=0)
     observation.tables[0]["rows"] = []

@@ -272,6 +272,34 @@ def test_adaptive_ui_field_name_is_allowed_when_value_matches_contract(monkeypat
     assert step.action_intent.target_control == "Current status"
 
 
+def test_nested_required_value_is_allowed_for_range_field(monkeypatch) -> None:
+    statement = StatementContract(
+        id="s1",
+        goal="set date range",
+        success="Date range is applied",
+        required_values={
+            "date_range": {"from": "01/01/2023", "to": "05/31/2023"},
+        },
+    )
+    policy = _policy(statement)
+    monkeypatch.setattr(
+        policy,
+        "_invoke_statement_transition",
+        lambda *a, **k: _act(
+            family="input",
+            control="Purchase Date From",
+            value="01/01/2023",
+            role="write",
+        ),
+    )
+
+    step = policy._run_single_turn(statement, _observation(), [])
+
+    assert step.outcome is None
+    assert step.action_intent is not None
+    assert step.action_intent.target_value == "01/01/2023"
+
+
 def test_transition_completion_is_not_reinterpreted_by_a_hidden_persistence_fsm(monkeypatch) -> None:
     statement = StatementContract(
         id="s1",

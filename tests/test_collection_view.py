@@ -210,6 +210,24 @@ def test_known_total_and_at_end_boundary_yields_complete_coverage():
     assert coverage_status(view) == "complete"
 
 
+def test_at_end_with_fewer_records_than_known_total_is_incomplete():
+    history = [
+        _turn(
+            1,
+            "i1:collect",
+            _frame(
+                records=[{"id": str(n)} for n in range(18)],
+                record_ids=[f"id:{n}" for n in range(18)],
+                known_total=38,
+                boundary="at_end",
+                window_key="page:2",
+            ),
+        ),
+    ]
+    view = build_collection_view(instance_id="i1:collect", contract=_contract(), history=history)
+    assert coverage_status(view) == "incomplete"
+
+
 # --- 4. coverage classification ----------------------------------------------
 
 
