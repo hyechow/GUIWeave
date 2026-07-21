@@ -36,11 +36,19 @@ from .schemas import (
 
 def _declared_string_values(values: dict[str, JsonValue]) -> set[str]:
     result: set[str] = set()
+
+    def visit(value: JsonValue) -> None:
+        if isinstance(value, dict):
+            for item in value.values():
+                visit(item)
+        elif isinstance(value, list):
+            for item in value:
+                visit(item)
+        elif isinstance(value, (str, int, float, bool)):
+            result.add(str(value).strip().casefold())
+
     for value in values.values():
-        candidates = value if isinstance(value, list) else [value]
-        for candidate in candidates:
-            if isinstance(candidate, (str, int, float, bool)):
-                result.add(str(candidate).strip().casefold())
+        visit(value)
     return {value for value in result if value}
 
 
