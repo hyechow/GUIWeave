@@ -4,7 +4,7 @@ from __future__ import annotations
 
 from typing import Annotated, Literal, Union
 
-from pydantic import BaseModel, ConfigDict, Field, JsonValue, model_validator
+from pydantic import BaseModel, ConfigDict, Field, JsonValue, field_validator, model_validator
 
 
 ValueType = Literal["auto", "text", "number", "money", "datetime", "boolean"]
@@ -29,6 +29,11 @@ class FilterStep(_KernelModel):
     ] = "eq"
     value: JsonValue = None
 
+    @field_validator("cmp", mode="before")
+    @classmethod
+    def _normalize_not_empty(cls, value):
+        return "exists" if value in {"not_empty", "nonempty", "is_not_empty"} else value
+
 
 class SortKey(_KernelModel):
     field: FieldRef
@@ -50,6 +55,18 @@ class ProjectStep(_KernelModel):
     op: Literal["project"] = "project"
     fields: dict[str, FieldRef] = Field(min_length=1)
 
+    @field_validator("fields", mode="before")
+    @classmethod
+    def _normalize_field_wrappers(cls, value):
+        if not isinstance(value, dict):
+            return value
+        return {
+            name: item["field"]
+            if isinstance(item, dict) and set(item) == {"field"}
+            else item
+            for name, item in value.items()
+        }
+
 
 class DistinctStep(_KernelModel):
     op: Literal["distinct"] = "distinct"
@@ -62,6 +79,16 @@ class DateBucketStep(_KernelModel):
     output: str
     unit: Literal["day", "month", "year"] = "month"
     format: Literal["iso", "month_name"] = "iso"
+
+
+class TextSplitStep(_KernelModel):
+    op: Literal["text_split"] = "text_split"
+    field: FieldRef
+    output: str
+    separator: str = Field(min_length=1)
+    direction: Literal["left", "right"] = "left"
+    maxsplit: int = Field(default=-1, ge=-1)
+    index: int
 
 
 class AggregateSpec(_KernelModel):
@@ -100,6 +127,7 @@ DataStep = Annotated[
         ProjectStep,
         DistinctStep,
         DateBucketStep,
+        TextSplitStep,
         AggregateStep,
         GroupStep,
         RankStep,
@@ -122,5 +150,6 @@ __all__ = [
     "SortKey",
     "SortStep",
     "TakeStep",
+    "TextSplitStep",
     "ValueType",
 ]

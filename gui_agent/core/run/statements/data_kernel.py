@@ -24,6 +24,7 @@ from gui_agent.core.data_types import (
     SortKey,
     SortStep,
     TakeStep,
+    TextSplitStep,
 )
 
 
@@ -242,6 +243,18 @@ def _bucket(value: Any, step: DateBucketStep) -> str:
     return parsed.strftime("%Y")
 
 
+def _split_text(value: Any, step: TextSplitStep) -> str:
+    text = str(value or "")
+    split = text.rsplit if step.direction == "right" else text.split
+    parts = split(step.separator, step.maxsplit)
+    try:
+        return parts[step.index]
+    except IndexError as exc:
+        raise DataKernelError(
+            f"text split index out of range: index={step.index}, parts={len(parts)}"
+        ) from exc
+
+
 def execute_pipeline(source: Any, steps: list[DataStep]) -> tuple[Any, list[str]]:
     """Execute a bounded linear transformation and return its trace."""
     current: Any = _records(source)
@@ -275,6 +288,11 @@ def execute_pipeline(source: Any, steps: list[DataStep]) -> tuple[Any, list[str]
         elif isinstance(step, DateBucketStep):
             current = [
                 {**row, step.output: _bucket(_resolve(row, step.field), step)}
+                for row in rows
+            ]
+        elif isinstance(step, TextSplitStep):
+            current = [
+                {**row, step.output: _split_text(_resolve(row, step.field), step)}
                 for row in rows
             ]
         elif isinstance(step, AggregateStep):
