@@ -519,10 +519,10 @@ def _classify_coverage(
         return "incomplete"
     if total is not None and total > 0 and collected >= total:
         return "complete"
-    if at_end_now:
-        return "complete"
     if total is not None and collected < total:
         return "incomplete"
+    if at_end_now:
+        return "complete"
     return "unknown"
 
 
@@ -539,10 +539,10 @@ def coverage_status(view: CollectionView) -> CoverageState:
     if view.may_contain_duplicates and view.known_total is not None:
         if last_kind == "has_next_page":
             return "incomplete"
-        if last_kind == "at_end":
-            return "complete"
         if len(view.records) < view.known_total:
             return "incomplete"
+        if last_kind == "at_end":
+            return "complete"
         return "unknown"
     return _classify_coverage(len(view.records), view.known_total, last_kind)
 
