@@ -269,6 +269,8 @@ def _boundary_from_traversal(signal: Any) -> CollectionBoundary:
         if can_more is False:
             return "not_at_end"
         return "unknown"
+    if kind == "static":
+        return "at_end"
     return "unknown"
 
 

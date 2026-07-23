@@ -19,6 +19,7 @@ def test_table_snapshot_js_is_serialized_expression():
     assert "detectPageViewport" in js
     assert "viewport: detectPageViewport" in js
     assert "document.documentElement.scrollHeight" in js
+    assert "return { type: 'static' }" in js
 
 
 def test_normalize_table_snapshots_maps_rows_to_headers():

@@ -401,3 +401,34 @@ def test_project_collection_slice_projects_rows_and_provenance():
     assert frame.known_total == 2
     assert frame.boundary == "at_end"
     assert frame.source == "table"
+
+
+def test_project_collection_slice_treats_static_table_as_bounded_snapshot():
+    class _Obs:
+        tables = [{
+            "path": "#top-search-terms",
+            "caption": "Top Search Terms",
+            "headers": ["Search Term", "Uses"],
+            "rows": [
+                {"Search Term": "alpha", "Uses": "9"},
+                {"Search Term": "beta", "Uses": "4"},
+            ],
+            "partial": False,
+            "traversal": {"type": "static"},
+        }]
+
+    frame = project_collection_slice(
+        _Obs(), _contract(), instance_id="i1:collect", after_turn=0,
+        event_ref="collection:1", frame_ref="frame:1",
+        table=_Obs.tables[0], strategy="react",
+    )  # type: ignore[arg-type]
+
+    assert frame is not None
+    assert frame.known_total is None
+    assert frame.boundary == "at_end"
+    view = build_collection_view(
+        instance_id="i1:collect",
+        contract=_contract(),
+        history=[frame],
+    )
+    assert coverage_status(view) == "complete"

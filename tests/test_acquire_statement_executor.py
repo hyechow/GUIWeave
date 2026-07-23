@@ -226,6 +226,48 @@ def test_acquire_rejects_ambiguous_structured_collections(tmp_path):
     assert not context.journal.collection_slices
 
 
+def test_react_bound_static_table_completes_without_traversal_guess(
+    monkeypatch, tmp_path,
+):
+    observation = _observation(1, traversal=False)
+    observation.tables[0]["traversal"] = {"type": "static"}
+    decisions = iter([
+        AcquireDecision(
+            kind="move",
+            reason="bind the requested static table",
+            bound_hint="table:0",
+            action_family="bind_region",
+            target_role="bound_region",
+        ),
+    ])
+    monkeypatch.setattr(
+        "gui_agent.core.run.statements.acquire.decide_acquisition",
+        lambda *_args, **_kwargs: next(decisions),
+    )
+    context = PolicyContext(goal="collect", supervisor_policy_name="s", action_policy_name="a")
+    bundle = SimpleNamespace(make_perception=None, move_collection=None)
+
+    outcome = execute_acquire_statement(
+        _invocation(),
+        cursor=ObservationCursor(
+            bundle=bundle, platform=object(), log_dir=tmp_path,
+            observation=observation, observation_url="frame.png",
+        ),
+        bundle=bundle,
+        platform=object(),
+        context=context,
+        instance_id="i1:collect",
+        save_context=lambda: None,
+        say=lambda _message: None,
+        status=lambda _message: None,
+    )
+
+    assert outcome.is_completed
+    assert outcome.verification == "confirmed"
+    assert outcome.outputs["records"] == [{"ID": "1", "Value": "v1"}]
+    assert len(context.journal.acquisition_receipts) == 1
+
+
 def test_react_fallback_requires_two_same_collection_no_progress_moves(monkeypatch, tmp_path):
     decisions = iter(
         [

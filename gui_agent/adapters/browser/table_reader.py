@@ -393,7 +393,10 @@ def table_snapshot_js() -> str:
         return scrollStateOf(container);
       }}
     }}
-    return {{ type: 'unknown' }};
+    // The sensor inspected this table's local containers and found neither a pager nor a
+    // scrollable collection surface. Page scrolling may reveal the table itself, but cannot
+    // reveal additional rows inside it, so the rendered DOM rows form a bounded snapshot.
+    return {{ type: 'static' }};
   }};
 
   // Page-level traversal sensor: deliberately not derived from a table/grid. Table traversal
