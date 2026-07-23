@@ -93,4 +93,8 @@ class CodingPlan:
 
     @property
     def requirements_satisfied(self) -> bool:
-        return bool(self.executable and self.review is not None)
+        return bool(
+            self.executable
+            and self.review is not None
+            and (self.review.approved or self.repaired)
+        )

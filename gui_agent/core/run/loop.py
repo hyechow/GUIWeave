@@ -38,6 +38,7 @@ from gui_agent.core.run.flow import (
     handle_loading_frame,
 )
 from gui_agent.core.run.statements import drain_immediate_statements
+from gui_agent.core.coding_orchestrator import CodingProgram, CodingProgramRuntime
 from gui_agent.core.orchestrator.program import Acquire, Interact, Program
 from gui_agent.core.orchestrator.recovery import MAX_KICKBACK_REPLANS
 from gui_agent.core.run.program_runtime import ProgramRuntime
@@ -128,7 +129,7 @@ def run_agent_loop(
     log_dir: Path,
     context_path: Path,
     *,
-    program: Program,
+    program: Program | CodingProgram,
     max_turns: int = 20,
     auto_continue: bool = False,
     hud: AgentHUD | None = None,
@@ -146,8 +147,8 @@ def run_agent_loop(
     platform: object = None,  # already-open session (runner pre-opens it so router/decompose can see the current front-tab url/title; see cli.py); None → open here (chat path, unchanged)
     headless: bool = False,  # suppress the action visualizer (cursor/overlay) on every platform; HUD is gated by the caller
 ) -> AgentResult:
-    if not isinstance(program, Program):
-        raise TypeError("run_agent_loop requires a compiled DSL Program")
+    if not isinstance(program, (Program, CodingProgram)):
+        raise TypeError("run_agent_loop requires a compiled DSL or coding program")
     _run_started = time.perf_counter()  # for context.wall_clock_s (true end-to-end elapsed)
 
     def _say(s: str) -> None:
@@ -176,7 +177,7 @@ def run_agent_loop(
     _prior_wall_clock_s = float(context.wall_clock_s or 0.0)
 
     # Bound after ProgramRuntime.start; _save_ctx / _finish close over this name.
-    rt: ProgramRuntime | None = None
+    rt: ProgramRuntime | CodingProgramRuntime | None = None
 
     def _save_ctx() -> None:
         """Persist context, stamping the run's wall-clock elapsed so far — so the final file
@@ -186,6 +187,8 @@ def run_agent_loop(
         _save_context(context_path, context)
 
     def _finish(result: AgentResult) -> AgentResult:
+        if rt is not None and callable(close_runtime := getattr(rt, "close", None)):
+            close_runtime()
         if isinstance(context.orchestrator, dict):
             # Final report projection only. Runtime decisions and checkpoint replay read the
             # interpreter/EventJournal directly; no live run_log mirror is persisted per turn.
@@ -289,10 +292,17 @@ def run_agent_loop(
                 from gui_agent.core.ui.hud import dock_rect
                 hud.reposition(*dock_rect(*_wb))
 
-        # ── ProgramRuntime (always on; sole statement-scheduling owner) ───────────
+        # ── Semantic runtime (sole statement-scheduling owner) ────────────────────
         _immediate_failure: "str | None" = None
         _immediate_kickback: "str | None" = None
-        rt = ProgramRuntime.resume(program, context.journal)
+        if isinstance(program, CodingProgram):
+            if context.journal.events:
+                raise ValueError(
+                    "coding orchestrator does not yet support checkpoint resume"
+                )
+            rt = CodingProgramRuntime.start(program)
+        else:
+            rt = ProgramRuntime.resume(program, context.journal)
         recovery_router = RecoveryRouter()
         if rt.current_instance_id:
             if rt.current is None:

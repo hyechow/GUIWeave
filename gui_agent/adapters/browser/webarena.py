@@ -799,6 +799,12 @@ def _print_webarena_outputs(
 
 def _print_program(program) -> None:
     """Print the semantic Program before execution."""
+    if getattr(program, "kind", "") == "coding":
+        print("[webarena] ── coding orchestrator program ──────────────────")
+        print(program.source)
+        print("[webarena] ─────────────────────────────────────────────────")
+        return
+
     def emit(s, indent: str = "  ") -> None:
         nm = type(s).__name__
         if nm in {"Interact", "Acquire", "Read", "SourceCheck", "Compute"}:
@@ -897,6 +903,12 @@ def main() -> int:
         help="persistent Chromium profile for --headless (default: output/.headless_profiles/<site_run>)",
     )
     parser.add_argument("--max-turns", type=int, default=25)
+    parser.add_argument(
+        "--orchestrator",
+        choices=["dsl", "coding"],
+        default="dsl",
+        help="planning backend: dsl (default) or reviewed restricted Python",
+    )
     dynamic_turns = parser.add_mutually_exclusive_group()
     dynamic_turns.add_argument(
         "--dynamic-max-turns",
@@ -1108,6 +1120,7 @@ def main() -> int:
                         cur_url = ""
                         cur_title = ""
                         cur_site = knowledge.app_name if knowledge is not None else ""
+                        initial_obs = None
                         try:
                             initial_obs = bundle.make_perception(
                                 platform, log_dir / "screenshot_initial.png"
@@ -1144,26 +1157,78 @@ def main() -> int:
                         orch_started = time.perf_counter()
                         orch_calls_before = get_llm_call_count()
                         orch_tokens_before = get_llm_token_usage()
-                        compile_error: OrchestratorCompileError | None = None
+                        compile_error: Exception | None = None
                         try:
-                            program = decompose(
-                                intent,
-                                knowledge=knowledge.decompose_context(intent) if knowledge else "",
-                                file_section=file_section,
-                                current_url=cur_url,
-                                current_title=cur_title,
-                                current_site=cur_site,
-                                context_reports=orchestrator_context_reports,
-                                resolution=resolution,
-                            )
+                            if args.orchestrator == "coding":
+                                from gui_agent.core.coding_orchestrator import (
+                                    generate_reviewed_code,
+                                    program_from_plan,
+                                )
+
+                                plan = generate_reviewed_code(
+                                    intent,
+                                    knowledge=(
+                                        knowledge.decompose_context(intent)
+                                        if knowledge else ""
+                                    ),
+                                    file_section=file_section,
+                                    current_url=cur_url,
+                                    current_title=cur_title,
+                                    current_site=cur_site,
+                                    current_observation=initial_obs,
+                                    resolution=resolution,
+                                )
+                                program = program_from_plan(plan)
+                                orchestrator_context_reports.append({
+                                    "kind": "coding_review",
+                                    "source": plan.source,
+                                    "approved": bool(
+                                        plan.review and plan.review.approved
+                                    ),
+                                    "repaired": plan.repaired,
+                                })
+                            else:
+                                program = decompose(
+                                    intent,
+                                    knowledge=(
+                                        knowledge.decompose_context(intent)
+                                        if knowledge else ""
+                                    ),
+                                    file_section=file_section,
+                                    current_url=cur_url,
+                                    current_title=cur_title,
+                                    current_site=cur_site,
+                                    context_reports=orchestrator_context_reports,
+                                    resolution=resolution,
+                                )
                         except OrchestratorCompileError as exc:
                             compile_error = exc
                             program = exc.program
+                        except Exception as exc:
+                            from gui_agent.core.coding_orchestrator import (
+                                CodingCompileError,
+                                CodingProgram,
+                            )
+
+                            if not isinstance(exc, CodingCompileError):
+                                raise
+                            compile_error = exc
+                            program = CodingProgram(
+                                goal=intent,
+                                source=exc.plan.source,
+                            )
                         orch_tokens_after = get_llm_token_usage()
+                        metric_name = (
+                            "orchestrator.coding"
+                            if args.orchestrator == "coding"
+                            else "orchestrator.decompose"
+                        )
                         orchestrator_metrics = {
-                            "timings": {"orchestrator.decompose": time.perf_counter() - orch_started},
+                            "timings": {
+                                metric_name: time.perf_counter() - orch_started
+                            },
                             "token_usage": {
-                                "orchestrator.decompose": {
+                                metric_name: {
                                     "input": orch_tokens_after[0] - orch_tokens_before[0],
                                     "output": orch_tokens_after[1] - orch_tokens_before[1],
                                 }
@@ -1171,11 +1236,8 @@ def main() -> int:
                             "llm_calls": get_llm_call_count() - orch_calls_before,
                         }
                         if compile_error is not None:
-                            summary = "; ".join(str(issue) for issue in compile_error.issues[:3])
-                            print(f"[webarena] orchestrator compile failed: {summary}")
-                            orchestrator_context_reports.append({
-                                "kind": "orchestrator_compile_error",
-                                "issues": [
+                            if isinstance(compile_error, OrchestratorCompileError):
+                                issue_payloads = [
                                     {
                                         "code": issue.code,
                                         "severity": issue.severity,
@@ -1183,7 +1245,21 @@ def main() -> int:
                                         "evidence": list(issue.evidence),
                                     }
                                     for issue in compile_error.issues
-                                ],
+                                ]
+                            else:
+                                issue_payloads = [{
+                                    "code": "CODING_COMPILE_ERROR",
+                                    "severity": "error",
+                                    "message": str(compile_error),
+                                    "evidence": [],
+                                }]
+                            summary = "; ".join(
+                                issue["message"] for issue in issue_payloads[:3]
+                            )
+                            print(f"[webarena] orchestrator compile failed: {summary}")
+                            orchestrator_context_reports.append({
+                                "kind": "orchestrator_compile_error",
+                                "issues": issue_payloads,
                             })
                             compile_blocked = True
                             compile_result = failed_result(
@@ -1207,15 +1283,7 @@ def main() -> int:
                                 orchestrator_metrics=orchestrator_metrics,
                                 compile_issues={
                                     "ok": False,
-                                    "issues": [
-                                        {
-                                            "code": issue.code,
-                                            "severity": issue.severity,
-                                            "message": str(issue),
-                                            "evidence": list(issue.evidence),
-                                        }
-                                        for issue in compile_error.issues
-                                    ],
+                                    "issues": issue_payloads,
                                 },
                                 result=compile_result,
                             )
@@ -1226,7 +1294,13 @@ def main() -> int:
                                     file_section if len(file_section) <= cap
                                     else file_section[:cap] + "\n…（配置过长已截断，其余以分解结果为准）"
                                 )
-                            print(f"[webarena] orchestrator: {len(program.statements)} statements")
+                            if args.orchestrator == "coding":
+                                print("[webarena] orchestrator: reviewed Python ready")
+                            else:
+                                print(
+                                    "[webarena] orchestrator: "
+                                    f"{len(program.statements)} statements"
+                                )
                             _print_program(program)
 
                             # Feasibility Guard kick-back: re-decompose ONLY the remaining plan via the
@@ -1235,24 +1309,29 @@ def main() -> int:
                             # a fallback when the loop has none — so the re-plan continues from where the run
                             # actually is, not from the start screen. prior_experience / remaining_plan are
                             # supplied by the loop (summarize_progress over the interpreter's run_log).
-                            def _redecompose(directive: str, context_reports=None, *, observation=None,
-                                             prior_experience="", remaining_plan="",
-                                             available_bindings=None,
-                                             _goal=intent, _know=knowledge, _file=file_section,
-                                             _url=cur_url, _title=cur_title, _site=cur_site,
-                                             _res=resolution):
-                                _cur_url2 = (getattr(observation, "url", None) or _url) if observation else _url
-                                _cur_title2 = (getattr(observation, "title", None) or _title) if observation else _title
-                                return redecompose(
-                                    _goal, knowledge=_know.decompose_context(_goal) if _know else "", file_section=_file,
-                                    current_url=_cur_url2, current_title=_cur_title2, current_site=_site,
-                                    corrective_directive=directive, resolution=_res,
-                                    prior_experience=prior_experience, remaining_plan=remaining_plan,
-                                    available_bindings=available_bindings,
-                                    context_reports=context_reports,
-                                )
+                            if args.orchestrator == "dsl":
+                                def _redecompose(directive: str, context_reports=None, *, observation=None,
+                                                 prior_experience="", remaining_plan="",
+                                                 available_bindings=None,
+                                                 _goal=intent, _know=knowledge, _file=file_section,
+                                                 _url=cur_url, _title=cur_title, _site=cur_site,
+                                                 _res=resolution):
+                                    _cur_url2 = (getattr(observation, "url", None) or _url) if observation else _url
+                                    _cur_title2 = (getattr(observation, "title", None) or _title) if observation else _title
+                                    return redecompose(
+                                        _goal, knowledge=_know.decompose_context(_goal) if _know else "", file_section=_file,
+                                        current_url=_cur_url2, current_title=_cur_title2, current_site=_site,
+                                        corrective_directive=directive, resolution=_res,
+                                        prior_experience=prior_experience, remaining_plan=remaining_plan,
+                                        available_bindings=available_bindings,
+                                        context_reports=context_reports,
+                                    )
 
-                            if not compile_blocked and args.dynamic_max_turns:
+                            if (
+                                args.orchestrator == "dsl"
+                                and not compile_blocked
+                                and args.dynamic_max_turns
+                            ):
                                 run_max_turns = estimate_program_turns(program, floor=args.max_turns)
                                 if run_max_turns != args.max_turns:
                                     print(f"[webarena] orchestrator: max_turns {args.max_turns} -> {run_max_turns}")

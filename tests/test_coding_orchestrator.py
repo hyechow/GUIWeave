@@ -6,9 +6,20 @@ from types import SimpleNamespace
 import pytest
 
 from gui_agent.core.coding_orchestrator import (
+    CodingCompileError,
+    CodingProgram,
+    CodingProgramRuntime,
     FixtureSpec,
     generate_reviewed_code,
+    program_from_plan,
 )
+from gui_agent.core.coding_orchestrator.models import (
+    CodingAttempt,
+    CodingPlan,
+    CodingReview,
+)
+from gui_agent.core.orchestrator.program import Acquire, Interact, Read
+from gui_agent.core.schemas import StatementOutcome
 from gui_agent.core.coding_orchestrator.planner import _decode_review_response
 from gui_agent.core.coding_orchestrator.sandbox import (
     execute_code,
@@ -470,6 +481,60 @@ def run(ctx):
     assert result.writes[0].after == {"status": "Complete"}
 
 
+def test_coding_runtime_yields_real_statement_invocations_and_resumes_dataflow() -> None:
+    source = '''
+def run(ctx):
+    scope = ctx.lookup("order 301", field="order_id")
+    rows = ctx.acquire(scope, fields=["id", "status"])
+    assert len(rows) == 1, "order 301 must be unique"
+    state = ctx.read(rows[0], fields=["quantity"])
+    updated = state["quantity"] + 5
+    assert updated == 12, "quantity must increase by five"
+    saved = ctx.interact(
+        "save inventory",
+        success="inventory quantity is saved",
+        inputs={"order": rows[0]},
+        required_values={"quantity": updated},
+        persistence="explicit_commit",
+    )
+    assert saved, "inventory must be saved"
+    return updated
+'''
+    runtime = CodingProgramRuntime.start(CodingProgram(goal="update inventory", source=source))
+    try:
+        assert isinstance(runtime.current.statement, Interact)
+        runtime.send_outcome(StatementOutcome.completed("scope established"))
+
+        assert isinstance(runtime.current.statement, Acquire)
+        runtime.send_outcome(StatementOutcome.completed(
+            "rows acquired",
+            outputs={"rows": [{"id": "o301", "status": "Pending"}]},
+        ))
+
+        assert isinstance(runtime.current.statement, Interact)
+        assert runtime.current.inputs == {
+            "target": {"id": "o301", "status": "Pending"},
+        }
+        runtime.send_outcome(StatementOutcome.completed("detail exposed"))
+
+        assert isinstance(runtime.current.statement, Read)
+        runtime.send_outcome(StatementOutcome.completed(
+            "quantity read",
+            outputs={"quantity": 7},
+        ))
+
+        assert isinstance(runtime.current.statement, Interact)
+        assert runtime.current.statement.required_values == {"quantity": 12}
+        runtime.send_outcome(StatementOutcome.completed("inventory saved"))
+
+        assert runtime.finished
+        assert runtime.reply == "12"
+        assert runtime.interpreter.env["return"] == 12
+        assert len(runtime.interpreter.run_log) == 5
+    finally:
+        runtime.close()
+
+
 def test_fixture_preserves_write_evidence_when_later_code_fails() -> None:
     source = '''
 def run(ctx):
@@ -748,6 +813,30 @@ def test_generate_reviewed_code_skips_revision_when_reviewer_approves() -> None:
     assert llm.calls == 2
 
 
+def test_runtime_rejects_an_executable_but_unrepaired_review_failure() -> None:
+    source = "def run(ctx):\n    return []"
+    plan = CodingPlan(
+        goal="return the requested records",
+        source=source,
+        attempts=[CodingAttempt(source=source)],
+        review=CodingReview(
+            text='{"approve": false, "edits": [{"search": "return []", '
+            '"replacement": "return missing"}]}',
+            approved=False,
+            edits=(("return []", "return missing"),),
+        ),
+    )
+
+    assert plan.executable
+    assert not plan.repaired
+    assert not plan.requirements_satisfied
+    with pytest.raises(
+        CodingCompileError,
+        match="coding review rejected the unrepaired program",
+    ):
+        program_from_plan(plan)
+
+
 @pytest.mark.parametrize("payload", [
     '{"approve": true, "edits": [{"search": "a", "replacement": "b"}]}',
     '{"approve": false, "edits": []}',
@@ -832,6 +921,45 @@ def test_generate_reviewed_code_exposes_deduplicated_mock_data_to_reviewer() -> 
     assert "aliases=['orders', 'pending orders']" in review_messages
     assert "available_fields=['id', 'status']" in review_messages
     assert review_messages.count("'status': ['Pending']") == 1
+
+
+def test_generate_reviewed_code_shares_current_view_schema_without_row_values() -> None:
+    source = (
+        "def run(ctx):\n"
+        "    scope = ctx.lookup('Top Search Terms')\n"
+        "    rows = ctx.acquire(scope, fields=['Search Term', 'Uses'])\n"
+        "    assert rows, 'search terms must exist'\n"
+        "    ranked = sorted(rows, key=lambda row: int(row['Uses']), reverse=True)\n"
+        "    return [row['Search Term'] for row in ranked[:2]]"
+    )
+    llm = _ContentSequenceLlm([
+        f"```python\n{source}\n```",
+        _review_response(approve=True),
+    ])
+    observation = SimpleNamespace(
+        tables=[{
+            "caption": "Top Search Terms",
+            "headers": ["Search Term", "Results", "Uses"],
+            "rows": [{"Search Term": "private runtime value", "Uses": "19"}],
+        }],
+        form_controls=[],
+    )
+
+    plan = generate_reviewed_code(
+        "return the two most-used search terms",
+        current_observation=observation,
+        llm=llm,
+    )
+
+    assert plan.requirements_satisfied
+    for messages in llm.messages:
+        prompt = "\n".join(
+            str(getattr(message, "content", ""))
+            for message in messages
+        )
+        assert '"source": "Top Search Terms"' in prompt
+        assert '"fields": ["Search Term", "Results", "Uses"]' in prompt
+        assert "private runtime value" not in prompt
 
 
 def test_generate_reviewed_code_gives_reviewer_static_gate_schema_and_knowledge() -> None:
@@ -985,7 +1113,7 @@ def test_generate_reviewed_code_allows_header_only_import_repair() -> None:
     assert plan.source.startswith("def run(ctx):")
 
 
-def test_generate_reviewed_code_rejects_complete_function_replacement() -> None:
+def test_generate_reviewed_code_validates_complete_function_replacement() -> None:
     initial = (
         "def run(ctx):\n"
         "    rows = []\n"
@@ -1016,12 +1144,11 @@ def test_generate_reviewed_code_rejects_complete_function_replacement() -> None:
         llm=llm,
     )
 
-    assert not plan.executable
-    assert any(
-        diagnostic.code == "LOCAL_REPAIR_INVALID"
-        and "complete run function" in diagnostic.message
-        for diagnostic in plan.attempts[-1].diagnostics
-    )
+    assert plan.executable
+    assert plan.repaired
+    assert plan.requirements_satisfied
+    assert plan.source == replacement
+    assert plan.attempts[-1].run.return_value == 42
 
 
 

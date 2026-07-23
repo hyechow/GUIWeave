@@ -7,7 +7,7 @@ scope:
 owner: gui_agent.core.coding_orchestrator.planner
 schema: code_review
 eval_suites:
-version: 21
+version: 22
 ---
 Review the candidate Python script against the user's task and supplied knowledge.
 
@@ -110,9 +110,12 @@ Otherwise return one to ten exact local edits:
 
 Each `search` must match the original candidate exactly once. Change the smallest causal region and
 preserve all unrelated code, selections, calculations, and interactions. Never include `def run`
-and its body inside `search`, and never return the complete function. A header-only edit may include
-imports immediately preceding `def run(ctx):` plus that function header when removing an invalid
-top-level import. Every `search` must copy text from the
+and its body inside `search` unless the candidate's task decomposition, source selection, or data
+shape is fundamentally wrong and correcting it genuinely requires replacing most of the function.
+A complete-function replacement is a last resort and must still preserve every valid task
+constraint and pass the same static and mock execution gates. A header-only edit may include imports
+immediately preceding `def run(ctx):` plus that function header when removing an invalid top-level
+import. Every `search` must copy text from the
 original candidate, not text produced by an earlier replacement. When static diagnostics prevented
 the mock from running, do not add cleanup refactors unrelated to those diagnostics or an explicit
 task mismatch. Fix all listed diagnostics and the causal task error in this single local repair

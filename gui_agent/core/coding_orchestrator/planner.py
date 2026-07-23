@@ -29,9 +29,6 @@ from .sandbox import (
 _SYSTEM = load_prompt_text("task.orchestrator.coding")
 _REVIEW_SYSTEM = load_prompt_text("task.orchestrator.coding_review")
 _CODE_BLOCK_RE = re.compile(r"```(?:python)?\s*\n(.*?)```", re.DOTALL | re.IGNORECASE)
-_RUN_HEADER_RE = re.compile(
-    r"(?m)^def\s+run\s*\([^\n]*\)\s*(?:->[^\n:]+)?\s*:[ \t]*$",
-)
 _REVIEW_MAX_OUTPUT_TOKENS = 3072
 
 
@@ -80,6 +77,62 @@ def _location_block(site: str, title: str, url: str) -> ContextBlock | None:
         ttl="turn",
         priority=30,
         content=f"## Current location\nsite={site!r}\ntitle={title!r}\nurl={url!r}",
+    )
+
+
+def _observation_schema_block(observation: Any) -> ContextBlock | None:
+    if observation is None:
+        return None
+    tables = getattr(observation, "tables", None) or []
+    table_schema = []
+    for table in tables[:20]:
+        if not isinstance(table, dict):
+            continue
+        caption = str(table.get("caption") or "").strip()
+        headers = [
+            str(header)
+            for header in (table.get("headers") or [])
+            if str(header).strip()
+        ]
+        if caption or headers:
+            table_schema.append({"source": caption, "fields": headers})
+
+    controls = getattr(observation, "form_controls", None) or []
+    control_schema = []
+    for control in controls[:40]:
+        if not isinstance(control, dict):
+            continue
+        label = str(
+            control.get("label")
+            or control.get("name")
+            or control.get("id")
+            or ""
+        ).strip()
+        kind = str(control.get("kind") or control.get("type") or "").strip()
+        if label:
+            control_schema.append({"field": label, "kind": kind})
+
+    if not table_schema and not control_schema:
+        return None
+    schema = {
+        "collections": table_schema,
+        "controls": control_schema,
+    }
+    return ContextBlock(
+        id="runtime.current_view_schema",
+        budget="required",
+        source_type="runtime_state",
+        source="observation",
+        ttl="turn",
+        priority=14,
+        content=(
+            "## Current-view interface schema\n"
+            f"{json.dumps(schema, ensure_ascii=False)}\n"
+            "This is an interface schema, not task-result data. A collection source names the "
+            "business scope to establish, and its fields are the exact semantic names available "
+            "to acquire from that source. Runtime code must still acquire and compute from the "
+            "actual rows."
+        ),
     )
 
 
@@ -290,10 +343,6 @@ def _parse_local_repairs(
         if not search.strip():
             rejected.append("SEARCH block is empty")
             continue
-        run_header = _RUN_HEADER_RE.search(search)
-        if run_header is not None and search[run_header.end():].strip():
-            rejected.append("SEARCH replaces the complete run function")
-            continue
         occurrences = source.count(search)
         if occurrences != 1:
             rejected.append(f"SEARCH matched {occurrences} times")
@@ -422,6 +471,7 @@ def generate_reviewed_code(
     current_site: str = "",
     current_title: str = "",
     current_url: str = "",
+    current_observation: Any = None,
     fixture: FixtureSpec | None = None,
     llm: Any = None,
 ) -> CodingPlan:
@@ -433,10 +483,12 @@ def generate_reviewed_code(
         _resolution_block(resolution),
         file_reference_block(file_section),
     ]
+    observation_schema = _observation_schema_block(current_observation)
     blocks = [
         *common_blocks,
         knowledge_block("app_knowledge", knowledge),
         _location_block(current_site, current_title, current_url),
+        observation_schema,
         _fixture_schema_block(fixture),
     ]
 
@@ -458,7 +510,7 @@ def generate_reviewed_code(
     attempts = [initial]
     review = _review_attempt(
         llm=llm,
-        blocks=common_blocks,
+        blocks=[*common_blocks, observation_schema],
         source=source,
         attempt=initial,
         fixture=fixture,

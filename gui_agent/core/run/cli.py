@@ -63,6 +63,12 @@ def main(
         help="监督者策略模块",
     )
     parser.add_argument(
+        "--orchestrator",
+        choices=["dsl", "coding"],
+        default="dsl",
+        help="规划后端：dsl（默认）或受限 Python coding orchestrator",
+    )
+    parser.add_argument(
         "--context",
         type=Path,
         help="agent-loop 可选的 context 加载路径",
@@ -114,6 +120,8 @@ def main(
         help="显式启用可选的 _skill.md 编排提示；默认仅使用应用功能说明",
     )
     args = parser.parse_args()
+    if args.context and args.orchestrator == "coding":
+        parser.error("coding orchestrator 暂不支持 --context checkpoint 恢复")
 
     # Unified headless switch (--headless flag OR env AGENT_HEADLESS): suppress the HUD and the
     # action visualizer on ALL platforms. Exported back to the env so the lazily-resolved browser
@@ -147,6 +155,7 @@ def main(
         cur_url = ""
         cur_title = ""
         cur_site = ""  # init OUTSIDE the try: an observe() failure must not leave it unbound
+        initial_obs = None
         try:
             initial_obs = bundle.make_perception(
                 platform, log_dir / "screenshot_initial.png"
@@ -233,7 +242,7 @@ def main(
                 knowledge_summary["decompose_sections"] = selected
                 print(f"Knowledge: decompose sections={selected or ['<app-overview-only>']}")
 
-            # DSL-only execution: compile a Program before opening the agent loop.
+            # Compile the selected semantic planning surface before opening the loop.
             orchestrator_context_reports: list[dict] = []
             def _compile_program():
                 from gui_agent.core.orchestrator import decompose, estimate_program_turns
@@ -271,20 +280,50 @@ def main(
                 orch_started = time.perf_counter()
                 orch_calls_before = get_llm_call_count()
                 orch_tokens_before = get_llm_token_usage()
-                program = decompose(
-                    goal,
-                    knowledge=knowledge.decompose_context(goal) if knowledge else "",
-                    file_section=file_section,
-                    current_url=cur_url,
-                    current_title=cur_title,
-                    current_site=cur_site,
-                    context_reports=orchestrator_context_reports,
-                )
+                if args.orchestrator == "coding":
+                    from gui_agent.core.coding_orchestrator import (
+                        generate_reviewed_code,
+                        program_from_plan,
+                    )
+                    from gui_agent.core.router import resolve_intent
+
+                    plan = generate_reviewed_code(
+                        goal,
+                        knowledge=knowledge.decompose_context(goal) if knowledge else "",
+                        file_section=file_section,
+                        current_url=cur_url,
+                        current_title=cur_title,
+                        current_site=cur_site,
+                        current_observation=initial_obs,
+                        resolution=resolve_intent(goal),
+                    )
+                    program = program_from_plan(plan)
+                    orchestrator_context_reports.append({
+                        "kind": "coding_review",
+                        "source": plan.source,
+                        "approved": bool(plan.review and plan.review.approved),
+                        "repaired": plan.repaired,
+                    })
+                else:
+                    program = decompose(
+                        goal,
+                        knowledge=knowledge.decompose_context(goal) if knowledge else "",
+                        file_section=file_section,
+                        current_url=cur_url,
+                        current_title=cur_title,
+                        current_site=cur_site,
+                        context_reports=orchestrator_context_reports,
+                    )
                 orch_tokens_after = get_llm_token_usage()
+                metric_name = (
+                    "orchestrator.coding"
+                    if args.orchestrator == "coding"
+                    else "orchestrator.decompose"
+                )
                 orchestrator_metrics = {
-                    "timings": {"orchestrator.decompose": time.perf_counter() - orch_started},
+                    "timings": {metric_name: time.perf_counter() - orch_started},
                     "token_usage": {
-                        "orchestrator.decompose": {
+                        metric_name: {
                             "input": orch_tokens_after[0] - orch_tokens_before[0],
                             "output": orch_tokens_after[1] - orch_tokens_before[1],
                         }
@@ -294,9 +333,13 @@ def main(
                 # The config must ALSO reach execution-time Transition deterministically — the
                 # supervisor's task-level constraints flow to every statement decision
                 # them (LLM distillation of config into constraints proved unstable).
-                print(f"Orchestrator: 分解为 {len(program.statements)} 条语句")
+                if args.orchestrator == "coding":
+                    print("Orchestrator: 已生成并审查受限 Python 程序")
+                    print(program.source)
+                else:
+                    print(f"Orchestrator: 分解为 {len(program.statements)} 条语句")
 
-                if args.dynamic_max_turns:
+                if args.dynamic_max_turns and isinstance(program, Program):
                     run_max_turns = estimate_program_turns(program, floor=args.max_turns)
                     if run_max_turns != args.max_turns:
                         print(
