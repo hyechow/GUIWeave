@@ -23,7 +23,12 @@ from dotenv import load_dotenv  # noqa: E402
 
 load_dotenv(PROJECT_ROOT / ".env")
 
-from gui_agent.core.coding_orchestrator import FixtureSpec, TraceEvent, generate_code  # noqa: E402
+from gui_agent.core.coding_orchestrator import (  # noqa: E402
+    FixtureSpec,
+    TraceEvent,
+    generate_code,
+    generate_reviewed_code,
+)
 from gui_agent.core.data_types import ArithmeticStep  # noqa: E402
 from gui_agent.core.orchestrator import (  # noqa: E402
     Acquire,
@@ -619,11 +624,21 @@ def _semantic_field_names(event: TraceEvent) -> set[str]:
 
 def _interaction_input(event: TraceEvent, field: str) -> Any:
     wanted = field.casefold().replace(" ", "_")
-    payload = event.kwargs.get("values", event.kwargs.get("inputs", {}))
+    payload = event.kwargs.get("required_values", {})
     for key, value in payload.items():
         if str(key).casefold().replace(" ", "_") == wanted:
             return value
     return None
+
+
+def _interaction_target(event: TraceEvent) -> Any:
+    inputs = event.kwargs.get("inputs", {})
+    if not isinstance(inputs, dict):
+        return None
+    return next(
+        (value for value in inputs.values() if isinstance(value, dict)),
+        None,
+    )
 
 
 def _mapping_value(mapping: Any, field: str) -> Any:
@@ -924,7 +939,7 @@ def grade_coding_trace(
         ]
         valid = [
             event for event in durable
-            if _target_id(event.kwargs.get("target"), fixture=fixture) == "order-302"
+            if _target_id(_interaction_target(event), fixture=fixture) == "order-302"
             and "cancel" in _event_text(event)
             and "302" in _event_text(event)
         ]
@@ -975,7 +990,7 @@ def grade_coding_trace(
         ]
         valid = [
             event for event in durable
-            if _target_id(event.kwargs.get("target"), fixture=fixture) == "sarah-pending-new"
+            if _target_id(_interaction_target(event), fixture=fixture) == "sarah-pending-new"
             and "notif" in _event_text(event)
             and "the order is ready to be shipped soon!" in _event_text(event)
         ]
@@ -1014,7 +1029,7 @@ def grade_coding_trace(
         fixture = fixture_for_task(task_id)
         valid = [
             event for event in durable
-            if _target_id(event.kwargs.get("target"), fixture=fixture) == "taurus-parent"
+            if _target_id(_interaction_target(event), fixture=fixture) == "taurus-parent"
             and "out of stock" in _event_text(event)
         ]
         if len(valid) != 1 or len(durable) != 1:
@@ -1039,7 +1054,7 @@ def grade_coding_trace(
         expected = "2 customer(s) love it!"
         valid = [
             event for event in durable
-            if _target_id(event.kwargs.get("target"), fixture=fixture) == "bella-parent"
+            if _target_id(_interaction_target(event), fixture=fixture) == "bella-parent"
             and expected.casefold() in _event_text(event)
         ]
         if len(valid) != 1 or len(durable) != 1:
@@ -1114,7 +1129,7 @@ def grade_coding_trace(
             if quantity is None:
                 quantity = _interaction_input(event, "stock_quantity")
             if (
-                _target_id(event.kwargs.get("target"), fixture=fixture) == "cronus-33-blue"
+                _target_id(_interaction_target(event), fixture=fixture) == "cronus-33-blue"
                 and quantity == 12
                 and any(word in _event_text(event) for word in ("stock", "inventory", "quantity"))
             ):
@@ -1150,7 +1165,7 @@ def grade_coding_trace(
             if event.kwargs.get("persistence") == "explicit_commit"
         ]
         actual = {
-            _target_id(event.kwargs.get("target"), fixture=fixture)
+            _target_id(_interaction_target(event), fixture=fixture)
             for event in durable
             if "approv" in _event_text(event)
         }
@@ -1195,14 +1210,14 @@ def grade_coding_trace(
         product_words = ("product", "configuration", "configurable", "产品", "配置")
         first = next((
             index for index, event in enumerate(durable)
-            if _target_id(event.kwargs.get("target"), fixture=fixture) == "attribute-size"
+            if _target_id(_interaction_target(event), fixture=fixture) == "attribute-size"
             and "xxs" in _event_text(event)
             and "size" in _event_text(event)
             and any(word in _event_text(event) for word in attribute_words)
         ), None)
         second = next((
             index for index, event in enumerate(durable)
-            if _target_id(event.kwargs.get("target"), fixture=fixture) == "nona-parent"
+            if _target_id(_interaction_target(event), fixture=fixture) == "nona-parent"
             and all(value in _event_text(event) for value in ("nona", "blue", "purple", "xxs"))
             and any(word in _event_text(event) for word in product_words)
         ), None)
@@ -1234,8 +1249,8 @@ def grade_coding_trace(
         if not required_read_targets.issubset(read_targets):
             failures.append("GT778:NOT_ALL_DETAILS_READ")
         actual = {
-            _target_id(event.kwargs.get("target"), fixture=fixture):
-                event.kwargs.get("values", {}).get("price")
+            _target_id(_interaction_target(event), fixture=fixture):
+                event.kwargs.get("required_values", {}).get("price")
             for event in interactions
             if event.kwargs.get("persistence") == "explicit_commit"
         }
@@ -1356,8 +1371,15 @@ def grade_dsl_program(task_id: int, program) -> list[str]:
     return [f"UNSUPPORTED_TASK:{task_id}"]
 
 
-def _coding_sample(task: dict, knowledge: str, resolution: Any) -> dict[str, Any]:
-    plan = generate_code(
+def _coding_sample(
+    task: dict,
+    knowledge: str,
+    resolution: Any,
+    *,
+    reviewed: bool = False,
+) -> dict[str, Any]:
+    generator = generate_reviewed_code if reviewed else generate_code
+    plan = generator(
         task["intent"],
         knowledge=knowledge,
         resolution=resolution,
@@ -1367,15 +1389,24 @@ def _coding_sample(task: dict, knowledge: str, resolution: Any) -> dict[str, Any
     final = plan.attempts[-1]
     trace = final.run.trace if final.run is not None else []
     failures = [] if plan.executable else ["CODING_NOT_EXECUTABLE"]
-    if plan.executable:
+    if reviewed:
+        if not plan.requirements_satisfied:
+            failures.append("PROMPT_REQUIREMENTS_NOT_SATISFIED")
+    elif plan.executable:
+        # Retained only for comparison with earlier experiment reports. The
+        # reviewed surface uses prompt-based semantic review instead of these
+        # task/fixture-specific frozen checks.
         failures.extend(grade_coding_trace(
             task["task_id"],
             trace,
             final.run.return_value if final.run is not None else None,
         ))
+    reviews = plan.reviews or ([plan.review] if plan.review is not None else [])
     return {
         "ok": not failures,
         "executable": plan.executable,
+        "requirements_satisfied": plan.requirements_satisfied if reviewed else None,
+        "evaluation_mode": "prompt_review" if reviewed else "legacy_frozen_grader",
         "first_executable": bool(
             plan.attempts
             and not plan.attempts[0].diagnostics
@@ -1383,12 +1414,23 @@ def _coding_sample(task: dict, knowledge: str, resolution: Any) -> dict[str, Any
             and plan.attempts[0].run.ok
         ),
         "failures": failures,
-        "calls": len(plan.attempts),
+        "calls": 1 + len(reviews) if reviewed else len(plan.attempts),
         "repairs": int(plan.repaired),
-        "input_tokens": sum(attempt.input_tokens for attempt in plan.attempts),
-        "output_tokens": sum(attempt.output_tokens for attempt in plan.attempts),
-        "seconds": round(sum(attempt.seconds for attempt in plan.attempts), 3),
+        "input_tokens": (
+            sum(attempt.input_tokens for attempt in plan.attempts)
+            + sum(review.input_tokens for review in reviews)
+        ),
+        "output_tokens": (
+            sum(attempt.output_tokens for attempt in plan.attempts)
+            + sum(review.output_tokens for review in reviews)
+        ),
+        "seconds": round(
+            sum(attempt.seconds for attempt in plan.attempts)
+            + sum(review.seconds for review in reviews),
+            3,
+        ),
         "source": plan.source,
+        "review": asdict(plan.review) if plan.review is not None else None,
         "attempts": [
             {
                 "source": attempt.source,
@@ -1396,10 +1438,19 @@ def _coding_sample(task: dict, knowledge: str, resolution: Any) -> dict[str, Any
                 "run_error": attempt.run.error if attempt.run is not None else "",
                 "trace": [asdict(event) for event in attempt.run.trace]
                 if attempt.run is not None else [],
+                "writes": [asdict(write) for write in attempt.run.writes]
+                if attempt.run is not None else [],
+                "final_state": attempt.run.final_state
+                if attempt.run is not None else {},
             }
             for attempt in plan.attempts
         ],
         "trace": [asdict(event) for event in trace],
+        "writes": [
+            asdict(write)
+            for write in (final.run.writes if final.run is not None else [])
+        ],
+        "final_state": final.run.final_state if final.run is not None else {},
         "diagnostics": [
             diagnostic.render() for attempt in plan.attempts for diagnostic in attempt.diagnostics
         ],
@@ -1480,7 +1531,12 @@ def main() -> int:
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument("--tasks", nargs="+", type=int, default=[549, 778])
     parser.add_argument("--k", type=int, default=5)
-    parser.add_argument("--surfaces", nargs="+", choices=["dsl", "coding"], default=["dsl", "coding"])
+    parser.add_argument(
+        "--surfaces",
+        nargs="+",
+        choices=["dsl", "coding", "coding_reviewed"],
+        default=["dsl", "coding"],
+    )
     args = parser.parse_args()
     unsupported = set(args.tasks) - SUPPORTED_TASKS
     if unsupported:
@@ -1502,11 +1558,15 @@ def main() -> int:
         for surface in args.surfaces:
             samples = []
             for sample_index in range(args.k):
-                sample = (
-                    _coding_sample(task, task_knowledge, resolution)
-                    if surface == "coding"
-                    else _dsl_sample(task, task_knowledge, resolution)
-                )
+                if surface in {"coding", "coding_reviewed"}:
+                    sample = _coding_sample(
+                        task,
+                        task_knowledge,
+                        resolution,
+                        reviewed=surface == "coding_reviewed",
+                    )
+                else:
+                    sample = _dsl_sample(task, task_knowledge, resolution)
                 samples.append(sample)
                 failures.update(f"{surface}:{failure}" for failure in sample["failures"])
                 mark = "✓" if sample["ok"] else "✗"
@@ -1527,16 +1587,27 @@ def main() -> int:
         samples = [sample for row in results for sample in row["surfaces"][surface]["samples"]]
         summaries[surface] = _surface_summary(samples)
     verdict: dict[str, bool] = {}
-    if "coding" in summaries:
+    for coding_surface in ("coding", "coding_reviewed"):
+        if coding_surface not in summaries:
+            continue
         per_task_passes = {
-            row["task_id"]: sum(sample["ok"] for sample in row["surfaces"]["coding"]["samples"])
+            row["task_id"]: sum(
+                sample["ok"] for sample in row["surfaces"][coding_surface]["samples"]
+            )
             for row in results
         }
-        verdict.update(coding_verdict(
-            summaries["coding"],
+        surface_verdict = coding_verdict(
+            summaries[coding_surface],
             per_task_passes,
             samples_per_task=args.k,
-        ))
+        )
+        if coding_surface == "coding":
+            verdict.update(surface_verdict)
+        else:
+            verdict.update({
+                key.replace("coding_", "coding_reviewed_", 1): value
+                for key, value in surface_verdict.items()
+            })
     if {"coding", "dsl"}.issubset(summaries):
         verdict["quality_win"] = (
             summaries["coding"]["semantic_passes"] > summaries["dsl"]["semantic_passes"]

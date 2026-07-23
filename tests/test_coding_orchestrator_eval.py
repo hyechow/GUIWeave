@@ -1,15 +1,53 @@
 from __future__ import annotations
 
-from gui_agent.core.coding_orchestrator import TraceEvent, execute_code
+from gui_agent.core.coding_orchestrator import (
+    CodingAttempt,
+    CodingPlan,
+    CodingReview,
+    CodingRunResult,
+    TraceEvent,
+    execute_code,
+)
 from gui_agent.core.orchestrator import Program
 from gui_agent.core.orchestrator.decomposer import _PlanDraft, _StepDraft, to_program
 from gui_agent.core.orchestrator.program import ObservationBinding, OutputSpec, ValueRef
 from scripts.coding_orchestrator_eval import (
+    _coding_sample,
     coding_verdict,
     fixture_for_task,
     grade_coding_trace,
     grade_dsl_program,
 )
+
+
+def test_reviewed_sample_uses_prompt_review_not_frozen_task_answer(
+    monkeypatch,
+) -> None:
+    plan = CodingPlan(
+        goal="perform the requested task",
+        source="def run(ctx):\n    assert ctx, 'runtime exists'",
+        attempts=[CodingAttempt(
+            source="def run(ctx):\n    assert ctx, 'runtime exists'",
+            run=CodingRunResult(ok=True),
+        )],
+        review=CodingReview(text="APPROVE", approved=True),
+    )
+    monkeypatch.setattr(
+        "scripts.coding_orchestrator_eval.generate_reviewed_code",
+        lambda *args, **kwargs: plan,
+    )
+
+    sample = _coding_sample(
+        {"task_id": 778, "intent": "perform the requested task"},
+        "",
+        None,
+        reviewed=True,
+    )
+
+    assert sample["ok"]
+    assert sample["requirements_satisfied"]
+    assert sample["evaluation_mode"] == "prompt_review"
+    assert sample["failures"] == []
 
 
 def test_coding_verdict_separates_functional_and_stability_gates() -> None:
@@ -43,7 +81,7 @@ def run(ctx):
         targets.append((product, price))
     assert targets, "at least one size 28 Sahara variant must exist"
     for product, price in targets:
-        saved = ctx.interact("save discounted price", success="price saved", target=product, values={"price": price}, persistence="explicit_commit")
+        saved = ctx.interact("save discounted price", success="price saved", inputs={"product": product}, required_values={"price": price}, persistence="explicit_commit")
         assert saved, "discounted price must be saved"
 '''
     run = execute_code(source, fixture_for_task(778))
@@ -86,8 +124,8 @@ def run(ctx):
     saved = ctx.interact(
         "mark Taurus Elements Shell out of stock",
         success="Taurus Elements Shell stock status is saved as Out of Stock",
-        target=parents[0],
-        values={"stock_status": "Out of Stock"},
+        inputs={"product": parents[0]},
+        required_values={"stock_status": "Out of Stock"},
         persistence="explicit_commit",
     )
     assert saved, "the parent stock status must be saved"
@@ -117,8 +155,8 @@ def run(ctx):
     saved = ctx.interact(
         "update Bella Tank product description",
         success=f"Bella Tank Short Description is saved as {description}",
-        target=parents[0],
-        values={"short_description": description},
+        inputs={"product": parents[0]},
+        required_values={"short_description": description},
         persistence="explicit_commit",
     )
     assert saved, "the computed product description must be saved"
@@ -269,8 +307,8 @@ def run(ctx):
         saved = ctx.interact(
             "cancel order 302",
             success="order 302 status is Canceled",
-            target=target,
-            values={"status": "Canceled"},
+            inputs={"order": target},
+            required_values={"status": "Canceled"},
             persistence="explicit_commit",
         )
         assert saved, "order 302 must be canceled"
@@ -280,7 +318,7 @@ def run(ctx):
     saved = ctx.interact(
         "create Cart Price Rule spring sale",
         success="spring sale cart price rule is active with a 20 percent discount",
-        values={
+        required_values={
             "name": "spring sale",
             "website": "Main Website",
             "customer_groups": ["General"],
@@ -311,8 +349,8 @@ def run(ctx):
         saved = ctx.interact(
             "cancel order 302",
             success="order 302 status is Canceled",
-            target=order,
-            values={"Status": "Canceled"},
+            inputs={"order": order},
+            required_values={"Status": "Canceled"},
             persistence="explicit_commit",
         )
         assert saved, "order 302 must be canceled"
@@ -401,8 +439,8 @@ def run(ctx):
         saved = ctx.interact(
             "approve the qualifying review",
             success="the review status is saved as Approved",
-            target=target,
-            values={"status": "Approved"},
+            inputs={"review": target},
+            required_values={"status": "Approved"},
             persistence="explicit_commit",
         )
         assert saved, "the qualifying review must be approved"
@@ -421,8 +459,8 @@ def run(ctx):
     saved = ctx.interact(
         "add DHL tracking number 239028439840 to order 301 shipment",
         success="DHL tracking number 239028439840 is saved",
-        target=orders[0],
-        values={"carrier": "DHL", "tracking_number": "239028439840"},
+        inputs={"order": orders[0]},
+        required_values={"carrier": "DHL", "tracking_number": "239028439840"},
         persistence="explicit_commit",
     )
     assert saved, "tracking must be saved"
@@ -432,7 +470,7 @@ def run(ctx):
     shown = ctx.interact(
         "show Sales Orders report from 02/01/2023 to 02/28/2023",
         success="Sales Orders report for 02/01/2023 through 02/28/2023 is rendered",
-        values={"from": "02/01/2023", "to": "02/28/2023"},
+        required_values={"from": "02/01/2023", "to": "02/28/2023"},
         persistence="immediate",
     )
     assert shown, "the requested report must be rendered"
@@ -467,8 +505,8 @@ def run(ctx):
         saved = ctx.interact(
             "notify the customer about this order",
             success="the order comment is saved and the customer is notified",
-            target=target,
-            values={"message": "the order is ready to be shipped soon!"},
+            inputs={"order": target},
+            required_values={"message": "the order is ready to be shipped soon!"},
             persistence="explicit_commit",
         )
         assert saved, "the customer notification must be saved"
@@ -476,6 +514,15 @@ def run(ctx):
     run = execute_code(source, fixture_for_task(491))
 
     assert run.ok, run.error
+    assert len(run.writes) == 1
+    assert run.writes[0].target_id == "sarah-pending-new"
+    assert run.writes[0].required_values == {
+        "message": "the order is ready to be shipped soon!",
+    }
+    assert run.writes[0].applied
+    assert run.final_state["sarah-pending-new"]["message"] == (
+        "the order is ready to be shipped soon!"
+    )
     assert grade_coding_trace(491, run.trace, run.return_value) == []
 
 
@@ -501,16 +548,16 @@ def run(ctx):
     option_saved = ctx.interact(
         "add an option to the Size product attribute",
         success="the Size attribute contains the XXS option",
-        target=size_attributes[0],
-        values={"attribute": "size", "option": "XXS"},
+        inputs={"attribute": size_attributes[0]},
+        required_values={"attribute": "size", "option": "XXS"},
         persistence="explicit_commit",
     )
     assert option_saved, "the XXS option must be saved"
     configurations_saved = ctx.interact(
         "add configurations to the Nona product",
         success="the Nona product contains Blue XXS and Purple XXS configurations",
-        target=parents[0],
-        values={"size": "XXS", "colors": ["Blue", "Purple"]},
+        inputs={"product": parents[0]},
+        required_values={"size": "XXS", "colors": ["Blue", "Purple"]},
         persistence="explicit_commit",
     )
     assert configurations_saved, "the requested Nona configurations must be saved"
@@ -518,6 +565,18 @@ def run(ctx):
     run = execute_code(source, fixture_for_task(550))
 
     assert run.ok, run.error
+    assert [write.target_id for write in run.writes] == [
+        "attribute-size",
+        "nona-parent",
+    ]
+    assert [write.required_values for write in run.writes] == [
+        {"attribute": "size", "option": "XXS"},
+        {"size": "XXS", "colors": ["Blue", "Purple"]},
+    ]
+    assert all(write.applied for write in run.writes)
+    assert run.final_state["attribute-size"]["option"] == "XXS"
+    assert run.final_state["nona-parent"]["size"] == "XXS"
+    assert run.final_state["nona-parent"]["colors"] == ["Blue", "Purple"]
     assert grade_coding_trace(550, run.trace, run.return_value) == []
 
 
@@ -544,8 +603,8 @@ def run(ctx):
         saved = ctx.interact(
             "update product inventory quantity",
             success="the product quantity is durably saved",
-            target=product,
-            values={"quantity": new_quantity},
+            inputs={"product": product},
+            required_values={"quantity": new_quantity},
             persistence="explicit_commit",
         )
         assert saved, "the updated inventory quantity must be saved"
@@ -553,13 +612,20 @@ def run(ctx):
     run = execute_code(source, fixture_for_task(768))
 
     assert run.ok, run.error
+    assert len(run.writes) == 1
+    assert run.writes[0].target_id == "cronus-33-blue"
+    assert run.writes[0].before["quantity"] == 7
+    assert run.writes[0].after["quantity"] == 12
+    assert run.writes[0].required_values == {"quantity": 12}
+    assert run.writes[0].applied
+    assert run.final_state["cronus-33-blue"]["quantity"] == 12
     assert grade_coding_trace(768, run.trace, run.return_value) == []
 
 
 def test_task_778_coding_trace_rejects_wrong_member_and_price() -> None:
     trace = [TraceEvent("interact", ("save",), {
-        "target": {"id": "sahara-30"},
-        "values": {"price": 1.0},
+        "inputs": {"product": {"id": "sahara-30"}},
+        "required_values": {"price": 1.0},
         "persistence": "explicit_commit",
     })]
 
@@ -572,12 +638,12 @@ def test_task_549_coding_trace_requires_ordered_durable_business_states() -> Non
     trace = [
         TraceEvent("interact", ("add option to existing Size attribute",), {
             "success": "Size attribute options contain XXXL",
-            "values": {"attribute": "size", "option": "XXXL"},
+            "required_values": {"attribute": "size", "option": "XXXL"},
             "persistence": "explicit_commit",
         }),
         TraceEvent("interact", ("configure Minerva LumaTech V-Tee product",), {
             "success": "configurable product configuration contains green XXXL",
-            "values": {"product": "Minerva", "color": "green", "size": "XXXL"},
+            "required_values": {"product": "Minerva", "color": "green", "size": "XXXL"},
             "persistence": "explicit_commit",
         }),
     ]
