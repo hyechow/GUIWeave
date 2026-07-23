@@ -65,6 +65,8 @@ class CodingAttempt:
 class CodingReview:
     text: str
     approved: bool
+    edits: tuple[tuple[str, str], ...] = ()
+    error: str = ""
     input_tokens: int = 0
     output_tokens: int = 0
     seconds: float = 0.0
@@ -76,14 +78,14 @@ class CodingPlan:
     source: str
     attempts: list[CodingAttempt] = field(default_factory=list)
     review: CodingReview | None = None
-    reviews: list[CodingReview] = field(default_factory=list)
 
     @property
     def executable(self) -> bool:
-        if not self.attempts:
-            return False
-        attempt = self.attempts[-1]
-        return not attempt.diagnostics and (attempt.run is None or attempt.run.ok)
+        return bool(
+            self.attempts
+            and not (attempt := self.attempts[-1]).diagnostics
+            and (attempt.run is None or attempt.run.ok)
+        )
 
     @property
     def repaired(self) -> bool:
@@ -91,16 +93,4 @@ class CodingPlan:
 
     @property
     def requirements_satisfied(self) -> bool:
-        """Whether the reviewer accepted or produced the executable result."""
         return bool(self.executable and self.review is not None)
-
-
-__all__ = [
-    "CodeDiagnostic",
-    "CodingAttempt",
-    "CodingPlan",
-    "CodingReview",
-    "CodingRunResult",
-    "TraceEvent",
-    "WriteEvent",
-]

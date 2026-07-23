@@ -9,12 +9,14 @@ from __future__ import annotations
 import ast
 import copy
 import datetime
+import __future__
 import math
 import multiprocessing
 import queue
 import re
 import time as _time
 import traceback
+import typing
 import _strptime
 from dataclasses import dataclass, field
 from typing import Any
@@ -25,7 +27,20 @@ from .models import CodeDiagnostic, CodingRunResult, TraceEvent, WriteEvent
 
 
 CTX_METHODS = frozenset({"interact", "lookup", "acquire", "read", "compute", "command"})
-SAFE_MODULES = {"datetime": datetime, "math": math}
+CTX_SIGNATURES = {
+    "lookup": (("entity", "field", "fallback"), {"entity"}),
+    "acquire": (("scope", "fields", "coverage"), {"scope", "fields"}),
+    "read": (("target", "fields"), {"fields"}),
+    "interact": (
+        ("goal", "success", "inputs", "required_values", "observe_fields", "persistence"),
+        {"goal", "success"},
+    ),
+    "command": (("capability",), {"capability"}),
+    "compute": (("operation",), {"operation"}),
+}
+SAFE_MODULES = {
+    "__future__": __future__, "datetime": datetime, "math": math, "typing": typing,
+}
 _RUNTIME_MODULES = {"_strptime": _strptime, "time": _time}
 
 
@@ -66,7 +81,10 @@ SAFE_BUILTINS = {
     "str": str,
     "sum": sum,
     "tuple": tuple,
+    "AssertionError": AssertionError,
+    "Exception": Exception,
     "KeyError": KeyError,
+    "RuntimeError": RuntimeError,
     "TypeError": TypeError,
     "ValueError": ValueError,
     "zip": zip,
@@ -79,6 +97,10 @@ SAFE_METHODS = frozenset({
     "strip", "strptime", "upper", "values", "zfill",
 })
 SAFE_PROPERTIES = frozenset({"day", "hour", "microsecond", "minute", "month", "second", "year"})
+IDENTITY_FIELDS = (
+    "id", "ID", "order_id", "increment_id", "action_url", "Action_url", "Action",
+    "sku", "SKU", "name", "Name", "title", "Title", "key",
+)
 
 
 @dataclass(frozen=True)
@@ -88,12 +110,36 @@ class FixtureSpec:
     command_results: dict[str, Any] = field(default_factory=dict)
     compute_results: dict[str, Any] = field(default_factory=dict)
 
+    def fields(self, *, include_reads: bool = False) -> set[str]:
+        records = [row for rows in self.lookups.values() for row in rows]
+        if include_reads:
+            records.extend(self.reads.values())
+        return {str(field_name) for record in records for field_name in record}
+
 
 @dataclass(frozen=True)
 class LookupScope:
     entity: str
     field: str
     fallback: str = ""
+
+
+def _ctx_method(node: ast.AST) -> str | None:
+    if (
+        isinstance(node, ast.Call)
+        and isinstance(node.func, ast.Attribute)
+        and isinstance(node.func.value, ast.Name)
+        and node.func.value.id == "ctx"
+    ):
+        return node.func.attr
+    return None
+
+
+def _call_argument(node: ast.Call, name: str, position: int) -> ast.AST | None:
+    return next(
+        (keyword.value for keyword in node.keywords if keyword.arg == name),
+        node.args[position] if len(node.args) > position else None,
+    )
 
 
 def _diag(node: ast.AST, code: str, message: str) -> CodeDiagnostic:
@@ -217,7 +263,7 @@ class _SafetyVisitor(ast.NodeVisitor):
         self.visit(node.value)
 
     def visit_Call(self, node: ast.Call) -> None:  # noqa: N802
-        ctx_method = None
+        ctx_method = _ctx_method(node)
         if isinstance(node.func, ast.Name):
             if (
                 node.func.id not in SAFE_BUILTINS
@@ -229,8 +275,6 @@ class _SafetyVisitor(ast.NodeVisitor):
                 ))
         elif isinstance(node.func, ast.Attribute):
             self.visit(node.func)
-            if isinstance(node.func.value, ast.Name) and node.func.value.id == "ctx":
-                ctx_method = node.func.attr
         else:
             self.diagnostics.append(_diag(node, "UNSAFE_CALL", "dynamic calls are not allowed"))
         for argument in node.args:
@@ -243,45 +287,10 @@ class _SafetyVisitor(ast.NodeVisitor):
             self._check_ctx_signature(node, ctx_method)
 
     def _check_ctx_signature(self, node: ast.Call, method: str) -> None:
-        signatures = {
-            "lookup": ({"entity"}, {"entity", "field", "fallback"}, 1),
-            "acquire": ({"scope", "fields"}, {"scope", "fields", "coverage"}, 1),
-            "read": ({"fields"}, {"target", "fields"}, 1),
-            "interact": (
-                {"goal", "success"},
-                {
-                    "goal",
-                    "success",
-                    "inputs",
-                    "required_values",
-                    "observe_fields",
-                    "persistence",
-                },
-                1,
-            ),
-            "command": ({"capability"}, None, 1),
-            "compute": ({"operation"}, None, 1),
-        }
-        required, allowed, positional_slots = signatures[method]
+        positional_names, required = CTX_SIGNATURES[method]
         keyword_names = {keyword.arg for keyword in node.keywords if keyword.arg is not None}
-        supplied = set(keyword_names)
-        positional_names = {
-            "lookup": ["entity", "field", "fallback"],
-            "acquire": ["scope", "fields", "coverage"],
-            "read": ["target", "fields"],
-            "interact": [
-                "goal",
-                "success",
-                "inputs",
-                "required_values",
-                "observe_fields",
-                "persistence",
-            ],
-            "command": ["capability"],
-            "compute": ["operation"],
-        }[method]
         positional_supplied = set(positional_names[:len(node.args)])
-        supplied.update(positional_supplied)
+        supplied = keyword_names | positional_supplied
         duplicated = sorted(positional_supplied & keyword_names)
         if duplicated:
             self.diagnostics.append(_diag(
@@ -296,14 +305,14 @@ class _SafetyVisitor(ast.NodeVisitor):
                 "CTX_SIGNATURE",
                 f"ctx.{method} is missing required arguments {missing}",
             ))
-        if len(node.args) > positional_slots:
+        if len(node.args) > 1:
             self.diagnostics.append(_diag(
                 node,
                 "CTX_SIGNATURE",
-                f"ctx.{method} accepts at most {positional_slots} positional argument",
+                f"ctx.{method} accepts at most one positional argument",
             ))
-        if allowed is not None:
-            unexpected = sorted(name for name in keyword_names if name not in allowed)
+        if method not in {"command", "compute"}:
+            unexpected = sorted(keyword_names - set(positional_names))
             if unexpected:
                 self.diagnostics.append(_diag(
                     node,
@@ -311,10 +320,7 @@ class _SafetyVisitor(ast.NodeVisitor):
                     f"ctx.{method} has unexpected arguments {unexpected}",
                 ))
         if method == "acquire":
-            scope = next(
-                (keyword.value for keyword in node.keywords if keyword.arg == "scope"),
-                node.args[0] if node.args else None,
-            )
+            scope = _call_argument(node, "scope", 0)
             if isinstance(scope, ast.Constant) and scope.value is None:
                 self.diagnostics.append(_diag(
                     node,
@@ -373,11 +379,11 @@ class _SafetyVisitor(ast.NodeVisitor):
                 (
                     child
                     for child in ast.walk(argument)
-                    if isinstance(child, (ast.Set, ast.SetComp))
+                    if isinstance(child, (ast.Set, ast.SetComp, ast.Tuple))
                     or (
                         isinstance(child, ast.Call)
                         and isinstance(child.func, ast.Name)
-                        and child.func.id == "set"
+                        and child.func.id in {"set", "tuple"}
                     )
                 ),
                 None,
@@ -388,19 +394,9 @@ class _SafetyVisitor(ast.NodeVisitor):
                     "INTERACT_JSON_VALUE",
                     (
                         f"ctx.interact {argument_name} must contain JSON values; "
-                        "replace set values with deterministic lists"
+                        "replace sets and tuples with deterministic lists"
                     ),
                 ))
-
-
-def _ctx_acquire_assignment(node: ast.AST) -> bool:
-    return (
-        isinstance(node, ast.Call)
-        and isinstance(node.func, ast.Attribute)
-        and isinstance(node.func.value, ast.Name)
-        and node.func.value.id == "ctx"
-        and node.func.attr == "acquire"
-    )
 
 
 def _lookup_entity_diagnostics(function: ast.FunctionDef) -> list[CodeDiagnostic]:
@@ -410,34 +406,13 @@ def _lookup_entity_diagnostics(function: ast.FunctionDef) -> list[CodeDiagnostic
         if isinstance(node, ast.Assign)
         and len(node.targets) == 1
         and isinstance(target := node.targets[0], ast.Name)
-        and isinstance(node.value, ast.Call)
-        and isinstance(node.value.func, ast.Attribute)
-        and isinstance(node.value.func.value, ast.Name)
-        and node.value.func.value.id == "ctx"
-        and node.value.func.attr == "lookup"
+        and _ctx_method(node.value) == "lookup"
     }
     diagnostics: list[CodeDiagnostic] = []
     for node in ast.walk(function):
-        if not (
-            isinstance(node, ast.Call)
-            and isinstance(node.func, ast.Attribute)
-            and isinstance(node.func.value, ast.Name)
-            and node.func.value.id == "ctx"
-            and node.func.attr == "lookup"
-        ):
+        if _ctx_method(node) != "lookup":
             continue
-        entity = (
-            node.args[0]
-            if node.args
-            else next(
-                (
-                    keyword.value
-                    for keyword in node.keywords
-                    if keyword.arg == "entity"
-                ),
-                None,
-            )
-        )
+        entity = _call_argument(node, "entity", 0)
         if isinstance(entity, ast.Name) and entity.id in scope_vars:
             diagnostics.append(_diag(
                 entity,
@@ -461,7 +436,7 @@ def _business_identity_break_diagnostics(
         target = node.targets[0]
         if not isinstance(target, ast.Name):
             continue
-        if _ctx_acquire_assignment(node.value):
+        if _ctx_method(node.value) == "acquire":
             collection_vars.add(target.id)
         dependencies[target.id] = _loaded_names(node.value)
     changed = True
@@ -513,18 +488,7 @@ def _date_constructor_diagnostics(function: ast.FunctionDef) -> list[CodeDiagnos
         )
         if function_name not in {"date", "datetime"}:
             continue
-        day = (
-            node.args[2]
-            if len(node.args) >= 3
-            else next(
-                (
-                    keyword.value
-                    for keyword in node.keywords
-                    if keyword.arg == "day"
-                ),
-                None,
-            )
-        )
+        day = _call_argument(node, "day", 2)
         if (
             isinstance(day, ast.Constant)
             and isinstance(day.value, int)
@@ -544,22 +508,9 @@ def _date_constructor_diagnostics(function: ast.FunctionDef) -> list[CodeDiagnos
 def _durable_interact_calls(function: ast.FunctionDef) -> list[ast.Call]:
     calls: list[ast.Call] = []
     for node in ast.walk(function):
-        if not (
-            isinstance(node, ast.Call)
-            and isinstance(node.func, ast.Attribute)
-            and isinstance(node.func.value, ast.Name)
-            and node.func.value.id == "ctx"
-            and node.func.attr == "interact"
-        ):
+        if _ctx_method(node) != "interact":
             continue
-        persistence = next(
-            (
-                keyword.value
-                for keyword in node.keywords
-                if keyword.arg == "persistence"
-            ),
-            None,
-        )
+        persistence = _call_argument(node, "persistence", 5)
         if (
             isinstance(persistence, ast.Constant)
             and persistence.value == "explicit_commit"
@@ -661,7 +612,11 @@ def validate_code(
     visitor = _SafetyVisitor(function)
     for node in tree.body:
         visitor.visit(node)
-    if require_business_assertions and not visitor.assertions:
+    if (
+        require_business_assertions
+        and not visitor.assertions
+        and not any(isinstance(node, ast.Raise) for node in ast.walk(function))
+    ):
         visitor.diagnostics.append(_diag(
             function,
             "BUSINESS_ASSERTION_REQUIRED",
@@ -674,15 +629,11 @@ def validate_code(
     return visitor.diagnostics
 
 
-def _lookup_key(value: str) -> str:
-    return value.strip().casefold()
-
-
 def _lookup_rows(
     lookups: dict[str, list[dict[str, Any]]],
     value: str,
 ) -> list[dict[str, Any]] | None:
-    exact = lookups.get(_lookup_key(value))
+    exact = lookups.get(value.strip().casefold())
     if exact is not None:
         return exact
     digits = re.sub(r"\D+", "", value)
@@ -704,22 +655,15 @@ def _semantic_key(value: str) -> str:
 
 
 def _literal_fields(node: ast.Call) -> list[str] | None:
-    fields_node = next(
-        (
-            keyword.value
-            for keyword in node.keywords
-            if keyword.arg == "fields"
-        ),
-        None,
-    )
+    fields_node = _call_argument(node, "fields", 1)
     if not isinstance(fields_node, (ast.List, ast.Tuple)):
         return None
-    fields: list[str] = []
-    for element in fields_node.elts:
-        if not isinstance(element, ast.Constant) or not isinstance(element.value, str):
-            return None
-        fields.append(element.value)
-    return fields
+    fields = [
+        element.value
+        for element in fields_node.elts
+        if isinstance(element, ast.Constant) and isinstance(element.value, str)
+    ]
+    return fields if len(fields) == len(fields_node.elts) else None
 
 
 def validate_fixture_contract(
@@ -731,31 +675,20 @@ def validate_fixture_contract(
         tree = ast.parse(source)
     except SyntaxError:
         return []
-    collection_fields = {
-        _semantic_key(str(field_name))
-        for rows in fixture.lookups.values()
-        for row in rows
-        for field_name in row
-    }
-    detail_fields = collection_fields | {
-        _semantic_key(str(field_name))
-        for state in fixture.reads.values()
-        for field_name in state
+    collection_fields = {_semantic_key(field_name) for field_name in fixture.fields()}
+    detail_fields = {
+        _semantic_key(field_name)
+        for field_name in fixture.fields(include_reads=True)
     }
     diagnostics: list[CodeDiagnostic] = []
     for node in ast.walk(tree):
-        if not (
-            isinstance(node, ast.Call)
-            and isinstance(node.func, ast.Attribute)
-            and isinstance(node.func.value, ast.Name)
-            and node.func.value.id == "ctx"
-            and node.func.attr in {"acquire", "read"}
-        ):
+        method = _ctx_method(node)
+        if method not in {"acquire", "read"}:
             continue
         requested = _literal_fields(node)
         if requested is None:
             continue
-        available = collection_fields if node.func.attr == "acquire" else detail_fields
+        available = collection_fields if method == "acquire" else detail_fields
         if not available:
             continue
         missing = [
@@ -768,8 +701,8 @@ def validate_fixture_contract(
                 node,
                 "MOCK_FIELD_UNAVAILABLE",
                 (
-                    f"ctx.{node.func.attr} fields {missing!r} are unavailable from every "
-                    f"supplied mock {node.func.attr} source"
+                    f"ctx.{method} fields {missing!r} are unavailable from every "
+                    f"supplied mock {method} source"
                 ),
             ))
     return diagnostics
@@ -783,13 +716,7 @@ class _ProjectionVisitor(ast.NodeVisitor):
 
     @staticmethod
     def _ctx_fields(node: ast.AST, method: str) -> set[str] | None:
-        if not (
-            isinstance(node, ast.Call)
-            and isinstance(node.func, ast.Attribute)
-            and isinstance(node.func.value, ast.Name)
-            and node.func.value.id == "ctx"
-            and node.func.attr == method
-        ):
+        if _ctx_method(node) != method:
             return None
         fields = _literal_fields(node)
         if fields is None:
@@ -882,12 +809,7 @@ class _ProjectionVisitor(ast.NodeVisitor):
 
     def visit_For(self, node: ast.For) -> None:
         self.visit(node.iter)
-        fields = (
-            self.sequence_fields.get(node.iter.id)
-            if isinstance(node.iter, ast.Name)
-            else None
-        )
-        self._bind(node.target, mapping=fields)
+        self._bind(node.target, mapping=self._infer_sequence(node.iter))
         for statement in node.body:
             self.visit(statement)
         for statement in node.orelse:
@@ -897,12 +819,7 @@ class _ProjectionVisitor(ast.NodeVisitor):
         saved_mappings = dict(self.mapping_fields)
         for generator in node.generators:
             self.visit(generator.iter)
-            fields = (
-                self.sequence_fields.get(generator.iter.id)
-                if isinstance(generator.iter, ast.Name)
-                else None
-            )
-            self._bind(generator.target, mapping=fields)
+            self._bind(generator.target, mapping=self._infer_sequence(generator.iter))
             for condition in generator.ifs:
                 self.visit(condition)
         self.visit(node.elt)
@@ -988,13 +905,7 @@ def validate_runtime_dataflow(source: str) -> list[CodeDiagnostic]:
             for name in ast.walk(value)
             if isinstance(name, ast.Name) and isinstance(name.ctx, ast.Load)
         }
-        if (
-            isinstance(value, ast.Call)
-            and isinstance(value.func, ast.Attribute)
-            and isinstance(value.func.value, ast.Name)
-            and value.func.value.id == "ctx"
-            and value.func.attr == "read"
-        ):
+        if _ctx_method(value) == "read":
             direct_read_vars.add(target.id)
     runtime_vars = set(direct_read_vars)
     changed = True
@@ -1023,23 +934,28 @@ def validate_runtime_dataflow(source: str) -> list[CodeDiagnostic]:
 
 
 def _field_value(mapping: dict[str, Any], field_name: str) -> tuple[bool, Any]:
-    if field_name in mapping:
-        return True, mapping[field_name]
-    folded = _semantic_key(field_name)
-    for key, value in mapping.items():
-        if _semantic_key(str(key)) == folded:
-            return True, value
-    return False, None
+    key = (
+        field_name
+        if field_name in mapping
+        else next(
+            (key for key in mapping if _semantic_key(str(key)) == _semantic_key(field_name)),
+            None,
+        )
+    )
+    return key is not None, mapping.get(key)
+
+
+def _identity_values(mapping: dict[str, Any]):
+    return (
+        str(mapping[field_name])
+        for field_name in IDENTITY_FIELDS
+        if mapping.get(field_name) is not None
+    )
 
 
 def _target_key(target: Any) -> str:
     if isinstance(target, dict):
-        for field_name in (
-            "id", "ID", "order_id", "increment_id", "action_url", "Action_url", "Action",
-            "sku", "SKU", "name", "Name", "title", "Title", "key",
-        ):
-            if field_name in target and target[field_name] is not None:
-                return str(target[field_name])
+        return next(_identity_values(target), str(target))
     return str(target)
 
 
@@ -1057,25 +973,17 @@ class _FixtureContext:
                 if not canonical:
                     continue
                 self.state.setdefault(canonical, {}).update(copy.deepcopy(row))
-                for field_name in (
-                    "id", "ID", "action_url", "Action_url", "Action", "sku", "SKU", "name", "Name",
-                    "title", "Title", "key",
-                ):
-                    value = row.get(field_name)
-                    if value is not None:
-                        self.read_aliases[str(value)] = canonical
+                self.read_aliases.update(
+                    {value: canonical for value in _identity_values(row)}
+                )
         for target_id, detail in fixture.reads.items():
             canonical = self.read_aliases.get(str(target_id), str(target_id))
             self.state.setdefault(canonical, {}).update(copy.deepcopy(detail))
             self.read_aliases[str(target_id)] = canonical
         for canonical, state in self.state.items():
-            for field_name in (
-                "id", "ID", "order_id", "increment_id", "action_url", "Action_url", "Action",
-                "sku", "SKU", "name", "Name", "title", "Title", "key",
-            ):
-                value = state.get(field_name)
-                if value is not None:
-                    self.read_aliases[str(value)] = canonical
+            self.read_aliases.update(
+                {value: canonical for value in _identity_values(state)}
+            )
 
     def lookup(
         self,
@@ -1093,11 +1001,19 @@ class _FixtureContext:
         fields: list[str],
         coverage: str = "complete",
     ) -> list[dict[str, Any]]:
-        rows = _lookup_rows(self.fixture.lookups, scope.entity)
-        if rows is None and scope.fallback:
-            rows = _lookup_rows(self.fixture.lookups, scope.fallback)
-        if rows is None:
-            rows = []
+        candidates = [
+            _lookup_rows(self.fixture.lookups, value)
+            for value in (scope.entity, scope.fallback)
+            if value
+        ]
+        rows = next(
+            (
+                candidate for candidate in candidates
+                if candidate
+                and all(any(_field_value(row, name)[0] for row in candidate) for name in fields)
+            ),
+            next((candidate for candidate in candidates if candidate is not None), []),
+        )
         missing = [
             name for name in fields
             if rows and not any(_field_value(row, name)[0] for row in rows)
@@ -1169,9 +1085,7 @@ class _FixtureContext:
             if key is not None and key in self.state:
                 resolved_by_key[key] = (self.state[key], key)
         resolved = list(resolved_by_key.values())
-        if len(resolved) == 1:
-            return resolved[0]
-        return None, None
+        return resolved[0] if len(resolved) == 1 else (None, None)
 
     def interact(
         self,
@@ -1197,21 +1111,21 @@ class _FixtureContext:
         target, key = self._statement_target(statement_inputs)
         if target is not None:
             self.current_target = target
-        write: WriteEvent | None = None
-        if key is not None and desired_values and contract.persistence == "explicit_commit":
-            state = self.state.get(key)
+        if contract.persistence == "explicit_commit":
+            state = self.state.get(key) if key is not None and desired_values else None
             before = copy.deepcopy(state) if state is not None else {}
-            if state is not None:
-                for field_name, value in desired_values.items():
-                    existing = next(
-                        (
-                            key_name for key_name in state
-                            if _semantic_key(str(key_name)) == _semantic_key(str(field_name))
-                        ),
-                        field_name,
-                    )
-                    state[existing] = copy.deepcopy(value)
-            write = WriteEvent(
+            for field_name, value in desired_values.items():
+                if state is None:
+                    break
+                existing = next(
+                    (
+                        key_name for key_name in state
+                        if _semantic_key(str(key_name)) == _semantic_key(str(field_name))
+                    ),
+                    field_name,
+                )
+                state[existing] = copy.deepcopy(value)
+            self.writes.append(WriteEvent(
                 goal=contract.goal,
                 success=contract.success,
                 target_id=key,
@@ -1220,23 +1134,9 @@ class _FixtureContext:
                 observe_fields=list(contract.observe_fields),
                 persistence=contract.persistence,
                 before=before,
-                after=copy.deepcopy(state) if state is not None else {},
+                after=copy.deepcopy(state if state is not None else desired_values),
                 applied=True,
-            )
-        elif contract.persistence == "explicit_commit":
-            write = WriteEvent(
-                goal=contract.goal,
-                success=contract.success,
-                target_id=key,
-                inputs=copy.deepcopy(statement_inputs),
-                required_values=copy.deepcopy(desired_values),
-                observe_fields=list(contract.observe_fields),
-                persistence=contract.persistence,
-                after=copy.deepcopy(desired_values),
-                applied=True,
-            )
-        if write is not None:
-            self.writes.append(write)
+            ))
         result = True
         self.trace.append(TraceEvent("interact", (goal,), {
             "success": contract.success,
@@ -1266,24 +1166,13 @@ def _worker(source: str, fixture: FixtureSpec, output: Any) -> None:
         "__builtins__": SAFE_BUILTINS,
         "__name__": "coding_plan",
     }
+    payload = {"trace": ctx.trace, "writes": ctx.writes, "final_state": ctx.state}
     try:
         exec(compile(source, "<coding-plan>", "exec"), namespace, namespace)
-        result = namespace["run"](ctx)
-        output.put({
-            "ok": True,
-            "return_value": result,
-            "trace": ctx.trace,
-            "writes": ctx.writes,
-            "final_state": ctx.state,
-        })
+        payload.update(ok=True, return_value=namespace["run"](ctx))
     except BaseException:  # noqa: BLE001 - child must serialize any plan failure
-        output.put({
-            "ok": False,
-            "error": traceback.format_exc(limit=8),
-            "trace": ctx.trace,
-            "writes": ctx.writes,
-            "final_state": ctx.state,
-        })
+        payload.update(ok=False, error=traceback.format_exc(limit=8))
+    output.put(payload)
 
 
 def execute_code(source: str, fixture: FixtureSpec, *, timeout: float = 5.0) -> CodingRunResult:
@@ -1317,15 +1206,3 @@ def execute_code(source: str, fixture: FixtureSpec, *, timeout: float = 5.0) -> 
         final_state=dict(payload.get("final_state") or {}),
         error=str(payload.get("error") or ""),
     )
-
-
-__all__ = [
-    "CTX_METHODS",
-    "FixtureSpec",
-    "LookupScope",
-    "execute_code",
-    "validate_code",
-    "validate_fixture_contract",
-    "validate_projection_contract",
-    "validate_runtime_dataflow",
-]

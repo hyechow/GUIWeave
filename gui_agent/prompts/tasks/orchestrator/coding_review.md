@@ -7,7 +7,7 @@ scope:
 owner: gui_agent.core.coding_orchestrator.planner
 schema: code_review
 eval_suites:
-version: 20
+version: 21
 ---
 Review the candidate Python script against the user's task and supplied knowledge.
 
@@ -34,6 +34,9 @@ Review in this order:
 4. Audit projected-record data flow. Every later `record["field"]` or `record.get("field")` must
    name a field requested when that record was acquired or read. Prefer retaining and passing the
    concrete record instead of extracting an identity field that was not projected.
+   Apply all task predicates before asserting singular cardinality; a lookup may legitimately
+   return a parent, variants, and other candidates. A selector filters or skips nonmatches; it does
+   not justify asserting that every acquired candidate matches.
 5. Audit runtime-value data flow. A current value read for a relative update must participate in
    the exact requested calculation, and the computed result must reach `required_values`. For
    example, an arrival or increase by N means `new = current + N`, not `new = N`.
@@ -67,7 +70,7 @@ Every `explicit_commit` interaction must have nonempty `required_values` contain
 business writes, and its boolean return value must be asserted, branched on, or returned. A bare
 durable interaction can silently fail and is never approvable.
 Both `inputs` and `required_values` cross the Statement boundary as JSON data. Replace Python sets
-with deterministic lists; never pass a set, set comprehension, or `set(...)` result.
+and tuples with deterministic lists; never pass a set, tuple, or their constructor results.
 `UNUSED_RUNTIME_VALUE` is a causal data-flow diagnostic. If the task describes a relative change,
 repair it by carrying that value through the calculation and write. Deleting the read and writing
 the task's delta as an absolute value is incorrect.
@@ -117,7 +120,8 @@ response. A partial repair that leaves even one listed diagnostic, references an
 replacement variable, or accesses a newly required field without adding it to the originating
 acquire/read projection is invalid. Every added assert must include a short nonempty diagnostic
 message. Consolidate adjacent or causally dependent fixes in the same business phase into one edit;
-do not emit no-op edits.
+do not emit no-op edits. Each edit must independently move the candidate toward a valid program;
+the repair gate may discard an edit that introduces diagnostics or execution failure.
 
 `BUSINESS_IDENTITY_FIRST_MATCH` cannot be suppressed with `# noqa` or any other comment. It applies
 when `break` chooses the first record from an acquired business collection. Replace that selection

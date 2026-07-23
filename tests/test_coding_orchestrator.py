@@ -7,9 +7,11 @@ import pytest
 
 from gui_agent.core.coding_orchestrator import (
     FixtureSpec,
-    execute_code,
-    generate_code,
     generate_reviewed_code,
+)
+from gui_agent.core.coding_orchestrator.planner import _decode_review_response
+from gui_agent.core.coding_orchestrator.sandbox import (
+    execute_code,
     validate_code,
     validate_fixture_contract,
     validate_projection_contract,
@@ -641,19 +643,6 @@ def run(ctx):
     assert result.ok, result.error
 
 
-class _SequenceLlm:
-    def __init__(self, sources: list[str]) -> None:
-        self.sources = iter(sources)
-        self.calls = 0
-
-    def invoke(self, _messages):
-        self.calls += 1
-        return SimpleNamespace(
-            content=f"```python\n{next(self.sources)}\n```",
-            usage_metadata={"input_tokens": 10, "output_tokens": 5},
-        )
-
-
 class _ContentSequenceLlm:
     def __init__(self, contents: list[str]) -> None:
         self.contents = iter(contents)
@@ -679,6 +668,19 @@ class _BindableContentSequenceLlm(_ContentSequenceLlm):
         return self
 
 
+def _review_response(
+    *edits: tuple[str, str],
+    approve: bool = False,
+) -> str:
+    return json.dumps({
+        "approve": approve,
+        "edits": [
+            {"search": search, "replacement": replacement}
+            for search, replacement in edits
+        ],
+    })
+
+
 def test_generate_reviewed_code_passes_statement_contract_evidence_to_reviewer() -> None:
     initial = (
         "def run(ctx):\n"
@@ -690,16 +692,12 @@ def test_generate_reviewed_code_passes_statement_contract_evidence_to_reviewer()
         "        persistence='explicit_commit')\n"
         "    assert saved, 'status must be saved'"
     )
-    repair = (
-        "<<<<<<< SEARCH\n"
-        "target = {'id': 'missing'}\n"
-        "=======\n"
-        "target = {'id': 'record-1'}\n"
-        ">>>>>>> REPLACE"
-    )
     llm = _ContentSequenceLlm([
         f"```python\n{initial}\n```",
-        repair,
+        _review_response((
+            "target = {'id': 'missing'}",
+            "target = {'id': 'record-1'}",
+        )),
     ])
 
     plan = generate_reviewed_code(
@@ -713,7 +711,6 @@ def test_generate_reviewed_code_passes_statement_contract_evidence_to_reviewer()
     assert plan.review is not None and not plan.review.approved
     assert plan.requirements_satisfied
     assert llm.calls == 2
-    assert len(plan.reviews) == 1
     assert plan.attempts[0].run.writes[0].applied
     review_messages = "\n".join(
         str(getattr(message, "content", ""))
@@ -734,7 +731,7 @@ def test_generate_reviewed_code_skips_revision_when_reviewer_approves() -> None:
     )
     llm = _ContentSequenceLlm([
         f"```python\n{source}\n```",
-        "APPROVE",
+        _review_response(approve=True),
     ])
 
     plan = generate_reviewed_code(
@@ -751,28 +748,16 @@ def test_generate_reviewed_code_skips_revision_when_reviewer_approves() -> None:
     assert llm.calls == 2
 
 
-def test_generate_reviewed_code_accepts_approve_as_the_review_conclusion() -> None:
-    source = (
-        "def run(ctx):\n"
-        "    rows = [1]\n"
-        "    assert rows, 'fixture task must have work'\n"
-        "    return 'done'"
-    )
-    llm = _ContentSequenceLlm([
-        f"```python\n{source}\n```",
-        "The candidate satisfies the task and mock contract.\n\nAPPROVE",
-    ])
+@pytest.mark.parametrize("payload", [
+    '{"approve": true, "edits": [{"search": "a", "replacement": "b"}]}',
+    '{"approve": false, "edits": []}',
+])
+def test_review_response_rejects_conflicting_approval_and_edits(payload: str) -> None:
+    approved, edits, error = _decode_review_response(payload)
+    assert not approved
+    assert edits == ()
+    assert error
 
-    plan = generate_reviewed_code(
-        "complete a fixture task",
-        fixture=FixtureSpec(),
-        llm=llm,
-    )
-
-    assert plan.executable
-    assert not plan.repaired
-    assert plan.review is not None and plan.review.approved
-    assert llm.calls == 2
 
 
 def test_generate_reviewed_code_bounds_the_reviewer_output() -> None:
@@ -784,7 +769,7 @@ def test_generate_reviewed_code_bounds_the_reviewer_output() -> None:
     )
     llm = _BindableContentSequenceLlm([
         f"```python\n{source}\n```",
-        "APPROVE",
+        _review_response(approve=True),
     ])
 
     plan = generate_reviewed_code(
@@ -828,7 +813,7 @@ def test_generate_reviewed_code_exposes_deduplicated_mock_data_to_reviewer() -> 
     source = "def run(ctx):\n    rows = [1]\n    assert rows, 'rows exist'"
     llm = _ContentSequenceLlm([
         f"```python\n{source}\n```",
-        "APPROVE",
+        _review_response(approve=True),
     ])
     rows = [{"id": "o1", "status": "Pending"}]
 
@@ -855,16 +840,12 @@ def test_generate_reviewed_code_gives_reviewer_static_gate_schema_and_knowledge(
         "    saved = ctx.interact('save order', success=True)\n"
         "    assert saved, 'order must be saved'"
     )
-    repair = (
-        "<<<<<<< SEARCH\n"
-        "success=True\n"
-        "=======\n"
-        "success='order is saved'\n"
-        ">>>>>>> REPLACE"
-    )
     llm = _ContentSequenceLlm([
         f"```python\n{initial}\n```",
-        repair,
+        _review_response((
+            "success=True",
+            "success='order is saved'",
+        )),
     ])
 
     plan = generate_reviewed_code(
@@ -914,16 +895,12 @@ def test_generate_reviewed_code_applies_one_local_repair() -> None:
         "    assert rows, 'an order must exist'\n"
         "    return rows[0]['id']"
     )
-    repair = (
-        "<<<<<<< SEARCH\n"
-        "fields=['status']\n"
-        "=======\n"
-        "fields=['status', 'id']\n"
-        ">>>>>>> REPLACE"
-    )
     llm = _ContentSequenceLlm([
         f"```python\n{initial}\n```",
-        f"{repair}\n\n{repair}",
+        _review_response(
+            ("fields=['status']", "fields=['status', 'id']"),
+            ("fields=['status']", "fields=['status', 'id']"),
+        ),
     ])
 
     plan = generate_reviewed_code(
@@ -935,7 +912,6 @@ def test_generate_reviewed_code_applies_one_local_repair() -> None:
     assert plan.executable
     assert "fields=['status', 'id']" in plan.source
     assert len(plan.attempts) == 2
-    assert len(plan.reviews) == 1
     assert llm.calls == 2
     assert plan.attempts[0].diagnostics[0].code == "PROJECTED_FIELD_UNAVAILABLE"
     assert plan.attempts[1].run.return_value == "o1"
@@ -973,7 +949,10 @@ def test_generate_reviewed_code_applies_structured_json_local_repair() -> None:
     assert "fields=['status', 'id']" in plan.source
     assert plan.attempts[1].run.return_value == "o1"
     assert plan.review is not None
-    assert plan.review.text.startswith("<<<<<<< SEARCH")
+    assert plan.review.edits == ((
+        "fields=['status']",
+        "fields=['status', 'id']",
+    ),)
 
 
 def test_generate_reviewed_code_allows_header_only_import_repair() -> None:
@@ -1045,41 +1024,6 @@ def test_generate_reviewed_code_rejects_complete_function_replacement() -> None:
     )
 
 
-def test_generate_reviewed_code_minimizes_a_local_change_wrapped_as_a_function() -> None:
-    initial = (
-        "def run(ctx):\n"
-        "    rows = [1]\n"
-        "    count = len(rows)\n"
-        "    return count"
-    )
-    replacement = (
-        "def run(ctx):\n"
-        "    rows = [1]\n"
-        "    count = len(rows)\n"
-        "    assert count >= 0, 'count must be nonnegative'\n"
-        "    return count"
-    )
-    repair = json.dumps({
-        "approve": False,
-        "edits": [{
-            "search": initial,
-            "replacement": replacement,
-        }],
-    })
-    llm = _ContentSequenceLlm([
-        f"```python\n{initial}\n```",
-        repair,
-    ])
-
-    plan = generate_reviewed_code(
-        "return the count",
-        fixture=FixtureSpec(),
-        llm=llm,
-    )
-
-    assert plan.executable
-    assert "assert count >= 0" in plan.source
-
 
 def test_generate_reviewed_code_atomically_applies_more_than_five_local_edits() -> None:
     assignments = "\n".join(
@@ -1120,7 +1064,7 @@ def test_generate_reviewed_code_atomically_applies_more_than_five_local_edits() 
     ]
 
 
-def test_generate_reviewed_code_discards_a_local_edit_that_breaks_the_repair() -> None:
+def test_generate_reviewed_code_keeps_only_edits_that_improve_the_candidate() -> None:
     initial = (
         "def run(ctx):\n"
         "    scope = ctx.lookup('orders')\n"
@@ -1132,31 +1076,18 @@ def test_generate_reviewed_code_discards_a_local_edit_that_breaks_the_repair() -
         "    assert saved, 'notification must be sent'\n"
         "    return rows[0]['id']"
     )
-    harmful = (
-        "<<<<<<< SEARCH\n"
-        "fields=['id', 'status']\n"
-        "=======\n"
-        "fields=['status']\n"
-        ">>>>>>> REPLACE"
-    )
-    required = (
-        "<<<<<<< SEARCH\n"
-        "'notify customer', inputs={'record': rows[0]},\n"
-        "=======\n"
-        "'notify customer', success='notification is sent', "
-        "inputs={'record': rows[0]},\n"
-        ">>>>>>> REPLACE"
-    )
     llm = _ContentSequenceLlm([
         f"```python\n{initial}\n```",
-        (
-            f"{harmful}\n\n"
-            "<<<<<<< SEARCH\n"
-            "exact text copied from the candidate\n"
-            "=======\n"
-            "replacement text\n"
-            ">>>>>>> REPLACE\n\n"
-            f"{required}"
+        _review_response(
+            (
+                "fields=['id', 'status']",
+                "fields=['status']",
+            ),
+            (
+                "'notify customer', inputs={'record': rows[0]},",
+                "'notify customer', success='notification is sent', "
+                "inputs={'record': rows[0]},",
+            ),
         ),
     ])
 
@@ -1175,42 +1106,30 @@ def test_generate_reviewed_code_discards_a_local_edit_that_breaks_the_repair() -
     assert llm.calls == 2
 
 
-def test_generate_code_repairs_static_or_execution_failure_once() -> None:
-    llm = _SequenceLlm([
-        "def run(ctx):\n    target = {'id': 'missing'}\n    assert target, 'target must exist'\n    ctx.read(target, fields=['price'])",
-        "def run(ctx):\n    rows = [1]\n    assert rows, 'fixture task must have work'\n    return 'done'",
+def test_generate_reviewed_code_keeps_an_executable_candidate_over_a_failed_repair() -> None:
+    initial = (
+        "def run(ctx):\n"
+        "    scope = ctx.lookup('orders')\n"
+        "    rows = ctx.acquire(scope, fields=['id'])\n"
+        "    assert rows, 'an order must exist'\n"
+        "    return rows[0]['id']"
+    )
+    llm = _ContentSequenceLlm([
+        f"```python\n{initial}\n```",
+        _review_response(
+            (
+                "fields=['id']",
+                "fields=['id', 'missing']",
+            ),
+        ),
     ])
 
-    plan = generate_code("complete a fixture task", fixture=_fixture(), llm=llm)
+    plan = generate_reviewed_code(
+        "return the order id",
+        fixture=FixtureSpec(lookups={"orders": [{"id": "o1"}]}),
+        llm=llm,
+    )
 
     assert plan.executable
-    assert plan.repaired
-    assert llm.calls == 2
-    assert plan.attempts[0].run is not None and not plan.attempts[0].run.ok
-    assert plan.attempts[1].run is not None and plan.attempts[1].run.ok
-
-
-def test_generate_code_does_not_repair_a_successful_execution() -> None:
-    llm = _SequenceLlm([
-        "def run(ctx):\n    rows = [1]\n    assert rows, 'fixture task must have work'\n    return 'done'",
-    ])
-
-    plan = generate_code("complete a fixture task", fixture=_fixture(), llm=llm)
-
-    assert plan.executable
-    assert not plan.repaired
-    assert llm.calls == 1
-
-
-def test_generate_code_repairs_failed_business_assertion_once() -> None:
-    llm = _SequenceLlm([
-        "def run(ctx):\n    rows = []\n    assert rows, 'required targets must exist'",
-        "def run(ctx):\n    rows = [1]\n    assert rows, 'required targets must exist'",
-    ])
-
-    plan = generate_code("complete a fixture task", fixture=_fixture(), llm=llm)
-
-    assert plan.executable
-    assert plan.repaired
-    assert plan.attempts[0].run is not None
-    assert "required targets must exist" in plan.attempts[0].run.error
+    assert plan.source == initial
+    assert len(plan.attempts) == 1

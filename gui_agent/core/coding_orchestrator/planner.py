@@ -5,7 +5,6 @@ from __future__ import annotations
 import json
 import re
 import time
-from itertools import combinations
 from typing import Any
 
 from langchain_openai import ChatOpenAI
@@ -30,9 +29,8 @@ from .sandbox import (
 _SYSTEM = load_prompt_text("task.orchestrator.coding")
 _REVIEW_SYSTEM = load_prompt_text("task.orchestrator.coding_review")
 _CODE_BLOCK_RE = re.compile(r"```(?:python)?\s*\n(.*?)```", re.DOTALL | re.IGNORECASE)
-_LOCAL_REPAIR_RE = re.compile(
-    r"<<<<<<< SEARCH\n(.*?)\n=======\n(.*?)\n>>>>>>> REPLACE",
-    re.DOTALL,
+_RUN_HEADER_RE = re.compile(
+    r"(?m)^def\s+run\s*\([^\n]*\)\s*(?:->[^\n:]+)?\s*:[ \t]*$",
 )
 _REVIEW_MAX_OUTPUT_TOKENS = 3072
 
@@ -82,37 +80,6 @@ def _location_block(site: str, title: str, url: str) -> ContextBlock | None:
         ttl="turn",
         priority=30,
         content=f"## Current location\nsite={site!r}\ntitle={title!r}\nurl={url!r}",
-    )
-
-
-def _repair_block(source: str, attempt: CodingAttempt) -> ContextBlock:
-    failures = [diagnostic.render() for diagnostic in attempt.diagnostics]
-    if attempt.run is not None and not attempt.run.ok:
-        failures.append(attempt.run.error)
-    trace = attempt.run.trace if attempt.run is not None else []
-    return ContextBlock(
-        id="runtime.coding_repair",
-        budget="required",
-        source_type="runtime_state",
-        source="coding_sandbox",
-        ttl="turn",
-        priority=5,
-        content=(
-            "## Previous source and execution diagnostics\n"
-            + "\n".join(f"- {failure}" for failure in failures)
-            + f"\ntrace={trace!r}\n\n```python\n{source}\n```\n"
-            "Rewrite the complete def run(ctx) and fix the causal business/data-flow error, not "
-            "only the failing line. A null projected field means it was unavailable from that "
-            "collection: acquire the available selection fields and use ctx.read on each concrete "
-            "record when detail state is required. Pass runtime records to interact through named "
-            "inputs and literal transition values through required_values. Never "
-            "turn a failed required precondition into continue, empty output, or a silent no-op. "
-            "ctx.acquire(scope=None, ...) is invalid; establish the intended business set with "
-            "ctx.lookup and pass that Scope explicitly. "
-            "When a concrete record already exists, read its detail-only fields with "
-            "ctx.read(record, fields=[...]); do not lookup/acquire the record ID as a new set. "
-            "Do not return a patch."
-        ),
     )
 
 
@@ -191,18 +158,9 @@ def _fixture_review_text(fixture: FixtureSpec | None) -> str:
         )
         for fields, states in sorted(detail_groups.items())
     )
-    collection_fields = {
-        str(field)
-        for rows in fixture.lookups.values()
-        for row in rows
-        for field in row
-    }
-    detail_fields = {
-        str(field)
-        for state in fixture.reads.values()
-        for field in state
-    }
-    detail_only_fields = sorted(detail_fields - collection_fields)
+    collection_fields = fixture.fields()
+    detail_fields = fixture.fields(include_reads=True) - collection_fields
+    detail_only_fields = sorted(detail_fields)
     return (
         "collection sources (`acquire` may request only their available_fields):\n"
         f"{lookup_text or '- none'}\n"
@@ -287,82 +245,43 @@ def _review_evidence_block(
     )
 
 
-def _review_approved(text: str) -> bool:
-    return bool(re.search(r"(?:^|\n)\s*APPROVE\s*$", text, re.IGNORECASE))
-
-
-def _normalize_review_response(text: str) -> str:
+def _decode_review_response(
+    text: str,
+) -> tuple[bool, tuple[tuple[str, str], ...], str]:
     try:
         payload = json.loads(text)
     except (TypeError, ValueError):
-        return text
-    if not isinstance(payload, dict):
-        return text
-    if payload.get("approve") is True:
-        return "APPROVE"
+        return False, (), "reviewer returned invalid JSON"
+    if (
+        not isinstance(payload, dict)
+        or not isinstance(payload.get("approve"), bool)
+    ):
+        return False, (), "reviewer returned an invalid review object"
     edits = payload.get("edits")
     if not isinstance(edits, list):
-        return text
-    blocks: list[str] = []
+        return False, (), "reviewer edits must be a list"
+    repairs: list[tuple[str, str]] = []
     for edit in edits:
         if not isinstance(edit, dict):
-            continue
+            return False, (), "reviewer edit must be an object"
         search = edit.get("search")
         replacement = edit.get("replacement")
         if not isinstance(search, str) or not isinstance(replacement, str):
-            continue
-        blocks.append(
-            f"<<<<<<< SEARCH\n{search}\n=======\n{replacement}\n>>>>>>> REPLACE"
-        )
-    return "\n\n".join(blocks) if blocks else text
-
-
-def _minimize_function_repair(search: str, replacement: str) -> tuple[str, str]:
-    """Trim unchanged outer lines from an accidentally broad function edit."""
-    search_lines = search.splitlines(keepends=True)
-    replacement_lines = replacement.splitlines(keepends=True)
-    prefix = 0
-    while (
-        prefix < len(search_lines)
-        and prefix < len(replacement_lines)
-        and search_lines[prefix] == replacement_lines[prefix]
-    ):
-        prefix += 1
-    suffix = 0
-    while (
-        suffix < len(search_lines) - prefix
-        and suffix < len(replacement_lines) - prefix
-        and search_lines[-suffix - 1] == replacement_lines[-suffix - 1]
-    ):
-        suffix += 1
-    if prefix <= 1 and suffix == 0:
-        return search, replacement
-    search_end = len(search_lines) - suffix if suffix else len(search_lines)
-    replacement_end = (
-        len(replacement_lines) - suffix if suffix else len(replacement_lines)
-    )
-    minimized_search = "".join(search_lines[prefix:search_end])
-    minimized_replacement = "".join(replacement_lines[prefix:replacement_end])
-    if not minimized_search.strip() and suffix:
-        minimized_search = search_lines[search_end]
-        minimized_replacement += replacement_lines[replacement_end]
-    elif not minimized_search.strip() and prefix > 1:
-        minimized_search = search_lines[prefix - 1]
-        minimized_replacement = (
-            replacement_lines[prefix - 1] + minimized_replacement
-        )
-    if not minimized_search.strip() or "def run(" in minimized_search:
-        return search, replacement
-    return minimized_search, minimized_replacement
+            return False, (), "reviewer edit search and replacement must be strings"
+        repairs.append((search, replacement))
+    approved = payload["approve"]
+    if approved == bool(repairs):
+        return False, (), "reviewer approval and edits conflict"
+    return approved, tuple(repairs), ""
 
 
 def _parse_local_repairs(
     source: str,
-    response: str,
+    repairs: tuple[tuple[str, str], ...],
 ) -> tuple[list[tuple[str, str]], str]:
-    matches = list(dict.fromkeys(_LOCAL_REPAIR_RE.findall(response)))
-    if not matches:
-        return [], "reviewer returned neither APPROVE nor SEARCH/REPLACE edits"
+    if not repairs:
+        return [], "reviewer returned no local edits"
+    matches = list(dict.fromkeys(repairs))
     if len(matches) > 10:
         return [], "reviewer returned more than ten local edits"
     valid_matches: list[tuple[str, str]] = []
@@ -371,21 +290,20 @@ def _parse_local_repairs(
         if not search.strip():
             rejected.append("SEARCH block is empty")
             continue
-        run_header = re.search(r"(?m)^def run\(ctx\):[ \t]*$", search)
+        run_header = _RUN_HEADER_RE.search(search)
         if run_header is not None and search[run_header.end():].strip():
-            search, replacement = _minimize_function_repair(search, replacement)
-            run_header = re.search(r"(?m)^def run\(ctx\):[ \t]*$", search)
-            if run_header is not None and search[run_header.end():].strip():
-                rejected.append("SEARCH replaces the complete run function")
-                continue
+            rejected.append("SEARCH replaces the complete run function")
+            continue
         occurrences = source.count(search)
         if occurrences != 1:
             rejected.append(f"SEARCH matched {occurrences} times")
             continue
         valid_matches.append((search, replacement))
     if not valid_matches:
-        detail = "; ".join(rejected) or "no valid local edits"
-        return [], f"reviewer returned no applicable local repair: {detail}"
+        return [], (
+            "reviewer returned no applicable local repair: "
+            + ("; ".join(rejected) or "no valid local edits")
+        )
     return valid_matches, ""
 
 
@@ -417,59 +335,49 @@ def _attempt_executable(attempt: CodingAttempt) -> bool:
 
 def _select_local_repair(
     source: str,
-    response: str,
+    repairs: tuple[tuple[str, str], ...],
     fixture: FixtureSpec | None,
 ) -> tuple[CodingAttempt, str, tuple[int, ...]]:
-    repairs, parse_error = _parse_local_repairs(source, response)
+    repairs, parse_error = _parse_local_repairs(source, repairs)
     if parse_error:
         return CodingAttempt(source=source), parse_error, ()
 
-    best_attempt: CodingAttempt | None = None
-    best_indices: tuple[int, ...] = ()
-    best_score: tuple[int, int, int] | None = None
-    repair_counts = (
-        range(len(repairs), 0, -1)
-        if len(repairs) <= 5
-        else (len(repairs),)
-    )
-    for repair_count in repair_counts:
-        for indices in combinations(range(len(repairs)), repair_count):
-            candidate, apply_error = _apply_local_repairs(
-                source,
-                [repairs[index] for index in indices],
-            )
-            if apply_error:
-                continue
-            attempt = _evaluate_source(candidate, fixture)
-            if _attempt_executable(attempt):
-                return attempt, "", indices
-            score = (
-                0 if not attempt.diagnostics else 1,
-                len(attempt.diagnostics),
-                -repair_count,
-            )
-            if best_score is None or score < best_score:
-                best_attempt = attempt
-                best_indices = indices
-                best_score = score
+    candidate, apply_error = _apply_local_repairs(source, repairs)
+    if not apply_error:
+        attempt = _evaluate_source(candidate, fixture)
+        if _attempt_executable(attempt):
+            return attempt, "", tuple(range(len(repairs)))
 
-    if best_attempt is None:
-        return (
-            CodingAttempt(source=source),
-            "no non-overlapping local repair candidate could be applied",
-            (),
+    current = _evaluate_source(source, fixture)
+    selected: list[int] = []
+    for index, repair in enumerate(repairs):
+        candidate, apply_error = _apply_local_repairs(current.source, [repair])
+        if apply_error:
+            continue
+        attempt = _evaluate_source(candidate, fixture)
+        current_score = (
+            not _attempt_executable(current),
+            len(current.diagnostics),
+            bool(current.run is not None and not current.run.ok),
         )
-    return best_attempt, "", best_indices
+        attempt_score = (
+            not _attempt_executable(attempt),
+            len(attempt.diagnostics),
+            bool(attempt.run is not None and not attempt.run.ok),
+        )
+        if attempt_score < current_score:
+            current = attempt
+            selected.append(index)
+    return current, "", tuple(selected)
 
 
 def _review_attempt(
     *,
-    reviewer_llm: Any,
+    llm: Any,
     blocks: list[ContextBlock | None],
     source: str,
     attempt: CodingAttempt,
     fixture: FixtureSpec | None,
-    context_reports: list[dict[str, Any]] | None,
 ) -> CodingReview:
     started = time.perf_counter()
     messages = assemble_messages(
@@ -478,110 +386,31 @@ def _review_attempt(
         human_blocks=[*blocks, _review_evidence_block(source, attempt, fixture)],
         image_resize="none",
         label="orchestrator.coding_reviewed.review",
-        context_reports=context_reports,
         decision_text="",
     )
     review_runner = (
-        reviewer_llm.bind(
+        llm.bind(
             max_tokens=_REVIEW_MAX_OUTPUT_TOKENS,
             temperature=0,
             response_format={"type": "json_object"},
         )
-        if callable(getattr(reviewer_llm, "bind", None))
-        else reviewer_llm
+        if callable(getattr(llm, "bind", None))
+        else llm
     )
     response = review_runner.invoke(messages)
     raw_text = _response_text(response.content)
-    text = _normalize_review_response(raw_text)
+    approved, edits, error = _decode_review_response(raw_text)
     input_tokens, output_tokens = _usage(response)
     review = CodingReview(
-        text=text,
-        approved=_review_approved(text),
+        text=raw_text,
+        approved=approved,
+        edits=edits,
+        error=error,
         input_tokens=input_tokens,
         output_tokens=output_tokens,
         seconds=time.perf_counter() - started,
     )
-    if context_reports is not None:
-        context_reports.append({
-            "kind": "coding_review",
-            "source": source,
-            "review": text,
-            "raw_review": raw_text,
-            "approved": review.approved,
-            "usage_metadata": getattr(response, "usage_metadata", None),
-        })
     return review
-
-
-def generate_code(
-    goal: str,
-    *,
-    knowledge: str = "",
-    resolution: Any = None,
-    file_section: str = "",
-    current_site: str = "",
-    current_title: str = "",
-    current_url: str = "",
-    fixture: FixtureSpec | None = None,
-    llm: Any = None,
-    context_reports: list[dict[str, Any]] | None = None,
-) -> CodingPlan:
-    """Generate, statically check and optionally fixture-run a coding plan.
-
-    One repair is allowed for syntax/safety failures, missing business assertions,
-    execution failures, or failed assertions. External graders remain private.
-    """
-    if llm is None:
-        llm = _default_llm()
-
-    blocks: list[ContextBlock | None] = [
-        task_goal_block(goal),
-        _resolution_block(resolution),
-        file_reference_block(file_section),
-        knowledge_block("app_knowledge", knowledge),
-        _location_block(current_site, current_title, current_url),
-    ]
-    attempts: list[CodingAttempt] = []
-    repair: ContextBlock | None = None
-    source = ""
-    for attempt_index in range(2):
-        started = time.perf_counter()
-        messages = assemble_messages(
-            _SYSTEM,
-            None,
-            human_blocks=[*blocks, repair],
-            image_resize="none",
-            label="orchestrator.coding",
-            context_reports=context_reports,
-            decision_text="",
-        )
-        response = llm.invoke(messages)
-        source = _extract_source(response.content)
-        input_tokens, output_tokens = _usage(response)
-        diagnostics = _diagnostics(source, fixture)
-        run = execute_code(source, fixture) if fixture is not None and not diagnostics else None
-        attempt = CodingAttempt(
-            source=source,
-            diagnostics=diagnostics,
-            run=run,
-            input_tokens=input_tokens,
-            output_tokens=output_tokens,
-            seconds=time.perf_counter() - started,
-        )
-        attempts.append(attempt)
-        if context_reports is not None:
-            context_reports.append({
-                "kind": "coding_source",
-                "attempt": attempt_index,
-                "source": source,
-                "diagnostics": [diagnostic.render() for diagnostic in diagnostics],
-                "run_error": run.error if run is not None else "",
-                "usage_metadata": getattr(response, "usage_metadata", None),
-            })
-        if not diagnostics and (run is None or run.ok):
-            break
-        repair = _repair_block(source, attempt)
-    return CodingPlan(goal=goal, source=source, attempts=attempts)
 
 
 def generate_reviewed_code(
@@ -595,26 +424,20 @@ def generate_reviewed_code(
     current_url: str = "",
     fixture: FixtureSpec | None = None,
     llm: Any = None,
-    reviewer_llm: Any = None,
-    context_reports: list[dict[str, Any]] | None = None,
 ) -> CodingPlan:
     """Generate once, then apply one locally constrained review repair."""
     if llm is None:
         llm = _default_llm()
-    if reviewer_llm is None:
-        reviewer_llm = llm
-    blocks: list[ContextBlock | None] = [
+    common_blocks: list[ContextBlock | None] = [
         task_goal_block(goal),
         _resolution_block(resolution),
         file_reference_block(file_section),
+    ]
+    blocks = [
+        *common_blocks,
         knowledge_block("app_knowledge", knowledge),
         _location_block(current_site, current_title, current_url),
         _fixture_schema_block(fixture),
-    ]
-    review_blocks: list[ContextBlock | None] = [
-        task_goal_block(goal),
-        _resolution_block(resolution),
-        file_reference_block(file_section),
     ]
 
     started = time.perf_counter()
@@ -624,59 +447,43 @@ def generate_reviewed_code(
         human_blocks=blocks,
         image_resize="none",
         label="orchestrator.coding_reviewed.generate",
-        context_reports=context_reports,
         decision_text="",
     ))
     source = _extract_source(response.content)
     input_tokens, output_tokens = _usage(response)
-    diagnostics = _diagnostics(source, fixture)
-    run = execute_code(source, fixture) if fixture is not None and not diagnostics else None
-    initial = CodingAttempt(
-        source=source,
-        diagnostics=diagnostics,
-        run=run,
-        input_tokens=input_tokens,
-        output_tokens=output_tokens,
-        seconds=time.perf_counter() - started,
-    )
+    initial = _evaluate_source(source, fixture)
+    initial.input_tokens = input_tokens
+    initial.output_tokens = output_tokens
+    initial.seconds = time.perf_counter() - started
     attempts = [initial]
     review = _review_attempt(
-        reviewer_llm=reviewer_llm,
-        blocks=review_blocks,
+        llm=llm,
+        blocks=common_blocks,
         source=source,
         attempt=initial,
         fixture=fixture,
-        context_reports=context_reports,
     )
     if not review.approved:
-        repaired, repair_error, selected_repairs = _select_local_repair(
-            source,
-            review.text,
-            fixture,
-        )
+        if review.error:
+            repaired = CodingAttempt(source=source)
+            repair_error, selected_repairs = review.error, ()
+        else:
+            repaired, repair_error, selected_repairs = _select_local_repair(
+                source,
+                review.edits,
+                fixture,
+            )
         if repair_error:
             repaired.diagnostics = [
                 CodeDiagnostic("LOCAL_REPAIR_INVALID", repair_error),
             ]
-        source = repaired.source
-        attempts.append(repaired)
-        if context_reports is not None:
-            context_reports.append({
-                "kind": "coding_local_repair",
-                "selected_repairs": list(selected_repairs),
-                "diagnostics": [
-                    diagnostic.render()
-                    for diagnostic in repaired.diagnostics
-                ],
-                "run_error": repaired.run.error if repaired.run is not None else "",
-            })
+        repair_accepted = bool(selected_repairs) and _attempt_executable(repaired)
+        if repair_error or repair_accepted or not _attempt_executable(initial):
+            source = repaired.source
+            attempts.append(repaired)
     return CodingPlan(
         goal=goal,
         source=source,
         attempts=attempts,
         review=review,
-        reviews=[review],
     )
-
-
-__all__ = ["generate_code", "generate_reviewed_code"]
