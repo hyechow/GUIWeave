@@ -136,6 +136,24 @@ def _observation_schema_block(observation: Any) -> ContextBlock | None:
     )
 
 
+def _observation_contract_fixture(observation: Any) -> FixtureSpec | None:
+    if observation is None:
+        return None
+    lookups: dict[str, list[dict[str, Any]]] = {}
+    for table in getattr(observation, "tables", None) or []:
+        if not isinstance(table, dict):
+            continue
+        caption = str(table.get("caption") or "").strip()
+        fields = [
+            str(header)
+            for header in table.get("headers") or []
+            if str(header).strip()
+        ]
+        if caption and fields:
+            lookups[caption.casefold()] = [{field: None for field in fields}]
+    return FixtureSpec(lookups=lookups) if lookups else None
+
+
 def _usage(response: Any) -> tuple[int, int]:
     usage = getattr(response, "usage_metadata", None) or {}
     return int(usage.get("input_tokens") or 0), int(usage.get("output_tokens") or 0)
@@ -372,8 +390,12 @@ def _apply_local_repairs(
     return repaired, ""
 
 
-def _evaluate_source(source: str, fixture: FixtureSpec | None) -> CodingAttempt:
-    diagnostics = _diagnostics(source, fixture)
+def _evaluate_source(
+    source: str,
+    fixture: FixtureSpec | None,
+    contract_fixture: FixtureSpec | None = None,
+) -> CodingAttempt:
+    diagnostics = _diagnostics(source, fixture or contract_fixture)
     run = execute_code(source, fixture) if fixture is not None and not diagnostics else None
     return CodingAttempt(source=source, diagnostics=diagnostics, run=run)
 
@@ -386,6 +408,7 @@ def _select_local_repair(
     source: str,
     repairs: tuple[tuple[str, str], ...],
     fixture: FixtureSpec | None,
+    contract_fixture: FixtureSpec | None = None,
 ) -> tuple[CodingAttempt, str, tuple[int, ...]]:
     repairs, parse_error = _parse_local_repairs(source, repairs)
     if parse_error:
@@ -393,28 +416,22 @@ def _select_local_repair(
 
     candidate, apply_error = _apply_local_repairs(source, repairs)
     if not apply_error:
-        attempt = _evaluate_source(candidate, fixture)
+        attempt = _evaluate_source(candidate, fixture, contract_fixture)
         if _attempt_executable(attempt):
             return attempt, "", tuple(range(len(repairs)))
 
-    current = _evaluate_source(source, fixture)
+    current = _evaluate_source(source, fixture, contract_fixture)
     selected: list[int] = []
     for index, repair in enumerate(repairs):
         candidate, apply_error = _apply_local_repairs(current.source, [repair])
         if apply_error:
             continue
-        attempt = _evaluate_source(candidate, fixture)
-        current_score = (
-            not _attempt_executable(current),
-            len(current.diagnostics),
-            bool(current.run is not None and not current.run.ok),
-        )
-        attempt_score = (
-            not _attempt_executable(attempt),
-            len(attempt.diagnostics),
-            bool(attempt.run is not None and not attempt.run.ok),
-        )
-        if attempt_score < current_score:
+        attempt = _evaluate_source(candidate, fixture, contract_fixture)
+        # Static/mock gates can reject a bad semantic edit, but cannot prove that
+        # a valid semantic edit improves an already-executable program. The
+        # Reviewer owns that judgment, so retain every independently executable
+        # local edit after discarding invalid ones.
+        if _attempt_executable(attempt):
             current = attempt
             selected.append(index)
     return current, "", tuple(selected)
@@ -484,6 +501,7 @@ def generate_reviewed_code(
         file_reference_block(file_section),
     ]
     observation_schema = _observation_schema_block(current_observation)
+    contract_fixture = _observation_contract_fixture(current_observation)
     blocks = [
         *common_blocks,
         knowledge_block("app_knowledge", knowledge),
@@ -503,7 +521,7 @@ def generate_reviewed_code(
     ))
     source = _extract_source(response.content)
     input_tokens, output_tokens = _usage(response)
-    initial = _evaluate_source(source, fixture)
+    initial = _evaluate_source(source, fixture, contract_fixture)
     initial.input_tokens = input_tokens
     initial.output_tokens = output_tokens
     initial.seconds = time.perf_counter() - started
@@ -524,6 +542,7 @@ def generate_reviewed_code(
                 source,
                 review.edits,
                 fixture,
+                contract_fixture,
             )
         if repair_error:
             repaired.diagnostics = [

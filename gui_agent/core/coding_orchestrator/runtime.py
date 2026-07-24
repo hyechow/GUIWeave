@@ -20,6 +20,7 @@ from gui_agent.core.orchestrator.program import (
 )
 from gui_agent.core.orchestrator.recovery import RecoveryLedger
 from gui_agent.core.orchestrator.runner import RunRecord, StatementInvocation
+from gui_agent.core.run.lookup_scope import is_lookup_scope
 from gui_agent.core.schemas import StatementContract, StatementOutcome
 
 from .sandbox import SAFE_BUILTINS, validate_code
@@ -117,18 +118,14 @@ class _RuntimeContext:
         entity: str,
         field: str = "name",
         fallback: str | None = None,
-    ) -> dict[str, str]:
-        scope = {
-            "entity": entity,
-            "field": field,
-            "fallback": fallback or "",
-        }
-        self._request("lookup", **scope)
-        return scope
+    ) -> dict[str, Any]:
+        return self._request(
+            "lookup", entity=entity, field=field, fallback=fallback or "",
+        )
 
     def acquire(
         self,
-        scope: dict[str, str],
+        scope: dict[str, Any],
         fields: list[str],
         coverage: str = "complete",
     ) -> list[dict[str, Any]]:
@@ -263,18 +260,27 @@ class CodingProgramRuntime:
             statement = Interact(
                 id=statement_id,
                 goal=(
-                    f"Establish the business scope for {entity!r} in semantic "
-                    f"field {field_name!r}{fallback_text}"
+                    f"Resolve the collection for {entity!r} within the current "
+                    f"business context using semantic field {field_name!r}{fallback_text}"
                 ),
                 success=(
-                    f"The current result scope matches {entity!r} in "
-                    f"{field_name!r}{fallback_text}"
+                    f"Exactly one structural collection is exposed for {entity!r} "
+                    f"without leaving or mutating the current business context"
                 ),
-                required_values={field_name: entity},
-                observe_fields=[field_name],
+                scope="lookup",
                 persistence="immediate",
             )
-            return StatementInvocation(statement=statement, task_goal=self.program.goal)
+            return StatementInvocation(
+                statement=statement,
+                task_goal=self.program.goal,
+                inputs={
+                    "lookup_request": {
+                        "entity": entity,
+                        "field": field_name,
+                        "fallback": fallback,
+                    },
+                },
+            )
         if op == "focus":
             fields = [str(item) for item in payload.get("fields") or []]
             statement = Interact(
@@ -305,6 +311,10 @@ class CodingProgramRuntime:
             )
         if op == "acquire":
             scope = dict(payload.get("scope") or {})
+            if not is_lookup_scope(scope):
+                raise ValueError(
+                    "ctx.acquire scope must be the validated handle returned by ctx.lookup"
+                )
             fields = [str(item) for item in payload.get("fields") or []]
             coverage = str(payload.get("coverage") or "complete")
             statement = Acquire(
@@ -319,7 +329,11 @@ class CodingProgramRuntime:
                     ),
                 },
             )
-            return StatementInvocation(statement=statement, task_goal=self.program.goal)
+            return StatementInvocation(
+                statement=statement,
+                task_goal=self.program.goal,
+                args={"lookup_scope": scope},
+            )
         if op == "read":
             fields = [str(item) for item in payload.get("fields") or []]
             statement = Read(
@@ -426,7 +440,12 @@ class CodingProgramRuntime:
             self._fail(outcome.summary)
             return None
         value: Any = True
-        if isinstance(invocation.statement, Acquire):
+        if isinstance(invocation.statement, Interact) and invocation.statement.scope == "lookup":
+            value = outcome.outputs.get("scope")
+            if not is_lookup_scope(value):
+                self._fail("lookup completed without a validated collection scope")
+                return None
+        elif isinstance(invocation.statement, Acquire):
             value = outcome.outputs.get("rows", [])
         elif isinstance(invocation.statement, Read):
             value = dict(outcome.outputs)

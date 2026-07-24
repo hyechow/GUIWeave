@@ -15,8 +15,10 @@ from gui_agent.core.schemas import (
 from .control_grounding import matches_target_control
 
 
-def _point_matches(control: dict, action: object) -> bool:
-    rect = control.get("rect") if isinstance(control.get("rect"), dict) else {}
+_POINT_TARGET_ACTIONS = {"tap", "click", "type", "select_option", "upload"}
+
+
+def _action_point(action: object) -> tuple[float, float] | None:
     snap = getattr(action, "snap", None)
     snapped = snap.get("snapped") if isinstance(snap, dict) else None
     if isinstance(snapped, (list, tuple)) and len(snapped) == 2:
@@ -24,13 +26,20 @@ def _point_matches(control: dict, action: object) -> bool:
     else:
         x = getattr(action, "x", None)
         y = getattr(action, "y", None)
+    if not isinstance(x, (int, float)) or not isinstance(y, (int, float)):
+        return None
+    return float(x), float(y)
+
+
+def _point_matches(control: dict, action: object) -> bool:
+    rect = control.get("rect") if isinstance(control.get("rect"), dict) else {}
+    point = _action_point(action)
     return bool(
-        isinstance(x, (int, float))
-        and isinstance(y, (int, float))
+        point is not None
         and isinstance(rect.get("x"), (int, float))
         and isinstance(rect.get("y"), (int, float))
-        and abs(float(rect["x"]) - float(x)) <= 3
-        and abs(float(rect["y"]) - float(y)) <= 3
+        and abs(float(rect["x"]) - point[0]) <= 3
+        and abs(float(rect["y"]) - point[1]) <= 3
     )
 
 
@@ -154,23 +163,25 @@ class BrowserTargetBinder:
                 if isinstance(point, dict) and all(
                     isinstance(point.get(axis), (int, float)) for axis in ("x", "y")
                 ):
-                    if (
-                        getattr(action, "action_type", "") == "tap"
-                        and abs(float(point["x"]) - float(getattr(action, "x", -1000))) <= 3
-                        and abs(float(point["y"]) - float(getattr(action, "y", -1000))) <= 3
-                    ):
+                    action_type = str(getattr(action, "action_type", "") or "")
+                    action_point = _action_point(action)
+                    if action_type in _POINT_TARGET_ACTIONS and action_point is not None:
+                        if (
+                            abs(float(point["x"]) - action_point[0]) > 3
+                            or abs(float(point["y"]) - action_point[1]) > 3
+                        ):
+                            return TargetBinding(
+                                status="contradicted",
+                                source="structural",
+                                unit_id=f"ref:{intent.target_ref}",
+                                reason="action point does not belong to the declared semantic target ref",
+                            )
                         return TargetBinding(
                             status="bound",
                             source="structural",
                             unit_id=f"ref:{intent.target_ref}",
                             reason="action point is owned by the declared semantic target ref",
                         )
-                    return TargetBinding(
-                        status="contradicted",
-                        source="structural",
-                        unit_id=f"ref:{intent.target_ref}",
-                        reason="action point does not belong to the declared semantic target ref",
-                    )
             # A ref may come from the optional form-control inventory rather than the
             # semantic tree.  Absence from that namespace is not a contradiction; continue
             # with point ownership and label binding below.

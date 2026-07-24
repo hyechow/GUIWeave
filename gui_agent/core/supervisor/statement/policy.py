@@ -7,6 +7,7 @@ from typing import Literal, Optional
 from llm.structured import StructuredOutputError
 
 from gui_agent.core.run.statement_memory import available_event_refs, build_memory_view
+from gui_agent.core.run.lookup_scope import resolve_lookup_scope
 from gui_agent.core.run.statement_runtime import StatementRuntimeState
 from gui_agent.core.run.statement_transition import validate_evidence_references
 from gui_agent.core.schemas import (
@@ -38,6 +39,15 @@ from .schemas import (
 _QUERY_MARKERS = (
     "search", "query", "filter", "搜索", "查询", "筛选", "查找", "检索",
 )
+_QUERY_SUBMIT_MARKERS = (
+    "search", "apply", "filter", "submit", "搜索", "应用", "筛选", "查询",
+)
+_MUTATING_MARKERS = (
+    "save", "create", "add", "edit", "update", "delete", "remove",
+    "discard", "reset", "cancel", "clear",
+    "保存", "创建", "新增", "添加", "编辑", "更新", "删除", "移除",
+    "丢弃", "重置", "取消", "清空",
+)
 
 
 def _declared_string_values(values: dict[str, JsonValue]) -> set[str]:
@@ -60,6 +70,33 @@ def _declared_string_values(values: dict[str, JsonValue]) -> set[str]:
 
 def _semantic_terms(value: str) -> set[str]:
     return set(re.findall(r"[\w]+", value.casefold().replace("_", " ")))
+
+
+def _action_targets(
+    view: StatementObservationView,
+    plan: _ActionDraft,
+) -> list[dict]:
+    if plan.target_ref:
+        return [
+            item for item in view.affordances
+            if plan.target_ref in {
+                str(item.get("ref") or ""),
+                *(str(value) for value in item.get("ref_aliases") or []),
+            }
+        ]
+    target = plan.target_control.strip().casefold()
+    return [
+        item for item in view.affordances
+        if str(item.get("label") or "").strip().casefold() == target
+    ]
+
+
+def _resolved_lookup(
+    statement: StatementContract,
+    observation: Observation,
+) -> dict[str, JsonValue] | None:
+    request = statement.inputs.get("lookup_request")
+    return resolve_lookup_scope(observation, request) if isinstance(request, dict) else None
 
 
 class StatementSupervisorPolicy(
@@ -578,23 +615,26 @@ class StatementSupervisorPolicy(
         if not any(marker in target_label for marker in _QUERY_MARKERS):
             return None
 
-        current_value = ""
         controls = [
             *(observation.form_control_state or []),
             *(observation.form_controls or []),
         ]
-        for control in controls:
-            if not isinstance(control, dict):
-                continue
-            identities = {
+        matched_control = next((
+            control for control in controls
+            if isinstance(control, dict)
+            and target_label in {
                 str(control.get(key) or "").strip().casefold()
                 for key in ("label", "name", "id", "group_field")
             }
-            if target_label in identities:
-                current_value = str(control.get("value") or "").strip()
-                break
+        ), None)
+        if matched_control is None or not (
+            matched_control.get("is_filter") is True
+            or str(matched_control.get("kind") or "").strip().casefold()
+            in {"search", "search_input", "searchbox"}
+        ):
+            return None
         expected = intent.target_value.strip().casefold()
-        if current_value.casefold() != expected:
+        if str(matched_control.get("value") or "").strip().casefold() != expected:
             return None
         if any(
             expected in str(value).strip().casefold()
@@ -602,22 +642,21 @@ class StatementSupervisorPolicy(
         ):
             return None
 
-        target_terms = _semantic_terms(intent.target_control)
-        candidates: list[tuple[int, dict]] = []
+        candidates: list[dict] = []
         for affordance in view.affordances:
             if "activate" not in (affordance.get("supported_operations") or []):
                 continue
             label = str(affordance.get("label") or "").strip()
             if not label:
                 continue
-            overlap = len(target_terms & _semantic_terms(label))
-            substring = label.casefold() in intent.target_control.casefold()
-            if overlap or substring:
-                candidates.append((overlap + int(substring), affordance))
-        if not candidates:
+            lowered = label.casefold()
+            if any(marker in lowered for marker in _MUTATING_MARKERS):
+                continue
+            if any(marker in lowered for marker in _QUERY_SUBMIT_MARKERS):
+                candidates.append(affordance)
+        if len(candidates) != 1:
             return None
-        candidates.sort(key=lambda item: item[0], reverse=True)
-        return prior, candidates[0][1]
+        return prior, candidates[0]
 
     def _staged_input_submission_step(
         self,
@@ -664,22 +703,8 @@ class StatementSupervisorPolicy(
         view: StatementObservationView,
         plan: _ActionDraft,
     ) -> str:
-        candidates = [
-            item
-            for item in view.affordances
-            if str(item.get("label") or "").strip().casefold()
-            == plan.target_control.strip().casefold()
-        ]
+        candidates = _action_targets(view, plan)
         if plan.target_ref:
-            candidates = [
-                item
-                for item in view.affordances
-                if plan.target_ref
-                in {
-                    str(item.get("ref") or ""),
-                    *(str(value) for value in (item.get("ref_aliases") or [])),
-                }
-            ]
             if not candidates:
                 return f"target_ref {plan.target_ref!r} is absent from current frame"
             if len(candidates) > 1:
@@ -690,6 +715,40 @@ class StatementSupervisorPolicy(
         ):
             return f"target does not support operation {plan.action_family!r}"
         return ""
+
+    @staticmethod
+    def _validate_lookup_action(
+        statement: StatementContract,
+        view: StatementObservationView,
+        plan: _ActionDraft,
+    ) -> str:
+        if not isinstance(statement.inputs.get("lookup_request"), dict):
+            return ""
+        if plan.atomic_role == "commit":
+            return "query-only lookup cannot commit business state"
+        if plan.action_family == "navigate":
+            return "query-only lookup cannot leave the current business context"
+        if plan.action_family == "iterate":
+            return ""
+
+        candidates = _action_targets(view, plan)
+        if len(candidates) != 1:
+            return "query-only lookup requires one structurally identified local control"
+        target = candidates[0]
+        label = str(target.get("label") or "").strip().casefold()
+        if any(marker in label for marker in _MUTATING_MARKERS):
+            return "query-only lookup cannot activate a business mutation control"
+        if plan.action_family in {"input", "select"}:
+            if target.get("is_filter") is True or target.get("role") in {
+                "search", "search_input", "searchbox",
+            }:
+                return ""
+            return "query-only lookup may write only to a structural search/filter control"
+        if plan.action_family == "activate" and any(
+            marker in label for marker in _QUERY_SUBMIT_MARKERS
+        ):
+            return ""
+        return "query-only lookup allows only local search/filter submission or viewport movement"
 
     def _materialize_action(
         self,
@@ -715,9 +774,11 @@ class StatementSupervisorPolicy(
         )
         if rejection:
             return None, rejection
-        rejection = self._validate_action_capability(
-            build_observation_view(statement, observation, []), plan
-        )
+        view = build_observation_view(statement, observation, [])
+        rejection = self._validate_lookup_action(statement, view, plan)
+        if rejection:
+            return None, rejection
+        rejection = self._validate_action_capability(view, plan)
         if rejection:
             return None, rejection
         drag_steps = self._picker_drag_steps(plan)
@@ -816,6 +877,21 @@ class StatementSupervisorPolicy(
 
         execution_scope = self._scope_for(statement, observation)
         self._rt.execution_scope = execution_scope
+        lookup_scope = _resolved_lookup(statement, observation)
+        if lookup_scope is not None:
+            summary = f"子目标「{statement.goal}」已由当前结构化观察满足。"
+            return SupervisorStep(
+                outcome=StatementOutcome.completed(
+                    summary,
+                    verification="confirmed",
+                    outputs={"scope": lookup_scope},
+                    observation=observation,
+                    observation_url=observation.url,
+                ),
+                pre_existing=True,
+                summary=summary,
+                **_ctx(statement),
+            )
         transport = self._offscreen_observed_field_step(
             statement,
             observation,
@@ -906,6 +982,16 @@ class StatementSupervisorPolicy(
             rejection = self._validate_filter_scope(statement, observation)
             if not rejection:
                 rejection = self._validate_input_matches(statement, observation)
+            lookup_scope = _resolved_lookup(statement, observation)
+            if (
+                not rejection
+                and isinstance(statement.inputs.get("lookup_request"), dict)
+                and lookup_scope is None
+            ):
+                rejection = (
+                    "current observation does not resolve exactly one structural "
+                    "collection for the lookup request"
+                )
             if rejection:
                 if validation_retries > 0:
                     self._static_constraints.append(
@@ -940,6 +1026,9 @@ class StatementSupervisorPolicy(
                     summary,
                     verification=verification,  # type: ignore[arg-type]
                     evidence=self._outcome_evidence(decision),
+                    outputs={"scope": lookup_scope} if lookup_scope is not None else {},
+                    observation=observation,
+                    observation_url=observation.url,
                 ),
                 pre_existing=not executed,
                 summary=summary,

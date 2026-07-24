@@ -399,9 +399,9 @@ class _SafetyVisitor(ast.NodeVisitor):
                 ))
 
 
-def _lookup_entity_diagnostics(function: ast.FunctionDef) -> list[CodeDiagnostic]:
-    scope_vars = {
-        target.id
+def _lookup_diagnostics(function: ast.FunctionDef) -> list[CodeDiagnostic]:
+    assignments = {
+        target.id: node
         for node in ast.walk(function)
         if isinstance(node, ast.Assign)
         and len(node.targets) == 1
@@ -409,17 +409,42 @@ def _lookup_entity_diagnostics(function: ast.FunctionDef) -> list[CodeDiagnostic
         and _ctx_method(node.value) == "lookup"
     }
     diagnostics: list[CodeDiagnostic] = []
+    consumed: set[str] = set()
     for node in ast.walk(function):
-        if _ctx_method(node) != "lookup":
+        method = _ctx_method(node)
+        if method == "lookup":
+            entity = _call_argument(node, "entity", 0)
+            if isinstance(entity, ast.Name) and entity.id in assignments:
+                diagnostics.append(_diag(
+                    entity,
+                    "LOOKUP_ENTITY_REQUIRED",
+                    (
+                        "ctx.lookup entity must be a textual business mention, not a "
+                        "LookupScope; pass the existing scope to ctx.acquire"
+                    ),
+                ))
             continue
-        entity = _call_argument(node, "entity", 0)
-        if isinstance(entity, ast.Name) and entity.id in scope_vars:
+        if method != "acquire":
+            continue
+        scope = _call_argument(node, "scope", 0)
+        if _ctx_method(scope) == "lookup":
+            continue
+        if isinstance(scope, ast.Name) and scope.id in assignments:
+            consumed.add(scope.id)
+            continue
+        diagnostics.append(_diag(
+            scope or node,
+            "ACQUIRE_SCOPE_ORIGIN",
+            "ctx.acquire scope must be the value returned directly by ctx.lookup",
+        ))
+    for name, node in assignments.items():
+        if name not in consumed:
             diagnostics.append(_diag(
-                entity,
-                "LOOKUP_ENTITY_REQUIRED",
+                node,
+                "LOOKUP_SCOPE_UNUSED",
                 (
-                    "ctx.lookup entity must be a textual business mention, not a LookupScope; "
-                    "reuse the existing scope in ctx.acquire or start a new lookup from text"
+                    f"lookup scope {name!r} is not consumed by ctx.acquire; "
+                    "lookup exists only to resolve a collection source"
                 ),
             ))
     return diagnostics
@@ -624,7 +649,7 @@ def validate_code(
         ))
     visitor.diagnostics.extend(_business_identity_break_diagnostics(function))
     visitor.diagnostics.extend(_date_constructor_diagnostics(function))
-    visitor.diagnostics.extend(_lookup_entity_diagnostics(function))
+    visitor.diagnostics.extend(_lookup_diagnostics(function))
     visitor.diagnostics.extend(_interact_result_diagnostics(function))
     return visitor.diagnostics
 

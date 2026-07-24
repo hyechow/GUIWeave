@@ -101,6 +101,11 @@ The dashboard chart can be generated in real time or by using historical, aggreg
 |Last Search Terms|The last five search terms.|
 |Top Search Terms|The five most commonly used search terms.|
 
+### Snapshot collection interfaces
+
+- **Top Search Terms** is a collection source with fields `Search Term`, `Results`, and `Uses`.
+  `Uses` is the usage count for ranking most-used terms; `Search Term` is the returned term text.
+
 ## Report tabs
 
 |Section|Description|

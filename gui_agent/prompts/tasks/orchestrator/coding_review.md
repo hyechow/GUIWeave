@@ -7,7 +7,7 @@ scope:
 owner: gui_agent.core.coding_orchestrator.planner
 schema: code_review
 eval_suites:
-version: 22
+version: 23
 ---
 Review the candidate Python script against the user's task and supplied knowledge.
 
@@ -37,12 +37,19 @@ Review in this order:
    Apply all task predicates before asserting singular cardinality; a lookup may legitimately
    return a parent, variants, and other candidates. A selector filters or skips nonmatches; it does
    not justify asserting that every acquired candidate matches.
-5. Audit runtime-value data flow. A current value read for a relative update must participate in
+5. Audit world-context and scope data flow. `interact` establishes authentication, workspace/page,
+   or a business operation. `lookup` only resolves one collection inside the already-established
+   current business context and its exact returned value must flow into `acquire`. Reject an unused
+   lookup, a handcrafted scope dictionary, a lookup used for login or cross-context navigation, or
+   an acquire fed from any other origin.
+6. Audit runtime-value data flow. A current value read for a relative update must participate in
    the exact requested calculation, and the computed result must reach `required_values`. For
    example, an arrival or increase by N means `new = current + N`, not `new = N`.
-6. Resolve the runtime error without adding unrelated lookups, prerequisite mutations, speculative
+   For top/bottom N retrieval, require at least N qualifying runtime records before slicing; an
+   empty or shorter success result does not satisfy the request.
+7. Resolve the runtime error without adding unrelated lookups, prerequisite mutations, speculative
    validation, or site behavior not required by the task.
-7. Mentally re-check the complete rewritten program against the same static API before returning it.
+8. Mentally re-check the complete rewritten program against the same static API before returning it.
 
 Treat task qualifiers as selection predicates, not mutation authorization. A color, size, status,
 category, or other value that identifies the requested target is presumed to describe existing
@@ -83,12 +90,14 @@ reinterpret their quantity as an absolute stock value. Only explicit wording suc
 replace with, or change to authorizes an absolute replacement. If the candidate already computes a
 delta from a runtime value, preserve that expression while fixing unrelated diagnostics.
 
-`lookup` establishes a collection scope, `acquire` reads collection fields, `read` reads current
+`lookup` resolves a collection scope inside the current business context, `acquire` reads collection
+fields, `read` reads current
 state, and `interact` invokes one real Statement contract. Its `inputs` are prior runtime data and
 its `required_values` are the values the state transition must apply. UI mechanics and target
 grounding remain inside Statement React; do not require database IDs merely to call `interact`.
 The first argument of `lookup` is always a textual business mention, never a previously returned
 `LookupScope`. Pass an existing scope directly to `acquire`, or start a distinct lookup from text.
+Use `fallback` only for a hint supplied by Router/task context; remove invented aliases.
 Every interaction must state an independently verifiable `success` postcondition. `observe_fields`
 may be used when the executor needs named observation fields to prove it. `success` must be a
 nonempty string, never a boolean. Every field requested from `acquire` or `read` must exist under

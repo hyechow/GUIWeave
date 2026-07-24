@@ -15,6 +15,7 @@ from gui_agent.core.run.collection_view import (
     project_collection_slice,
 )
 from gui_agent.core.run.observation_materializer import visual_dataset
+from gui_agent.core.run.lookup_scope import is_lookup_scope
 from gui_agent.core.schemas import (
     AcquisitionReceiptEvent,
     EventJournal,
@@ -163,6 +164,14 @@ class _AcquireExecutor:
         observation = self.cursor.observation
         assert observation is not None
         structural = collection_candidates(observation)
+        scope = self.invocation.args.get("lookup_scope")
+        if is_lookup_scope(scope):
+            fingerprint = str(scope["surface_fingerprint"])
+            return [
+                item
+                for item in structural
+                if item["surface_fingerprint"] == fingerprint
+            ]
         if structural:
             return structural
         fields = list(self.statement.required_fields) or ["record"]
@@ -510,6 +519,25 @@ class _AcquireExecutor:
                 "上游数据可用性检查未通过",
                 kickback="用 SourceCheck + Program If 处理缺列/集合未圈定，再进入 Acquire",
             )
+        scope = self.invocation.args.get("lookup_scope")
+        if scope is not None:
+            if not is_lookup_scope(scope):
+                return StatementOutcome.infeasible(
+                    "Acquire 收到的 lookup scope 未经当前 observation 验证",
+                    kickback="重新执行 ctx.lookup，并把其返回值直接传给 ctx.acquire",
+                )
+            available = {str(field).strip().casefold()
+                         for field in scope.get("available_fields") or []}
+            missing = [
+                field
+                for field in self.statement.required_fields
+                if field.strip().casefold() not in available
+            ]
+            if missing:
+                return StatementOutcome.infeasible(
+                    f"lookup scope 不提供请求字段 {missing!r}",
+                    kickback="修正 acquire 字段，或在正确上下文重新 lookup",
+                )
         self.cursor.ensure(0)
         while True:
             observation = self.cursor.observation

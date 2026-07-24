@@ -135,6 +135,12 @@ def _contract_lines(contract: StatementContract) -> list[str]:
 
 def _contract_requirements(contract: StatementContract) -> list[str]:
     requirements: list[str] = []
+    if isinstance(contract.inputs.get("lookup_request"), dict):
+        requirements.append(
+            "这是只读 lookup：只可在当前业务上下文内定位结构集合，允许局部搜索、"
+            "筛选和视口移动；禁止登录、跨业务页面导航或业务写入；只有当前 observation "
+            "能机械解析出唯一集合句柄时才可 complete。"
+        )
     if contract.persistence == "explicit_commit":
         requirements.append(
             "合同要求 explicit_commit 持久化边界；是否已越过只由 Journal receipt 证明。"
