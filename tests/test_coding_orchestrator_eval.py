@@ -37,13 +37,57 @@ def test_reviewed_sample_uses_prompt_review_not_frozen_task_answer(
         {"task_id": 778, "intent": "perform the requested task"},
         "",
         None,
+        coding_eval_mode="whitebox",
     )
 
     assert sample["ok"]
     assert sample["requirements_satisfied"]
     assert plan.review is not None
-    assert sample["evaluation_mode"] == "prompt_review"
-    assert sample["failures"] == []
+    assert sample["evaluation_mode"] == "whitebox_regression"
+    assert sample["review_fixture_visible"]
+    assert sample["hidden_evaluation"] is None
+
+
+def test_blind_sample_hides_fixture_until_final_evaluation(monkeypatch) -> None:
+    captured = {}
+    source = (
+        "def run(ctx):\n"
+        "    scope = ctx.lookup('sahara', field='name')\n"
+        "    rows = ctx.acquire(scope, fields=['id', 'name'], coverage='complete')\n"
+        "    assert rows, 'matching products are required'\n"
+        "    return len(rows)"
+    )
+    plan = CodingPlan(
+        goal="perform the requested task",
+        source=source,
+        attempts=[CodingAttempt(
+            source=source,
+            run=CodingRunResult(ok=True),
+        )],
+        review=CodingReview(text='{"approve": true, "edits": []}', approved=True),
+    )
+
+    def generate(*args, **kwargs):
+        captured["fixture"] = kwargs.get("fixture")
+        return plan
+
+    monkeypatch.setattr(
+        "scripts.coding_orchestrator_eval.generate_reviewed_code",
+        generate,
+    )
+
+    sample = _coding_sample(
+        {"task_id": 778, "intent": "perform the requested task"},
+        "",
+        None,
+        coding_eval_mode="blind",
+    )
+
+    assert captured["fixture"] is None
+    assert sample["evaluation_mode"] == "blind_generalization"
+    assert not sample["review_fixture_visible"]
+    assert sample["hidden_evaluation"] is not None
+    assert sample["failures"] == [], sample["hidden_evaluation"]
 
 
 def test_coding_verdict_separates_functional_and_stability_gates() -> None:

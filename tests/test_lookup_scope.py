@@ -34,6 +34,12 @@ def _table(path, caption, headers):
             "table:#products",
         ),
         (
+            {"entity": "Orders List", "field": "name"},
+            [_table("#orders", "", ["Status", "Purchase Date"])],
+            None,
+            "table:#orders",
+        ),
+        (
             {"entity": "Missing", "field": "Name"},
             [
                 _table("#one", "One", ["Name"]),
@@ -51,6 +57,7 @@ def test_lookup_resolves_only_an_exact_or_proven_filtered_collection(
         Observation(
             png_bytes=b"png",
             source="browser",
+            title="Orders" if lookup_request["entity"] == "Orders List" else "",
             tables=tables,
             applied_filters=filters,
         ),

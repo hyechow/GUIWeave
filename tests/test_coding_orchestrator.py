@@ -177,6 +177,30 @@ def run(ctx):
     assert "'id'" in diagnostics[0].message
 
 
+def test_static_review_rejects_undefined_names_and_unprojected_generator_fields() -> None:
+    undefined_source = '''
+def run(ctx):
+    scope = ctx.lookup("Orders")
+    records = ctx.acquire(scope, fields=["ID", "Grand Total (Purchased)"])
+    assert records, "orders must exist"
+    last_two = records[:2]
+    last_two = sorted_records[:2]
+    return last_two
+'''
+    projection_source = undefined_source.replace(
+        "    last_two = sorted_records[:2]\n    return last_two",
+        '    return sum(float(row["Total"]) for row in last_two)',
+    )
+
+    assert {diagnostic.code for diagnostic in validate_code(undefined_source)} == {
+        "UNDEFINED_NAME",
+    }
+    assert {
+        diagnostic.code
+        for diagnostic in validate_projection_contract(projection_source)
+    } == {"PROJECTED_FIELD_UNAVAILABLE"}
+
+
 @pytest.mark.parametrize(
     ("expression", "expected_codes"),
     [
@@ -286,6 +310,13 @@ def run(ctx):
             "def run(ctx):\n"
             "    scope = ctx.lookup('orders')\n"
             "    assert scope, 'scope exists'",
+            "LOOKUP_SCOPE_UNUSED",
+        ),
+        (
+            "def run(ctx):\n"
+            "    ctx.lookup('orders')\n"
+            "    rows = ctx.acquire(ctx.lookup('orders'), fields=['id'])\n"
+            "    assert rows, 'orders exist'",
             "LOOKUP_SCOPE_UNUSED",
         ),
         (
@@ -891,7 +922,7 @@ def test_generate_reviewed_code_bounds_the_reviewer_output() -> None:
 
     assert plan.executable
     assert llm.bind_calls == [{
-        "max_tokens": 3072,
+        "max_tokens": 4096,
         "temperature": 0,
         "response_format": {"type": "json_object"},
     }]
@@ -988,6 +1019,165 @@ def test_current_view_schema_is_private_and_rejects_field_invention() -> None:
         assert '"source": "Top Search Terms"' in prompt
         assert '"fields": ["Search Term", "Results", "Uses"]' in prompt
         assert "private runtime value" not in prompt
+
+
+def test_current_view_schema_does_not_constrain_a_different_later_collection() -> None:
+    source = (
+        "def run(ctx):\n"
+        "    entered = ctx.interact('open orders', success='orders page is open')\n"
+        "    assert entered, 'orders page must open'\n"
+        "    scope = ctx.lookup('Orders')\n"
+        "    rows = ctx.acquire(scope, fields=['Status', 'Purchase Date', 'Grand Total'])\n"
+        "    assert rows, 'orders must exist'\n"
+        "    return rows"
+    )
+    llm = _ContentSequenceLlm([
+        f"```python\n{source}\n```",
+        _review_response(approve=True),
+    ])
+    observation = SimpleNamespace(
+        tables=[{
+            "caption": "Top Search Terms",
+            "headers": ["Search Term", "Uses"],
+            "rows": [],
+        }],
+        form_controls=[],
+    )
+
+    plan = generate_reviewed_code(
+        "open orders and return order fields",
+        current_observation=observation,
+        llm=llm,
+    )
+
+    assert plan.requirements_satisfied
+    assert not plan.attempts[0].diagnostics
+
+
+def test_current_view_requires_context_transition_before_a_different_lookup() -> None:
+    initial = (
+        "def run(ctx):\n"
+        "    scope = ctx.lookup('Orders')\n"
+        "    rows = ctx.acquire(scope, fields=['Status'])\n"
+        "    assert rows, 'orders must exist'\n"
+        "    return rows"
+    )
+    repaired = initial.replace(
+        "    scope =",
+        "    entered = ctx.interact('open orders', success='orders page is open')\n"
+        "    assert entered, 'orders page must open'\n"
+        "    scope =",
+    )
+    llm = _ContentSequenceLlm([
+        f"```python\n{initial}\n```",
+        _review_response((initial, repaired)),
+    ])
+    observation = SimpleNamespace(
+        tables=[{
+            "caption": "Top Search Terms",
+            "headers": ["Search Term", "Uses"],
+            "rows": [],
+        }],
+        form_controls=[],
+    )
+
+    plan = generate_reviewed_code(
+        "open orders and return statuses",
+        current_observation=observation,
+        llm=llm,
+    )
+
+    assert plan.requirements_satisfied
+    assert plan.repaired
+    assert plan.attempts[0].diagnostics[0].code == "LOOKUP_CONTEXT_REQUIRED"
+
+
+def test_static_diagnostics_override_an_incorrect_reviewer_approval() -> None:
+    initial = (
+        "def run(ctx):\n"
+        "    entered = ctx.interact('open orders')\n"
+        "    assert entered, 'orders must open'"
+    )
+    repaired = initial.replace(
+        "ctx.interact('open orders')",
+        "ctx.interact('open orders', success='orders page is open')",
+    )
+    llm = _ContentSequenceLlm([
+        f"```python\n{initial}\n```",
+        _review_response(approve=True),
+        _review_response((initial, repaired)),
+    ])
+
+    plan = generate_reviewed_code("open orders", llm=llm)
+
+    assert plan.requirements_satisfied
+    assert plan.repaired
+    assert "success='orders page is open'" in plan.source
+    assert llm.calls == 3
+
+
+def test_production_review_executes_with_synthetic_probe_data() -> None:
+    initial = (
+        "def run(ctx):\n"
+        "    scope = ctx.lookup('Orders')\n"
+        "    rows = ctx.acquire(scope, fields=['ID'])\n"
+        "    assert rows, 'orders must exist'\n"
+        "    return 1 / 0"
+    )
+    repaired = initial.replace("return 1 / 0", "return len(rows)")
+    review_text = _review_response((initial, repaired))
+    llm = _ContentSequenceLlm([
+        f"```python\n{initial}\n```",
+        review_text,
+    ])
+
+    plan = generate_reviewed_code("count orders", llm=llm)
+
+    assert plan.requirements_satisfied
+    assert plan.repaired
+    assert plan.attempts[0].run is not None
+    assert "ZeroDivisionError" in plan.attempts[0].run.error
+    assert plan.attempts[1].run.return_value >= 1
+
+
+def test_generate_reviewed_code_emits_complete_auditable_event_sequence() -> None:
+    initial = (
+        "def run(ctx):\n"
+        "    rows = [1]\n"
+        "    assert rows, 'rows exist'\n"
+        "    return 1 / 0"
+    )
+    repaired = initial.replace("return 1 / 0", "return len(rows)")
+    review_text = _review_response((initial, repaired))
+    llm = _ContentSequenceLlm([
+        f"```python\n{initial}\n```",
+        review_text,
+    ])
+    emitted = []
+
+    plan = generate_reviewed_code(
+        "count rows",
+        llm=llm,
+        on_event=emitted.append,
+    )
+
+    assert emitted == plan.events
+    assert [event.kind for event in emitted] == [
+        "generation_started",
+        "generation_completed",
+        "diagnostics",
+        "probe",
+        "review_started",
+        "review_completed",
+        "repair_completed",
+        "diagnostics",
+        "probe",
+        "finalized",
+    ]
+    assert emitted[1].data["source"] == initial
+    assert emitted[5].data["text"] == review_text
+    assert emitted[6].data["before"] == initial
+    assert emitted[6].data["after"] == repaired
 
 
 def test_generate_reviewed_code_gives_reviewer_static_gate_schema_and_knowledge() -> None:

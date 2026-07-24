@@ -1,7 +1,8 @@
-"""Same-context A/B for the DSL planner and standalone coding orchestrator.
+"""Offline comparison for the DSL planner and coding orchestrator.
 
-The candidate executes against private fixtures. Fixtures and semantic grader
-failures are never included in either planner prompt.
+White-box mode exposes task fixtures to generation and review for mechanism
+regression. Blind mode withholds them until the final source is frozen, then
+uses them only for independent contract and execution evaluation.
 """
 
 from __future__ import annotations
@@ -26,6 +27,10 @@ load_dotenv(PROJECT_ROOT / ".env")
 from gui_agent.core.coding_orchestrator import (  # noqa: E402
     FixtureSpec,
     generate_reviewed_code,
+)
+from gui_agent.core.coding_orchestrator.sandbox import (  # noqa: E402
+    execute_code,
+    validate_fixture_contract,
 )
 from gui_agent.core.data_types import ArithmeticStep  # noqa: E402
 from gui_agent.core.orchestrator import (  # noqa: E402
@@ -702,31 +707,89 @@ def _coding_sample(
     task: dict,
     knowledge: str,
     resolution: Any,
+    *,
+    coding_eval_mode: str = "whitebox",
 ) -> dict[str, Any]:
+    fixture = fixture_for_task(task["task_id"])
     plan = generate_reviewed_code(
         task["intent"],
         knowledge=knowledge,
         resolution=resolution,
         current_site="shopping_admin",
-        fixture=fixture_for_task(task["task_id"]),
+        fixture=fixture if coding_eval_mode == "whitebox" else None,
     )
     final = plan.attempts[-1]
     trace = final.run.trace if final.run is not None else []
-    failures = [] if plan.executable else ["CODING_NOT_EXECUTABLE"]
+    hidden: dict[str, Any] | None = None
+    hidden_ok = True
+    first_executable = bool(
+        plan.attempts
+        and not plan.attempts[0].diagnostics
+        and plan.attempts[0].run is not None
+        and plan.attempts[0].run.ok
+    )
+    if coding_eval_mode == "blind":
+        hidden_diagnostics = validate_fixture_contract(
+            plan.source,
+            fixture,
+            match_lookup_sources=True,
+        )
+        hidden_run = (
+            execute_code(plan.source, fixture)
+            if not hidden_diagnostics else None
+        )
+        hidden_ok = bool(hidden_run is not None and hidden_run.ok)
+        hidden = {
+            "diagnostics": [
+                diagnostic.render() for diagnostic in hidden_diagnostics
+            ],
+            "run_error": hidden_run.error if hidden_run is not None else "",
+            "trace": [
+                asdict(event) for event in hidden_run.trace
+            ] if hidden_run is not None else [],
+            "writes": [
+                asdict(write) for write in hidden_run.writes
+            ] if hidden_run is not None else [],
+        }
+        first_source = plan.attempts[0].source
+        if first_source == plan.source:
+            first_executable = hidden_ok
+        else:
+            first_diagnostics = validate_fixture_contract(
+                first_source,
+                fixture,
+                match_lookup_sources=True,
+            )
+            first_run = (
+                execute_code(first_source, fixture)
+                if not first_diagnostics else None
+            )
+            first_executable = bool(first_run is not None and first_run.ok)
+
+    executable = plan.executable and hidden_ok
+    failures = [] if executable else ["CODING_NOT_EXECUTABLE"]
+    if hidden is not None and hidden["diagnostics"]:
+        failures.extend(
+            f"HIDDEN_FIXTURE:{diagnostic.split(']', 1)[0].lstrip('[')}"
+            for diagnostic in hidden["diagnostics"]
+        )
+    elif hidden is not None and not hidden_ok:
+        failures.append("HIDDEN_FIXTURE:RUNTIME")
     if not plan.requirements_satisfied:
         failures.append("PROMPT_REQUIREMENTS_NOT_SATISFIED")
     reviews = [plan.review] if plan.review is not None else []
     return {
         "ok": not failures,
-        "executable": plan.executable,
+        "executable": executable,
         "requirements_satisfied": plan.requirements_satisfied,
-        "evaluation_mode": "prompt_review",
-        "first_executable": bool(
-            plan.attempts
-            and not plan.attempts[0].diagnostics
-            and plan.attempts[0].run is not None
-            and plan.attempts[0].run.ok
+        "evaluation_mode": (
+            "whitebox_regression"
+            if coding_eval_mode == "whitebox"
+            else "blind_generalization"
         ),
+        "review_fixture_visible": coding_eval_mode == "whitebox",
+        "hidden_evaluation": hidden,
+        "first_executable": first_executable,
         "failures": failures,
         "calls": 1 + len(reviews),
         "repairs": int(plan.repaired),
@@ -851,6 +914,15 @@ def main() -> int:
         choices=["dsl", "coding_reviewed"],
         default=["dsl", "coding_reviewed"],
     )
+    parser.add_argument(
+        "--coding-eval-mode",
+        choices=["whitebox", "blind"],
+        default="blind",
+        help=(
+            "whitebox exposes task fixtures to generation/review for regression; "
+            "blind reveals them only after the final code is frozen"
+        ),
+    )
     args = parser.parse_args()
     unsupported = set(args.tasks) - SUPPORTED_TASKS
     if unsupported:
@@ -873,7 +945,12 @@ def main() -> int:
             samples = []
             for sample_index in range(args.k):
                 if surface == "coding_reviewed":
-                    sample = _coding_sample(task, task_knowledge, resolution)
+                    sample = _coding_sample(
+                        task,
+                        task_knowledge,
+                        resolution,
+                        coding_eval_mode=args.coding_eval_mode,
+                    )
                 else:
                     sample = _dsl_sample(task, task_knowledge, resolution)
                 samples.append(sample)
@@ -924,6 +1001,7 @@ def main() -> int:
             and summaries["coding_reviewed"]["mean_calls"] <= summaries["dsl"]["mean_calls"]
         )
     report = {
+        "coding_eval_mode": args.coding_eval_mode,
         "summary": summaries,
         "verdict": verdict,
         "failure_codes": dict(failures.most_common()),
