@@ -89,3 +89,23 @@ def test_terminal_renderer_shows_rejected_repair_and_reason() -> None:
     assert "✗ rejected" in output
     assert "+    assert ctx.interact('Save', success='saved')" in output
     assert "BUSINESS_ASSERTION_MESSAGE" in output
+
+
+def test_terminal_renderer_marks_partial_repair_as_applied_progress() -> None:
+    lines = []
+    render = CodingTerminalRenderer(write=lines.append)
+
+    render(CodingEvent("repair_completed", {
+        "status": "partial",
+        "before": "def run(ctx):\n    return 1 / 0",
+        "after": "def run(ctx):\n    return missing",
+        "proposed": "def run(ctx):\n    return missing",
+        "selected_edits": [0],
+        "error": "",
+        "candidate_diagnostics": ["[UNDEFINED_NAME] line 2:12: missing"],
+        "candidate_error": "",
+    }))
+
+    output = "\n".join(lines)
+    assert "candidate.py (applied)" in output
+    assert "△ partial" in output

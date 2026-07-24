@@ -7,111 +7,55 @@ scope:
 owner: gui_agent.core.coding_orchestrator.planner
 schema: code_review
 eval_suites:
-version: 24
+version: 29
 ---
-Review the candidate Python script against the user's task and supplied knowledge.
+Review the candidate Python program against the user's task, supplied knowledge, static diagnostics,
+and mock execution. The fixture is visible test data, not a canonical answer; never hardcode its
+record IDs, values, or row count.
 
-The mock fixture is visible unit-test data, not a canonical answer. Use it to understand available
-fields, row shapes, and concrete execution behavior. Never hardcode fixture record IDs or dynamic
-values into the script.
+The public API is:
 
-Check only whether the code:
-
-- selects the entities required by the task;
-- derives relative values from runtime reads;
-- passes relevant runtime data through named Statement `inputs` and declares the requested literal
-  changes through `required_values`, without unrelated transitions;
-- returns the requested information;
-- runs against the supplied mock.
+- `ctx.gui(task, target=None)`: establish non-durable GUI context; it raises on failure.
+- `ctx.query(entity, fields=[...], filters={}, field="name", fallback=None,
+  coverage="complete")`: filter and materialize one collection in the current context.
+- `ctx.read(target=None, fields=[...])`: read fields from one target or current state.
+- `ctx.write(task, target=None, values={...})`: perform one durable business operation.
+- `ctx.command(capability, **arguments)`: deterministic platform capability.
 
 Review in this order:
 
-1. Preserve the user's exact requested entities, qualifiers, operations, and output.
-2. Resolve every listed static diagnostic. A candidate with any static diagnostic can never be
-   approved. Do not replace one invalid call with a different contract violation.
-3. Audit every `acquire` and `read` field against the exact `available_fields` for that source.
-   Collection fields and detail fields are separate; move a detail-only field to `read(record, ...)`.
-4. Audit projected-record data flow. Every later `record["field"]` or `record.get("field")` must
-   name a field requested when that record was acquired or read. Prefer retaining and passing the
-   concrete record instead of extracting an identity field that was not projected.
-   Apply all task predicates before asserting singular cardinality; a lookup may legitimately
-   return a parent, variants, and other candidates. A selector filters or skips nonmatches; it does
-   not justify asserting that every acquired candidate matches.
-5. Audit world-context and scope data flow. `interact` establishes authentication, workspace/page,
-   or a business operation. `lookup` only resolves one collection inside the already-established
-   current business context and its exact returned value must flow into `acquire`. Reject an unused
-   lookup, a handcrafted scope dictionary, a lookup used for login or cross-context navigation, or
-   an acquire fed from any other origin.
-   If a retrieval collection is absent from the current observation, repair the program by adding
-   one preceding `immediate` context-establishing `interact`; no later business interaction can own
-   that navigation.
-6. Audit runtime-value data flow. A current value read for a relative update must participate in
-   the exact requested calculation, and the computed result must reach `required_values`. For
-   example, an arrival or increase by N means `new = current + N`, not `new = N`.
-   For top/bottom N retrieval, require at least N qualifying runtime records before slicing; an
-   empty or shorter success result does not satisfy the request.
-7. Resolve the runtime error without adding unrelated lookups, prerequisite mutations, speculative
-   validation, or site behavior not required by the task.
-8. Mentally re-check the complete rewritten program against the same static API before returning it.
+1. Preserve every user-requested entity, qualifier, operation, numeric relationship, and output.
+2. Fix every static diagnostic. Do not trade one contract violation for another.
+3. Check each `query` and `read` field against its exact available fields. Every later
+   `row["field"]` or `row.get("field")` must have been projected by that call.
+4. Check effect boundaries. `gui` only establishes non-durable application context; `query` owns
+   local search, exact source filters, pagination, and materialization; `write` owns durable
+   business changes. If a collection is absent from the current observation, add one preceding
+   context-establishing `gui` call.
+5. Check data flow. Runtime values used for selection or relative updates must participate in the
+   calculation and reach the final `write` values. Pass an already acquired record as `target`
+   instead of inventing a database identifier.
+6. Check collection logic. Apply predicates before cardinality assertions. Do not select an
+   arbitrary first match. For top/bottom N, require at least N qualifying records, sort by the
+   authoritative runtime field, and take exactly N. Do not reinterpret a count as a time window.
+7. Resolve the mock runtime error with the smallest causal change. Do not add prerequisite writes,
+   speculative validation, unrelated navigation, or redundant display parsers.
 
-Treat task qualifiers as selection predicates, not mutation authorization. A color, size, status,
-category, or other value that identifies the requested target is presumed to describe existing
-business state unless the user explicitly asks to create or change that resource. Delete speculative
-prerequisite checks or writes for such qualifiers; do not "ensure" them through extra interactions.
-When the candidate already acquired a concrete record, pass that record through a named `inputs`
-entry instead of reducing it to a database ID or copying requested literal values into `inputs`.
-Put every user-requested new or changed literal in `required_values`.
+`query(filters=...)` is the only planning-level representation of source-native filtering. Do not
+add a separate GUI task to apply a filter. Currency and date/time table values are already
+normalized by `query`.
 
-Prefer the shortest corrected program that satisfies the task, but preserve every valid
-runtime-derived selection and calculation. When diagnostics concern a missing projected field,
-make the smallest local fix: add that field to its originating acquire/read or remove the access
-only when its output is not requested. Do not rewrite unrelated data flow while repairing a local
-diagnostic.
-The boolean returned by `interact` means Statement React already established and verified its
-`success` postcondition. Assert that boolean, but do not add a following `read` solely to prove the
-same saved state again.
-The postcondition is idempotent. Remove pre-reads and branches whose only purpose is to check whether
-an explicitly requested add, create, ensure, or update is already satisfied. Keep a read only when
-the user's branch, target selection, or value calculation genuinely consumes current business data.
-Any interaction that changes business data, including comments and notifications, must use
-`persistence="explicit_commit"`. Use `immediate` only for non-durable navigation or presentation
-state.
-Every `explicit_commit` interaction must have nonempty `required_values` containing its requested
-business writes, and its boolean return value must be asserted, branched on, or returned. A bare
-durable interaction can silently fail and is never approvable.
-Both `inputs` and `required_values` cross the Statement boundary as JSON data. Replace Python sets
-and tuples with deterministic lists; never pass a set, tuple, or their constructor results.
-`UNUSED_RUNTIME_VALUE` is a causal data-flow diagnostic. If the task describes a relative change,
-repair it by carrying that value through the calculation and write. Deleting the read and writing
-the task's delta as an absolute value is incorrect.
-If the task instead requests an absolute value and the read does not affect selection, branching,
-calculation, output, or Statement inputs, delete the unnecessary read assignment completely. Do not
-retain an unused read merely to establish context; the concrete acquired record already supplies
-Statement context.
-Words such as arrived, received, restocked, added, removed, or consumed describe a delta. Never
-reinterpret their quantity as an absolute stock value. Only explicit wording such as set to,
-replace with, or change to authorizes an absolute replacement. If the candidate already computes a
-delta from a runtime value, preserve that expression while fixing unrelated diagnostics.
+`ctx.gui` and `ctx.write` return no business value. Do not assign or assert their results. Never put
+filters in either call. Put changed business fields in `write(values=...)`. The GUI Statement owns
+page mechanics, save/commit behavior, retries, and proof of completion.
 
-`lookup` resolves a collection scope inside the current business context, `acquire` reads collection
-fields, `read` reads current
-state, and `interact` invokes one real Statement contract. Its `inputs` are prior runtime data and
-its `required_values` are the values the state transition must apply. UI mechanics and target
-grounding remain inside Statement React; do not require database IDs merely to call `interact`.
-The first argument of `lookup` is always a textual business mention, never a previously returned
-`LookupScope`. Pass an existing scope directly to `acquire`, or start a distinct lookup from text.
-Use `fallback` only for a hint supplied by Router/task context; remove invented aliases.
-Every interaction must state an independently verifiable `success` postcondition. `observe_fields`
-may be used when the executor needs named observation fields to prove it. `success` must be a
-nonempty string, never a boolean. Every field requested from `acquire` or `read` must exist under
-that exact semantic name in supplied knowledge or mock data; do not invent or rename source fields.
-The exact signature is
-`ctx.interact(goal, *, success: str, inputs={}, required_values={}, observe_fields=[],
-persistence="immediate|explicit_commit")`.
+Treat task qualifiers as selection predicates unless the user explicitly asks to create or change
+them. Preserve valid runtime-derived filtering and calculations. Delete unused values and redundant
+reads. Every newly added assertion needs a short nonempty message.
 
-Return exactly one JSON object and no explanation, Markdown, findings, or extra keys.
+Return exactly one JSON object and no explanation or Markdown.
 
-If the candidate is correct:
+If correct:
 
 {"approve": true, "edits": []}
 
@@ -120,32 +64,7 @@ Otherwise return one to ten exact local edits:
 {"approve": false, "edits": [{"search": "exact text copied from the candidate",
 "replacement": "replacement text"}]}
 
-Each `search` must match the original candidate exactly once. Change the smallest causal region and
-preserve all unrelated code, selections, calculations, and interactions. Never include `def run`
-and its body inside `search` unless the candidate's task decomposition, source selection, or data
-shape is fundamentally wrong and correcting it genuinely requires replacing most of the function.
-A complete-function replacement is a last resort and must still preserve every valid task
-constraint and pass the same static and mock execution gates. A header-only edit may include imports
-immediately preceding `def run(ctx):` plus that function header when removing an invalid top-level
-import. Every `search` must copy text from the
-original candidate, not text produced by an earlier replacement. When static diagnostics prevented
-the mock from running, do not add cleanup refactors unrelated to those diagnostics or an explicit
-task mismatch. Fix all listed diagnostics and the causal task error in this single local repair
-response. A partial repair that leaves even one listed diagnostic, references an undefined
-replacement variable, or accesses a newly required field without adding it to the originating
-acquire/read projection is invalid. Every added assert must include a short nonempty diagnostic
-message. Consolidate adjacent or causally dependent fixes in the same business phase into one edit;
-do not emit no-op edits. Each edit must independently move the candidate toward a valid program;
-the repair gate may discard an edit that introduces diagnostics or execution failure.
-
-`BUSINESS_IDENTITY_FIRST_MATCH` cannot be suppressed with `# noqa` or any other comment. It applies
-when `break` chooses the first record from an acquired business collection. Replace that selection
-with a complete candidate collection and an explicit cardinality assertion, then select the sole
-validated member. A local algorithmic loop, such as trying known date formats, may use `break`
-because it does not choose a business entity.
-Ranking tasks are different from arbitrary first-match selection. For "most recent", highest,
-lowest, earliest, or similar requests, acquire and filter the complete candidate set, assert it is
-nonempty, rank it by the requested runtime field, and select the first ranked result. Do not assert
-that the pre-ranked candidate set has cardinality one.
-`INVALID_DATE_CONSTRUCTION` means a literal day is outside the valid 1..31 range. Derive month
-boundaries from the first day of a month plus or minus `datetime.timedelta`; never use day zero.
+Each search must match the original candidate exactly once. Change the smallest causal region and
+preserve unrelated code. Do not replace the complete `run` function unless its source selection or
+overall data shape is fundamentally wrong. Every edit must independently reduce diagnostics,
+runtime failure, or an explicit task mismatch.

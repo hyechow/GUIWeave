@@ -42,11 +42,16 @@ _QUERY_MARKERS = (
 _QUERY_SUBMIT_MARKERS = (
     "search", "apply", "filter", "submit", "搜索", "应用", "筛选", "查询",
 )
+_QUERY_COLUMNS_MARKERS = ("column", "columns", "列")
+_QUERY_PRESENTATION_LABELS = {
+    frozenset(label.split()) for label in "cancel|close|dismiss|clear all|reset filters|"
+    "取消|关闭|清除全部|重置筛选".split("|")
+}
 _MUTATING_MARKERS = (
     "save", "create", "add", "edit", "update", "delete", "remove",
-    "discard", "reset", "cancel", "clear",
+    "discard",
     "保存", "创建", "新增", "添加", "编辑", "更新", "删除", "移除",
-    "丢弃", "重置", "取消", "清空",
+    "丢弃",
 )
 
 
@@ -85,10 +90,13 @@ def _action_targets(
             }
         ]
     target = plan.target_control.strip().casefold()
-    return [
+    target_terms = _semantic_terms(target)
+    matches = [
         item for item in view.affordances
-        if str(item.get("label") or "").strip().casefold() == target
+        if _semantic_terms(str(item.get("label") or "")) == target_terms
     ]
+    visible = [item for item in matches if item.get("visibility") == "visible"]
+    return visible if len(visible) == 1 else matches
 
 
 def _resolved_lookup(
@@ -744,8 +752,29 @@ class StatementSupervisorPolicy(
             }:
                 return ""
             return "query-only lookup may write only to a structural search/filter control"
+        required_fields = [
+            _semantic_terms(str(value))
+            for value in statement.inputs["lookup_request"].get("required_fields") or []
+        ]
+        label_terms = _semantic_terms(label)
+        is_projection = any(
+            marker in label for marker in _QUERY_COLUMNS_MARKERS
+        ) or target.get("role") in {
+            "checkbox", "checkbox_input", "menuitemcheckbox", "switch",
+            "switch_input", "option", "menuitem",
+        } and any(
+            terms and (terms <= label_terms or label_terms <= terms)
+            for terms in required_fields
+        )
+        if plan.action_family == "activate" and is_projection:
+            return ""
         if plan.action_family == "activate" and any(
             marker in label for marker in _QUERY_SUBMIT_MARKERS
+        ):
+            return ""
+        if (
+            plan.action_family == "activate"
+            and frozenset(_semantic_terms(label)) in _QUERY_PRESENTATION_LABELS
         ):
             return ""
         return "query-only lookup allows only local search/filter submission or viewport movement"

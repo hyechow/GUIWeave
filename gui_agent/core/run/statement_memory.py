@@ -136,10 +136,12 @@ def _contract_lines(contract: StatementContract) -> list[str]:
 def _contract_requirements(contract: StatementContract) -> list[str]:
     requirements: list[str] = []
     if isinstance(contract.inputs.get("lookup_request"), dict):
+        request = contract.inputs["lookup_request"]
         requirements.append(
             "这是只读 lookup：只可在当前业务上下文内定位结构集合，允许局部搜索、"
-            "筛选和视口移动；禁止登录、跨业务页面导航或业务写入；只有当前 observation "
-            "能机械解析出唯一集合句柄时才可 complete。"
+            "筛选、列展示和视口移动；禁止登录、跨业务导航或业务写入。终态必须"
+            f"精确应用 filters={request.get('filters') or {}}，且集合 headers 包含"
+            f" fields={request.get('required_fields') or []}，否则不可 complete。"
         )
     if contract.persistence == "explicit_commit":
         requirements.append(

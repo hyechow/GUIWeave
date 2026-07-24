@@ -13,7 +13,7 @@ source: manual_distilled
 confidence: medium
 sensitivity: internal
 ttl: session
-version: 2
+version: 3
 ---
 # Orders
 
@@ -24,6 +24,11 @@ Usually, orders are created when customers complete the checkout process from th
 ## Orders workspace
 
 The Orders workspace lists all current orders, and gives you the ability to edit existing orders and create orders. Each row in the grid represents a customer order, and each column represents an attribute, or data field. Use the standard controls to sort and filter the list, find orders, and apply actions to selected orders. Use the tabs above the pagination controls to filter the list, change the default view, change and rearrange columns, and export data.
+
+For completed-only retrieval or aggregation, use the Orders grid's native
+`Status = Complete` filter before materializing the collection. The same context-establishing
+operation may enter Orders, clear unrelated retained filters, and apply this exact filter; do not
+page through every order status and reproduce an available exact filter only in local code.
 
 Planning note for Orders date filters: when a task requires filtering by
 `Purchase Date`, write the page filter step with slash-form UI dates
@@ -81,6 +86,13 @@ clear the Status filter, collect rows with `Status`, `Purchase Date`, and `Grand
 (Purchased)`, and exclude `Canceled` during structured analysis. For recent/oldest payment
 questions, `Purchase Date` is the ordering field and `Grand Total (Purchased)` is the payment
 measure; the grid's current/default row order is not a recency guarantee.
+
+The coding `ctx.query` contract for the Orders grid uses the visible semantic column names exactly:
+`Status`, `Purchase Date`, and `Grand Total (Purchased)`. Values use the visible forms such as
+`Complete`, `Feb 3, 2023 6:08:03 PM`, and `$1,234.50` in the browser; the coding `ctx.query`
+boundary deterministically returns normalized date/time and currency values. Provider/storage
+identifiers such as `status`, `created_at`, or invented names such as `purchase_date` and
+`grand_total_purchased` are not query fields.
 
 Order-number lookup and keyword lookup are different capabilities. The order number shown as
 `#304` is stored as a zero-padded increment ID such as `000000304`; use the Filters panel's **ID**

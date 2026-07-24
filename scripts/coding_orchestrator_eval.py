@@ -50,9 +50,10 @@ from llm.structured import get_llm_call_count, get_llm_token_usage  # noqa: E402
 
 DATASET = PROJECT_ROOT / "webarena-verified/assets/dataset/webarena-verified.json"
 SUPPORTED_TASKS = frozenset({
-    11, 62, 77, 94, 107, 183, 184, 196, 202, 203, 208, 470, 500, 501,
+    11, 62, 77, 94, 107, 183, 184, 193, 196, 202, 203, 208, 470, 500, 501,
     491, 543, 549, 550, 699, 704, 768, 771, 778,
 })
+HIDDEN_EXPECTED_RETURNS = {193: 182.4}
 
 
 def fixture_for_task(task_id: int) -> FixtureSpec:
@@ -194,6 +195,44 @@ def fixture_for_task(task_id: int) -> FixtureSpec:
                 for row in rows
             },
         )
+    if task_id == 193:
+        rows = [
+            {
+                "ID": "o-pending", "Status": "Pending",
+                "Purchase Date": "Jun 11, 2023 9:00:00 AM",
+                "Grand Total (Purchased)": "$900.00",
+            },
+            {
+                "ID": "o-older", "Status": "Complete",
+                "Purchase Date": "Sep 30, 2022 9:00:00 AM",
+                "Grand Total (Purchased)": "$40.00",
+            },
+            {
+                "ID": "o-latest", "Status": "Complete",
+                "Purchase Date": "Jun 09, 2023 9:00:00 AM",
+                "Grand Total (Purchased)": "$100.00",
+            },
+            {
+                "ID": "o-canceled", "Status": "Canceled",
+                "Purchase Date": "Jun 10, 2023 9:00:00 AM",
+                "Grand Total (Purchased)": "$800.00",
+            },
+            {
+                "ID": "o-second", "Status": "Complete",
+                "Purchase Date": "May 31, 2023 9:00:00 AM",
+                "Grand Total (Purchased)": "$82.40",
+            },
+        ]
+        return FixtureSpec(lookups={
+            "orders": rows,
+            "orders list": rows,
+            "completed orders": [
+                row for row in rows if row["Status"] == "Complete"
+            ],
+            "last 2 completed orders": [
+                row for row in rows if row["Status"] == "Complete"
+            ],
+        })
     if task_id == 196:
         rows = [
             {"id": "x-old", "status": "Canceled", "purchase_date": "Apr 01, 2023 9:00:00 AM", "Grand Total (Purchased)": 999.0},
@@ -703,6 +742,54 @@ def grade_dsl_program(task_id: int, program) -> list[str]:
     return [f"UNSUPPORTED_TASK:{task_id}"]
 
 
+def _evaluate_hidden_source(
+    source: str,
+    fixture: FixtureSpec,
+    *,
+    expected_return: Any = None,
+) -> tuple[dict[str, Any], bool]:
+    diagnostics = validate_fixture_contract(
+        source,
+        fixture,
+        match_lookup_sources=True,
+    )
+    run = execute_code(source, fixture) if not diagnostics else None
+    return_matches: bool | None = None
+    if expected_return is not None and run is not None and run.ok:
+        actual = run.return_value
+        return_matches = bool(
+            not isinstance(actual, bool)
+            and isinstance(actual, (int, float))
+            and abs(float(actual) - float(expected_return)) < 1e-9
+        )
+    result = {
+        "diagnostics": [diagnostic.render() for diagnostic in diagnostics],
+        "run_error": run.error if run is not None else "",
+        "return_value": run.return_value if run is not None else None,
+        "expected_return": expected_return,
+        "return_matches": return_matches,
+        "trace": [asdict(event) for event in run.trace] if run is not None else [],
+        "writes": [asdict(write) for write in run.writes] if run is not None else [],
+    }
+    return result, bool(
+        not diagnostics
+        and run is not None
+        and run.ok
+        and return_matches is not False
+    )
+
+
+def _hidden_contract_failures(task_id: int, result: dict[str, Any]) -> list[str]:
+    if task_id != 193:
+        return []
+    native_filter = any(
+        event.get("op") == "query"
+        and (event.get("kwargs", {}).get("filters") or {}).get("Status") == "Complete"
+        for event in result.get("trace", [])
+    )
+    return [] if native_filter else ["HIDDEN_CONTRACT:NATIVE_FILTER"]
+
+
 def _coding_sample(
     task: dict,
     knowledge: str,
@@ -722,6 +809,7 @@ def _coding_sample(
     trace = final.run.trace if final.run is not None else []
     hidden: dict[str, Any] | None = None
     hidden_ok = True
+    hidden_contract_failures: list[str] = []
     first_executable = bool(
         plan.attempts
         and not plan.attempts[0].diagnostics
@@ -729,52 +817,43 @@ def _coding_sample(
         and plan.attempts[0].run.ok
     )
     if coding_eval_mode == "blind":
-        hidden_diagnostics = validate_fixture_contract(
+        expected_return = HIDDEN_EXPECTED_RETURNS.get(task["task_id"])
+        hidden, hidden_ok = _evaluate_hidden_source(
             plan.source,
             fixture,
-            match_lookup_sources=True,
+            expected_return=expected_return,
         )
-        hidden_run = (
-            execute_code(plan.source, fixture)
-            if not hidden_diagnostics else None
+        hidden_contract_failures = _hidden_contract_failures(
+            task["task_id"], hidden,
         )
-        hidden_ok = bool(hidden_run is not None and hidden_run.ok)
-        hidden = {
-            "diagnostics": [
-                diagnostic.render() for diagnostic in hidden_diagnostics
-            ],
-            "run_error": hidden_run.error if hidden_run is not None else "",
-            "trace": [
-                asdict(event) for event in hidden_run.trace
-            ] if hidden_run is not None else [],
-            "writes": [
-                asdict(write) for write in hidden_run.writes
-            ] if hidden_run is not None else [],
-        }
         first_source = plan.attempts[0].source
         if first_source == plan.source:
-            first_executable = hidden_ok
+            first_executable = hidden_ok and not hidden_contract_failures
         else:
-            first_diagnostics = validate_fixture_contract(
+            first_hidden, first_executable = _evaluate_hidden_source(
                 first_source,
                 fixture,
-                match_lookup_sources=True,
+                expected_return=expected_return,
             )
-            first_run = (
-                execute_code(first_source, fixture)
-                if not first_diagnostics else None
+            first_executable = (
+                first_executable
+                and not _hidden_contract_failures(task["task_id"], first_hidden)
             )
-            first_executable = bool(first_run is not None and first_run.ok)
 
-    executable = plan.executable and hidden_ok
+    executable = plan.executable and hidden_ok and not hidden_contract_failures
     failures = [] if executable else ["CODING_NOT_EXECUTABLE"]
+    failures.extend(hidden_contract_failures)
     if hidden is not None and hidden["diagnostics"]:
         failures.extend(
             f"HIDDEN_FIXTURE:{diagnostic.split(']', 1)[0].lstrip('[')}"
             for diagnostic in hidden["diagnostics"]
         )
     elif hidden is not None and not hidden_ok:
-        failures.append("HIDDEN_FIXTURE:RUNTIME")
+        failures.append(
+            "HIDDEN_FIXTURE:RETURN"
+            if hidden["return_matches"] is False
+            else "HIDDEN_FIXTURE:RUNTIME"
+        )
     if not plan.requirements_satisfied:
         failures.append("PROMPT_REQUIREMENTS_NOT_SATISFIED")
     reviews = [plan.review] if plan.review is not None else []

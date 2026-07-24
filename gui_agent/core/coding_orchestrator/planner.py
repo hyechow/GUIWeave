@@ -138,10 +138,10 @@ def _observation_schema_block(observation: Any) -> ContextBlock | None:
             f"{json.dumps(schema, ensure_ascii=False)}\n"
             "This is an interface schema, not task-result data. A collection source names the "
             "business scope to establish, and its fields are the exact semantic names available "
-            "to acquire from that source only while the program remains in this current context. "
-            "After ctx.interact changes application context, do not reuse these collection fields; "
+            "to query from that source only while the program remains in this current context. "
+            "After ctx.gui changes application context, do not reuse these collection fields; "
             "use the selected application knowledge for the destination source. Runtime code must "
-            "still acquire and compute from the actual rows."
+            "still query and compute from the actual rows."
         ),
     )
 
@@ -252,15 +252,14 @@ def _fixture_review_text(fixture: FixtureSpec | None) -> str:
     detail_fields = fixture.fields(include_reads=True) - collection_fields
     detail_only_fields = sorted(detail_fields)
     return (
-        "collection sources (`acquire` may request only their available_fields):\n"
+        "collection sources (`query` may request only their available_fields):\n"
         f"{lookup_text or '- none'}\n"
         "detail sources (`read` may request only their available_fields):\n"
         f"{detail_text or '- none'}\n"
         f"detail-only fields: {detail_only_fields!r}\n"
         "A detail-only selection field must be read from each concrete collection record before "
-        "the Python predicate uses it; never add it to acquire.\n"
-        f"command results: {fixture.command_results!r}\n"
-        f"compute results: {fixture.compute_results!r}"
+        "the Python predicate uses it; never add it to query.\n"
+        f"command results: {fixture.command_results!r}"
     )
 
 
@@ -327,9 +326,9 @@ def _review_evidence_block(
             f"Runtime error that must disappear:\n"
             f"{run.error if run is not None else '- not available'}\n"
             "Before returning edits, mentally apply the complete patch set once. Every newly "
-            "accessed acquire/read field must be present in that record's projection, every "
+            "accessed query/read field must be present in that record's projection, every "
             "listed diagnostic must be fixed, and every requested mutation literal must reach "
-            "required_values. Every newly added assert must have a nonempty diagnostic message. "
+            "ctx.write values. Every newly added assert must have a nonempty diagnostic message. "
             "Do not return a partial repair."
         ),
     )
@@ -423,7 +422,8 @@ def _evaluate_source(
     if fixture is None and run is not None and not run.ok:
         final_error = run.error.strip().splitlines()[-1] if run.error.strip() else ""
         definite = (
-            "NameError", "UnboundLocalError", "KeyError", "IndexError",
+            "AssertionError", "AttributeError", "TypeError", "NameError",
+            "UnboundLocalError", "KeyError", "IndexError", "ValueError",
             "ZeroDivisionError",
         )
         if not final_error.startswith(tuple(f"{name}:" for name in definite)):
@@ -453,23 +453,20 @@ def _select_local_repair(
 
     candidate, apply_error = _apply_local_repairs(source, repairs)
     proposed = CodingAttempt(source=candidate)
+    current = _evaluate_source(source, fixture, contract_fixture)
     if not apply_error:
         proposed = _evaluate_source(candidate, fixture, contract_fixture)
-        if _attempt_executable(proposed):
-            return proposed, "", tuple(range(len(repairs))), proposed
 
-    current = _evaluate_source(source, fixture, contract_fixture)
     selected: list[int] = []
     for index, repair in enumerate(repairs):
         candidate, apply_error = _apply_local_repairs(current.source, [repair])
         if apply_error:
             continue
         attempt = _evaluate_source(candidate, fixture, contract_fixture)
-        # Static/mock gates can reject a bad semantic edit, but cannot prove that
-        # a valid semantic edit improves an already-executable program. The
-        # Reviewer owns that judgment, so retain every independently executable
-        # local edit after discarding invalid ones.
-        if _attempt_executable(attempt):
+        if _attempt_executable(attempt) or (
+            current.diagnostics
+            and len(attempt.diagnostics) < len(current.diagnostics)
+        ):
             current = attempt
             selected.append(index)
     return current, "", tuple(selected), proposed
@@ -531,7 +528,7 @@ def generate_reviewed_code(
     llm: Any = None,
     on_event: Callable[[CodingEvent], None] | None = None,
 ) -> CodingPlan:
-    """Generate once, then apply one locally constrained review repair."""
+    """Generate once, then run at most two locally constrained review passes."""
     events: list[CodingEvent] = []
 
     def emit(kind: str, **data: Any) -> None:
@@ -570,11 +567,14 @@ def generate_reviewed_code(
     ]
     observation_schema = _observation_schema_block(current_observation)
     contract_fixture = _observation_contract_fixture(current_observation)
-    blocks = [
+    review_blocks = [
         *common_blocks,
         knowledge_block("app_knowledge", knowledge),
         _location_block(current_site, current_title, current_url),
         observation_schema,
+    ]
+    blocks = [
+        *review_blocks,
         _fixture_schema_block(fixture),
     ]
 
@@ -603,55 +603,27 @@ def generate_reviewed_code(
     initial.seconds = time.perf_counter() - started
     attempts = [initial]
     emit_validation("initial", initial)
-    emit("review_started", pass_index=1)
-    review = _review_attempt(
-        llm=llm,
-        blocks=[*common_blocks, observation_schema],
-        source=source,
-        attempt=initial,
-        fixture=fixture,
-    )
-    emit(
-        "review_completed",
-        pass_index=1,
-        approved=review.approved,
-        source=source,
-        text=review.text,
-        error=review.error,
-        edits=[
-            {"search": search, "replacement": replacement}
-            for search, replacement in review.edits
-        ],
-        seconds=review.seconds,
-    )
-    if review.approved and not _attempt_executable(initial):
-        emit("review_started", pass_index=2, reason="approval contradicted diagnostics")
+    current = initial
+    review: CodingReview | None = None
+    repair_status = "none"
+    next_reason = ""
+    extra_review_blocks: list[ContextBlock | None] = []
+    for pass_index in (1, 2):
+        emit(
+            "review_started",
+            pass_index=pass_index,
+            **({"reason": next_reason} if next_reason else {}),
+        )
         review = _review_attempt(
             llm=llm,
-            blocks=[
-                *common_blocks,
-                observation_schema,
-                ContextBlock(
-                    id="runtime.coding_review_contradiction",
-                    budget="required",
-                    source_type="runtime_state",
-                    source="static_validator",
-                    ttl="turn",
-                    priority=1,
-                    content=(
-                        "The previous review incorrectly approved a candidate with mandatory "
-                        "static diagnostics. Approval is forbidden; return local edits that "
-                        "remove every listed diagnostic."
-                    ),
-                ),
-            ],
+            blocks=[*review_blocks, *extra_review_blocks],
             source=source,
-            attempt=initial,
+            attempt=current,
             fixture=fixture,
         )
         emit(
             "review_completed",
-            pass_index=2,
+            pass_index=pass_index,
             approved=review.approved,
             source=source,
             text=review.text,
@@ -662,8 +634,25 @@ def generate_reviewed_code(
             ],
             seconds=review.seconds,
         )
-    repair_status = "none"
-    if not review.approved:
+        if review.approved:
+            if _attempt_executable(current) or pass_index == 2:
+                break
+            next_reason = "approval contradicted diagnostics"
+            extra_review_blocks = [ContextBlock(
+                id="runtime.coding_review_contradiction",
+                budget="required",
+                source_type="runtime_state",
+                source="static_validator",
+                ttl="turn",
+                priority=1,
+                content=(
+                    "The previous review incorrectly approved a candidate with mandatory "
+                    "static diagnostics. Approval is forbidden; return local edits that "
+                    "remove every listed diagnostic."
+                ),
+            )]
+            continue
+
         if review.error:
             repaired = CodingAttempt(source=source)
             proposed = repaired
@@ -679,8 +668,13 @@ def generate_reviewed_code(
             repaired.diagnostics = [
                 CodeDiagnostic("LOCAL_REPAIR_INVALID", repair_error),
             ]
-        repair_accepted = bool(selected_repairs) and _attempt_executable(repaired)
-        repair_status = "accepted" if repair_accepted else "rejected"
+        repair_progress = bool(selected_repairs) and repaired.source != source
+        repair_accepted = repair_progress and _attempt_executable(repaired)
+        repair_status = (
+            "accepted" if repair_accepted
+            else "partial" if repair_progress
+            else "rejected"
+        )
         proposed_run = proposed.run
         emit(
             "repair_completed",
@@ -699,10 +693,16 @@ def generate_reviewed_code(
                 else ""
             ),
         )
-        if repair_error or repair_accepted or not _attempt_executable(initial):
+        if repair_progress or repair_error:
             source = repaired.source
+            current = repaired
             attempts.append(repaired)
             emit_validation("repair", repaired)
+        if repair_accepted or not repair_progress or pass_index == 2:
+            break
+        next_reason = "remaining diagnostics after partial repair"
+        extra_review_blocks = []
+    assert review is not None
     plan = CodingPlan(
         goal=goal,
         source=source,

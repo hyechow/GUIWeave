@@ -92,7 +92,11 @@ def _policy(statement: StatementContract) -> StatementSupervisorPolicy:
     return policy
 
 
-def _lookup_statement(entity: str = "Records", field: str = "name") -> StatementContract:
+def _lookup_statement(
+    entity: str = "Records",
+    field: str = "name",
+    required_fields: list[str] | None = None,
+) -> StatementContract:
     return StatementContract(
         id="lookup",
         goal="resolve a collection",
@@ -102,6 +106,7 @@ def _lookup_statement(entity: str = "Records", field: str = "name") -> Statement
                 "entity": entity,
                 "field": field,
                 "fallback": "",
+                "required_fields": list(required_fields or []),
             },
         },
     )
@@ -567,6 +572,100 @@ def test_query_only_lookup_allows_structural_filter_input(monkeypatch) -> None:
     assert step.action_intent is not None
     assert step.action_intent.family == "input"
     assert step.action_intent.target_value == "Sahara"
+
+
+def test_query_only_lookup_allows_columns_control(monkeypatch) -> None:
+    statement = _lookup_statement("Orders", required_fields=["Customer Email"])
+    step = _run_lookup(
+        monkeypatch,
+        statement,
+        lambda *_args, **_kwargs: _act(
+            family="activate",
+            control="Columns",
+        ),
+        semantic_tree=[{
+            "role": "button",
+            "key": "Columns",
+            "ref": 9,
+            "in_viewport": True,
+        }],
+    )
+
+    assert step.action_intent is not None
+    assert step.action_intent.family == "activate"
+
+
+def test_query_only_lookup_matches_icon_prefixed_filter_control(monkeypatch) -> None:
+    statement = _lookup_statement("Orders")
+    step = _run_lookup(
+        monkeypatch,
+        statement,
+        lambda *_args, **_kwargs: _act(
+            family="activate",
+            control="Filters",
+        ),
+        semantic_tree=[{
+            "role": "button",
+            "key": "\ue605Filters",
+            "ref": 9,
+            "in_viewport": True,
+        }],
+    )
+
+    assert step.action_intent is not None
+    assert step.action_intent.family == "activate"
+
+
+@pytest.mark.parametrize("control", ["Cancel", "Clear All"])
+def test_query_only_lookup_allows_local_query_presentation_controls(
+    monkeypatch, control,
+) -> None:
+    statement = _lookup_statement("Orders")
+    step = _run_lookup(
+        monkeypatch,
+        statement,
+        lambda *_args, **_kwargs: _act(
+            family="activate",
+            control=control,
+        ),
+        semantic_tree=[{
+            "role": "button",
+            "key": control,
+            "ref": 9,
+            "in_viewport": True,
+        }],
+    )
+
+    assert step.action_intent is not None
+    assert step.action_intent.family == "activate"
+
+
+def test_query_only_lookup_allows_required_column_toggle(monkeypatch) -> None:
+    statement = _lookup_statement("Orders", required_fields=["Customer Email"])
+    step = _run_lookup(
+        monkeypatch,
+        statement,
+        lambda *_args, **_kwargs: _act(
+            family="activate",
+            control="Customer Email",
+        ),
+        semantic_tree=[{
+            "role": "checkbox",
+            "key": "Customer Email",
+            "value": "false",
+            "ref": 10,
+            "in_viewport": True,
+        }],
+        form_controls=[{
+            "kind": "checkbox_input",
+            "label": "Customer Email",
+            "id": "12",
+            "value": "off",
+        }],
+    )
+
+    assert step.action_intent is not None
+    assert step.action_intent.family == "activate"
 
 
 def test_invalid_structured_transition_retries_once(monkeypatch) -> None:

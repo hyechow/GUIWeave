@@ -121,6 +121,31 @@ def _typed(value: Any, value_type: ValueType) -> Any:
     raise ComputeKernelError(f"cannot parse {value!r} as boolean")
 
 
+def normalize_table_value(field_name: str, value: Any) -> JsonValue:
+    if not isinstance(value, str):
+        return json_value(value)
+    text = value.strip()
+    if _CURRENCY_RE.search(text):
+        return json_value(_decimal(text, money=True))
+    words = set(re.findall(r"[\w]+", field_name.casefold()))
+    if words & {"date", "datetime", "time", "timestamp"}:
+        try:
+            return json_value(_datetime(text))
+        except ComputeKernelError:
+            pass
+    return text
+
+
+def normalize_table_rows(rows: list[dict[str, Any]]) -> list[dict[str, JsonValue]]:
+    return [
+        {
+            str(field): normalize_table_value(str(field), value)
+            for field, value in row.items()
+        }
+        for row in rows
+    ]
+
+
 def _resolve(value: Any, ref: FieldRef) -> Any:
     current = value
     for part in ref.path:

@@ -20,6 +20,7 @@ from gui_agent.core.run.statements.compute_kernel import (
     TakeStep,
     TextSplitStep,
     execute_pipeline,
+    normalize_table_rows,
 )
 
 
@@ -189,6 +190,20 @@ def test_pipeline_replays_recent_completed_order_total_case():
     ])
 
     assert result == {"total": Decimal("182.40")}
+
+
+def test_table_boundary_normalizes_unambiguous_dates_and_money():
+    rows = normalize_table_rows([{
+        "Purchase Date": "Jun 9, 2023 9:00:00 AM",
+        "Grand Total": "$1,234.50",
+        "Status": "Complete",
+    }])
+
+    assert rows == [{
+        "Purchase Date": "2023-06-09T09:00:00+00:00",
+        "Grand Total": 1234.5,
+        "Status": "Complete",
+    }]
 
 
 def test_pipeline_buckets_groups_and_dense_ranks_with_ties():

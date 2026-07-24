@@ -21,6 +21,7 @@ from gui_agent.core.orchestrator.program import (
 from gui_agent.core.orchestrator.recovery import RecoveryLedger
 from gui_agent.core.orchestrator.runner import RunRecord, StatementInvocation
 from gui_agent.core.run.lookup_scope import is_lookup_scope
+from gui_agent.core.run.statements.compute_kernel import normalize_table_rows
 from gui_agent.core.schemas import StatementContract, StatementOutcome
 
 from .sandbox import SAFE_BUILTINS, validate_code
@@ -113,22 +114,23 @@ class _RuntimeContext:
             raise RuntimeError(response.get("error") or f"ctx.{op} failed")
         return response.get("value")
 
-    def lookup(
+    def query(
         self,
         entity: str,
+        fields: list[str],
+        filters: dict[str, Any] | None = None,
         field: str = "name",
         fallback: str | None = None,
-    ) -> dict[str, Any]:
-        return self._request(
-            "lookup", entity=entity, field=field, fallback=fallback or "",
-        )
-
-    def acquire(
-        self,
-        scope: dict[str, Any],
-        fields: list[str],
         coverage: str = "complete",
     ) -> list[dict[str, Any]]:
+        scope = self._request(
+            "lookup",
+            entity=entity,
+            field=field,
+            fallback=fallback or "",
+            filters=filters or {},
+            required_fields=fields,
+        )
         return self._request(
             "acquire",
             scope=scope,
@@ -147,25 +149,24 @@ class _RuntimeContext:
             self._request("focus", target=target, fields=fields)
         return self._request("read", fields=fields)
 
-    def interact(
+    def gui(
         self,
-        goal: str,
+        task: str,
         *,
-        success: str,
-        inputs: dict[str, Any] | None = None,
-        required_values: dict[str, Any] | None = None,
-        observe_fields: list[str] | None = None,
-        persistence: str = "immediate",
-    ) -> bool:
-        return bool(self._request(
-            "interact",
-            goal=goal,
-            success=success,
-            inputs=inputs or {},
-            required_values=required_values or {},
-            observe_fields=observe_fields or [],
-            persistence=persistence,
-        ))
+        target: Any = None,
+    ) -> None:
+        inputs = {"target": target} if target is not None else {}
+        self._request("gui", task=task, inputs=inputs)
+
+    def write(
+        self,
+        task: str,
+        *,
+        target: Any = None,
+        values: dict[str, Any],
+    ) -> None:
+        inputs = {"target": target} if target is not None else {}
+        self._request("write", task=task, inputs=inputs, values=values)
 
     def command(self, capability: str, **arguments: Any) -> Any:
         return self._request(
@@ -173,10 +174,6 @@ class _RuntimeContext:
             capability=capability,
             arguments=arguments,
         )
-
-    def compute(self, operation: str, **inputs: Any) -> Any:
-        return self._request("compute", operation=operation, inputs=inputs)
-
 
 def _runtime_worker(source: str, connection: Any) -> None:
     namespace: dict[str, Any] = {
@@ -256,16 +253,23 @@ class CodingProgramRuntime:
             entity = str(payload["entity"])
             field_name = str(payload.get("field") or "name")
             fallback = str(payload.get("fallback") or "")
-            fallback_text = f"; if empty, use hint {fallback!r}" if fallback else ""
+            filters = dict(payload.get("filters") or {})
+            required_fields = [
+                str(value) for value in payload.get("required_fields") or []
+            ]
+            request_text = (
+                f"field={field_name!r}, fallback={fallback!r}, "
+                f"filters={filters!r}, fields={required_fields!r}"
+            )
             statement = Interact(
                 id=statement_id,
                 goal=(
-                    f"Resolve the collection for {entity!r} within the current "
-                    f"business context using semantic field {field_name!r}{fallback_text}"
+                    f"Resolve collection {entity!r} in the current business context; "
+                    f"{request_text}"
                 ),
                 success=(
-                    f"Exactly one structural collection is exposed for {entity!r} "
-                    f"without leaving or mutating the current business context"
+                    f"Exactly one local collection satisfies {request_text}; "
+                    "the business context is unchanged"
                 ),
                 scope="lookup",
                 persistence="immediate",
@@ -278,6 +282,8 @@ class CodingProgramRuntime:
                         "entity": entity,
                         "field": field_name,
                         "fallback": fallback,
+                        "filters": filters,
+                        "required_fields": required_fields,
                     },
                 },
             )
@@ -295,14 +301,15 @@ class CodingProgramRuntime:
                 task_goal=self.program.goal,
                 inputs={"target": payload.get("target")},
             )
-        if op == "interact":
+        if op in {"gui", "write"}:
+            task = str(payload["task"])
+            values = dict(payload.get("values") or {}) if op == "write" else {}
             statement = Interact(
                 id=statement_id,
-                goal=str(payload["goal"]),
-                success=str(payload["success"]),
-                required_values=dict(payload.get("required_values") or {}),
-                observe_fields=list(payload.get("observe_fields") or []),
-                persistence=str(payload.get("persistence") or "immediate"),
+                goal=task,
+                success=f"The GUI task is complete: {task}",
+                required_values=values,
+                persistence="explicit_commit" if values else "immediate",
             )
             return StatementInvocation(
                 statement=statement,
@@ -313,7 +320,7 @@ class CodingProgramRuntime:
             scope = dict(payload.get("scope") or {})
             if not is_lookup_scope(scope):
                 raise ValueError(
-                    "ctx.acquire scope must be the validated handle returned by ctx.lookup"
+                    "internal query scope was not produced by the lookup statement"
                 )
             fields = [str(item) for item in payload.get("fields") or []]
             coverage = str(payload.get("coverage") or "complete")
@@ -446,7 +453,8 @@ class CodingProgramRuntime:
                 self._fail("lookup completed without a validated collection scope")
                 return None
         elif isinstance(invocation.statement, Acquire):
-            value = outcome.outputs.get("rows", [])
+            rows = outcome.outputs.get("rows", [])
+            value = normalize_table_rows(rows if isinstance(rows, list) else [])
         elif isinstance(invocation.statement, Read):
             value = dict(outcome.outputs)
         elif isinstance(invocation.statement, Command):

@@ -24,10 +24,13 @@ AffordanceCoverage = Literal["unavailable", "unknown", "partial", "complete"]
 
 _ACTIVATABLE_ROLES = frozenset({
     "button",
+    "checkbox",
     "link",
     "menuitem",
     "menuitemcheckbox",
     "menuitemradio",
+    "radio",
+    "switch",
     "tab",
     "treeitem",
 })
@@ -162,7 +165,8 @@ def _control_affordance(control: dict) -> dict | None:
         "number",
     }:
         operations = ["input"]
-    elif kind in {"button", "checkbox", "radio", "switch", "link"}:
+    elif kind in {"button", "checkbox", "checkbox_input", "radio", "radio_input",
+                  "switch", "switch_input", "link"}:
         operations = ["activate"]
     else:
         return None

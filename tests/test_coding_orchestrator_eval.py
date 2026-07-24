@@ -11,7 +11,9 @@ from gui_agent.core.orchestrator.decomposer import _PlanDraft, _StepDraft, to_pr
 from gui_agent.core.orchestrator.program import ObservationBinding, OutputSpec, ValueRef
 from scripts.coding_orchestrator_eval import (
     _coding_sample,
+    _evaluate_hidden_source,
     coding_verdict,
+    fixture_for_task,
     grade_dsl_program,
 )
 
@@ -52,8 +54,7 @@ def test_blind_sample_hides_fixture_until_final_evaluation(monkeypatch) -> None:
     captured = {}
     source = (
         "def run(ctx):\n"
-        "    scope = ctx.lookup('sahara', field='name')\n"
-        "    rows = ctx.acquire(scope, fields=['id', 'name'], coverage='complete')\n"
+        "    rows = ctx.query('sahara', fields=['id', 'name'], coverage='complete')\n"
         "    assert rows, 'matching products are required'\n"
         "    return len(rows)"
     )
@@ -88,6 +89,36 @@ def test_blind_sample_hides_fixture_until_final_evaluation(monkeypatch) -> None:
     assert not sample["review_fixture_visible"]
     assert sample["hidden_evaluation"] is not None
     assert sample["failures"] == [], sample["hidden_evaluation"]
+
+
+def test_task_193_hidden_fixture_checks_the_numeric_result() -> None:
+    source = (
+        "def run(ctx):\n"
+        "    rows = ctx.query('orders', field='ID', filters={'Status': 'Complete'}, "
+        "fields=['Status', 'Purchase Date', 'Grand Total (Purchased)'], "
+        "coverage='complete')\n"
+        "    assert all(row['Status'] == 'Complete' for row in rows), "
+        "'status filter must hold'\n"
+        "    assert len(rows) >= 2, 'at least two completed orders are required'\n"
+        "    latest = sorted(rows, key=lambda row: row['Purchase Date'], reverse=True)[:2]\n"
+        "    return round(sum(row['Grand Total (Purchased)'] for row in latest), 2)"
+    )
+
+    result, ok = _evaluate_hidden_source(
+        source,
+        fixture_for_task(193),
+        expected_return=182.4,
+    )
+
+    assert ok
+    assert result["return_value"] == 182.4
+    assert result["return_matches"]
+    filter_events = [
+        event for event in result["trace"]
+        if event["op"] == "query"
+        and event["kwargs"]["filters"] == {"Status": "Complete"}
+    ]
+    assert filter_events
 
 
 def test_coding_verdict_separates_functional_and_stability_gates() -> None:

@@ -116,7 +116,7 @@ class CodingTerminalRenderer:
             self._section("Apply Repair")
             display_after = (
                 data.get("after")
-                if data.get("status") == "accepted"
+                if data.get("status") in {"accepted", "partial"}
                 else data.get("proposed")
             )
             rendered = self._diff(
@@ -124,16 +124,18 @@ class CodingTerminalRenderer:
                 str(display_after or ""),
                 tofile=(
                     "candidate.py (applied)"
-                    if data.get("status") == "accepted"
+                    if data.get("status") in {"accepted", "partial"}
                     else "candidate.py (proposed)"
                 ),
             )
             if not rendered:
                 self.write("  – no applicable source change")
-            self.write(
-                f"  {'✓' if data.get('status') == 'accepted' else '✗'} "
-                f"{data.get('status')}"
-            )
+            marker = {
+                "accepted": "✓",
+                "partial": "△",
+                "rejected": "✗",
+            }.get(str(data.get("status")), "✗")
+            self.write(f"  {marker} {data.get('status')}")
             if data.get("error"):
                 self.write(f"  {data['error']}")
             for diagnostic in data.get("candidate_diagnostics") or []:
