@@ -30,7 +30,7 @@ HTML_TEMPLATE = """\
   }}
   body {{ font-family: -apple-system, "PingFang SC", sans-serif; background: var(--bg); color: var(--text); }}
 
-  /* ── Layout: sticky outline sidebar + scrolling main ── */
+  /* ── Layout: optional knowledge sidebar + scrolling main ── */
   .layout {{ display: flex; align-items: flex-start; }}
   .sidebar {{
     width: 240px; flex-shrink: 0; position: sticky; top: 0; height: 100vh;
@@ -39,20 +39,10 @@ HTML_TEMPLATE = """\
   }}
   .main {{ flex: 1; min-width: 0; padding: 24px; }}
 
-  /* ── Outline (子目标分解) ── */
   .sidebar-title {{ font-size: 11px; font-weight: 700; color: var(--muted); text-transform: uppercase; letter-spacing: 0.06em; padding: 0 18px 12px; }}
-  .outline {{ display: flex; flex-direction: column; }}
-  .outline-item {{ display: block; text-decoration: none; color: inherit; padding: 8px 16px 8px 18px; border-left: 2px solid transparent; transition: background 0.12s, border-color 0.12s; }}
-  .outline-item:hover {{ background: #f8fafc; }}
-  .outline-item.active {{ border-left-color: #6366f1; background: #eef2ff; }}
-  .outline-top {{ display: flex; align-items: baseline; gap: 6px; }}
-  .outline-id {{ font-weight: 700; color: #4338ca; font-size: 12px; flex-shrink: 0; }}
-  .outline-name {{ font-size: 12px; color: var(--text); font-weight: 500; line-height: 1.35; }}
-  .outline-meta {{ display: flex; align-items: center; gap: 6px; flex-wrap: wrap; margin-top: 4px; padding-left: 22px; font-size: 10px; color: #94a3b8; font-family: monospace; }}
-  .sidebar-empty {{ padding: 4px 18px; font-size: 12px; color: var(--muted); }}
 
   /* ── Knowledge (知识库注入) ── */
-  .sidebar-knowledge {{ margin-top: 16px; padding-top: 16px; border-top: 1px solid var(--border); }}
+  .sidebar-knowledge {{ }}
   .sk-app {{ padding: 0 18px; font-size: 13px; font-weight: 600; color: #0891b2; }}
   .sk-meta {{ padding: 3px 18px 0; font-size: 10px; color: #94a3b8; font-family: monospace; line-height: 1.6; }}
   .sk-channels {{ padding: 6px 18px 0; display: flex; flex-wrap: nowrap; gap: 4px; }}
@@ -106,6 +96,8 @@ HTML_TEMPLATE = """\
   .prog-compiler-detail {{ margin-left:25px; color:#64748b; font-size:11px; }}
   .prog-compiler-detail summary {{ width:max-content; max-width:100%; cursor:pointer; color:#64748b; }}
   .prog-compiler-detail[open] {{ padding:6px 8px; background:#fff; border:1px dashed #cbd5e1; border-radius:6px; line-height:1.55; }}
+  .coding-source {{ margin: 0; padding: 14px 16px; overflow-x: auto; border: 1px solid #cbd5e1; border-radius: 8px; background: #0f172a; color: #e2e8f0; font: 12px/1.6 ui-monospace, SFMono-Regular, Menlo, Consolas, monospace; white-space: pre; tab-size: 4; }}
+  .coding-note {{ color: #64748b; font-size: 11px; }}
   .prog-resolved {{ color: #0e7490; font-size: 11px; font-family: monospace; background: #ecfeff; border: 1px solid #a5f3fc; border-radius: 5px; padding: 0 6px; }}
   .prog-empty {{ color: #cbd5e1; }}
   .prog-if {{ display: flex; flex-direction: column; gap: 5px; padding: 8px 10px; margin: 2px 0; background: #fffbeb; border: 1px solid #fde68a; border-radius: 8px; }}
@@ -335,11 +327,7 @@ HTML_TEMPLATE = """\
 <body>
 
 <div class="layout">
-  <nav class="sidebar">
-    <div class="sidebar-title">{outline_title}</div>
-    <div class="outline">{outline_html}</div>
-    {knowledge_html}
-  </nav>
+  {sidebar_html}
   <main class="main">
     <div class="header">
       <h1>{title}{platform_badge}{phase_badge}</h1>
@@ -392,25 +380,6 @@ HTML_TEMPLATE = """\
   </div>
 </div>
 <script>
-// Scroll-spy: highlight the outline item whose statement is near the top.
-(function() {{
-  var items = Array.prototype.slice.call(document.querySelectorAll('.outline-item'));
-  if (!items.length || !('IntersectionObserver' in window)) return;
-  var map = {{}};
-  items.forEach(function(it) {{ map[it.dataset.target] = it; }});
-  var obs = new IntersectionObserver(function(entries) {{
-    entries.forEach(function(e) {{
-      if (!e.isIntersecting) return;
-      items.forEach(function(i) {{ i.classList.remove('active'); }});
-      var it = map[e.target.id];
-      if (it) it.classList.add('active');
-    }});
-  }}, {{ rootMargin: '-15% 0px -75% 0px', threshold: 0 }});
-  items.forEach(function(it) {{
-    var sec = document.getElementById(it.dataset.target);
-    if (sec) obs.observe(sec);
-  }});
-}})();
 function showDetail(id) {{
   var el = document.getElementById(id);
   if (el.classList.contains('show')) {{
@@ -1132,50 +1101,11 @@ def generate_html(data: ReportData, grid: bool = False) -> str:
         )
     stats_str = "  |  ".join(stats_parts)
 
-    # Display ordinal per statement (#1, #2, …). StatementContract ids are descriptive slugs now
-    # (e.g. 'navigate_to_riot_app'), which _short_mid can't shorten — showing the raw slug
-    # crowds the name out of the sidebar. The ordinal is always short; the raw id stays for
-    # the anchor. Falls back to _short_mid for ids not in the statement list (e.g. _no_statement).
+    # Display ordinal per statement (#1, #2, …). StatementContract ids are descriptive slugs now;
+    # keep the raw id for anchors while using a compact ordinal in statement headings.
     _mid_ordinal = {m.get("id", ""): i for i, m in enumerate(data.statements, 1)}
     def _mid_disp(mid: str) -> str:
         return str(_mid_ordinal[mid]) if mid in _mid_ordinal else _short_mid(mid)
-
-    # Sidebar outline (子目标分解): one clickable node per statement, scroll-spy active.
-    # Orchestrator mode: the decomposed program is node #0 编排 (the stage that produced them).
-    outline_parts = []
-    if (data.orchestrator.get("program") or {}).get("statements"):
-        outline_parts.append(
-            '<a class="outline-item" href="#ms-orchestrate" data-target="ms-orchestrate">'
-            '<span class="outline-top"><span class="outline-id">#0</span>'
-            '<span class="outline-name">编排</span></span>'
-            '<span class="outline-meta"><span class="statement-badge statement-badge-default">program</span></span>'
-            '</a>'
-        )
-    for m in data.statements:
-        mid = _safe(m.get("id", "?"))           # full id — for the anchor/link
-        mid_disp = _safe(_mid_disp(m.get("id", "?")))  # ordinal — for display
-        name = _safe(m.get("name", ""))
-        kind = m.get("kind", "")
-        kind_safe = _safe(kind)
-        turns = m.get("turns", "")
-        t = m.get("total_time", 0)
-        badge_cls = KIND_BADGE.get(kind, "statement-badge-default")
-        meta_bits = ""
-        if kind_safe:
-            meta_bits += f'<span class="statement-badge {badge_cls}">{kind_safe}</span>'
-        meta_bits += f'<span>{t:.1f}s</span>'
-        if turns:
-            meta_bits += f'<span>T{_safe(str(turns))}</span>'
-        outline_parts.append(
-            f'<a class="outline-item" href="#ms-{mid}" data-target="ms-{mid}">'
-            f'<span class="outline-top">'
-            f'<span class="outline-id">#{mid_disp}</span>'
-            f'<span class="outline-name">{name or kind_safe}</span>'
-            f'</span>'
-            f'<span class="outline-meta">{meta_bits}</span>'
-            f'</a>'
-        )
-    outline_html = "".join(outline_parts) or '<div class="sidebar-empty">无子目标</div>'
 
     def _render_checklist(items: list[dict], cid: str) -> tuple[str, str]:
         if not items:
@@ -1462,6 +1392,9 @@ def generate_html(data: ReportData, grid: bool = False) -> str:
             f'</div>'
         )
 
+    knowledge_html = _render_knowledge_html(data.knowledge, data.knowledge_sections)
+    sidebar_html = f'<nav class="sidebar">{knowledge_html}</nav>' if knowledge_html else ""
+
     return HTML_TEMPLATE.format(
         title=_safe(data.title),
         platform_badge=_render_platform_badge(data.platform),
@@ -1471,10 +1404,8 @@ def generate_html(data: ReportData, grid: bool = False) -> str:
         mobileworld_html=_render_mobileworld_result(data.mobileworld),
         program_html=_render_program_section(data.orchestrator),
         phase_badge=_render_phase_badge(data),
-        outline_title=("任务编排" if (data.orchestrator.get("program") or {}).get("statements") else "子目标分解"),
-        outline_html=outline_html,
+        sidebar_html=sidebar_html,
         cost_note_html=cost_note_html,
-        knowledge_html=_render_knowledge_html(data.knowledge, data.knowledge_sections),
         result_html=result_html,
         pages_html=pages_html,
     )

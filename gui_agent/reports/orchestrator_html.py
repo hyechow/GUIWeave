@@ -406,18 +406,65 @@ def _render_program_card(
 
 
 def _render_program_section(orchestrator: dict | None) -> str:
-    """Render the ORIGINAL decomposed program as the #0 编排 card (before the executed statements).
-    Re-decompose cards are NOT here — each renders INLINE right after the statement that triggered it
-    (render_redecompose_card), so it sits where it actually fired. Empty → no section."""
+    """Render the original DSL or coding plan before its executed statements."""
     if not orchestrator:
         return ""
     prog0 = orchestrator.get("program") or {}
+    if prog0.get("kind") == "coding" or prog0.get("source"):
+        return _render_coding_program_card(orchestrator, prog0)
     if not prog0.get("statements"):
         return ""
     return _render_program_card(
         orchestrator, prog0, "#0", "任务编排 · 业务步骤与控制流",
         metrics_html=_render_orchestrator_metrics(orchestrator),
         extras_html=_render_orchestrator_context_reports(orchestrator),
+    )
+
+
+def _render_coding_program_card(orchestrator: dict, program: dict) -> str:
+    source = str(program.get("source") or "").strip()
+    if not source:
+        return ""
+    goal = str(program.get("goal") or "")
+    input_html = (
+        f'<div class="prog-input"><span class="prog-input-label">输入</span>{_safe(goal)}'
+        '<span class="prog-input-arrow">↓ Python 计划</span></div>'
+        if goal else ""
+    )
+    review = next(
+        (
+            report for report in reversed(orchestrator.get("context_reports") or [])
+            if isinstance(report, dict) and report.get("kind") == "coding_review"
+        ),
+        {},
+    )
+    if review.get("repaired"):
+        review_label = "Review · 已修复"
+    elif review.get("approved"):
+        review_label = "Review · 通过"
+    elif review:
+        review_label = "Review · 未通过"
+    else:
+        review_label = "Review · 未记录"
+    review_html = (
+        '<div class="compat-row">'
+        f'<span class="compat-chip">{_safe(review_label)}</span>'
+        '<span class="coding-note">运行时产生的 Statement 调用与执行证据见下方时间线</span>'
+        '</div>'
+    )
+    return (
+        '<div class="statement prog-section" id="ms-orchestrate-coding">'
+        '<div class="statement-header">'
+        '<h2>#0</h2>'
+        '<span class="statement-name">Coding Orchestrator · Python 执行计划</span>'
+        '<span class="statement-badge statement-badge-default">python</span>'
+        f'{_render_orchestrator_metrics(orchestrator)}'
+        '</div>'
+        f'<div class="prog-body">{input_html}{review_html}'
+        f'<pre class="coding-source"><code>{_safe(source)}</code></pre>'
+        f'{_render_orchestrator_context_reports(orchestrator)}'
+        '</div>'
+        '</div>'
     )
 
 

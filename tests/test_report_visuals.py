@@ -2,7 +2,7 @@ import json
 
 from gui_agent.reports.builder import RunnerReportBuilder
 from gui_agent.reports.builder import _group_steps_by_statement
-from gui_agent.reports.models import ReportStep
+from gui_agent.reports.models import ReportData, ReportStep
 from gui_agent.reports.orchestrator_html import (
     _render_non_ui_detail,
     _render_program_section,
@@ -98,6 +98,43 @@ def test_orchestrator_program_renders_foreach_block_and_body():
     assert "foreach" in html
     assert "打开当前评论" in html
     assert "prog-branch" in html
+
+
+def test_coding_orchestrator_renders_reviewed_python_plan():
+    html = _render_program_section({
+        "program": {
+            "kind": "coding",
+            "goal": "return the top record",
+            "source": 'def run(ctx):\n    rows = ctx.acquire("items")\n    return rows[0]',
+        },
+        "context_reports": [{
+            "kind": "coding_review",
+            "approved": False,
+            "repaired": True,
+        }],
+        "timings": {"orchestrator.coding": 1.5},
+    })
+
+    assert "Coding Orchestrator · Python 执行计划" in html
+    assert "Review · 已修复" in html
+    assert "ctx.acquire" in html
+    assert "Statement 调用与执行证据见下方时间线" in html
+
+
+def test_runner_report_omits_subgoal_outline_sidebar():
+    html = generate_html(ReportData(
+        title="report",
+        statements=[{
+            "id": "step_1",
+            "name": "do work",
+            "kind": "interact",
+            "total_time": 1.0,
+        }],
+    ))
+
+    assert "子目标分解" not in html
+    assert 'class="outline' not in html
+    assert '<nav class="sidebar">' not in html
 
 
 def test_acquire_outputs_are_bounded_in_program_and_non_ui_details():
