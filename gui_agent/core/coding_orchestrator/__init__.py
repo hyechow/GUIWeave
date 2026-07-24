@@ -8,11 +8,13 @@ from .runtime import (
     program_from_plan,
 )
 from .sandbox import FixtureSpec
+from .terminal import CodingTerminalRenderer
 
 __all__ = [
     "CodingCompileError",
     "CodingProgram",
     "CodingProgramRuntime",
+    "CodingTerminalRenderer",
     "FixtureSpec",
     "generate_reviewed_code",
     "program_from_plan",

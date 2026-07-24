@@ -5,7 +5,7 @@ from __future__ import annotations
 import json
 import re
 import time
-from typing import Any
+from typing import Any, Callable
 
 from langchain_openai import ChatOpenAI
 
@@ -15,9 +15,17 @@ from gui_agent.core.config import resolve_llm_config
 from gui_agent.core.llm.messages import assemble_messages
 from gui_agent.prompts import load_prompt_text
 
-from .models import CodeDiagnostic, CodingAttempt, CodingPlan, CodingReview
+from .models import (
+    CodeDiagnostic,
+    CodingAttempt,
+    CodingEvent,
+    CodingPlan,
+    CodingReview,
+    CodingRunResult,
+)
 from .sandbox import (
     FixtureSpec,
+    build_probe_fixture,
     execute_code,
     validate_code,
     validate_fixture_contract,
@@ -29,7 +37,7 @@ from .sandbox import (
 _SYSTEM = load_prompt_text("task.orchestrator.coding")
 _REVIEW_SYSTEM = load_prompt_text("task.orchestrator.coding_review")
 _CODE_BLOCK_RE = re.compile(r"```(?:python)?\s*\n(.*?)```", re.DOTALL | re.IGNORECASE)
-_REVIEW_MAX_OUTPUT_TOKENS = 3072
+_REVIEW_MAX_OUTPUT_TOKENS = 4096
 
 
 def _response_text(content: Any) -> str:
@@ -130,8 +138,10 @@ def _observation_schema_block(observation: Any) -> ContextBlock | None:
             f"{json.dumps(schema, ensure_ascii=False)}\n"
             "This is an interface schema, not task-result data. A collection source names the "
             "business scope to establish, and its fields are the exact semantic names available "
-            "to acquire from that source. Runtime code must still acquire and compute from the "
-            "actual rows."
+            "to acquire from that source only while the program remains in this current context. "
+            "After ctx.interact changes application context, do not reuse these collection fields; "
+            "use the selected application knowledge for the destination source. Runtime code must "
+            "still acquire and compute from the actual rows."
         ),
     )
 
@@ -159,12 +169,21 @@ def _usage(response: Any) -> tuple[int, int]:
     return int(usage.get("input_tokens") or 0), int(usage.get("output_tokens") or 0)
 
 
-def _diagnostics(source: str, fixture: FixtureSpec | None) -> list[Any]:
+def _diagnostics(
+    source: str,
+    fixture: FixtureSpec | None,
+    *,
+    match_lookup_sources: bool = False,
+) -> list[Any]:
     diagnostics = validate_code(source)
     diagnostics.extend(validate_projection_contract(source))
     diagnostics.extend(validate_runtime_dataflow(source))
     if fixture is not None:
-        diagnostics.extend(validate_fixture_contract(source, fixture))
+        diagnostics.extend(validate_fixture_contract(
+            source,
+            fixture,
+            match_lookup_sources=match_lookup_sources,
+        ))
     return diagnostics
 
 
@@ -184,7 +203,7 @@ def _default_llm() -> Any:
 
 def _fixture_review_text(fixture: FixtureSpec | None) -> str:
     if fixture is None:
-        return "No mock fixture was supplied."
+        return "No external fixture was supplied; execution uses schema-only synthetic probe data."
 
     def examples(rows: list[dict[str, Any]]) -> dict[str, list[Any]]:
         result: dict[str, list[Any]] = {}
@@ -395,8 +414,25 @@ def _evaluate_source(
     fixture: FixtureSpec | None,
     contract_fixture: FixtureSpec | None = None,
 ) -> CodingAttempt:
-    diagnostics = _diagnostics(source, fixture or contract_fixture)
-    run = execute_code(source, fixture) if fixture is not None and not diagnostics else None
+    diagnostics = _diagnostics(
+        source,
+        fixture or contract_fixture,
+        match_lookup_sources=fixture is None and contract_fixture is not None,
+    )
+    run = execute_code(source, fixture or build_probe_fixture(source)) if not diagnostics else None
+    if fixture is None and run is not None and not run.ok:
+        final_error = run.error.strip().splitlines()[-1] if run.error.strip() else ""
+        definite = (
+            "NameError", "UnboundLocalError", "KeyError", "IndexError",
+            "ZeroDivisionError",
+        )
+        if not final_error.startswith(tuple(f"{name}:" for name in definite)):
+            run = CodingRunResult(
+                ok=True,
+                trace=run.trace,
+                writes=run.writes,
+                final_state=run.final_state,
+            )
     return CodingAttempt(source=source, diagnostics=diagnostics, run=run)
 
 
@@ -409,16 +445,18 @@ def _select_local_repair(
     repairs: tuple[tuple[str, str], ...],
     fixture: FixtureSpec | None,
     contract_fixture: FixtureSpec | None = None,
-) -> tuple[CodingAttempt, str, tuple[int, ...]]:
+) -> tuple[CodingAttempt, str, tuple[int, ...], CodingAttempt]:
     repairs, parse_error = _parse_local_repairs(source, repairs)
     if parse_error:
-        return CodingAttempt(source=source), parse_error, ()
+        attempt = CodingAttempt(source=source)
+        return attempt, parse_error, (), attempt
 
     candidate, apply_error = _apply_local_repairs(source, repairs)
+    proposed = CodingAttempt(source=candidate)
     if not apply_error:
-        attempt = _evaluate_source(candidate, fixture, contract_fixture)
-        if _attempt_executable(attempt):
-            return attempt, "", tuple(range(len(repairs)))
+        proposed = _evaluate_source(candidate, fixture, contract_fixture)
+        if _attempt_executable(proposed):
+            return proposed, "", tuple(range(len(repairs))), proposed
 
     current = _evaluate_source(source, fixture, contract_fixture)
     selected: list[int] = []
@@ -434,7 +472,7 @@ def _select_local_repair(
         if _attempt_executable(attempt):
             current = attempt
             selected.append(index)
-    return current, "", tuple(selected)
+    return current, "", tuple(selected), proposed
 
 
 def _review_attempt(
@@ -491,8 +529,38 @@ def generate_reviewed_code(
     current_observation: Any = None,
     fixture: FixtureSpec | None = None,
     llm: Any = None,
+    on_event: Callable[[CodingEvent], None] | None = None,
 ) -> CodingPlan:
     """Generate once, then apply one locally constrained review repair."""
+    events: list[CodingEvent] = []
+
+    def emit(kind: str, **data: Any) -> None:
+        event = CodingEvent(kind=kind, data=data)
+        events.append(event)
+        if on_event is not None:
+            on_event(event)
+
+    def emit_validation(phase: str, attempt: CodingAttempt) -> None:
+        emit(
+            "diagnostics",
+            phase=phase,
+            status="failed" if attempt.diagnostics else "passed",
+            diagnostics=[item.render() for item in attempt.diagnostics],
+        )
+        run = attempt.run
+        emit(
+            "probe",
+            phase=phase,
+            status=(
+                "skipped" if run is None
+                else "passed" if run.ok
+                else "failed"
+            ),
+            operations=[event.op for event in run.trace] if run is not None else [],
+            return_value=repr(run.return_value) if run is not None else "",
+            error=run.error if run is not None else "",
+        )
+
     if llm is None:
         llm = _default_llm()
     common_blocks: list[ContextBlock | None] = [
@@ -511,6 +579,7 @@ def generate_reviewed_code(
     ]
 
     started = time.perf_counter()
+    emit("generation_started", goal=goal)
     response = llm.invoke(assemble_messages(
         _SYSTEM,
         None,
@@ -521,11 +590,20 @@ def generate_reviewed_code(
     ))
     source = _extract_source(response.content)
     input_tokens, output_tokens = _usage(response)
+    emit(
+        "generation_completed",
+        source=source,
+        seconds=time.perf_counter() - started,
+        input_tokens=input_tokens,
+        output_tokens=output_tokens,
+    )
     initial = _evaluate_source(source, fixture, contract_fixture)
     initial.input_tokens = input_tokens
     initial.output_tokens = output_tokens
     initial.seconds = time.perf_counter() - started
     attempts = [initial]
+    emit_validation("initial", initial)
+    emit("review_started", pass_index=1)
     review = _review_attempt(
         llm=llm,
         blocks=[*common_blocks, observation_schema],
@@ -533,12 +611,65 @@ def generate_reviewed_code(
         attempt=initial,
         fixture=fixture,
     )
+    emit(
+        "review_completed",
+        pass_index=1,
+        approved=review.approved,
+        source=source,
+        text=review.text,
+        error=review.error,
+        edits=[
+            {"search": search, "replacement": replacement}
+            for search, replacement in review.edits
+        ],
+        seconds=review.seconds,
+    )
+    if review.approved and not _attempt_executable(initial):
+        emit("review_started", pass_index=2, reason="approval contradicted diagnostics")
+        review = _review_attempt(
+            llm=llm,
+            blocks=[
+                *common_blocks,
+                observation_schema,
+                ContextBlock(
+                    id="runtime.coding_review_contradiction",
+                    budget="required",
+                    source_type="runtime_state",
+                    source="static_validator",
+                    ttl="turn",
+                    priority=1,
+                    content=(
+                        "The previous review incorrectly approved a candidate with mandatory "
+                        "static diagnostics. Approval is forbidden; return local edits that "
+                        "remove every listed diagnostic."
+                    ),
+                ),
+            ],
+            source=source,
+            attempt=initial,
+            fixture=fixture,
+        )
+        emit(
+            "review_completed",
+            pass_index=2,
+            approved=review.approved,
+            source=source,
+            text=review.text,
+            error=review.error,
+            edits=[
+                {"search": search, "replacement": replacement}
+                for search, replacement in review.edits
+            ],
+            seconds=review.seconds,
+        )
+    repair_status = "none"
     if not review.approved:
         if review.error:
             repaired = CodingAttempt(source=source)
+            proposed = repaired
             repair_error, selected_repairs = review.error, ()
         else:
-            repaired, repair_error, selected_repairs = _select_local_repair(
+            repaired, repair_error, selected_repairs, proposed = _select_local_repair(
                 source,
                 review.edits,
                 fixture,
@@ -549,12 +680,40 @@ def generate_reviewed_code(
                 CodeDiagnostic("LOCAL_REPAIR_INVALID", repair_error),
             ]
         repair_accepted = bool(selected_repairs) and _attempt_executable(repaired)
+        repair_status = "accepted" if repair_accepted else "rejected"
+        proposed_run = proposed.run
+        emit(
+            "repair_completed",
+            status=repair_status,
+            before=source,
+            after=repaired.source,
+            proposed=proposed.source,
+            selected_edits=list(selected_repairs),
+            error=repair_error,
+            candidate_diagnostics=[
+                item.render() for item in proposed.diagnostics
+            ],
+            candidate_error=(
+                proposed_run.error
+                if proposed_run is not None and not proposed_run.ok
+                else ""
+            ),
+        )
         if repair_error or repair_accepted or not _attempt_executable(initial):
             source = repaired.source
             attempts.append(repaired)
-    return CodingPlan(
+            emit_validation("repair", repaired)
+    plan = CodingPlan(
         goal=goal,
         source=source,
         attempts=attempts,
         review=review,
+        events=events,
     )
+    emit(
+        "finalized",
+        status="passed" if plan.requirements_satisfied else "failed",
+        source=source,
+        repair_status=repair_status,
+    )
+    return plan

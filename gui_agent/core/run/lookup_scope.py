@@ -43,6 +43,15 @@ def resolve_lookup_scope(
         if _semantic_key(candidate.get("caption")) in mentions
     ]
     if len(eligible) != 1:
+        title = _semantic_key(observation.title)
+        title_matches = [
+            candidate for candidate in candidates
+            if title
+            and any(title in mention or mention in title for mention in mentions)
+        ]
+        if len(title_matches) == 1:
+            eligible = title_matches
+    if len(eligible) != 1:
         filtered = bool(mentions & {
             _semantic_key(value)
             for value in (observation.applied_filters or {}).values()

@@ -7,7 +7,7 @@ scope:
 owner: gui_agent.core.coding_orchestrator.planner
 schema: code_review
 eval_suites:
-version: 23
+version: 24
 ---
 Review the candidate Python script against the user's task and supplied knowledge.
 
@@ -42,6 +42,9 @@ Review in this order:
    current business context and its exact returned value must flow into `acquire`. Reject an unused
    lookup, a handcrafted scope dictionary, a lookup used for login or cross-context navigation, or
    an acquire fed from any other origin.
+   If a retrieval collection is absent from the current observation, repair the program by adding
+   one preceding `immediate` context-establishing `interact`; no later business interaction can own
+   that navigation.
 6. Audit runtime-value data flow. A current value read for a relative update must participate in
    the exact requested calculation, and the computed result must reach `required_values`. For
    example, an arrival or increase by N means `new = current + N`, not `new = N`.

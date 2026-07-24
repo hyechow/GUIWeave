@@ -1161,6 +1161,7 @@ def main() -> int:
                         try:
                             if args.orchestrator == "coding":
                                 from gui_agent.core.coding_orchestrator import (
+                                    CodingTerminalRenderer,
                                     generate_reviewed_code,
                                     program_from_plan,
                                 )
@@ -1177,8 +1178,10 @@ def main() -> int:
                                     current_site=cur_site,
                                     current_observation=initial_obs,
                                     resolution=resolution,
+                                    on_event=CodingTerminalRenderer(
+                                        prefix="[webarena][coding]",
+                                    ),
                                 )
-                                program = program_from_plan(plan)
                                 orchestrator_context_reports.append({
                                     "kind": "coding_review",
                                     "source": plan.source,
@@ -1186,7 +1189,11 @@ def main() -> int:
                                         plan.review and plan.review.approved
                                     ),
                                     "repaired": plan.repaired,
+                                    "events": [
+                                        event.to_dict() for event in plan.events
+                                    ],
                                 })
+                                program = program_from_plan(plan)
                             else:
                                 program = decompose(
                                     intent,

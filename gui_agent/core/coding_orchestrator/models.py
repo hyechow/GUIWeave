@@ -72,12 +72,22 @@ class CodingReview:
     seconds: float = 0.0
 
 
+@dataclass(frozen=True)
+class CodingEvent:
+    kind: str
+    data: dict[str, Any] = field(default_factory=dict)
+
+    def to_dict(self) -> dict[str, Any]:
+        return {"kind": self.kind, **self.data}
+
+
 @dataclass
 class CodingPlan:
     goal: str
     source: str
     attempts: list[CodingAttempt] = field(default_factory=list)
     review: CodingReview | None = None
+    events: list[CodingEvent] = field(default_factory=list)
 
     @property
     def executable(self) -> bool:

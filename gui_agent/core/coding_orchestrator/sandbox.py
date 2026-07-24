@@ -14,6 +14,7 @@ import math
 import multiprocessing
 import queue
 import re
+import symtable
 import time as _time
 import traceback
 import typing
@@ -410,6 +411,7 @@ def _lookup_diagnostics(function: ast.FunctionDef) -> list[CodeDiagnostic]:
     }
     diagnostics: list[CodeDiagnostic] = []
     consumed: set[str] = set()
+    owned_calls = {id(node.value) for node in assignments.values()}
     for node in ast.walk(function):
         method = _ctx_method(node)
         if method == "lookup":
@@ -428,6 +430,7 @@ def _lookup_diagnostics(function: ast.FunctionDef) -> list[CodeDiagnostic]:
             continue
         scope = _call_argument(node, "scope", 0)
         if _ctx_method(scope) == "lookup":
+            owned_calls.add(id(scope))
             continue
         if isinstance(scope, ast.Name) and scope.id in assignments:
             consumed.add(scope.id)
@@ -446,6 +449,13 @@ def _lookup_diagnostics(function: ast.FunctionDef) -> list[CodeDiagnostic]:
                     f"lookup scope {name!r} is not consumed by ctx.acquire; "
                     "lookup exists only to resolve a collection source"
                 ),
+            ))
+    for node in ast.walk(function):
+        if _ctx_method(node) == "lookup" and id(node) not in owned_calls:
+            diagnostics.append(_diag(
+                node,
+                "LOOKUP_SCOPE_UNUSED",
+                "ctx.lookup result must flow directly into ctx.acquire",
             ))
     return diagnostics
 
@@ -602,6 +612,48 @@ def _interact_result_diagnostics(function: ast.FunctionDef) -> list[CodeDiagnost
     return diagnostics
 
 
+def _undefined_name_diagnostics(
+    source: str,
+    function: ast.FunctionDef,
+) -> list[CodeDiagnostic]:
+    module = symtable.symtable(source, "<coding-plan>", "exec")
+    run_scope = next(
+        (child for child in module.get_children() if child.get_name() == "run"),
+        None,
+    )
+    if run_scope is None:
+        return []
+    allowed = set(SAFE_BUILTINS) | set(module.get_identifiers())
+    scopes = [run_scope]
+    for scope in scopes:
+        scopes.extend(scope.get_children())
+    undefined = {
+        name
+        for scope in scopes
+        for name in scope.get_identifiers()
+        if scope.lookup(name).is_referenced()
+        and scope.lookup(name).is_global()
+        and name not in allowed
+    }
+    diagnostics: list[CodeDiagnostic] = []
+    for name in sorted(undefined):
+        node = next(
+            (
+                item for item in ast.walk(function)
+                if isinstance(item, ast.Name)
+                and isinstance(item.ctx, ast.Load)
+                and item.id == name
+            ),
+            function,
+        )
+        diagnostics.append(_diag(
+            node,
+            "UNDEFINED_NAME",
+            f"name {name!r} is read but never defined or safely imported",
+        ))
+    return diagnostics
+
+
 def validate_code(
     source: str,
     *,
@@ -651,6 +703,7 @@ def validate_code(
     visitor.diagnostics.extend(_date_constructor_diagnostics(function))
     visitor.diagnostics.extend(_lookup_diagnostics(function))
     visitor.diagnostics.extend(_interact_result_diagnostics(function))
+    visitor.diagnostics.extend(_undefined_name_diagnostics(source, function))
     return visitor.diagnostics
 
 
@@ -691,9 +744,154 @@ def _literal_fields(node: ast.Call) -> list[str] | None:
     return fields if len(fields) == len(fields_node.elts) else None
 
 
+def _literal_strings(node: ast.AST | None) -> set[str]:
+    if node is None:
+        return set()
+    return {
+        str(value.value)
+        for value in ast.walk(node)
+        if isinstance(value, ast.Constant) and isinstance(value.value, str)
+    }
+
+
+def _referenced_fields(node: ast.AST) -> set[str]:
+    fields: set[str] = set()
+    for value in ast.walk(node):
+        if (
+            isinstance(value, ast.Subscript)
+            and isinstance(value.slice, ast.Constant)
+            and isinstance(value.slice.value, str)
+        ):
+            fields.add(value.slice.value)
+        elif (
+            isinstance(value, ast.Call)
+            and isinstance(value.func, ast.Attribute)
+            and value.func.attr == "get"
+            and value.args
+            and isinstance(value.args[0], ast.Constant)
+            and isinstance(value.args[0].value, str)
+        ):
+            fields.add(value.args[0].value)
+    return fields
+
+
+def build_probe_fixture(source: str) -> FixtureSpec:
+    """Synthesize non-authoritative rows so production review can execute Python."""
+    try:
+        tree = ast.parse(source)
+    except SyntaxError:
+        return FixtureSpec()
+    inferred: dict[str, Any] = {}
+    for comparison in (node for node in ast.walk(tree) if isinstance(node, ast.Compare)):
+        for field_name in _referenced_fields(comparison.left):
+            values = {
+                value
+                for comparator in comparison.comparators
+                for value in _literal_strings(comparator)
+            }
+            if values:
+                inferred.setdefault(_semantic_key(field_name), next(iter(values)))
+        for comparator in comparison.comparators:
+            for field_name in _referenced_fields(comparator):
+                values = _literal_strings(comparison.left)
+                if values:
+                    inferred.setdefault(_semantic_key(field_name), next(iter(values)))
+
+    aliases: dict[str, set[str]] = {}
+    for assignment in ast.walk(tree):
+        if (
+            isinstance(assignment, ast.Assign)
+            and len(assignment.targets) == 1
+            and isinstance(assignment.targets[0], ast.Name)
+            and _ctx_method(assignment.value) == "lookup"
+        ):
+            aliases[assignment.targets[0].id] = {
+                value
+                for argument in (
+                    _call_argument(assignment.value, "entity", 0),
+                    _call_argument(assignment.value, "fallback", 2),
+                )
+                for value in _literal_strings(argument)
+            }
+
+    row_count = max(
+        [3, *[
+            value.value
+            for value in ast.walk(tree)
+            if isinstance(value, ast.Constant)
+            and isinstance(value.value, int)
+            and not isinstance(value.value, bool)
+            and 1 <= value.value <= 10
+        ]],
+    )
+
+    def probe_value(field_name: str, index: int) -> Any:
+        key = _semantic_key(field_name)
+        if key in inferred:
+            return inferred[key]
+        if key in {_semantic_key(value) for value in IDENTITY_FIELDS}:
+            return f"probe-{index + 1}"
+        if "date" in key or "time" in key:
+            return "2026-07-24"
+        if "status" in key:
+            return "Complete"
+        if any(token in key for token in (
+            "amount", "count", "price", "qty", "quantity", "rating",
+            "result", "total", "use",
+        )):
+            return index + 1
+        return f"probe-{index + 1}"
+
+    lookups: dict[str, list[dict[str, Any]]] = {}
+    rows: list[dict[str, Any]] = []
+    for call in (node for node in ast.walk(tree) if _ctx_method(node) == "acquire"):
+        fields = _literal_fields(call)
+        scope = _call_argument(call, "scope", 0)
+        names = aliases.get(scope.id, set()) if isinstance(scope, ast.Name) else set()
+        if fields is None or not names:
+            continue
+        rows = [{field: probe_value(field, index) for field in fields}
+                for index in range(row_count)]
+        for name in names:
+            lookups[name.strip().casefold()] = rows
+
+    read_fields = {
+        field
+        for call in ast.walk(tree)
+        if isinstance(call, ast.Call) and _ctx_method(call) == "read"
+        for field in (_literal_fields(call) or [])
+    }
+    reads = {
+        next(_identity_values(row), str(row)): {
+            field: probe_value(field, index) for field in read_fields
+        }
+        for index, row in enumerate(rows)
+    } if read_fields else {}
+    commands = {
+        value: True
+        for call in ast.walk(tree)
+        if isinstance(call, ast.Call) and _ctx_method(call) == "command"
+        for value in _literal_strings(_call_argument(call, "capability", 0))
+    }
+    computes = {
+        value: 1
+        for call in ast.walk(tree)
+        if isinstance(call, ast.Call) and _ctx_method(call) == "compute"
+        for value in _literal_strings(_call_argument(call, "operation", 0))
+    }
+    return FixtureSpec(
+        lookups=lookups,
+        reads=reads,
+        command_results=commands,
+        compute_results=computes,
+    )
+
+
 def validate_fixture_contract(
     source: str,
     fixture: FixtureSpec,
+    *,
+    match_lookup_sources: bool = False,
 ) -> list[CodeDiagnostic]:
     """Report literal fields that no supplied mock source can provide."""
     try:
@@ -705,6 +903,31 @@ def validate_fixture_contract(
         _semantic_key(field_name)
         for field_name in fixture.fields(include_reads=True)
     }
+    lookup_sources: dict[str, set[str]] = {}
+    lookup_lines: dict[str, int] = {}
+    if match_lookup_sources:
+        for assignment in ast.walk(tree):
+            if (
+                isinstance(assignment, ast.Assign)
+                and len(assignment.targets) == 1
+                and isinstance(assignment.targets[0], ast.Name)
+                and _ctx_method(assignment.value) == "lookup"
+            ):
+                values = (
+                    _call_argument(assignment.value, "entity", 0),
+                    _call_argument(assignment.value, "fallback", 2),
+                )
+                lookup_sources[assignment.targets[0].id] = {
+                    _semantic_key(value.value)
+                    for value in values
+                    if isinstance(value, ast.Constant) and isinstance(value.value, str)
+                }
+                lookup_lines[assignment.targets[0].id] = assignment.lineno
+    interact_lines = [
+        node.lineno
+        for node in ast.walk(tree)
+        if isinstance(node, ast.Call) and _ctx_method(node) == "interact"
+    ]
     diagnostics: list[CodeDiagnostic] = []
     for node in ast.walk(tree):
         method = _ctx_method(node)
@@ -714,6 +937,50 @@ def validate_fixture_contract(
         if requested is None:
             continue
         available = collection_fields if method == "acquire" else detail_fields
+        if match_lookup_sources:
+            scope = _call_argument(node, "scope", 0)
+            if isinstance(scope, ast.Name):
+                aliases = lookup_sources.get(scope.id, set())
+                lookup_line = lookup_lines.get(scope.id)
+            elif _ctx_method(scope) == "lookup":
+                aliases = {
+                    _semantic_key(value)
+                    for argument in (
+                        _call_argument(scope, "entity", 0),
+                        _call_argument(scope, "fallback", 2),
+                    )
+                    for value in _literal_strings(argument)
+                }
+                lookup_line = scope.lineno
+            else:
+                aliases, lookup_line = set(), None
+            matching_rows = [
+                row
+                for alias, rows in fixture.lookups.items()
+                if _semantic_key(alias) in aliases
+                for row in rows
+            ]
+            if method == "read":
+                continue
+            if not matching_rows:
+                if (
+                    lookup_line is not None
+                    and not any(line < lookup_line for line in interact_lines)
+                ):
+                    diagnostics.append(_diag(
+                        scope,
+                        "LOOKUP_CONTEXT_REQUIRED",
+                        (
+                            "lookup source is absent from the current observation; "
+                            "establish its application context with ctx.interact first"
+                        ),
+                    ))
+                continue
+            available = {
+                _semantic_key(field_name)
+                for row in matching_rows
+                for field_name in row
+            }
         if not available:
             continue
         missing = [
@@ -757,6 +1024,7 @@ class _ProjectionVisitor(ast.NodeVisitor):
         if (
             isinstance(node, ast.Subscript)
             and isinstance(node.value, ast.Name)
+            and not isinstance(node.slice, ast.Slice)
         ):
             return self.sequence_fields.get(node.value.id)
         return None
@@ -767,6 +1035,12 @@ class _ProjectionVisitor(ast.NodeVisitor):
             return acquire_fields
         if isinstance(node, ast.Name):
             return self.sequence_fields.get(node.id)
+        if (
+            isinstance(node, ast.Subscript)
+            and isinstance(node.value, ast.Name)
+            and isinstance(node.slice, ast.Slice)
+        ):
+            return self.sequence_fields.get(node.value.id)
         if (
             isinstance(node, ast.Call)
             and isinstance(node.func, ast.Name)
@@ -849,6 +1123,8 @@ class _ProjectionVisitor(ast.NodeVisitor):
                 self.visit(condition)
         self.visit(node.elt)
         self.mapping_fields = saved_mappings
+
+    visit_GeneratorExp = visit_ListComp
 
     def visit_Call(self, node: ast.Call) -> None:
         if (

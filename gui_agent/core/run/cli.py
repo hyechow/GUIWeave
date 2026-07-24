@@ -282,6 +282,7 @@ def main(
                 orch_tokens_before = get_llm_token_usage()
                 if args.orchestrator == "coding":
                     from gui_agent.core.coding_orchestrator import (
+                        CodingTerminalRenderer,
                         generate_reviewed_code,
                         program_from_plan,
                     )
@@ -296,14 +297,16 @@ def main(
                         current_site=cur_site,
                         current_observation=initial_obs,
                         resolution=resolve_intent(goal),
+                        on_event=CodingTerminalRenderer(),
                     )
-                    program = program_from_plan(plan)
                     orchestrator_context_reports.append({
                         "kind": "coding_review",
                         "source": plan.source,
                         "approved": bool(plan.review and plan.review.approved),
                         "repaired": plan.repaired,
+                        "events": [event.to_dict() for event in plan.events],
                     })
+                    program = program_from_plan(plan)
                 else:
                     program = decompose(
                         goal,
