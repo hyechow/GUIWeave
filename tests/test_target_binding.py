@@ -378,6 +378,43 @@ def test_exact_visible_semantic_button_ref_becomes_bound_tap() -> None:
     assert (binding.status, binding.unit_id) == ("bound", "ref:42")
 
 
+def test_password_type_binds_only_to_its_exact_semantic_ref() -> None:
+    """Replay 20260724_105002 turn 2: the exact Password point was wrongly vetoed."""
+    observation = Observation(
+        png_bytes=b"frame",
+        source="browser",
+        semantic_tree=[{
+            "role": "textbox",
+            "key": "Password *",
+            "ref": 14,
+            "in_viewport": True,
+            "point": {"x": 500.0, "y": 581.451194184839},
+        }],
+    )
+    step = SupervisorStep(
+        action_intent=ActionIntent(
+            instruction="在 Password 输入框写入目标值",
+            role="write",
+            family="input",
+            target_control="Password *",
+            target_value="secret",
+            target_ref="14",
+        ),
+        summary="fill password",
+        statement_id="login",
+    )
+    def bind(y: int):
+        decision = BrowserActionDecision(action=BrowserAction(
+            action_type="type", x=500, y=y, text="secret",
+            description="填写 Password",
+        ))
+        return BrowserTargetBinder().bind(step, observation, decision)
+
+    exact, wrong = bind(581), bind(491)
+    assert exact is not None and (exact.status, exact.unit_id) == ("bound", "ref:14")
+    assert wrong is not None and wrong.status == "contradicted"
+
+
 def test_semantic_binding_uses_unique_ref_not_decorated_label() -> None:
     observation = Observation(
         png_bytes=b"frame",

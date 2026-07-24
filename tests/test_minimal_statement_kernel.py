@@ -92,6 +92,27 @@ def _policy(statement: StatementContract) -> StatementSupervisorPolicy:
     return policy
 
 
+def _lookup_statement(entity: str = "Records", field: str = "name") -> StatementContract:
+    return StatementContract(
+        id="lookup",
+        goal="resolve a collection",
+        success="one collection is exposed",
+        inputs={
+            "lookup_request": {
+                "entity": entity,
+                "field": field,
+                "fallback": "",
+            },
+        },
+    )
+
+
+def _run_lookup(monkeypatch, statement, transition, **observation):
+    policy = _policy(statement)
+    monkeypatch.setattr(policy, "_invoke_statement_transition", transition)
+    return policy._run_single_turn(statement, _observation(**observation), [])
+
+
 def _observation(**updates) -> Observation:
     return Observation.model_validate({
         "png_bytes": _png(),
@@ -409,6 +430,7 @@ def test_staged_query_activates_matching_submit_before_pagination(monkeypatch) -
                 "kind": "text_input",
                 "label": "Search by keyword",
                 "value": "WS08",
+                "is_filter": True,
             }],
             semantic_tree=[{
                 "role": "button",
@@ -469,6 +491,82 @@ def test_regular_form_input_does_not_trigger_mechanical_submission(monkeypatch) 
     )
 
     assert calls == 1
+
+
+def test_query_only_lookup_returns_structural_scope_on_complete(monkeypatch) -> None:
+    statement = _lookup_statement("Top Search Terms")
+    step = _run_lookup(
+        monkeypatch,
+        statement,
+        lambda *_args, **_kwargs: pytest.fail("lookup must complete mechanically"),
+        url="https://example.test/dashboard",
+        tables=[{
+            "path": "#terms",
+            "caption": "Top Search Terms",
+            "headers": ["Search Term", "Uses"],
+            "rows": [{"Search Term": "bag", "Uses": "3"}],
+        }],
+    )
+
+    assert step.outcome is not None
+    assert step.outcome.is_completed
+    assert step.outcome.outputs["scope"]["surface_fingerprint"] == "table:#terms"
+
+
+@pytest.mark.parametrize(
+    ("control", "role", "message"),
+    [
+        ("Delete Search", "commit", "cannot commit"),
+        ("Save Search", "prepare", "business mutation"),
+    ],
+)
+def test_query_only_lookup_rejects_business_mutation(
+    monkeypatch, control, role, message,
+) -> None:
+    statement = _lookup_statement()
+    step = _run_lookup(
+        monkeypatch,
+        statement,
+        lambda *_args, **_kwargs: _act(
+            family="activate",
+            control=control,
+            role=role,
+        ),
+        semantic_tree=[{
+            "role": "button",
+            "key": control,
+            "ref": 9,
+            "in_viewport": True,
+        }],
+    )
+
+    assert step.outcome is not None
+    assert step.outcome.phase == "exhausted"
+    assert message in step.outcome.summary
+
+
+def test_query_only_lookup_allows_structural_filter_input(monkeypatch) -> None:
+    statement = _lookup_statement("Sahara", "Name")
+    step = _run_lookup(
+        monkeypatch,
+        statement,
+        lambda *_args, **_kwargs: _act(
+            family="input",
+            control="Name",
+            value="Sahara",
+            role="write",
+        ),
+        form_controls=[{
+            "kind": "text_input",
+            "label": "Name",
+            "is_filter": True,
+            "in_viewport": True,
+        }],
+    )
+
+    assert step.action_intent is not None
+    assert step.action_intent.family == "input"
+    assert step.action_intent.target_value == "Sahara"
 
 
 def test_invalid_structured_transition_retries_once(monkeypatch) -> None:

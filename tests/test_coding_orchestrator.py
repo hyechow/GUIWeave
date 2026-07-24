@@ -282,6 +282,18 @@ def run(ctx):
             "CTX_SIGNATURE",
         ),
         ("def run(ctx):\n    ctx.lookup('entity', unknown=True)", "CTX_SIGNATURE"),
+        (
+            "def run(ctx):\n"
+            "    scope = ctx.lookup('orders')\n"
+            "    assert scope, 'scope exists'",
+            "LOOKUP_SCOPE_UNUSED",
+        ),
+        (
+            "def run(ctx):\n"
+            "    rows = ctx.acquire({'entity': 'orders'}, fields=['id'])\n"
+            "    assert rows, 'orders exist'",
+            "ACQUIRE_SCOPE_ORIGIN",
+        ),
         ("def run(ctx):\n    return 'done'", "BUSINESS_ASSERTION_REQUIRED"),
         ("def run(ctx):\n    assert True, 'always'", "BUSINESS_ASSERTION_CONSTANT"),
         ("def run(ctx):\n    value = 1\n    assert value", "BUSINESS_ASSERTION_MESSAGE"),
@@ -503,9 +515,19 @@ def run(ctx):
     runtime = CodingProgramRuntime.start(CodingProgram(goal="update inventory", source=source))
     try:
         assert isinstance(runtime.current.statement, Interact)
-        runtime.send_outcome(StatementOutcome.completed("scope established"))
+        scope = {
+            "kind": "resolved_collection",
+            "entity": "order 301",
+            "surface_fingerprint": "table:#orders",
+            "available_fields": ["id", "status"],
+        }
+        runtime.send_outcome(StatementOutcome.completed(
+            "scope established",
+            outputs={"scope": scope},
+        ))
 
         assert isinstance(runtime.current.statement, Acquire)
+        assert runtime.current.args["lookup_scope"] == scope
         runtime.send_outcome(StatementOutcome.completed(
             "rows acquired",
             outputs={"rows": [{"id": "o301", "status": "Pending"}]},
@@ -923,18 +945,24 @@ def test_generate_reviewed_code_exposes_deduplicated_mock_data_to_reviewer() -> 
     assert review_messages.count("'status': ['Pending']") == 1
 
 
-def test_generate_reviewed_code_shares_current_view_schema_without_row_values() -> None:
-    source = (
+def test_current_view_schema_is_private_and_rejects_field_invention() -> None:
+    initial = (
+        "def run(ctx):\n"
+        "    scope = ctx.lookup('Top Search Terms')\n"
+        "    rows = ctx.acquire(scope, fields=['term', 'count'])\n"
+        "    assert len(rows) >= 2, 'two terms must exist'\n"
+        "    return rows"
+    )
+    repaired = (
         "def run(ctx):\n"
         "    scope = ctx.lookup('Top Search Terms')\n"
         "    rows = ctx.acquire(scope, fields=['Search Term', 'Uses'])\n"
-        "    assert rows, 'search terms must exist'\n"
-        "    ranked = sorted(rows, key=lambda row: int(row['Uses']), reverse=True)\n"
-        "    return [row['Search Term'] for row in ranked[:2]]"
+        "    assert len(rows) >= 2, 'two terms must exist'\n"
+        "    return rows"
     )
     llm = _ContentSequenceLlm([
-        f"```python\n{source}\n```",
-        _review_response(approve=True),
+        f"```python\n{initial}\n```",
+        _review_response((initial, repaired)),
     ])
     observation = SimpleNamespace(
         tables=[{
@@ -946,17 +974,17 @@ def test_generate_reviewed_code_shares_current_view_schema_without_row_values() 
     )
 
     plan = generate_reviewed_code(
-        "return the two most-used search terms",
+        "return the top two search terms",
         current_observation=observation,
         llm=llm,
     )
 
     assert plan.requirements_satisfied
+    assert plan.repaired
+    assert "fields=['Search Term', 'Uses']" in plan.source
+    assert plan.attempts[0].diagnostics[0].code == "MOCK_FIELD_UNAVAILABLE"
     for messages in llm.messages:
-        prompt = "\n".join(
-            str(getattr(message, "content", ""))
-            for message in messages
-        )
+        prompt = "\n".join(str(message.content) for message in messages)
         assert '"source": "Top Search Terms"' in prompt
         assert '"fields": ["Search Term", "Results", "Uses"]' in prompt
         assert "private runtime value" not in prompt
@@ -1260,3 +1288,36 @@ def test_generate_reviewed_code_keeps_an_executable_candidate_over_a_failed_repa
     assert plan.executable
     assert plan.source == initial
     assert len(plan.attempts) == 1
+
+
+def test_generate_reviewed_code_keeps_valid_semantic_edit_on_executable_source() -> None:
+    initial = (
+        "def run(ctx):\n"
+        "    scope = ctx.lookup('records')\n"
+        "    rows = ctx.acquire(scope, fields=['name', 'uses'])\n"
+        "    assert len(rows) > 0, 'records must exist'\n"
+        "    ranked = sorted(rows, key=lambda row: row['uses'], reverse=True)\n"
+        "    return [row['name'] for row in ranked[:2]]"
+    )
+    llm = _ContentSequenceLlm([
+        f"```python\n{initial}\n```",
+        _review_response((
+            "assert len(rows) > 0, 'records must exist'",
+            "assert len(rows) >= 2, 'two records must exist'",
+        )),
+    ])
+
+    plan = generate_reviewed_code(
+        "return the top two records",
+        fixture=FixtureSpec(lookups={
+            "records": [
+                {"name": "A", "uses": 2},
+                {"name": "B", "uses": 1},
+            ],
+        }),
+        llm=llm,
+    )
+
+    assert plan.requirements_satisfied
+    assert plan.repaired
+    assert "len(rows) >= 2" in plan.source

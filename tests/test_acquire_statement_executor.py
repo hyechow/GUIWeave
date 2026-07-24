@@ -56,6 +56,35 @@ def _invocation(coverage="complete"):
     return StatementInvocation(statement=statement)
 
 
+def _lookup_scope(fields):
+    return {
+        "kind": "resolved_collection",
+        "entity": "Records",
+        "surface_fingerprint": "table:#records",
+        "available_fields": fields,
+    }
+
+
+def _execute(invocation, tmp_path, bundle, observation=None):
+    return execute_acquire_statement(
+        invocation,
+        cursor=ObservationCursor(
+            bundle=bundle,
+            platform=object(),
+            log_dir=tmp_path,
+            observation=observation,
+            observation_url="frame.png" if observation else "",
+        ),
+        bundle=bundle,
+        platform=object(),
+        context=PolicyContext(goal="collect", supervisor_policy_name="s", action_policy_name="a"),
+        instance_id="i1:collect",
+        save_context=lambda: None,
+        say=lambda _message: None,
+        status=lambda _message: None,
+    )
+
+
 class _Perception:
     def __init__(self, observation):
         self.observation = observation
@@ -115,6 +144,41 @@ def test_structured_acquire_pages_without_policy_calls(tmp_path):
     ) == build_acquire_memory(
         context.journal, instance_id="i1:collect", statement_id="collect",
     )
+
+
+def test_acquire_consumes_exact_lookup_scope_in_multi_collection_frame(tmp_path):
+    observation = _observation(1, has_next=False, total=1)
+    observation.tables.append({
+        "path": "#other",
+        "caption": "Other Records",
+        "headers": ["ID", "Value"],
+        "rows": [{"ID": "other", "Value": "wrong"}],
+    })
+    invocation = _invocation().model_copy(
+        update={"args": {"lookup_scope": _lookup_scope(["ID", "Value"])}},
+    )
+    invocation.statement.required_fields = ["ID", "Value"]
+    bundle = SimpleNamespace(
+        make_perception=lambda _platform, _path: _Perception(observation),
+        move_collection=lambda *_args: False,
+        make_action_policy=lambda _name: (_ for _ in ()).throw(
+            AssertionError("complete scoped collection must not call a policy")
+        ),
+        validate_collection_action=None,
+        default_action_policy="unused",
+    )
+    outcome = _execute(invocation, tmp_path, bundle, observation)
+
+    assert outcome.is_completed
+    assert outcome.outputs["records"] == [{"ID": "1", "Value": "v1"}]
+    invalid = _invocation().model_copy(
+        update={"args": {"lookup_scope": _lookup_scope(["ID"])}},
+    )
+    invalid.statement.required_fields = ["ID", "Missing"]
+    empty_bundle = SimpleNamespace()
+    rejected = _execute(invalid, tmp_path, empty_bundle)
+    assert rejected.phase == "infeasible"
+    assert "Missing" in rejected.summary
 
 
 def test_structured_acquire_rewinds_persisted_pager_before_forward_traversal(tmp_path):
