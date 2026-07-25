@@ -11,7 +11,18 @@ from gui_agent.core.config import model_price, pricing_currency
 from .html_utils import _attr, _safe
 from .metrics import _fmt_tokens, _sum_tokens, _token_cost
 from .models import ReportData, ReportStep
-from .orchestrator_html import _render_non_ui_detail, _render_program_section, render_redecompose_card
+from .orchestrator_html import (
+    _coding_call_label,
+    _coding_statement_id,
+    _flatten_coding_inputs,
+    _infer_coding_op,
+    _render_coding_data_panel,
+    _render_non_ui_detail,
+    _render_program_section,
+    coding_plan_expansion_by_sid,
+    is_coding_orchestrator,
+    render_redecompose_card,
+)
 from .prompt_html import _render_module_io_html
 
 # ── Runner HTML generator ──────────────────────────────────────
@@ -97,7 +108,137 @@ HTML_TEMPLATE = """\
   .prog-compiler-detail summary {{ width:max-content; max-width:100%; cursor:pointer; color:#64748b; }}
   .prog-compiler-detail[open] {{ padding:6px 8px; background:#fff; border:1px dashed #cbd5e1; border-radius:6px; line-height:1.55; }}
   .coding-source {{ margin: 0; padding: 14px 16px; overflow-x: auto; border: 1px solid #cbd5e1; border-radius: 8px; background: #0f172a; color: #e2e8f0; font: 12px/1.6 ui-monospace, SFMono-Regular, Menlo, Consolas, monospace; white-space: pre; tab-size: 4; }}
+  .coding-source-wrap {{ margin-top: 4px; border: 1px solid #e2e8f0; border-radius: 8px; background: #f8fafc; }}
+  .coding-source-wrap > summary {{ cursor: pointer; padding: 8px 12px; font-size: 12px; font-weight: 600; color: #475569; list-style: none; display: flex; align-items: center; gap: 6px; flex-wrap: wrap; }}
+  .coding-source-wrap > summary::-webkit-details-marker {{ display: none; }}
+  .coding-source-wrap[open] > summary {{ border-bottom: 1px solid #e2e8f0; }}
+  .coding-source-wrap .coding-source {{ border: 0; border-radius: 0 0 8px 8px; }}
   .coding-note {{ color: #64748b; font-size: 11px; }}
+  .coding-src-legend {{
+    padding: 6px 12px; font-size: 11px; color: #64748b; background: #f1f5f9;
+    border-bottom: 1px solid #e2e8f0;
+  }}
+  .coding-source-annotated {{
+    margin: 0; padding: 8px 0 10px; overflow-x: auto; background: #0f172a; color: #e2e8f0;
+    font: 12px/1.65 ui-monospace, SFMono-Regular, Menlo, Consolas, monospace; tab-size: 4;
+  }}
+  .coding-src-line {{
+    display: grid; grid-template-columns: 40px minmax(12em, 1fr) auto;
+    gap: 0 10px; align-items: start; padding: 0 12px; min-height: 22px;
+  }}
+  .coding-src-line:hover {{ background: rgba(148,163,184,0.08); }}
+  .coding-src-line-hit {{ background: rgba(56,189,248,0.07); }}
+  .coding-src-ln {{
+    color: #64748b; text-align: right; user-select: none; padding-top: 1px;
+  }}
+  .coding-src-code {{ white-space: pre; min-width: 0; overflow-x: auto; color: #e2e8f0; }}
+  .coding-src-ann {{
+    display: flex; flex-wrap: wrap; gap: 4px; align-items: center;
+    justify-content: flex-end; padding: 1px 0; max-width: 42%;
+  }}
+  .coding-src-chip {{
+    display: inline-flex; align-items: center; gap: 4px;
+    background: #1e293b; border: 1px solid #334155; border-radius: 999px;
+    padding: 1px 6px 1px 2px; white-space: nowrap;
+  }}
+  .coding-src-chip-op {{
+    font-size: 10px; color: #7dd3fc; font-weight: 600;
+  }}
+  .coding-src-chip-meta {{ font-size: 10px; color: #94a3b8; }}
+  .coding-src-chip-plan {{ border-color: #0ea5e9; background: #0c4a6e; }}
+  .coding-src-chip-pending {{
+    border-style: dashed; border-color: #64748b; opacity: 0.9;
+  }}
+  .coding-src-chip-pending .coding-src-chip-op {{ color: #94a3b8; font-weight: 500; }}
+  .coding-src-chip .coding-phase {{ transform: scale(0.92); transform-origin: center right; }}
+  .statement-sc.coding-plan-sc {{
+    color: #0369a1; font-size: 11px; width: 100%; margin-bottom: 2px;
+  }}
+  .coding-macro-verdict {{
+    margin: 0 0 4px; padding: 8px 12px; border-radius: 8px;
+    border: 1px solid #fecaca; background: #fef2f2; color: #991b1b;
+    font-size: 12px; font-weight: 600; line-height: 1.45;
+  }}
+  .coding-plan-details > summary {{ color: #0369a1; }}
+  .coding-plan-details-body {{
+    padding: 8px 10px 10px; display: flex; flex-direction: column; gap: 6px;
+  }}
+  .coding-call-link {{
+    display: inline-flex; align-items: center; justify-content: center;
+    min-width: 26px; height: 18px; padding: 0 5px; border-radius: 999px;
+    background: #eef2ff; color: #4338ca; font-weight: 700; font-size: 10px;
+    text-decoration: none; flex-shrink: 0;
+  }}
+  .coding-call-link:hover {{ background: #c7d2fe; }}
+  .coding-src-footer {{
+    display: flex; flex-wrap: wrap; gap: 6px; align-items: center;
+    margin: 8px 12px 4px; padding: 8px 10px; border-top: 1px dashed #334155;
+  }}
+  .coding-src-footer-label {{ font-size: 10px; color: #94a3b8; margin-right: 4px; }}
+  /* Coding: data strip inside the existing statement card (between header and gallery). */
+  .coding-stmt-data {{
+    margin: 0; border: 0; border-bottom: 1px solid var(--border);
+    background: #f8fafc; padding: 10px 20px 12px;
+    display: flex; flex-direction: column; gap: 12px;
+  }}
+  .coding-data-block {{ display: flex; flex-direction: column; gap: 6px; }}
+  .coding-data-block-plan {{
+    padding: 8px 10px; border: 1px solid #bae6fd; border-radius: 8px;
+    background: #f0f9ff;
+  }}
+  .coding-data-block-plan .coding-data-title {{ color: #0369a1; }}
+  .coding-data-block-plan .coding-data-val {{ border-color: #bae6fd; }}
+  .coding-data-title {{
+    font-size: 11px; font-weight: 700; color: #64748b;
+    text-transform: uppercase; letter-spacing: .04em;
+  }}
+  .coding-data-row {{
+    display: grid; grid-template-columns: 88px minmax(0, 1fr);
+    gap: 8px; align-items: start; font-size: 12px;
+  }}
+  .coding-data-key {{
+    color: #64748b; font-family: ui-monospace, SFMono-Regular, monospace;
+    font-size: 11px; padding-top: 5px;
+  }}
+  .coding-data-val {{
+    color: var(--text); word-break: break-word; min-width: 0;
+    background: #fff; border: 1px solid #e2e8f0; border-radius: 6px;
+    padding: 4px 8px; font-size: 12px; line-height: 1.45;
+  }}
+  .coding-data-val code {{
+    font: 11px/1.4 ui-monospace, SFMono-Regular, Menlo, Consolas, monospace;
+    background: transparent; border: 0; padding: 0; color: #0f766e;
+  }}
+  .coding-data-pre {{
+    margin: 0; white-space: pre-wrap; word-break: break-word;
+    font: 11px/1.5 ui-monospace, SFMono-Regular, Menlo, Consolas, monospace;
+    color: #0f172a; background: #fff; border: 1px solid #e2e8f0;
+    border-radius: 6px; padding: 6px 8px; max-height: 240px; overflow: auto;
+  }}
+  .coding-data-details {{
+    margin-top: 2px; border: 1px solid #e2e8f0; border-radius: 6px; background: #fff;
+  }}
+  .coding-data-details > summary {{
+    cursor: pointer; list-style: none; padding: 6px 10px; font-size: 11px;
+    font-weight: 600; color: #64748b; user-select: none;
+  }}
+  .coding-data-details > summary::-webkit-details-marker {{ display: none; }}
+  .coding-data-details > summary::before {{ content: "▸ "; color: #94a3b8; }}
+  .coding-data-details[open] > summary::before {{ content: "▾ "; }}
+  .coding-data-details[open] > summary {{ border-bottom: 1px solid #e2e8f0; }}
+  .coding-data-details .coding-data-pre {{
+    border: 0; border-radius: 0 0 6px 6px; max-height: 320px;
+  }}
+  .coding-data-fail .coding-data-val {{ color: #991b1b; border-color: #fecaca; background: #fef2f2; }}
+  .coding-phase {{ font-size: 10px; font-weight: 700; padding: 2px 7px; border-radius: 999px; flex-shrink: 0; }}
+  .coding-phase-ok {{ background: #dcfce7; color: #166534; }}
+  .coding-phase-fail {{ background: #fee2e2; color: #991b1b; }}
+  .coding-phase-warn {{ background: #fef3c7; color: #92400e; }}
+  .coding-ctx-badge {{
+    font-size: 10px; font-weight: 700; padding: 2px 7px; border-radius: 20px;
+    background: #ecfeff; color: #0e7490; border: 1px solid #a5f3fc;
+    font-family: ui-monospace, SFMono-Regular, monospace;
+  }}
   .prog-resolved {{ color: #0e7490; font-size: 11px; font-family: monospace; background: #ecfeff; border: 1px solid #a5f3fc; border-radius: 5px; padding: 0 6px; }}
   .prog-empty {{ color: #cbd5e1; }}
   .prog-if {{ display: flex; flex-direction: column; gap: 5px; padding: 8px 10px; margin: 2px 0; background: #fffbeb; border: 1px solid #fde68a; border-radius: 8px; }}
@@ -187,6 +328,14 @@ HTML_TEMPLATE = """\
   .statement-name {{ font-size: 13px; color: var(--text); }}
   .statement-desc {{ font-size: 11px; color: var(--muted); width: 100%; }}
   .statement-sc {{ font-size: 11px; color: #94a3b8; width: 100%; }}
+  .statement-sc.coding-call-sc {{
+    color: #0f766e; font-family: ui-monospace, SFMono-Regular, Menlo, Consolas, monospace;
+    font-size: 11px; line-height: 1.45; word-break: break-word;
+  }}
+  .statement-sc.coding-call-sc code {{
+    font: inherit; background: #ecfeff; border: 1px solid #a5f3fc;
+    border-radius: 4px; padding: 1px 6px;
+  }}
   .checklist-badge {{ cursor:pointer; font-size:10px; font-weight:600; padding:2px 8px; border-radius:20px; user-select:none; display:inline-flex; align-items:center; gap:4px; }}
   .checklist-badge-ok {{ background:#dcfce7; color:#166534; }}
   .checklist-badge-partial {{ background:#e0f2fe; color:#0369a1; }}
@@ -1149,6 +1298,28 @@ def generate_html(data: ReportData, grid: bool = False) -> str:
         key=lambda r: r.get("at_turn") or 0,
     )
     placed_rd: set = set()
+    coding_mode = is_coding_orchestrator(data.orchestrator)
+    # Coding mode: index run_log by instance/statement id so each card can show a data strip.
+    coding_run_by_key: dict[str, dict] = {}
+    coding_plan_by_sid: dict[str, dict] = {}
+    if coding_mode:
+        coding_plan_by_sid = coding_plan_expansion_by_sid(data.orchestrator)
+        for entry in (data.orchestrator or {}).get("report_run_log") or []:
+            if not isinstance(entry, dict):
+                continue
+            for key in (
+                str(entry.get("instance_id") or ""),
+                _coding_statement_id(entry),
+            ):
+                if key and key not in coding_run_by_key:
+                    coding_run_by_key[key] = entry
+    statements_by_key: dict[str, dict] = {}
+    for item in data.statements or []:
+        if not isinstance(item, dict):
+            continue
+        for key in (str(item.get("instance_id") or ""), str(item.get("id") or "")):
+            if key and key not in statements_by_key:
+                statements_by_key[key] = item
 
     pages_html = ""
     prev_ts = ""  # carries across pages so the gap is vs the previous turn globally
@@ -1238,7 +1409,12 @@ def generate_html(data: ReportData, grid: bool = False) -> str:
             if page.statement_description and page.statement_description.strip() != page.statement_name.strip()
             else ""
         )
-        sc_html = f'<div class="statement-sc">验收：{_safe(page.statement_success)}</div>' if page.statement_success else ""
+        # Default (DSL): success criteria under the header. Coding mode overrides this with
+        # the actual ctx.* call + arguments once run_log / inputs are resolved below.
+        sc_html = (
+            f'<div class="statement-sc">验收：{_safe(page.statement_success)}</div>'
+            if page.statement_success else ""
+        )
         checklist_badge, checklist_data = _render_checklist(page.checklist, f"cl-{mid_safe}")
         ms_time_html = (
             f'总耗时 {ms_elapsed:.1f}s'
@@ -1313,17 +1489,128 @@ def generate_html(data: ReportData, grid: bool = False) -> str:
         # (The infeasible-statement kick-back verdict is rendered on its own turn's detail, above —
         # it's that turn's conclusion, not a statement-level banner.)
         turns_label = f"{len(page.steps)} turns" if page.steps else "无交互 turn"
+        # Coding: statement-local data strip (ctx.op / inputs / outputs) above the gallery.
+        data_panel_html = ""
+        phase_chip = ""
+        ctx_chip = ""
+        if coding_mode:
+            run_entry = (
+                coding_run_by_key.get(page.instance_id)
+                or coding_run_by_key.get(page.statement_id)
+                or {}
+            )
+            result = run_entry.get("result") if isinstance(run_entry.get("result"), dict) else {}
+            stmt_meta = (
+                statements_by_key.get(page.instance_id)
+                or statements_by_key.get(page.statement_id)
+                or {}
+            )
+            inputs = (
+                run_entry.get("coding_payload")
+                if isinstance(run_entry.get("coding_payload"), dict)
+                else None
+            )
+            if not inputs and isinstance(stmt_meta.get("inputs"), dict):
+                inputs = stmt_meta["inputs"]
+            outputs = result.get("outputs") if isinstance(result.get("outputs"), dict) else None
+            if not outputs and isinstance(stmt_meta.get("outputs"), dict):
+                outputs = stmt_meta["outputs"]
+            phase = str(result.get("phase") or stmt_meta.get("phase") or "")
+            if phase:
+                phase_cls = {
+                    "completed": "coding-phase-ok",
+                    "exhausted": "coding-phase-fail",
+                    "failed": "coding-phase-fail",
+                }.get(phase, "coding-phase-warn")
+                phase_chip = f'<span class="coding-phase {phase_cls}">{_safe(phase)}</span>'
+            coding_op = str(run_entry.get("coding_op") or "")
+            op = _infer_coding_op(
+                coding_op=coding_op,
+                executor=page.statement_executor,
+                inputs=inputs if isinstance(inputs, dict) else {},
+                name=page.statement_name,
+            )
+            flat = _flatten_coding_inputs(
+                coding_op=op,
+                coding_payload=run_entry.get("coding_payload")
+                if isinstance(run_entry.get("coding_payload"), dict) else None,
+                inputs=inputs if isinstance(inputs, dict) else {},
+            )
+            if op == "gui" and not flat.get("task") and page.statement_name:
+                flat = {**flat, "task": page.statement_name}
+            call_label = _coding_call_label(op, flat) if op else ""
+            plan_meta = (
+                coding_plan_by_sid.get(page.statement_id)
+                or coding_plan_by_sid.get(page.instance_id)
+                or {}
+            )
+            # Single badge: plan+step when expanded, else ctx.op. Avoid double chips.
+            plan_expanded = bool(
+                plan_meta.get("plan_op")
+                and (
+                    int(plan_meta.get("plan_steps") or 0) > 1
+                    or plan_meta.get("plan_op") != op
+                )
+            )
+            if plan_expanded:
+                plan_op = str(plan_meta.get("plan_op") or "")
+                step = int(plan_meta.get("plan_step") or 1)
+                steps = int(plan_meta.get("plan_steps") or 1)
+                badge_text = f"ctx.{plan_op} {step}/{steps}"
+                if op and op != plan_op:
+                    badge_text += f" · {op}"
+                ctx_chip = (
+                    f'<span class="coding-ctx-badge" title="{_attr(str(plan_meta.get("label") or call_label))}">'
+                    f'{_safe(badge_text)}</span>'
+                )
+            elif op:
+                ctx_chip = (
+                    f'<span class="coding-ctx-badge" title="{_attr(call_label)}">'
+                    f'ctx.{_safe(op)}</span>'
+                )
+            # Header subtitle: only the step call signature (plan info lives in the badge).
+            if call_label:
+                sc_html = (
+                    f'<div class="statement-sc coding-call-sc">'
+                    f'<code>{_safe(call_label)}</code></div>'
+                )
+            call_snapshot = (
+                stmt_meta.get("call")
+                if isinstance(stmt_meta.get("call"), dict)
+                else None
+            )
+            data_panel_html = _render_coding_data_panel(
+                name=page.statement_name,
+                success=page.statement_success,
+                result=result or {
+                    "phase": phase,
+                    "summary": str(stmt_meta.get("last_summary") or ""),
+                },
+                outputs=outputs,
+                inputs=inputs if isinstance(inputs, dict) else {},
+                coding_op=coding_op,
+                coding_payload=run_entry.get("coding_payload")
+                if isinstance(run_entry.get("coding_payload"), dict) else None,
+                executor=page.statement_executor,
+                call=call_snapshot,
+                plan_meta=plan_meta,
+                # Call signature already shown under the header; avoid repeating it.
+                omit_call_label=True,
+            )
         pages_html += f"""
         <div class="statement" id="ms-{mid_safe}">
           <div class="statement-header">
             <h2>#{mid_disp}</h2>
             <span class="statement-name">{_safe(page.statement_name)}</span>
             <span class="statement-badge {badge_cls}">{_safe(page.statement_executor)}</span>
+            {ctx_chip}
+            {phase_chip}
             {checklist_badge}
             <span class="statement-time" title="{_safe(ms_time_title)}">{ms_time_html} · {turns_label}{ms_tok_html}</span>
             {desc_html}
             {sc_html}
           </div>
+          {data_panel_html}
           <div class="gallery">{thumbs_html}{verify_thumb}</div>
           {details_html}
           {verify_detail}
@@ -1335,6 +1622,8 @@ def generate_html(data: ReportData, grid: bool = False) -> str:
     for _rd in redecomps:
         if _rd.get("kickback_n") not in placed_rd:
             pages_html += render_redecompose_card(data.orchestrator, _rd.get("kickback_n"))
+
+    program_html = _render_program_section(data.orchestrator)
 
     # Model-config box with an inline "参考单价" chip that pops the rate table on hover.
     cost_note_html = ""
@@ -1402,7 +1691,7 @@ def generate_html(data: ReportData, grid: bool = False) -> str:
         provenance_html=_render_provenance(data.raw_input, data.goal, data.router),
         webarena_html=_render_webarena_result(data.webarena),
         mobileworld_html=_render_mobileworld_result(data.mobileworld),
-        program_html=_render_program_section(data.orchestrator),
+        program_html=program_html,
         phase_badge=_render_phase_badge(data),
         sidebar_html=sidebar_html,
         cost_note_html=cost_note_html,

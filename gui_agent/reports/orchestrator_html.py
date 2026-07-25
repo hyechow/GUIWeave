@@ -2,11 +2,13 @@
 
 from __future__ import annotations
 
+import ast
 import json
+import re
 
 from gui_agent.core.config import pricing_currency
 
-from .html_utils import _attr, _safe
+from .html_utils import _safe
 from .metrics import _fmt_tokens, _sum_tokens, _token_cost
 from .prompt_html import _render_module_io_html
 
@@ -405,13 +407,31 @@ def _render_program_card(
     )
 
 
+def is_coding_orchestrator(orchestrator: dict | None) -> bool:
+    if not orchestrator:
+        return False
+    prog = orchestrator.get("program") or {}
+    return prog.get("kind") == "coding" or bool(str(prog.get("source") or "").strip())
+
+
+def _coding_statement_id(record: dict) -> str:
+    """Resolve statement id from a report_run_log entry (new + legacy logs)."""
+    node_id = str(record.get("node_id") or "").strip()
+    if node_id:
+        return node_id
+    instance_id = str(record.get("instance_id") or "").strip()
+    if ":" in instance_id:
+        return instance_id.rsplit(":", 1)[-1]
+    return instance_id
+
+
 def _render_program_section(orchestrator: dict | None) -> str:
     """Render the original DSL or coding plan before its executed statements."""
     if not orchestrator:
         return ""
     prog0 = orchestrator.get("program") or {}
-    if prog0.get("kind") == "coding" or prog0.get("source"):
-        return _render_coding_program_card(orchestrator, prog0)
+    if is_coding_orchestrator(orchestrator):
+        return _render_coding_program_shell(orchestrator, prog0)
     if not prog0.get("statements"):
         return ""
     return _render_program_card(
@@ -421,14 +441,536 @@ def _render_program_section(orchestrator: dict | None) -> str:
     )
 
 
-def _render_coding_program_card(orchestrator: dict, program: dict) -> str:
+def _infer_coding_op(
+    *,
+    coding_op: str = "",
+    executor: str = "",
+    inputs: dict | None = None,
+    name: str = "",
+) -> str:
+    """Resolve ctx.* op for a statement (new logs: coding_op; old logs: infer)."""
+    if coding_op:
+        return str(coding_op)
+    inputs = inputs if isinstance(inputs, dict) else {}
+    if "lookup_request" in inputs:
+        return "lookup"
+    if "constrain_request" in inputs:
+        return "constrain"
+    if executor == "acquire":
+        return "acquire"
+    if executor == "read":
+        return "read"
+    if executor == "command":
+        return "command"
+    if executor == "interact":
+        if isinstance(inputs.get("values"), dict) and inputs.get("values"):
+            return "write"
+        return "gui"
+    # Legacy report_run_log often omits executor/coding_op — recover from goal text.
+    lowered = name.lower()
+    if "resolve collection" in lowered or "locate collection" in lowered:
+        return "lookup"
+    if "materialize records" in lowered:
+        return "acquire"
+    if "narrow collection" in lowered or "filter" in lowered and "collection" in lowered:
+        return "constrain"
+    if name and executor:
+        return executor
+    if name and len(name) <= 48 and "\n" not in name:
+        # Short imperative labels like go_to / open_settings map to ctx.gui.
+        return "gui"
+    return executor or ""
+
+
+def _flatten_coding_inputs(
+    *,
+    coding_op: str,
+    coding_payload: dict | None,
+    inputs: dict | None,
+) -> dict:
+    """Prefer coding_payload; fall back to statement.inputs / nested request objects."""
+    if isinstance(coding_payload, dict) and coding_payload:
+        return dict(coding_payload)
+    inputs = inputs if isinstance(inputs, dict) else {}
+    if not inputs:
+        return {}
+    for key in ("lookup_request", "constrain_request"):
+        nested = inputs.get(key)
+        if isinstance(nested, dict) and nested:
+            return dict(nested)
+    return dict(inputs)
+
+
+def _coding_call_label(op: str, payload: dict | None = None) -> str:
+    """Short human label: ctx.gui("go_to") / ctx.lookup(Orders, …)."""
+    payload = payload if isinstance(payload, dict) else {}
+    if not op:
+        return "ctx.?"
+    if op == "gui":
+        task = payload.get("task") or payload.get("goal") or ""
+        target = payload.get("target")
+        if task and target is not None:
+            return f'ctx.gui({task!r}, target={target!r})'
+        if task:
+            return f"ctx.gui({task!r})"
+        return "ctx.gui(…)"
+    if op == "write":
+        task = payload.get("task") or ""
+        return f"ctx.write({task!r}, …)" if task else "ctx.write(…)"
+    if op == "lookup":
+        entity = payload.get("entity") or "?"
+        filters = payload.get("filters") or {}
+        fields = payload.get("required_fields") or payload.get("fields") or []
+        bits = [f"entity={entity!r}"]
+        if filters:
+            bits.append(f"filters={filters!r}")
+        if fields:
+            bits.append(f"fields={list(fields)[:6]!r}")
+        return f"ctx.lookup({', '.join(bits)})"
+    if op == "constrain":
+        entity = payload.get("entity") or "?"
+        filters = payload.get("filters") or {}
+        return f"ctx.constrain({entity!r}, {filters!r})"
+    if op == "acquire":
+        entity = payload.get("entity") or "?"
+        fields = payload.get("fields") or []
+        return f"ctx.acquire({entity!r}, fields={list(fields)[:6]!r})"
+    if op == "read":
+        fields = payload.get("fields") or []
+        return f"ctx.read(fields={list(fields)[:8]!r})"
+    if op == "focus":
+        fields = payload.get("fields") or []
+        return f"ctx.focus(fields={list(fields)[:6]!r})"
+    if op == "command":
+        cap = payload.get("capability") or "?"
+        return f"ctx.command({cap!r})"
+    if op == "query":
+        entity = payload.get("entity") or "?"
+        return f"ctx.query({entity!r}, …)"
+    return f"ctx.{op}(…)"
+
+
+_CODING_CTX_PLAN_OPS = frozenset({
+    "gui", "write", "query", "lookup", "constrain", "focus",
+    "acquire", "read", "command", "interact",
+})
+
+# Plan-level ctx.* call → ordered runtime ops it may expand into.
+_PLAN_RUNTIME_CONSUME: dict[str, tuple[str, ...]] = {
+    "gui": ("gui",),
+    "write": ("write",),
+    "query": ("lookup", "constrain", "acquire"),
+    "lookup": ("lookup",),
+    "constrain": ("constrain",),
+    "acquire": ("acquire",),
+    "read": ("focus", "read"),
+    "focus": ("focus",),
+    "command": ("command",),
+    "interact": ("gui", "write"),
+}
+
+
+def _coding_plan_call_sites(source: str) -> list[dict]:
+    """Static ctx.* call sites from source, source order (by lineno)."""
+    try:
+        tree = ast.parse(source)
+    except SyntaxError:
+        return []
+    sites: list[dict] = []
+    for node in ast.walk(tree):
+        if not isinstance(node, ast.Call):
+            continue
+        func = node.func
+        if not (
+            isinstance(func, ast.Attribute)
+            and isinstance(func.value, ast.Name)
+            and func.value.id == "ctx"
+            and func.attr in _CODING_CTX_PLAN_OPS
+        ):
+            continue
+        sites.append({
+            "op": func.attr,
+            "lineno": int(getattr(node, "lineno", 0) or 0),
+            "end_lineno": int(
+                getattr(node, "end_lineno", None)
+                or getattr(node, "lineno", 0)
+                or 0
+            ),
+        })
+    sites.sort(key=lambda item: (item["lineno"], item["op"]))
+    return sites
+
+
+def _coding_runtime_calls(orchestrator: dict) -> list[dict]:
+    """Normalized runtime statement list from report_run_log."""
+    out: list[dict] = []
+    for index, entry in enumerate(orchestrator.get("report_run_log") or [], 1):
+        if not isinstance(entry, dict):
+            continue
+        name = str(entry.get("name") or "")
+        result = entry.get("result") if isinstance(entry.get("result"), dict) else {}
+        payload = (
+            dict(entry["coding_payload"])
+            if isinstance(entry.get("coding_payload"), dict)
+            else {}
+        )
+        op = _infer_coding_op(
+            coding_op=str(entry.get("coding_op") or ""),
+            executor=str(entry.get("executor") or ""),
+            inputs=payload,
+            name=name,
+        )
+        if op == "gui" and not payload.get("task"):
+            payload = {**payload, "task": name}
+        if op == "lookup" and not payload.get("entity") and "collection" in name:
+            m = re.search(r"collection '([^']+)'", name)
+            if m:
+                payload = {**payload, "entity": m.group(1)}
+            fm = re.search(r"filters=(\{.*?\})", name)
+            if fm:
+                try:
+                    payload = {**payload, "filters": ast.literal_eval(fm.group(1))}
+                except Exception:  # noqa: BLE001
+                    pass
+            rm = re.search(r"fields=(\[.*?\])", name)
+            if rm:
+                try:
+                    payload = {
+                        **payload,
+                        "required_fields": ast.literal_eval(rm.group(1)),
+                    }
+                except Exception:  # noqa: BLE001
+                    pass
+        plan = str(entry.get("coding_plan") or "")
+        plan_step = int(entry.get("coding_plan_step") or 0)
+        plan_steps = int(entry.get("coding_plan_steps") or 0)
+        out.append({
+            "ordinal": index,
+            "sid": _coding_statement_id(entry),
+            "op": op,
+            "phase": str(result.get("phase") or ""),
+            "payload": payload,
+            "name": name,
+            "plan_op": plan,
+            "plan_step": plan_step,
+            "plan_steps": plan_steps,
+        })
+    return out
+
+
+def _designed_plan_steps(plan_op: str, matched: list[dict]) -> int:
+    """How many internal statements a plan-level API is designed to emit."""
+    if plan_op == "query":
+        return 2
+    if plan_op == "read":
+        if any(str(c.get("op") or "") == "focus" for c in matched):
+            return 2
+        return 1
+    return max(1, len(matched) or 1)
+
+
+def _apply_plan_expansion_to_group(plan_op: str, matched: list[dict]) -> None:
+    """Mutate matched runtime calls with plan_op / step / siblings for reporting."""
+    if not matched:
+        return
+    designed = _designed_plan_steps(plan_op, matched)
+    siblings = [int(c.get("ordinal") or 0) for c in matched]
+    pending_ops: list[str] = []
+    if plan_op == "query" and not any(c.get("op") == "acquire" for c in matched):
+        pending_ops.append("acquire")
+    if plan_op == "read" and designed == 2 and not any(c.get("op") == "read" for c in matched):
+        pending_ops.append("read")
+    for index, call in enumerate(matched, 1):
+        # Prefer runtime-recorded plan meta when present.
+        if not call.get("plan_op"):
+            call["plan_op"] = plan_op
+        if not call.get("plan_step"):
+            call["plan_step"] = index
+        if not call.get("plan_steps"):
+            call["plan_steps"] = designed
+        call["plan_siblings"] = siblings
+        call["plan_pending"] = list(pending_ops)
+
+
+def _match_runtime_to_plan_sites(
+    plan_sites: list[dict],
+    runtime_calls: list[dict],
+) -> tuple[dict[int, list[dict]], list[dict]]:
+    """Map plan-source linenos → runtime calls; leftover runtime calls returned separately."""
+    by_line: dict[int, list[dict]] = {}
+    queue = list(runtime_calls)
+    for site in plan_sites:
+        plan_op = str(site.get("op") or "")
+        lineno = int(site.get("lineno") or 0)
+        if not lineno or not queue:
+            continue
+        allowed = _PLAN_RUNTIME_CONSUME.get(plan_op, (plan_op,))
+        matched: list[dict] = []
+        # Consume a contiguous prefix of allowed runtime ops (macro expansion).
+        while queue and queue[0].get("op") in allowed:
+            matched.append(queue.pop(0))
+            # gui/write/command: exactly one
+            if plan_op in {"gui", "write", "command", "lookup", "constrain", "acquire", "focus"}:
+                break
+            # query: stop after acquire if present, else keep taking lookup/constrain
+            if plan_op == "query" and matched[-1].get("op") == "acquire":
+                break
+            # read: stop after read
+            if plan_op == "read" and matched[-1].get("op") == "read":
+                break
+        if matched:
+            _apply_plan_expansion_to_group(plan_op, matched)
+            by_line.setdefault(lineno, []).extend(matched)
+    return by_line, queue
+
+
+def _enrich_runtime_plan_expansion(
+    runtime_calls: list[dict],
+    *,
+    source: str = "",
+) -> dict[str, dict]:
+    """Return sid → expansion meta; also mutates runtime_calls in place."""
+    if not runtime_calls:
+        return {}
+
+    plan_sites = _coding_plan_call_sites(source) if source else []
+    if plan_sites:
+        _by_line, leftovers = _match_runtime_to_plan_sites(
+            plan_sites, list(runtime_calls),
+        )
+        for call in leftovers:
+            plan = str(call.get("plan_op") or call.get("op") or "")
+            if plan == "lookup" or call.get("op") == "lookup":
+                plan = str(call.get("plan_op") or "query")
+            _apply_plan_expansion_to_group(plan or "gui", [call])
+    else:
+        # No source: group by recorded plan tags, else lookup(+acquire) as query.
+        i = 0
+        while i < len(runtime_calls):
+            call = runtime_calls[i]
+            plan = str(call.get("plan_op") or "")
+            if plan and int(call.get("plan_steps") or 0) > 1:
+                group = [call]
+                j = i + 1
+                while (
+                    j < len(runtime_calls)
+                    and str(runtime_calls[j].get("plan_op") or "") == plan
+                ):
+                    group.append(runtime_calls[j])
+                    j += 1
+                _apply_plan_expansion_to_group(plan, group)
+                i = j
+                continue
+            if (
+                call.get("op") == "lookup"
+                and i + 1 < len(runtime_calls)
+                and runtime_calls[i + 1].get("op") == "acquire"
+            ):
+                _apply_plan_expansion_to_group(
+                    "query", [call, runtime_calls[i + 1]],
+                )
+                i += 2
+                continue
+            if call.get("op") == "lookup":
+                _apply_plan_expansion_to_group(
+                    str(call.get("plan_op") or "query"), [call],
+                )
+            else:
+                _apply_plan_expansion_to_group(
+                    str(call.get("plan_op") or call.get("op") or "gui"), [call],
+                )
+            i += 1
+
+    by_sid: dict[str, dict] = {}
+    for call in runtime_calls:
+        sid = str(call.get("sid") or "")
+        if not sid:
+            continue
+        plan_op = str(call.get("plan_op") or call.get("op") or "")
+        step = int(call.get("plan_step") or 1)
+        steps = int(call.get("plan_steps") or 1)
+        by_sid[sid] = {
+            "plan_op": plan_op,
+            "plan_step": step,
+            "plan_steps": steps,
+            "op": str(call.get("op") or ""),
+            "ordinal": int(call.get("ordinal") or 0),
+            "siblings": list(call.get("plan_siblings") or [call.get("ordinal")]),
+            "pending": list(call.get("plan_pending") or []),
+            "expanded": bool(steps > 1 or plan_op in {"query", "read"} and plan_op != call.get("op")),
+            "label": _plan_step_label(plan_op, str(call.get("op") or ""), step, steps),
+        }
+    return by_sid
+
+
+def _plan_step_label(plan_op: str, step_op: str, step: int, steps: int) -> str:
+    """Human label: ctx.query · 步骤 1/2 · lookup"""
+    plan_op = plan_op or step_op or "?"
+    step_op = step_op or "?"
+    if steps > 1 or plan_op != step_op:
+        return f"ctx.{plan_op} · 步骤 {step}/{steps} · {step_op}"
+    return f"ctx.{plan_op}"
+
+
+def _plan_is_expanded(plan_meta: dict | None, step_op: str = "") -> bool:
+    if not isinstance(plan_meta, dict) or not plan_meta:
+        return False
+    plan_op = str(plan_meta.get("plan_op") or "")
+    steps = int(plan_meta.get("plan_steps") or 0)
+    op = step_op or str(plan_meta.get("op") or "")
+    return bool(plan_op and (steps > 1 or (op and plan_op != op)))
+
+
+def _macro_failure_verdict(
+    plan_meta: dict | None,
+    *,
+    phase: str = "",
+    step_op: str = "",
+) -> str:
+    """One-line diagnosis when a plan-level API dies mid-expansion."""
+    if phase not in {"exhausted", "failed", "stopped", "interrupted"}:
+        return ""
+    if not _plan_is_expanded(plan_meta, step_op):
+        return ""
+    assert isinstance(plan_meta, dict)
+    plan_op = str(plan_meta.get("plan_op") or "?")
+    step = int(plan_meta.get("plan_step") or 1)
+    steps = int(plan_meta.get("plan_steps") or 1)
+    op = step_op or str(plan_meta.get("op") or "?")
+    pending = [str(p) for p in (plan_meta.get("pending") or []) if p]
+    text = f"ctx.{plan_op} 在步骤 {step}/{steps}（{op}）失败"
+    if pending:
+        text += "，" + "、".join(pending) + " 未执行"
+    elif step < steps:
+        text += f"，后续步骤未执行"
+    return text
+
+
+def _render_runtime_ann_chips(calls: list[dict]) -> str:
+    chips: list[str] = []
+    plan_op = ""
+    plan_steps = 0
+    if calls:
+        plan_op = str(calls[0].get("plan_op") or "")
+        plan_steps = int(calls[0].get("plan_steps") or 0)
+    if plan_op and plan_steps > 1:
+        chips.append(
+            f'<span class="coding-src-chip coding-src-chip-plan">'
+            f'<span class="coding-src-chip-op">ctx.{_safe(plan_op)}</span>'
+            f'<span class="coding-src-chip-meta">{len(calls)}/{plan_steps} 步</span>'
+            f'</span>'
+        )
+    for call in calls:
+        ordinal = int(call.get("ordinal") or 0)
+        sid = str(call.get("sid") or "")
+        phase = str(call.get("phase") or "")
+        phase_cls = {
+            "completed": "coding-phase-ok",
+            "exhausted": "coding-phase-fail",
+            "failed": "coding-phase-fail",
+        }.get(phase, "coding-phase-warn")
+        phase_html = (
+            f'<span class="coding-phase {phase_cls}">{_safe(phase)}</span>'
+            if phase else ""
+        )
+        op = str(call.get("op") or "")
+        step = int(call.get("plan_step") or 0)
+        steps = int(call.get("plan_steps") or 0)
+        step_meta = f"{step}/{steps}" if steps > 1 else ""
+        title = _plan_step_label(
+            str(call.get("plan_op") or ""), op, step or 1, steps or 1,
+        )
+        link = (
+            f'<a class="coding-call-link" href="#ms-{_safe(sid)}" title="{_safe(title)}">'
+            f'#{ordinal}</a>'
+            if sid else f'<span class="coding-call-link">#{ordinal}</span>'
+        )
+        chips.append(
+            f'<span class="coding-src-chip">{link}'
+            f'<span class="coding-src-chip-op">{_safe(op or "?")}'
+            f'{(" · " + step_meta) if step_meta else ""}</span>'
+            f'{phase_html}</span>'
+        )
+    pending = list(calls[0].get("plan_pending") or []) if calls else []
+    for pending_op in pending:
+        chips.append(
+            f'<span class="coding-src-chip coding-src-chip-pending">'
+            f'<span class="coding-src-chip-op">{_safe(pending_op)} 未执行</span>'
+            f'</span>'
+        )
+    return "".join(chips)
+
+
+def _render_annotated_coding_source(source: str, orchestrator: dict) -> str:
+    """Python source with runtime call annotations on matching ctx.* lines."""
+    lines = source.splitlines()
+    plan_sites = _coding_plan_call_sites(source)
+    runtime_calls = _coding_runtime_calls(orchestrator)
+    # Enrich plan expansion (query→lookup+acquire) before lining up to source.
+    _enrich_runtime_plan_expansion(runtime_calls, source=source)
+    by_line, leftovers = _match_runtime_to_plan_sites(
+        plan_sites, list(runtime_calls),
+    )
+
+    # Fallback: no AST sites or no matches — keep chips in footer (don't mis-attach).
+    if runtime_calls and not any(by_line.values()):
+        leftovers = list(runtime_calls)
+        by_line = {}
+
+    row_html: list[str] = []
+    for lineno, raw in enumerate(lines, 1):
+        code = _safe(raw) if raw else " "
+        ann = _render_runtime_ann_chips(by_line.get(lineno) or [])
+        ann_html = f'<span class="coding-src-ann">{ann}</span>' if ann else ""
+        has_ann = " coding-src-line-hit" if ann else ""
+        row_html.append(
+            f'<div class="coding-src-line{has_ann}">'
+            f'<span class="coding-src-ln">{lineno}</span>'
+            f'<span class="coding-src-code">{code}</span>'
+            f'{ann_html}'
+            f'</div>'
+        )
+
+    footer = ""
+    if leftovers:
+        footer = (
+            '<div class="coding-src-footer">'
+            '<span class="coding-src-footer-label">未对齐到源码行的运行调用</span>'
+            f'{_render_runtime_ann_chips(leftovers)}'
+            '</div>'
+        )
+    note = (
+        '<div class="coding-src-legend">'
+        '行尾：计划 API 展开的 Statement 步骤（如 query→lookup+acquire），点击 #N 跳转卡片'
+        '</div>'
+    )
+    return (
+        f'{note}'
+        f'<div class="coding-source coding-source-annotated">'
+        f'{"".join(row_html)}'
+        f'{footer}'
+        f'</div>'
+    )
+
+
+def coding_plan_expansion_by_sid(orchestrator: dict | None) -> dict[str, dict]:
+    """Public helper: statement id → plan expansion meta for card headers/data panels."""
+    if not orchestrator:
+        return {}
+    source = str((orchestrator.get("program") or {}).get("source") or "")
+    calls = _coding_runtime_calls(orchestrator)
+    return _enrich_runtime_plan_expansion(calls, source=source)
+
+
+def _render_coding_program_shell(orchestrator: dict, program: dict) -> str:
+    """Coding plan shell: goal, review, annotated Python source."""
     source = str(program.get("source") or "").strip()
     if not source:
         return ""
     goal = str(program.get("goal") or "")
     input_html = (
         f'<div class="prog-input"><span class="prog-input-label">输入</span>{_safe(goal)}'
-        '<span class="prog-input-arrow">↓ Python 计划</span></div>'
+        '<span class="prog-input-arrow">↓ Statement 卡片（数据 + UI 交互）</span></div>'
         if goal else ""
     )
     review = next(
@@ -446,11 +988,23 @@ def _render_coding_program_card(orchestrator: dict, program: dict) -> str:
         review_label = "Review · 未通过"
     else:
         review_label = "Review · 未记录"
+    runtime_n = len(_coding_runtime_calls(orchestrator))
     review_html = (
         '<div class="compat-row">'
         f'<span class="compat-chip">{_safe(review_label)}</span>'
-        '<span class="coding-note">运行时产生的 Statement 调用与执行证据见下方时间线</span>'
+        f'<span class="coding-note">'
+        f'源码行尾标注 {runtime_n} 次运行调用 · 点击跳转卡片'
+        f'</span>'
         '</div>'
+    )
+    # Open source by default when there are runtime annotations to show.
+    open_attr = " open" if runtime_n else ""
+    source_html = (
+        f'<details class="coding-source-wrap"{open_attr}>'
+        f'<summary>完整 Python 源码'
+        f'<span class="coding-note"> · 运行调用已标注在对应行</span></summary>'
+        f'{_render_annotated_coding_source(source, orchestrator)}'
+        f'</details>'
     )
     return (
         '<div class="statement prog-section" id="ms-orchestrate-coding">'
@@ -460,12 +1014,338 @@ def _render_coding_program_card(orchestrator: dict, program: dict) -> str:
         '<span class="statement-badge statement-badge-default">python</span>'
         f'{_render_orchestrator_metrics(orchestrator)}'
         '</div>'
-        f'<div class="prog-body">{input_html}{review_html}'
-        f'<pre class="coding-source"><code>{_safe(source)}</code></pre>'
+        f'<div class="prog-body">{input_html}{review_html}{source_html}'
         f'{_render_orchestrator_context_reports(orchestrator)}'
         '</div>'
         '</div>'
     )
+
+
+def _build_statement_call_params(
+    *,
+    name: str = "",
+    success: str = "",
+    executor: str = "",
+    inputs: dict | None = None,
+    coding_op: str = "",
+    coding_payload: dict | None = None,
+    call: dict | None = None,
+) -> dict:
+    """Assemble the full statement-executor call parameter object for the data panel."""
+    call = dict(call) if isinstance(call, dict) else {}
+    inputs = inputs if isinstance(inputs, dict) else {}
+    coding_payload = dict(coding_payload) if isinstance(coding_payload, dict) else {}
+
+    op = _infer_coding_op(
+        coding_op=coding_op,
+        executor=executor or str(call.get("executor") or ""),
+        inputs=coding_payload or inputs or (
+            call.get("inputs") if isinstance(call.get("inputs"), dict) else {}
+        ),
+        name=name or str(call.get("goal") or ""),
+    )
+    flat = _flatten_coding_inputs(
+        coding_op=op,
+        coding_payload=coding_payload or None,
+        inputs=inputs or (
+            call.get("inputs") if isinstance(call.get("inputs"), dict) else {}
+        ),
+    )
+    if op == "gui" and not flat.get("task"):
+        task = name or str(call.get("goal") or "")
+        if task:
+            flat = {**flat, "task": task}
+
+    params: dict = {}
+    if op:
+        params["ctx_op"] = op
+    # Prefer explicit coding payload when present (new runs); else flattened request.
+    if coding_payload:
+        params["ctx_payload"] = coding_payload
+    elif flat:
+        params["ctx_payload"] = flat
+
+    # Full statement-executor contract (what the runtime actually dispatched).
+    executor_call: dict = {}
+    for key in (
+        "id",
+        "executor",
+        "goal",
+        "success",
+        "on",
+        "scope",
+        "persistence",
+        "inputs",
+        "required_values",
+        "observe_fields",
+        "returns",
+        "args",
+        "capability",
+        "required_fields",
+        "reads",
+        "coverage",
+    ):
+        if key in call and call.get(key) is not None:
+            executor_call[key] = call[key]
+    # Fill gaps from page-level fields when journal call snapshot is partial.
+    if executor and "executor" not in executor_call:
+        executor_call["executor"] = executor
+    if name and "goal" not in executor_call:
+        executor_call["goal"] = name
+    if success and "success" not in executor_call:
+        executor_call["success"] = success
+    if inputs and "inputs" not in executor_call:
+        executor_call["inputs"] = inputs
+    if executor_call:
+        params["statement"] = executor_call
+    return params
+
+
+def _coding_json_pre(value: object, *, limit: int = 8000) -> str:
+    """Light-theme JSON/pre body for data panels (always the same surface)."""
+    if isinstance(value, str):
+        text = value
+    else:
+        text = json.dumps(value, ensure_ascii=False, indent=2, default=str)
+    if len(text) > limit:
+        text = text[: limit - 3] + "…"
+    return f'<pre class="coding-data-pre">{_safe(text)}</pre>'
+
+
+def _coding_arg_row(key: str, value: object) -> str:
+    """One key/value row; scalars as value text, structures as light pre."""
+    if value is None or isinstance(value, (bool, int, float)):
+        body = f'<span class="coding-data-val">{_safe(str(value))}</span>'
+    elif isinstance(value, str):
+        body = f'<span class="coding-data-val">{_safe(value)}</span>'
+    else:
+        body = _coding_json_pre(value, limit=2400)
+    return (
+        f'<div class="coding-data-row">'
+        f'<span class="coding-data-key">{_safe(key)}</span>'
+        f'{body}'
+        f'</div>'
+    )
+
+
+# Preferred field order for ctx payload rows — matches common call signatures.
+_CTX_PAYLOAD_KEY_ORDER: dict[str, tuple[str, ...]] = {
+    "gui": ("task", "target"),
+    "write": ("task", "target", "values"),
+    "lookup": ("entity", "field", "fallback", "filters", "required_fields", "fields"),
+    "constrain": ("entity", "filters"),
+    "acquire": ("entity", "fields", "coverage", "scope"),
+    "read": ("fields", "target"),
+    "focus": ("target", "fields"),
+    "command": ("capability",),
+    "query": ("entity", "fields", "filters", "field", "fallback", "coverage"),
+}
+
+
+def _ordered_payload_items(op: str, payload: dict) -> list[tuple[str, object]]:
+    """Stable, signature-first key order for readable call-arg rows."""
+    preferred = _CTX_PAYLOAD_KEY_ORDER.get(op, ())
+    seen: set[str] = set()
+    items: list[tuple[str, object]] = []
+    for key in preferred:
+        if key in payload:
+            items.append((key, payload[key]))
+            seen.add(key)
+    for key, value in payload.items():
+        if key not in seen:
+            items.append((str(key), value))
+    return items
+
+
+def _render_coding_data_panel(
+    *,
+    name: str = "",
+    success: str = "",
+    result: dict | None = None,
+    outputs: dict | None = None,
+    inputs: dict | None = None,
+    coding_op: str = "",
+    coding_payload: dict | None = None,
+    executor: str = "",
+    call: dict | None = None,
+    plan_meta: dict | None = None,
+    omit_call_label: bool = False,
+) -> str:
+    """Statement-local data: readable call args (light) + run result."""
+    result = result if isinstance(result, dict) else {}
+    outputs = outputs if isinstance(outputs, dict) else {}
+    if not outputs:
+        raw_out = result.get("outputs")
+        if isinstance(raw_out, dict):
+            outputs = raw_out
+
+    params = _build_statement_call_params(
+        name=name,
+        success=success,
+        executor=executor,
+        inputs=inputs,
+        coding_op=coding_op,
+        coding_payload=coding_payload,
+        call=call,
+    )
+    op = str(params.get("ctx_op") or "")
+    payload = params.get("ctx_payload") if isinstance(params.get("ctx_payload"), dict) else {}
+    statement = params.get("statement") if isinstance(params.get("statement"), dict) else {}
+    plan_meta = plan_meta if isinstance(plan_meta, dict) else {}
+
+    sections: list[str] = []
+
+    phase = str(result.get("phase") or "")
+    plan_expanded = _plan_is_expanded(plan_meta, op)
+    plan_op = str(plan_meta.get("plan_op") or "")
+    plan_step = int(plan_meta.get("plan_step") or 0)
+    plan_steps = int(plan_meta.get("plan_steps") or 0)
+
+    # ── 0) 宏失败结论：抬到最前，避免先翻参数 ──
+    verdict = _macro_failure_verdict(plan_meta, phase=phase, step_op=op)
+    if verdict:
+        sections.append(
+            f'<div class="coding-macro-verdict">{_safe(verdict)}</div>'
+        )
+
+    # ── 1a) 计划展开：header 已有徽章时默认折叠，避免与徽章/结论重复 ──
+    if plan_expanded:
+        plan_rows: list[str] = [
+            _coding_arg_row("API", f"ctx.{plan_op}"),
+            _coding_arg_row("本步", f"{plan_step}/{plan_steps} · {op or '?'}"),
+        ]
+        siblings = [n for n in (plan_meta.get("siblings") or []) if n]
+        if siblings:
+            plan_rows.append(
+                _coding_arg_row("关联卡片", " ".join(f"#{n}" for n in siblings)),
+            )
+        pending = plan_meta.get("pending") or []
+        if pending:
+            plan_rows.append(
+                _coding_arg_row(
+                    "未执行",
+                    ", ".join(
+                        f"ctx.{p}" if not str(p).startswith("ctx.") else str(p)
+                        for p in pending
+                    ),
+                ),
+            )
+        # Failed macros already show a top verdict — keep details folded.
+        open_attr = "" if verdict else " open"
+        summary = (
+            f"计划展开 · ctx.{plan_op} 步骤 {plan_step}/{plan_steps}"
+            if plan_op else "计划展开"
+        )
+        sections.append(
+            f'<div class="coding-data-block coding-data-block-plan">'
+            f'<details class="coding-data-details coding-plan-details"{open_attr}>'
+            f'<summary>{_safe(summary)}</summary>'
+            f'<div class="coding-plan-details-body">{"".join(plan_rows)}</div>'
+            f'</details>'
+            f'</div>'
+        )
+
+    # ── 1b) 本步参数：当前 Statement 内部 op 的入参（不再重复 op/签名）──
+    step_rows: list[str] = []
+    if op and not omit_call_label:
+        step_rows.append(
+            f'<div class="coding-data-row">'
+            f'<span class="coding-data-key">调用</span>'
+            f'<span class="coding-data-val"><code>{_safe(_coding_call_label(op, payload))}</code></span>'
+            f'</div>'
+        )
+    for field, value in _ordered_payload_items(op, payload)[:24]:
+        if value is None:
+            continue
+        # Skip empty optional strings that only clutter the form (e.g. fallback="").
+        if value == "" or value == [] or value == {}:
+            continue
+        step_rows.append(_coding_arg_row(str(field), value))
+    if step_rows:
+        step_title = "本步参数" if plan_expanded else "调用参数"
+        sections.append(
+            f'<div class="coding-data-block">'
+            f'<div class="coding-data-title">{step_title}</div>'
+            f'{"".join(step_rows)}'
+            f'</div>'
+        )
+
+    # ── 2) 运行结果（failure 与顶部宏结论重复时，只保留 evidence 等补充信息）──
+    result_rows: list[str] = []
+    if phase and not verdict:
+        result_rows.append(_coding_arg_row("phase", phase))
+    summary = str(result.get("summary") or "")
+    failure = str(result.get("failure_evidence") or "")
+    # When macro verdict already names the failure locus, skip duplicating the same text.
+    if summary and (not verdict or summary.strip() not in verdict):
+        # Also skip if summary == failure and we'll show failure once.
+        if not (failure and summary.strip() == failure.strip() and verdict):
+            result_rows.append(_coding_arg_row("summary", summary))
+    if failure and not verdict:
+        result_rows.append(
+            f'<div class="coding-data-row coding-data-fail">'
+            f'<span class="coding-data-key">failure</span>'
+            f'<span class="coding-data-val">{_safe(failure)}</span></div>'
+        )
+    elif failure and verdict and failure.strip() not in verdict and (
+        not summary or failure.strip() != summary.strip()
+    ):
+        result_rows.append(
+            f'<div class="coding-data-row coding-data-fail">'
+            f'<span class="coding-data-key">detail</span>'
+            f'<span class="coding-data-val">{_safe(failure)}</span></div>'
+        )
+    evidence = result.get("evidence") or []
+    if isinstance(evidence, list) and evidence:
+        for index, item in enumerate(evidence[:6], 1):
+            if not item:
+                continue
+            result_rows.append(_coding_arg_row(f"ev.{index}", str(item)))
+    if outputs:
+        if len(json.dumps(outputs, ensure_ascii=False, default=str)) > 6000:
+            out_body = _report_value(outputs, sample_items=3, limit=2400)
+            result_rows.append(
+                f'<div class="coding-data-row">'
+                f'<span class="coding-data-key">outputs</span>'
+                f'{_coding_json_pre(out_body)}'
+                f'</div>'
+            )
+        else:
+            result_rows.append(
+                f'<div class="coding-data-row">'
+                f'<span class="coding-data-key">outputs</span>'
+                f'{_coding_json_pre(outputs)}'
+                f'</div>'
+            )
+    if result_rows:
+        sections.append(
+            f'<div class="coding-data-block">'
+            f'<div class="coding-data-title">运行结果</div>'
+            f'{"".join(result_rows)}'
+            f'</div>'
+        )
+
+    # ── 3) Statement 契约（低频细节，放最后）──
+    if statement:
+        sections.append(
+            f'<div class="coding-data-block">'
+            f'<details class="coding-data-details">'
+            f'<summary>Statement 执行器契约</summary>'
+            f'{_coding_json_pre(statement)}'
+            f'</details>'
+            f'</div>'
+        )
+
+    if not sections:
+        if name:
+            return (
+                f'<div class="coding-stmt-data">'
+                f'<div class="coding-data-title">数据</div>'
+                f'{_coding_arg_row("goal", name)}'
+                f'</div>'
+            )
+        return ""
+    return f'<div class="coding-stmt-data">{"".join(sections)}</div>'
 
 
 def render_redecompose_card(orchestrator: dict | None, kickback_n) -> str:

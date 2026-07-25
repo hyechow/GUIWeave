@@ -37,6 +37,78 @@ class CodingProgram(BaseModel):
     source: str
 
 
+def _report_coding_payload(op: str, payload: dict[str, Any]) -> dict[str, Any]:
+    """Project a ctx.* call payload into a small, JSON-safe report form."""
+
+    def _clip(value: Any, *, depth: int = 0) -> Any:
+        if depth > 3:
+            return "…"
+        if value is None or isinstance(value, (bool, int, float)):
+            return value
+        if isinstance(value, str):
+            return value if len(value) <= 240 else value[:237] + "…"
+        if isinstance(value, list):
+            return [_clip(item, depth=depth + 1) for item in value[:20]]
+        if isinstance(value, dict):
+            out: dict[str, Any] = {}
+            for index, (key, item) in enumerate(value.items()):
+                if index >= 24:
+                    out["…"] = f"+{len(value) - 24} keys"
+                    break
+                out[str(key)] = _clip(item, depth=depth + 1)
+            return out
+        text = repr(value)
+        return text if len(text) <= 120 else text[:117] + "…"
+
+    if not payload:
+        return {}
+    # Prefer the structured request keys that the report data panel already understands.
+    if op == "gui":
+        return {
+            "task": payload.get("task"),
+            **(dict(payload.get("inputs") or {}) if isinstance(payload.get("inputs"), dict) else {}),
+        }
+    if op == "write":
+        return {
+            "task": payload.get("task"),
+            **(dict(payload.get("inputs") or {}) if isinstance(payload.get("inputs"), dict) else {}),
+            "values": payload.get("values") or {},
+        }
+    if op == "lookup":
+        return {
+            "entity": payload.get("entity"),
+            "field": payload.get("field"),
+            "fallback": payload.get("fallback"),
+            "filters": payload.get("filters") or {},
+            "required_fields": payload.get("required_fields") or [],
+        }
+    if op == "constrain":
+        return {
+            "entity": payload.get("entity"),
+            "filters": payload.get("filters") or {},
+        }
+    if op == "acquire":
+        scope = payload.get("scope") if isinstance(payload.get("scope"), dict) else {}
+        return {
+            "entity": scope.get("entity"),
+            "fields": payload.get("fields") or [],
+            "coverage": payload.get("coverage") or "complete",
+        }
+    if op == "focus":
+        return {
+            "target": payload.get("target"),
+            "fields": payload.get("fields") or [],
+        }
+    if op == "read":
+        return {"fields": payload.get("fields") or []}
+    if op == "command":
+        return {
+            "capability": payload.get("capability"),
+            **(dict(payload.get("arguments") or {}) if isinstance(payload.get("arguments"), dict) else {}),
+        }
+    return {key: _clip(value) for key, value in payload.items()}
+
+
 class CodingCompileError(ValueError):
     def __init__(self, plan: Any) -> None:
         self.plan = plan
@@ -107,8 +179,24 @@ class _RuntimeContext:
     def __init__(self, connection: Any) -> None:
         self._connection = connection
 
-    def _request(self, op: str, **payload: Any) -> Any:
-        self._connection.send({"kind": "call", "op": op, "payload": payload})
+    def _request(
+        self,
+        op: str,
+        *,
+        plan: str = "",
+        plan_step: int = 0,
+        plan_steps: int = 0,
+        **payload: Any,
+    ) -> Any:
+        """Send one internal op. ``plan*`` tags the plan-level API expansion (e.g. query)."""
+        self._connection.send({
+            "kind": "call",
+            "op": op,
+            "payload": payload,
+            "plan": plan or op,
+            "plan_step": int(plan_step or 1),
+            "plan_steps": int(plan_steps or 1),
+        })
         response = self._connection.recv()
         if not response.get("ok"):
             raise RuntimeError(response.get("error") or f"ctx.{op} failed")
@@ -123,8 +211,12 @@ class _RuntimeContext:
         fallback: str | None = None,
         coverage: str = "complete",
     ) -> list[dict[str, Any]]:
+        # Macro: lookup establishes scope, then acquire materializes rows.
         scope = self._request(
             "lookup",
+            plan="query",
+            plan_step=1,
+            plan_steps=2,
             entity=entity,
             field=field,
             fallback=fallback or "",
@@ -133,6 +225,9 @@ class _RuntimeContext:
         )
         return self._request(
             "acquire",
+            plan="query",
+            plan_step=2,
+            plan_steps=2,
             scope=scope,
             fields=fields,
             coverage=coverage,
@@ -146,8 +241,28 @@ class _RuntimeContext:
         if fields is None:
             raise TypeError("ctx.read requires fields")
         if target is not None:
-            self._request("focus", target=target, fields=fields)
-        return self._request("read", fields=fields)
+            self._request(
+                "focus",
+                plan="read",
+                plan_step=1,
+                plan_steps=2,
+                target=target,
+                fields=fields,
+            )
+            return self._request(
+                "read",
+                plan="read",
+                plan_step=2,
+                plan_steps=2,
+                fields=fields,
+            )
+        return self._request(
+            "read",
+            plan="read",
+            plan_step=1,
+            plan_steps=1,
+            fields=fields,
+        )
 
     def gui(
         self,
@@ -156,7 +271,14 @@ class _RuntimeContext:
         target: Any = None,
     ) -> None:
         inputs = {"target": target} if target is not None else {}
-        self._request("gui", task=task, inputs=inputs)
+        self._request(
+            "gui",
+            plan="gui",
+            plan_step=1,
+            plan_steps=1,
+            task=task,
+            inputs=inputs,
+        )
 
     def write(
         self,
@@ -166,11 +288,22 @@ class _RuntimeContext:
         values: dict[str, Any],
     ) -> None:
         inputs = {"target": target} if target is not None else {}
-        self._request("write", task=task, inputs=inputs, values=values)
+        self._request(
+            "write",
+            plan="write",
+            plan_step=1,
+            plan_steps=1,
+            task=task,
+            inputs=inputs,
+            values=values,
+        )
 
     def command(self, capability: str, **arguments: Any) -> Any:
         return self._request(
             "command",
+            plan="command",
+            plan_step=1,
+            plan_steps=1,
             capability=capability,
             arguments=arguments,
         )
@@ -208,6 +341,11 @@ class CodingProgramRuntime:
     index: int = 0
     reply: str | None = None
     current_instance_id: str = ""
+    current_coding_op: str = ""
+    current_coding_payload: dict[str, Any] = field(default_factory=dict)
+    current_coding_plan: str = ""
+    current_coding_plan_step: int = 0
+    current_coding_plan_steps: int = 0
     _instance_seq: int = 0
     _statement_seq: int = 0
     _process: Any = None
@@ -379,12 +517,24 @@ class CodingProgramRuntime:
         message = self._connection.recv()
         kind = message.get("kind")
         if kind == "call":
+            op = str(message.get("op") or "")
+            payload = dict(message.get("payload") or {})
+            plan = str(message.get("plan") or op or "")
+            plan_step = int(message.get("plan_step") or 1)
+            plan_steps = int(message.get("plan_steps") or 1)
             try:
-                self.current = self._invocation(
-                    str(message.get("op") or ""),
-                    dict(message.get("payload") or {}),
-                )
+                self.current = self._invocation(op, payload)
+                self.current_coding_op = op
+                self.current_coding_payload = _report_coding_payload(op, payload)
+                self.current_coding_plan = plan
+                self.current_coding_plan_step = plan_step
+                self.current_coding_plan_steps = plan_steps
             except Exception as exc:  # noqa: BLE001 - generated call contract
+                self.current_coding_op = ""
+                self.current_coding_payload = {}
+                self.current_coding_plan = ""
+                self.current_coding_plan_step = 0
+                self.current_coding_plan_steps = 0
                 self._connection.send({"ok": False, "error": str(exc)})
                 self._advance()
             return
@@ -393,6 +543,11 @@ class CodingProgramRuntime:
             self.interpreter.env["return"] = value
             self.reply = _render_return(value)
             self.current = None
+            self.current_coding_op = ""
+            self.current_coding_payload = {}
+            self.current_coding_plan = ""
+            self.current_coding_plan_step = 0
+            self.current_coding_plan_steps = 0
             self._close_process()
             return
         self._fail(str(message.get("error") or "coding program exited unexpectedly"))
@@ -401,6 +556,11 @@ class CodingProgramRuntime:
         self.interpreter.control_error = error
         self.reply = error
         self.current = None
+        self.current_coding_op = ""
+        self.current_coding_payload = {}
+        self.current_coding_plan = ""
+        self.current_coding_plan_step = 0
+        self.current_coding_plan_steps = 0
         self._close_process()
 
     def _close_process(self) -> None:
@@ -440,8 +600,18 @@ class CodingProgramRuntime:
             result=outcome,
             loop_path=list(invocation.loop_path),
             instance_id=instance_id,
+            coding_op=self.current_coding_op,
+            coding_payload=dict(self.current_coding_payload),
+            coding_plan=self.current_coding_plan,
+            coding_plan_step=self.current_coding_plan_step,
+            coding_plan_steps=self.current_coding_plan_steps,
         ))
         self.current_instance_id = ""
+        self.current_coding_op = ""
+        self.current_coding_payload = {}
+        self.current_coding_plan = ""
+        self.current_coding_plan_step = 0
+        self.current_coding_plan_steps = 0
         self.index += 1
         if not outcome.is_completed:
             self._fail(outcome.summary)

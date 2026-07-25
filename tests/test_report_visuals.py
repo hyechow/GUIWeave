@@ -118,7 +118,174 @@ def test_coding_orchestrator_renders_reviewed_python_plan():
     assert "Coding Orchestrator · Python 执行计划" in html
     assert "Review · 已修复" in html
     assert "ctx.acquire" in html
-    assert "Statement 调用与执行证据见下方时间线" in html
+    assert "coding-source-wrap" in html
+    assert "完整 Python 源码" in html
+    assert "coding-trace" not in html  # nodes attached by generate_html, not the shell
+
+
+def test_coding_report_uses_standard_cards_with_data_strip():
+    """Coding mode keeps standard statement cards; each card gains a data strip above gallery."""
+    from gui_agent.reports.models import ReportPage, ReportStep
+
+    html = generate_html(ReportData(
+        title="coding report",
+        orchestrator={
+            "program": {
+                "kind": "coding",
+                "goal": "open orders",
+                "source": 'def run(ctx):\n    ctx.gui("go_to", target="Orders")\n',
+            },
+            "report_run_log": [{
+                "node_id": "c1",
+                "executor": "interact",
+                "name": "go_to",
+                "instance_id": "i1:c1",
+                "coding_op": "gui",
+                "coding_payload": {"task": "go_to", "target": "Orders List"},
+                "result": {
+                    "phase": "completed",
+                    "summary": "arrived at Orders",
+                    "outputs": {},
+                    "evidence": ["url contains /order/"],
+                },
+            }, {
+                "node_id": "c2",
+                "executor": "interact",
+                "name": "Resolve collection Orders",
+                "instance_id": "i2:c2",
+                "coding_op": "lookup",
+                "coding_payload": {
+                    "entity": "Orders",
+                    "filters": {"Status": "Complete"},
+                    "required_fields": ["Status", "Purchase Date"],
+                },
+                "result": {
+                    "phase": "exhausted",
+                    "summary": "lookup failed",
+                    "failure_evidence": "query-only lookup cannot commit",
+                    "outputs": {},
+                },
+            }],
+            "context_reports": [{
+                "kind": "coding_review",
+                "approved": True,
+                "repaired": False,
+            }],
+        },
+        statements=[
+            {
+                "id": "c1", "instance_id": "i1:c1", "name": "go_to",
+                "executor": "interact",
+                "inputs": {"target": "Orders List"},
+                "call": {
+                    "id": "c1",
+                    "executor": "interact",
+                    "goal": "go_to",
+                    "success": "The GUI task is complete: go_to",
+                    "persistence": "immediate",
+                    "inputs": {"target": "Orders List"},
+                    "required_values": {},
+                    "observe_fields": [],
+                },
+            },
+            {
+                "id": "c2", "instance_id": "i2:c2",
+                "name": "Resolve collection Orders", "executor": "interact",
+                "inputs": {"lookup_request": {"entity": "Orders"}},
+                "call": {
+                    "id": "c2",
+                    "executor": "interact",
+                    "goal": "Resolve collection Orders",
+                    "persistence": "immediate",
+                    "inputs": {
+                        "lookup_request": {
+                            "entity": "Orders",
+                            "field": "name",
+                            "fallback": "",
+                            "filters": {"Status": "Complete"},
+                            "required_fields": ["Status", "Purchase Date"],
+                        },
+                    },
+                },
+            },
+        ],
+        pages=[
+            ReportPage(
+                title="go_to",
+                statement_id="c1",
+                instance_id="i1:c1",
+                statement_executor="interact",
+                statement_name="go_to",
+                statement_success="The GUI task is complete: go_to",
+                steps=[ReportStep(
+                    label="Turn 1",
+                    action_type="tap",
+                    x=10,
+                    y=20,
+                    description="click sales",
+                    annotated_before_url="shot1.jpg",
+                    status="✓",
+                    statement_id="c1",
+                    instance_id="i1:c1",
+                )],
+            ),
+            ReportPage(
+                title="lookup",
+                statement_id="c2",
+                instance_id="i2:c2",
+                statement_executor="interact",
+                statement_name="Resolve collection Orders",
+                statement_success="collection resolved",
+                steps=[],
+            ),
+        ],
+    ))
+
+    # Same card shell as DSL reports — not a custom details accordion.
+    assert "coding-trace" not in html
+    assert 'id="ms-c1"' in html
+    assert 'id="ms-c2"' in html
+    # Runtime calls annotated on Python source lines (not a separate index block).
+    assert "coding-call-index" not in html
+    assert "coding-source-annotated" in html
+    assert "coding-src-chip" in html
+    assert 'href="#ms-c1"' in html
+    assert "coding-stmt-data" in html
+    assert "ctx.gui" in html
+    assert "Orders List" in html or "Orders" in html
+    assert "Status" in html  # filters / required_fields
+    assert "arrived at Orders" in html
+    assert "query-only lookup cannot commit" in html
+    assert 'class="gallery"' in html
+    assert "shot1.jpg" in html
+    assert "coding-phase-ok" in html
+    assert "coding-phase-fail" in html
+    assert "coding-ctx-badge" in html
+    # Header subtitle shows the underlying call (not DSL 验收 criteria).
+    c1 = html.split('id="ms-c1"', 1)[1].split('id="ms-c2"', 1)[0]
+    assert "coding-call-sc" in c1
+    assert "验收：" not in c1
+    assert "ctx.gui" in c1
+    assert "Orders List" in c1 or "Orders" in c1
+    # Data strip sits inside the standard card before gallery and includes full call params.
+    assert "coding-stmt-data" in c1
+    assert c1.find("coding-stmt-data") < c1.find('class="gallery"')
+    assert "调用参数" in c1 or "本步参数" in c1
+    assert "Orders List" in c1
+    assert "Statement 执行器契约" in c1  # full contract folded
+    assert "运行结果" in c1
+    # Light unified surface — no dark code dump as primary view.
+    assert "coding-data-pre-full" not in html
+    # query macro expansion: top verdict + folded plan details + step args.
+    c2 = html.split('id="ms-c2"', 1)[1].split('class="gallery"', 1)[0] if 'class="gallery"' in html.split('id="ms-c2"', 1)[1] else html.split('id="ms-c2"', 1)[1][:5000]
+    assert "coding-macro-verdict" in c2
+    assert "步骤 1/2" in c2 or "1/2" in c2
+    assert "lookup" in c2
+    assert "acquire" in c2  # pending / 未执行
+    assert "本步参数" in c2
+    # Header: one combined badge, call signature only (no duplicate plan subtitle line).
+    assert "ctx.query 1/2" in c2 or "ctx.query 1/2 · lookup" in c2
+    assert c2.count("coding-plan-sc") == 0
 
 
 def test_runner_report_omits_subgoal_outline_sidebar():

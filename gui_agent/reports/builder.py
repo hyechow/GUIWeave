@@ -604,6 +604,8 @@ class RunnerReportBuilder:
                 "acceptance": view.acceptance,
                 "checklist": view.checklist,
                 "outputs": view.outputs,
+                "inputs": view.inputs,
+                "call": view.call,
                 "last_summary": view.last_summary,
                 "pre_existing": view.pre_existing,
                 "collection_summary": view.collection_summary,
@@ -652,6 +654,8 @@ class RunnerReportBuilder:
                 "success": page.statement_success,
                 "status": ms_state.get("status", ""),
                 "outputs": ms_state.get("outputs", {}),
+                "inputs": ms_state.get("inputs", {}),
+                "call": ms_state.get("call", {}),
                 "checklist": ms_state.get("checklist", []),
                 "turns": (
                     f"{ms_steps[0].label.split()[-1]}-{ms_steps[-1].label.split()[-1]}"

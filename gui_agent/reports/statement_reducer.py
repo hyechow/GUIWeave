@@ -40,6 +40,9 @@ class StatementView:
     verification: str = ""
     kickback: str = ""
     outputs: dict[str, Any] = field(default_factory=dict)
+    inputs: dict[str, Any] = field(default_factory=dict)
+    # Full statement-executor call contract as journaled (for report data panels).
+    call: dict[str, Any] = field(default_factory=dict)
     checklist: list[dict] = field(default_factory=list)
     acceptance: dict = field(default_factory=dict)
     pre_existing: bool = False
@@ -198,6 +201,48 @@ class StatementReportReducer:
                 view.description = str(info.get("goal") or view.description)
                 view.executor = str(info.get("executor") or view.executor)
                 view.success = str(info.get("success") or view.success)
+                inputs = info.get("inputs")
+                if isinstance(inputs, dict) and inputs:
+                    view.inputs = dict(inputs)
+                required_values = info.get("required_values")
+                if isinstance(required_values, dict) and required_values:
+                    # Surface write values next to other statement inputs in reports.
+                    merged = dict(view.inputs)
+                    merged.setdefault("values", required_values)
+                    view.inputs = merged
+                # Capture the full executor call shape once (first non-empty journal dump).
+                if not view.call:
+                    call: dict[str, Any] = {}
+                    for key in (
+                        "id",
+                        "executor",
+                        "goal",
+                        "success",
+                        "on",
+                        "scope",
+                        "persistence",
+                        "inputs",
+                        "required_values",
+                        "observe_fields",
+                        "returns",
+                        "args",
+                        "capability",
+                        "required_fields",
+                        "reads",
+                        "coverage",
+                    ):
+                        if key in info and info.get(key) not in (None,):
+                            call[key] = info.get(key)
+                    # Prefer runtime_state.contract when present (same fields, authoritative).
+                    runtime = event.get("runtime_state")
+                    if isinstance(runtime, dict):
+                        contract = runtime.get("contract")
+                        if isinstance(contract, dict) and contract:
+                            for key, value in contract.items():
+                                if key not in call or call.get(key) in (None, {}, []):
+                                    call[key] = value
+                    if call:
+                        view.call = call
 
             if not view.name:
                 view.name = str(

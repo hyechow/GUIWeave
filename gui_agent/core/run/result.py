@@ -201,8 +201,11 @@ def orchestration_result(
         "recovery_notices",
         "failure_evidence",
     }
-    run_log = [
-        {
+    run_log = []
+    for record in interp.run_log:
+        entry: dict = {
+            "node_id": record.node_id,
+            "executor": record.executor,
             "name": record.name,
             "var": record.var,
             "instance_id": record.instance_id,
@@ -212,8 +215,20 @@ def orchestration_result(
                 exclude_none=True,
             ),
         }
-        for record in interp.run_log
-    ]
+        coding_op = str(getattr(record, "coding_op", "") or "")
+        if coding_op:
+            entry["coding_op"] = coding_op
+            entry["coding_payload"] = dict(getattr(record, "coding_payload", {}) or {})
+            plan = str(getattr(record, "coding_plan", "") or "")
+            if plan:
+                entry["coding_plan"] = plan
+                entry["coding_plan_step"] = int(
+                    getattr(record, "coding_plan_step", 0) or 0
+                )
+                entry["coding_plan_steps"] = int(
+                    getattr(record, "coding_plan_steps", 0) or 0
+                )
+        run_log.append(entry)
     digest = [
         {
             "name": r.name,

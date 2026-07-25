@@ -93,6 +93,14 @@ class RunRecord(BaseModel):
     result: StatementOutcome
     loop_path: list[int] = Field(default_factory=list)
     instance_id: str = ""
+    # Coding-orchestrator only: which ctx.* op produced this statement, plus a
+    # report-safe projection of its payload (inputs/filters/fields/…).
+    coding_op: str = ""
+    coding_payload: dict[str, Any] = Field(default_factory=dict)
+    # Plan-level API that expanded into this statement (e.g. query → lookup+acquire).
+    coding_plan: str = ""
+    coding_plan_step: int = 0
+    coding_plan_steps: int = 0
 
 
 def _flatten_statements(statements: list[Stmt]) -> list[StatementNode]:
