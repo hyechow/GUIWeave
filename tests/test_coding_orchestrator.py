@@ -172,6 +172,24 @@ def run(ctx):
     assert validate_code(source) == []
 
 
+def test_validate_code_rejects_display_parsing_of_normalized_dates() -> None:
+    source = """
+def run(ctx):
+    state = ctx.gui("Open orders", success={
+        "entity": "Orders", "fields": ["Purchase Date"],
+    })
+    rows = ctx.query(state, entity="Orders", fields=["Purchase Date"])
+    for row in rows:
+        raw_date = row["Purchase Date"]
+        raw_date.split()
+    return []
+"""
+
+    assert "NORMALIZED_DATE_DISPLAY_PARSE" in {
+        item.code for item in validate_code(source)
+    }
+
+
 def test_execute_code_rejects_misaligned_gui_query_state() -> None:
     source = """
 def run(ctx):

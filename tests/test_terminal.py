@@ -7,6 +7,7 @@ from gui_agent.core.orchestrator import (
     SourceCheck,
     ValueRef,
 )
+from gui_agent.core.coding_orchestrator.runtime import CodingInterpreter
 from gui_agent.core.run.flow import finish_terminal_step
 from gui_agent.core.run.program_runtime import ProgramRuntime
 from gui_agent.core.run.result import make_result, orchestration_result
@@ -80,6 +81,20 @@ def test_one_statement_outcome_never_promotes_unfinished_program_result():
     result = make_result(_context(), "user stopped before Program finished")
     assert result.phase == "stopped"
     assert result.verification is None
+
+
+def test_coding_return_bypasses_output_llm(monkeypatch):
+    monkeypatch.setattr(
+        "gui_agent.core.llm.output.compose_orchestration_reply",
+        lambda *_args, **_kwargs: "hallucinated",
+    )
+    result = orchestration_result(
+        _context(),
+        CodingInterpreter(goal="count orders", source="def run(ctx): return []"),
+        '[{"month":"April","count":9}]',
+    )
+    assert result.output == '[{"month":"April","count":9}]'
+    assert result.orchestrator["kind"] == "coding"
 
 
 def test_program_verification_uses_finish_output_lineage_not_unrelated_preflight(monkeypatch):

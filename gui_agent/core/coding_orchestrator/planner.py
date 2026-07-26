@@ -29,7 +29,6 @@ from .sandbox import (
     execute_code,
     validate_code,
     validate_fixture_contract,
-    validate_projection_contract,
     validate_runtime_dataflow,
 )
 
@@ -176,7 +175,6 @@ def _diagnostics(
     match_lookup_sources: bool = False,
 ) -> list[Any]:
     diagnostics = validate_code(source)
-    diagnostics.extend(validate_projection_contract(source))
     diagnostics.extend(validate_runtime_dataflow(source))
     if fixture is not None:
         diagnostics.extend(validate_fixture_contract(

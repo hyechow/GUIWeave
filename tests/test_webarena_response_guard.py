@@ -254,6 +254,26 @@ def test_live_180142_terminal_save_bypasses_second_llm_judgement():
     assert resp.retrieved_data is None
 
 
+def test_completed_coding_retrieve_uses_json_return_without_output_llm():
+    returned = [{"month": "April", "count": 9}]
+    resp = _synthesize_response(
+        "Return monthly completed order counts",
+        _result(
+            task_type="RETRIEVE",
+            phase="completed",
+            verification="confirmed",
+            output='[{"month": "April", "count": 9}]',
+            orchestrator={"kind": "coding", "run_log": []},
+        ),
+    )
+    assert resp == WAResponse(
+        task_type="RETRIEVE",
+        status="SUCCESS",
+        retrieved_data=returned,
+        error_details=None,
+    )
+
+
 def test_completed_mutate_response_does_not_infer_failure_from_summary_text():
     resp = _completed_mutate_response(
         "Update product",

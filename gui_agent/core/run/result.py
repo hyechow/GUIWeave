@@ -240,8 +240,10 @@ def orchestration_result(
         }
         for r in interp.run_log
     ]
-    reply = compose_orchestration_reply(
-        context.goal, digest,
+    coding = bool(getattr(interp, "source", ""))
+    reply = terminal if coding else compose_orchestration_reply(
+        context.goal,
+        digest,
         current=(current.goal if current is not None else ""),
         terminal=terminal,
     )
@@ -278,6 +280,7 @@ def orchestration_result(
     return base.model_copy(update={
         "output": reply,
         "orchestrator": {
+            "kind": "coding" if coding else "dsl",
             "reply": reply,
             "terminal": terminal,
             "run_log": run_log,

@@ -647,13 +647,27 @@ def _synthesize_response(
     result: AgentResult,
     context_path: Path | None = None,
 ) -> WAResponse:
-    """Map the typed agent result into WebArena's agent_response via one LLM
-    structured call — the intent carries the required output format (e.g. an object
-    with keys min/max), so the model emits retrieved_data in exactly that shape
-    (fixing the human-questionnaire failure mode of a string-instead-of-object)."""
+    """Map typed results to WebArena, preserving reviewed coding returns."""
     completed_mutate = _completed_mutate_response(intent, result)
     if completed_mutate is not None:
         return completed_mutate
+    if (
+        result.phase == "completed"
+        and result.verification == "confirmed"
+        and (result.orchestrator or {}).get("kind") == "coding"
+        and _webarena_task_type_from_result(intent, result) == "RETRIEVE"
+    ):
+        try:
+            retrieved = json.loads(result.output)
+        except (TypeError, json.JSONDecodeError):
+            retrieved = None
+        valid = isinstance(retrieved, list)
+        return WAResponse(
+            task_type="RETRIEVE",
+            status="SUCCESS" if valid else "NOT_FOUND_ERROR",
+            retrieved_data=retrieved if valid else None,
+            error_details=None if valid else "Coding program must return a JSON list.",
+        )
 
     from langchain_core.messages import HumanMessage, SystemMessage
     from langchain_openai import ChatOpenAI

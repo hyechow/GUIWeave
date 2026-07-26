@@ -645,6 +645,7 @@ def validate_code(source: str) -> list[CodeDiagnostic]:
     visitor.diagnostics.extend(_undefined_name_diagnostics(source, function))
     visitor.diagnostics.extend(_unused_local_diagnostics(function))
     visitor.diagnostics.extend(_top_n_shrink_diagnostics(function))
+    visitor.diagnostics.extend(validate_projection_contract(source))
     return visitor.diagnostics
 
 
@@ -924,6 +925,7 @@ class _ProjectionVisitor(ast.NodeVisitor):
     def __init__(self) -> None:
         self.mapping_fields: dict[str, set[str]] = {}
         self.sequence_fields: dict[str, set[str]] = {}
+        self.normalized_dates: set[str] = set()
         self.diagnostics: list[CodeDiagnostic] = []
 
     @staticmethod
@@ -992,10 +994,24 @@ class _ProjectionVisitor(ast.NodeVisitor):
             return
         self.mapping_fields.pop(target.id, None)
         self.sequence_fields.pop(target.id, None)
+        self.normalized_dates.discard(target.id)
         if mapping is not None:
             self.mapping_fields[target.id] = set(mapping)
         if sequence is not None:
             self.sequence_fields[target.id] = set(sequence)
+
+    def _is_normalized_date(self, node: ast.AST) -> bool:
+        if isinstance(node, ast.Name) and node.id in self.normalized_dates:
+            return True
+        sources = self.mapping_fields.keys() | self.sequence_fields.keys()
+        from_normalized_source = bool(_loaded_names(node) & sources) or any(
+            _ctx_method(child) in {"query", "read"} for child in ast.walk(node)
+        )
+        return from_normalized_source and any(
+            {"date", "datetime", "time", "timestamp"}
+            & set(re.findall(r"[a-z0-9]+", field.casefold().replace("_", " ")))
+            for field in _referenced_fields(node)
+        )
 
     def _check_field(self, node: ast.AST, variable: str, field_name: str) -> None:
         available = self.mapping_fields.get(variable)
@@ -1014,17 +1030,23 @@ class _ProjectionVisitor(ast.NodeVisitor):
         self.visit(node.value)
         mapping = self._infer_mapping(node.value)
         sequence = self._infer_sequence(node.value)
+        normalized_date = self._is_normalized_date(node.value)
         for target in node.targets:
             self._bind(target, mapping=mapping, sequence=sequence)
+            if normalized_date and isinstance(target, ast.Name):
+                self.normalized_dates.add(target.id)
 
     def visit_AnnAssign(self, node: ast.AnnAssign) -> None:
         if node.value is not None:
             self.visit(node.value)
+            normalized_date = self._is_normalized_date(node.value)
             self._bind(
                 node.target,
                 mapping=self._infer_mapping(node.value),
                 sequence=self._infer_sequence(node.value),
             )
+            if normalized_date and isinstance(node.target, ast.Name):
+                self.normalized_dates.add(node.target.id)
 
     def visit_For(self, node: ast.For) -> None:
         self.visit(node.iter)
@@ -1056,6 +1078,21 @@ class _ProjectionVisitor(ast.NodeVisitor):
             and isinstance(node.args[0].value, str)
         ):
             self._check_field(node, node.func.value.id, node.args[0].value)
+        if (
+            isinstance(node.func, ast.Attribute)
+            and node.func.attr == "split"
+            and self._is_normalized_date(node.func.value)
+            and (
+                not node.args
+                or isinstance(node.args[0], ast.Constant)
+                and not str(node.args[0].value or "").strip()
+            )
+        ):
+            self.diagnostics.append(_diag(
+                node,
+                "NORMALIZED_DATE_DISPLAY_PARSE",
+                "date/time query fields are ISO-8601; use datetime.fromisoformat",
+            ))
         self.generic_visit(node)
 
     def visit_Subscript(self, node: ast.Subscript) -> None:
