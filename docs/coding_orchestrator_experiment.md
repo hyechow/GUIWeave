@@ -2,7 +2,8 @@
 
 > 实验时间：2026-07-22 至 2026-07-23
 >
-> 当前状态：已回退到 2026-07-22 的 7/12 实验基线；业务操作级接口复验保留为失败对照
+> 当前状态：reviewed-Python orchestrator 已成为唯一生产编排路径。下文涉及旧 DSL 的内容仅作为
+> 实验历史保留，不代表受支持的 Runtime 架构。
 >
 > 当前基线模型：`qwen3.5-35b-a3b`（配置 profile：`qwen35`）
 
@@ -134,7 +135,7 @@ Python 代码。正常的 UI 路径失败不应触发整个剩余 Program 重写
 
 原型代码位于：
 
-- `gui_agent/core/coding_orchestrator/`：模型、规划器、AST 校验和受限沙盒；
+- `gui_agent/core/orchestrator/`：模型、规划器、AST 校验、受限沙盒与 Runtime；
 - `gui_agent/prompts/tasks/orchestrator/coding.md`：场景无关的代码生成合同；
 - `scripts/coding_orchestrator_eval.py`：冻结 fixture、私有 grader 和批量评估；
 - `tests/test_coding_orchestrator.py`、`tests/test_coding_orchestrator_eval.py`：机制与评估测试。

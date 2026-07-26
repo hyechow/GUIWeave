@@ -4,7 +4,7 @@
 
 > **关于名称：** 项目从 iPhone 单端起步，现已面向浏览器、iPhone 和 Android，因此演进为 **GUIWeave**。Python 包名仍保留 `gui_agent`；已有本地 checkout 可能仍使用旧目录名。
 
-**面向 GUI Agent 的可编程 Runtime：把目标编译成类型化程序，再在真实界面上执行。**
+**面向 GUI Agent 的可编程 Runtime：生成并审查 Python 计划，再在真实界面上执行语义调用。**
 
 ## 第一性原理：GUI 任务不等于全程 GUI 交互
 
@@ -14,34 +14,40 @@ GUIWeave 从一个简单前提出发：**GUI 任务不等于连续的 GUI 交互
 典型：目标 ─► [ 观察 → 推理 → 动作 → 做完了？ ] × N ─► 结果
                     计划 · 记忆 · 恢复也都在环里
 
-GUIWeave：目标 ─► DSL Program ─► ProgramRuntime ─► ProgramOutcome
-                                         ├─ 非 GUI：控制流 · 数据 · 恢复
-                                         │          If · ForEach · Call · Read · Query · Compute
-                                         └─ GUI I/O：Run ─► Agent 环 ─► StatementOutcome
+GUIWeave：目标 ─► 审查后的 Python ─► CodingProgramRuntime ─► ProgramOutcome
+                                               ├─ Python：控制流 · 数据处理
+                                               └─ ctx.*：GUI / 查询语义调用
+                                                          └─ StatementOutcome
 ```
 
 **你会得到什么**
 
 - **分支、循环、汇总写在 Program 里** —— 不靠模型在连续点击中「记住」整份计划。
-- **有预算的分层恢复** —— 页内 replan → return tighten → kickback 重分解 —— 而不是整段 vibe 重跑。
+- **简单的终态语义** —— Statement 只有完成或失败；Runtime 不会根据文本 gate 信号重写剩余程序。
 - **诚实的完成态** —— `phase` + `verification`（`confirmed` vs `accepted_unverified`），reads 与证据作返回值 —— 而不是一个成功布尔。
 
-**程序长什么样**（示意形态，非精确语法）：
+**程序长什么样：**
 
-```text
-Run     打开订单并筛选：已支付、上周
-ForEach row in result_rows:
-  Run   打开详情
-  Read  amount, status
-Query   SUM(amount) WHERE status = paid
-Finish
+```python
+def run(ctx):
+    state = ctx.gui(
+        "打开订单",
+        success={"entity": "Orders", "fields": ["Status", "Purchase Date"]},
+    )
+    rows = ctx.query(
+        state,
+        entity="Orders",
+        fields=["Status", "Purchase Date", "Grand Total"],
+        filters={"Status": "Complete"},
+    )
+    return summarize(rows)
 ```
 
-只有 `Run` 进入 GUI 环；其余由 Runtime 确定性执行。
+只有 `ctx.*` 调用进入 Statement 执行；普通 Python 控制流和数据处理留在审查后的程序中。
 
-- **任务变成可执行程序：** prompt 里的文本计划变成类型化 DSL `Program`，控制与数据处理不再靠点击环模拟。
-- **Agent 环变成有界 I/O：** Interpreter 调度 statement，环只做局部 GUI 战术。
-- **结果变成显式返回值：** `StatementOutcome` 携带 `phase`、验证、reads 与证据；有预算的恢复记入 `EventJournal`。
+- **任务变成可执行程序：** 审查后的 Python 程序显式表达控制流和数据依赖。
+- **Agent 环变成有界 I/O：** `ctx.*` 调度类型化 Statement，环只做局部 GUI 战术。
+- **结果变成显式返回值：** `StatementOutcome` 携带 phase、verification、outputs、evidence；`ProgramOutcome.output` 保留原始程序结果。
 
 浏览器、iPhone 和 Android 是可替换的 I/O 后端。Program 编排保持确定性；LLM 根据 statement 内的 Journal 记忆决定下一步 GUI 战术，合同与证据保留终态否决权。这种切分**减轻任务级规划负担**，使 Qwen3.5-35B-A3B 等较小多模态模型也能承载更长流程（含私有化 OpenAI 兼容接口）。这**不能消除**视觉与 grounding 误差——感知质量仍然关键。
 
@@ -66,21 +72,14 @@ Harness：`./bin/webarena <id>`、`bin/mobileworld <task>`。
 
 ```mermaid
 flowchart TD
-    Goal([自然语言目标]) --> Compiler[Compiler]
-    Compiler --> Prog[DSL Program]
-    Prog --> RT[ProgramRuntime / Interpreter]
+    Goal([自然语言目标]) --> Planner[Python Planner + Review]
+    Planner --> Prog[Reviewed CodingProgram]
+    Prog --> RT[CodingProgramRuntime]
 
-    RT --> Imm[Non-interactive\nRead Query Compute]
-    RT --> Run[Interactive Run]
-    Imm --> SO[StatementOutcome]
-    Run --> SE[Statement 执行器]
+    RT --> API[ctx.gui / ctx.query / ctx.read / ctx.command]
+    API --> SE[Statement 执行器]
     SE --> SO
     SO --> RT
-
-    RT -->|缺 returns| Tight[Return tighten]
-    RT -->|不可行| Kick[Kickback 重分解]
-    Tight --> RT
-    Kick --> Compiler
 
     SE --> Loop[Journal 记忆 + 当前观察<br/>→ LLM transition<br/>→ 证据 Guard → act / outcome]
     Loop --> SE
@@ -96,24 +95,25 @@ flowchart TD
 
 | 层 | 拥有 | 不得拥有 |
 |----|------|----------|
-| Compiler | Program 语义与 statement 合同 | 像素或页内战术 |
-| ProgramRuntime / interpreter | Program 游标、env、statement 顺序、恢复预算 | 页内点击目标 |
+| Planner + Review | Python 程序与 `ctx.*` 语义调用 | 像素或页内战术 |
+| CodingProgramRuntime | 协程状态、值和 Statement 顺序 | 页内点击目标 |
 | Run loop | observe/dispatch 生命周期与 Journal 持久化 | Program 游标、语义战术或变量绑定 |
 | Statement 执行器 | Journal 记忆投影、LLM 战术与单个 statement 终态 | Program 改写或任务终态 |
 | Action policy | 一次 grounding 后的动作建议 | Statement 或任务完成 |
 | Adapter | 观察与设备 I/O | 目标语义 |
 
-Program checkpoint 与有序 journal 可在跨进程后重建 interpreter 与 recovery 状态；未完成 statement 内的实时 UI 状态故意不回放。
+有序 Journal 记录 Statement 执行与证据；未完成 Statement 内的实时 UI 状态故意不回放。
 使用 `bin/replay_run logs/<运行目录>` 可在不连接浏览器、设备、网络或 LLM 的情况下校验 checkpoint；
 追加 `--json` 输出机器可读结果。
 
-深读：[`docs/dsl_runtime_architecture.md`](docs/dsl_runtime_architecture.md)。
+深读：[`docs/coding_orchestrator_experiment.md`](docs/coding_orchestrator_experiment.md)。
 
 ---
 
 ## 一次运行长什么样
 
-各平台共用同一套 Runtime。HTML 报告展示 **program statement**、标注截图、耗时与验收——是 DSL 程序的执行轨迹，而不是扁平点击日志。
+各平台共用同一套 Runtime。HTML 报告展示审查后的 Python 源码、`ctx.*` 调用分区、Statement
+卡片、截图、耗时、原始程序输出和最终 Reply。
 
 ![执行报告](gui_agent/assets/report.png)
 
@@ -231,8 +231,8 @@ iPhone 截图服务 `bin/sck_server`（ScreenCaptureKit）避免每帧触发录�
 ```text
 gui_agent/
 ├── core/
-│   ├── orchestrator/   # DSL 语言、编译、校验、解释器、恢复
-│   ├── run/            # ProgramRuntime、statement 分派、loop、AgentResult、journal
+│   ├── orchestrator/   # Python planner、review、sandbox protocol、runtime、replay
+│   ├── run/            # statement 分派、loop、AgentResult、journal
 │   ├── supervisor/     # 交互 statement 执行器
 │   ├── runtime/        # 平台契约 + 工厂
 │   ├── chat/ · llm/ · schemas/ · config/ · self_learning/

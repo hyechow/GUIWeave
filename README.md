@@ -4,7 +4,7 @@ English | [中文](README.zh-CN.md)
 
 > **About the name:** The project started on iPhone and now targets browser, iPhone, and Android, so it has become **GUIWeave**. The Python package remains `gui_agent`; existing local checkouts may still use the former directory name.
 
-**A programmable runtime for GUI agents: compile a goal into a typed program, then execute it against real interfaces.**
+**A programmable runtime for GUI agents: review a Python plan, then execute its semantic calls against real interfaces.**
 
 ## First principle: a GUI task is not just GUI interaction
 
@@ -14,34 +14,41 @@ GUIWeave starts from one premise: **a GUI task is not continuous GUI interaction
 Typical: Goal ─► [ observe → reason → act → done? ] × N ─► Result
                     plan · memory · recovery also live here
 
-GUIWeave: Goal ─► DSL Program ─► ProgramRuntime ─► ProgramOutcome
-                                         ├─ non-GUI: control flow · data · recovery
-                                         │           If · ForEach · Call · Read · Query · Compute
-                                         └─ GUI I/O: Run ─► agent loop ─► StatementOutcome
+GUIWeave: Goal ─► reviewed Python ─► CodingProgramRuntime ─► ProgramOutcome
+                                             ├─ Python: control flow · data processing
+                                             └─ ctx.*: semantic GUI/query calls
+                                                        └─ StatementOutcome
 ```
 
 **What you get**
 
 - **Branch, loop, and aggregate in the program** — not by hoping the model remembers the plan across clicks.
-- **Bounded failure recovery** — page replan → return tighten → kickback redecompose, under explicit budgets — not “retry the whole vibe.”
+- **Simple terminal semantics** — a statement either completes or fails; the runtime does not rewrite the remaining program from textual gate signals.
 - **Honest completion** — `phase` + `verification` (`confirmed` vs `accepted_unverified`), evidence and reads as returns — not a single success boolean.
 
-**What the program looks like** (illustrative shape, not exact syntax):
+**What the program looks like:**
 
-```text
-Run     open orders and filter: paid, last week
-ForEach row in result_rows:
-  Run   open detail
-  Read  amount, status
-Query   SUM(amount) WHERE status = paid
-Finish
+```python
+def run(ctx):
+    state = ctx.gui(
+        "Open orders",
+        success={"entity": "Orders", "fields": ["Status", "Purchase Date"]},
+    )
+    rows = ctx.query(
+        state,
+        entity="Orders",
+        fields=["Status", "Purchase Date", "Grand Total"],
+        filters={"Status": "Complete"},
+    )
+    return summarize(rows)
 ```
 
-Only the `Run` lines enter the GUI loop. Everything else is deterministic runtime work.
+Only `ctx.*` calls enter statement execution. Ordinary Python control flow and data processing stay
+inside the reviewed program.
 
-- **The task becomes executable:** prose plans become a typed DSL `Program`; control and data processing no longer have to be simulated through clicks.
-- **The agent loop becomes bounded I/O:** the interpreter schedules statements; the loop handles only local GUI tactics.
-- **The result becomes explicit:** `StatementOutcome` carries `phase`, verification, reads, and evidence; bounded recovery is recorded in `EventJournal`.
+- **The task becomes executable:** a reviewed Python program makes control flow and data dependencies explicit.
+- **The agent loop becomes bounded I/O:** `ctx.*` schedules typed statements; the loop handles only local GUI tactics.
+- **The result becomes explicit:** `StatementOutcome` carries phase, verification, outputs, and evidence; `ProgramOutcome.output` preserves the raw program result.
 
 Browser, iPhone, and Android are replaceable I/O backends. Program orchestration stays deterministic, while the LLM owns the next GUI tactic from statement-local Journal memory. Contracts and evidence retain terminal veto authority. This split **reduces task-level planning load** so longer workflows are practical with smaller multimodal models (e.g. Qwen3.5-35B-A3B), including private OpenAI-compatible endpoints. It does **not** remove vision or grounding errors — perception quality still matters.
 
@@ -66,21 +73,14 @@ Harness: `./bin/webarena <id>`, `bin/mobileworld <task>`.
 
 ```mermaid
 flowchart TD
-    Goal([NL goal]) --> Compiler[Compiler]
-    Compiler --> Prog[DSL Program]
-    Prog --> RT[ProgramRuntime / Interpreter]
+    Goal([NL goal]) --> Planner[Python planner + review]
+    Planner --> Prog[Reviewed CodingProgram]
+    Prog --> RT[CodingProgramRuntime]
 
-    RT --> Imm[Non-interactive\nRead Query Compute]
-    RT --> Run[Interactive Run]
-    Imm --> SO[StatementOutcome]
-    Run --> SE[Statement executor]
+    RT --> API[ctx.gui / ctx.query / ctx.read / ctx.command]
+    API --> SE[Statement executor]
     SE --> SO
     SO --> RT
-
-    RT -->|missing returns| Tight[Return tighten]
-    RT -->|infeasible| Kick[Kickback redecompose]
-    Tight --> RT
-    Kick --> Compiler
 
     SE --> Loop[Journal memory + observation<br/>→ LLM transition<br/>→ evidence guard → act / outcome]
     Loop --> SE
@@ -96,24 +96,25 @@ flowchart TD
 
 | Layer | Owns | Must not own |
 |-------|------|--------------|
-| Compiler | Program semantics and statement contracts | Pixels or page tactics |
-| ProgramRuntime / interpreter | Program cursor, env, statement order, recovery budgets | Page click targets |
+| Planner + review | Python program and semantic `ctx.*` calls | Pixels or page tactics |
+| CodingProgramRuntime | Coroutine state, values, and statement order | Page click targets |
 | Run loop | Observe/dispatch lifecycle and Journal persistence | Program cursor, semantic tactic, or variable binding |
 | Statement executor | Journal-memory projection, LLM tactic, and one statement outcome | Program rewrites or task completion |
 | Action policy | One grounded action proposal | Statement or task completion |
 | Adapter | Observation and device I/O | Goal semantics |
 
-Program checkpoints plus the ordered journal can reconstruct interpreter and recovery state across a process boundary. Live UI state inside an unfinished statement is intentionally not replayed.
+The ordered journal records statement execution and evidence. Live UI state inside an unfinished statement is intentionally not replayed.
 Validate a saved checkpoint without a browser, device, network, or LLM with
 `bin/replay_run logs/<run-directory>`; add `--json` for machine-readable output.
 
-Deep dive: [`docs/dsl_runtime_architecture.md`](docs/dsl_runtime_architecture.md).
+Deep dive: [`docs/coding_orchestrator_experiment.md`](docs/coding_orchestrator_experiment.md).
 
 ---
 
 ## What a run looks like
 
-Same runtime on every platform. The HTML report shows **program statements**, annotated screenshots, timing, and verification — the execution trace of the DSL program, not a flat click log.
+Same runtime on every platform. The HTML report shows the reviewed Python source, `ctx.*` call groups,
+statement cards, screenshots, timing, raw program output, and the final user reply.
 
 ![Execution report](gui_agent/assets/report.png)
 
@@ -231,8 +232,8 @@ iPhone screenshot server (`bin/sck_server`, ScreenCaptureKit) avoids firing the 
 ```text
 gui_agent/
 ├── core/
-│   ├── orchestrator/   # DSL language, compiler, validator, interpreter, recovery
-│   ├── run/            # ProgramRuntime, statement dispatch, loop, AgentResult, journal
+│   ├── orchestrator/   # reviewed Python planner, sandbox protocol, runtime, replay
+│   ├── run/            # statement dispatch, loop, AgentResult, journal
 │   ├── supervisor/     # Interactive statement executor
 │   ├── runtime/        # Platform contracts + factory
 │   ├── chat/ · llm/ · schemas/ · config/ · self_learning/

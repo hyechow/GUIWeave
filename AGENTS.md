@@ -48,8 +48,8 @@ Concrete examples:
 - `uv sync`: install dependencies from `pyproject.toml` and `uv.lock`.
 - `uv run pytest`: run the unit test suite.
 - `uv run pytest tests/<name>.py`: run focused tests for a change.
-- `uv run python evals/browser/orchestrator/test_orchestrator_decompose.py --label <text>`:
-  run a focused orchestrator decomposition eval.
+- `uv run pytest tests/test_coding_orchestrator.py`:
+  run the focused reviewed-Python orchestrator contract tests.
 - `./bin/webarena <task_id>`: run a WebArena task through the local harness.
 
 For syntax checks, prefer targeted `uv run python -m py_compile <files>`.
@@ -73,7 +73,7 @@ site-specific eval assertions only when validating site knowledge.
 
 Hardware- or browser-dependent tests should fail clearly when required services
 or devices are unavailable. When changing WebArena behavior, run the relevant
-unit tests plus the smallest matching WebArena/decomposer eval.
+unit tests plus the smallest matching WebArena or coding-orchestrator eval.
 
 ## Commit Style
 
