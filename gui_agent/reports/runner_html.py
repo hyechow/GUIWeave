@@ -160,7 +160,7 @@ HTML_TEMPLATE = """\
     font-size: 12px; font-weight: 600; line-height: 1.45;
   }}
   .coding-plan-details > summary {{ color: #0369a1; }}
-  .coding-plan-details-body {{
+  .coding-data-details-body {{
     padding: 8px 10px 10px; display: flex; flex-direction: column; gap: 6px;
   }}
   .coding-call-link {{

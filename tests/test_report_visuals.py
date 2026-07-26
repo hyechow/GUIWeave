@@ -293,6 +293,9 @@ def test_coding_report_uses_standard_cards_with_data_strip():
     assert "Orders List" in c1
     assert "Statement 执行器契约" in c1  # full contract folded
     assert "运行结果" in c1
+    assert "<summary>调用参数</summary>" in c1
+    assert "<summary>运行结果</summary>" in c1
+    assert '<details class="coding-data-details" open' not in c1
     # Light unified surface — no dark code dump as primary view.
     assert "coding-data-pre-full" not in html
     # query macro expansion: top verdict + folded plan details + step args.
@@ -303,6 +306,8 @@ def test_coding_report_uses_standard_cards_with_data_strip():
     assert "constrain" in c2  # pending / 未执行
     assert "acquire" in c2
     assert "本步参数" in c2
+    assert "<summary>本步参数</summary>" in c2
+    assert 'coding-plan-details" open' not in c2
     # Header: one combined badge, call signature only (no duplicate plan subtitle line).
     assert "ctx.query 1/3" in c2 or "ctx.query 1/3 · lookup" in c2
     assert c2.count("coding-plan-sc") == 0

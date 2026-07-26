@@ -1166,6 +1166,19 @@ def _coding_arg_row(key: str, value: object) -> str:
     )
 
 
+def _coding_details(title: str, body: str, *, plan: bool = False) -> str:
+    """Render one consistently collapsed statement-data section."""
+    block_class = " coding-data-block-plan" if plan else ""
+    details_class = " coding-plan-details" if plan else ""
+    return (
+        f'<div class="coding-data-block{block_class}">'
+        f'<details class="coding-data-details{details_class}">'
+        f'<summary>{_safe(title)}</summary>'
+        f'<div class="coding-data-details-body">{body}</div>'
+        f'</details></div>'
+    )
+
+
 # Preferred field order for ctx payload rows — matches common call signatures.
 _CTX_PAYLOAD_KEY_ORDER: dict[str, tuple[str, ...]] = {
     "gui": ("task", "target"),
@@ -1246,7 +1259,7 @@ def _render_coding_data_panel(
             f'<div class="coding-macro-verdict">{_safe(verdict)}</div>'
         )
 
-    # ── 1a) 计划展开：header 已有徽章时默认折叠，避免与徽章/结论重复 ──
+    # ── 1a) 计划展开：与其他数据区块一致，默认折叠 ──
     if plan_expanded:
         plan_rows: list[str] = [
             _coding_arg_row("API", f"ctx.{plan_op}"),
@@ -1268,20 +1281,11 @@ def _render_coding_data_panel(
                     ),
                 ),
             )
-        # Failed macros already show a top verdict — keep details folded.
-        open_attr = "" if verdict else " open"
         summary = (
             f"计划展开 · ctx.{plan_op} 步骤 {plan_step}/{plan_steps}"
             if plan_op else "计划展开"
         )
-        sections.append(
-            f'<div class="coding-data-block coding-data-block-plan">'
-            f'<details class="coding-data-details coding-plan-details"{open_attr}>'
-            f'<summary>{_safe(summary)}</summary>'
-            f'<div class="coding-plan-details-body">{"".join(plan_rows)}</div>'
-            f'</details>'
-            f'</div>'
-        )
+        sections.append(_coding_details(summary, "".join(plan_rows), plan=True))
 
     # ── 1b) 本步参数：当前 Statement 内部 op 的入参（不再重复 op/签名）──
     step_rows: list[str] = []
@@ -1301,12 +1305,7 @@ def _render_coding_data_panel(
         step_rows.append(_coding_arg_row(str(field), value))
     if step_rows:
         step_title = "本步参数" if plan_expanded else "调用参数"
-        sections.append(
-            f'<div class="coding-data-block">'
-            f'<div class="coding-data-title">{step_title}</div>'
-            f'{"".join(step_rows)}'
-            f'</div>'
-        )
+        sections.append(_coding_details(step_title, "".join(step_rows)))
 
     # ── 2) 运行结果（failure 与顶部宏结论重复时，只保留 evidence 等补充信息）──
     result_rows: list[str] = []
@@ -1356,30 +1355,20 @@ def _render_coding_data_panel(
                 f'</div>'
             )
     if result_rows:
-        sections.append(
-            f'<div class="coding-data-block">'
-            f'<div class="coding-data-title">运行结果</div>'
-            f'{"".join(result_rows)}'
-            f'</div>'
-        )
+        sections.append(_coding_details("运行结果", "".join(result_rows)))
 
     # ── 3) Statement 契约（低频细节，放最后）──
     if statement:
-        sections.append(
-            f'<div class="coding-data-block">'
-            f'<details class="coding-data-details">'
-            f'<summary>Statement 执行器契约</summary>'
-            f'{_coding_json_pre(statement)}'
-            f'</details>'
-            f'</div>'
-        )
+        sections.append(_coding_details(
+            "Statement 执行器契约",
+            _coding_json_pre(statement),
+        ))
 
     if not sections:
         if name:
             return (
                 f'<div class="coding-stmt-data">'
-                f'<div class="coding-data-title">数据</div>'
-                f'{_coding_arg_row("goal", name)}'
+                f'{_coding_details("数据", _coding_arg_row("goal", name))}'
                 f'</div>'
             )
         return ""
