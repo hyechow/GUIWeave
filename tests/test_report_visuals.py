@@ -4,8 +4,10 @@ from gui_agent.reports.builder import RunnerReportBuilder
 from gui_agent.reports.builder import _group_steps_by_statement
 from gui_agent.reports.models import ReportData, ReportStep
 from gui_agent.reports.orchestrator_html import (
+    _match_public_calls_to_plan_sites,
     _render_non_ui_detail,
     _render_program_section,
+    _render_runtime_index_group,
 )
 from gui_agent.reports.prompt_html import _render_module_io_html
 from gui_agent.reports.runner_html import generate_html, _render_thumb_time, _turn_elapsed_seconds
@@ -126,6 +128,26 @@ def test_coding_orchestrator_renders_reviewed_python_plan():
     assert "coding-source-wrap" in html
     assert "完整 Python 源码" in html
     assert "coding-trace" not in html  # nodes attached by generate_html, not the shell
+
+
+def test_runtime_index_groups_loop_invocations_at_one_source_site():
+    calls = [{
+        "call_id": f"{index}:read",
+        "plan_op": "read",
+        "op": "read",
+        "ordinal": index,
+        "phase": "completed",
+    } for index in range(1, 4)]
+
+    by_line, leftovers = _match_public_calls_to_plan_sites(
+        [{"op": "read", "lineno": 7}], calls,
+    )
+    html = _render_runtime_index_group(7, by_line[7])
+
+    assert leftovers == []
+    assert "ctx.read" in html
+    assert "×3 · 3/3 completed" in html
+    assert html.count("coding-src-instance-label") == 3
 
 
 def test_coding_report_groups_statements_by_public_ctx_call():
@@ -275,12 +297,16 @@ def test_coding_report_groups_statements_by_public_ctx_call():
     # Runtime calls remain annotated on Python source lines.
     assert "coding-source-annotated" in html
     assert "coding-src-chip" in html
-    assert "源码右侧 #N 对应下方运行调用索引" in html
-    assert "coding-src-run-ref" in html
+    assert "实色 ctx.API 与高亮行表示已执行" in html
+    assert "coding-src-run-ref" not in html
+    assert "coding-src-api-token coding-src-api-token-run" in html
     assert "运行调用索引" in html
-    assert '<details class="coding-src-index">' in html
-    assert '<details class="coding-src-index" open' not in html
-    assert ".coding-src-index').open=true" in html
+    assert '<details class="coding-src-index" open>' in html
+    assert '<details class="coding-src-api-group" id="coding-src-calls-2">' in html
+    assert '<details class="coding-src-api-group" id="coding-src-calls-3" open>' in html
+    assert "coding-src-api-group" in html
+    assert '<span class="coding-call-index">L2</span>' in html
+    assert '<span class="coding-call-index">L3</span>' in html
     code_css = html.split(".coding-src-code {", 1)[1].split("}", 1)[0]
     assert "white-space: pre-wrap" in code_css
     assert "overflow-x: auto" not in code_css
@@ -728,6 +754,9 @@ def test_terminal_event_attaches_to_statement_without_empty_report_turn(tmp_path
     assert data.pages[0].steps == []
     assert data.pages[0].verify_url == "screenshot_turn_1.png"
     assert [step.label for step in data.pages[1].steps] == ["Turn 1"]
+    first_card = generate_html(data).split('id="ms-s1"', 1)[1].split('id="ms-s2"', 1)[0]
+    assert 'class="gallery"' not in first_card
+    assert "验收截图" not in first_card
 
 
 def test_non_interactive_turn_renders_its_observation_frame(tmp_path):

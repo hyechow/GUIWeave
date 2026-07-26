@@ -20,6 +20,7 @@ from .orchestrator_html import (
     _render_non_ui_detail,
     _render_program_section,
     coding_plan_expansion_by_sid,
+    coding_source_line_by_call_id,
     is_coding_orchestrator,
     render_redecompose_card,
 )
@@ -123,11 +124,13 @@ HTML_TEMPLATE = """\
     font: 12px/1.65 ui-monospace, SFMono-Regular, Menlo, Consolas, monospace; tab-size: 4;
   }}
   .coding-src-line {{
-    display: grid; grid-template-columns: 40px minmax(0, 1fr) auto;
+    display: grid; grid-template-columns: 40px minmax(0, 1fr);
     gap: 0 10px; align-items: start; padding: 0 12px; min-height: 22px;
   }}
   .coding-src-line:hover {{ background: rgba(148,163,184,0.08); }}
-  .coding-src-line-hit {{ background: rgba(56,189,248,0.07); }}
+  .coding-src-line-hit {{
+    background: rgba(56,189,248,0.07); box-shadow: inset 3px 0 #0ea5e9;
+  }}
   .coding-src-ln {{
     color: #64748b; text-align: right; user-select: none; padding-top: 1px;
   }}
@@ -135,12 +138,14 @@ HTML_TEMPLATE = """\
     min-width: 0; color: #e2e8f0; white-space: pre-wrap;
     overflow-wrap: anywhere;
   }}
-  .coding-src-run-ref {{
-    margin-top: 1px; padding: 0 6px; border: 1px solid #0ea5e9; border-radius: 999px;
-    background: #0c4a6e; color: #bae6fd; font-size: 10px; font-weight: 700;
-    line-height: 18px; text-decoration: none; white-space: nowrap;
+  .coding-src-api-token {{
+    color: #7dd3fc; font-weight: 700; text-decoration: underline;
+    text-decoration-color: #0369a1; text-underline-offset: 3px;
   }}
-  .coding-src-run-ref:hover {{ background: #075985; }}
+  .coding-src-api-token-run {{
+    padding: 1px 4px; border-radius: 4px; background: #0369a1;
+    color: #f0f9ff; text-decoration: none; box-shadow: 0 0 0 1px #38bdf8;
+  }}
   .coding-src-chip {{
     display: inline-flex; align-items: center; gap: 4px;
     background: #1e293b; border: 1px solid #334155; border-radius: 999px;
@@ -189,9 +194,31 @@ HTML_TEMPLATE = """\
   .coding-src-index > summary span {{ color: #64748b; font-size: 10px; font-weight: 500; }}
   .coding-src-index[open] > summary {{ border-bottom: 1px solid #334155; }}
   .coding-src-index-body {{ padding: 6px 12px 9px; }}
-  .coding-src-index-row {{
-    display: flex; flex-wrap: wrap; align-items: center; gap: 5px;
-    padding: 3px 0; scroll-margin-top: 12px;
+  .coding-src-api-group {{
+    margin: 4px 0; border: 1px solid #334155; border-radius: 7px;
+    background: #0f172a; scroll-margin-top: 12px;
+  }}
+  .coding-src-api-group > summary {{
+    display: flex; align-items: center; gap: 7px; padding: 6px 8px;
+    color: #cbd5e1; cursor: pointer; list-style: none;
+  }}
+  .coding-src-api-group > summary::-webkit-details-marker {{ display: none; }}
+  .coding-src-api-group > summary::before {{ content: "▸"; color: #64748b; }}
+  .coding-src-api-group[open] > summary::before {{ content: "▾"; }}
+  .coding-src-api-group[open] > summary {{ border-bottom: 1px solid #334155; }}
+  .coding-src-api-group > summary code {{ color: #7dd3fc; font-size: 11px; }}
+  .coding-src-api-meta {{ color: #94a3b8; font-size: 10px; }}
+  .coding-src-api-group > summary .coding-phase {{ margin-left: auto; }}
+  .coding-src-api-body {{ padding: 6px 8px 8px; }}
+  .coding-src-instance {{
+    display: flex; flex-wrap: wrap; align-items: center; gap: 5px; padding: 3px 0;
+  }}
+  .coding-src-instance-label {{
+    width: 42px; color: #94a3b8; font-size: 10px; flex-shrink: 0;
+  }}
+  .coding-src-unmatched {{
+    display: flex; flex-wrap: wrap; align-items: center; gap: 5px; padding: 5px 8px;
+    color: #94a3b8; font-size: 10px;
   }}
   .coding-src-index-line {{
     width: 42px; color: #7dd3fc; font-size: 10px; font-weight: 700;
@@ -1352,8 +1379,10 @@ def generate_html(data: ReportData, grid: bool = False) -> str:
     # Coding mode: index run_log by instance/statement id so each card can show a data strip.
     coding_run_by_key: dict[str, dict] = {}
     coding_plan_by_sid: dict[str, dict] = {}
+    coding_line_by_call_id: dict[str, int] = {}
     if coding_mode:
         coding_plan_by_sid = coding_plan_expansion_by_sid(data.orchestrator)
+        coding_line_by_call_id = coding_source_line_by_call_id(data.orchestrator)
         for entry in (data.orchestrator or {}).get("report_run_log") or []:
             if not isinstance(entry, dict):
                 continue
@@ -1478,7 +1507,7 @@ def generate_html(data: ReportData, grid: bool = False) -> str:
         verify_thumb = ""
         verify_detail = ""
         _is_rd_ms = _triggered_rd  # this statement's verification produced a re-decompose
-        if page.verify_url:
+        if page.verify_url and page.steps:
             vd_id = f"detail-ms{mid_safe}-verify"
             if _is_rd_ms:
                 # not a pass — its outcome was a re-decompose; label it 重编排 (red), not 验收
@@ -1536,7 +1565,7 @@ def generate_html(data: ReportData, grid: bool = False) -> str:
                 f'</div>'
                 f'</div>'
             )
-        _rd_outside = "" if page.verify_url else rd_banner  # no 验收结果 box → fall back to the card body
+        _rd_outside = "" if page.verify_url and page.steps else rd_banner
         # (The infeasible-statement kick-back verdict is rendered on its own turn's detail, above —
         # it's that turn's conclusion, not a statement-level banner.)
         turns_label = f"{len(page.steps)} turns" if page.steps else "无交互 turn"
@@ -1663,6 +1692,10 @@ def generate_html(data: ReportData, grid: bool = False) -> str:
                 # Call signature already shown under the header; avoid repeating it.
                 omit_call_label=True,
             )
+        gallery_html = (
+            f'<div class="gallery">{thumbs_html}{verify_thumb}</div>'
+            if thumbs_html or verify_thumb else ""
+        )
         page_html = f"""
         <div class="statement" id="ms-{mid_safe}">
           <div class="statement-header">
@@ -1677,7 +1710,7 @@ def generate_html(data: ReportData, grid: bool = False) -> str:
             {sc_html}
           </div>
           {data_panel_html}
-          <div class="gallery">{thumbs_html}{verify_thumb}</div>
+          {gallery_html}
           {details_html}
           {verify_detail}
           {_rd_outside}
@@ -1699,6 +1732,15 @@ def generate_html(data: ReportData, grid: bool = False) -> str:
                 call_groups[-1]["chunks"].append(chunk)
             else:
                 call_groups.append({"key": key, "chunks": [chunk]})
+        group_lines = [
+            coding_line_by_call_id.get(str(group["key"]))
+            for group in call_groups
+        ]
+        line_totals = {
+            lineno: group_lines.count(lineno)
+            for lineno in group_lines if lineno is not None
+        }
+        line_seen: dict[int, int] = {}
         for call_no, group in enumerate(call_groups, 1):
             chunks = group["chunks"]
             op = str(chunks[0].get("op") or "?")
@@ -1719,10 +1761,18 @@ def generate_html(data: ReportData, grid: bool = False) -> str:
                 f'<span class="coding-phase {phase_cls}">{_safe(phase)}</span>'
                 if phase else ""
             )
+            lineno = group_lines[call_no - 1]
+            if lineno is not None:
+                line_seen[lineno] = line_seen.get(lineno, 0) + 1
+                call_ref = f"L{lineno}"
+                if line_totals[lineno] > 1:
+                    call_ref += f" · {line_seen[lineno]}/{line_totals[lineno]}"
+            else:
+                call_ref = f"call {call_no}"
             pages_html += (
                 f'<details class="coding-call-card" id="ctx-call-{call_no}">'
                 f'<summary>'
-                f'<span class="coding-call-index">#{call_no}</span>'
+                f'<span class="coding-call-index">{call_ref}</span>'
                 f'<code class="coding-call-title">{_safe(label)}</code>'
                 f'{phase_html}'
                 f'<span class="coding-call-meta">{len(chunks)} 个内部阶段 · 默认收起</span>'

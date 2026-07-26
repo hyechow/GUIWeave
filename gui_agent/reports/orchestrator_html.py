@@ -779,6 +779,55 @@ def _match_runtime_to_plan_sites(
     return by_line, queue
 
 
+def _public_call_groups(calls: list[dict]) -> list[list[dict]]:
+    """Contiguous private statements grouped by their public ctx.* invocation."""
+    groups: list[list[dict]] = []
+    keys: list[tuple] = []
+    for call in calls:
+        call_id = str(call.get("call_id") or "")
+        siblings = tuple(call.get("plan_siblings") or ())
+        key = (
+            ("call", call_id)
+            if call_id else
+            ("siblings", siblings) if siblings else
+            ("ordinal", int(call.get("ordinal") or 0))
+        )
+        if keys and key == keys[-1]:
+            groups[-1].append(call)
+        else:
+            keys.append(key)
+            groups.append([call])
+    return groups
+
+
+def _match_public_calls_to_plan_sites(
+    plan_sites: list[dict],
+    runtime_calls: list[dict],
+) -> tuple[dict[int, list[dict]], list[dict]]:
+    """Map dynamic public calls to source sites, reusing loop sites on back-edges."""
+    by_line: dict[int, list[dict]] = {}
+    leftovers: list[dict] = []
+    cursor = 0
+    for group in _public_call_groups(runtime_calls):
+        op = str(group[0].get("plan_op") or group[0].get("op") or "")
+        compatible = [
+            index for index, site in enumerate(plan_sites)
+            if str(site.get("op") or "") == op
+        ]
+        after_cursor = [index for index in compatible if index >= cursor]
+        if after_cursor:
+            site_index = after_cursor[0]
+        elif compatible:
+            site_index = compatible[-1]
+        else:
+            leftovers.extend(group)
+            continue
+        lineno = int(plan_sites[site_index].get("lineno") or 0)
+        by_line.setdefault(lineno, []).extend(group)
+        cursor = site_index + 1
+    return by_line, leftovers
+
+
 def _enrich_runtime_plan_expansion(
     runtime_calls: list[dict],
     *,
@@ -972,6 +1021,49 @@ def _render_runtime_ann_chips(calls: list[dict]) -> str:
     return "".join(chips)
 
 
+def _render_runtime_index_group(lineno: int, calls: list[dict]) -> str:
+    invocations = _public_call_groups(calls)
+    failed = any(
+        call.get("phase") in {"exhausted", "failed", "stopped", "interrupted"}
+        for call in calls
+    )
+    completed = sum(
+        all(call.get("phase") == "completed" for call in invocation)
+        for invocation in invocations
+    )
+    phase = "failed" if failed else "completed" if completed == len(invocations) else "running"
+    phase_cls = (
+        "coding-phase-fail" if failed
+        else "coding-phase-ok" if phase == "completed"
+        else "coding-phase-warn"
+    )
+    plan_op = str(calls[0].get("plan_op") or calls[0].get("op") or "?")
+    meta = (
+        f"×{len(invocations)} · {completed}/{len(invocations)} completed"
+        if len(invocations) > 1
+        else f"{len(calls)} 个内部阶段"
+    )
+    instances = []
+    for index, invocation in enumerate(invocations, 1):
+        label = (
+            f'<span class="coding-src-instance-label">调用 {index}</span>'
+            if len(invocations) > 1 else ""
+        )
+        instances.append(
+            f'<div class="coding-src-instance">{label}'
+            f'{_render_runtime_ann_chips(invocation)}</div>'
+        )
+    return (
+        f'<details class="coding-src-api-group" id="coding-src-calls-{lineno}"'
+        f'{" open" if failed else ""}>'
+        f'<summary><a class="coding-src-index-line" href="#coding-src-line-{lineno}">'
+        f'L{lineno}</a><code>ctx.{_safe(plan_op)}</code>'
+        f'<span class="coding-src-api-meta">{meta}</span>'
+        f'<span class="coding-phase {phase_cls}">{phase}</span></summary>'
+        f'<div class="coding-src-api-body">{"".join(instances)}</div></details>'
+    )
+
+
 def _render_annotated_coding_source(source: str, orchestrator: dict) -> str:
     """Python source with runtime call annotations on matching ctx.* lines."""
     lines = source.splitlines()
@@ -979,7 +1071,7 @@ def _render_annotated_coding_source(source: str, orchestrator: dict) -> str:
     runtime_calls = _coding_runtime_calls(orchestrator)
     # Enrich plan expansion (query→lookup+constrain+acquire) before source alignment.
     _enrich_runtime_plan_expansion(runtime_calls, source=source)
-    by_line, leftovers = _match_runtime_to_plan_sites(
+    by_line, leftovers = _match_public_calls_to_plan_sites(
         plan_sites, list(runtime_calls),
     )
 
@@ -990,53 +1082,53 @@ def _render_annotated_coding_source(source: str, orchestrator: dict) -> str:
 
     row_html: list[str] = []
     index_html: list[str] = []
+    ops_by_line: dict[int, list[str]] = {}
+    for site in plan_sites:
+        ops_by_line.setdefault(int(site.get("lineno") or 0), []).append(
+            str(site.get("op") or "")
+        )
     for lineno, raw in enumerate(lines, 1):
         code = _safe(raw) if raw else " "
         calls = by_line.get(lineno) or []
         has_ann = " coding-src-line-hit" if calls else ""
-        ref = ""
+        for op in dict.fromkeys(ops_by_line.get(lineno, [])):
+            token = f"ctx.{op}"
+            token_class = "coding-src-api-token" + (
+                " coding-src-api-token-run" if calls else ""
+            )
+            code = code.replace(
+                token,
+                f'<span class="{token_class}">{token}</span>',
+            )
         if calls:
-            ordinals = [int(call.get("ordinal") or 0) for call in calls]
-            label = (
-                f"#{ordinals[0]}"
-                if len(ordinals) == 1
-                else f"#{ordinals[0]}–{ordinals[-1]}"
-            )
-            ref = (
-                f'<a class="coding-src-run-ref" href="#coding-src-calls-{lineno}" '
-                f'onclick="this.closest(\'.coding-source-wrap\').querySelector('
-                f'\'.coding-src-index\').open=true" '
-                f'title="查看运行调用 {", ".join(f"#{n}" for n in ordinals)}">{label}</a>'
-            )
-            index_html.append(
-                f'<div class="coding-src-index-row" id="coding-src-calls-{lineno}">'
-                f'<a class="coding-src-index-line" href="#coding-src-line-{lineno}">'
-                f'L{lineno}</a>{_render_runtime_ann_chips(calls)}</div>'
-            )
+            index_html.append(_render_runtime_index_group(lineno, calls))
         row_html.append(
             f'<div class="coding-src-line{has_ann}" id="coding-src-line-{lineno}">'
             f'<span class="coding-src-ln">{lineno}</span>'
             f'<span class="coding-src-code">{code}</span>'
-            f'{ref}'
             f'</div>'
         )
 
     if leftovers:
         index_html.append(
-            '<div class="coding-src-index-row">'
-            '<span class="coding-src-index-line">其他</span>'
+            '<div class="coding-src-unmatched"><span>未对齐调用</span>'
             f'{_render_runtime_ann_chips(leftovers)}</div>'
         )
+    has_failure = any(
+        call.get("phase") in {"exhausted", "failed", "stopped", "interrupted"}
+        for call in runtime_calls
+    )
     call_index = (
-        '<details class="coding-src-index">'
+        f'<details class="coding-src-index"{" open" if has_failure else ""}>'
         '<summary>运行调用索引'
-        f'<span>{len(runtime_calls)} 次调用 · 默认收起</span></summary>'
+        f'<span>{len(_public_call_groups(runtime_calls))} 个 ctx 调用'
+        f'{" · 含失败，自动展开" if has_failure else " · 默认收起"}</span></summary>'
         f'<div class="coding-src-index-body">{"".join(index_html)}</div></details>'
         if index_html else ""
     )
     note = (
         '<div class="coding-src-legend">'
-        '源码右侧 #N 对应下方运行调用索引；索引中的 #N 可跳转 Statement 卡片'
+        '实色 ctx.API 与高亮行表示已执行；L 表示源码行，#N 表示 Statement 卡片'
         '</div>'
     )
     return (
@@ -1055,6 +1147,24 @@ def coding_plan_expansion_by_sid(orchestrator: dict | None) -> dict[str, dict]:
     source = str((orchestrator.get("program") or {}).get("source") or "")
     calls = _coding_runtime_calls(orchestrator)
     return _enrich_runtime_plan_expansion(calls, source=source)
+
+
+def coding_source_line_by_call_id(orchestrator: dict | None) -> dict[str, int]:
+    """Public ctx call id → source line, including repeated loop invocations."""
+    if not orchestrator:
+        return {}
+    source = str((orchestrator.get("program") or {}).get("source") or "")
+    calls = _coding_runtime_calls(orchestrator)
+    _enrich_runtime_plan_expansion(calls, source=source)
+    by_line, _ = _match_public_calls_to_plan_sites(
+        _coding_plan_call_sites(source), calls,
+    )
+    return {
+        str(call.get("call_id")): lineno
+        for lineno, line_calls in by_line.items()
+        for call in line_calls
+        if call.get("call_id")
+    }
 
 
 def _render_coding_program_shell(orchestrator: dict, program: dict) -> str:
@@ -1094,14 +1204,14 @@ def _render_coding_program_shell(orchestrator: dict, program: dict) -> str:
         '<div class="compat-row">'
         f'<span class="compat-chip">{_safe(review_label)}</span>'
         f'<span class="coding-note">'
-        f'源码标注 {runtime_n} 次运行调用 · 点击跳转卡片'
+        f'源码高亮 {runtime_n} 次运行调用'
         f'</span>'
         '</div>'
     )
     source_html = (
         f'<details class="coding-source-wrap">'
         f'<summary>完整 Python 源码'
-        f'<span class="coding-note"> · 右侧标记对应下方运行调用索引</span></summary>'
+        f'<span class="coding-note"> · 高亮行对应下方运行调用索引</span></summary>'
         f'{_render_annotated_coding_source(source, orchestrator)}'
         f'</details>'
     )
