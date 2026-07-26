@@ -288,6 +288,9 @@ HTML_TEMPLATE = """\
   .result-card-interrupted .result-label {{ color: #d97706; }}
   .result-card-failed .result-label {{ color: #dc2626; }}
   .result-card-stopped .result-label {{ color: #dc2626; }}
+  .result-output {{ padding: 10px 0; }}
+  .result-output + .result-output {{ border-top: 1px solid var(--border); }}
+  .result-output-label {{ margin-bottom: 5px; color: var(--muted); font-size: 11px; font-weight: 700; }}
   .result-body {{ font-size: 14px; color: var(--text); line-height: 1.6; white-space: pre-wrap; word-break: break-word; }}
 
   /* WebArena final response */
@@ -1762,13 +1765,20 @@ def generate_html(data: ReportData, grid: bool = False) -> str:
             cost_note_html = f'<div class="decompose">{price_chip}</div>'
 
     result_html = ""
-    if data.output:
+    if data.program_output or data.reply:
         status_cls, _, _ = _phase_meta(data)
         result_class = "result-card" if status_cls == "completed" else f"result-card result-card-{status_cls}"
         result_html = (
             f'<div class="{result_class}">'
             f'<div class="result-label">最终输出</div>'
-            f'<div class="result-body">{_safe(data.output)}</div>'
+            f'<div class="result-output">'
+            f'<div class="result-output-label">编排程序输出结果</div>'
+            f'<div class="result-body">{_safe(data.program_output or "（无）")}</div>'
+            f'</div>'
+            f'<div class="result-output">'
+            f'<div class="result-output-label">Reply 回复输出</div>'
+            f'<div class="result-body">{_safe(data.reply or "（未生成）")}</div>'
+            f'</div>'
             f'</div>'
         )
 

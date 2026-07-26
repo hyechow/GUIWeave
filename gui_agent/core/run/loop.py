@@ -187,7 +187,8 @@ def run_agent_loop(
         if isinstance(context.orchestrator, dict):
             # Final report projection only. Runtime decisions and checkpoint replay read the
             # interpreter/EventJournal directly; no live run_log mirror is persisted per turn.
-            report_run_log = (result.orchestrator or {}).get("run_log")
+            result_orchestrator = result.orchestrator or {}
+            report_run_log = result_orchestrator.get("run_log")
             if report_run_log is not None:
                 context.orchestrator = {
                     **context.orchestrator,

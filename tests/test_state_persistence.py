@@ -18,7 +18,7 @@ from gui_agent.core.schemas import (
     StatementOutcomeEvent,
     SupervisorStep,
 )
-from gui_agent.core.run.state import program_outcome_from_result, write_final_program_outcome
+from gui_agent.core.run.state import program_outcome_from_result, write_final_reply
 from gui_agent.reports.statement_reducer import StatementReportReducer
 
 
@@ -121,7 +121,7 @@ def test_agent_result_rejects_invalid_program_terminal_shape():
         AgentResult(goal="g", output="done", summary="done", phase="completed")
 
 
-def test_write_final_program_outcome_patches_outcome_block(tmp_path: Path):
+def test_write_final_reply_does_not_replace_program_output(tmp_path: Path):
     path = tmp_path / "context.json"
     path.write_text(
         json.dumps({
@@ -129,25 +129,24 @@ def test_write_final_program_outcome_patches_outcome_block(tmp_path: Path):
             "supervisor_policy_name": "m",
             "action_policy_name": "a",
             "journal": {"schema_version": 4, "events": []},
+            "outcome": {
+                "phase": "completed",
+                "summary": "raw",
+                "verification": "confirmed",
+                "output": "[1, 2]",
+            },
         }),
         encoding="utf-8",
     )
-    write_final_program_outcome(
-        path,
-        {
-            "phase": "completed",
-            "verification": "confirmed",
-            "summary": "ok",
-        },
-        output="done",
-    )
+    write_final_reply(path, "已找到 1 和 2。")
     raw = json.loads(path.read_text(encoding="utf-8"))
     assert raw["outcome"] == {
         "phase": "completed",
-        "summary": "ok",
+        "summary": "raw",
         "verification": "confirmed",
-        "output": "done",
+        "output": "[1, 2]",
     }
+    assert raw["reply"] == "已找到 1 和 2。"
 
 
 def test_program_outcome_mapping_rejects_fields_outside_agent_result():

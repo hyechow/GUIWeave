@@ -340,6 +340,44 @@ def test_runner_report_omits_subgoal_outline_sidebar():
     assert '<nav class="sidebar">' not in html
 
 
+def test_runner_report_replays_program_and_reply_outputs(tmp_path):
+    raw_output = '["Emma", "seam miller"]'
+    cases = [
+        ({
+            "goal": "return names",
+            "journal": {"schema_version": 4, "events": []},
+            "outcome": {
+                "phase": "completed",
+                "verification": "confirmed",
+                "summary": raw_output,
+                "output": raw_output,
+            },
+            "reply": "符合条件的昵称是 Emma 和 seam miller。",
+        }, "符合条件的昵称是 Emma 和 seam miller。"),
+        ({
+            "goal": "return names",
+            "journal": {"schema_version": 4, "events": []},
+            "outcome": {
+                "phase": "completed",
+                "verification": "confirmed",
+                "summary": raw_output,
+                "output": raw_output,
+            },
+        }, ""),
+    ]
+    for index, (payload, reply) in enumerate(cases):
+        run_dir = tmp_path / str(index)
+        run_dir.mkdir()
+        (run_dir / "context.json").write_text(json.dumps(payload), encoding="utf-8")
+        data = RunnerReportBuilder().build(run_dir)
+        html = generate_html(data)
+        assert data.program_output == raw_output
+        assert data.reply == reply
+        assert "编排程序输出结果" in html
+        assert "Reply 回复输出" in html
+        assert ("（未生成）" in html) is (not reply)
+
+
 def test_acquire_outputs_are_bounded_in_program_and_non_ui_details():
     rows = [
         {"id": f"row-{index}", "email": f"user-{index}@example.test"}

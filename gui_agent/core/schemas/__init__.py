@@ -1162,6 +1162,10 @@ class PolicyContext(BaseModel):
     task_type: Optional[TaskType] = None
     collection_scope: Optional[CollectionScope] = None
     outcome: Optional[ProgramOutcome] = None
+    reply: Optional[str] = Field(
+        default=None,
+        description="前端基于 ProgramOutcome 生成并最终呈现给用户的回复。",
+    )
     models: dict[str, str] = Field(
         default_factory=dict,
         description="本次运行各 LLM 配置键实际使用的模型 {config_key: model}，用于成本核算自描述",

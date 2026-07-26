@@ -433,12 +433,21 @@ class RunnerReportBuilder:
         data.router = ctx.get("router") or {}
         data.platform = ctx.get("platform") or ""
         outcome = ctx.get("outcome") or {}
-        data.output = outcome.get("output") or ""
         data.summary = outcome.get("summary") or ""
         data.phase = outcome.get("phase") or ""
         data.verification = outcome.get("verification") or ""
         data.knowledge = ctx.get("knowledge") or {}
         data.orchestrator = ctx.get("orchestrator") or {}
+        outcome_output = str(outcome.get("output") or "")
+        if "reply" in ctx:
+            data.program_output = outcome_output
+            data.reply = str(ctx.get("reply") or "")
+        elif outcome_output and outcome_output != data.summary:
+            # Legacy chat logs overwrote outcome.output with the Reply.
+            data.program_output = data.summary
+            data.reply = outcome_output
+        else:
+            data.program_output = outcome_output or data.summary
         data.webarena = ctx.get("webarena") or {}
         data.mobileworld = ctx.get("mobileworld") or {}
         if data.webarena and not data.webarena.get("eval_result"):

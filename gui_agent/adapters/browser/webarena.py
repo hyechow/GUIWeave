@@ -1299,6 +1299,14 @@ def main() -> int:
             # ----- post-run artifacts -----
             if result is None:
                 raise RuntimeError("WebArena run ended without AgentResult")
+            try:
+                from gui_agent.core.llm.output import generate_reply
+                from gui_agent.core.run.state import write_final_reply
+
+                reply = generate_reply(intent, result.model_dump(mode="json"))
+                write_final_reply(log_dir / "context.json", reply)
+            except Exception as exc:  # noqa: BLE001 - reply is report-facing, not evaluator input
+                print(f"[webarena] reply generation failed ({exc})")
             rec = recorder_holder.get("rec")
             if rec is not None:
                 print("[webarena]", rec.dump(str(har_path)))

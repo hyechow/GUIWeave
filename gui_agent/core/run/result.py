@@ -44,10 +44,9 @@ class AgentResult(BaseModel):
 
     ProgramOutcome remains the persisted terminal authority. AgentResult adds presentation and
     reporting data, and is dumped to a plain JSON dictionary only at process/API boundaries.
-    ``summary`` is the diagnostic terminal conclusion; ``output`` is the user-facing answer
-    produced from the run. They intentionally contain the same text for failures created before
-    answer synthesis. A chat frontend may persist its later conversational reply as
-    ProgramOutcome.output without mutating this execution result.
+    ``summary`` is the diagnostic terminal conclusion; ``output`` is the program's execution
+    result. A frontend persists its later user-facing reply separately without mutating this
+    execution result or ProgramOutcome.output.
     """
 
     model_config = ConfigDict(frozen=True, extra="forbid")
@@ -75,12 +74,12 @@ class AgentResult(BaseModel):
         )
         return self
 
-    def to_program_outcome(self, *, output: str | None = None) -> ProgramOutcome:
+    def to_program_outcome(self) -> ProgramOutcome:
         return ProgramOutcome(
             phase=self.phase,
             verification=self.verification,
             summary=self.summary,
-            output=self.output if output is None else output,
+            output=self.output,
         )
 
 
@@ -263,7 +262,6 @@ def orchestration_result(
         "output": reply,
         "orchestrator": {
             "kind": "coding",
-            "reply": reply,
             "terminal": terminal,
             "run_log": run_log,
         },

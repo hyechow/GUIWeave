@@ -40,7 +40,7 @@ from gui_agent.core.runner import (
     build_supervisor,
     run_agent_loop,
 )
-from gui_agent.core.run.state import write_final_program_outcome
+from gui_agent.core.run.state import write_final_reply
 from gui_agent.core.run.result import AgentResult, failed_result
 from gui_agent.core.chat.session import (
     RouterResult,
@@ -636,7 +636,7 @@ def main() -> None:
         try:
             ctx_path = log_dir / "context.json"
             if ctx_path.exists():
-                write_final_program_outcome(ctx_path, result, reply)
+                write_final_reply(ctx_path, reply)
         except Exception:
             pass
 

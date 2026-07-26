@@ -21,7 +21,7 @@ from gui_agent.core.self_learning.app_summary import (
     load_knowledge_for_app,
     match_app_by_url,
 )
-from gui_agent.core.run.state import write_final_program_outcome
+from gui_agent.core.run.state import write_final_reply
 from gui_agent.core.run.result import AgentResult
 from llm.structured import get_llm_call_count, get_llm_token_usage
 
@@ -311,17 +311,25 @@ def main(
                         headless=headless,
                     )
                 if result:
-                    # The answer is the interpreter's reply (finish / auto-summary from the
-                    # program's persisted reads), not a re-derivation from content notes.
-                    output = result.output or "（编排器未产生答复）"
-                    print("\n" + "=" * 50)
-                    print("最终输出")
-                    print("=" * 50)
-                    print(output.rstrip())
-                    print("=" * 50)
-                    # Persist the final reply and structured run state so the HTML report can render it.
+                    program_output = result.output or "（编排程序未产生输出）"
                     try:
-                        write_final_program_outcome(context_path, result, output)
+                        from gui_agent.core.llm.output import generate_reply
+
+                        reply = generate_reply(raw_input, result.model_dump(mode="json"))
+                    except Exception as exc:
+                        reply = ""
+                        print(f"（Reply 生成失败: {exc}）")
+                    print("\n" + "=" * 50)
+                    print("编排程序输出")
+                    print("=" * 50)
+                    print(program_output.rstrip())
+                    print("=" * 50)
+                    print("Reply 回复输出")
+                    print("=" * 50)
+                    print(reply.rstrip() if reply else "（未生成）")
+                    print("=" * 50)
+                    try:
+                        write_final_reply(context_path, reply)
                     except Exception as exc:
                         print(f"（输出未写入 context: {exc}）")
 

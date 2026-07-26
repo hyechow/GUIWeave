@@ -65,12 +65,13 @@ class ReportData:
     stats: dict = field(default_factory=dict)
     statements: list[dict] = field(default_factory=list)
     decompose_summary: str = ""  # First-turn supervisor summary with decomposition info
-    orchestrator: dict = field(default_factory=dict)  # DSL 编排器 {program:{goal,statements}}
+    orchestrator: dict = field(default_factory=dict)
     models: dict[str, str] = field(default_factory=dict)  # config_key → model used this run
     raw_input: str = ""  # original human input (title); empty for old logs
     goal: str = ""       # resolved goal that drove the run
     router: dict = field(default_factory=dict)  # RouterResult dict; empty for bin/runner path
-    output: str = ""     # final reply / 最终输出 of the run
+    program_output: str = ""
+    reply: str = ""
     summary: str = ""      # ProgramOutcome.summary
     phase: str = ""        # ProgramOutcome.phase
     verification: str = ""
