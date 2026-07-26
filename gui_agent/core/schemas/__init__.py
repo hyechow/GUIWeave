@@ -14,6 +14,11 @@ from pydantic import (
     model_validator,
 )
 
+from gui_agent.core.filter_contract import (
+    AppliedFilterState,
+    FilterPredicateSet,
+)
+
 # The 6 shared actions every platform supports. Platform-specific actions (iphone
 # home/app_switch, browser navigate, android home/back/app_switch) live in each
 # adapter's <Plat>Action.action_type, so a policy injects only its own vocabulary.
@@ -440,6 +445,13 @@ class Observation(BaseModel):
             "翻译成这个平台中性契约。None=该平台不提供、当前页无已生效筛选，或当前页没有可判定的筛选状态。"
         ),
     )
+    applied_filter_state: Optional[AppliedFilterState] = Field(
+        default=None,
+        description=(
+            "平台 adapter 规范化后的类型化筛选谓词和覆盖率。constrain 的确定性终态只使用"
+            "该字段；applied_filters 仅保留为显示/旧日志兼容。"
+        ),
+    )
     applied_filter_meta: Optional[dict[str, Any]] = Field(
         default=None,
         description=(
@@ -449,8 +461,6 @@ class Observation(BaseModel):
             "误读成任务未完成。"
         ),
     )
-
-
 class RecoveryNotice(BaseModel):
     """A recovery event emitted while executing one statement."""
 
@@ -660,6 +670,34 @@ class GoalValidationResult(BaseModel):
     missing: str = Field(default="", description="缺少什么（sufficient=false 时填写）")
 
 
+class CollectionIntent(BaseModel):
+    """One phase of the collection state machine."""
+
+    model_config = ConfigDict(frozen=True, extra="forbid")
+
+    phase: Literal["reach", "locate", "constrain"]
+    entity: str = Field(min_length=1)
+    required_fields: list[str] = Field(default_factory=list)
+    field: str = "name"
+    fallback: str = ""
+    predicates: FilterPredicateSet = Field(default_factory=FilterPredicateSet)
+
+
+InteractionIntent = Optional[CollectionIntent]
+
+ActionEffectKind = Literal[
+    "query_control",
+    "presentation",
+    "viewport",
+    "pagination",
+    "navigation",
+    "field_write",
+    "business_commit",
+    "authentication",
+    "unknown",
+]
+
+
 class StatementContract(BaseModel):
     """Frozen execution contract for one Program statement invocation input.
 
@@ -671,13 +709,13 @@ class StatementContract(BaseModel):
     id: str
     goal: str
     success: str
+    interaction_intent: InteractionIntent = None
     on: Literal["main"] = "main"
     inputs: dict[str, JsonValue] = Field(default_factory=dict)
     required_values: dict[str, JsonValue] = Field(default_factory=dict)
     observe_fields: list[str] = Field(default_factory=list)
     returns: dict[str, OutputSpec] = Field(default_factory=dict)
     persistence: PersistenceMode = "immediate"
-
 
 class StatementInfo(BaseModel):
     """Persisted statement contract DTO written once per invocation (first turn)."""
@@ -690,13 +728,13 @@ class StatementInfo(BaseModel):
     ] = "interact"
     goal: str = ""
     success: str = ""
+    interaction_intent: InteractionIntent = None
     on: Literal["main"] = "main"
     inputs: dict[str, JsonValue] = Field(default_factory=dict)
     required_values: dict[str, JsonValue] = Field(default_factory=dict)
     observe_fields: list[str] = Field(default_factory=list)
     persistence: PersistenceMode = "immediate"
     returns: dict[str, OutputSpec] = Field(default_factory=dict)
-
 
 class StatementRuntimeSnapshot(BaseModel):
     """Minimal replay identity for an active statement invocation.

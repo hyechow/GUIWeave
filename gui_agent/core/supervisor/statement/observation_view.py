@@ -134,6 +134,10 @@ def _semantic_affordance(node: dict, current_url: str) -> dict | None:
     }
     if url:
         result["url"] = url
+    for key in ("effect_kind",):
+        value = node.get(key)
+        if value:
+            result[key] = value
     point = node.get("point")
     if isinstance(point, dict):
         result["point"] = point
@@ -165,8 +169,10 @@ def _control_affordance(control: dict) -> dict | None:
         "number",
     }:
         operations = ["input"]
-    elif kind in {"button", "checkbox", "checkbox_input", "radio", "radio_input",
-                  "switch", "switch_input", "link"}:
+    elif kind in {
+        "button", "checkbox", "checkbox_input", "radio", "radio_input",
+        "switch", "switch_input", "link", "section_toggle",
+    }:
         operations = ["activate"]
     else:
         return None
@@ -187,7 +193,10 @@ def _control_affordance(control: dict) -> dict | None:
     }
     if len(refs) > 1:
         result["ref_aliases"] = refs[1:]
-    for key in ("name", "id", "value", "options", "group_id", "is_filter"):
+    for key in (
+        "name", "id", "value", "options", "group_id", "is_filter",
+        "effect_kind",
+    ):
         value = control.get(key)
         if value is not None and value != "":
             result[key] = value

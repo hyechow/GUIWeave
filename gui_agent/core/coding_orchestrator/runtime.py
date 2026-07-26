@@ -22,9 +22,15 @@ from gui_agent.core.orchestrator.recovery import RecoveryLedger
 from gui_agent.core.orchestrator.runner import RunRecord, StatementInvocation
 from gui_agent.core.run.lookup_scope import is_lookup_scope
 from gui_agent.core.run.statements.compute_kernel import normalize_table_rows
-from gui_agent.core.schemas import StatementContract, StatementOutcome
+from gui_agent.core.filter_contract import compile_filter_predicates
+from gui_agent.core.schemas import (
+    CollectionIntent,
+    StatementContract,
+    StatementOutcome,
+)
 
 from .sandbox import SAFE_BUILTINS, validate_code
+from .models import UIStateHandle, collection_postcondition, require_ui_state
 
 
 class CodingProgram(BaseModel):
@@ -62,11 +68,16 @@ def _report_coding_payload(op: str, payload: dict[str, Any]) -> dict[str, Any]:
 
     if not payload:
         return {}
+
+    def _state_token(value: Any) -> str:
+        return value.token if isinstance(value, UIStateHandle) else ""
+
     # Prefer the structured request keys that the report data panel already understands.
     if op == "gui":
         return {
-            "task": payload.get("task"),
-            **(dict(payload.get("inputs") or {}) if isinstance(payload.get("inputs"), dict) else {}),
+            "goal": payload.get("goal"),
+            "success": payload.get("success"),
+            **({"target": payload.get("target")} if payload.get("target") is not None else {}),
         }
     if op == "write":
         return {
@@ -76,6 +87,7 @@ def _report_coding_payload(op: str, payload: dict[str, Any]) -> dict[str, Any]:
         }
     if op == "lookup":
         return {
+            "state": _state_token(payload.get("state")),
             "entity": payload.get("entity"),
             "field": payload.get("field"),
             "fallback": payload.get("fallback"),
@@ -83,24 +95,31 @@ def _report_coding_payload(op: str, payload: dict[str, Any]) -> dict[str, Any]:
             "required_fields": payload.get("required_fields") or [],
         }
     if op == "constrain":
+        scope = payload.get("scope") if isinstance(payload.get("scope"), dict) else {}
         return {
+            "state": scope.get("ui_state_token"),
             "entity": payload.get("entity"),
             "filters": payload.get("filters") or {},
         }
     if op == "acquire":
         scope = payload.get("scope") if isinstance(payload.get("scope"), dict) else {}
         return {
+            "state": scope.get("ui_state_token"),
             "entity": scope.get("entity"),
             "fields": payload.get("fields") or [],
             "coverage": payload.get("coverage") or "complete",
         }
     if op == "focus":
         return {
+            "state": _state_token(payload.get("state")),
             "target": payload.get("target"),
             "fields": payload.get("fields") or [],
         }
     if op == "read":
-        return {"fields": payload.get("fields") or []}
+        return {
+            "state": _state_token(payload.get("state")),
+            "fields": payload.get("fields") or [],
+        }
     if op == "command":
         return {
             "capability": payload.get("capability"),
@@ -204,6 +223,8 @@ class _RuntimeContext:
 
     def query(
         self,
+        state: UIStateHandle,
+        *,
         entity: str,
         fields: list[str],
         filters: dict[str, Any] | None = None,
@@ -211,23 +232,34 @@ class _RuntimeContext:
         fallback: str | None = None,
         coverage: str = "complete",
     ) -> list[dict[str, Any]]:
-        # Macro: lookup establishes scope, then acquire materializes rows.
+        # Macro: locate source, establish the exact filter state, then materialize rows.
         scope = self._request(
             "lookup",
             plan="query",
             plan_step=1,
-            plan_steps=2,
+            plan_steps=3,
+            state=state,
             entity=entity,
             field=field,
             fallback=fallback or "",
-            filters=filters or {},
             required_fields=fields,
+        )
+        scope = self._request(
+            "constrain",
+            plan="query",
+            plan_step=2,
+            plan_steps=3,
+            state=state,
+            scope=scope,
+            entity=entity,
+            filters=dict(filters or {}),
         )
         return self._request(
             "acquire",
             plan="query",
-            plan_step=2,
-            plan_steps=2,
+            plan_step=3,
+            plan_steps=3,
+            state=state,
             scope=scope,
             fields=fields,
             coverage=coverage,
@@ -235,17 +267,20 @@ class _RuntimeContext:
 
     def read(
         self,
+        state: UIStateHandle,
+        *,
         target: Any = None,
         fields: list[str] | None = None,
     ) -> dict[str, Any]:
         if fields is None:
             raise TypeError("ctx.read requires fields")
         if target is not None:
-            self._request(
+            state = self._request(
                 "focus",
                 plan="read",
                 plan_step=1,
                 plan_steps=2,
+                state=state,
                 target=target,
                 fields=fields,
             )
@@ -254,6 +289,7 @@ class _RuntimeContext:
                 plan="read",
                 plan_step=2,
                 plan_steps=2,
+                state=state,
                 fields=fields,
             )
         return self._request(
@@ -261,23 +297,25 @@ class _RuntimeContext:
             plan="read",
             plan_step=1,
             plan_steps=1,
+            state=state,
             fields=fields,
         )
 
     def gui(
         self,
-        task: str,
+        goal: str,
         *,
+        success: dict[str, Any],
         target: Any = None,
-    ) -> None:
-        inputs = {"target": target} if target is not None else {}
-        self._request(
+    ) -> UIStateHandle:
+        return self._request(
             "gui",
             plan="gui",
             plan_step=1,
             plan_steps=1,
-            task=task,
-            inputs=inputs,
+            goal=goal,
+            success=success,
+            target=target,
         )
 
     def write(
@@ -385,51 +423,89 @@ class CodingProgramRuntime:
         self._statement_seq += 1
         return f"c{self._statement_seq}"
 
+    @staticmethod
+    def _state_context(state: UIStateHandle) -> dict[str, Any]:
+        return {
+            "inputs": {"ui_state": state.snapshot()},
+            "args": {"ui_state_token": state.token},
+        }
+
     def _invocation(self, op: str, payload: dict[str, Any]) -> StatementInvocation:
         statement_id = self._id()
         if op == "lookup":
             entity = str(payload["entity"])
             field_name = str(payload.get("field") or "name")
             fallback = str(payload.get("fallback") or "")
-            filters = dict(payload.get("filters") or {})
             required_fields = [
                 str(value) for value in payload.get("required_fields") or []
             ]
+            state = require_ui_state(
+                payload.get("state"),
+                entity=entity,
+                fields=required_fields,
+            )
             request_text = (
-                f"field={field_name!r}, fallback={fallback!r}, "
-                f"filters={filters!r}, fields={required_fields!r}"
+                f"field={field_name!r}, fallback={fallback!r}, fields={required_fields!r}"
             )
             statement = Interact(
                 id=statement_id,
                 goal=(
-                    f"Resolve collection {entity!r} in the current business context; "
-                    f"{request_text}"
+                    f"Locate collection {entity!r} as the single local source in the current "
+                    f"business context; {request_text}"
                 ),
                 success=(
                     f"Exactly one local collection satisfies {request_text}; "
                     "the business context is unchanged"
                 ),
-                scope="lookup",
+                interaction_intent=CollectionIntent(
+                    phase="locate",
+                    entity=entity,
+                    field=field_name,
+                    fallback=fallback,
+                    required_fields=required_fields,
+                ),
                 persistence="immediate",
             )
             return StatementInvocation(
                 statement=statement,
                 task_goal=self.program.goal,
-                inputs={
-                    "lookup_request": {
-                        "entity": entity,
-                        "field": field_name,
-                        "fallback": fallback,
-                        "filters": filters,
-                        "required_fields": required_fields,
-                    },
-                },
+                **self._state_context(state),
             )
-        if op == "focus":
-            fields = [str(item) for item in payload.get("fields") or []]
+        if op == "constrain":
+            scope = dict(payload.get("scope") or {})
+            state = require_ui_state(payload.get("state"))
+            entity = str(payload["entity"])
+            if str(scope.get("entity") or "") != entity:
+                raise ValueError(
+                    "constrain entity does not match its collection scope"
+                )
+            filters = dict(payload.get("filters") or {})
             statement = Interact(
                 id=statement_id,
-                goal="Expose the requested fields for the supplied business target",
+                goal=f"Narrow collection {entity!r} to the source-native filter {filters!r}",
+                success=(
+                    f"The filter {filters!r} is active on the current {entity!r} view"
+                ),
+                interaction_intent=CollectionIntent(
+                    phase="constrain",
+                    entity=entity,
+                    predicates=compile_filter_predicates(filters),
+                ),
+                persistence="immediate",
+            )
+            return StatementInvocation(
+                statement=statement,
+                task_goal=self.program.goal,
+                inputs={"ui_state": state.snapshot()},
+                args={"lookup_scope": scope, "ui_state_token": state.token},
+            )
+        if op == "focus":
+            state = require_ui_state(payload.get("state"))
+            fields = [str(item) for item in payload.get("fields") or []]
+            target = payload.get("target")
+            statement = Interact(
+                id=statement_id,
+                goal=f"Expose fields {fields} for business target {target!r}",
                 success=f"The target detail state exposes these fields: {fields}",
                 observe_fields=fields,
                 persistence="immediate",
@@ -437,22 +513,51 @@ class CodingProgramRuntime:
             return StatementInvocation(
                 statement=statement,
                 task_goal=self.program.goal,
-                inputs={"target": payload.get("target")},
+                inputs={
+                    "ui_state": state.snapshot(),
+                    "target": target,
+                },
+                args={"ui_state_token": state.token},
             )
         if op in {"gui", "write"}:
-            task = str(payload["task"])
+            task = str(payload.get("goal") if op == "gui" else payload["task"])
             values = dict(payload.get("values") or {}) if op == "write" else {}
+            interaction_intent = None
+            success_text = f"The GUI task is complete: {task}"
+            if op == "gui":
+                success = collection_postcondition(payload.get("success"))
+                if success is None:
+                    raise ValueError("ctx.gui success is not a collection postcondition")
+                entity, required_fields = success["entity"], success["fields"]
+                interaction_intent = CollectionIntent(
+                    phase="reach",
+                    entity=entity,
+                    required_fields=required_fields,
+                )
+                success_text = (
+                    f"One structural collection for {entity!r} is available "
+                    f"with fields {required_fields!r}"
+                )
             statement = Interact(
                 id=statement_id,
                 goal=task,
-                success=f"The GUI task is complete: {task}",
+                success=success_text,
+                **(
+                    {"interaction_intent": interaction_intent}
+                    if interaction_intent is not None
+                    else {}
+                ),
                 required_values=values,
                 persistence="explicit_commit" if values else "immediate",
             )
             return StatementInvocation(
                 statement=statement,
                 task_goal=self.program.goal,
-                inputs=dict(payload.get("inputs") or {}),
+                inputs=(
+                    {"target": payload.get("target")}
+                    if op == "gui" and payload.get("target") is not None
+                    else dict(payload.get("inputs") or {})
+                ),
             )
         if op == "acquire":
             scope = dict(payload.get("scope") or {})
@@ -460,6 +565,7 @@ class CodingProgramRuntime:
                 raise ValueError(
                     "internal query scope was not produced by the lookup statement"
                 )
+            state = require_ui_state(payload.get("state"))
             fields = [str(item) for item in payload.get("fields") or []]
             coverage = str(payload.get("coverage") or "complete")
             statement = Acquire(
@@ -477,9 +583,11 @@ class CodingProgramRuntime:
             return StatementInvocation(
                 statement=statement,
                 task_goal=self.program.goal,
-                args={"lookup_scope": scope},
+                inputs={"ui_state": state.snapshot()},
+                args={"lookup_scope": scope, "ui_state_token": state.token},
             )
         if op == "read":
+            state = require_ui_state(payload.get("state"))
             fields = [str(item) for item in payload.get("fields") or []]
             statement = Read(
                 id=statement_id,
@@ -492,7 +600,11 @@ class CodingProgramRuntime:
                     for field_name in fields
                 },
             )
-            return StatementInvocation(statement=statement, task_goal=self.program.goal)
+            return StatementInvocation(
+                statement=statement,
+                task_goal=self.program.goal,
+                **self._state_context(state),
+            )
         if op == "command":
             statement = Command(
                 id=statement_id,
@@ -592,6 +704,24 @@ class CodingProgramRuntime:
         if invocation is None:
             raise RuntimeError("coding runtime has no active statement")
         instance_id = self.current_instance_id
+        coding_op = self.current_coding_op
+        coding_payload = dict(self.current_coding_payload)
+        issued_ui_state: UIStateHandle | None = None
+        if outcome.is_completed and coding_op in {"gui", "focus"}:
+            if coding_op == "focus":
+                postcondition = {
+                    "kind": "target_fields_available",
+                    "target": invocation.inputs.get("target"),
+                    "fields": list(invocation.statement.observe_fields),
+                }
+            else:
+                postcondition = dict(coding_payload.get("success") or {})
+            issued_ui_state = UIStateHandle(
+                token=f"{invocation.id}:state",
+                postcondition=postcondition,
+                observed_state=dict(outcome.outputs),
+            )
+            coding_payload["produced_state"] = issued_ui_state.token
         self.interpreter.run_log.append(RunRecord(
             node_id=invocation.id,
             executor=invocation.executor,
@@ -600,8 +730,8 @@ class CodingProgramRuntime:
             result=outcome,
             loop_path=list(invocation.loop_path),
             instance_id=instance_id,
-            coding_op=self.current_coding_op,
-            coding_payload=dict(self.current_coding_payload),
+            coding_op=coding_op,
+            coding_payload=coding_payload,
             coding_plan=self.current_coding_plan,
             coding_plan_step=self.current_coding_plan_step,
             coding_plan_steps=self.current_coding_plan_steps,
@@ -617,11 +747,27 @@ class CodingProgramRuntime:
             self._fail(outcome.summary)
             return None
         value: Any = True
-        if isinstance(invocation.statement, Interact) and invocation.statement.scope == "lookup":
+        if (
+            isinstance(invocation.statement, Interact)
+            and invocation.statement.interaction_intent is not None
+            and invocation.statement.interaction_intent.phase == "locate"
+        ):
             value = outcome.outputs.get("scope")
             if not is_lookup_scope(value):
                 self._fail("lookup completed without a validated collection scope")
                 return None
+        elif (
+            isinstance(invocation.statement, Interact)
+            and invocation.statement.interaction_intent is not None
+            and invocation.statement.interaction_intent.phase == "constrain"
+        ):
+            scope = dict(invocation.args.get("lookup_scope") or {})
+            if not is_lookup_scope(scope):
+                self._fail("constrain completed without its collection scope")
+                return None
+            value = scope
+        elif issued_ui_state is not None:
+            value = issued_ui_state
         elif isinstance(invocation.statement, Acquire):
             rows = outcome.outputs.get("rows", [])
             value = normalize_table_rows(rows if isinstance(rows, list) else [])
@@ -646,6 +792,7 @@ class CodingProgramRuntime:
         statement = self.current.statement.model_copy(update={
             "goal": contract.goal,
             "success": contract.success,
+            "interaction_intent": contract.interaction_intent,
         })
         self.current = self.current.model_copy(update={"statement": statement})
 

@@ -27,6 +27,57 @@ class TraceEvent:
 
 
 @dataclass(frozen=True)
+class UIStateHandle:
+    """Runtime-issued capability and the verified state it represents."""
+
+    token: str
+    postcondition: dict[str, Any] = field(default_factory=dict)
+    observed_state: dict[str, Any] = field(default_factory=dict)
+
+    def snapshot(self) -> dict[str, Any]:
+        return {
+            "token": self.token,
+            "postcondition": self.postcondition,
+            "observed_state": self.observed_state,
+        }
+
+
+def collection_postcondition(value: Any) -> dict[str, Any] | None:
+    """Validate the one public ``ctx.gui`` success shape."""
+    if not isinstance(value, dict) or set(value) != {"entity", "fields"}:
+        return None
+    entity, fields = value["entity"], value["fields"]
+    if (
+        not isinstance(entity, str)
+        or not entity.strip()
+        or not isinstance(fields, list)
+        or not fields
+        or any(not isinstance(item, str) or not item.strip() for item in fields)
+    ):
+        return None
+    return {"entity": entity, "fields": list(fields)}
+
+
+def require_ui_state(
+    value: Any,
+    *,
+    entity: str = "",
+    fields: list[str] | None = None,
+) -> UIStateHandle:
+    if not isinstance(value, UIStateHandle):
+        raise ValueError(
+            "ctx.query/ctx.read require the UIStateHandle returned by ctx.gui"
+        )
+    postcondition = value.postcondition
+    if entity and (
+        postcondition.get("entity") != entity
+        or not set(fields or []) <= set(postcondition.get("fields") or [])
+    ):
+        raise ValueError("ctx.gui collection state does not satisfy ctx.query")
+    return value
+
+
+@dataclass(frozen=True)
 class WriteEvent:
     goal: str
     success: str

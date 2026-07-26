@@ -54,7 +54,11 @@ def test_blind_sample_hides_fixture_until_final_evaluation(monkeypatch) -> None:
     captured = {}
     source = (
         "def run(ctx):\n"
-        "    rows = ctx.query('sahara', fields=['id', 'name'], coverage='complete')\n"
+        "    state = ctx.gui('Open products', success={"
+        "'entity': 'sahara', "
+        "'fields': ['id', 'name']})\n"
+        "    rows = ctx.query(state, entity='sahara', "
+        "fields=['id', 'name'], coverage='complete')\n"
         "    assert rows, 'matching products are required'\n"
         "    return len(rows)"
     )
@@ -94,7 +98,11 @@ def test_blind_sample_hides_fixture_until_final_evaluation(monkeypatch) -> None:
 def test_task_193_hidden_fixture_checks_the_numeric_result() -> None:
     source = (
         "def run(ctx):\n"
-        "    rows = ctx.query('orders', field='ID', filters={'Status': 'Complete'}, "
+        "    state = ctx.gui('Open orders', success={"
+        "'entity': 'orders', "
+        "'fields': ['Status', 'Purchase Date', 'Grand Total (Purchased)']})\n"
+        "    rows = ctx.query(state, entity='orders', field='ID', "
+        "filters={'Status': 'Complete'}, "
         "fields=['Status', 'Purchase Date', 'Grand Total (Purchased)'], "
         "coverage='complete')\n"
         "    assert all(row['Status'] == 'Complete' for row in rows), "

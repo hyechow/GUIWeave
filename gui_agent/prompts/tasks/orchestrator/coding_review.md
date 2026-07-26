@@ -7,7 +7,7 @@ scope:
 owner: gui_agent.core.coding_orchestrator.planner
 schema: code_review
 eval_suites:
-version: 29
+version: 34
 ---
 Review the candidate Python program against the user's task, supplied knowledge, static diagnostics,
 and mock execution. The fixture is visible test data, not a canonical answer; never hardcode its
@@ -15,10 +15,14 @@ record IDs, values, or row count.
 
 The public API is:
 
-- `ctx.gui(task, target=None)`: establish non-durable GUI context; it raises on failure.
-- `ctx.query(entity, fields=[...], filters={}, field="name", fallback=None,
+- `ctx.gui(goal, success={...}, target=None) -> UIState`: reach one typed non-durable UI
+  postcondition and return its opaque Runtime-issued state handle. Assign and consume it.
+  When its state feeds `query`, success must be
+  `{"entity": <same entity>, "fields": <all query fields>}`.
+  Use the same collection contract before `read`.
+- `ctx.query(state, entity=..., fields=[...], filters={}, field="name", fallback=None,
   coverage="complete")`: filter and materialize one collection in the current context.
-- `ctx.read(target=None, fields=[...])`: read fields from one target or current state.
+- `ctx.read(state, target=None, fields=[...])`: read fields from one target or verified state.
 - `ctx.write(task, target=None, values={...})`: perform one durable business operation.
 - `ctx.command(capability, **arguments)`: deterministic platform capability.
 
@@ -30,8 +34,12 @@ Review in this order:
    `row["field"]` or `row.get("field")` must have been projected by that call.
 4. Check effect boundaries. `gui` only establishes non-durable application context; `query` owns
    local search, exact source filters, pagination, and materialization; `write` owns durable
-   business changes. If a collection is absent from the current observation, add one preceding
-   context-establishing `gui` call.
+   business changes. Every `query`/`read` must consume a state from one preceding
+   context-establishing `gui` call; when the state is already visible, that call is a mechanical
+   assertion rather than forced navigation. Its `goal` must be local; assign its returned state
+   and pass that exact variable to `query` or `read`. For query, literal success must copy that
+   query's entity and fields into `success`; do not guess document titles, page
+   suffixes, sidebars, or menus.
 5. Check data flow. Runtime values used for selection or relative updates must participate in the
    calculation and reach the final `write` values. Pass an already acquired record as `target`
    instead of inventing a database identifier.
@@ -45,9 +53,11 @@ Review in this order:
 add a separate GUI task to apply a filter. Currency and date/time table values are already
 normalized by `query`.
 
-`ctx.gui` and `ctx.write` return no business value. Do not assign or assert their results. Never put
-filters in either call. Put changed business fields in `write(values=...)`. The GUI Statement owns
-page mechanics, save/commit behavior, retries, and proof of completion.
+`ctx.gui` returns a UI state capability, not business data; assign it only to feed `query`/`read`.
+`ctx.write` returns no business value. Never put filters in either call. Put changed business
+fields in `write(values=...)`. Each typed Statement
+owns only its in-scope widget mechanics and proof: `query` acquisition owns pagination, while
+`write` owns save/commit behavior.
 
 Treat task qualifiers as selection predicates unless the user explicitly asks to create or change
 them. Preserve valid runtime-derived filtering and calculations. Delete unused values and redundant

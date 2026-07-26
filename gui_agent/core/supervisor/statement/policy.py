@@ -6,12 +6,15 @@ from typing import Literal, Optional
 
 from llm.structured import StructuredOutputError
 
+from gui_agent.core.filter_contract import canonical_filter_value, compare_filter_state
 from gui_agent.core.run.statement_memory import available_event_refs, build_memory_view
 from gui_agent.core.run.lookup_scope import resolve_lookup_scope
 from gui_agent.core.run.statement_runtime import StatementRuntimeState
 from gui_agent.core.run.statement_transition import validate_evidence_references
 from gui_agent.core.schemas import (
     ActionIntent,
+    ActionEffectKind,
+    CollectionIntent,
     JournalEvent,
     JsonValue,
     Observation,
@@ -35,24 +38,11 @@ from .schemas import (
     _TransitionAction,
 )
 
-
-_QUERY_MARKERS = (
-    "search", "query", "filter", "搜索", "查询", "筛选", "查找", "检索",
-)
-_QUERY_SUBMIT_MARKERS = (
-    "search", "apply", "filter", "submit", "搜索", "应用", "筛选", "查询",
-)
-_QUERY_COLUMNS_MARKERS = ("column", "columns", "列")
-_QUERY_PRESENTATION_LABELS = {
-    frozenset(label.split()) for label in "cancel|close|dismiss|clear all|reset filters|"
-    "取消|关闭|清除全部|重置筛选".split("|")
+_COLLECTION_EFFECTS = {
+    "reach": {"navigation", "authentication", "presentation", "viewport"},
+    "locate": {"query_control", "presentation", "viewport"},
+    "constrain": {"query_control", "presentation", "viewport"},
 }
-_MUTATING_MARKERS = (
-    "save", "create", "add", "edit", "update", "delete", "remove",
-    "discard",
-    "保存", "创建", "新增", "添加", "编辑", "更新", "删除", "移除",
-    "丢弃",
-)
 
 
 def _declared_string_values(values: dict[str, JsonValue]) -> set[str]:
@@ -103,8 +93,57 @@ def _resolved_lookup(
     statement: StatementContract,
     observation: Observation,
 ) -> dict[str, JsonValue] | None:
-    request = statement.inputs.get("lookup_request")
-    return resolve_lookup_scope(observation, request) if isinstance(request, dict) else None
+    intent = statement.interaction_intent
+    return (
+        resolve_lookup_scope(observation, intent)
+        if intent is not None and intent.phase == "locate"
+        else None
+    )
+
+
+def _collection_intent(
+    statement: StatementContract,
+    phase: Literal["reach", "locate", "constrain"],
+) -> CollectionIntent | None:
+    intent = statement.interaction_intent
+    return intent if intent is not None and intent.phase == phase else None
+
+
+def _resolved_reach_collection(
+    statement: StatementContract,
+    observation: Observation,
+) -> dict[str, JsonValue] | None:
+    intent = _collection_intent(statement, "reach")
+    if intent is None:
+        return None
+    return resolve_lookup_scope(
+        observation,
+        CollectionIntent(
+            phase="locate",
+            entity=intent.entity,
+            required_fields=intent.required_fields,
+        ),
+    )
+
+
+def _declared_action_values(statement: StatementContract) -> set[str]:
+    """Values an input/select action may place while satisfying this contract."""
+    allowed = _declared_string_values(statement.required_values)
+    intent = statement.interaction_intent
+    if intent is not None and intent.phase == "constrain":
+        for predicate in intent.predicates.values():
+            allowed.update(
+                str(value).strip().casefold()
+                for value in predicate.values
+                if value is not None and str(value).strip()
+            )
+    elif intent is not None and intent.phase == "locate":
+        allowed.update(
+            value.strip().casefold()
+            for value in (intent.entity, intent.fallback)
+            if value.strip()
+        )
+    return allowed
 
 
 class StatementSupervisorPolicy(
@@ -241,6 +280,51 @@ class StatementSupervisorPolicy(
         if text and text not in self._static_constraints:
             self._static_constraints.append(text)
 
+    def authorize_grounded_action(
+        self,
+        effect: ActionEffectKind,
+    ) -> str:
+        """Authorize an adapter-grounded effect for the active interaction intent.
+
+        Reach and query phases admit only the effect families they own. The gate
+        does not inspect action labels or application vocabulary.
+        """
+        statement = self._active_statement
+        if statement is None:
+            return "cannot authorize an action without an active statement"
+        intent = statement.interaction_intent
+        if intent is None:
+            if effect == "pagination":
+                return (
+                    "pagination belongs to collection acquisition, not an "
+                    "ordinary interactive statement"
+                )
+            return ""
+        if effect in _COLLECTION_EFFECTS[intent.phase]:
+            return ""
+        return (
+            f"{intent.phase}_collection requires an allowed structural effect; "
+            f"grounded effect is {effect}"
+        )
+
+    def reject_grounded_effect(self, reason: str) -> SupervisorStep:
+        """Return a deterministic terminal result; do not retry on the same frame."""
+        statement = self._active_statement
+        if statement is None:
+            raise RuntimeError("cannot reject an effect without an active statement")
+        message = f"Grounded action authorization rejected: {reason}"
+        return SupervisorStep(
+            outcome=StatementOutcome.infeasible(
+                message,
+                kickback=(
+                    "Re-observe or replan the surrounding program; the current "
+                    "interaction intent cannot authorize this grounded effect."
+                ),
+            ),
+            summary=message,
+            **_ctx(statement),
+        )
+
     def _scope_for(self, statement: StatementContract, observation: Observation) -> str:
         return execution_scope_for(
             statement,
@@ -354,12 +438,24 @@ class StatementSupervisorPolicy(
         statement: StatementContract,
         plan: _ActionDraft,
     ) -> str:
-        allowed = _declared_string_values(statement.required_values)
-        if plan.atomic_role != "write" or not allowed:
+        allowed = _declared_action_values(statement)
+        restricted_query = (
+            statement.interaction_intent is not None
+            and statement.interaction_intent.phase in {"locate", "constrain"}
+        )
+        writes_value = plan.action_family in {"input", "select"}
+        if restricted_query and writes_value and not allowed:
+            return "typed interaction intent declares no writable query value"
+        if not allowed or not (plan.atomic_role == "write" or writes_value):
             return ""
-        value = plan.target_value.strip().casefold()
+        value = str(canonical_filter_value(plan.target_value)).strip().casefold()
         if value not in allowed:
-            return f"write value {plan.target_value!r} is outside required_values"
+            boundary = (
+                "typed interaction intent"
+                if restricted_query
+                else "required_values"
+            )
+            return f"write value {plan.target_value!r} is outside {boundary}"
         return ""
 
     @staticmethod
@@ -548,66 +644,6 @@ class StatementSupervisorPolicy(
         return ""
 
     @staticmethod
-    def _validate_filter_scope(
-        statement: StatementContract,
-        observation: Observation,
-    ) -> str:
-        declared: list[tuple[set[str], JsonValue]] = []
-        for name, value in statement.required_values.items():
-            terms = _semantic_terms(name)
-            if "filter" not in terms:
-                continue
-            field_terms = terms - {"filter", "from", "to", "min", "max"}
-            if field_terms:
-                declared.append((field_terms, value))
-        if not declared or not observation.applied_filters:
-            return ""
-
-        actual = {
-            name: (_semantic_terms(name), str(value).strip().casefold())
-            for name, value in observation.applied_filters.items()
-        }
-        matched: set[str] = set()
-        missing: list[str] = []
-        mismatched: list[str] = []
-        for expected_terms, expected in declared:
-            candidate = next(
-                (
-                    (name, value)
-                    for name, (terms, value) in actual.items()
-                    if expected_terms <= terms or terms <= expected_terms
-                ),
-                None,
-            )
-            label = " ".join(sorted(expected_terms))
-            if candidate is None:
-                missing.append(label)
-                continue
-            name, value = candidate
-            matched.add(name)
-            expected_value = str(expected).strip().casefold()
-            endpoints = [part.strip() for part in value.split("-")]
-            if value != expected_value and not (
-                len(endpoints) == 2
-                and all(endpoint == expected_value for endpoint in endpoints)
-            ):
-                mismatched.append(f"{name}={value!r}")
-
-        unexpected = [name for name in actual if name not in matched]
-        problems = []
-        if missing:
-            problems.append("missing " + ", ".join(missing))
-        if mismatched:
-            problems.append("mismatched " + ", ".join(mismatched))
-        if unexpected:
-            problems.append("unexpected " + ", ".join(unexpected))
-        if not problems:
-            return ""
-        return "filter scope does not exactly match the contract: " + "; ".join(
-            problems
-        )
-
-    @staticmethod
     def _staged_input_submission(
         observation: Observation,
         history: list[PolicyTurn],
@@ -620,8 +656,6 @@ class StatementSupervisorPolicy(
         if intent is None or intent.family != "input" or not intent.target_value:
             return None
         target_label = intent.target_control.strip().casefold()
-        if not any(marker in target_label for marker in _QUERY_MARKERS):
-            return None
 
         controls = [
             *(observation.form_control_state or []),
@@ -636,9 +670,8 @@ class StatementSupervisorPolicy(
             }
         ), None)
         if matched_control is None or not (
-            matched_control.get("is_filter") is True
-            or str(matched_control.get("kind") or "").strip().casefold()
-            in {"search", "search_input", "searchbox"}
+            str(matched_control.get("effect_kind") or "") == "query_control"
+            or matched_control.get("is_filter") is True
         ):
             return None
         expected = intent.target_value.strip().casefold()
@@ -657,10 +690,9 @@ class StatementSupervisorPolicy(
             label = str(affordance.get("label") or "").strip()
             if not label:
                 continue
-            lowered = label.casefold()
-            if any(marker in lowered for marker in _MUTATING_MARKERS):
-                continue
-            if any(marker in lowered for marker in _QUERY_SUBMIT_MARKERS):
+            if (
+                affordance.get("effect_kind") == "query_control"
+            ):
                 candidates.append(affordance)
         if len(candidates) != 1:
             return None
@@ -724,61 +756,6 @@ class StatementSupervisorPolicy(
             return f"target does not support operation {plan.action_family!r}"
         return ""
 
-    @staticmethod
-    def _validate_lookup_action(
-        statement: StatementContract,
-        view: StatementObservationView,
-        plan: _ActionDraft,
-    ) -> str:
-        if not isinstance(statement.inputs.get("lookup_request"), dict):
-            return ""
-        if plan.atomic_role == "commit":
-            return "query-only lookup cannot commit business state"
-        if plan.action_family == "navigate":
-            return "query-only lookup cannot leave the current business context"
-        if plan.action_family == "iterate":
-            return ""
-
-        candidates = _action_targets(view, plan)
-        if len(candidates) != 1:
-            return "query-only lookup requires one structurally identified local control"
-        target = candidates[0]
-        label = str(target.get("label") or "").strip().casefold()
-        if any(marker in label for marker in _MUTATING_MARKERS):
-            return "query-only lookup cannot activate a business mutation control"
-        if plan.action_family in {"input", "select"}:
-            if target.get("is_filter") is True or target.get("role") in {
-                "search", "search_input", "searchbox",
-            }:
-                return ""
-            return "query-only lookup may write only to a structural search/filter control"
-        required_fields = [
-            _semantic_terms(str(value))
-            for value in statement.inputs["lookup_request"].get("required_fields") or []
-        ]
-        label_terms = _semantic_terms(label)
-        is_projection = any(
-            marker in label for marker in _QUERY_COLUMNS_MARKERS
-        ) or target.get("role") in {
-            "checkbox", "checkbox_input", "menuitemcheckbox", "switch",
-            "switch_input", "option", "menuitem",
-        } and any(
-            terms and (terms <= label_terms or label_terms <= terms)
-            for terms in required_fields
-        )
-        if plan.action_family == "activate" and is_projection:
-            return ""
-        if plan.action_family == "activate" and any(
-            marker in label for marker in _QUERY_SUBMIT_MARKERS
-        ):
-            return ""
-        if (
-            plan.action_family == "activate"
-            and frozenset(_semantic_terms(label)) in _QUERY_PRESENTATION_LABELS
-        ):
-            return ""
-        return "query-only lookup allows only local search/filter submission or viewport movement"
-
     def _materialize_action(
         self,
         decision: _StatementTransitionResult,
@@ -804,9 +781,6 @@ class StatementSupervisorPolicy(
         if rejection:
             return None, rejection
         view = build_observation_view(statement, observation, [])
-        rejection = self._validate_lookup_action(statement, view, plan)
-        if rejection:
-            return None, rejection
         rejection = self._validate_action_capability(view, plan)
         if rejection:
             return None, rejection
@@ -852,6 +826,7 @@ class StatementSupervisorPolicy(
         *,
         execution_scope: str,
     ) -> SupervisorStep:
+        """Hard terminal for truly unrecoverable proposal failures (not soft gates)."""
         self._record_transition(decision, reason)
         message = f"Statement Transition validation failed: {reason}"
         return SupervisorStep(
@@ -860,6 +835,45 @@ class StatementSupervisorPolicy(
             execution_scope=execution_scope,
             **_ctx(statement),
         )
+
+    def _soft_reject_and_retry(
+        self,
+        statement: StatementContract,
+        observation: Observation,
+        history: list[JournalEvent],
+        *,
+        decision: _StatementTransitionResult | None,
+        reason: str,
+        execution_scope: str,
+        guidance: str,
+        validation_retries: int,
+    ) -> SupervisorStep:
+        """Give one same-frame correction, then return a recoverable infeasible."""
+        if decision is not None:
+            self._record_transition(decision, reason)
+        if validation_retries <= 0:
+            kickback = (
+                "The current statement cannot satisfy its typed postcondition from this "
+                f"frame ({reason}). Re-observe or replan the surrounding program; do not "
+                "retry alternative labels on the same evidence."
+            )
+            message = f"Statement postcondition remains unsatisfied: {reason}"
+            return SupervisorStep(
+                outcome=StatementOutcome.infeasible(message, kickback=kickback),
+                summary=message,
+                execution_scope=execution_scope,
+                **_ctx(statement),
+            )
+        self._static_constraints.append(guidance)
+        try:
+            return self._run_single_turn(
+                statement,
+                observation,
+                history,
+                validation_retries=validation_retries - 1,
+            )
+        finally:
+            self._static_constraints.pop()
 
     @staticmethod
     def _verification(
@@ -906,6 +920,24 @@ class StatementSupervisorPolicy(
 
         execution_scope = self._scope_for(statement, observation)
         self._rt.execution_scope = execution_scope
+        reach_collection_scope = _resolved_reach_collection(
+            statement,
+            observation,
+        )
+        if reach_collection_scope is not None:
+            summary = f"子目标「{statement.goal}」已由当前结构化集合满足。"
+            return SupervisorStep(
+                outcome=StatementOutcome.completed(
+                    summary,
+                    verification="confirmed",
+                    outputs={"scope": reach_collection_scope},
+                    observation=observation,
+                    observation_url=observation.url,
+                ),
+                pre_existing=True,
+                summary=summary,
+                **_ctx(statement),
+            )
         lookup_scope = _resolved_lookup(statement, observation)
         if lookup_scope is not None:
             summary = f"子目标「{statement.goal}」已由当前结构化观察满足。"
@@ -914,6 +946,28 @@ class StatementSupervisorPolicy(
                     summary,
                     verification="confirmed",
                     outputs={"scope": lookup_scope},
+                    observation=observation,
+                    observation_url=observation.url,
+                ),
+                pre_existing=True,
+                summary=summary,
+                **_ctx(statement),
+            )
+        constrain_intent = _collection_intent(statement, "constrain")
+        filter_status = (
+            compare_filter_state(
+                constrain_intent.predicates,
+                observation.applied_filter_state,
+            )
+            if constrain_intent is not None
+            else None
+        )
+        if filter_status is True:
+            summary = f"子目标「{statement.goal}」已由当前视图筛选状态满足。"
+            return SupervisorStep(
+                outcome=StatementOutcome.completed(
+                    summary,
+                    verification="confirmed",
                     observation=observation,
                     observation_url=observation.url,
                 ),
@@ -1008,39 +1062,60 @@ class StatementSupervisorPolicy(
                     statement, decision, refs.reason, execution_scope=execution_scope
                 )
         if decision.kind == "complete":
-            rejection = self._validate_filter_scope(statement, observation)
-            if not rejection:
-                rejection = self._validate_input_matches(statement, observation)
+            rejection = self._validate_input_matches(statement, observation)
+            if (
+                not rejection
+                and _collection_intent(statement, "reach") is not None
+                and _resolved_reach_collection(statement, observation) is None
+            ):
+                rejection = (
+                    "requested structural collection is not established for "
+                    "the reach_collection postcondition"
+                )
             lookup_scope = _resolved_lookup(statement, observation)
             if (
                 not rejection
-                and isinstance(statement.inputs.get("lookup_request"), dict)
+                and _collection_intent(statement, "locate") is not None
                 and lookup_scope is None
             ):
                 rejection = (
                     "current observation does not resolve exactly one structural "
                     "collection for the lookup request"
                 )
+            constrain_intent = _collection_intent(statement, "constrain")
+            filter_status = (
+                compare_filter_state(
+                    constrain_intent.predicates,
+                    observation.applied_filter_state,
+                )
+                if constrain_intent is not None
+                else None
+            )
+            if (
+                not rejection
+                and filter_status is not None
+                and filter_status is not True
+            ):
+                rejection = (
+                    "requested exact filter predicate set is not established: "
+                    f"{'unknown' if filter_status is None else 'mismatched'}"
+                )
             if rejection:
-                if validation_retries > 0:
-                    self._static_constraints.append(
-                        "上一个 complete 候选未通过确定性终态校验："
-                        f"{rejection}。继续执行动作，使当前 UI 状态精确满足合同。"
-                    )
-                    try:
-                        return self._run_single_turn(
-                            statement,
-                            observation,
-                            history,
-                            validation_retries=validation_retries - 1,
-                        )
-                    finally:
-                        self._static_constraints.pop()
-                return self._transition_failure(
+                # Soft effect / contract miss: demote complete → continue acting.
+                # Never escalate filter/string mismatch to exhausted.
+                return self._soft_reject_and_retry(
                     statement,
-                    decision,
-                    rejection,
+                    observation,
+                    history,
+                    decision=decision,
+                    reason=rejection,
                     execution_scope=execution_scope,
+                    guidance=(
+                        "上一个 complete 候选未通过效应/合同校验："
+                        f"{rejection}。不要结束 statement；继续 act 使视图满足合同，"
+                        "或在筛选已语义生效时再 complete。"
+                    ),
+                    validation_retries=validation_retries,
                 )
             self._record_transition(decision)
             executed = any(
@@ -1088,27 +1163,19 @@ class StatementSupervisorPolicy(
             execution_scope=execution_scope,
         )
         if step is None:
-            if validation_retries > 0:
-                constraint = (
-                    "上一个 Transition 候选未执行，因为机械合同校验拒绝："
-                    f"{rejection or 'invalid action'}。基于同一画面重新判断任务状态，"
-                    "并给出另一条满足当前 affordance 与 required_values 的动作。"
-                )
-                self._static_constraints.append(constraint)
-                try:
-                    return self._run_single_turn(
-                        statement,
-                        observation,
-                        history,
-                        validation_retries=validation_retries - 1,
-                    )
-                finally:
-                    self._static_constraints.pop()
-            return self._transition_failure(
+            return self._soft_reject_and_retry(
                 statement,
-                decision,
-                rejection or "invalid action",
+                observation,
+                history,
+                decision=decision,
+                reason=rejection or "invalid action",
                 execution_scope=execution_scope,
+                guidance=(
+                    "上一个 Transition 候选未执行，因为护栏/机械校验拒绝："
+                    f"{rejection or 'invalid action'}。基于同一画面重新判断；"
+                    "保持 typed interaction intent，并给出另一条可落成动作。"
+                ),
+                validation_retries=validation_retries,
             )
         self._record_transition(decision)
         return step

@@ -11,7 +11,11 @@ from typing import Annotated, Literal, TypeAlias, Union
 
 from pydantic import BaseModel, ConfigDict, Field, JsonValue, model_validator
 
-from gui_agent.core.schemas import OutputSpec, PersistenceMode
+from gui_agent.core.schemas import (
+    InteractionIntent,
+    OutputSpec,
+    PersistenceMode,
+)
 from gui_agent.core.data_types import ComputeStep
 
 
@@ -63,6 +67,7 @@ class Interact(StatementNode):
     op: Literal["interact"] = "interact"
     goal: str
     success: str
+    interaction_intent: InteractionIntent = None
     on: SurfaceName = "main"
     required_values: dict[str, JsonValue] = Field(default_factory=dict)
     observe_fields: list[str] = Field(default_factory=list)

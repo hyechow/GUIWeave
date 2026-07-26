@@ -24,6 +24,11 @@ def test_form_controls_js_is_serialized_expression():
     assert "iframe[id$=\"_ifr\"]" in js
     assert "fieldset-wrapper-content" in js
     assert "_hide" in js
+    assert "input[type=\"password\"]" in js
+    assert "authentication" in js
+    assert "a[href]" in js
+    assert "pagination" in js
+    assert "business_commit" in js
 
 
 def test_form_progress_fingerprint_excludes_transient_focus() -> None:
@@ -81,6 +86,18 @@ def test_normalize_form_controls_keeps_native_select_options():
         "focused": True,
         "rect": {"x": 856, "y": 509, "w": 246, "h": 32},
     }]
+
+
+def test_normalize_form_controls_keeps_structural_effect_classification():
+    controls = normalize_form_controls({
+        "controls": [{
+            "label": "Localized status label",
+            "kind": "native_select",
+            "effect_kind": "query_control",
+        }]
+    })
+
+    assert controls[0]["effect_kind"] == "query_control"
 
 
 def test_normalize_form_controls_keeps_section_toggle_affordance():
@@ -178,7 +195,10 @@ def test_browser_perception_reads_form_controls(tmp_path):
             return False
 
         def page_info(self):
-            return "http://x/admin/orders", "Orders"
+            return (
+                "http://x/admin/orders",
+                "Orders / Operations / Sales / Commerce Admin",
+            )
 
         def form_state_fingerprint(self):
             return "abc123"
@@ -216,12 +236,15 @@ def test_browser_perception_reads_form_controls(tmp_path):
     assert obs.form_controls == [{"label": "Status", "kind": "native_select"}]
     assert obs.form_controls_meta["coverage"] == "complete"
     assert obs.applied_filters == {"Product": "Olivia"}
+    assert obs.applied_filter_state is not None
+    assert obs.applied_filter_state.coverage == "complete"
+    assert obs.applied_filter_state.predicates["product"].values == ["olivia"]
     assert obs.applied_filter_meta == {
         "source": "adapter_state",
         "indicator_channel": "absent",
         "fallback_channel": "present",
     }
-    assert obs.title == "Orders"
+    assert obs.title == "Orders / Operations / Sales / Commerce Admin"
 
 
 def test_normalize_form_controls_reserves_slots_for_offscreen_controls():

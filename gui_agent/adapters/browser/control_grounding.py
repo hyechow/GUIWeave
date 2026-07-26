@@ -12,11 +12,14 @@ def _norm(value: object) -> str:
 def _control_aliases(control: dict) -> set[str]:
     label = str(control.get("label") or "").strip()
     group_field = str(control.get("group_field") or "").strip()
+    kind = str(control.get("kind") or "").strip().casefold()
     values = {
         str(control.get("name") or "").strip(),
         str(control.get("id") or "").strip(),
         label,
     }
+    if kind in {"a", "button", "link", "section_toggle"}:
+        values.add(str(control.get("value") or "").strip())
     if label and group_field:
         values.update((f"{group_field} {label}", f"{label} {group_field}"))
     elif group_field:

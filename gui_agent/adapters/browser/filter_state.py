@@ -23,6 +23,8 @@ from __future__ import annotations
 import json
 from typing import Any
 
+from gui_agent.core.filter_contract import AppliedFilterState, compile_filter_predicates
+
 
 def applied_filters_js() -> str:
     """A JS expression (run via CDP Runtime.evaluate, returnByValue) that serializes the grid's
@@ -49,11 +51,7 @@ def applied_filters_js() -> str:
 
   const chipContainers = Array.from(document.querySelectorAll(
     '.admin__current-filters-list, [data-role="filter-list"]'
-  )).filter(el => {
-    const r = el.getBoundingClientRect();
-    const st = getComputedStyle(el);
-    return r.width > 0 && r.height > 0 && st.visibility !== 'hidden' && st.display !== 'none';
-  });
+  ));
   if (chipContainers.length) {
     meta.indicator_channel = 'present';
     meta.chip_container = 'present';
@@ -258,6 +256,26 @@ def normalize_applied_filter_meta(raw: Any) -> dict[str, Any] | None:
     """Return only the meta portion from an applied-filter JS result."""
     _filters, meta = normalize_applied_filter_state(raw)
     return meta or None
+
+
+def typed_applied_filter_state(
+    filters: dict[str, str] | None,
+    meta: dict[str, Any] | None,
+) -> AppliedFilterState:
+    """Project browser extraction evidence into the neutral typed state contract."""
+    metadata = meta or {}
+    source = str(metadata.get("source") or "").strip()
+    complete_channel = bool(
+        filters
+        or source in {"chips", "legacy_url", "legacy_controls"}
+        or str(metadata.get("indicator_channel") or "") == "present"
+        or str(metadata.get("fallback_channel") or "") == "present"
+    )
+    return AppliedFilterState(
+        predicates=compile_filter_predicates(filters or {}),
+        coverage="complete" if complete_channel else "unavailable",
+        source=source,
+    )
 
 
 def _normalize_filter_mapping(raw: Any) -> dict[str, str] | None:

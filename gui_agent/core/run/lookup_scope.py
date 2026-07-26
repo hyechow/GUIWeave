@@ -2,11 +2,13 @@
 
 from __future__ import annotations
 
-import re
 from typing import Any
 
+from gui_agent.core.filter_contract import (
+    canonical_filter_field,
+)
 from gui_agent.core.run.collection_view import collection_candidates
-from gui_agent.core.schemas import Observation
+from gui_agent.core.schemas import CollectionIntent, Observation
 
 
 _KIND = "resolved_collection"
@@ -14,11 +16,14 @@ _GENERIC_SCOPE_WORDS = {"grid", "list", "page", "table", "view", "workspace"}
 
 
 def _semantic_key(value: Any) -> str:
-    return re.sub(r"[^\w]+", "", str(value or "").strip().casefold())
+    return "".join(
+        char for char in canonical_filter_field(value)
+        if char.isalnum()
+    )
 
 
 def _semantic_words(value: Any) -> set[str]:
-    words = re.findall(r"\w+", str(value or "").casefold())
+    words = set(canonical_filter_field(value).split())
     return set(words) - _GENERIC_SCOPE_WORDS
 
 
@@ -32,29 +37,25 @@ def is_lookup_scope(value: Any) -> bool:
 
 def resolve_lookup_scope(
     observation: Observation,
-    request: dict[str, Any],
+    request: CollectionIntent,
 ) -> dict[str, Any] | None:
-    """Resolve one structural collection without guessing among candidates."""
-    requested_filters = request.get("filters") or {}
-    if not isinstance(requested_filters, dict):
-        return None
-    actual_filters = {
-        _semantic_key(name): str(value).strip().casefold()
-        for name, value in (observation.applied_filters or {}).items()
-    }
-    if any(
-        actual_filters.get(_semantic_key(name)) != str(value).strip().casefold()
-        for name, value in requested_filters.items()
-    ):
-        return None
+    """Locate one structural collection by identity, without guessing among candidates.
 
+    Lookup is a pure addressing step: it never gates on applied filters. Narrowing
+    a collection is the ``constrain`` statement's job.
+    """
     candidates = collection_candidates(observation)
     if not candidates:
         return None
 
+    entity = request.entity
+    fallback = request.fallback
+    field = request.field
+    required_fields = request.required_fields
+
     mention_values = {
         str(value).strip()
-        for value in (request.get("entity"), request.get("fallback"))
+        for value in (entity, fallback)
         if str(value or "").strip()
     }
     mentions = {_semantic_key(value) for value in mention_values}
@@ -69,30 +70,24 @@ def resolve_lookup_scope(
         ):
             eligible = candidates
     if len(eligible) != 1:
-        filtered = bool(mentions & {
-            _semantic_key(value)
-            for value in (observation.applied_filters or {}).values()
-            if str(value or "").strip()
-        })
-        field_key = _semantic_key(request.get("field") or "name")
+        field_key = _semantic_key(field)
         matching = [
             candidate for candidate in candidates
             if field_key in {
                 _semantic_key(header) for header in candidate.get("headers") or []
             }
         ]
-        eligible = matching or candidates
-        if not filtered or len(eligible) != 1:
+        eligible = matching
+        if len(eligible) != 1:
             return None
     chosen = eligible[0]
     available_fields = [str(value) for value in chosen.get("headers") or []]
-    required = {_semantic_key(field) for field in request.get("required_fields") or []}
+    required = {_semantic_key(field_name) for field_name in required_fields}
     if not required <= {_semantic_key(field) for field in available_fields}:
         return None
     return {
         "kind": _KIND,
-        "entity": str(request.get("entity") or ""),
-        "filters": dict(requested_filters),
+        "entity": entity,
         "surface_fingerprint": str(chosen["surface_fingerprint"]),
         "available_fields": available_fields,
     }

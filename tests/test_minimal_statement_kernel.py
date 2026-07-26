@@ -8,8 +8,13 @@ from PIL import Image
 import pytest
 
 from llm.structured import StructuredOutputError
+from gui_agent.core.filter_contract import (
+    AppliedFilterState,
+    compile_filter_predicates,
+)
 from gui_agent.core.schemas import (
     ActionIntent,
+    CollectionIntent,
     Observation,
     PolicyTurn,
     StatementContract,
@@ -101,14 +106,12 @@ def _lookup_statement(
         id="lookup",
         goal="resolve a collection",
         success="one collection is exposed",
-        inputs={
-            "lookup_request": {
-                "entity": entity,
-                "field": field,
-                "fallback": "",
-                "required_fields": list(required_fields or []),
-            },
-        },
+        interaction_intent=CollectionIntent(
+            phase="locate",
+            entity=entity,
+            field=field,
+            required_fields=list(required_fields or []),
+        ),
     )
 
 
@@ -180,7 +183,7 @@ def test_offscreen_action_gets_one_same_frame_transition_retry(monkeypatch) -> N
     step = policy._run_single_turn(statement, observation, [])
 
     assert calls == 2
-    assert step.outcome is not None and step.outcome.phase == "exhausted"
+    assert step.outcome is not None and step.outcome.phase == "infeasible"
     assert "does not support operation 'activate'" in step.outcome.summary
     assert policy._last_transition_record["validation_error"]
 
@@ -373,7 +376,11 @@ def test_complete_rejects_inherited_filter_outside_declared_scope(monkeypatch) -
         id="s1",
         goal="filter records by quantity",
         success="only quantity 3 records remain",
-        required_values={"quantity_filter": 3},
+        interaction_intent=CollectionIntent(
+            phase="constrain",
+            entity="Records",
+            predicates=compile_filter_predicates({"Quantity": "3 - 3"}),
+        ),
     )
     policy = _policy(statement)
     decisions = iter([
@@ -388,7 +395,17 @@ def test_complete_rejects_inherited_filter_outside_declared_scope(monkeypatch) -
 
     step = policy._run_single_turn(
         statement,
-        _observation(applied_filters={"Keyword": "old", "Quantity": "3 - 3"}),
+        _observation(
+            applied_filters={"Keyword": "old", "Quantity": "3 - 3"},
+            applied_filter_state=AppliedFilterState(
+                predicates=compile_filter_predicates({
+                    "Keyword": "old",
+                    "Quantity": "3 - 3",
+                }),
+                coverage="complete",
+                source="test",
+            ),
+        ),
         [],
     )
 
@@ -442,6 +459,7 @@ def test_staged_query_activates_matching_submit_before_pagination(monkeypatch) -
                 "key": "Search",
                 "ref": 42,
                 "in_viewport": True,
+                "effect_kind": "query_control",
             }],
         ),
         [prior],
@@ -519,14 +537,14 @@ def test_query_only_lookup_returns_structural_scope_on_complete(monkeypatch) -> 
 
 
 @pytest.mark.parametrize(
-    ("control", "role", "message"),
+    ("control", "role"),
     [
-        ("Delete Search", "commit", "cannot commit"),
-        ("Save Search", "prepare", "business mutation"),
+        ("Delete Search", "commit"),
+        ("Save Search", "prepare"),
     ],
 )
-def test_query_only_lookup_rejects_business_mutation(
-    monkeypatch, control, role, message,
+def test_query_only_lookup_permission_uses_grounded_effect_not_control_label(
+    monkeypatch, control, role,
 ) -> None:
     statement = _lookup_statement()
     step = _run_lookup(
@@ -545,9 +563,10 @@ def test_query_only_lookup_rejects_business_mutation(
         }],
     )
 
-    assert step.outcome is not None
-    assert step.outcome.phase == "exhausted"
-    assert message in step.outcome.summary
+    # Proposal materialization is label-agnostic; permission is checked after grounding.
+    assert step.action_intent is not None
+    rejection = _policy(statement).authorize_grounded_action("business_commit")
+    assert rejection
 
 
 def test_query_only_lookup_allows_structural_filter_input(monkeypatch) -> None:

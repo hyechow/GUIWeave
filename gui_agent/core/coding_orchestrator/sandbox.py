@@ -24,17 +24,25 @@ from typing import Any
 
 from gui_agent.core.run.statements.compute_kernel import normalize_table_rows
 
-from .models import CodeDiagnostic, CodingRunResult, TraceEvent, WriteEvent
+from .models import (
+    CodeDiagnostic,
+    CodingRunResult,
+    TraceEvent,
+    UIStateHandle,
+    WriteEvent,
+    collection_postcondition,
+    require_ui_state,
+)
 
 
 CTX_METHODS = frozenset({"gui", "query", "read", "write", "command"})
 CTX_SIGNATURES = {
     "query": (
-        ("entity", "fields", "filters", "field", "fallback", "coverage"),
-        {"entity", "fields"},
+        ("state", "entity", "fields", "filters", "field", "fallback", "coverage"),
+        {"state", "entity", "fields"},
     ),
-    "read": (("target", "fields"), {"fields"}),
-    "gui": (("task", "target"), {"task"}),
+    "read": (("state", "target", "fields"), {"state", "fields"}),
+    "gui": (("goal", "success", "target"), {"goal", "success"}),
     "write": (("task", "target", "values"), {"task", "values"}),
     "command": (("capability",), {"capability"}),
 }
@@ -325,7 +333,8 @@ class _SafetyVisitor(ast.NodeVisitor):
             for keyword in node.keywords
             if keyword.arg is not None
         }
-        task = _call_argument(node, "task", 0)
+        text_argument_name = "goal" if method == "gui" else "task"
+        task = _call_argument(node, text_argument_name, 0)
         if (
             isinstance(task, ast.Constant) and not isinstance(task.value, str)
             or isinstance(task, (ast.Dict, ast.List, ast.Set, ast.Tuple))
@@ -333,10 +342,10 @@ class _SafetyVisitor(ast.NodeVisitor):
             self.diagnostics.append(_diag(
                 task or node,
                 "CTX_SIGNATURE",
-                f"ctx.{method} task must be text",
+                f"ctx.{method} {text_argument_name} must be text",
             ))
         for argument_name in (
-            ("target", "values") if method == "write" else ("target",)
+            ("target", "values") if method == "write" else ("success", "target")
         ):
             argument = keywords.get(argument_name)
             if argument is None:
@@ -363,6 +372,16 @@ class _SafetyVisitor(ast.NodeVisitor):
                         "replace sets and tuples with deterministic lists"
                     ),
                 ))
+        success = keywords.get("success")
+        if method == "gui" and success is not None and (
+            not isinstance(success, ast.Dict)
+            or collection_postcondition(_literal_value(success)) is None
+        ):
+            self.diagnostics.append(_diag(
+                success,
+                "GUI_SUCCESS_CONTRACT",
+                "ctx.gui success must be a literal with nonempty entity and fields",
+            ))
         values = keywords.get("values")
         if method == "write" and (
             values is None
@@ -374,6 +393,14 @@ class _SafetyVisitor(ast.NodeVisitor):
                 "WRITE_VALUES_REQUIRED",
                 "ctx.write requires nonempty business values",
             ))
+
+def _literal_value(node: ast.AST | None) -> Any:
+    if node is None:
+        return None
+    try:
+        return ast.literal_eval(node)
+    except (TypeError, ValueError, SyntaxError):
+        return None
 
 
 def _business_identity_break_diagnostics(
@@ -647,7 +674,11 @@ def _semantic_key(value: str) -> str:
 
 
 def _literal_fields(node: ast.Call) -> list[str] | None:
-    fields_node = _call_argument(node, "fields", 1)
+    fields_node = _call_argument(
+        node,
+        "fields",
+        2 if _ctx_method(node) in {"query", "read"} else 1,
+    )
     if not isinstance(fields_node, (ast.List, ast.Tuple)):
         return None
     fields = [
@@ -765,14 +796,14 @@ def build_probe_fixture(source: str) -> FixtureSpec:
         names = {
             value
             for argument in (
-                _call_argument(call, "entity", 0),
-                _call_argument(call, "fallback", 4),
+                _call_argument(call, "entity", 1),
+                _call_argument(call, "fallback", 5),
             )
             for value in _literal_strings(argument)
         }
         if fields is None or not names:
             continue
-        filters = _literal_mapping(_call_argument(call, "filters", 2)) or {}
+        filters = _literal_mapping(_call_argument(call, "filters", 3)) or {}
         rows = [
             {
                 **{field: probe_value(field, index) for field in fields},
@@ -843,8 +874,8 @@ def validate_fixture_contract(
             aliases = {
                 _semantic_key(value)
                 for argument in (
-                    _call_argument(node, "entity", 0),
-                    _call_argument(node, "fallback", 4),
+                    _call_argument(node, "entity", 1),
+                    _call_argument(node, "fallback", 5),
                 )
                 for value in _literal_strings(argument)
             }
@@ -1177,6 +1208,8 @@ class _FixtureContext:
 
     def query(
         self,
+        state: UIStateHandle,
+        *,
         entity: str,
         fields: list[str],
         filters: dict[str, Any] | None = None,
@@ -1184,6 +1217,7 @@ class _FixtureContext:
         fallback: str | None = None,
         coverage: str = "complete",
     ) -> list[dict[str, Any]]:
+        require_ui_state(state, entity=entity, fields=fields)
         candidates = [
             _lookup_rows(self.fixture.lookups, value)
             for value in (entity, fallback or "")
@@ -1238,6 +1272,7 @@ class _FixtureContext:
             (entity,),
             {
                 "fields": list(fields),
+                "ui_state": state.token,
                 "filters": copy.deepcopy(requested_filters),
                 "field": field,
                 "fallback": fallback,
@@ -1247,7 +1282,14 @@ class _FixtureContext:
         ))
         return projected
 
-    def read(self, target: Any = None, fields: list[str] | None = None) -> dict[str, Any]:
+    def read(
+        self,
+        state: UIStateHandle,
+        *,
+        target: Any = None,
+        fields: list[str] | None = None,
+    ) -> dict[str, Any]:
+        require_ui_state(state)
         if fields is None:
             raise TypeError("ctx.read requires fields")
         actual_target = self.current_target if target is None else target
@@ -1255,12 +1297,17 @@ class _FixtureContext:
         key = self.read_aliases.get(key, key)
         if key not in self.state:
             raise KeyError(f"no fixture read state for target {key!r}")
-        state = self.state[key]
-        missing = [name for name in fields if not _field_value(state, name)[0]]
+        record = self.state[key]
+        missing = [name for name in fields if not _field_value(record, name)[0]]
         if missing:
             raise KeyError(f"fixture target {key!r} has no fields {missing}")
-        result = {name: _field_value(state, name)[1] for name in fields}
-        self.trace.append(TraceEvent("read", (actual_target,), {"fields": list(fields)}, result))
+        result = {name: _field_value(record, name)[1] for name in fields}
+        self.trace.append(TraceEvent(
+            "read",
+            (actual_target,),
+            {"fields": list(fields), "ui_state": state.token},
+            result,
+        ))
         return result
 
     def _state_key_for_input(self, value: Any) -> str | None:
@@ -1299,11 +1346,26 @@ class _FixtureContext:
 
     def gui(
         self,
-        task: str,
+        goal: str,
         *,
+        success: dict[str, Any],
         target: Any = None,
-    ) -> None:
-        self._world_task(task, target=target, values={})
+    ) -> UIStateHandle:
+        normalized = collection_postcondition(success)
+        if normalized is None:
+            raise ValueError("ctx.gui success is not a collection postcondition")
+        state = UIStateHandle(
+            token=f"fixture-ui:{len(self.trace) + 1}",
+            postcondition=normalized,
+        )
+        self._world_task(
+            goal,
+            target=target,
+            values={},
+            trace_extra={"success": success},
+            result=state,
+        )
+        return state
 
     def write(
         self,
@@ -1320,6 +1382,8 @@ class _FixtureContext:
         *,
         target: Any,
         values: dict[str, Any],
+        trace_extra: dict[str, Any] | None = None,
+        result: Any = None,
     ) -> None:
         inputs = {"target": copy.deepcopy(target)} if target is not None else {}
         desired_values = copy.deepcopy(values)
@@ -1357,9 +1421,10 @@ class _FixtureContext:
             (task,),
             {
                 "target": copy.deepcopy(inputs.get("target")),
+                **copy.deepcopy(trace_extra or {}),
                 "values": desired_values,
             },
-            None,
+            result,
         ))
 
     def command(self, capability: str, **kwargs: Any) -> Any:

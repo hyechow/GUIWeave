@@ -318,14 +318,14 @@ Rule 错选成 Catalog Price Rule。这类错误不是代码语法问题，而�
 当前价格参与新价格计算，因此必须显式进入 Program：
 
 ```python
-state = ctx.read(product, fields=["price"])
-new_price = round(state["price"] * 0.8, 2)
-assert new_price < state["price"], "discount must reduce the price"
+detail = ctx.read(products_state, target=product, fields=["price"])
+new_price = round(detail["price"] * 0.8, 2)
+assert new_price < detail["price"], "discount must reduce the price"
 
-ctx.interact(
+ctx.write(
     "更新商品价格",
     target=product,
-    inputs={"price": new_price},
+    values={"price": new_price},
 )
 ```
 

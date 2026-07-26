@@ -122,6 +122,13 @@ def _contract_lines(contract: StatementContract) -> list[str]:
     if contract.inputs:
         payload = json.dumps(contract.inputs, ensure_ascii=False, default=str)
         lines.append(f"本次调用 inputs：{payload[:4000]}")
+    if contract.interaction_intent is not None:
+        payload = json.dumps(
+            contract.interaction_intent.model_dump(mode="json"),
+            ensure_ascii=False,
+            default=str,
+        )
+        lines.append(f"interaction_intent：{payload[:4000]}")
     if contract.persistence:
         lines.append(f"persistence：{contract.persistence}")
     if contract.required_values:
@@ -135,13 +142,21 @@ def _contract_lines(contract: StatementContract) -> list[str]:
 
 def _contract_requirements(contract: StatementContract) -> list[str]:
     requirements: list[str] = []
-    if isinstance(contract.inputs.get("lookup_request"), dict):
-        request = contract.inputs["lookup_request"]
+    intent = contract.interaction_intent
+    if intent is not None:
+        allowed = (
+            "navigation/authentication/presentation/viewport"
+            if intent.phase == "reach"
+            else "query_control/presentation/viewport"
+        )
+        proof = (
+            f"唯一集合 entity={intent.entity!r} 覆盖 fields={intent.required_fields!r}"
+            if intent.phase != "constrain"
+            else f"完整 applied_filter_state 精确等于 {intent.predicates!r}"
+        )
         requirements.append(
-            "这是只读 lookup：只可在当前业务上下文内定位结构集合，允许局部搜索、"
-            "筛选、列展示和视口移动；禁止登录、跨业务导航或业务写入。终态必须"
-            f"精确应用 filters={request.get('filters') or {}}，且集合 headers 包含"
-            f" fields={request.get('required_fields') or []}，否则不可 complete。"
+            f"这是 {intent.phase}_collection：仅允许 {allowed} 效应；"
+            f"只有结构证据证明 {proof} 时才可 complete。"
         )
     if contract.persistence == "explicit_commit":
         requirements.append(

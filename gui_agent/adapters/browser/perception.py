@@ -17,6 +17,7 @@ import os
 from pathlib import Path
 from typing import Optional
 
+from gui_agent.adapters.browser.filter_state import typed_applied_filter_state
 from gui_agent.core.schemas import Observation
 
 ROOT = Path(__file__).resolve().parents[3]
@@ -160,6 +161,10 @@ class BrowserPerception:
             applied_filters, applied_filter_meta = client.read_applied_filter_state()
         elif client is not None and hasattr(client, "read_applied_filters"):
             applied_filters = client.read_applied_filters()
+        applied_filter_state = typed_applied_filter_state(
+            applied_filters,
+            applied_filter_meta,
+        )
         return Observation(
             png_bytes=png_bytes, source="browser", loading=loading,
             url=url or None, title=title or None, dom_state=dom_state,
@@ -171,5 +176,6 @@ class BrowserPerception:
             viewport=viewport or None,
             semantic_tree=semantic_tree,
             applied_filters=applied_filters or None,
+            applied_filter_state=applied_filter_state,
             applied_filter_meta=applied_filter_meta or None,
         )

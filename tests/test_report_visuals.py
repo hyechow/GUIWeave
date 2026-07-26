@@ -133,7 +133,14 @@ def test_coding_report_uses_standard_cards_with_data_strip():
             "program": {
                 "kind": "coding",
                 "goal": "open orders",
-                "source": 'def run(ctx):\n    ctx.gui("go_to", target="Orders")\n',
+                "source": (
+                    'def run(ctx):\n    state = ctx.gui("Open orders", '
+                    'success={"entity": "Orders", '
+                    '"fields": ["Status", "Purchase Date"]})\n'
+                    '    return ctx.query(state, entity="Orders", '
+                    'fields=["Status", "Purchase Date"], '
+                    'filters={"Status": "Complete"})\n'
+                ),
             },
             "report_run_log": [{
                 "node_id": "c1",
@@ -141,7 +148,14 @@ def test_coding_report_uses_standard_cards_with_data_strip():
                 "name": "go_to",
                 "instance_id": "i1:c1",
                 "coding_op": "gui",
-                "coding_payload": {"task": "go_to", "target": "Orders List"},
+                "coding_payload": {
+                    "goal": "Open orders",
+                    "success": {
+                        "entity": "Orders",
+                        "fields": ["Status", "Purchase Date"],
+                    },
+                    "produced_state": "ui:1",
+                },
                 "result": {
                     "phase": "completed",
                     "summary": "arrived at Orders",
@@ -155,6 +169,7 @@ def test_coding_report_uses_standard_cards_with_data_strip():
                 "instance_id": "i2:c2",
                 "coding_op": "lookup",
                 "coding_payload": {
+                    "state": "ui:1",
                     "entity": "Orders",
                     "filters": {"Status": "Complete"},
                     "required_fields": ["Status", "Purchase Date"],
@@ -252,6 +267,8 @@ def test_coding_report_uses_standard_cards_with_data_strip():
     assert 'href="#ms-c1"' in html
     assert "coding-stmt-data" in html
     assert "ctx.gui" in html
+    assert "success=collection" in html
+    assert "ui:1" in html
     assert "Orders List" in html or "Orders" in html
     assert "Status" in html  # filters / required_fields
     assert "arrived at Orders" in html
@@ -266,6 +283,8 @@ def test_coding_report_uses_standard_cards_with_data_strip():
     assert "coding-call-sc" in c1
     assert "验收：" not in c1
     assert "ctx.gui" in c1
+    assert "success=collection" in c1
+    assert "ui:1" in c1
     assert "Orders List" in c1 or "Orders" in c1
     # Data strip sits inside the standard card before gallery and includes full call params.
     assert "coding-stmt-data" in c1
@@ -279,12 +298,13 @@ def test_coding_report_uses_standard_cards_with_data_strip():
     # query macro expansion: top verdict + folded plan details + step args.
     c2 = html.split('id="ms-c2"', 1)[1].split('class="gallery"', 1)[0] if 'class="gallery"' in html.split('id="ms-c2"', 1)[1] else html.split('id="ms-c2"', 1)[1][:5000]
     assert "coding-macro-verdict" in c2
-    assert "步骤 1/2" in c2 or "1/2" in c2
+    assert "步骤 1/3" in c2 or "1/3" in c2
     assert "lookup" in c2
-    assert "acquire" in c2  # pending / 未执行
+    assert "constrain" in c2  # pending / 未执行
+    assert "acquire" in c2
     assert "本步参数" in c2
     # Header: one combined badge, call signature only (no duplicate plan subtitle line).
-    assert "ctx.query 1/2" in c2 or "ctx.query 1/2 · lookup" in c2
+    assert "ctx.query 1/3" in c2 or "ctx.query 1/3 · lookup" in c2
     assert c2.count("coding-plan-sc") == 0
 
 

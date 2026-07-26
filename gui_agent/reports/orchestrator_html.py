@@ -502,45 +502,79 @@ def _flatten_coding_inputs(
 
 
 def _coding_call_label(op: str, payload: dict | None = None) -> str:
-    """Short human label: ctx.gui("go_to") / ctx.lookup(Orders, …)."""
+    """Short human label for one translated ctx.* invocation."""
     payload = payload if isinstance(payload, dict) else {}
     if not op:
         return "ctx.?"
     if op == "gui":
-        task = payload.get("task") or payload.get("goal") or ""
+        goal = payload.get("goal") or payload.get("task") or ""
+        success = payload.get("success")
         target = payload.get("target")
-        if task and target is not None:
-            return f'ctx.gui({task!r}, target={target!r})'
-        if task:
-            return f"ctx.gui({task!r})"
+        success_text = ""
+        if (
+            isinstance(success, dict)
+            and success.get("entity")
+        ):
+            entity = success.get("entity")
+            fields = success.get("fields") or []
+            success_text = (
+                f", success=collection({entity!r}, "
+                f"fields={fields!r})"
+            )
+        target_text = f", target={target!r}" if target is not None else ""
+        result_text = (
+            f" → {payload.get('produced_state')}"
+            if payload.get("produced_state")
+            else ""
+        )
+        if goal:
+            return (
+                f"ctx.gui({goal!r}{success_text}{target_text})"
+                f"{result_text}"
+            )
         return "ctx.gui(…)"
     if op == "write":
         task = payload.get("task") or ""
         return f"ctx.write({task!r}, …)" if task else "ctx.write(…)"
     if op == "lookup":
+        state = payload.get("state")
         entity = payload.get("entity") or "?"
         filters = payload.get("filters") or {}
         fields = payload.get("required_fields") or payload.get("fields") or []
-        bits = [f"entity={entity!r}"]
+        bits = [
+            *([f"state={state}"] if state else []),
+            f"entity={entity!r}",
+        ]
         if filters:
             bits.append(f"filters={filters!r}")
         if fields:
             bits.append(f"fields={list(fields)[:6]!r}")
         return f"ctx.lookup({', '.join(bits)})"
     if op == "constrain":
+        state = payload.get("state")
         entity = payload.get("entity") or "?"
         filters = payload.get("filters") or {}
-        return f"ctx.constrain({entity!r}, {filters!r})"
+        state_text = f"{state}, " if state else ""
+        return f"ctx.constrain({state_text}{entity!r}, {filters!r})"
     if op == "acquire":
+        state = payload.get("state")
         entity = payload.get("entity") or "?"
         fields = payload.get("fields") or []
-        return f"ctx.acquire({entity!r}, fields={list(fields)[:6]!r})"
+        state_text = f"{state}, " if state else ""
+        return (
+            f"ctx.acquire({state_text}{entity!r}, "
+            f"fields={list(fields)[:6]!r})"
+        )
     if op == "read":
+        state = payload.get("state")
         fields = payload.get("fields") or []
-        return f"ctx.read(fields={list(fields)[:8]!r})"
+        state_text = f"{state}, " if state else ""
+        return f"ctx.read({state_text}fields={list(fields)[:8]!r})"
     if op == "focus":
+        state = payload.get("state")
         fields = payload.get("fields") or []
-        return f"ctx.focus(fields={list(fields)[:6]!r})"
+        state_text = f"{state}, " if state else ""
+        return f"ctx.focus({state_text}fields={list(fields)[:6]!r})"
     if op == "command":
         cap = payload.get("capability") or "?"
         return f"ctx.command({cap!r})"
@@ -661,7 +695,7 @@ def _coding_runtime_calls(orchestrator: dict) -> list[dict]:
 def _designed_plan_steps(plan_op: str, matched: list[dict]) -> int:
     """How many internal statements a plan-level API is designed to emit."""
     if plan_op == "query":
-        return 2
+        return 3
     if plan_op == "read":
         if any(str(c.get("op") or "") == "focus" for c in matched):
             return 2
@@ -676,8 +710,10 @@ def _apply_plan_expansion_to_group(plan_op: str, matched: list[dict]) -> None:
     designed = _designed_plan_steps(plan_op, matched)
     siblings = [int(c.get("ordinal") or 0) for c in matched]
     pending_ops: list[str] = []
-    if plan_op == "query" and not any(c.get("op") == "acquire" for c in matched):
-        pending_ops.append("acquire")
+    if plan_op == "query":
+        for pending_op in ("lookup", "constrain", "acquire"):
+            if not any(c.get("op") == pending_op for c in matched):
+                pending_ops.append(pending_op)
     if plan_op == "read" and designed == 2 and not any(c.get("op") == "read" for c in matched):
         pending_ops.append("read")
     for index, call in enumerate(matched, 1):
@@ -712,7 +748,7 @@ def _match_runtime_to_plan_sites(
             # gui/write/command: exactly one
             if plan_op in {"gui", "write", "command", "lookup", "constrain", "acquire", "focus"}:
                 break
-            # query: stop after acquire if present, else keep taking lookup/constrain
+            # query: stop after acquire if present, else keep taking its ordered phases
             if plan_op == "query" and matched[-1].get("op") == "acquire":
                 break
             # read: stop after read
@@ -744,7 +780,7 @@ def _enrich_runtime_plan_expansion(
                 plan = str(call.get("plan_op") or "query")
             _apply_plan_expansion_to_group(plan or "gui", [call])
     else:
-        # No source: group by recorded plan tags, else lookup(+acquire) as query.
+        # No source: group by recorded plan tags, else query phases by order.
         i = 0
         while i < len(runtime_calls):
             call = runtime_calls[i]
@@ -761,20 +797,21 @@ def _enrich_runtime_plan_expansion(
                 _apply_plan_expansion_to_group(plan, group)
                 i = j
                 continue
-            if (
-                call.get("op") == "lookup"
-                and i + 1 < len(runtime_calls)
-                and runtime_calls[i + 1].get("op") == "acquire"
-            ):
-                _apply_plan_expansion_to_group(
-                    "query", [call, runtime_calls[i + 1]],
-                )
-                i += 2
-                continue
             if call.get("op") == "lookup":
-                _apply_plan_expansion_to_group(
-                    str(call.get("plan_op") or "query"), [call],
-                )
+                group = [call]
+                j = i + 1
+                while (
+                    j < len(runtime_calls)
+                    and runtime_calls[j].get("op") in {"constrain", "acquire"}
+                ):
+                    group.append(runtime_calls[j])
+                    if runtime_calls[j].get("op") == "acquire":
+                        j += 1
+                        break
+                    j += 1
+                _apply_plan_expansion_to_group("query", group)
+                i = j
+                continue
             else:
                 _apply_plan_expansion_to_group(
                     str(call.get("plan_op") or call.get("op") or "gui"), [call],
@@ -804,7 +841,7 @@ def _enrich_runtime_plan_expansion(
 
 
 def _plan_step_label(plan_op: str, step_op: str, step: int, steps: int) -> str:
-    """Human label: ctx.query · 步骤 1/2 · lookup"""
+    """Human label: ctx.query · 步骤 1/3 · lookup"""
     plan_op = plan_op or step_op or "?"
     step_op = step_op or "?"
     if steps > 1 or plan_op != step_op:
@@ -906,7 +943,7 @@ def _render_annotated_coding_source(source: str, orchestrator: dict) -> str:
     lines = source.splitlines()
     plan_sites = _coding_plan_call_sites(source)
     runtime_calls = _coding_runtime_calls(orchestrator)
-    # Enrich plan expansion (query→lookup+acquire) before lining up to source.
+    # Enrich plan expansion (query→lookup+constrain+acquire) before source alignment.
     _enrich_runtime_plan_expansion(runtime_calls, source=source)
     by_line, leftovers = _match_runtime_to_plan_sites(
         plan_sites, list(runtime_calls),
@@ -941,7 +978,8 @@ def _render_annotated_coding_source(source: str, orchestrator: dict) -> str:
         )
     note = (
         '<div class="coding-src-legend">'
-        '行尾：计划 API 展开的 Statement 步骤（如 query→lookup+acquire），点击 #N 跳转卡片'
+        '行尾：计划 API 展开的 Statement 步骤（如 query→lookup+constrain+acquire），'
+        '点击 #N 跳转卡片'
         '</div>'
     )
     return (
