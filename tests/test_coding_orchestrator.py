@@ -214,15 +214,13 @@ def run(ctx):
     assert "collection state does not satisfy ctx.query" in mismatched.error
 
 
-def test_coding_runtime_strips_program_kickback_from_statement_failure() -> None:
-    outcome = CodingProgramRuntime.adapt_outcome(StatementOutcome.infeasible(
+def test_coding_runtime_normalizes_executor_terminal_phase() -> None:
+    outcome = CodingProgramRuntime.adapt_outcome(StatementOutcome.exhausted(
         "current call cannot establish its postcondition",
-        kickback="rewrite the surrounding program",
         evidence=["frame:1"],
     ))
 
     assert outcome.phase == "failed"
-    assert outcome.kickback is None
     assert outcome.evidence == ["frame:1"]
 
 

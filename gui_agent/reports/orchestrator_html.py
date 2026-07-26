@@ -4,38 +4,12 @@ from __future__ import annotations
 
 import ast
 import json
-import re
 
 from gui_agent.core.config import pricing_currency
 
 from .html_utils import _safe
 from .metrics import _fmt_tokens, _sum_tokens, _token_cost
 from .prompt_html import _render_module_io_html
-
-_PROG_KIND_BADGE = {
-    "interact": "statement-badge-action",
-    "acquire": "statement-badge-collection",
-    "read": "statement-badge-collection",
-    "source_check": "statement-badge-collection",
-    "command": "statement-badge-navigation",
-}
-
-def _program_run_items(stmts: list) -> list[dict]:
-    """Flatten run statements from a DSL program, preserving source order."""
-    out: list[dict] = []
-    for s in stmts or []:
-        if not isinstance(s, dict):
-            continue
-        op = s.get("op", "")
-        if op in {"interact", "acquire", "read", "source_check", "command"}:
-            out.append(s)
-        elif op == "if":
-            out.extend(_program_run_items(s.get("then", [])))
-            out.extend(_program_run_items(s.get("otherwise", [])))
-        elif op == "foreach":
-            out.extend(_program_run_items(s.get("body", [])))
-    return out
-
 
 def _field_summary(fields: list[str]) -> str:
     shown = ", ".join(fields[:12])
@@ -80,7 +54,6 @@ def _render_non_ui_detail(non_ui: dict) -> str:
     mode = {
         "acquire": "Acquire 集合采集",
         "read": "Read 观察绑定",
-        "source_check": "SourceCheck 字段检查",
         "command": "确定性命令",
     }.get(kind, "非交互")
     outputs = non_ui.get("outputs") if isinstance(non_ui.get("outputs"), dict) else {}
@@ -163,7 +136,7 @@ def _estimate_orchestrator_token_usage(reports: list[dict]) -> dict:
     output_tokens = _estimate_tokens(output_chars)
     if not input_tokens and not output_tokens:
         return {}
-    return {"orchestrator.decompose": {"input": input_tokens, "output": output_tokens}}
+    return {"orchestrator.coding": {"input": input_tokens, "output": output_tokens}}
 
 
 def _count_prompt_calls(reports: list[dict]) -> int:
@@ -176,238 +149,7 @@ def _estimate_tokens(chars: int) -> int:
     return max(1, (chars + 3) // 4)
 
 
-def _render_program_card(
-    orchestrator: dict,
-    program: dict,
-    h2: str,
-    name: str,
-    *,
-    directive: str = "",
-    metrics_html: str = "",
-    extras_html: str = "",
-    h2_style: str = "",
-    embedded: bool = False,
-) -> str:
-    """Render one DSL program using the final report-only Program result projection."""
-
-    # var -> captured values. This projection is written once at Program finish; it is never a
-    # live runtime/checkpoint authority.
-    env: dict[str, dict] = {}
-    for r in (orchestrator.get("report_run_log") or []):
-        result = r.get("result") or {}
-        outputs = result.get("outputs") or {}
-        if r.get("var") and outputs:
-            env[r["var"]] = outputs
-
-    counter = [0]
-
-    def _result_html(s: dict) -> str:
-        var = s.get("bind")
-        returned = list((s.get("returns") or {}).keys())
-        if not returned:
-            return ""
-        values = env.get(var or "") or {}
-        shown = "、".join(
-            (
-                f"{_safe(field)}={_safe(_report_value(values[field], sample_items=0, limit=240))}"
-                if values.get(field) is not None else _safe(field)
-            )
-            for field in returned
-        )
-        return f'<span class="prog-ret">→ {_safe("result" if len(returned) == 1 else "outputs")} {shown}</span>'
-
-    def _run_row(s: dict) -> str:
-        counter[0] += 1
-        kind = s.get("op", "interact")
-        badge = _PROG_KIND_BADGE.get(kind, "statement-badge-default")
-        name = s.get("goal") or s.get("capability", "")
-        if not name and kind == "read":
-            name = "、".join(
-                str(binding.get("name") or output)
-                for output, binding in (s.get("reads") or {}).items()
-            )
-        if not name and kind == "source_check":
-            name = "、".join(str(field) for field in s.get("required_fields") or [])
-        return (
-            f'<div class="prog-step">'
-            f'<span class="prog-n">{counter[0]}</span>'
-            f'<span class="prog-name">{_safe(name)}</span>'
-            f'<span class="statement-badge {badge}">{_safe(kind)}</span>{_result_html(s)}'
-            f'</div>'
-        )
-
-    def _source_macro(items: list, index: int) -> tuple[dict, dict, dict, dict] | None:
-        nodes = items[index:index + 4]
-        if len(nodes) != 4 or not all(isinstance(node, dict) for node in nodes):
-            return None
-        initial, branch, final, acquire = nodes
-        if not (
-            [node.get("op") for node in nodes]
-            == ["source_check", "if", "source_check", "acquire"]
-            and str(initial.get("bind") or "").startswith("__source_")
-            and str(final.get("bind") or "").startswith("__source_")
-            and (acquire.get("source_check") or {}).get("var") == final.get("bind")
-        ):
-            return None
-        return initial, branch, final, acquire
-
-    def _availability(s: dict) -> tuple[object, str]:
-        values = env.get(str(s.get("bind") or "")) or {}
-        available = values.get("available")
-        return available, {True: "可读", False: "不可读"}.get(available, "未运行")
-
-    def _acquire_macro_row(
-        macro: tuple[dict, dict, dict, dict], consumer: dict | None,
-    ) -> str:
-        initial, _, final, acquire = macro
-        counter[0] += 1
-        fields = list(acquire.get("required_fields") or initial.get("required_fields") or [])
-        field_html = (
-            f'<span class="compat-chip">字段 · {_safe("、".join(map(str, fields)))}</span>'
-            if fields else ""
-        )
-        returns = acquire.get("returns") or {}
-        coverage = next(
-            (spec.get("coverage") for spec in returns.values() if isinstance(spec, dict)),
-            "complete",
-        )
-        coverage_label = "完整集合" if coverage == "complete" else "尽力采集"
-        goal = (consumer or {}).get("goal") or acquire.get("goal") or "当前业务集合"
-        initial_value, initial_status = _availability(initial)
-        _, final_status = _availability(final)
-        repair_status = {True: "已跳过", False: "已执行"}.get(initial_value, "按需执行")
-        return (
-            f'<div class="nonui-detail">'
-            f'<div class="prog-step">'
-            f'<span class="prog-n">{counter[0]}</span>'
-            f'<span class="prog-name">采集{_safe(coverage_label)}：{_safe(goal)}</span>'
-            f'<span class="statement-badge statement-badge-collection">acquire</span>'
-            f'{_result_html(acquire)}'
-            f'</div>'
-            f'<div class="compat-row">{field_html}</div>'
-            f'<details class="prog-compiler-detail">'
-            f'<summary>Compiler 自动步骤 · 来源检查 + 必要时修复</summary>'
-            f'<div><b>初检</b> · {_safe(initial_status)}</div>'
-            f'<div><b>修复</b> · {_safe(repair_status)}</div>'
-            f'<div><b>复检</b> · {_safe(final_status)}</div>'
-            f'</details>'
-            f'</div>'
-        )
-
-    def _walk(items: list) -> list[str]:
-        out: list[str] = []
-        index = 0
-        while index < len(items):
-            macro = _source_macro(items, index)
-            if macro is not None:
-                consumer = items[index + 4] if index + 4 < len(items) else None
-                out.append(_acquire_macro_row(
-                    macro,
-                    consumer if isinstance(consumer, dict) and consumer.get("op") == "read" else None,
-                ))
-                index += 4
-                continue
-            s = items[index]
-            op = s.get("op", "")
-            if op in {"interact", "acquire", "read", "source_check", "command"}:
-                out.append(_run_row(s))
-            elif op == "if":
-                cond = s.get("cond", {})
-                ref = cond.get("ref") or {}
-                path = json.dumps(ref.get("path") or [], ensure_ascii=False)
-                c = (f'<span class="prog-condvar">{_safe(ref.get("var",""))}{_safe(path)}</span>'
-                     f' {_safe(cond.get("cmp","=="))} '
-                     f'<span class="prog-condval">{_safe(cond.get("value",""))}</span>')
-                then_html = "".join(_walk(s.get("then", []))) or '<div class="prog-step prog-empty">—</div>'
-                else_html = "".join(_walk(s.get("otherwise", [])))
-                # empty else (no otherwise statements) → omit the whole else block, don't show "else : —"
-                else_block = (
-                    f'<div class="prog-cond"><span class="prog-kw">else :</span></div>'
-                    f'<div class="prog-branch prog-branch-else">{else_html}</div>'
-                ) if else_html else ""
-                out.append(
-                    f'<div class="prog-if">'
-                    f'<div class="prog-cond"><span class="prog-kw">if</span> {c} <span class="prog-kw">:</span></div>'
-                    f'<div class="prog-branch">{then_html}</div>'
-                    f'{else_block}'
-                    f'</div>'
-                )
-            elif op == "foreach":
-                items = s.get("items") or {}
-                over = f"{items.get('var', '')}{items.get('path', [])}"
-                into = s.get("into") or ""
-                values = env.get(into, []) if into else []
-                n = len(values) if isinstance(values, list) else 0
-                collected = f'<span class="prog-ret">→ 采集 {n} 行</span>' if n else ""
-                body_html = "".join(_walk(s.get("body", []))) or '<div class="prog-step prog-empty">—</div>'
-                head = (
-                    f'<span class="prog-kw">foreach</span> '
-                    f'<span class="prog-condvar">{_safe(s.get("item","item"))}</span> '
-                    f'<span class="prog-kw">in</span> '
-                    f'<span class="prog-condvar">{_safe(over)}</span> '
-                    f'<span class="prog-kw">→</span> '
-                    f'<span class="prog-condval">{_safe(into)}</span>{collected}'
-                )
-                out.append(
-                    f'<div class="prog-if">'
-                    f'<div class="prog-cond">{head} <span class="prog-kw">:</span></div>'
-                    f'<div class="prog-branch">{body_html}</div>'
-                    f'</div>'
-                )
-            elif op == "finish":
-                message = str(s.get("message") or "").strip()
-                output_names = list((s.get("outputs") or {}).keys())
-                conclusion = (
-                    message
-                    or (f'完成并返回 {"、".join(map(str, output_names))}' if output_names else "完成任务")
-                )
-                out.append(f'<div class="prog-finish">↩ {_safe(conclusion)}</div>')
-            index += 1
-        return out
-
-    counter[0] = 0
-    card_body = "".join(_walk(program.get("statements") or []))
-    g = _safe(program.get("goal") or "")
-    input_html = (
-        f'<div class="prog-input"><span class="prog-input-label">输入</span>{g}'
-        f'<span class="prog-input-arrow">↓ 执行计划</span></div>'
-    ) if g else ""
-    # A re-decompose card leads with WHY it fired (the Feasibility kick-back directive).
-    directive_html = (
-        '<div class="prog-input" style="border-left:3px solid #e0a020;background:#fff8e8">'
-        '<span class="prog-input-label">重编排触发</span>'
-        f'<span style="color:#a05a00">⚠️ 上层判 statement 不可行 → 踢回指令：{_safe(directive)}</span>'
-        '</div>'
-    ) if directive else ""
-    if embedded:
-        # Integrated INTO a statement's 验收结果 — a light sub-block (the re-decompose outcome),
-        # NOT an independent #vN statement card. The new plan itself also runs as the subsequent
-        # executed statements; this block makes the trigger→new-plan explicit in the 验收 area.
-        return (
-            '<div style="margin-top:4px">'
-            '<div style="display:flex;align-items:center;gap:8px;padding:2px 0 6px 0">'
-            f'<span style="color:#dc2626;font-weight:800;font-size:14px">↻ {_safe(h2)}</span>'
-            f'<span style="color:#991b1b;font-weight:700;font-size:13px">{_safe(name)}</span>'
-            f'<span style="margin-left:auto">{metrics_html}</span></div>'
-            f'<div class="prog-body">{directive_html}{input_html}{card_body}{extras_html}</div>'
-            '</div>'
-        )
-    anchor = h2.replace("#", "").replace("↻", "r")
-    h2_open = f'<h2 style="{h2_style}">' if h2_style else "<h2>"
-    return (
-        f'<div class="statement prog-section" id="ms-orchestrate-{anchor}">'
-        f'<div class="statement-header">'
-        f'{h2_open}{_safe(h2)}</h2>'
-        f'<span class="statement-name">{_safe(name)}</span>'
-        f'<span class="statement-badge statement-badge-default">program</span>'
-        f'{metrics_html}'
-        f'</div>'
-        f'<div class="prog-body">{directive_html}{input_html}{card_body}{extras_html}</div>'
-        f'</div>'
-    )
-
-
-def is_coding_orchestrator(orchestrator: dict | None) -> bool:
+def has_reviewed_python_program(orchestrator: dict | None) -> bool:
     if not orchestrator:
         return False
     prog = orchestrator.get("program") or {}
@@ -426,19 +168,13 @@ def _coding_statement_id(record: dict) -> str:
 
 
 def _render_program_section(orchestrator: dict | None) -> str:
-    """Render the original DSL or coding plan before its executed statements."""
+    """Render the reviewed Python plan before its executed statements."""
     if not orchestrator:
         return ""
     prog0 = orchestrator.get("program") or {}
-    if is_coding_orchestrator(orchestrator):
-        return _render_coding_program_shell(orchestrator, prog0)
-    if not prog0.get("statements"):
+    if not has_reviewed_python_program(orchestrator):
         return ""
-    return _render_program_card(
-        orchestrator, prog0, "#0", "任务编排 · 业务步骤与控制流",
-        metrics_html=_render_orchestrator_metrics(orchestrator),
-        extras_html=_render_orchestrator_context_reports(orchestrator),
-    )
+    return _render_coding_program_shell(orchestrator, prog0)
 
 
 def _infer_coding_op(
@@ -446,9 +182,8 @@ def _infer_coding_op(
     coding_op: str = "",
     executor: str = "",
     inputs: dict | None = None,
-    name: str = "",
 ) -> str:
-    """Resolve ctx.* op for a statement (new logs: coding_op; old logs: infer)."""
+    """Resolve ctx.* op from structured runtime fields."""
     if coding_op:
         return str(coding_op)
     inputs = inputs if isinstance(inputs, dict) else {}
@@ -465,19 +200,6 @@ def _infer_coding_op(
     if executor == "interact":
         if isinstance(inputs.get("values"), dict) and inputs.get("values"):
             return "write"
-        return "gui"
-    # Legacy report_run_log often omits executor/coding_op — recover from goal text.
-    lowered = name.lower()
-    if "resolve collection" in lowered or "locate collection" in lowered:
-        return "lookup"
-    if "materialize records" in lowered:
-        return "acquire"
-    if "narrow collection" in lowered or "filter" in lowered and "collection" in lowered:
-        return "constrain"
-    if name and executor:
-        return executor
-    if name and len(name) <= 48 and "\n" not in name:
-        # Short imperative labels like go_to / open_settings map to ctx.gui.
         return "gui"
     return executor or ""
 
@@ -652,29 +374,9 @@ def _coding_runtime_calls(orchestrator: dict) -> list[dict]:
             coding_op=str(entry.get("coding_op") or ""),
             executor=str(entry.get("executor") or ""),
             inputs=payload,
-            name=name,
         )
         if op == "gui" and not payload.get("task"):
             payload = {**payload, "task": name}
-        if op == "lookup" and not payload.get("entity") and "collection" in name:
-            m = re.search(r"collection '([^']+)'", name)
-            if m:
-                payload = {**payload, "entity": m.group(1)}
-            fm = re.search(r"filters=(\{.*?\})", name)
-            if fm:
-                try:
-                    payload = {**payload, "filters": ast.literal_eval(fm.group(1))}
-                except Exception:  # noqa: BLE001
-                    pass
-            rm = re.search(r"fields=(\[.*?\])", name)
-            if rm:
-                try:
-                    payload = {
-                        **payload,
-                        "required_fields": ast.literal_eval(rm.group(1)),
-                    }
-                except Exception:  # noqa: BLE001
-                    pass
         plan = str(entry.get("coding_plan") or "")
         plan_step = int(entry.get("coding_plan_step") or 0)
         plan_steps = int(entry.get("coding_plan_steps") or 0)
@@ -1251,7 +953,6 @@ def _build_statement_call_params(
         inputs=coding_payload or inputs or (
             call.get("inputs") if isinstance(call.get("inputs"), dict) else {}
         ),
-        name=name or str(call.get("goal") or ""),
     )
     flat = _flatten_coding_inputs(
         coding_op=op,
@@ -1544,29 +1245,3 @@ def _render_coding_data_panel(
             )
         return ""
     return f'<div class="coding-stmt-data">{"".join(sections)}</div>'
-
-
-def render_redecompose_card(orchestrator: dict | None, kickback_n) -> str:
-    """A timeline DIVIDER marking where a Feasibility kick-back re-decomposed the plan. The new
-    plan's steps are NOT listed here — they ARE the statements that FOLLOW this marker; the banner
-    just marks the transition (trigger + directive + model-call cost) so the subsequent statements
-    read as the v{N} plan, without duplicating them."""
-    if not orchestrator:
-        return ""
-    rd = next(
-        (r for r in (orchestrator.get("redecomposes") or []) if r.get("kickback_n") == kickback_n),
-        None,
-    )
-    if not rd or not (rd.get("program") or {}).get("statements"):
-        return ""
-    at = rd.get("at_turn")
-    # Render the replacement plan with the same semantic-node style as the #0 card (reuse
-    # _render_program_card), in a light embedded block — always visible, not folded.
-    return _render_program_card(
-        orchestrator, rd["program"], f"#v{kickback_n}",
-        f"重编排 · Re-decompose（T{at} 后 · Feasibility 踢回）",
-        directive=rd.get("directive") or "",
-        metrics_html=_render_orchestrator_metrics(rd),
-        extras_html=_render_orchestrator_context_reports(rd),  # 模型调用详情 (this re-decompose's LLM trace)
-        embedded=True,
-    )

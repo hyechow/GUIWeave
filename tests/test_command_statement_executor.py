@@ -84,4 +84,3 @@ def test_command_executor_fails_when_platform_lacks_capability(tmp_path):
     )
 
     assert outcome.phase == "failed"
-    assert not outcome.kickback

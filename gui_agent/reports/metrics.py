@@ -11,7 +11,9 @@ from gui_agent.core.config import model_price
 # _Timer module name → llm config key.
 _MODULE_CFG: dict[str, str] = {
     "transition": "supervisor",
-    "decompose": "supervisor.decompose", "orchestrator.decompose": "supervisor.decompose",
+    "orchestrator.coding": "orchestrator",
+    "orchestrator.coding_reviewed.generate": "orchestrator",
+    "orchestrator.coding_reviewed.review": "orchestrator",
     "action_policy": "action_policy",
 }
 

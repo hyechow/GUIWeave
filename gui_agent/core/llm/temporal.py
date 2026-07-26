@@ -2,7 +2,7 @@
 
 Replaces relative time expressions (上周, 本月, 昨天, etc.) with absolute
 ISO date ranges (YYYY-MM-DD至YYYY-MM-DD) using Python datetime arithmetic.
-No LLM involved — eliminates date calculation errors in the decomposer.
+No LLM involved — eliminates date calculation errors in orchestration.
 """
 
 from __future__ import annotations

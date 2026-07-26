@@ -67,7 +67,7 @@ PersistenceMode = Literal["immediate", "explicit_commit"]
 OutputType = Literal["text", "number", "boolean", "url", "record", "list[record]", "json"]
 Coverage = Literal["current_view", "complete", "best_effort"]
 CompletionStatus = Literal["confirmed", "accepted_unverified", "failed", "in_progress"]
-StatementPhase = Literal["completed", "failed", "exhausted", "infeasible", "interrupted"]
+StatementPhase = Literal["completed", "failed", "exhausted", "interrupted"]
 Verification = Literal["confirmed", "accepted_unverified"]
 BindingSource = Literal["visual", "structural"]
 BindingStatus = Literal["bound", "contradicted", "unresolved"]
@@ -493,7 +493,6 @@ class StatementOutcome(BaseModel):
     phase: StatementPhase
     summary: str
     verification: Optional[Verification] = None
-    kickback: Optional[str] = None
     outputs: dict[str, JsonValue] = Field(default_factory=dict)
     evidence: list[str] = Field(default_factory=list)
     observation: Observation | None = None
@@ -509,18 +508,8 @@ class StatementOutcome(BaseModel):
                 raise ValueError(
                     "completed StatementOutcome requires confirmed|accepted_unverified"
                 )
-            if self.kickback:
-                raise ValueError("completed StatementOutcome cannot carry kickback")
-        else:
-            if self.verification is not None:
-                raise ValueError(f"{self.phase} StatementOutcome cannot carry verification")
-            if self.phase == "infeasible":
-                if not (self.kickback and self.kickback.strip()):
-                    raise ValueError("infeasible StatementOutcome requires kickback")
-            elif self.kickback:
-                raise ValueError(
-                    f"{self.phase} StatementOutcome cannot carry kickback"
-                )
+        elif self.verification is not None:
+            raise ValueError(f"{self.phase} StatementOutcome cannot carry verification")
         return self
 
     @classmethod
@@ -559,22 +548,6 @@ class StatementOutcome(BaseModel):
     @classmethod
     def interrupted(cls, summary: str, **details: Any) -> "StatementOutcome":
         return cls._failure("interrupted", summary, details)
-
-    @classmethod
-    def infeasible(
-        cls,
-        summary: str,
-        *,
-        kickback: str,
-        **details: Any,
-    ) -> "StatementOutcome":
-        details.setdefault("failure_evidence", summary)
-        return cls(
-            phase="infeasible",
-            summary=summary,
-            kickback=kickback,
-            **details,
-        )
 
     @property
     def is_completed(self) -> bool:
@@ -722,9 +695,7 @@ class StatementInfo(BaseModel):
     model_config = ConfigDict(frozen=True, extra="forbid")
 
     id: str = ""
-    executor: Literal[
-        "interact", "acquire", "read", "source_check", "compute", "command"
-    ] = "interact"
+    executor: Literal["interact", "acquire", "read", "command"] = "interact"
     goal: str = ""
     success: str = ""
     interaction_intent: InteractionIntent = None
@@ -1180,8 +1151,10 @@ class PolicyContext(BaseModel):
     )
     orchestrator: Optional[dict] = Field(
         default=None,
-        description="语义 Program 运行信息：{program, run_log, context_reports, token_usage}。"
-                    "decompose 是独立阶段，报告据此渲染单独的「分解」行。",
+        description=(
+            "Reviewed-Python Program 运行信息："
+            "{program, report_run_log, context_reports, token_usage}。"
+        ),
     )
 
 

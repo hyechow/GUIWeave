@@ -15,8 +15,6 @@ _ACTION_SYSTEM = load_prompt_text("task.output.action_summary")
 
 _CHAT_SYSTEM = load_prompt_text("task.output.chat_reply")
 
-_ORCH_SYSTEM = load_prompt_text("task.output.orchestration_reply")
-
 
 def generate_reply(
     goal: str,
@@ -48,52 +46,6 @@ def generate_reply(
         messages = _action_messages(goal, result or {})
 
     return _message_text(llm.invoke(messages).content).strip()
-
-
-def compose_orchestration_reply(
-    goal: str,
-    run_log: list[dict],
-    *,
-    current: str = "",
-    terminal: str = "",
-) -> str:
-    """Comprehensive final reply for DSL orchestrator runs: synthesize 已完成 / 读取发现 /
-    未完成 / 结论 from the WHOLE program's structured state, not just the last finish line.
-
-    run_log: ordered statements [{name, executor, phase, verification, outputs:{字段:值}, summary}].
-    current: the in-progress (uncompleted) statement name when interrupted (max_turns), else "".
-    terminal: how the program ended — the finish/failure reply, or "达到最大轮数 N" etc."""
-    from llm.provider_config import dashscope_extra_body
-
-    cfg = resolve_llm_config("output")
-    llm = ChatOpenAI(
-        model=cfg.model,
-        api_key=cfg.api_key,
-        base_url=cfg.base_url,
-        timeout=cfg.timeout_s,
-        max_retries=cfg.max_retries,
-        extra_body=dashscope_extra_body(cfg.model),
-    )
-    lines = []
-    for i, r in enumerate(run_log, 1):
-        phase = r.get("phase")
-        verification = r.get("verification")
-        mark = (
-            "△ 已派发，结果未验证"
-            if verification == "accepted_unverified"
-            else ("✓ 完成" if phase == "completed" else "✗ 未完成")
-        )
-        lines.append(f"{i}. {r.get('name', '')} — {mark}")
-        outputs = {k: v for k, v in (r.get("outputs") or {}).items() if v is not None}
-        if outputs:
-            lines.append("   输出：" + "；".join(f"{k}={v}" for k, v in outputs.items()))
-    if current:
-        lines.append(f"（当前进行中、尚未完成：{current}）")
-    digest = "\n".join(lines) or "（无已完成步骤）"
-    human = f"用户目标：{goal}\n\n执行轨迹：\n{digest}\n\n结束原因：{terminal or '程序正常结束'}"
-    return _message_text(
-        llm.invoke([SystemMessage(content=_ORCH_SYSTEM), HumanMessage(content=human)]).content
-    ).strip()
 
 
 # ── Message builders ───────────────────────────────────────────────────────

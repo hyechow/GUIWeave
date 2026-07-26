@@ -493,34 +493,6 @@ def browser_page_block(url: str | None, title: str | None, *, site: str = "") ->
     )
 
 
-def feedback_block(
-    issues: Iterable[str],
-    *,
-    previous_output: str = "",
-) -> ContextBlock | None:
-    issue_list = [issue for issue in issues if issue]
-    if not issue_list:
-        return None
-    body = "\n".join(f"  - {issue}" for issue in issue_list)
-    content = f"此前分解存在以下问题，请修正并保持已修复约束：\n{body}"
-    if previous_output.strip():
-        content += (
-            "\n\n以下是上一版结构化草稿。以它为基线做局部修复；保留未被上述问题点名的"
-            "步骤、变量、分支和已满足的合同，不要从头改写：\n"
-            + previous_output.strip()
-        )
-    return ContextBlock(
-        id="runtime.decompose.feedback",
-        budget="required",
-        source_type="runtime_state",
-        source="decomposition_guard",
-        ttl="turn",
-        priority=20,
-        metadata={"count": len(issue_list)},
-        content=content,
-    )
-
-
 def tried_instructions_block(instructions: Iterable[str]) -> ContextBlock:
     items = sorted({item for item in instructions if item})
     content = "\n".join(f"  - 「{item}」" for item in items) if items else "  （无）"

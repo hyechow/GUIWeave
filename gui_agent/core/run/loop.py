@@ -140,7 +140,7 @@ def run_agent_loop(
     knowledge: dict | None = None,  # injected app-knowledge summary {app_name, nav_chars, ...}; None if no match
     orchestrator_context_reports: list[dict] | None = None,
     stop_requested: object = None,  # callable() -> bool; true means stop after current turn settles
-    platform: object = None,  # already-open session (runner pre-opens it so router/decompose can see the current front-tab url/title; see cli.py); None → open here (chat path, unchanged)
+    platform: object = None,  # already-open session so routing/planning sees the current front-tab URL/title; None → open here
     headless: bool = False,  # suppress the action visualizer (cursor/overlay) on every platform; HUD is gated by the caller
 ) -> AgentResult:
     if not isinstance(program, CodingProgram):
@@ -222,7 +222,7 @@ def run_agent_loop(
 
     # Pre-session environment check (mirror open / CDP up / adb+ADBKeyboard ready). Runs
     # ONCE here before the session opens — UNLESS the caller already opened `platform` (the
-    # runner pre-opens it so router/decompose can see the current front-tab url; see cli.py).
+    # The runner pre-opens it so routing/planning can see the current front-tab URL.
     # Any one-time setup a platform needs (android switching the IME to ADBKeyboard) happens
     # inside the check.
     if platform is None:

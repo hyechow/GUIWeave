@@ -2,7 +2,6 @@ from __future__ import annotations
 
 from gui_agent.context import ContextBlock, ContextBudgeter, ContextBundle
 from gui_agent.context.runtime import (
-    feedback_block,
     form_controls_block,
     render_prompt_context,
 )
@@ -10,19 +9,6 @@ from gui_agent.context.runtime import (
 
 def _blk(id_: str, budget: str, chars: int, *, ttl: str = "turn") -> ContextBlock:
     return ContextBlock(id_, "runtime_state", "test", "x" * chars, ttl=ttl, budget=budget)
-
-
-def test_decompose_feedback_includes_previous_draft_for_local_repair():
-    block = feedback_block(
-        ["URL result is unused"],
-        previous_output='{"steps":[{"op":"run","var":"q"}]}',
-    )
-
-    assert block is not None
-    assert "URL result is unused" in block.content
-    assert "上一版结构化草稿" in block.content
-    assert '"var":"q"' in block.content
-    assert "不要从头改写" in block.content
 
 
 def test_context_block_renders_source_metadata():

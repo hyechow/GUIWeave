@@ -36,8 +36,8 @@ def _norm_label(s: str) -> str:
 def read_spec_label_candidates(read_spec: str, field: str) -> list[str]:
     """Return explicit UI label candidates mentioned by ``read_spec`` for ``field``.
 
-    The DSL field can be semantic (for example ``title``) while the page label is concrete
-    (for example ``Summary of Review``). When the decomposer spells that mapping out in the
+    The requested field can be semantic (for example ``title``) while the page label is concrete
+    (for example ``Summary of Review``). When the orchestrator spells that mapping out in the
     read spec, DOM readers should use it before falling back to vision.
     """
     if not read_spec or not field:
@@ -164,7 +164,7 @@ def structured_read(
 ) -> dict[str, str]:
     """Read `returns` fields off the frame -> {field: value} (empty when not readable).
 
-    `read_spec` is the task-level read instruction the decomposer generated from the user goal
+    `read_spec` is the task-level read instruction generated from the user goal
     (what each field means + how to judge it off the UI) — the PRIMARY judgment guidance, so the
     extraction semantics live in the program, not in this hardcoded prompt. `check_knowledge`
     (the app's _check.md signal conventions) is a supplementary reference for icon/colour cues.

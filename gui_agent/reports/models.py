@@ -17,7 +17,7 @@ class ReportStep:
     after_url: str | None = None      # screenshot after action
     status: str = ""  # ✓ ✗ ↩ ""
     timestamp: str = ""  # ISO timestamp
-    index: int = 0              # context turn index (for ordering re-decompose cards by at_turn)
+    index: int = 0              # context turn index
     statement_id: str = ""
     instance_id: str = ""       # statement invocation instance (foreach/retry isolate here)
     statement_executor: str = ""
@@ -51,7 +51,6 @@ class ReportPage:
     checklist: list[dict] = field(default_factory=list)
     verify_url: str = ""  # verification screenshot (first turn of next statement)
     verify_outcome: dict = field(default_factory=dict)  # terminal Outcome/Transition projection
-    kickback: dict = field(default_factory=dict)  # Feasibility kick-back terminal state {reason, directive} — the "验收" for an abandoned-as-infeasible statement
     outcome_after_turn: int = 0
     outcome_timings: dict[str, float] = field(default_factory=dict)
     outcome_token_usage: dict[str, dict[str, int]] = field(default_factory=dict)
@@ -64,7 +63,7 @@ class ReportData:
     pages: list[ReportPage] = field(default_factory=list)
     stats: dict = field(default_factory=dict)
     statements: list[dict] = field(default_factory=list)
-    decompose_summary: str = ""  # First-turn supervisor summary with decomposition info
+    orchestration_summary: str = ""  # Compact statement sequence for the report
     orchestrator: dict = field(default_factory=dict)
     models: dict[str, str] = field(default_factory=dict)  # config_key → model used this run
     raw_input: str = ""  # original human input (title); empty for old logs

@@ -264,28 +264,6 @@ def _call_summary_text(label: str, output: dict) -> str:
                 if field:
                     bits.append(f"{field}={value}" if value else field)
         return _shorten(" · ".join(bits), 130) if bits else "read"
-    if "decompose" in lname:
-        steps = parsed.get("steps") if isinstance(parsed.get("steps"), list) else []
-        typed_bits = []
-        has_finish = False
-        for step in steps:
-            if not isinstance(step, dict):
-                continue
-            op = str(step.get("op") or "")
-            if op == "finish":
-                has_finish = True
-            if op in {"interact", "acquire", "read", "source_check", "command"}:
-                bind = str(step.get("bind") or "")
-                returns = [str(v) for v in (step.get("returns") or {}) if str(v)]
-                if bind and returns:
-                    typed_bits.append(f"{bind}.{','.join(returns)}")
-                elif returns:
-                    typed_bits.append(",".join(returns))
-        parts = [f"{len(steps)} steps" if steps else "program"]
-        parts.extend(f"outputs {bit}" for bit in typed_bits[:2])
-        if has_finish:
-            parts.append("finish")
-        return " · ".join(parts)
     for key in ("status", "instruction", "summary", "reason", "message"):
         if parsed.get(key):
             return _shorten(str(parsed.get(key)), 130)

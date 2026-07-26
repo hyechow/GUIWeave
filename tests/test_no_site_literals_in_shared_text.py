@@ -1,6 +1,6 @@
-"""Guard: model-visible SHARED text must stay site-neutral (no Magento/WebArena literals).
+"""Guard: model-visible shared text must stay site-neutral.
 
-The orchestrator/decomposer + statement prompts, the runtime ``ContextBlock`` content, and the
+The orchestrator planner + statement prompts, the runtime ``ContextBlock`` content, and the
 core schema field descriptions are SHARED across every platform and site. Site-specific facts —
 Magento admin-grid column names (Salable Quantity, Grand Total, Customer Email, Store View),
 configurable-product mechanics, WebArena task vocabulary (WS08, …) — belong in app knowledge
@@ -52,8 +52,8 @@ def _scanned_files() -> list[Path]:
     files += sorted((_ROOT / "gui_agent" / "context").rglob("*.py"))
     # 2. core schema field descriptions (can reach the LLM tool schema / reports)
     files.append(_ROOT / "gui_agent" / "core" / "schemas" / "__init__.py")
-    # 3. structured-output schema descriptions used by the orchestrator LLM
-    files.append(_ROOT / "gui_agent" / "core" / "orchestrator" / "decomposer.py")
+    # 3. reviewed-Python planner and review schema descriptions
+    files.append(_ROOT / "gui_agent" / "core" / "orchestrator" / "planner.py")
     # 4. shared statement/orchestrator/router prompts — the WebArena namespace is allowlisted
     for md in sorted((_ROOT / "gui_agent" / "prompts").rglob("*.md")):
         if "webarena" in md.parts:

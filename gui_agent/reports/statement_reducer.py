@@ -38,7 +38,6 @@ class StatementView:
     status: str = ""  # done | failed | running
     phase: str = ""
     verification: str = ""
-    kickback: str = ""
     outputs: dict[str, Any] = field(default_factory=dict)
     inputs: dict[str, Any] = field(default_factory=dict)
     # Full statement-executor call contract as journaled (for report data panels).
@@ -278,13 +277,12 @@ class StatementReportReducer:
             if outcome:
                 view.phase = str(outcome.get("phase") or view.phase)
                 view.verification = str(outcome.get("verification") or view.verification)
-                view.kickback = str(outcome.get("kickback") or view.kickback)
                 outputs = outcome.get("outputs")
                 if isinstance(outputs, dict) and outputs:
                     view.outputs = dict(outputs)
                 if view.phase == "completed":
                     view.status = "done"
-                elif view.phase in {"failed", "exhausted", "infeasible", "interrupted"}:
+                elif view.phase in {"failed", "exhausted", "interrupted"}:
                     view.status = "failed"
                 view.last_summary = str(
                     outcome.get("summary") or view.last_summary
@@ -340,7 +338,7 @@ class StatementReportReducer:
                 transition_check = {
                     "status": (
                         "done" if kind == "complete"
-                        else "stuck" if kind == "infeasible"
+                        else "stuck" if kind == "failed"
                         else "in_progress"
                     ),
                     "reason": str(proposal.get("reason") or ""),
@@ -355,7 +353,7 @@ class StatementReportReducer:
                         str(transition.get("validation_error") or "")
                     ] if transition.get("validation_error") else [],
                 }
-                if kind in {"complete", "infeasible"}:
+                if kind in {"complete", "failed"}:
                     view.acceptance = transition_check
                 fold_checklist_from_verdict(
                     success=view.success,

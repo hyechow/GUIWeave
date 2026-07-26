@@ -90,15 +90,15 @@ def test_skill_md_excluded_by_default_for_functional_cold_start(tmp_path, monkey
     assert k.summary()["profile"] == "functional-only"
 
 
-def test_decompose_context_selects_only_goal_matched_functional_sections(tmp_path, monkeypatch):
+def test_orchestrator_context_selects_only_goal_matched_functional_sections(tmp_path, monkeypatch):
     app_dir = _make_app(tmp_path, with_skill=True)
     (app_dir / "客户电话.md").write_text(
-        "---\nscope:\n  - decompose\nselector_when: 按客户 phone/电话号码查找时\n---\n"
+        "---\nscope:\n  - orchestrator\nselector_when: 按客户 phone/电话号码查找时\n---\n"
         "电话使用本地号段检索",
         encoding="utf-8",
     )
     (app_dir / "订单发货.md").write_text(
-        "---\nscope:\n  - decompose\nselector_when: 创建 shipment/发货时\n---\n"
+        "---\nscope:\n  - orchestrator\nselector_when: 创建 shipment/发货时\n---\n"
         "发货功能说明",
         encoding="utf-8",
     )
@@ -112,8 +112,8 @@ def test_decompose_context_selects_only_goal_matched_functional_sections(tmp_pat
     k = app_summary.auto_discover_knowledge("在 testapp 按电话号码查客户", "browser")
 
     assert k is not None
-    assert k.decompose_sections("按电话号码查客户") == ["客户电话"]
-    context = k.decompose_context("按电话号码查客户")
+    assert k.orchestrator_sections("按电话号码查客户") == ["客户电话"]
+    context = k.orchestrator_context("按电话号码查客户")
     assert "电话使用本地号段检索" in context
     assert "发货功能说明" not in context
     assert "不应进入初始编排" not in context

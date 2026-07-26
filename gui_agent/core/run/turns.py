@@ -33,7 +33,7 @@ from gui_agent.core.schemas import (
 
 MODEL_KEYS = (
     "supervisor",
-    "supervisor.decompose",
+    "orchestrator",
     "observation",
     "action_policy",
     "output",

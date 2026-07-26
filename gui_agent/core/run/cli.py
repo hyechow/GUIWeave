@@ -205,9 +205,9 @@ def main(
                     f"sections={knowledge_summary['section_count']}, "
                     f"profile={knowledge_summary['profile']})"
                 )
-                selected = knowledge.decompose_sections(goal)
-                knowledge_summary["decompose_sections"] = selected
-                print(f"Knowledge: decompose sections={selected or ['<app-overview-only>']}")
+                selected = knowledge.orchestrator_sections(goal)
+                knowledge_summary["orchestrator_sections"] = selected
+                print(f"Knowledge: orchestrator sections={selected or ['<app-overview-only>']}")
 
             # Compile the selected semantic planning surface before opening the loop.
             orchestrator_context_reports: list[dict] = []
@@ -234,7 +234,7 @@ def main(
                 orch_tokens_before = get_llm_token_usage()
                 plan = generate_reviewed_code(
                     goal,
-                    knowledge=knowledge.decompose_context(goal) if knowledge else "",
+                    knowledge=knowledge.orchestrator_context(goal) if knowledge else "",
                     file_section=file_section,
                     current_url=cur_url,
                     current_title=cur_title,

@@ -8,7 +8,7 @@ def test_data_model_config_is_not_nested_under_supervisor():
 
     assert llm["observation"]["model"]
     assert "observation" not in llm["supervisor"]
-    assert llm["supervisor"]["feasibility"]["model"]
+    assert llm["orchestrator"]["model"]
 
 
 def test_recon_navigator_config_falls_back_to_legacy_back_nav(monkeypatch):

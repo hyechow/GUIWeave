@@ -557,7 +557,6 @@ class RunnerReportBuilder:
                 label = {
                     "acquire": "Acquire",
                     "read": "Read",
-                    "source_check": "SourceCheck",
                     "command": "Command",
                 }.get(atype, "non-UI")
                 status = f"{'✓' if executed else '✗'} {label}"
@@ -620,7 +619,6 @@ class RunnerReportBuilder:
                 "collection_summary": view.collection_summary,
                 "phase": view.phase,
                 "verification": view.verification,
-                "kickback": view.kickback,
                 "verification_url": view.verification_url,
                 "outcome_after_turn": view.outcome_after_turn,
                 "outcome_timings": view.outcome_timings,
@@ -695,28 +693,13 @@ class RunnerReportBuilder:
                 ms_state.get("outcome_token_usage") or {}
             )
             page.outcome_context = list(ms_state.get("outcome_context") or [])
-            # A statement abandoned as INFEASIBLE may not produce a completed acceptance, so its 验收 slot is
-            # blank. Surface the Feasibility kick-back verdict (why + the re-decompose directive) as
-            # that statement's terminal acceptance instead.
-            if ms_state.get("phase") == "infeasible":
-                # Acceptance display only — this statement was judged infeasible. (The inline #0↻N
-                # program card is placed separately, by the re-decompose's at_turn, in runner_html.)
-                page.kickback = {
-                    "reason": (
-                        (ms_state.get("acceptance") or {}).get("reason")
-                        or ms_state.get("last_summary")
-                        or ""
-                    ),
-                    "directive": ms_state.get("kickback") or "",
-                }
-
         data.pages = pages
         data.statements = statements_info
         # Decompose summary: list all statements with names
         ms_parts = []
         for ms in statements_info:
             ms_parts.append(f"#{ms['id']} {ms['name']}（{ms['executor']}）")
-        data.decompose_summary = " → ".join(ms_parts) if ms_parts else ""
+        data.orchestration_summary = " → ".join(ms_parts) if ms_parts else ""
         data.stats = {
             "turns": len(all_steps),
             "executed": total_executed,

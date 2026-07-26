@@ -1,7 +1,7 @@
 """Browser intent-resolver eval: validates entity classification (precise vs fuzzy + search key).
 
 The Intent Resolver runs once on the user goal (text-only, no screenshot) and tags each lookup entity
-with {type, match_mode, search_key}. This drives the decomposer's column choice and the
+with {type, match_mode, search_key}. This drives the orchestrator's column choice and the
 exact-then-fuzzy retrieval ladder. Cases assert, per expected entity, the type / match_mode and an
 accepted set of search keys (the exact key token can vary, so it's an any-of).
 

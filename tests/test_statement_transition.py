@@ -87,12 +87,11 @@ def test_evidence_validation_rejects_invented_journal_references():
     assert allowed.allowed is True
 
 
-def test_infeasible_is_not_an_action_and_requires_program_kickback():
+def test_failed_is_not_an_action_and_requires_evidence():
     result = _StatementTransitionResult(
         assessment=_assessment("blocked"),
-        kind="infeasible",
+        kind="failed",
         reason="the required entity does not exist",
-        kickback="recompile without assuming the entity exists",
         evidence=[
             _TransitionEvidence(
                 source="current_observation",

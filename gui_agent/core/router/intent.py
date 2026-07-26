@@ -99,7 +99,7 @@ class IntentResolution(BaseModel):
 
 def _llm() -> ChatOpenAI:
     # Text-only judgment on the goal — no screenshot. Configured under supervisor.intent
-    # (falls back to the supervisor model if unset), parallel to supervisor.decompose.
+    # (falls back to the supervisor model if unset), before orchestrator planning.
     cfg = resolve_llm_config("supervisor.intent")
     if not cfg.model:
         cfg = resolve_llm_config("supervisor")
@@ -119,7 +119,7 @@ def resolve_intent(
     carry the kind of fact this judgment actually needs (whether an entity's stored form is exact
     or normalized away from how users refer to it). Feeding it in was pure noise on the prompt —
     measured: a knowledge.navigation excerpt led entirely with deployment/login/page-list info,
-    none of which bears on precise-vs-approximate. decompose still receives the full knowledge
+    none of which bears on precise-vs-approximate. The orchestrator still receives the full knowledge
     independently (its own `knowledge` param) for the HOW it actually needs."""
     if not goal.strip():
         return IntentResolution()

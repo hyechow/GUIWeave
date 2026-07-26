@@ -380,13 +380,7 @@ class StatementSupervisorPolicy(
             raise RuntimeError("cannot reject an effect without an active statement")
         message = f"Grounded action authorization rejected: {reason}"
         return SupervisorStep(
-            outcome=StatementOutcome.infeasible(
-                message,
-                kickback=(
-                    "Re-observe or replan the surrounding program; the current "
-                    "interaction intent cannot authorize this grounded effect."
-                ),
-            ),
+            outcome=StatementOutcome.failed(message),
             summary=message,
             **_ctx(statement),
         )
@@ -1004,18 +998,13 @@ class StatementSupervisorPolicy(
         guidance: str,
         validation_retries: int,
     ) -> SupervisorStep:
-        """Give one same-frame correction, then return a recoverable infeasible."""
+        """Give one same-frame correction, then fail the current statement."""
         if decision is not None:
             self._record_transition(decision, reason)
         if validation_retries <= 0:
-            kickback = (
-                "The current statement cannot satisfy its typed postcondition from this "
-                f"frame ({reason}). Re-observe or replan the surrounding program; do not "
-                "retry alternative labels on the same evidence."
-            )
             message = f"Statement postcondition remains unsatisfied: {reason}"
             return SupervisorStep(
-                outcome=StatementOutcome.infeasible(message, kickback=kickback),
+                outcome=StatementOutcome.failed(message),
                 summary=message,
                 execution_scope=execution_scope,
                 **_ctx(statement),
@@ -1196,7 +1185,7 @@ class StatementSupervisorPolicy(
                     self._static_constraints.append(
                         "上一个 Transition 输出未通过结构化合同校验："
                         f"{exc}。保持原 statement 目标，修正 kind 对应的必填字段后重新决策；"
-                        "若当前仍有可执行路径，必须返回 act 而不是 infeasible。"
+                        "若当前仍有可执行路径，必须返回 act 而不是 failed。"
                     )
                     try:
                         return self._run_single_turn(
@@ -1222,7 +1211,7 @@ class StatementSupervisorPolicy(
             f"  [TransitionLLM] state={decision.assessment.status} "
             f"kind={decision.kind}: {decision.reason[:120]}"
         )
-        if decision.kind in {"complete", "infeasible"}:
+        if decision.kind in {"complete", "failed"}:
             citable_refs = set(available_event_refs(memory))
             refs = validate_evidence_references(
                 decision.evidence,
@@ -1309,12 +1298,11 @@ class StatementSupervisorPolicy(
                 summary=summary,
                 **_ctx(statement),
             )
-        if decision.kind == "infeasible":
+        if decision.kind == "failed":
             self._record_transition(decision)
             return SupervisorStep(
-                outcome=StatementOutcome.infeasible(
+                outcome=StatementOutcome.failed(
                     decision.reason,
-                    kickback=decision.kickback,
                     evidence=self._outcome_evidence(decision),
                 ),
                 summary=decision.assessment.summary,

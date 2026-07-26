@@ -55,53 +55,6 @@ def test_module_io_renders_summary_collapsed_schema_and_tokens():
     assert "transition" in html
 
 
-def test_orchestrator_program_renders_foreach_block_and_body():
-    html = _render_program_section(
-        {
-            "program": {
-                "goal": "找 rating<=3 昵称",
-                "statements": [
-                    {
-                        "op": "read",
-                        "id": "s1",
-                        "bind": "selection",
-                        "reads": {"rows": {"source": "dataset", "name": "rows"}},
-                        "returns": {"rows": {"type": "list[record]"}},
-                    },
-                    {
-                        "op": "foreach",
-                        "items": {"var": "selection", "path": ["rows"]},
-                        "item": "row",
-                        "into": "reviews",
-                        "collect": {"var": "detail", "path": ["nickname"]},
-                        "body": [
-                            {
-                                "op": "interact",
-                                "id": "s2",
-                                "bind": "detail",
-                                "goal": "打开当前评论并读取评分昵称",
-                                "success": "当前评论详情可见",
-                                "returns": {"nickname": {"type": "text"}},
-                            }
-                        ],
-                    },
-                    {"op": "finish", "message": "done"},
-                ],
-            },
-            "report_run_log": [
-                {
-                    "var": "selection",
-                    "result": {"outputs": {"rows": [{"id": "347"}, {"id": "349"}]}},
-                },
-            ],
-            "context_reports": [],
-        },
-    )
-    assert "foreach" in html
-    assert "打开当前评论" in html
-    assert "prog-branch" in html
-
-
 def test_coding_orchestrator_renders_reviewed_python_plan():
     html = _render_program_section({
         "program": {
@@ -324,7 +277,7 @@ def test_coding_report_groups_statements_by_public_ctx_call():
     assert "coding-phase-ok" in html
     assert "coding-phase-fail" in html
     assert "coding-ctx-badge" in html
-    # Header subtitle shows the underlying call (not DSL 验收 criteria).
+    # Header subtitle shows the underlying call rather than duplicating acceptance prose.
     c1 = html.split('id="ms-c1"', 1)[1].split('id="ms-c2"', 1)[0]
     assert "coding-call-sc" in c1
     assert "验收：" not in c1
@@ -413,147 +366,21 @@ def test_runner_report_replays_program_and_reply_outputs(tmp_path):
         assert ("（未生成）" in html) is (not reply)
 
 
-def test_acquire_outputs_are_bounded_in_program_and_non_ui_details():
+def test_acquire_outputs_are_bounded_in_non_ui_details():
     rows = [
         {"id": f"row-{index}", "email": f"user-{index}@example.test"}
         for index in range(12)
     ]
-    program_html = _render_program_section({
-        "program": {
-            "goal": "collect every row",
-            "statements": [{
-                "op": "acquire",
-                "id": "s1",
-                "bind": "collection",
-                "goal": "collect rows",
-                "returns": {"rows": {"type": "list[record]"}},
-            }],
-        },
-        "report_run_log": [{
-            "var": "collection",
-            "result": {"outputs": {"rows": rows}},
-        }],
-        "context_reports": [],
-    })
     detail_html = _render_non_ui_detail({
         "executor": "acquire",
         "outputs": {"rows": rows},
     })
 
-    assert "rows=12 records · 2 fields [id, email]" in program_html
-    assert "row-0" not in program_html
     assert "12 records · 2 fields [id, email]" in detail_html
     assert "sample (first 2)" in detail_html
     assert "row-0" in detail_html
     assert "row-1" in detail_html
     assert "row-2" not in detail_html
-
-
-def test_in_progress_program_card_does_not_require_report_run_log():
-    html = _render_program_section({
-        "program": {
-            "goal": "open one row",
-            "statements": [
-                {
-                    "op": "read",
-                    "id": "s1",
-                    "bind": "row",
-                    "reads": {"id": {"source": "field", "name": "row id"}},
-                    "returns": {"id": {"type": "text"}},
-                },
-                {
-                    "op": "interact",
-                    "id": "s2",
-                    "goal": "open selected row",
-                    "success": "selected row is open",
-                    "inputs": {"id": {"var": "row", "path": ["id"]}},
-                },
-            ],
-        },
-        "context_reports": [],
-    })
-
-    assert "row id" in html
-    assert "open selected row" in html
-    assert "prog-resolved" not in html
-
-
-def test_orchestrator_program_renders_value_ref_path_in_if_condition():
-    html = _render_program_section({
-        "program": {
-            "goal": "inspect then collect",
-            "statements": [
-                {
-                    "op": "if",
-                    "cond": {
-                        "ref": {"var": "source", "path": ["available"]},
-                        "cmp": "==",
-                        "value": False,
-                    },
-                    "then": [],
-                    "otherwise": [],
-                },
-            ],
-        },
-        "context_reports": [],
-    })
-
-    assert 'source["available"]' in html
-
-
-def test_orchestrator_program_collapses_compiler_acquire_macro():
-    html = _render_program_section({
-        "program": {
-            "goal": "count records by month",
-            "statements": [
-                {
-                    "op": "source_check", "bind": "__source_initial",
-                    "required_fields": ["date", "status"],
-                },
-                {
-                    "op": "if",
-                    "cond": {
-                        "ref": {"var": "__source_initial", "path": ["available"]},
-                        "cmp": "==", "value": False,
-                    },
-                    "then": [{"op": "interact", "goal": "expose required fields"}],
-                    "otherwise": [],
-                },
-                {
-                    "op": "source_check", "bind": "__source_final",
-                    "required_fields": ["date", "status"],
-                },
-                {
-                    "op": "acquire", "bind": "__collection",
-                    "goal": "collect the scoped records",
-                    "source_check": {"var": "__source_final", "path": ["available"]},
-                    "required_fields": ["date", "status"],
-                    "returns": {"rows": {"type": "list[record]", "coverage": "complete"}},
-                },
-                {
-                    "op": "finish", "message": "",
-                    "outputs": {"result": {"var": "answer", "path": ["result"]}},
-                },
-            ],
-        },
-        "report_run_log": [
-            {"var": "__source_initial", "result": {"outputs": {"available": True}}},
-            {"var": "__source_final", "result": {"outputs": {"available": True}}},
-            {"var": "__collection", "result": {"outputs": {"rows": [{"id": "1"}]}}},
-        ],
-        "context_reports": [],
-    })
-
-    assert "prog-compiler-detail" in html
-    assert "采集完整集合" in html
-    assert "Compiler 自动步骤" in html
-    assert "初检</b> · 可读" in html
-    assert "修复</b> · 已跳过" in html
-    assert "__source_initial" not in html
-    assert "完成并返回 result" in html
-    assert "finish「」" not in html
-
-
 def test_thumb_time_only_renders_total_and_keeps_flags_searchable():
     html, search = _render_thumb_time(
         ReportStep(

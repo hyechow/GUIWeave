@@ -110,7 +110,7 @@ def run_chat_turn(
     raw_input: str | None = None,
     router: dict | None = None,
     knowledge: dict | None = None,
-    decompose_knowledge: str = "",
+    orchestrator_knowledge: str = "",
     current_url: str = "",
     current_title: str = "",
     current_site: str = "",
@@ -127,7 +127,7 @@ def run_chat_turn(
     resolution = resolve_intent(goal)
     plan = generate_reviewed_code(
         goal,
-        knowledge=decompose_knowledge,
+        knowledge=orchestrator_knowledge,
         current_url=current_url,
         current_title=current_title,
         current_site=current_site,
@@ -596,7 +596,9 @@ def main() -> None:
                     raw_input=display_msg,
                     router=router_result.model_dump(),
                     knowledge=knowledge_summary,
-                    decompose_knowledge=(knowledge.decompose_context(goal) if knowledge else ""),
+                    orchestrator_knowledge=(
+                        knowledge.orchestrator_context(goal) if knowledge else ""
+                    ),
                     current_url=cur_url,
                     current_title=cur_title,
                     current_site=cur_site,

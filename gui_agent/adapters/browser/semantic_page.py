@@ -238,7 +238,7 @@ def read_grid_from_tree(
         if best_col >= 0:
             field_to_col[field] = best_col
 
-    # URL-ish fields match by CAPABILITY, not header text: the decomposer names the row-link column
+    # URL-ish fields match by capability, not header text: orchestration names the row-link column
     # unpredictably (detail_url / action_url / edit_url / url / link ...) while the actual header is
     # e.g. "Action" — a name-only match silently drops the column and the foreach dies on the
     # column-completeness net (live 778 run 232803: declared detail_url, header Action). A link

@@ -1,8 +1,5 @@
 """CollectionView — read-only cross-slice collection projection from EventJournal.
 
-Normative authority (Runtime Data Acquisition and Processing Design,
-``docs/data_acquisition_and_processing_design.md``):
-
 - EventJournal: fact authority. Independent ``CollectionSliceEvent`` values carry each
   observed slice's normalized records, provenance and boundary evidence.
 - CollectionView: a PURE projection of those frames (this module).
@@ -14,8 +11,8 @@ CollectionView is NOT a state machine. It MUST NOT expose:
 
     advance(), next_action(), should_continue(), is_complete(), phase
 
-(see ``docs/data_acquisition_and_processing_design.md`` lines 179-187). It only describes
-facts; Acquire combines it with adapter capabilities and acquisition-only policy proposals.
+It only describes facts; Acquire combines it with adapter capabilities and acquisition-only
+policy proposals.
 """
 
 from __future__ import annotations

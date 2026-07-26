@@ -183,7 +183,7 @@ def test_offscreen_action_gets_one_same_frame_transition_retry(monkeypatch) -> N
     step = policy._run_single_turn(statement, observation, [])
 
     assert calls == 2
-    assert step.outcome is not None and step.outcome.phase == "infeasible"
+    assert step.outcome is not None and step.outcome.phase == "failed"
     assert "does not support operation 'activate'" in step.outcome.summary
     assert policy._last_transition_record["validation_error"]
 
@@ -803,7 +803,7 @@ def test_invalid_structured_transition_retries_once(monkeypatch) -> None:
     )
     policy = _policy(statement)
     decisions = iter([
-        StructuredOutputError("infeasible transition requires cited evidence"),
+        StructuredOutputError("failed transition requires cited evidence"),
         _act(family="activate", control="Back"),
     ])
 

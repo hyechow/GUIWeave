@@ -471,11 +471,11 @@ class CodingProgramRuntime:
 
     @staticmethod
     def adapt_outcome(outcome: StatementOutcome) -> StatementOutcome:
-        """Keep Program-rewrite signals outside the coding coroutine protocol."""
+        """Normalize executor-specific terminal phases for the coding protocol."""
         if outcome.phase in {"completed", "failed"}:
             return outcome
         details = outcome.model_dump(
-            exclude={"phase", "summary", "verification", "kickback"},
+            exclude={"phase", "summary", "verification"},
         )
         return StatementOutcome.failed(outcome.summary, **details)
 

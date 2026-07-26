@@ -196,7 +196,7 @@ def _diagnostics(
 
 
 def _default_llm() -> Any:
-    cfg = resolve_llm_config("supervisor.decompose")
+    cfg = resolve_llm_config("orchestrator")
     if not cfg.model:
         cfg = resolve_llm_config("supervisor")
     from llm.provider_config import dashscope_extra_body

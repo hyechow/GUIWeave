@@ -14,7 +14,7 @@ scroll). MobileWorld's HTTP API is used ONLY for the task lifecycle:
 
   pre-run  : POST /init (controller) + POST /task/init (reset the app to the task's
              start state) + GET /task/goal (the intent) — in the ``_prime`` hook.
-  run      : decompose the goal into the DSL orchestrator program, then run_agent_loop
+  run      : generate a reviewed Python program, then run_agent_loop
              drives each statement over adb.
   post-run : (optional) POST /step answer to set the backend's interaction_cache for
              answer-style tasks + GET /task/eval (score, reason) + POST /task/tear_down.
@@ -316,7 +316,7 @@ def main() -> int:
                                 f"{e.mention}→{e.type}/{e.match_mode}/key={e.search_key}" for e in resolution.entities))
                         plan = generate_reviewed_code(
                             intent,
-                            knowledge=knowledge.decompose_context(intent) if knowledge else "",
+                            knowledge=knowledge.orchestrator_context(intent) if knowledge else "",
                             file_section=file_section,
                             current_url="",
                             current_title="",

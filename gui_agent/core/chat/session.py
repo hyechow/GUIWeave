@@ -122,7 +122,7 @@ def route_message(
     resolved_msg = resolve_temporal_expressions(user_msg)
     # Knowledge-base awareness: the router runs BEFORE knowledge injection, so without
     # this it asks the user for facts (entry URL) that knowledge already holds and
-    # decompose will inject. The rule TEXT is the platform's (adapter router_prompt);
+    # orchestrator planning will inject. The rule TEXT is the platform's (adapter router_prompt);
     # core only discovers the app list and fills it in. Lazy import keeps chat_session
     # a leaf at import time.
     if known_apps_rule:

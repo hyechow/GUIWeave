@@ -23,7 +23,7 @@ class StatementPrompts:
         return cls(
             image_resize="none",
             transition=(
-                "Decide one kind: act|complete|infeasible from the contract, memory facts, "
+                "Decide one kind: act|complete|failed from the contract, memory facts, "
                 "and the current observation. Act requires exactly one action."
             ),
         )
@@ -152,7 +152,7 @@ class _StatementTransitionResult(BaseModel):
     model_config = ConfigDict(extra="forbid")
 
     assessment: _TransitionAssessment
-    kind: Literal["act", "complete", "infeasible"]
+    kind: Literal["act", "complete", "failed"]
     # Emit the concrete payload before prose in the JSON schema. If a provider truncates a long
     # reason containing DOM quotes, an already-emitted action remains recoverable.
     action: Optional[_TransitionAction] = None
@@ -160,11 +160,7 @@ class _StatementTransitionResult(BaseModel):
     summary: str = Field(default="", description="当前屏幕/局势一句话摘要")
     evidence: list[_TransitionEvidence] = Field(default_factory=list)
     page_identity: str = Field(default="", description="页面身份描述")
-    kickback: str = Field(
-        default="",
-        description="kind=infeasible 时给 ProgramRuntime 的重规划约束；其他 kind 留空",
-    )
-    @field_validator("summary", "page_identity", "kickback", mode="before")
+    @field_validator("summary", "page_identity", mode="before")
     @classmethod
     def _coerce_str(cls, value):
         return "" if value is None else value
@@ -176,16 +172,12 @@ class _StatementTransitionResult(BaseModel):
                 raise ValueError("act transition requires one action")
         elif self.action is not None:
             raise ValueError(f"{self.kind} transition cannot carry an action")
-        if self.kind != "infeasible" and self.kickback:
-            raise ValueError(f"{self.kind} transition cannot carry kickback")
-        if self.kind in {"complete", "infeasible"} and not self.evidence:
+        if self.kind in {"complete", "failed"} and not self.evidence:
             raise ValueError(f"{self.kind} transition requires cited evidence")
-        if self.kind == "infeasible" and not self.kickback.strip():
-            raise ValueError("infeasible transition requires kickback")
         expected_status = {
             "act": "in_progress",
             "complete": "satisfied",
-            "infeasible": "blocked",
+            "failed": "blocked",
         }[self.kind]
         if self.assessment.status != expected_status:
             raise ValueError(

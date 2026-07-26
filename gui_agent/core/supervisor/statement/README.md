@@ -10,7 +10,7 @@ For each non-loading observation:
 1. `StatementMemory` projects this invocation's Journal facts.
 2. The screenshot supplies the portable visual baseline; adapter affordances are optional evidence.
 3. Transition receives the immutable contract, Memory, current observation and relevant knowledge.
-4. Transition assesses the current state and proposes one `act | complete | infeasible` result.
+4. Transition assesses the current state and proposes one `act | complete | failed` result.
 5. Runtime validates proposal shape, declared values, observable fields and target capability.
 6. The adapter grounds the physical action and classifies its effect. Runtime authorizes that
    grounded effect against the typed interaction intent immediately before dispatch.
@@ -32,7 +32,7 @@ Runtime does **not** hold final business authority. It may only:
 |------|------|------------|
 | **Typed success predicate** | Compare a declared postcondition with adapter-normalized state | Admit or short-circuit `complete` only on a proven match |
 | **Grounded permission guard** | Compare grounding-bound `effect_kind` with collection phase | Reject known forbidden effects before dispatch; unknown effects abstain |
-| **Proposal mechanics** | Validate declared values, target refs, capabilities and observable-field rules | Give one same-frame correction, then return recoverable `infeasible` |
+| **Proposal mechanics** | Validate declared values, target refs, capabilities and observable-field rules | Give one same-frame correction, then fail the current Statement |
 | **Hard structural** | Invented journal citations, hard-budget final frame | May terminal-fail |
 
 `exhausted` is reserved for truly unrecoverable cases (e.g. hard-budget final frame, corrupt

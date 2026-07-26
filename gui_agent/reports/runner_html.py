@@ -21,8 +21,7 @@ from .orchestrator_html import (
     _render_program_section,
     coding_plan_expansion_by_sid,
     coding_source_line_by_call_id,
-    is_coding_orchestrator,
-    render_redecompose_card,
+    has_reviewed_python_program,
 )
 from .prompt_html import _render_module_io_html
 
@@ -76,8 +75,8 @@ HTML_TEMPLATE = """\
   .header {{ position: relative; max-width: 1080px; margin: 0 auto 20px; padding: 20px 24px; background: var(--card); border-radius: var(--radius); box-shadow: 0 1px 3px rgba(0,0,0,0.08); }}
   .header h1 {{ font-size: 18px; font-weight: 700; margin-bottom: 4px; padding-right: 72px; }}
   .stats {{ color: var(--muted); font-size: 12px; }}
-  .decompose {{ margin-top: 10px; padding: 10px 14px; background: #f8fafc; border-radius: 8px; font-size: 12px; color: #475569; line-height: 1.5; }}
-  .decompose-label {{ font-weight: 600; color: #6366f1; margin-right: 4px; }}
+  .meta-strip {{ margin-top: 10px; padding: 10px 14px; background: #f8fafc; border-radius: 8px; font-size: 12px; color: #475569; line-height: 1.5; }}
+  .meta-strip-label {{ font-weight: 600; color: #6366f1; margin-right: 4px; }}
   .compat-row {{ display:flex; gap:6px; flex-wrap:wrap; align-items:center; margin:4px 0; }}
   .compat-chip {{ display:inline-flex; align-items:center; height:20px; padding:0 8px; border-radius:999px; background:#f1f5f9; color:#64748b; border:1px solid #e2e8f0; font-size:10px; font-weight:700; font-family:ui-monospace, SFMono-Regular, monospace; }}
   .report-search-trigger {{ position:absolute; top:19px; right:22px; height:28px; padding:0 10px; border:1px solid #cbd5e1; border-radius:7px; background:#fff; color:#475569; font-size:11px; font-weight:700; cursor:pointer; }}
@@ -94,20 +93,12 @@ HTML_TEMPLATE = """\
   .report-search-count {{ min-width:48px; color:#64748b; font-size:11px; font-weight:700; text-align:right; font-family:ui-monospace, SFMono-Regular, monospace; }}
   .search-hit {{ outline:1px solid #facc15; background:#fffbeb !important; }}
   .search-current {{ outline:2px solid #f97316; box-shadow:0 0 0 3px rgba(249,115,22,0.12); }}
-  /* ── #0 编排 (DSL program) — vertical, indented like code ── */
+  /* ── #0 reviewed Python program ── */
   .prog-section {{ }}
   .prog-body {{ padding: 14px 20px; display: flex; flex-direction: column; gap: 5px; font-size: 13px; }}
   .prog-input {{ display: flex; align-items: center; gap: 8px; flex-wrap: wrap; padding-bottom: 10px; margin-bottom: 6px; border-bottom: 1px dashed var(--border); color: var(--text); }}
   .prog-input-label {{ font-weight: 600; color: #6366f1; font-size: 11px; padding: 1px 7px; background: #eef2ff; border-radius: 10px; }}
   .prog-input-arrow {{ color: #94a3b8; font-size: 11px; font-family: monospace; }}
-  .prog-step {{ display: flex; align-items: center; gap: 7px; flex-wrap: wrap; }}
-  .prog-n {{ display: inline-flex; align-items: center; justify-content: center; min-width: 18px; height: 18px; padding: 0 3px; border-radius: 9px; background: #eef2ff; color: #4338ca; font-weight: 700; font-size: 11px; flex-shrink: 0; }}
-  .prog-name {{ color: var(--text); }}
-  .prog-var {{ font-family: monospace; color: #0891b2; font-weight: 600; }}
-  .prog-ret {{ color: #047857; font-size: 11px; font-family: monospace; }}
-  .prog-compiler-detail {{ margin-left:25px; color:#64748b; font-size:11px; }}
-  .prog-compiler-detail summary {{ width:max-content; max-width:100%; cursor:pointer; color:#64748b; }}
-  .prog-compiler-detail[open] {{ padding:6px 8px; background:#fff; border:1px dashed #cbd5e1; border-radius:6px; line-height:1.55; }}
   .coding-source {{ margin: 0; padding: 14px 16px; overflow-x: auto; border: 1px solid #cbd5e1; border-radius: 8px; background: #0f172a; color: #e2e8f0; font: 12px/1.6 ui-monospace, SFMono-Regular, Menlo, Consolas, monospace; white-space: pre; tab-size: 4; }}
   .coding-source-wrap {{ margin-top: 4px; border: 1px solid #e2e8f0; border-radius: 8px; background: #f8fafc; }}
   .coding-source-wrap > summary {{ cursor: pointer; padding: 8px 12px; font-size: 12px; font-weight: 600; color: #475569; list-style: none; display: flex; align-items: center; gap: 6px; flex-wrap: wrap; }}
@@ -288,14 +279,6 @@ HTML_TEMPLATE = """\
     background: #ecfeff; color: #0e7490; border: 1px solid #a5f3fc;
     font-family: ui-monospace, SFMono-Regular, monospace;
   }}
-  .prog-resolved {{ color: #0e7490; font-size: 11px; font-family: monospace; background: #ecfeff; border: 1px solid #a5f3fc; border-radius: 5px; padding: 0 6px; }}
-  .prog-empty {{ color: #cbd5e1; }}
-  .prog-if {{ display: flex; flex-direction: column; gap: 5px; padding: 8px 10px; margin: 2px 0; background: #fffbeb; border: 1px solid #fde68a; border-radius: 8px; }}
-  .prog-cond {{ display: flex; align-items: baseline; gap: 6px; flex-wrap: wrap; }}
-  .prog-kw {{ color: #b45309; font-weight: 700; font-family: monospace; }}
-  .prog-condvar {{ font-family: monospace; color: #0891b2; }}
-  .prog-condval {{ font-weight: 600; color: #92400e; }}
-  .prog-branch {{ display: flex; flex-direction: column; gap: 5px; margin-left: 8px; padding-left: 12px; border-left: 2px solid #34d399; }}
   .nonui-log {{ margin-top: 12px; padding-top: 12px; border-top: 1px dashed var(--border); display:flex; flex-direction:column; gap:8px; }}
   .nonui-title {{ font-size: 11px; font-weight: 700; color: #0f766e; text-transform: uppercase; letter-spacing: .04em; }}
   .nonui-row {{ border: 1px solid #d1fae5; background: #f0fdfa; border-radius: 8px; padding: 10px; display: grid; grid-template-columns: minmax(0, 1fr) auto; gap: 12px; }}
@@ -316,8 +299,6 @@ HTML_TEMPLATE = """\
   .nonui-key {{ color:#0f766e; font-weight:600; word-break:break-word; }}
   .nonui-val {{ margin:0; color:#1e293b; font-family:ui-monospace, SFMono-Regular, monospace; white-space:pre-wrap; word-break:break-word; }}
   .nonui-shot img {{ width: 150px; max-height: 96px; object-fit: cover; border-radius: 7px; border: 1px solid #99f6e4; cursor: zoom-in; display:block; }}
-  .prog-branch-else {{ border-left-color: #f87171; }}
-  .prog-finish {{ align-self: flex-start; padding: 2px 9px; background: #ecfdf5; border: 1px solid #a7f3d0; border-radius: 6px; color: #065f46; }}
 
   /* Run status badge */
   .run-status-badge {{ position:relative; display:inline-block; margin-left:8px; padding:2px 10px; border-radius:11px; font-size:13px; font-weight:700; vertical-align:middle; cursor:default; }}
@@ -670,7 +651,7 @@ function reportSearch(q) {{
     return;
   }}
   var nodes = Array.prototype.slice.call(document.querySelectorAll(
-    '.prompt-call,.prompt-part,.thumb,.prog-step,.prog-finish,.nonui-row,.wa-card'
+    '.prompt-call,.prompt-part,.thumb,.coding-call-card,.coding-src-api-group,.nonui-row,.wa-card'
   ));
   reportSearchHits = nodes.filter(function(n) {{
     var hay = ((n.dataset.searchIndex || '') + ' ' + (n.textContent || '')).toLowerCase();
@@ -733,7 +714,6 @@ document.addEventListener('keydown', function(event) {{
 """
 
 TIMING_COLORS: dict[str, str] = {
-    "decompose": "#6366f1",
     "transition": "#3b82f6",
     "action_policy": "#22c55e",
     "read": "#0f766e",
@@ -743,7 +723,6 @@ KIND_BADGE = {
     "interact": "statement-badge-action",
     "acquire": "statement-badge-collection",
     "read": "statement-badge-collection",
-    "source_check": "statement-badge-collection",
     "command": "statement-badge-navigation",
 }
 
@@ -755,7 +734,7 @@ AT_LABELS = {
     "upload": "上传", "navigate": "导航", "back": "后退",
     "new_tab": "新标签页", "select_tab": "切标签页", "close_tab": "关标签页",
     "select_option": "选项",
-    "acquire": "采集", "read": "绑定", "source_check": "字段检查", "command": "命令", "non_ui": "非交互",
+    "acquire": "采集", "read": "绑定", "command": "命令", "non_ui": "非交互",
 }
 
 
@@ -826,7 +805,6 @@ def _step_diagnostic_flags(step: ReportStep) -> list[tuple[str, str]]:
         label = {
             "acquire": "Acquire 采集",
             "read": "Read 观察绑定",
-            "source_check": "SourceCheck 字段检查",
             "command": "Command",
         }.get(executor, "non-UI")
         flags.append(("normal", label))
@@ -917,8 +895,7 @@ def _render_step_detail(step: ReportStep, detail_id: str, prev_timestamp: str = 
     """Render the expandable detail panel for a step.
 
     prev_timestamp: the previous action's timestamp, to show the inter-action gap.
-    extra_html: appended at the end of the panel — e.g. the re-decompose result block on the turn
-    whose failure triggered it (that turn's conclusion).
+    extra_html: optional content appended at the end of the panel.
     """
     at_cls = f"at-{step.action_type}"
     at_label = AT_LABELS.get(step.action_type, step.action_type)
@@ -1294,8 +1271,8 @@ def _render_provenance(raw_input: str, goal: str, router: dict) -> str:
         body = f'<span class="prov-goal">{_safe(goal or raw_input)}</span>（输入未改写）'
 
     return (
-        f'<div class="decompose">'
-        f'<span class="decompose-label">Router</span>'
+        f'<div class="meta-strip">'
+        f'<span class="meta-strip-label">Router</span>'
         f'{body}'
         f'<span class="prov-via {via_cls}">{via_text}</span>'
         f'</div>'
@@ -1303,9 +1280,6 @@ def _render_provenance(raw_input: str, goal: str, router: dict) -> str:
 
 def generate_html(data: ReportData, grid: bool = False) -> str:
     stats_parts = [f"{k}: {v}" for k, v in data.stats.items()]
-    _rd_n = len((data.orchestrator or {}).get("redecomposes") or [])
-    if _rd_n:  # only when it happened — most runs have 0
-        stats_parts.append(f"re-decompose: {_rd_n}")
     llm_s = sum(m.get("total_time", 0) for m in data.statements)  # Σ LLM-module timings
     if data.wall_clock_s:
         # True end-to-end elapsed, split into LLM compute, settle waits, and "other"
@@ -1367,15 +1341,7 @@ def generate_html(data: ReportData, grid: bool = False) -> str:
         data = f'<div id="{cid}" class="checklist-data" style="display:none">{"".join(rows)}</div>'
         return badge, data
 
-    # Per-statement sections. A Feasibility kick-back re-decompose IS the outcome of the statement
-    # whose verification failed — so its #vN card is embedded in THAT statement's 验收结果 (the
-    # statement active at the kick-back's `at_turn`), not rendered as a separate sibling card.
-    redecomps = sorted(
-        ((data.orchestrator or {}).get("redecomposes") or []),
-        key=lambda r: r.get("at_turn") or 0,
-    )
-    placed_rd: set = set()
-    coding_mode = is_coding_orchestrator(data.orchestrator)
+    coding_mode = has_reviewed_python_program(data.orchestrator)
     # Coding mode: index run_log by instance/statement id so each card can show a data strip.
     coding_run_by_key: dict[str, dict] = {}
     coding_plan_by_sid: dict[str, dict] = {}
@@ -1404,19 +1370,6 @@ def generate_html(data: ReportData, grid: bool = False) -> str:
     page_chunks: list[dict] = []
     prev_ts = ""  # carries across pages so the gap is vs the previous turn globally
     for page in data.pages:
-        # a re-decompose triggered by one of THIS statement's turns is that statement's 验收结果 —
-        # render its banner there (the new plan = the statements that follow; the banner doesn't
-        # re-list them, just marks the transition + trigger directive).
-        _pturn_set = {s.index for s in page.steps}
-        if page.verify_outcome:
-            _pturn_set.add(page.outcome_after_turn)
-        rd_banner = ""
-        for _rd in redecomps:
-            _n = _rd.get("kickback_n")
-            if _n not in placed_rd and (_rd.get("at_turn") or 0) in _pturn_set:
-                rd_banner += render_redecompose_card(data.orchestrator, _n)
-                placed_rd.add(_n)
-        _triggered_rd = bool(rd_banner)  # → label its verify thumbnail 重编排
         badge_cls = KIND_BADGE.get(page.statement_executor, "statement-badge-default")
         ms_in = sum(_sum_tokens(s.token_usage)[0] for s in page.steps)
         ms_out = sum(_sum_tokens(s.token_usage)[1] for s in page.steps)
@@ -1483,14 +1436,14 @@ def generate_html(data: ReportData, grid: bool = False) -> str:
                 prev_ts = step.timestamp
         ms_elapsed += sum(float(v or 0.0) for v in page.outcome_timings.values())
 
-        # The decomposer often sets description == name; don't render the title twice.
+        # Avoid rendering the statement title twice when description == name.
         desc_html = (
             f'<div class="statement-desc">{_safe(page.statement_description)}</div>'
             if page.statement_description and page.statement_description.strip() != page.statement_name.strip()
             else ""
         )
-        # Default (DSL): success criteria under the header. Coding mode overrides this with
-        # the actual ctx.* call + arguments once run_log / inputs are resolved below.
+        # Success criteria are replaced by the actual ctx.* call signature when structured
+        # runtime metadata is available below.
         sc_html = (
             f'<div class="statement-sc">验收：{_safe(page.statement_success)}</div>'
             if page.statement_success else ""
@@ -1506,18 +1459,14 @@ def generate_html(data: ReportData, grid: bool = False) -> str:
         )
         verify_thumb = ""
         verify_detail = ""
-        _is_rd_ms = _triggered_rd  # this statement's verification produced a re-decompose
         if page.verify_url and page.steps:
             vd_id = f"detail-ms{mid_safe}-verify"
-            if _is_rd_ms:
-                # not a pass — its outcome was a re-decompose; label it 重编排 (red), not 验收
-                _vt_border, _vt_status = "#dc262655", '<div class="thumb-status" style="background:#dc2626">↻</div>'
-                _vt_label = ('<div class="thumb-label" style="background:linear-gradient(transparent, '
-                             'rgba(254,226,226,0.95));color:#dc2626;font-weight:800">重编排</div>')
-            else:
-                _vt_border, _vt_status = "#22c55e40", '<div class="thumb-status thumb-status-ok">✓</div>'
-                _vt_label = ('<div class="thumb-label" style="background:linear-gradient(transparent, '
-                             'rgba(34,197,94,0.7))">验收</div>')
+            _vt_border = "#22c55e40"
+            _vt_status = '<div class="thumb-status thumb-status-ok">✓</div>'
+            _vt_label = (
+                '<div class="thumb-label" style="background:linear-gradient(transparent, '
+                'rgba(34,197,94,0.7))">验收</div>'
+            )
             verify_thumb = (
                 f'<div class="thumb" data-detail="{vd_id}" onclick="showDetail(\'{vd_id}\')" style="border-color:{_vt_border}">'
                 f'<img src="{page.verify_url}" alt="验收截图">'
@@ -1539,15 +1488,6 @@ def generate_html(data: ReportData, grid: bool = False) -> str:
             identity_html = f'<span style="font-size:11px;color:#64748b;margin-left:6px">{_safe(ck_identity)}</span>' if ck_identity else ""
             reason_html = f'<div class="detail-instruction" style="margin-top:4px">{_safe(ck_reason)}</div>' if ck_reason else ""
             summary_html = f'<div class="detail-summary">{_safe(ck_summary)}</div>' if ck_summary and ck_summary != ck_reason else ""
-            kickback_html = ""
-            if page.kickback:
-                directive = _safe(str(page.kickback.get("directive") or ""))
-                if directive:
-                    kickback_html = (
-                        '<div class="statement-sc" style="border-left:3px solid #dc2626;'
-                        'background:#fef2f2;color:#991b1b;margin-top:8px">'
-                        f'↳ 重规划指令：{directive}</div>'
-                    )
             verify_detail = (
                 f'<div class="detail" id="{vd_id}">'
                 f'<div class="detail-ss"><img src="{page.verify_url}" onclick="zoomImg(this.src)" alt="验收截图"></div>'
@@ -1558,16 +1498,11 @@ def generate_html(data: ReportData, grid: bool = False) -> str:
                 f'</div>'
                 f'{reason_html}'
                 f'{summary_html}'
-                f'{kickback_html}'
                 f'{_render_module_io_html(page.outcome_context, page.outcome_token_usage)}'
                 f'{_render_timing_html(page.outcome_timings)}'
-                f'{rd_banner}'  # a re-decompose triggered here IS this statement's 验收结果 — inside the box
                 f'</div>'
                 f'</div>'
             )
-        _rd_outside = "" if page.verify_url and page.steps else rd_banner
-        # (The infeasible-statement kick-back verdict is rendered on its own turn's detail, above —
-        # it's that turn's conclusion, not a statement-level banner.)
         turns_label = f"{len(page.steps)} turns" if page.steps else "无交互 turn"
         # Coding: statement-local data strip (ctx.op / inputs / outputs) above the gallery.
         data_panel_html = ""
@@ -1613,7 +1548,6 @@ def generate_html(data: ReportData, grid: bool = False) -> str:
                 coding_op=coding_op,
                 executor=page.statement_executor,
                 inputs=inputs if isinstance(inputs, dict) else {},
-                name=page.statement_name,
             )
             flat = _flatten_coding_inputs(
                 coding_op=op,
@@ -1713,7 +1647,6 @@ def generate_html(data: ReportData, grid: bool = False) -> str:
           {gallery_html}
           {details_html}
           {verify_detail}
-          {_rd_outside}
           {checklist_data}
         </div>"""
         page_chunks.append({
@@ -1784,11 +1717,6 @@ def generate_html(data: ReportData, grid: bool = False) -> str:
     else:
         pages_html = "".join(str(chunk["html"]) for chunk in page_chunks)
 
-    # any re-decompose whose trigger turn wasn't matched to a statement (edge) → banner at the end
-    for _rd in redecomps:
-        if _rd.get("kickback_n") not in placed_rd:
-            pages_html += render_redecompose_card(data.orchestrator, _rd.get("kickback_n"))
-
     program_html = _render_program_section(data.orchestrator)
 
     # Model-config box with an inline "参考单价" chip that pops the rate table on hover.
@@ -1800,7 +1728,7 @@ def generate_html(data: ReportData, grid: bool = False) -> str:
         price_chip = ""
         if sess_in or sess_out:
             models_seen: dict[str, tuple[float, float]] = {}
-            for k in ("supervisor", "supervisor.decompose", "action_policy"):
+            for k in ("supervisor", "orchestrator", "action_policy"):
                 mdl = (data.models or {}).get(k)
                 if mdl and mdl not in models_seen:
                     models_seen[mdl] = model_price(mdl)
@@ -1830,11 +1758,11 @@ def generate_html(data: ReportData, grid: bool = False) -> str:
                 for m, keys in grouped.items()
             )
             cost_note_html = (
-                f'<div class="decompose"><span class="decompose-label">模型配置</span>'
+                f'<div class="meta-strip"><span class="meta-strip-label">模型配置</span>'
                 f'{parts}{price_chip}</div>'
             )
         elif price_chip:
-            cost_note_html = f'<div class="decompose">{price_chip}</div>'
+            cost_note_html = f'<div class="meta-strip">{price_chip}</div>'
 
     result_html = ""
     if data.program_output or data.reply:

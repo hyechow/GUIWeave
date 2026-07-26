@@ -65,11 +65,6 @@ def test_handle_loading_frame_stops_after_limit(monkeypatch):
     interpreter = type("Interpreter", (), {
         "run_log": [], "finish_incomplete": False, "failed": False,
     })()
-    monkeypatch.setattr(
-        "gui_agent.core.llm.output.compose_orchestration_reply",
-        lambda _goal, _digest, *, current, terminal: terminal,
-    )
-
     result = flow.handle_loading_frame(
         loading_streak=12,
         max_loading_frames=12,

@@ -2,7 +2,7 @@
 
 Produces two files in knowledge/{platform}/{app}/ (platform defaults to iphone, the only
 platform with per-page recon today):
-- _app.md: Navigation structure for Supervisor (task decomposition)
+- _app.md: Navigation structure for orchestrator planning
 - _elements.md: UI element details for Planner (instruction generation)
 
 Hand-maintained `_`-prefixed siblings survive re-ingest. `_deploy.md` and `_update.md` are folded
@@ -45,7 +45,7 @@ _ELEMENTS_PROMPT = load_prompt("task.self_learning.app_summary.elements_prompt")
 class AppKnowledge:
     """Two-layer knowledge for an app."""
     navigation: str  # _app.md content → Supervisor
-    elements: str    # _elements.md content → Planner (full; replan/decompose + fallback)
+    elements: str    # _elements.md content → statement execution and fallback
     app_name: str
     sections: dict[str, str] = field(default_factory=dict)  # per-section bodies → progressive load
     check: str = ""  # _check.md content → Checker-only observable completion rules
@@ -55,10 +55,10 @@ class AppKnowledge:
     # purely so the report can show each channel's loaded state. Absent file → key absent.
     overlays: dict[str, int] = field(default_factory=dict)
 
-    def decompose_sections(self, goal: str) -> list[str]:
-        """Pick functional sections relevant to initial Program decomposition.
+    def orchestrator_sections(self, goal: str) -> list[str]:
+        """Pick functional sections relevant to initial Program planning.
 
-        Only sections explicitly scoped to ``decompose`` participate. This keeps page-level HOW
+        Only sections explicitly scoped to ``orchestrator`` participate. This keeps page-level HOW
         out of the initial Program while making resource ownership, field semantics, and stable
         capability constraints available before execution.
         """
@@ -70,17 +70,17 @@ class AppKnowledge:
             scope = meta.get("scope") or []
             if isinstance(scope, str):
                 scope = [scope]
-            if "decompose" in {str(item).strip() for item in scope}:
+            if "orchestrator" in {str(item).strip() for item in scope}:
                 eligible[stem] = text
         if not eligible:
             return []
         return ProgressiveKnowledge(eligible).match_signals([goal])
 
-    def decompose_context(self, goal: str) -> str:
+    def orchestrator_context(self, goal: str) -> str:
         """Application overview plus a small goal-matched functional knowledge slice."""
         from gui_agent.core.self_learning.progressive import ProgressiveKnowledge
 
-        stems = self.decompose_sections(goal)
+        stems = self.orchestrator_sections(goal)
         if not stems:
             return self.navigation
         selected = ProgressiveKnowledge({stem: self.sections[stem] for stem in stems}).bodies(stems)
@@ -288,7 +288,7 @@ def match_app_by_url(url: str, platform: str = "iphone") -> str | None:
     then by a unique port fallback for Docker redirects such as localhost:7780. Returns None
     when the URL doesn't match any known app (e.g. a Google new-tab page), the port is
     ambiguous, or the platform has no url-keyed knowledge (iphone/android). Gives
-    router/decompose a semantic site name instead of a bare IP.
+    route/plan with a semantic site name instead of a bare IP.
     """
     from urllib.parse import urlparse
 
@@ -340,7 +340,7 @@ def list_known_apps(platform: str = "iphone") -> list[str]:
 
     Used by the router (chat_session.route_message) so it treats these apps as
     fully specified instead of asking the user for facts — entry URL, access,
-    usage — that knowledge injection provides downstream at decompose time.
+    usage — that knowledge injection provides downstream at planning time.
     """
     platform_dir = KNOWLEDGE_DIR / platform
     if not platform_dir.is_dir():

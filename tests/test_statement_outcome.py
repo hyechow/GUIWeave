@@ -16,29 +16,15 @@ def test_completed_requires_verification():
     assert ok.is_completed
 
 
-def test_completed_rejects_kickback():
-    with pytest.raises(ValueError, match="kickback"):
-        StatementOutcome(
-            phase="completed",
-            summary="x",
-            verification="confirmed",
-            kickback="go elsewhere",
-        )
-
-
-def test_failed_rejects_verification_and_kickback():
+def test_failed_rejects_verification():
     with pytest.raises(ValueError, match="verification"):
         StatementOutcome(phase="failed", summary="x", verification="confirmed")
-    with pytest.raises(ValueError, match="kickback"):
-        StatementOutcome(phase="failed", summary="x", kickback="nope")
 
 
-def test_infeasible_requires_kickback():
-    with pytest.raises(ValueError, match="kickback"):
-        StatementOutcome.infeasible("blocked", kickback="")
-    out = StatementOutcome.infeasible("blocked", kickback="use list view")
-    assert out.phase == "infeasible"
-    assert out.kickback == "use list view"
+def test_failed_is_a_terminal_outcome():
+    out = StatementOutcome.failed("blocked")
+    assert out.phase == "failed"
+    assert out.failure_evidence == "blocked"
     assert not out.is_completed
 
 

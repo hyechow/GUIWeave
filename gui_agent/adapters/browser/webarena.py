@@ -1023,10 +1023,10 @@ def main() -> int:
                       f"(nav={knowledge_summary['nav_chars']} chars, "
                       f"sections={knowledge_summary['section_count']}, "
                       f"profile={knowledge_summary['profile']})")
-                selected = knowledge.decompose_sections(intent)
-                knowledge_summary["decompose_sections"] = selected
+                selected = knowledge.orchestrator_sections(intent)
+                knowledge_summary["orchestrator_sections"] = selected
                 print(
-                    "[webarena] knowledge: decompose sections="
+                    "[webarena] knowledge: orchestrator sections="
                     f"{selected or ['<app-overview-only>']}"
                 )
                 break
@@ -1125,7 +1125,7 @@ def main() -> int:
                             plan = generate_reviewed_code(
                                 intent,
                                 knowledge=(
-                                    knowledge.decompose_context(intent)
+                                    knowledge.orchestrator_context(intent)
                                     if knowledge else ""
                                 ),
                                 file_section=file_section,
