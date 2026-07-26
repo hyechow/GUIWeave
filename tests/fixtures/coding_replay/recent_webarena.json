@@ -1,0 +1,105 @@
+{
+  "42": {
+    "expected": ["hollister", "joust bag"],
+    "lookups": {
+      "Search Terms": [
+        {"Search Query": "hollister", "Number of Uses": 28},
+        {"Search Query": "joust bag", "Number of Uses": 21},
+        {"Search Query": "yoga", "Number of Uses": 13}
+      ]
+    }
+  },
+  "63": {
+    "expected": ["helloworld@yahoo.com", "michael.nguyen@yahoo.com"],
+    "lookups": {
+      "Orders": [
+        {"Status": "Complete", "Customer Email": "top@example.com", "ID": "1"},
+        {"Status": "Complete", "Customer Email": "top@example.com", "ID": "2"},
+        {"Status": "Complete", "Customer Email": "top@example.com", "ID": "3"},
+        {"Status": "Complete", "Customer Email": "helloworld@yahoo.com", "ID": "4"},
+        {"Status": "Complete", "Customer Email": "helloworld@yahoo.com", "ID": "5"},
+        {"Status": "Complete", "Customer Email": "michael.nguyen@yahoo.com", "ID": "6"},
+        {"Status": "Complete", "Customer Email": "michael.nguyen@yahoo.com", "ID": "7"},
+        {"Status": "Complete", "Customer Email": "single@example.com", "ID": "8"},
+        {"Status": "Pending", "Customer Email": "ignored@example.com", "ID": "9"}
+      ]
+    }
+  },
+  "108": {
+    "expected": [
+      {"month": "January", "count": 12},
+      {"month": "February", "count": 7},
+      {"month": "March", "count": 5},
+      {"month": "April", "count": 9},
+      {"month": "May", "count": 5}
+    ],
+    "lookups": {
+      "Orders": [
+        {"Status": "Complete", "Purchase Date": "2023-01-01T09:00:00"},
+        {"Status": "Complete", "Purchase Date": "2023-01-02T09:00:00"},
+        {"Status": "Complete", "Purchase Date": "2023-01-03T09:00:00"},
+        {"Status": "Complete", "Purchase Date": "2023-01-04T09:00:00"},
+        {"Status": "Complete", "Purchase Date": "2023-01-05T09:00:00"},
+        {"Status": "Complete", "Purchase Date": "2023-01-06T09:00:00"},
+        {"Status": "Complete", "Purchase Date": "2023-01-07T09:00:00"},
+        {"Status": "Complete", "Purchase Date": "2023-01-08T09:00:00"},
+        {"Status": "Complete", "Purchase Date": "2023-01-09T09:00:00"},
+        {"Status": "Complete", "Purchase Date": "2023-01-10T09:00:00"},
+        {"Status": "Complete", "Purchase Date": "2023-01-11T09:00:00"},
+        {"Status": "Complete", "Purchase Date": "2023-01-12T09:00:00"},
+        {"Status": "Complete", "Purchase Date": "2023-02-01T09:00:00"},
+        {"Status": "Complete", "Purchase Date": "2023-02-02T09:00:00"},
+        {"Status": "Complete", "Purchase Date": "2023-02-03T09:00:00"},
+        {"Status": "Complete", "Purchase Date": "2023-02-04T09:00:00"},
+        {"Status": "Complete", "Purchase Date": "2023-02-05T09:00:00"},
+        {"Status": "Complete", "Purchase Date": "2023-02-06T09:00:00"},
+        {"Status": "Complete", "Purchase Date": "2023-02-07T09:00:00"},
+        {"Status": "Complete", "Purchase Date": "2023-03-01T09:00:00"},
+        {"Status": "Complete", "Purchase Date": "2023-03-02T09:00:00"},
+        {"Status": "Complete", "Purchase Date": "2023-03-03T09:00:00"},
+        {"Status": "Complete", "Purchase Date": "2023-03-04T09:00:00"},
+        {"Status": "Complete", "Purchase Date": "2023-03-05T09:00:00"},
+        {"Status": "Complete", "Purchase Date": "2023-04-01T09:00:00"},
+        {"Status": "Complete", "Purchase Date": "2023-04-02T09:00:00"},
+        {"Status": "Complete", "Purchase Date": "2023-04-03T09:00:00"},
+        {"Status": "Complete", "Purchase Date": "2023-04-04T09:00:00"},
+        {"Status": "Complete", "Purchase Date": "2023-04-05T09:00:00"},
+        {"Status": "Complete", "Purchase Date": "2023-04-06T09:00:00"},
+        {"Status": "Complete", "Purchase Date": "2023-04-07T09:00:00"},
+        {"Status": "Complete", "Purchase Date": "2023-04-08T09:00:00"},
+        {"Status": "Complete", "Purchase Date": "2023-04-09T09:00:00"},
+        {"Status": "Complete", "Purchase Date": "2023-05-01T09:00:00"},
+        {"Status": "Complete", "Purchase Date": "2023-05-02T09:00:00"},
+        {"Status": "Complete", "Purchase Date": "2023-05-03T09:00:00"},
+        {"Status": "Complete", "Purchase Date": "2023-05-04T09:00:00"},
+        {"Status": "Complete", "Purchase Date": "2023-05-05T09:00:00"}
+      ]
+    }
+  },
+  "113": {
+    "expected": ["Emma", "Seam Miller"],
+    "lookups": {
+      "All Reviews": [
+        {"ID": "r1", "Product": "Olivia 1/4 Zip Light Jacket", "Nickname": "Emma"},
+        {"ID": "r2", "Product": "Olivia 1/4 Zip Light Jacket", "Nickname": "Seam Miller"},
+        {"ID": "r3", "Product": "Olivia 1/4 Zip Light Jacket", "Nickname": "Kai"}
+      ]
+    },
+    "reads": {
+      "r1": {"Detailed Rating": 2},
+      "r2": {"Detailed Rating": 3},
+      "r3": {"Detailed Rating": 5}
+    }
+  },
+  "193": {
+    "expected": 182.4,
+    "lookups": {
+      "Orders": [
+        {"Status": "Complete", "Purchase Date": "2026-07-24T12:00:00", "Grand Total (Purchased)": 93.4},
+        {"Status": "Complete", "Purchase Date": "2026-07-23T12:00:00", "Grand Total (Purchased)": 89.0},
+        {"Status": "Complete", "Purchase Date": "2026-07-22T12:00:00", "Grand Total (Purchased)": 10.0},
+        {"Status": "Pending", "Purchase Date": "2026-07-25T12:00:00", "Grand Total (Purchased)": 999.0}
+      ]
+    }
+  }
+}
