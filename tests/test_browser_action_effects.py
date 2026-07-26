@@ -1,33 +1,33 @@
 from gui_agent.adapters.browser.actions import BrowserAction, BrowserActionDecision
 from gui_agent.adapters.browser.policies import BrowserActionPolicy
-from gui_agent.core.schemas import ActionIntent, Observation, SupervisorStep
+from gui_agent.core.schemas import ActionIntent, Observation, SupervisorStep, TargetBinding
 
 
-def test_browser_effect_resolution_uses_structure_and_primitives() -> None:
+def test_browser_effect_resolution_uses_binding_and_primitives() -> None:
     policy = BrowserActionPolicy()
-    observation = Observation(
-        png_bytes=b"png",
-        source="browser",
-        semantic_tree=[{
-            "ref": 18,
-            "role": "button",
-            "key": "Refund",
-            "effect_kind": "query_control",
-        }],
-    )
     step = SupervisorStep(
         action_intent=ActionIntent(
             instruction="activate",
             family="activate",
-            target_control="Refund",
-            target_ref="18",
+            target_control="a label that is absent from observation",
         ),
         summary="activate",
     )
     tap = BrowserActionDecision(
         action=BrowserAction(action_type="tap", x=10, y=20, description="tap")
     )
-    assert policy.resolve_action_effect(step, observation, tap) == "query_control"
+    binding = TargetBinding(
+        status="bound",
+        source="structural",
+        unit_id="ref:18",
+        effect_kind="query_control",
+    )
+    assert policy.resolve_action_effect(
+        step,
+        Observation(png_bytes=b"png", source="browser"),
+        tap,
+        binding,
+    ) == "query_control"
 
     columns = Observation(
         png_bytes=b"png",
@@ -37,14 +37,25 @@ def test_browser_effect_resolution_uses_structure_and_primitives() -> None:
             "label": "ID",
             "value": "Columns",
             "effect_kind": "presentation",
+            "rect": {"x": 822, "y": 280, "w": 129, "h": 48},
         }],
     )
+    columns_step = step.model_copy(update={
+        "action_intent": step.action_intent.model_copy(
+            update={"target_control": "Columns"}
+        )
+    })
+    columns_tap = BrowserActionDecision(
+        action=BrowserAction(action_type="tap", x=830, y=276, description="tap")
+    )
+    columns_binding = policy.bind(columns_step, columns, columns_tap)
+    assert columns_binding is not None
+    assert (columns_binding.status, columns_binding.effect_kind) == (
+        "bound",
+        "presentation",
+    )
     assert policy.resolve_action_effect(
-        step.model_copy(update={"action_intent": step.action_intent.model_copy(
-            update={"target_control": "Columns", "target_ref": ""}
-        )}),
-        columns,
-        tap,
+        columns_step, columns, columns_tap, columns_binding
     ) == "presentation"
 
     navigate = BrowserActionDecision(action=BrowserAction(

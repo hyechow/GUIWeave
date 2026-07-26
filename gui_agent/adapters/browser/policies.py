@@ -22,7 +22,6 @@ from dotenv import load_dotenv
 from gui_agent.adapters.browser.actions import BrowserActionDecision
 from gui_agent.adapters.browser.control_grounding import (
     ground_rendered_action,
-    matches_target_control,
     rendered_target_evidence,
     resolve_native_control_action,
     resolve_semantic_action,
@@ -97,12 +96,10 @@ class BrowserActionPolicy(BaseActionPolicy):
         action_decision,
         binding=None,
     ) -> ActionEffectKind:
-        """Resolve the grounded target's effect from adapter structural evidence."""
-        del binding
-        intent = step.action_intent
+        """Read effect evidence produced by grounding; never rematch target text."""
+        del step, observation
         action = action_decision.action
         action_type = str(getattr(action, "action_type", "") or "").casefold()
-        target_ref = str(getattr(intent, "target_ref", "") or "") if intent else ""
         primitive: ActionEffectKind | None = (
             "viewport"
             if action_type in {"scroll", "drag", "scroll_to_ref"}
@@ -114,45 +111,8 @@ class BrowserActionPolicy(BaseActionPolicy):
         )
         if primitive:
             return primitive
-        if intent is None:
-            return "unknown"
-
-        def matches(item: object) -> bool:
-            if not isinstance(item, dict):
-                return False
-            refs = {
-                str(item.get(key) or "").strip()
-                for key in ("ref", "id", "name")
-            }
-            if target_ref and target_ref in refs:
-                return True
-            candidate = (
-                {**item, "label": item.get("key")}
-                if not item.get("label") and item.get("key")
-                else item
-            )
-            return matches_target_control(
-                candidate,
-                intent.target_control,
-                allow_compound=intent.family in {"input", "select"},
-            )
-
-        candidates = [
-            item
-            for item in [
-                *(getattr(observation, "semantic_tree", None) or []),
-                *(getattr(observation, "form_controls", None) or []),
-                *(getattr(observation, "form_control_state", None) or []),
-            ]
-            if matches(item)
-        ]
-        effects = {
-            str(item.get("effect_kind") or "")
-            for item in candidates
-            if item.get("effect_kind")
-        }
-        if len(effects) == 1:
-            return effects.pop()
+        if binding is not None and binding.status == "bound":
+            return binding.effect_kind
         return "unknown"
 
     def _prepare_png(self, png_bytes: bytes) -> bytes:

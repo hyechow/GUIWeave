@@ -31,7 +31,7 @@ Runtime does **not** hold final business authority. It may only:
 | Kind | Role | On failure |
 |------|------|------------|
 | **Typed success predicate** | Compare a declared postcondition with adapter-normalized state | Admit or short-circuit `complete` only on a proven match |
-| **Grounded permission guard** | Compare adapter-classified `effect_kind` with collection phase | Reject before dispatch; unknown effects fail closed for restricted phases |
+| **Grounded permission guard** | Compare grounding-bound `effect_kind` with collection phase | Reject known forbidden effects before dispatch; unknown effects abstain |
 | **Proposal mechanics** | Validate declared values, target refs, capabilities and observable-field rules | Give one same-frame correction, then return recoverable `infeasible` |
 | **Hard structural** | Invented journal citations, hard-budget final frame | May terminal-fail |
 

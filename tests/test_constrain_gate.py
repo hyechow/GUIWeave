@@ -41,7 +41,7 @@ def _authorize(phase: str | None, effect: str) -> str:
         ("pagination", False),
         ("navigation", False),
         ("business_commit", False),
-        ("unknown", False),
+        ("unknown", True),
     ],
 )
 def test_query_phase_effect_boundary(phase, effect, allowed) -> None:

@@ -71,6 +71,17 @@ StatementPhase = Literal["completed", "failed", "exhausted", "infeasible", "inte
 Verification = Literal["confirmed", "accepted_unverified"]
 BindingSource = Literal["visual", "structural"]
 BindingStatus = Literal["bound", "contradicted", "unresolved"]
+ActionEffectKind = Literal[
+    "query_control",
+    "presentation",
+    "viewport",
+    "pagination",
+    "navigation",
+    "field_write",
+    "business_commit",
+    "authentication",
+    "unknown",
+]
 TargetValue = str | list[str]
 
 
@@ -122,6 +133,7 @@ class TargetBinding(BaseModel):
     status: BindingStatus
     source: Optional[BindingSource] = None
     unit_id: str = ""
+    effect_kind: ActionEffectKind = "unknown"
     reason: str = ""
 
 
@@ -684,19 +696,6 @@ class CollectionIntent(BaseModel):
 
 
 InteractionIntent = Optional[CollectionIntent]
-
-ActionEffectKind = Literal[
-    "query_control",
-    "presentation",
-    "viewport",
-    "pagination",
-    "navigation",
-    "field_write",
-    "business_commit",
-    "authentication",
-    "unknown",
-]
-
 
 class StatementContract(BaseModel):
     """Frozen execution contract for one Program statement invocation input.

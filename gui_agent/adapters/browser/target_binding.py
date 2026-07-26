@@ -34,12 +34,17 @@ def _action_point(action: object) -> tuple[float, float] | None:
 def _point_matches(control: dict, action: object) -> bool:
     rect = control.get("rect") if isinstance(control.get("rect"), dict) else {}
     point = _action_point(action)
-    return bool(
-        point is not None
-        and isinstance(rect.get("x"), (int, float))
-        and isinstance(rect.get("y"), (int, float))
-        and abs(float(rect["x"]) - point[0]) <= 3
-        and abs(float(rect["y"]) - point[1]) <= 3
+    if (
+        point is None
+        or not isinstance(rect.get("x"), (int, float))
+        or not isinstance(rect.get("y"), (int, float))
+    ):
+        return False
+    half_width = max(3.0, float(rect.get("w") or 0) / 2)
+    half_height = max(3.0, float(rect.get("h") or 0) / 2)
+    return (
+        abs(float(rect["x"]) - point[0]) <= half_width
+        and abs(float(rect["y"]) - point[1]) <= half_height
     )
 
 
@@ -76,6 +81,7 @@ def _binding(control: dict) -> TargetBinding:
         status="bound",
         source="structural",
         unit_id=group_id or "__form__",
+        effect_kind=str(control.get("effect_kind") or "unknown"),
         reason="browser control inventory uniquely owns the concrete action point",
     )
 
@@ -157,6 +163,7 @@ class BrowserTargetBinder:
                         status="bound",
                         source="structural",
                         unit_id=f"ref:{intent.target_ref}",
+                        effect_kind=str(semantic[0].get("effect_kind") or "unknown"),
                         reason="navigation URL is owned by the declared semantic target ref",
                     )
                 point = semantic[0].get("point")
@@ -180,6 +187,7 @@ class BrowserTargetBinder:
                             status="bound",
                             source="structural",
                             unit_id=f"ref:{intent.target_ref}",
+                            effect_kind=str(semantic[0].get("effect_kind") or "unknown"),
                             reason="action point is owned by the declared semantic target ref",
                         )
             # A ref may come from the optional form-control inventory rather than the

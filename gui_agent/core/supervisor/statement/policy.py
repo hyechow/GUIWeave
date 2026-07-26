@@ -286,8 +286,9 @@ class StatementSupervisorPolicy(
     ) -> str:
         """Authorize an adapter-grounded effect for the active interaction intent.
 
-        Reach and query phases admit only the effect families they own. The gate
-        does not inspect action labels or application vocabulary.
+        Reach and query phases reject only structurally identified effects outside
+        their ownership. Unknown means the gate lacks evidence and therefore abstains;
+        target binding and execution validation remain responsible for the action.
         """
         statement = self._active_statement
         if statement is None:
@@ -299,6 +300,8 @@ class StatementSupervisorPolicy(
                     "pagination belongs to collection acquisition, not an "
                     "ordinary interactive statement"
                 )
+            return ""
+        if effect == "unknown":
             return ""
         if effect in _COLLECTION_EFFECTS[intent.phase]:
             return ""

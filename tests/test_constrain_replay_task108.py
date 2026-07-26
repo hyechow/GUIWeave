@@ -49,7 +49,7 @@ def _contract() -> StatementContract:
     )
 
 
-def test_recorded_label_does_not_grant_query_effect_permission() -> None:
+def test_recorded_label_does_not_fabricate_query_effect() -> None:
     observation = _recorded_observation()
     contract = _contract()
     view = build_observation_view(contract, observation, [])
@@ -85,7 +85,7 @@ def test_recorded_label_does_not_grant_query_effect_permission() -> None:
 
     policy = StatementSupervisorPolicy()
     policy.begin_statement(contract, instance_id="i1:c1")
-    rejection = policy.authorize_grounded_action(effect)
+    decision = policy.authorize_grounded_action(effect)
 
     assert effect == "unknown"
-    assert rejection
+    assert decision == ""
