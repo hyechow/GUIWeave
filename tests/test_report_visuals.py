@@ -105,7 +105,12 @@ def test_coding_orchestrator_renders_reviewed_python_plan():
         "program": {
             "kind": "coding",
             "goal": "return the top record",
-            "source": 'def run(ctx):\n    rows = ctx.acquire("items")\n    return rows[0]',
+            "source": (
+                'def run(ctx):\n'
+                '    state = ctx.gui("Open items", success={"entity": "Items"})\n'
+                '    rows = ctx.query(state, entity="Items", fields=["id"])\n'
+                '    return rows[0]\n'
+            ),
         },
         "context_reports": [{
             "kind": "coding_review",
@@ -116,15 +121,15 @@ def test_coding_orchestrator_renders_reviewed_python_plan():
     })
 
     assert "Coding Orchestrator · Python 执行计划" in html
-    assert "Review · 已修复" in html
-    assert "ctx.acquire" in html
+    assert "Review · 已重生成" in html
+    assert "ctx.query" in html
     assert "coding-source-wrap" in html
     assert "完整 Python 源码" in html
     assert "coding-trace" not in html  # nodes attached by generate_html, not the shell
 
 
-def test_coding_report_uses_standard_cards_with_data_strip():
-    """Coding mode keeps standard statement cards; each card gains a data strip above gallery."""
+def test_coding_report_groups_statements_by_public_ctx_call():
+    """A public ctx call is one collapsed card; executor phases stay inside it."""
     from gui_agent.reports.models import ReportPage, ReportStep
 
     html = generate_html(ReportData(
@@ -147,6 +152,7 @@ def test_coding_report_uses_standard_cards_with_data_strip():
                 "executor": "interact",
                 "name": "go_to",
                 "instance_id": "i1:c1",
+                "coding_call_id": "1:gui",
                 "coding_op": "gui",
                 "coding_payload": {
                     "goal": "Open orders",
@@ -167,7 +173,11 @@ def test_coding_report_uses_standard_cards_with_data_strip():
                 "executor": "interact",
                 "name": "Resolve collection Orders",
                 "instance_id": "i2:c2",
+                "coding_call_id": "2:query",
                 "coding_op": "lookup",
+                "coding_plan": "query",
+                "coding_plan_step": 1,
+                "coding_plan_steps": 3,
                 "coding_payload": {
                     "state": "ui:1",
                     "entity": "Orders",
@@ -256,12 +266,13 @@ def test_coding_report_uses_standard_cards_with_data_strip():
         ],
     ))
 
-    # Same card shell as DSL reports — not a custom details accordion.
     assert "coding-trace" not in html
     assert 'id="ms-c1"' in html
     assert 'id="ms-c2"' in html
-    # Runtime calls annotated on Python source lines (not a separate index block).
-    assert "coding-call-index" not in html
+    assert html.count('<details class="coding-call-card"') == 2
+    assert '<details class="coding-call-card" open' not in html
+    assert "1 个内部阶段 · 默认收起" in html
+    # Runtime calls remain annotated on Python source lines.
     assert "coding-source-annotated" in html
     assert "coding-src-chip" in html
     assert 'href="#ms-c1"' in html

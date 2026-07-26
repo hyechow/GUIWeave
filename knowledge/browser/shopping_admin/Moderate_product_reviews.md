@@ -13,7 +13,7 @@ source: manual_distilled
 confidence: medium
 sensitivity: internal
 ttl: session
-version: 2
+version: 3
 ---
 # Moderate product reviews
 
@@ -22,15 +22,15 @@ For Commerce product reviews, a submitted product review must be approved before
 ## Review data surfaces
 
 **Marketing > User Content > All Reviews** is the complete review-record source. Its grid exposes
-the Product association, Title, Review text, and an Action link to each review detail. Product-
+the Product association, Title, Nickname, Review text, and an Action link to each review detail. Product-
 scoped review queries bind their search/filter to the grid's **Product** field rather than looking
 for reviews from the Products list.
 
-The review detail owns **Detailed Rating**, **Nickname**, and **Summary of Review**. These are not
-columns that can be enabled in the All Reviews grid. When the requested title is available in the
-grid, use **Title**; on the detail form, the corresponding review-title field is **Summary of
-Review**, not Nickname and not the page heading.
-Therefore a complete review collection may take Product, Title, Review, and the Action URL from
+The review detail owns **Detailed Rating** and the editable **Nickname** and **Summary of Review**
+fields. Nickname is also directly available in the All Reviews grid. When the requested title is
+available in the grid, use **Title**; on the detail form, the corresponding review-title field is
+**Summary of Review**, not Nickname and not the page heading.
+Therefore a complete review collection may take Product, Title, Nickname, Review, and the Action URL from
 the grid, but it cannot declare Rating as a grid row field. Rating-dependent analysis must obtain
 Detailed Rating from each row's linked review-detail resource before aggregating.
 

@@ -1,4 +1,4 @@
-"""Structured read: extract a read statement's `returns` fields off the result frame.
+"""Extract declared read fields from a result frame.
 
 The orchestrator's read primitive. A read statement's job is single-frame data extraction
 (the inspect insight): read the requested fields, interpreting non-text signals (icons /

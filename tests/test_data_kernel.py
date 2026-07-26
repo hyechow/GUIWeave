@@ -1,4 +1,5 @@
 from decimal import Decimal
+from datetime import datetime
 
 import pytest
 
@@ -196,14 +197,38 @@ def test_table_boundary_normalizes_unambiguous_dates_and_money():
     rows = normalize_table_rows([{
         "Purchase Date": "Jun 9, 2023 9:00:00 AM",
         "Grand Total": "$1,234.50",
+        "Uses": "19",
+        "Rating": "4.5",
+        "ID": "000062",
         "Status": "Complete",
     }])
 
     assert rows == [{
         "Purchase Date": "2023-06-09T09:00:00+00:00",
         "Grand Total": 1234.5,
+        "Uses": 19,
+        "Rating": 4.5,
+        "ID": "000062",
         "Status": "Complete",
     }]
+
+
+def test_table_boundary_honors_explicit_field_types():
+    rows = normalize_table_rows(
+        [{
+            "Purchase Date": "Jun 9, 2023 9:00:00 AM",
+            "Grand Total": "$1,234.50",
+        }],
+        {
+            "Purchase Date": "datetime",
+            "Grand Total": "number",
+        },
+    )
+
+    assert rows[0]["Purchase Date"] == datetime.fromisoformat(
+        "2023-06-09 09:00:00+00:00"
+    )
+    assert rows[0]["Grand Total"] == 1234.5
 
 
 def test_pipeline_buckets_groups_and_dense_ranks_with_ties():

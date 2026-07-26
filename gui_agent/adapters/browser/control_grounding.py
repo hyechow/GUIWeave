@@ -178,15 +178,21 @@ def resolve_semantic_action(
         )
     if node.get("in_viewport") is False:
         return None
-    if action_family == "navigate":
-        if (
-            str(node.get("role") or "").casefold() == "link"
-            and str(node.get("url") or "").strip()
-        ):
+    link_url = str(node.get("url") or "").strip()
+    is_document_link = bool(
+        str(node.get("role") or "").casefold() == "link"
+        and link_url
+        and not link_url.casefold().startswith("javascript:")
+        and not link_url.rstrip().endswith("#")
+    )
+    if action_family == "navigate" or (
+        action_family == "activate" and is_document_link
+    ):
+        if is_document_link:
             return BrowserActionDecision(
                 action=BrowserAction(
                     action_type="navigate",
-                    url=str(node["url"]).strip(),
+                    url=link_url,
                     description=instruction or f"打开 {target_control}",
                 )
             )

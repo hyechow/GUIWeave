@@ -134,7 +134,7 @@ def _semantic_affordance(node: dict, current_url: str) -> dict | None:
     }
     if url:
         result["url"] = url
-    for key in ("effect_kind",):
+    for key in ("effect_kind", "query_action"):
         value = node.get(key)
         if value:
             result[key] = value
@@ -195,7 +195,7 @@ def _control_affordance(control: dict) -> dict | None:
         result["ref_aliases"] = refs[1:]
     for key in (
         "name", "id", "value", "options", "group_id", "is_filter",
-        "effect_kind",
+        "effect_kind", "query_action",
     ):
         value = control.get(key)
         if value is not None and value != "":

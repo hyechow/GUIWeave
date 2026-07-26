@@ -3,7 +3,6 @@
 from __future__ import annotations
 
 import argparse
-import json
 import os
 import sys
 import time
@@ -63,35 +62,11 @@ def main(
         help="监督者策略模块",
     )
     parser.add_argument(
-        "--orchestrator",
-        choices=["dsl", "coding"],
-        default="dsl",
-        help="规划后端：dsl（默认）或受限 Python coding orchestrator",
-    )
-    parser.add_argument(
-        "--context",
-        type=Path,
-        help="agent-loop 可选的 context 加载路径",
-    )
-    parser.add_argument(
         "--max-turns",
         type=int,
         default=20,
         help="agent-loop 最大自动执行轮数，防止无限循环",
     )
-    dynamic_turns = parser.add_mutually_exclusive_group()
-    dynamic_turns.add_argument(
-        "--dynamic-max-turns",
-        action="store_true",
-        help="DSL 编排器模式下显式允许按 Program 复杂度提高 max_turns",
-    )
-    dynamic_turns.add_argument(
-        "--no-dynamic-max-turns",
-        dest="dynamic_max_turns",
-        action="store_false",
-        help=argparse.SUPPRESS,
-    )
-    parser.set_defaults(dynamic_max_turns=False)
     parser.add_argument(
         "--auto-continue",
         action="store_true",
@@ -120,8 +95,6 @@ def main(
         help="显式启用可选的 _skill.md 编排提示；默认仅使用应用功能说明",
     )
     args = parser.parse_args()
-    if args.context and args.orchestrator == "coding":
-        parser.error("coding orchestrator 暂不支持 --context checkpoint 恢复")
 
     # Unified headless switch (--headless flag OR env AGENT_HEADLESS): suppress the HUD and the
     # action visualizer on ALL platforms. Exported back to the env so the lazily-resolved browser
@@ -136,16 +109,14 @@ def main(
     action_policy = policy_builder(args.policy)
     supervisor = supervisor_builder(args.supervisor)
 
-    input_context_path = args.context
+    input_context_path = None
     log_dir = create_run_dir("agent-loop", bundle.platform)
     context_path = log_dir / "context.json"
     hud = None
 
     # ── 启动初始化:先 setup_check + 连接 device,observe 一次拿当前前台 tab 的 url/title ──
-    # router 和 decompose 过去都在 device 连接前跑(router_prompt.py 自己都写「默认在当前已打开
-    # 的页面」却根本不知是哪个),连截图都没有(DSL decompose 在 cli、连接在 loop)。现在提前连接、
-    # observe 一次,把 url 注入 router/decompose(截图看不到地址栏,以此 url 为 ground truth),再把
-    # 已开的 session 传给 run_agent_loop 复用(loop 见 platform 非空就跳过自己的 setup_check/open_session)。
+    # Connect and observe once so routing and code generation receive the
+    # current location, then reuse the open session in the agent loop.
     setup = bundle.setup_check()
     if not setup.ok:
         print(f"环境检查未通过：{setup.summary}")
@@ -163,24 +134,20 @@ def main(
             cur_url = initial_obs.url or ""
             cur_title = initial_obs.title or ""
             # Map the url's host to a known app name (semantic site) — the IP itself is opaque
-            # to router/decompose, while an explicit application identity carries meaning.
+            # to routing/planning, while an explicit application identity carries meaning.
             if cur_url:
                 cur_site = match_app_by_url(cur_url, bundle.platform) or ""
             if cur_url or cur_site:
                 _shown = cur_site or cur_url
                 print(f"当前前台页面：{_shown}" + (f"（{cur_title}）" if cur_title else ""))
         except Exception as exc:  # noqa: BLE001 — never block the run on a page-info probe
-            print(f"（初始页面探测失败，router/decompose 将不感知当前站点：{exc}）")
+            print(f"（初始页面探测失败，规划器将不感知当前站点：{exc}）")
 
-        # Route the raw input through the LLM router (now with the current front-tab url so
-        # it can resolve "当前页面/这里" to a concrete site). Skipped on --context / --no-router.
+        # Route the raw input through the LLM router with current location context.
         raw_input = args.prompt
         router_result = None
         goal = args.prompt
-        if args.context:
-            raw_context = json.loads(args.context.read_text(encoding="utf-8"))
-            goal = str(raw_context.get("goal") or goal)
-        if not args.context and not args.no_router:
+        if not args.no_router:
             try:
                 from gui_agent.core.chat.session import route_message
                 router_result = route_message(
@@ -245,8 +212,12 @@ def main(
             # Compile the selected semantic planning surface before opening the loop.
             orchestrator_context_reports: list[dict] = []
             def _compile_program():
-                from gui_agent.core.orchestrator import decompose, estimate_program_turns
-                from gui_agent.core.orchestrator.program import Program
+                from gui_agent.core.orchestrator import (
+                    CodingTerminalRenderer,
+                    generate_reviewed_code,
+                    program_from_plan,
+                )
+                from gui_agent.core.router import resolve_intent
                 from gui_agent.core.supervisor.statement.model_io import resolve_file_refs
                 orchestrator_metrics: dict = {}
                 run_max_turns = args.max_turns
@@ -258,71 +229,36 @@ def main(
                         if len(file_section) <= cap
                         else file_section[:cap] + "\n…（配置过长已截断，其余以分解结果为准）"
                     )
-                if input_context_path:
-                    raw = json.loads(input_context_path.read_text(encoding="utf-8"))
-                    revisions = [
-                        event
-                        for event in ((raw.get("journal") or {}).get("events") or [])
-                        if event.get("event_type") == "program_revision"
-                    ]
-                    if not revisions:
-                        raise ValueError(
-                            "resume context has no Program revision in EventJournal"
-                        )
-                    program = Program.model_validate(revisions[-1]["program"])
-                    print(
-                        f"Orchestrator: 从 EventJournal 恢复 revision "
-                        f"{revisions[-1].get('revision')}（{len(program.statements)} 条语句）"
-                    )
-                    return program, {}, run_max_turns
-                # Resolve @<path> refs once (config field values the goal only points at) and feed
-                # them to the decomposer so the LLM sees the referenced field values.
                 orch_started = time.perf_counter()
                 orch_calls_before = get_llm_call_count()
                 orch_tokens_before = get_llm_token_usage()
-                if args.orchestrator == "coding":
-                    from gui_agent.core.coding_orchestrator import (
-                        CodingTerminalRenderer,
-                        generate_reviewed_code,
-                        program_from_plan,
-                    )
-                    from gui_agent.core.router import resolve_intent
-
-                    plan = generate_reviewed_code(
-                        goal,
-                        knowledge=knowledge.decompose_context(goal) if knowledge else "",
-                        file_section=file_section,
-                        current_url=cur_url,
-                        current_title=cur_title,
-                        current_site=cur_site,
-                        current_observation=initial_obs,
-                        resolution=resolve_intent(goal),
-                        on_event=CodingTerminalRenderer(),
-                    )
-                    orchestrator_context_reports.append({
-                        "kind": "coding_review",
-                        "source": plan.source,
-                        "approved": bool(plan.review and plan.review.approved),
-                        "repaired": plan.repaired,
-                        "events": [event.to_dict() for event in plan.events],
-                    })
-                    program = program_from_plan(plan)
-                else:
-                    program = decompose(
-                        goal,
-                        knowledge=knowledge.decompose_context(goal) if knowledge else "",
-                        file_section=file_section,
-                        current_url=cur_url,
-                        current_title=cur_title,
-                        current_site=cur_site,
-                        context_reports=orchestrator_context_reports,
-                    )
-                orch_tokens_after = get_llm_token_usage()
-                metric_name = (
-                    "orchestrator.coding"
-                    if args.orchestrator == "coding"
-                    else "orchestrator.decompose"
+                plan = generate_reviewed_code(
+                    goal,
+                    knowledge=knowledge.decompose_context(goal) if knowledge else "",
+                    file_section=file_section,
+                    current_url=cur_url,
+                    current_title=cur_title,
+                    current_site=cur_site,
+                    current_observation=initial_obs,
+                    resolution=resolve_intent(goal),
+                    on_event=CodingTerminalRenderer(),
                 )
+                orchestrator_context_reports.append({
+                    "kind": "coding_review",
+                    "source": plan.source,
+                    "approved": bool(plan.review and plan.review.approved),
+                    "issues": [
+                        issue.render()
+                        for issue in (plan.review.issues if plan.review else ())
+                    ],
+                    "error": plan.review.error if plan.review else "",
+                    "degraded": bool(plan.review and plan.review.unavailable),
+                    "repaired": plan.repaired,
+                    "events": [event.to_dict() for event in plan.events],
+                })
+                program = program_from_plan(plan)
+                orch_tokens_after = get_llm_token_usage()
+                metric_name = "orchestrator.coding"
                 orchestrator_metrics = {
                     "timings": {metric_name: time.perf_counter() - orch_started},
                     "token_usage": {
@@ -336,19 +272,8 @@ def main(
                 # The config must ALSO reach execution-time Transition deterministically — the
                 # supervisor's task-level constraints flow to every statement decision
                 # them (LLM distillation of config into constraints proved unstable).
-                if args.orchestrator == "coding":
-                    print("Orchestrator: 已生成并审查受限 Python 程序")
-                    print(program.source)
-                else:
-                    print(f"Orchestrator: 分解为 {len(program.statements)} 条语句")
-
-                if args.dynamic_max_turns and isinstance(program, Program):
-                    run_max_turns = estimate_program_turns(program, floor=args.max_turns)
-                    if run_max_turns != args.max_turns:
-                        print(
-                            f"Orchestrator: max_turns {args.max_turns} -> {run_max_turns} "
-                            "based on program complexity"
-                        )
+                print("Orchestrator: 已生成并审查受限 Python 程序")
+                print(program.source)
                 return program, orchestrator_metrics, run_max_turns
 
             program, orchestrator_metrics, run_max_turns = _compile_program()

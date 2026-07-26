@@ -16,23 +16,19 @@ from gui_agent.adapters.browser.webarena import (
     _warn_if_pre_loop_page_changed,
     _write_webarena_report_context,
 )
-from gui_agent.core.orchestrator import ObservationBinding, OutputSpec, Program, Read, SourceCheck
+from gui_agent.core.orchestrator import CodingProgram
 from gui_agent.core.run.result import AgentResult
 
 
-def test_print_program_uses_uniform_goal_text_for_binding_nodes(capsys):
-    _print_program(Program(statements=[
-        SourceCheck(id="check", required_fields=["SKU"]),
-        Read(
-            id="read",
-            reads={"value": ObservationBinding(source="field", name="Material")},
-            returns={"value": OutputSpec(type="text", required=False)},
-        ),
-    ]))
+def test_print_program_renders_reviewed_python(capsys):
+    _print_program(CodingProgram(
+        goal="read material",
+        source="def run(ctx):\n    return 'Cotton'",
+    ))
 
     output = capsys.readouterr().out
-    assert "[source_check] 检查 source fields：SKU" in output
-    assert "[read] 绑定当前 observation：value<-field.Material" in output
+    assert "coding orchestrator program" in output
+    assert "def run(ctx)" in output
 
 
 def _result(**updates) -> AgentResult:
@@ -274,6 +270,38 @@ def test_completed_coding_retrieve_uses_json_return_without_output_llm():
     )
 
 
+def test_completed_coding_retrieve_accepts_unverified_read_evidence():
+    resp = _synthesize_response(
+        "Return matching customer nicknames",
+        _result(
+            task_type="RETRIEVE",
+            phase="completed",
+            verification="accepted_unverified",
+            output='["Emma", "seam miller"]',
+            orchestrator={"kind": "coding", "run_log": []},
+        ),
+    )
+
+    assert resp.status == "SUCCESS"
+    assert resp.retrieved_data == ["Emma", "seam miller"]
+
+
+def test_completed_coding_retrieve_wraps_scalar_for_webarena_protocol():
+    resp = _synthesize_response(
+        "Return the total as a number only",
+        _result(
+            task_type="RETRIEVE",
+            phase="completed",
+            verification="confirmed",
+            output="182.4",
+            orchestrator={"kind": "coding", "run_log": []},
+        ),
+    )
+
+    assert resp.status == "SUCCESS"
+    assert resp.retrieved_data == [182.4]
+
+
 def test_completed_mutate_response_does_not_infer_failure_from_summary_text():
     resp = _completed_mutate_response(
         "Update product",
@@ -346,7 +374,7 @@ def test_retrieve_success_without_confirmed_completion_is_not_found():
 
     assert resp.status == "NOT_FOUND_ERROR"
     assert resp.retrieved_data is None
-    assert "confirmed completion" in (resp.error_details or "")
+    assert "completed phase" in (resp.error_details or "")
 
 
 def test_retrieve_confirmed_with_list_stays_success():

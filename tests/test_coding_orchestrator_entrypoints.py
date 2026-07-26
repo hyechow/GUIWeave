@@ -9,7 +9,7 @@ from gui_agent.adapters.browser import webarena
 from gui_agent.core.run import cli
 
 
-def test_cli_exposes_coding_orchestrator_backend(monkeypatch, capsys) -> None:
+def test_cli_has_one_implicit_coding_orchestrator(monkeypatch, capsys) -> None:
     bundle = SimpleNamespace(
         default_action_policy="policy",
         action_policy_choices=("policy",),
@@ -27,14 +27,14 @@ def test_cli_exposes_coding_orchestrator_backend(monkeypatch, capsys) -> None:
         )
 
     assert exc.value.code == 0
-    assert "--orchestrator {dsl,coding}" in capsys.readouterr().out
+    assert "--orchestrator" not in capsys.readouterr().out
 
 
-def test_webarena_exposes_coding_orchestrator_backend(monkeypatch, capsys) -> None:
+def test_webarena_has_one_implicit_coding_orchestrator(monkeypatch, capsys) -> None:
     monkeypatch.setattr(sys, "argv", ["webarena", "--help"])
 
     with pytest.raises(SystemExit) as exc:
         webarena.main()
 
     assert exc.value.code == 0
-    assert "--orchestrator {dsl,coding}" in capsys.readouterr().out
+    assert "--orchestrator" not in capsys.readouterr().out

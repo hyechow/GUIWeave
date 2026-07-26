@@ -5,9 +5,9 @@ from pathlib import Path
 
 import pytest
 
-from gui_agent.core.coding_orchestrator import CodingProgram, CodingProgramRuntime
+from gui_agent.core.orchestrator import CodingProgram, CodingProgramRuntime
 from gui_agent.core.filter_contract import AppliedFilterState
-from gui_agent.core.orchestrator.program import Acquire, Interact
+from gui_agent.core.run.contracts import Acquire, Interact
 from gui_agent.core.run.interactive import contract_for_interact
 from gui_agent.core.schemas import (
     CollectionIntent,
@@ -139,14 +139,6 @@ def run(ctx):
     assert locate_outcome.outputs["scope"]["entity"] == "Orders"
     runtime.send_outcome(locate_outcome)
 
-    # Empty filter state is an exact typed constrain phase, then Acquire owns
-    # any collection traversal/materialization.
-    assert isinstance(
-        runtime.current.statement.interaction_intent,
-        CollectionIntent,
-    )
-    assert runtime.current.statement.interaction_intent.phase == "constrain"
-    runtime.send_outcome(
-        _complete_without_model(monkeypatch, runtime.current, observation, 2)
-    )
+    # A query without predicates has nothing to reconcile. It moves directly
+    # from the located collection state to materialization.
     assert isinstance(runtime.current.statement, Acquire)

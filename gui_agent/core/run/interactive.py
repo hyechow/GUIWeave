@@ -2,8 +2,7 @@
 
 from __future__ import annotations
 
-from gui_agent.core.orchestrator.program import Interact
-from gui_agent.core.orchestrator.runner import StatementInvocation
+from gui_agent.core.run.contracts import Interact, StatementInvocation
 from gui_agent.core.schemas import StatementContract, StatementInfo
 
 def statement_id(invocation: StatementInvocation, program_index: int) -> str:

@@ -1,4 +1,4 @@
-"""LLM coding agent for standalone orchestration programs."""
+"""LLM coding agent for orchestration programs."""
 
 from __future__ import annotations
 
@@ -36,6 +36,7 @@ from .sandbox import (
 _SYSTEM = load_prompt_text("task.orchestrator.coding")
 _REVIEW_SYSTEM = load_prompt_text("task.orchestrator.coding_review")
 _CODE_BLOCK_RE = re.compile(r"```(?:python)?\s*\n(.*?)```", re.DOTALL | re.IGNORECASE)
+_GENERATION_MAX_OUTPUT_TOKENS = 2048
 _REVIEW_MAX_OUTPUT_TOKENS = 4096
 
 
@@ -61,6 +62,7 @@ def _resolution_block(resolution: Any) -> ContextBlock | None:
     lines = []
     for entity in entities:
         dump = entity.model_dump() if hasattr(entity, "model_dump") else vars(entity)
+        dump = {key: value for key, value in dump.items() if key != "match_mode"}
         lines.append(f"- {dump}")
     return ContextBlock(
         id="runtime.intent_facts",
@@ -69,7 +71,15 @@ def _resolution_block(resolution: Any) -> ContextBlock | None:
         source="router",
         ttl="turn",
         priority=20,
-        content="## Router intent facts\n" + "\n".join(lines),
+        content=(
+            "## Router intent facts\n"
+            + "\n".join(lines)
+            + "\nThese facts describe a mention and its matching semantics, not a required "
+            "standalone collection. Query the authoritative source field that also owns the "
+            "requested output. Phrase broadening is an orchestration branch: query the full "
+            "mention first, then explicitly query the shorter search key only when empty. "
+            "Both are strict literal queries."
+        ),
     )
 
 
@@ -317,24 +327,14 @@ def _review_evidence_block(
             f"{run.writes if run is not None else []!r}\n\n"
             "## Mock API schema\n"
             f"{_fixture_review_text(fixture)}\n"
-            "The available_fields are the exact mock API schema for this review.\n\n"
-            "## Mandatory final repair gate\n"
-            f"Static diagnostics that must all disappear:\n{diagnostics}\n"
-            f"Runtime status that must become PASS: {runtime_status}\n"
-            f"Runtime error that must disappear:\n"
-            f"{run.error if run is not None else '- not available'}\n"
-            "Before returning edits, mentally apply the complete patch set once. Every newly "
-            "accessed query/read field must be present in that record's projection, every "
-            "listed diagnostic must be fixed, and every requested mutation literal must reach "
-            "ctx.write values. Every newly added assert must have a nonempty diagnostic message. "
-            "Do not return a partial repair."
+            "The available_fields are the exact mock API schema for this review."
         ),
     )
 
 
 def _decode_review_response(
     text: str,
-) -> tuple[bool, tuple[tuple[str, str], ...], str]:
+) -> tuple[bool, tuple[CodeDiagnostic, ...], str]:
     try:
         payload = json.loads(text)
     except (TypeError, ValueError):
@@ -344,66 +344,27 @@ def _decode_review_response(
         or not isinstance(payload.get("approve"), bool)
     ):
         return False, (), "reviewer returned an invalid review object"
-    edits = payload.get("edits")
-    if not isinstance(edits, list):
-        return False, (), "reviewer edits must be a list"
-    repairs: list[tuple[str, str]] = []
-    for edit in edits:
-        if not isinstance(edit, dict):
-            return False, (), "reviewer edit must be an object"
-        search = edit.get("search")
-        replacement = edit.get("replacement")
-        if not isinstance(search, str) or not isinstance(replacement, str):
-            return False, (), "reviewer edit search and replacement must be strings"
-        repairs.append((search, replacement))
+    raw_issues = payload.get("issues")
+    if not isinstance(raw_issues, list):
+        return False, (), "reviewer issues must be a list"
+    issues: list[CodeDiagnostic] = []
+    for item in raw_issues:
+        if (
+            not isinstance(item, dict)
+            or not isinstance(item.get("code"), str)
+            or not item["code"].strip()
+            or not isinstance(item.get("message"), str)
+            or not item["message"].strip()
+        ):
+            return False, (), "reviewer issue must contain code and message"
+        issues.append(CodeDiagnostic(
+            code=item["code"].strip(),
+            message=item["message"].strip(),
+        ))
     approved = payload["approve"]
-    if approved == bool(repairs):
-        return False, (), "reviewer approval and edits conflict"
-    return approved, tuple(repairs), ""
-
-
-def _parse_local_repairs(
-    source: str,
-    repairs: tuple[tuple[str, str], ...],
-) -> tuple[list[tuple[str, str]], str]:
-    if not repairs:
-        return [], "reviewer returned no local edits"
-    matches = list(dict.fromkeys(repairs))
-    if len(matches) > 10:
-        return [], "reviewer returned more than ten local edits"
-    valid_matches: list[tuple[str, str]] = []
-    rejected: list[str] = []
-    for search, replacement in matches:
-        if not search.strip():
-            rejected.append("SEARCH block is empty")
-            continue
-        occurrences = source.count(search)
-        if occurrences != 1:
-            rejected.append(f"SEARCH matched {occurrences} times")
-            continue
-        valid_matches.append((search, replacement))
-    if not valid_matches:
-        return [], (
-            "reviewer returned no applicable local repair: "
-            + ("; ".join(rejected) or "no valid local edits")
-        )
-    return valid_matches, ""
-
-
-def _apply_local_repairs(
-    source: str,
-    repairs: list[tuple[str, str]],
-) -> tuple[str, str]:
-    repaired = source
-    for search, replacement in repairs:
-        occurrences = repaired.count(search)
-        if occurrences != 1:
-            return source, (
-                "local edits overlap or depend on another replacement; "
-                f"SEARCH matched {occurrences} times after earlier edits"
-            )
-        repaired = repaired.replace(search, replacement, 1)
-    return repaired, ""
+    if approved == bool(issues):
+        return False, (), "reviewer approval and issues conflict"
+    return approved, tuple(issues), ""
 
 
 def _evaluate_source(
@@ -438,36 +399,36 @@ def _attempt_executable(attempt: CodingAttempt) -> bool:
     return not attempt.diagnostics and (attempt.run is None or attempt.run.ok)
 
 
-def _select_local_repair(
+def _regeneration_block(
     source: str,
-    repairs: tuple[tuple[str, str], ...],
-    fixture: FixtureSpec | None,
-    contract_fixture: FixtureSpec | None = None,
-) -> tuple[CodingAttempt, str, tuple[int, ...], CodingAttempt]:
-    repairs, parse_error = _parse_local_repairs(source, repairs)
-    if parse_error:
-        attempt = CodingAttempt(source=source)
-        return attempt, parse_error, (), attempt
-
-    candidate, apply_error = _apply_local_repairs(source, repairs)
-    proposed = CodingAttempt(source=candidate)
-    current = _evaluate_source(source, fixture, contract_fixture)
-    if not apply_error:
-        proposed = _evaluate_source(candidate, fixture, contract_fixture)
-
-    selected: list[int] = []
-    for index, repair in enumerate(repairs):
-        candidate, apply_error = _apply_local_repairs(current.source, [repair])
-        if apply_error:
-            continue
-        attempt = _evaluate_source(candidate, fixture, contract_fixture)
-        if _attempt_executable(attempt) or (
-            current.diagnostics
-            and len(attempt.diagnostics) < len(current.diagnostics)
-        ):
-            current = attempt
-            selected.append(index)
-    return current, "", tuple(selected), proposed
+    attempt: CodingAttempt,
+) -> ContextBlock:
+    issues = [
+        *(item.render() for item in attempt.diagnostics),
+        *(
+            [attempt.run.error]
+            if attempt.run is not None and not attempt.run.ok and attempt.run.error
+            else []
+        ),
+    ]
+    if not issues:
+        issues.append("The candidate failed deterministic validation.")
+    return ContextBlock(
+        id="runtime.coding_regeneration",
+        budget="required",
+        source_type="runtime_state",
+        source="coding_review",
+        ttl="turn",
+        priority=1,
+        content=(
+            "## Rejected candidate\n"
+            f"```python\n{source}\n```\n\n"
+            "## Issues to resolve\n"
+            + "\n".join(f"- {issue}" for issue in issues)
+            + "\n\nGenerate a complete replacement program. Preserve correct behavior, but do "
+            "not return a patch, edit list, or explanation."
+        ),
+    )
 
 
 def _review_attempt(
@@ -496,20 +457,48 @@ def _review_attempt(
         if callable(getattr(llm, "bind", None))
         else llm
     )
-    response = review_runner.invoke(messages)
-    raw_text = _response_text(response.content)
-    approved, edits, error = _decode_review_response(raw_text)
-    input_tokens, output_tokens = _usage(response)
-    review = CodingReview(
-        text=raw_text,
-        approved=approved,
-        edits=edits,
-        error=error,
+    input_tokens = 0
+    output_tokens = 0
+    last_error = ""
+    last_text = ""
+    for attempt_index in range(2):
+        try:
+            response = review_runner.invoke(messages)
+        except Exception as exc:  # noqa: BLE001 - provider/protocol boundary
+            last_error = f"{type(exc).__name__}: {exc}"
+            if attempt_index == 0:
+                continue
+            return CodingReview(
+                text="",
+                approved=False,
+                error=f"[REVIEW_IO] {last_error}",
+                seconds=time.perf_counter() - started,
+            )
+        used_in, used_out = _usage(response)
+        input_tokens += used_in
+        output_tokens += used_out
+        last_text = _response_text(response.content)
+        approved, issues, error = _decode_review_response(last_text)
+        if not error:
+            return CodingReview(
+                text=last_text,
+                approved=approved,
+                issues=issues,
+                input_tokens=input_tokens,
+                output_tokens=output_tokens,
+                seconds=time.perf_counter() - started,
+            )
+        last_error = error
+        if attempt_index == 0:
+            continue
+    return CodingReview(
+        text=last_text,
+        approved=False,
+        error=f"[REVIEW_PROTOCOL] {last_error}",
         input_tokens=input_tokens,
         output_tokens=output_tokens,
         seconds=time.perf_counter() - started,
     )
-    return review
 
 
 def generate_reviewed_code(
@@ -526,7 +515,11 @@ def generate_reviewed_code(
     llm: Any = None,
     on_event: Callable[[CodingEvent], None] | None = None,
 ) -> CodingPlan:
-    """Generate once, then run at most two locally constrained review passes."""
+    """Generate, review, and deterministically regenerate at most once.
+
+    Reviewer output is retained as structured audit evidence. Only static/probe
+    failures can trigger the bounded rewrite or block execution.
+    """
     events: list[CodingEvent] = []
 
     def emit(kind: str, **data: Any) -> None:
@@ -558,6 +551,11 @@ def generate_reviewed_code(
 
     if llm is None:
         llm = _default_llm()
+    generator = (
+        llm.bind(max_tokens=_GENERATION_MAX_OUTPUT_TOKENS, temperature=0)
+        if callable(getattr(llm, "bind", None))
+        else llm
+    )
     common_blocks: list[ContextBlock | None] = [
         task_goal_block(goal),
         _resolution_block(resolution),
@@ -576,134 +574,80 @@ def generate_reviewed_code(
         _fixture_schema_block(fixture),
     ]
 
-    started = time.perf_counter()
-    emit("generation_started", goal=goal)
-    response = llm.invoke(assemble_messages(
-        _SYSTEM,
-        None,
-        human_blocks=blocks,
-        image_resize="none",
-        label="orchestrator.coding_reviewed.generate",
-        decision_text="",
-    ))
-    source = _extract_source(response.content)
-    input_tokens, output_tokens = _usage(response)
-    emit(
-        "generation_completed",
-        source=source,
-        seconds=time.perf_counter() - started,
-        input_tokens=input_tokens,
-        output_tokens=output_tokens,
-    )
-    initial = _evaluate_source(source, fixture, contract_fixture)
-    initial.input_tokens = input_tokens
-    initial.output_tokens = output_tokens
-    initial.seconds = time.perf_counter() - started
-    attempts = [initial]
-    emit_validation("initial", initial)
-    current = initial
-    review: CodingReview | None = None
-    repair_status = "none"
-    next_reason = ""
-    extra_review_blocks: list[ContextBlock | None] = []
-    for pass_index in (1, 2):
+    def generate(
+        *,
+        phase: str,
+        extra_blocks: list[ContextBlock | None] | None = None,
+    ) -> CodingAttempt:
+        started = time.perf_counter()
+        emit("generation_started", goal=goal, phase=phase)
+        response = generator.invoke(assemble_messages(
+            _SYSTEM,
+            None,
+            human_blocks=[*blocks, *(extra_blocks or [])],
+            image_resize="none",
+            label="orchestrator.coding_reviewed.generate",
+            decision_text="",
+        ))
+        generated = _extract_source(response.content)
+        input_tokens, output_tokens = _usage(response)
+        attempt = _evaluate_source(generated, fixture, contract_fixture)
+        attempt.input_tokens = input_tokens
+        attempt.output_tokens = output_tokens
+        attempt.seconds = time.perf_counter() - started
         emit(
-            "review_started",
-            pass_index=pass_index,
-            **({"reason": next_reason} if next_reason else {}),
+            "generation_completed",
+            phase=phase,
+            source=generated,
+            seconds=attempt.seconds,
+            input_tokens=input_tokens,
+            output_tokens=output_tokens,
         )
-        review = _review_attempt(
+        emit_validation(phase, attempt)
+        return attempt
+
+    def review_attempt(
+        attempt: CodingAttempt,
+        *,
+        pass_index: int,
+    ) -> CodingReview:
+        emit("review_started", pass_index=pass_index)
+        result = _review_attempt(
             llm=llm,
-            blocks=[*review_blocks, *extra_review_blocks],
-            source=source,
-            attempt=current,
+            blocks=review_blocks,
+            source=attempt.source,
+            attempt=attempt,
             fixture=fixture,
         )
         emit(
             "review_completed",
             pass_index=pass_index,
-            approved=review.approved,
-            source=source,
-            text=review.text,
-            error=review.error,
-            edits=[
-                {"search": search, "replacement": replacement}
-                for search, replacement in review.edits
-            ],
-            seconds=review.seconds,
+            approved=result.approved,
+            source=attempt.source,
+            text=result.text,
+            error=result.error,
+            issues=[item.render() for item in result.issues],
+            seconds=result.seconds,
         )
-        if review.approved:
-            if _attempt_executable(current) or pass_index == 2:
-                break
-            next_reason = "approval contradicted diagnostics"
-            extra_review_blocks = [ContextBlock(
-                id="runtime.coding_review_contradiction",
-                budget="required",
-                source_type="runtime_state",
-                source="static_validator",
-                ttl="turn",
-                priority=1,
-                content=(
-                    "The previous review incorrectly approved a candidate with mandatory "
-                    "static diagnostics. Approval is forbidden; return local edits that "
-                    "remove every listed diagnostic."
-                ),
-            )]
-            continue
+        return result
 
-        if review.error:
-            repaired = CodingAttempt(source=source)
-            proposed = repaired
-            repair_error, selected_repairs = review.error, ()
-        else:
-            repaired, repair_error, selected_repairs, proposed = _select_local_repair(
-                source,
-                review.edits,
-                fixture,
-                contract_fixture,
-            )
-        if repair_error:
-            repaired.diagnostics = [
-                CodeDiagnostic("LOCAL_REPAIR_INVALID", repair_error),
-            ]
-        repair_progress = bool(selected_repairs) and repaired.source != source
-        repair_accepted = repair_progress and _attempt_executable(repaired)
-        repair_status = (
-            "accepted" if repair_accepted
-            else "partial" if repair_progress
-            else "rejected"
+    initial = generate(phase="initial")
+    attempts = [initial]
+    review = review_attempt(initial, pass_index=1)
+    current = initial
+    regeneration_status = "not_needed"
+    if not _attempt_executable(initial):
+        current = generate(
+            phase="regenerated",
+            extra_blocks=[_regeneration_block(initial.source, initial)],
         )
-        proposed_run = proposed.run
-        emit(
-            "repair_completed",
-            status=repair_status,
-            before=source,
-            after=repaired.source,
-            proposed=proposed.source,
-            selected_edits=list(selected_repairs),
-            error=repair_error,
-            candidate_diagnostics=[
-                item.render() for item in proposed.diagnostics
-            ],
-            candidate_error=(
-                proposed_run.error
-                if proposed_run is not None and not proposed_run.ok
-                else ""
-            ),
-        )
-        if repair_progress or repair_error:
-            source = repaired.source
-            current = repaired
-            attempts.append(repaired)
-            emit_validation("repair", repaired)
-        if repair_accepted or not repair_progress or pass_index == 2:
-            break
-        next_reason = "remaining diagnostics after partial repair"
-        extra_review_blocks = []
-    assert review is not None
+        attempts.append(current)
+        regeneration_status = "completed"
+        review = review_attempt(current, pass_index=2)
+
     plan = CodingPlan(
         goal=goal,
-        source=source,
+        source=current.source,
         attempts=attempts,
         review=review,
         events=events,
@@ -711,7 +655,7 @@ def generate_reviewed_code(
     emit(
         "finalized",
         status="passed" if plan.requirements_satisfied else "failed",
-        source=source,
-        repair_status=repair_status,
+        source=current.source,
+        repair_status=regeneration_status,
     )
     return plan

@@ -383,14 +383,10 @@ def test_complete_rejects_inherited_filter_outside_declared_scope(monkeypatch) -
         ),
     )
     policy = _policy(statement)
-    decisions = iter([
-        _complete("the quantity filter is visible"),
-        _act(family="activate", control="Clear all"),
-    ])
     monkeypatch.setattr(
         policy,
         "_invoke_statement_transition",
-        lambda *_args, **_kwargs: next(decisions),
+        lambda *_args, **_kwargs: pytest.fail("structured reset must bypass Transition"),
     )
 
     step = policy._run_single_turn(
@@ -405,6 +401,13 @@ def test_complete_rejects_inherited_filter_outside_declared_scope(monkeypatch) -
                 coverage="complete",
                 source="test",
             ),
+            form_control_state=[{
+                "kind": "button",
+                "label": "Clear all",
+                "id": "reset",
+                "effect_kind": "query_control",
+                "query_action": "reset",
+            }],
         ),
         [],
     )
@@ -460,6 +463,7 @@ def test_staged_query_activates_matching_submit_before_pagination(monkeypatch) -
                 "ref": 42,
                 "in_viewport": True,
                 "effect_kind": "query_control",
+                "query_action": "submit",
             }],
         ),
         [prior],
@@ -469,6 +473,109 @@ def test_staged_query_activates_matching_submit_before_pagination(monkeypatch) -
     assert step.action_intent.family == "activate"
     assert step.action_intent.target_control == "Search"
     assert step.action_intent.target_ref == "42"
+
+
+def test_staged_filter_uses_typed_predicate_not_visual_input_text(monkeypatch) -> None:
+    statement = StatementContract(
+        id="s1",
+        goal="filter reviews",
+        success="the product filter is active",
+        interaction_intent=CollectionIntent(
+            phase="constrain",
+            entity="All Reviews",
+            predicates=compile_filter_predicates({
+                "Product": "Olivia zip jacket",
+            }),
+        ),
+    )
+    policy = _policy(statement)
+    monkeypatch.setattr(
+        policy,
+        "_invoke_statement_transition",
+        lambda *_args, **_kwargs: pytest.fail("structured state must bypass Transition"),
+    )
+    prior = PolicyTurn(
+        index=1,
+        observation_source="browser",
+        statement_instance_id=INSTANCE,
+        executed=True,
+        supervisor=SupervisorStep(
+            action_intent=ActionIntent(
+                instruction="type the product",
+                role="prepare",
+                family="input",
+                target_control="Product filter input field",
+                target_value="olivia zip jacket",
+            ),
+            summary="query entered",
+            statement_id="s1",
+        ),
+    )
+
+    step = policy._run_single_turn(
+        statement,
+        _observation(
+            applied_filters=None,
+            form_control_state=[{
+                "kind": "text_input",
+                "label": "Product",
+                "name": "name",
+                "group_field": "Product",
+                "value": "olivia zip jacket",
+                "is_filter": True,
+            }],
+            semantic_tree=[{
+                "role": "button",
+                "key": "Search",
+                "ref": 42,
+                "in_viewport": True,
+                "effect_kind": "query_control",
+                "query_action": "submit",
+            }],
+        ),
+        [prior],
+    )
+
+    assert step.action_intent is not None
+    assert step.action_intent.family == "activate"
+    assert step.action_intent.target_control == "Search"
+
+
+def test_constrain_replaces_mismatched_filter_from_typed_dom_state(monkeypatch) -> None:
+    statement = StatementContract(
+        id="s1",
+        goal="filter reviews",
+        success="the product filter is active",
+        interaction_intent=CollectionIntent(
+            phase="constrain",
+            entity="All Reviews",
+            predicates=compile_filter_predicates({"Product": "Olivia"}),
+        ),
+    )
+    policy = _policy(statement)
+    monkeypatch.setattr(
+        policy,
+        "_invoke_statement_transition",
+        lambda *_args, **_kwargs: pytest.fail("structured write must bypass Transition"),
+    )
+
+    step = policy._run_single_turn(
+        statement,
+        _observation(form_control_state=[{
+            "kind": "text_input",
+            "label": "Product",
+            "id": "reviewGrid_filter_name",
+            "group_field": "Product",
+            "value": "Olivia zip jacket",
+            "is_filter": True,
+        }]),
+        [],
+    )
+
+    assert step.action_intent is not None
+    assert step.action_intent.family == "input"
+    assert step.action_intent.target_value == "olivia"
+    assert step.action_intent.target_ref == "reviewGrid_filter_name"
 
 
 def test_regular_form_input_does_not_trigger_mechanical_submission(monkeypatch) -> None:

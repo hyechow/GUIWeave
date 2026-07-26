@@ -1,75 +1,21 @@
-"""Semantic Program compiler and runtime.
+"""Public surface for the sole reviewed-Python orchestrator."""
 
-The public surface intentionally mirrors the semantic IR. Concrete UI actions,
-observation bindings and pure evaluation remain separate runtime concerns.
-"""
-
-from gui_agent.core.schemas import StatementOutcome
-
-from .program import (
-    Acquire,
-    Command,
-    Compute,
-    ComputeRef,
-    Condition,
-    Finish,
-    ForEach,
-    If,
-    Interact,
-    ObservationBinding,
-    OutputSpec,
-    Program,
-    Read,
-    SourceCheck,
-    Stmt,
-    ValueRef,
+from .planner import generate_reviewed_code
+from .runtime import (
+    CodingCompileError,
+    CodingProgram,
+    CodingProgramRuntime,
+    program_from_plan,
 )
-from .runner import (
-    InputDescriptor,
-    Interpreter,
-    OrchestratorResult,
-    ProgramRunner,
-    RunRecord,
-    StatementExecutor,
-    StatementInvocation,
-    summarize_progress,
-)
-from .decomposer import OrchestratorCompileError, decompose, redecompose, to_program
-from .budget import estimate_program_turns
-from .validator import IssueList, ValidationIssue, validate_program
+from .sandbox import FixtureSpec
+from .terminal import CodingTerminalRenderer
 
 __all__ = [
-    "Acquire",
-    "Command",
-    "Compute",
-    "ComputeRef",
-    "Condition",
-    "Finish",
-    "ForEach",
-    "If",
-    "Interact",
-    "ObservationBinding",
-    "OutputSpec",
-    "Program",
-    "Read",
-    "SourceCheck",
-    "Stmt",
-    "ValueRef",
-    "StatementOutcome",
-    "Interpreter",
-    "InputDescriptor",
-    "StatementExecutor",
-    "StatementInvocation",
-    "OrchestratorResult",
-    "ProgramRunner",
-    "RunRecord",
-    "summarize_progress",
-    "OrchestratorCompileError",
-    "decompose",
-    "redecompose",
-    "to_program",
-    "IssueList",
-    "ValidationIssue",
-    "validate_program",
-    "estimate_program_turns",
+    "CodingCompileError",
+    "CodingProgram",
+    "CodingProgramRuntime",
+    "CodingTerminalRenderer",
+    "FixtureSpec",
+    "generate_reviewed_code",
+    "program_from_plan",
 ]

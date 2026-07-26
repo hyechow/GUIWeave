@@ -4,10 +4,10 @@ source_type: task_template
 platform: shared
 scope:
   - orchestrator
-owner: gui_agent.core.coding_orchestrator.planner
+owner: gui_agent.core.orchestrator.planner
 schema: code_review
 eval_suites:
-version: 34
+version: 40
 ---
 Review the candidate Python program against the user's task, supplied knowledge, static diagnostics,
 and mock execution. The fixture is visible test data, not a canonical answer; never hardcode its
@@ -17,12 +17,16 @@ The public API is:
 
 - `ctx.gui(goal, success={...}, target=None) -> UIState`: reach one typed non-durable UI
   postcondition and return its opaque Runtime-issued state handle. Assign and consume it.
-  When its state feeds `query`, success must be
-  `{"entity": <same entity>, "fields": <all query fields>}`.
+  When its state feeds `query`, success must name the same entity; each query validates its own
+  requested fields.
   Use the same collection contract before `read`.
-- `ctx.query(state, entity=..., fields=[...], filters={}, field="name", fallback=None,
+- `ctx.query(state, entity=..., fields=[...] or {"Field": "type"}, filters={},
   coverage="complete")`: filter and materialize one collection in the current context.
-- `ctx.read(state, target=None, fields=[...])`: read fields from one target or verified state.
+  `filters` are literal source predicates. One call executes only those declared predicates.
+- `ctx.read(state, target=None, fields=[...] or {"Field": "type"})`: read fields from one target
+  or verified state. Field mappings may declare `text`, `number`, `money`, `datetime`, or `boolean`.
+  A row returned by `ctx.query` is already a concrete target; pass the row directly. Never demand
+  an invented ID, URL, action field, or separate identity lookup for that read.
 - `ctx.write(task, target=None, values={...})`: perform one durable business operation.
 - `ctx.command(capability, **arguments)`: deterministic platform capability.
 
@@ -37,8 +41,8 @@ Review in this order:
    business changes. Every `query`/`read` must consume a state from one preceding
    context-establishing `gui` call; when the state is already visible, that call is a mechanical
    assertion rather than forced navigation. Its `goal` must be local; assign its returned state
-   and pass that exact variable to `query` or `read`. For query, literal success must copy that
-   query's entity and fields into `success`; do not guess document titles, page
+   and pass that exact variable to `query` or `read`. For query, literal success must name the
+   same entity; do not guess document titles, page
    suffixes, sidebars, or menus.
 5. Check data flow. Runtime values used for selection or relative updates must participate in the
    calculation and reach the final `write` values. Pass an already acquired record as `target`
@@ -46,12 +50,16 @@ Review in this order:
 6. Check collection logic. Apply predicates before cardinality assertions. Do not select an
    arbitrary first match. For top/bottom N, require at least N qualifying records, sort by the
    authoritative runtime field, and take exactly N. Do not reinterpret a count as a time window.
+   When a shorter search key is available, entity resolution must visibly query the full phrase
+   first and issue a second literal query with the shorter phrase only when the first result is
+   empty. Reject hidden or unconditional broadening, generated fuzzy scoring, and invented
+   matching modes.
 7. Resolve the mock runtime error with the smallest causal change. Do not add prerequisite writes,
    speculative validation, unrelated navigation, or redundant display parsers.
 
 `query(filters=...)` is the only planning-level representation of source-native filtering. Do not
-add a separate GUI task to apply a filter. Currency and date/time table values are already
-normalized by `query`.
+add a separate GUI task to apply a filter. Currency and semantically numeric table values are
+declared as numeric types; typed date/time values are Python `datetime` objects.
 
 `ctx.gui` returns a UI state capability, not business data; assign it only to feed `query`/`read`.
 `ctx.write` returns no business value. Never put filters in either call. Put changed business
@@ -63,18 +71,14 @@ Treat task qualifiers as selection predicates unless the user explicitly asks to
 them. Preserve valid runtime-derived filtering and calculations. Delete unused values and redundant
 reads. Every newly added assertion needs a short nonempty message.
 
-Return exactly one JSON object and no explanation or Markdown.
+Return exactly one JSON object and no explanation or Markdown. Report issues only; never edit or
+rewrite the program.
 
 If correct:
 
-{"approve": true, "edits": []}
+{"approve": true, "issues": []}
 
-Otherwise return one to ten exact local edits:
+Otherwise return concise structured issues:
 
-{"approve": false, "edits": [{"search": "exact text copied from the candidate",
-"replacement": "replacement text"}]}
-
-Each search must match the original candidate exactly once. Change the smallest causal region and
-preserve unrelated code. Do not replace the complete `run` function unless its source selection or
-overall data shape is fundamentally wrong. Every edit must independently reduce diagnostics,
-runtime failure, or an explicit task mismatch.
+{"approve": false, "issues": [{"code": "SHORT_STABLE_CODE",
+"message": "Specific task-semantic or contract problem."}]}

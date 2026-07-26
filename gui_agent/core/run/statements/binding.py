@@ -9,20 +9,20 @@ from typing import Any, Callable
 
 from pydantic import JsonValue
 
-from gui_agent.core.orchestrator.program import (
+from gui_agent.core.run.contracts import (
     ObservationBinding,
     OutputSpec,
     Read,
-    SourceCheck,
+    StatementInvocation,
+    matches_output_spec,
 )
-from gui_agent.core.orchestrator.runner import StatementInvocation, matches_output_spec
 from gui_agent.core.run.observation_materializer import (
     NormalizedObservation,
     materialize_observation,
 )
 from gui_agent.core.schemas import Observation, StatementOutcome
 
-from .compute_kernel import ComputeKernelError, json_value
+from .compute_kernel import ComputeKernelError, json_value, normalize_table_rows
 
 
 class ObservationUnavailable(ComputeKernelError):
@@ -172,7 +172,7 @@ def _visual_facts(
     check_knowledge: str,
     prepare_vision_prompt_png,
 ) -> dict[str, _BoundFact]:
-    from gui_agent.core.orchestrator.primitives.structured_read import structured_read
+    from gui_agent.core.run.structured_read import structured_read
 
     fields = list(unresolved)
     values = structured_read(
@@ -206,16 +206,16 @@ def execute_read(
     statement = invocation.statement
     if not isinstance(statement, Read):
         raise TypeError("execute_read requires a Read invocation")
-    if invocation.inputs:
+    unexpected_inputs = set(invocation.inputs) - {"ui_state"}
+    if unexpected_inputs:
         return StatementOutcome.exhausted(
-            "Read 不能消费 typed inputs；确定性数据处理必须由 Compute 执行",
+            "Read cannot consume business inputs; compute from ctx results in Python",
             observation=observation,
-            failure_evidence="read received typed inputs",
+            failure_evidence=f"read received business inputs: {sorted(unexpected_inputs)}",
         )
     if observation is None:
-        return StatementOutcome.infeasible(
+        return StatementOutcome.failed(
             "Read 没有可绑定的 observation",
-            kickback="先由 Interact 或 Command 产生 observation，再执行 Read。",
         )
 
     normalized = materialize_observation(observation)
@@ -247,20 +247,16 @@ def execute_read(
     missing = sorted(set(statement.returns) - set(facts))
     if missing:
         status("Read 当前观察缺少声明事实")
-        return StatementOutcome.infeasible(
+        return StatementOutcome.failed(
             f"Read 无法绑定 outputs：{missing}",
-            kickback=(
-                "由 Program 安排 Interact 暴露声明字段，再从新的终态 observation 执行 Read；"
-                "不得把缺少观察解释成业务条件 false。"
-            ),
             observation=observation,
             failure_evidence=", ".join(missing),
         )
 
-    outputs = {
+    outputs = normalize_table_rows([{
         output: _coerce(fact.value, statement.returns[output])
         for output, fact in facts.items()
-    }
+    }])[0]
     invalid = [
         output
         for output, spec in statement.returns.items()
@@ -286,70 +282,7 @@ def execute_read(
     )
 
 
-def _source_fields(
-    invocation: StatementInvocation,
-    observation: Observation | None,
-) -> list[str]:
-    fields: list[str] = []
-    for value in invocation.inputs.values():
-        rows = value.get("rows") if isinstance(value, dict) else value
-        if isinstance(rows, list):
-            for row in rows:
-                if isinstance(row, dict):
-                    fields.extend(str(name) for name in row)
-    normalized = materialize_observation(observation)
-    for dataset in normalized.datasets:
-        fields.extend(dataset.fields)
-    for control in normalized.controls:
-        fields.extend(
-            str(control[name])
-            for name in ("label", "name", "id", "group_field")
-            if control.get(name) not in (None, "")
-        )
-    fields.extend(
-        str(item["key"])
-        for item in normalized.semantic
-        if item.get("key") not in (None, "")
-    )
-    return list(dict.fromkeys(fields))
-
-
-def execute_source_check(
-    invocation: StatementInvocation,
-    *,
-    observation: Observation | None,
-    say: Callable[[str], None] = lambda _message: None,
-    status: Callable[[str], None] = lambda _message: None,
-) -> StatementOutcome:
-    statement = invocation.statement
-    if not isinstance(statement, SourceCheck):
-        raise TypeError("execute_source_check requires a SourceCheck invocation")
-    actual = _source_fields(invocation, observation)
-    by_key = {_key(field): field for field in actual}
-    bindings = {
-        field: by_key[_key(field)]
-        for field in statement.required_fields
-        if _key(field) in by_key
-    }
-    missing = [field for field in statement.required_fields if field not in bindings]
-    outputs = {
-        "available": not missing,
-        "bindings": bindings,
-        "missing_fields": missing,
-    }
-    say("  [SourceCheck] " + ("可用" if not missing else f"缺少 {missing}"))
-    status("SourceCheck 完成")
-    return StatementOutcome.completed(
-        statement.goal_text,
-        verification="confirmed",
-        outputs=outputs,
-        evidence=[f"source:{field}->{actual}" for field, actual in bindings.items()],
-        observation=observation,
-    )
-
-
 __all__ = [
     "ObservationUnavailable",
     "execute_read",
-    "execute_source_check",
 ]

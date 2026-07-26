@@ -5,8 +5,7 @@ from __future__ import annotations
 from dataclasses import dataclass, field
 from typing import Any
 
-from gui_agent.core.orchestrator.program import Acquire
-from gui_agent.core.orchestrator.runner import StatementInvocation
+from gui_agent.core.run.contracts import Acquire, StatementInvocation
 from gui_agent.core.run.collection_view import (
     CollectionView,
     build_collection_view,
@@ -188,7 +187,7 @@ class _AcquireExecutor:
         if prior is not None:
             records = [dict(record) for record in prior.records]
         else:
-            from gui_agent.core.orchestrator.primitives.structured_read import (
+            from gui_agent.core.run.structured_read import (
                 structured_read_rows,
             )
 
@@ -365,6 +364,8 @@ class _AcquireExecutor:
                 if page_index > 1 and not page_one_seen
                 else "paginate_next"
             )
+            if family == "paginate_next" and traversal.get("has_next_page") is False:
+                return False
         before = current.content_key if current else ""
         capability = f"structured:{candidate['surface_fingerprint']}:{before}:{family}"
         memory = self.memory()
@@ -463,9 +464,8 @@ class _AcquireExecutor:
                 (item for item in candidates if item["ref"] == decision.bound_hint), None,
             )
             if decision.action_family != "bind_region" or candidate is None:
-                return StatementOutcome.infeasible(
+                return StatementOutcome.failed(
                     "AcquirePolicy 未从当前候选声明唯一绑定区域",
-                    kickback="由上游 Interact 圈定集合，或让采集策略引用当前候选 ref",
                     context_reports=self.reports,
                 )
             self.receipt(
@@ -478,9 +478,8 @@ class _AcquireExecutor:
             self.slice(candidate, "react")
             return None
         if decision.kind == "blocked":
-            return StatementOutcome.infeasible(
+            return StatementOutcome.failed(
                 decision.reason,
-                kickback="Acquire 无法移动已绑定集合；由 Program 改路线或降级 coverage",
                 context_reports=self.reports,
             )
         if decision.kind == "boundary":
@@ -501,9 +500,8 @@ class _AcquireExecutor:
             return None
         candidate = _bound(candidates, memory.bound_region)
         if candidate is None:
-            return StatementOutcome.infeasible(
+            return StatementOutcome.failed(
                 "React fallback 丢失已绑定集合",
-                kickback="回到上游 Interact 重新圈定集合",
                 context_reports=self.reports,
             )
         try:
@@ -513,18 +511,11 @@ class _AcquireExecutor:
         return None
 
     def run(self, max_moves: int) -> StatementOutcome:
-        check = self.invocation.args.get("source_check")
-        if check is False or (isinstance(check, dict) and check.get("available") is False):
-            return StatementOutcome.infeasible(
-                "上游数据可用性检查未通过",
-                kickback="用 SourceCheck + Program If 处理缺列/集合未圈定，再进入 Acquire",
-            )
         scope = self.invocation.args.get("lookup_scope")
         if scope is not None:
             if not is_lookup_scope(scope):
-                return StatementOutcome.infeasible(
+                return StatementOutcome.failed(
                     "Acquire 收到的 lookup scope 未经当前 observation 验证",
-                    kickback="重新执行 ctx.lookup，并把其返回值直接传给 ctx.acquire",
                 )
             available = {str(field).strip().casefold()
                          for field in scope.get("available_fields") or []}
@@ -534,9 +525,8 @@ class _AcquireExecutor:
                 if field.strip().casefold() not in available
             ]
             if missing:
-                return StatementOutcome.infeasible(
+                return StatementOutcome.failed(
                     f"lookup scope 不提供请求字段 {missing!r}",
-                    kickback="修正 acquire 字段，或在正确上下文重新 lookup",
                 )
         self.cursor.ensure(0)
         while True:
@@ -546,14 +536,12 @@ class _AcquireExecutor:
             candidate = _bound(candidates, memory.bound_region) if memory.bound_region else None
             reliable = [item for item in candidates if item["reliable"]]
             if memory.bound_region and candidate is None:
-                return StatementOutcome.infeasible(
+                return StatementOutcome.failed(
                     "已绑定集合在当前帧消失或 provenance 漂移",
-                    kickback="回到上游 Interact 重新圈定同一集合",
                 )
             if not memory.bound_region and len(reliable) > 1:
-                return StatementOutcome.infeasible(
+                return StatementOutcome.failed(
                     "当前帧有多个可遍历结构集合，Acquire 不能猜测业务目标",
-                    kickback="由上游 Interact 把目标范围收敛到唯一集合",
                 )
             if not memory.bound_region and len(reliable) == 1:
                 candidate = reliable[0]
@@ -580,9 +568,8 @@ class _AcquireExecutor:
                     continue
                 terminal_only = self.attempts() >= max_moves
             if not candidates:
-                return StatementOutcome.infeasible(
+                return StatementOutcome.failed(
                     "当前平台没有可物化的集合观察",
-                    kickback="该平台需先实现 NormalizedObservation materializer",
                 )
             memory = self.memory()
             decision = decide_acquisition(

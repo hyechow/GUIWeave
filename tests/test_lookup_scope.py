@@ -107,6 +107,25 @@ def test_lookup_resolves_single_collection_from_business_word_in_page_title() ->
     assert scope["surface_fingerprint"] == "table:#orders"
 
 
+def test_lookup_resolves_unique_collection_from_required_field_schema() -> None:
+    scope = resolve_lookup_scope(
+        Observation(
+            png_bytes=b"png",
+            source="browser",
+            title="History",
+            tables=[_table("#audit", "", ["Actor", "Outcome"])],
+        ),
+        CollectionIntent(
+            phase="locate",
+            entity="Audit Records",
+            required_fields=["Actor", "Outcome"],
+        ),
+    )
+
+    assert scope is not None
+    assert scope["surface_fingerprint"] == "table:#audit"
+
+
 def test_lookup_does_not_resolve_single_collection_from_generic_word_only() -> None:
     scope = resolve_lookup_scope(
         Observation(
@@ -187,7 +206,18 @@ def test_compile_filter_predicates_folds_nested_range_mapping() -> None:
     assert nested == split
     date_predicate = nested["purchase date"]
     assert date_predicate.operator == "range"
-    assert date_predicate.values == ["01/01/2023", "05/31/2023"]
+    assert date_predicate.values == ["2023-01-01", "2023-05-31"]
+
+
+def test_date_filter_values_compare_by_typed_value_not_display_format() -> None:
+    iso = compile_filter_predicates({
+        "Purchase Date": {"from": "2023-01-01", "to": "2023-05-31"},
+    })
+    display = compile_filter_predicates({
+        "Purchase Date": {"from": "01/01/2023", "to": "05/31/2023"},
+    })
+
+    assert iso == display
 
 
 def test_applied_filters_require_exact_predicate_set() -> None:

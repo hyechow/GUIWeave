@@ -1,7 +1,6 @@
 from types import SimpleNamespace
 
-from gui_agent.core.orchestrator import Command, OutputSpec
-from gui_agent.core.orchestrator.runner import StatementInvocation
+from gui_agent.core.run.contracts import Command, OutputSpec, StatementInvocation
 from gui_agent.core.run.statements.command import execute_command
 from gui_agent.core.run.statements.observation import ObservationCursor
 from gui_agent.core.schemas import Observation
@@ -59,7 +58,7 @@ def test_command_executor_calls_deterministic_capability_and_reports_location(tm
     }
 
 
-def test_command_executor_returns_kickback_when_platform_lacks_capability(tmp_path):
+def test_command_executor_fails_when_platform_lacks_capability(tmp_path):
     observation = Observation(png_bytes=b"png", source="mobile")
     bundle = SimpleNamespace(
         make_perception=lambda _platform, _path: SimpleNamespace(
@@ -84,5 +83,5 @@ def test_command_executor_returns_kickback_when_platform_lacks_capability(tmp_pa
         say=lambda _message: None,
     )
 
-    assert outcome.phase == "infeasible"
-    assert outcome.kickback
+    assert outcome.phase == "failed"
+    assert not outcome.kickback

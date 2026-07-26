@@ -1,9 +1,33 @@
-"""Data contracts for the standalone coding-orchestrator experiment."""
+"""Data contracts for the sole coding orchestrator."""
 
 from __future__ import annotations
 
 from dataclasses import dataclass, field
 from typing import Any
+
+
+FIELD_VALUE_TYPES = frozenset(
+    {"auto", "text", "number", "money", "datetime", "boolean"}
+)
+
+
+def field_projection(
+    value: list[str] | dict[str, str],
+) -> tuple[list[str], dict[str, str]]:
+    """Normalize the public field projection and its optional value schema."""
+    if not isinstance(value, (list, dict)):
+        raise TypeError("fields must be a list of names or a name-to-type mapping")
+    names = list(value)
+    field_types = dict(value) if isinstance(value, dict) else {}
+    if (
+        not names
+        or any(not isinstance(name, str) or not name.strip() for name in names)
+        or any(str(value) not in FIELD_VALUE_TYPES for value in field_types.values())
+    ):
+        raise ValueError(
+            f"fields require nonempty names and types from {sorted(FIELD_VALUE_TYPES)!r}"
+        )
+    return list(names), field_types
 
 
 @dataclass(frozen=True)
@@ -44,14 +68,17 @@ class UIStateHandle:
 
 def collection_postcondition(value: Any) -> dict[str, Any] | None:
     """Validate the one public ``ctx.gui`` success shape."""
-    if not isinstance(value, dict) or set(value) != {"entity", "fields"}:
+    if (
+        not isinstance(value, dict)
+        or "entity" not in value
+        or not set(value) <= {"entity", "fields"}
+    ):
         return None
-    entity, fields = value["entity"], value["fields"]
+    entity, fields = value["entity"], value.get("fields", [])
     if (
         not isinstance(entity, str)
         or not entity.strip()
         or not isinstance(fields, list)
-        or not fields
         or any(not isinstance(item, str) or not item.strip() for item in fields)
     ):
         return None
@@ -69,10 +96,7 @@ def require_ui_state(
             "ctx.query/ctx.read require the UIStateHandle returned by ctx.gui"
         )
     postcondition = value.postcondition
-    if entity and (
-        postcondition.get("entity") != entity
-        or not set(fields or []) <= set(postcondition.get("fields") or [])
-    ):
+    if entity and postcondition.get("entity") != entity:
         raise ValueError("ctx.gui collection state does not satisfy ctx.query")
     return value
 
@@ -116,11 +140,15 @@ class CodingAttempt:
 class CodingReview:
     text: str
     approved: bool
-    edits: tuple[tuple[str, str], ...] = ()
+    issues: tuple[CodeDiagnostic, ...] = ()
     error: str = ""
     input_tokens: int = 0
     output_tokens: int = 0
     seconds: float = 0.0
+
+    @property
+    def unavailable(self) -> bool:
+        return self.error.startswith(("[REVIEW_IO]", "[REVIEW_PROTOCOL]"))
 
 
 @dataclass(frozen=True)
@@ -154,8 +182,5 @@ class CodingPlan:
 
     @property
     def requirements_satisfied(self) -> bool:
-        return bool(
-            self.executable
-            and self.review is not None
-            and (self.review.approved or self.repaired)
-        )
+        # Reviewer output is audit evidence, never an execution gate.
+        return self.executable

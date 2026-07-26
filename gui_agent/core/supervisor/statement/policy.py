@@ -6,7 +6,11 @@ from typing import Literal, Optional
 
 from llm.structured import StructuredOutputError
 
-from gui_agent.core.filter_contract import canonical_filter_value, compare_filter_state
+from gui_agent.core.filter_contract import (
+    canonical_filter_field,
+    canonical_filter_value,
+    compare_filter_state,
+)
 from gui_agent.core.run.statement_memory import available_event_refs, build_memory_view
 from gui_agent.core.run.lookup_scope import resolve_lookup_scope
 from gui_agent.core.run.statement_runtime import StatementRuntimeState
@@ -109,6 +113,62 @@ def _collection_intent(
     return intent if intent is not None and intent.phase == phase else None
 
 
+def _controls(observation: Observation) -> list[dict]:
+    return [
+        control
+        for control in (
+            observation.form_control_state
+            or observation.form_controls
+            or []
+        )
+        if isinstance(control, dict)
+    ]
+
+
+def _control_identities(control: dict) -> set[str]:
+    return {
+        canonical_filter_field(control.get(key))
+        for key in ("label", "name", "id", "group_field")
+        if control.get(key)
+    }
+
+
+def _filter_controls(observation: Observation, field: str) -> list[dict]:
+    target = canonical_filter_field(field)
+    return [
+        control
+        for control in _controls(observation)
+        if (
+            control.get("is_filter") is True
+            or control.get("effect_kind") == "query_control"
+        )
+        and target in _control_identities(control)
+    ]
+
+
+def _control_values(control: dict) -> list[JsonValue]:
+    return [
+        canonical_filter_value(control[key])
+        for key in ("value", "selected_text_primary", "selected_text")
+        if control.get(key) not in (None, "")
+    ]
+
+
+def _query_action(
+    view: StatementObservationView,
+    action: Literal["submit", "reset"],
+) -> dict | None:
+    matches = [
+        item
+        for item in view.affordances
+        if "activate" in (item.get("supported_operations") or [])
+        and str(item.get("label") or "").strip()
+        and item.get("effect_kind") == "query_control"
+        and item.get("query_action") == action
+    ]
+    return matches[0] if len(matches) == 1 else None
+
+
 def _resolved_reach_collection(
     statement: StatementContract,
     observation: Observation,
@@ -128,7 +188,10 @@ def _resolved_reach_collection(
 
 def _declared_action_values(statement: StatementContract) -> set[str]:
     """Values an input/select action may place while satisfying this contract."""
-    allowed = _declared_string_values(statement.required_values)
+    allowed = {
+        str(canonical_filter_value(value)).strip().casefold()
+        for value in _declared_string_values(statement.required_values)
+    }
     intent = statement.interaction_intent
     if intent is not None and intent.phase == "constrain":
         for predicate in intent.predicates.values():
@@ -139,7 +202,7 @@ def _declared_action_values(statement: StatementContract) -> set[str]:
             )
     elif intent is not None and intent.phase == "locate":
         allowed.update(
-            value.strip().casefold()
+            str(canonical_filter_value(value)).strip().casefold()
             for value in (intent.entity, intent.fallback)
             if value.strip()
         )
@@ -570,6 +633,7 @@ class StatementSupervisorPolicy(
         family: Literal["input", "select", "activate", "navigate", "iterate"],
         target_control: str,
         expected_result: str,
+        target_value: str = "",
         target_ref: str = "",
         direction: Literal["up", "down"] | None = None,
     ) -> SupervisorStep:
@@ -578,7 +642,7 @@ class StatementSupervisorPolicy(
             "atomic_role": role,
             "action_family": family,
             "target_control": target_control,
-            "target_value": "",
+            "target_value": target_value,
             "target_ref": target_ref,
             "expected_result": expected_result,
         }
@@ -605,6 +669,7 @@ class StatementSupervisorPolicy(
                 role=role,
                 family=family,
                 target_control=target_control,
+                target_value=target_value,
                 target_ref=target_ref,
                 expected_result=expected_result,
                 direction=direction,
@@ -612,6 +677,100 @@ class StatementSupervisorPolicy(
             summary=summary,
             execution_scope=execution_scope,
             **_ctx(statement),
+        )
+
+    def _structured_filter_write_step(
+        self,
+        statement: StatementContract,
+        observation: Observation,
+        *,
+        execution_scope: str,
+    ) -> SupervisorStep | None:
+        constrain = _collection_intent(statement, "constrain")
+        if constrain is None:
+            return None
+        for field, predicate in constrain.predicates.items():
+            if predicate.operator != "eq" or len(predicate.values) != 1:
+                continue
+            matches = {
+                str(
+                    control.get("id")
+                    or control.get("name")
+                    or control.get("label")
+                    or ""
+                ): control
+                for control in _filter_controls(observation, field)
+            }
+            if len(matches) != 1:
+                continue
+            control = next(iter(matches.values()))
+            expected = predicate.values[0]
+            if expected in _control_values(control):
+                continue
+            kind = str(control.get("kind") or "").casefold()
+            family: Literal["input", "select"] = (
+                "select"
+                if "select" in kind or kind in {"combobox", "listbox"}
+                else "input"
+            )
+            label = str(
+                control.get("group_field")
+                or control.get("label")
+                or control.get("name")
+                or field
+            )
+            value = str(expected)
+            return self._mechanical_step(
+                statement,
+                execution_scope=execution_scope,
+                summary="结构化筛选值与当前控件状态不一致",
+                established=f"已定位筛选字段 {label!r} 的唯一结构化控件。",
+                gap=f"该控件尚未设置为合同值 {value!r}。",
+                reason="typed filter predicate differs from the DOM control value",
+                instruction=f"将筛选字段 {label!r} 设置为 {value!r}。",
+                role="prepare",
+                family=family,
+                target_control=label,
+                target_value=value,
+                target_ref=str(control.get("id") or control.get("name") or ""),
+                expected_result=f"{label!r} 的结构化控件值变为 {value!r}。",
+            )
+        return None
+
+    def _structured_filter_reset_step(
+        self,
+        statement: StatementContract,
+        observation: Observation,
+        view: StatementObservationView,
+        *,
+        execution_scope: str,
+    ) -> SupervisorStep | None:
+        constrain = _collection_intent(statement, "constrain")
+        actual = observation.applied_filter_state
+        if (
+            constrain is None
+            or actual is None
+            or actual.coverage != "complete"
+            or not (set(actual.predicates) - set(constrain.predicates))
+        ):
+            return None
+        reset = _query_action(view, "reset")
+        if reset is None:
+            return None
+        label = str(reset.get("label") or "").strip()
+        return self._mechanical_step(
+            statement,
+            execution_scope=execution_scope,
+            summary="当前集合含请求之外的活动筛选",
+            established="结构化筛选状态包含额外谓词。",
+            gap="额外谓词会缩小请求的结果集合。",
+            reason="source query must start from exactly its declared predicates",
+            instruction=f"激活 {label}，清除当前集合的活动筛选。",
+            role="prepare",
+            family="activate",
+            target_control=label,
+            target_ref=str(reset.get("ref") or ""),
+            expected_result="活动筛选被清空，集合可按声明谓词重新查询。",
         )
 
     @staticmethod
@@ -648,6 +807,7 @@ class StatementSupervisorPolicy(
 
     @staticmethod
     def _staged_input_submission(
+        statement: StatementContract,
         observation: Observation,
         history: list[PolicyTurn],
         view: StatementObservationView,
@@ -656,50 +816,43 @@ class StatementSupervisorPolicy(
         if prior is None or prior.supervisor is None:
             return None
         intent = prior.supervisor.action_intent
-        if intent is None or intent.family != "input" or not intent.target_value:
-            return None
-        target_label = intent.target_control.strip().casefold()
-
-        controls = [
-            *(observation.form_control_state or []),
-            *(observation.form_controls or []),
-        ]
-        matched_control = next((
-            control for control in controls
-            if isinstance(control, dict)
-            and target_label in {
-                str(control.get(key) or "").strip().casefold()
-                for key in ("label", "name", "id", "group_field")
-            }
-        ), None)
-        if matched_control is None or not (
-            str(matched_control.get("effect_kind") or "") == "query_control"
-            or matched_control.get("is_filter") is True
-        ):
-            return None
-        expected = intent.target_value.strip().casefold()
-        if str(matched_control.get("value") or "").strip().casefold() != expected:
-            return None
-        if any(
-            expected in str(value).strip().casefold()
-            for value in (observation.applied_filters or {}).values()
-        ):
+        if intent is None or intent.family not in {"input", "select"}:
             return None
 
-        candidates: list[dict] = []
-        for affordance in view.affordances:
-            if "activate" not in (affordance.get("supported_operations") or []):
-                continue
-            label = str(affordance.get("label") or "").strip()
-            if not label:
-                continue
-            if (
-                affordance.get("effect_kind") == "query_control"
+        constrain = _collection_intent(statement, "constrain")
+        if constrain is not None:
+            for field, predicate in constrain.predicates.items():
+                observed = [
+                    value
+                    for control in _filter_controls(observation, field)
+                    for value in _control_values(control)
+                ]
+                if not all(value in observed for value in predicate.values):
+                    return None
+        else:
+            if not intent.target_value:
+                return None
+            target_label = canonical_filter_field(intent.target_control)
+            matched_control = next((
+                control for control in _controls(observation)
+                if target_label in _control_identities(control)
+            ), None)
+            if matched_control is None or not (
+                str(matched_control.get("effect_kind") or "") == "query_control"
+                or matched_control.get("is_filter") is True
             ):
-                candidates.append(affordance)
-        if len(candidates) != 1:
-            return None
-        return prior, candidates[0]
+                return None
+            expected = intent.target_value.strip().casefold()
+            if str(matched_control.get("value") or "").strip().casefold() != expected:
+                return None
+            if any(
+                expected in str(value).strip().casefold()
+                for value in (observation.applied_filters or {}).values()
+            ):
+                return None
+
+        submit = _query_action(view, "submit")
+        return (prior, submit) if submit is not None else None
 
     def _staged_input_submission_step(
         self,
@@ -710,7 +863,7 @@ class StatementSupervisorPolicy(
         *,
         execution_scope: str,
     ) -> SupervisorStep | None:
-        staged = self._staged_input_submission(observation, history, view)
+        staged = self._staged_input_submission(statement, observation, history, view)
         if staged is None:
             return None
         prior, submit = staged
@@ -999,6 +1152,21 @@ class StatementSupervisorPolicy(
             observation=observation,
         )
         view = build_observation_view(statement, observation, scoped_history)
+        filter_reset = self._structured_filter_reset_step(
+            statement,
+            observation,
+            view,
+            execution_scope=execution_scope,
+        )
+        if filter_reset is not None:
+            return filter_reset
+        filter_write = self._structured_filter_write_step(
+            statement,
+            observation,
+            execution_scope=execution_scope,
+        )
+        if filter_write is not None:
+            return filter_write
         submission = self._staged_input_submission_step(
             statement,
             observation,

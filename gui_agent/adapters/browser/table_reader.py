@@ -139,7 +139,7 @@ def table_snapshot_js() -> str:
     const kept = paired.slice(0, MAX_ROWS);
     entry.rows = kept.map((p) => p.cells);
     entry.rowLinks = kept.map((p) => p.links);
-    entry.totalRecords = entry.totalRecords || null;
+    entry.totalRecords = entry.totalRecords ?? null;
     entry.partial = !!(entry.totalRecords && entry.rows.length < entry.totalRecords);
     entry.path = entry.path || "";
     return entry;
@@ -469,8 +469,18 @@ def table_snapshot_js() -> str:
     const headerCells = headerRow ? cellsOf(headerRow, "th,td") : [];
     const bodyRows = Array.from(table.querySelectorAll("tbody tr")).filter(visible);
     const dataRows = (bodyRows.length ? bodyRows : allRows.filter((r) => r !== headerRow));
-    const built = dataRows.map((r) => ({{ c: cellsOf(r, "th,td"), l: linksOf(r, "th,td") }}))
-      .filter((b) => b.c.length > 0);
+    const built = dataRows.map((r) => {{
+      const cells = Array.from(r.querySelectorAll("th,td")).filter(visible);
+      const only = cells.length === 1 ? cells[0] : null;
+      const span = only
+        ? Math.max(Number(only.colSpan || 1), Number(only.getAttribute("aria-colspan") || 1))
+        : 1;
+      return {{
+        c: cells.slice(0, MAX_CELLS).map(text),
+        l: cells.slice(0, MAX_CELLS).map(cellLink),
+        placeholder: span > 1,
+      }};
+    }}).filter((b) => b.c.length > 0 && !b.placeholder);
     const rows = built.map((b) => b.c);
     const rowLinks = built.map((b) => b.l);
     if (!headerCells.length && rows.length < 2) continue;
@@ -582,11 +592,25 @@ def normalize_table_snapshots(raw: Any) -> list[dict[str, Any]]:
                 href = str(link_row[col_idx]).strip() if col_idx < len(link_row) else ""
                 row[link_header] = href
             rows.append(row)
-        if not rows:
-            continue
         headers = headers + [link_headers[i] for i in sorted(link_headers)]
         total_records = _safe_int(item.get("totalRecords"))
+        if total_records is not None and total_records < len(rows):
+            total_records = None
         traversal = item.get("traversal")
+        dom_row_count = _safe_int(item.get("domRows"))
+        dom_row_count = len(rows) if dom_row_count is None else dom_row_count
+        reconciled_total = bool(
+            total_records is not None
+            and isinstance(traversal, dict)
+            and traversal.get("type") == "paged"
+            and _safe_int(traversal.get("page_index")) == 1
+            and _safe_int(traversal.get("page_count")) == 1
+            and traversal.get("has_next_page") is False
+            and dom_row_count == len(rows)
+            and (_safe_int(traversal.get("page_size")) or 0) >= len(rows)
+        )
+        if reconciled_total:
+            total_records = len(rows)
         out.append(
             {
                 "index": idx,
@@ -595,9 +619,12 @@ def normalize_table_snapshots(raw: Any) -> list[dict[str, Any]]:
                 "headers": headers,
                 "rows": rows,
                 "row_count": len(rows),
-                "dom_row_count": _safe_int(item.get("domRows")) or len(rows),
+                "dom_row_count": dom_row_count,
                 "total_records": total_records,
-                "partial": bool(item.get("partial") or (total_records and len(rows) < total_records)),
+                "partial": bool(
+                    not reconciled_total
+                    and (item.get("partial") or (total_records and len(rows) < total_records))
+                ),
                 "path": str(item.get("path") or ""),
                 "page": page,
                 # Surface-scoped traversal evidence. Consumers must move this exact table rather

@@ -27,6 +27,7 @@ from gui_agent.core.data_types import (
     SortStep,
     TakeStep,
     TextSplitStep,
+    ValueType,
 )
 
 
@@ -51,6 +52,11 @@ def json_value(value: Any) -> JsonValue:
 
 
 _CURRENCY_RE = re.compile(r"[$€£¥₹₩₪₫฿₽₺₦₱]")
+_NUMBER_RE = re.compile(r"[-+]?(?:\d{1,3}(?:,\d{3})+|\d+)(?:\.\d+)?%?")
+_NUMERIC_FIELD_WORDS = frozenset(
+    "amount balance cost count counts percent percentage price quantity quantities "
+    "qty rank rating result results score subtotal total uses".split()
+)
 _DATETIME_FORMATS = (
     "%b %d, %Y %I:%M:%S %p", "%B %d, %Y %I:%M:%S %p",
     "%b %d, %Y %I:%M %p", "%B %d, %Y %I:%M %p",
@@ -121,7 +127,22 @@ def _typed(value: Any, value_type: ValueType) -> Any:
     raise ComputeKernelError(f"cannot parse {value!r} as boolean")
 
 
-def normalize_table_value(field_name: str, value: Any) -> JsonValue:
+def normalize_table_value(
+    field_name: str,
+    value: Any,
+    value_type: ValueType = "auto",
+) -> Any:
+    if value_type == "datetime":
+        return _datetime(value)
+    if value_type == "number":
+        numbers = _NUMBER_RE.findall(str(value).strip())
+        if len(numbers) != 1:
+            raise ComputeKernelError(f"cannot parse {value!r} as number")
+        return json_value(_decimal(numbers[0]))
+    if value_type == "money":
+        return json_value(_decimal(value, money=True))
+    if value_type != "auto":
+        return json_value(_typed(value, value_type))
     if not isinstance(value, str):
         return json_value(value)
     text = value.strip()
@@ -133,13 +154,27 @@ def normalize_table_value(field_name: str, value: Any) -> JsonValue:
             return json_value(_datetime(text))
         except ComputeKernelError:
             pass
+    numbers = _NUMBER_RE.findall(text)
+    if words & _NUMERIC_FIELD_WORDS and len(numbers) == 1:
+        try:
+            return json_value(_decimal(numbers[0]))
+        except ComputeKernelError:
+            pass
     return text
 
 
-def normalize_table_rows(rows: list[dict[str, Any]]) -> list[dict[str, JsonValue]]:
+def normalize_table_rows(
+    rows: list[dict[str, Any]],
+    field_types: dict[str, str] | None = None,
+) -> list[dict[str, Any]]:
+    declared = field_types or {}
     return [
         {
-            str(field): normalize_table_value(str(field), value)
+            str(field): normalize_table_value(
+                str(field),
+                value,
+                declared.get(str(field), "auto"),
+            )
             for field, value in row.items()
         }
         for row in rows

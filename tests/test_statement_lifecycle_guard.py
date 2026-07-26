@@ -1,7 +1,6 @@
 import pytest
 
-from gui_agent.core.orchestrator import Interact
-from gui_agent.core.orchestrator.runner import StatementInvocation
+from gui_agent.core.run.contracts import Interact, StatementInvocation
 from gui_agent.core.run.interactive import contract_for_interact
 from gui_agent.core.supervisor.statement.policy import StatementSupervisorPolicy
 

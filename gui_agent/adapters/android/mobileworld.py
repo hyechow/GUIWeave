@@ -200,19 +200,6 @@ def main() -> int:
     parser.add_argument("--all-tasks", action="store_true", help="with --list, include non-GUI (mcp/user-interaction) tasks")
     parser.add_argument("--max-turns", type=int, default=25)
     parser.add_argument("--headless", action="store_true", help="run fully headless (no HUD / cursor overlay)")
-    dynamic_turns = parser.add_mutually_exclusive_group()
-    dynamic_turns.add_argument(
-        "--dynamic-max-turns",
-        action="store_true",
-        help="explicitly allow DSL program complexity to raise max_turns",
-    )
-    dynamic_turns.add_argument(
-        "--no-dynamic-max-turns",
-        dest="dynamic_max_turns",
-        action="store_false",
-        help=argparse.SUPPRESS,
-    )
-    parser.set_defaults(dynamic_max_turns=False)
     parser.add_argument("--no-teardown", action="store_true", help="skip /task/tear_down (leave app state for inspection)")
     parser.add_argument("--no-answer-bridge", action="store_true", help="do not POST a final answer to the backend before eval")
     args = parser.parse_args()
@@ -316,9 +303,8 @@ def main() -> int:
                         cur_site = knowledge.app_name if knowledge is not None else ""
 
                         from gui_agent.core.orchestrator import (
-                            decompose,
-                            estimate_program_turns,
-                            redecompose,
+                            generate_reviewed_code,
+                            program_from_plan,
                         )
                         from gui_agent.core.supervisor.statement.model_io import resolve_file_refs
                         from gui_agent.core.router import resolve_intent
@@ -328,46 +314,45 @@ def main() -> int:
                         if resolution.entities:
                             print("[mobileworld] intent: " + "; ".join(
                                 f"{e.mention}→{e.type}/{e.match_mode}/key={e.search_key}" for e in resolution.entities))
-                        program = decompose(
+                        plan = generate_reviewed_code(
                             intent,
                             knowledge=knowledge.decompose_context(intent) if knowledge else "",
                             file_section=file_section,
                             current_url="",
                             current_title="",
                             current_site=cur_site,
-                            context_reports=orchestrator_context_reports,
                             resolution=resolution,
                         )
+                        orchestrator_context_reports.append({
+                            "kind": "coding_review",
+                            "source": plan.source,
+                            "approved": bool(plan.review and plan.review.approved),
+                            "issues": [
+                                issue.render()
+                                for issue in (
+                                    plan.review.issues if plan.review else ()
+                                )
+                            ],
+                            "error": plan.review.error if plan.review else "",
+                            "degraded": bool(
+                                plan.review and plan.review.unavailable
+                            ),
+                            "repaired": plan.repaired,
+                            "events": [
+                                event.to_dict() for event in plan.events
+                            ],
+                        })
+                        program = program_from_plan(plan)
                         if file_section:
                             cap = 3000
                             supervisor.add_static_constraint(
                                 file_section if len(file_section) <= cap
                                 else file_section[:cap] + "\n…（配置过长已截断，其余以分解结果为准）"
                             )
-                        print(f"[mobileworld] orchestrator: {len(program.statements)} statements")
+                        print("[mobileworld] orchestrator: reviewed Python ready")
+                        return program, run_max_turns
 
-                        def _redecompose(directive: str, context_reports=None, *, observation=None,
-                                         prior_experience="", remaining_plan="",
-                                         available_bindings=None,
-                                         _goal=intent, _know=knowledge, _file=file_section,
-                                         _site=cur_site, _res=resolution):
-                            del observation
-                            return redecompose(
-                                _goal, knowledge=_know.decompose_context(_goal) if _know else "", file_section=_file,
-                                current_url="", current_title="", current_site=_site,
-                                corrective_directive=directive, resolution=_res,
-                                prior_experience=prior_experience, remaining_plan=remaining_plan,
-                                available_bindings=available_bindings,
-                                context_reports=context_reports,
-                            )
-
-                        if args.dynamic_max_turns:
-                            run_max_turns = estimate_program_turns(program, floor=args.max_turns)
-                            if run_max_turns != args.max_turns:
-                                print(f"[mobileworld] orchestrator: max_turns {args.max_turns} -> {run_max_turns}")
-                        return program, _redecompose, run_max_turns
-
-                    program, _redecompose, run_max_turns = _compile_program()
+                    program, run_max_turns = _compile_program()
                     with EscStopSignal(enabled=True) as esc_stop:
                         if esc_stop.enabled:
                             print("[mobileworld] Interrupt: 按 ESC 将在当前 turn 收尾后停止")
@@ -385,7 +370,6 @@ def main() -> int:
                             router=None,
                             knowledge=knowledge_summary,
                             program=program,
-                            redecompose=_redecompose,
                             orchestrator_context_reports=orchestrator_context_reports,
                             stop_requested=esc_stop.requested if esc_stop.enabled else None,
                             platform=platform,

@@ -357,6 +357,31 @@ HTML_TEMPLATE = """\
   .statement-badge-collection {{ background: #d1fae5; color: #065f46; }}
   .statement-badge-default {{ background: #f1f5f9; color: #475569; }}
   .statement-time {{ font-size: 11px; color: #475569; margin-left: auto; font-family: monospace; font-weight: 700; }}
+  .coding-call-card {{
+    max-width: 1080px; margin: 0 auto 16px; background: var(--card);
+    border-radius: var(--radius); box-shadow: 0 1px 3px rgba(0,0,0,0.08);
+    overflow: hidden;
+  }}
+  .coding-call-card > summary {{
+    cursor: pointer; list-style: none; padding: 12px 20px; background: #f8fafc;
+    display: flex; align-items: center; gap: 10px; flex-wrap: wrap;
+  }}
+  .coding-call-card > summary::-webkit-details-marker {{ display: none; }}
+  .coding-call-card > summary::before {{
+    content: "▸"; color: #64748b; font-size: 12px; width: 10px;
+  }}
+  .coding-call-card[open] > summary::before {{ content: "▾"; }}
+  .coding-call-card[open] > summary {{ border-bottom: 1px solid var(--border); }}
+  .coding-call-index {{ font-size: 12px; font-weight: 700; color: #475569; }}
+  .coding-call-title {{
+    color: #0f766e; font: 600 12px/1.4 ui-monospace, SFMono-Regular, monospace;
+  }}
+  .coding-call-meta {{ margin-left: auto; color: #64748b; font-size: 11px; }}
+  .coding-call-body {{ padding: 12px; background: #f8fafc; }}
+  .coding-call-body > .statement {{
+    margin: 0 auto 10px; border: 1px solid var(--border); box-shadow: none;
+  }}
+  .coding-call-body > .statement:last-child {{ margin-bottom: 0; }}
 
   /* Thumbnail gallery — one row per statement */
   .gallery {{ display: flex; gap: 6px; padding: 12px 16px; overflow-x: auto; }}
@@ -1322,6 +1347,7 @@ def generate_html(data: ReportData, grid: bool = False) -> str:
                 statements_by_key[key] = item
 
     pages_html = ""
+    page_chunks: list[dict] = []
     prev_ts = ""  # carries across pages so the gap is vs the previous turn globally
     for page in data.pages:
         # a re-decompose triggered by one of THIS statement's turns is that statement's 验收结果 —
@@ -1493,6 +1519,10 @@ def generate_html(data: ReportData, grid: bool = False) -> str:
         data_panel_html = ""
         phase_chip = ""
         ctx_chip = ""
+        page_call_id = ""
+        page_call_op = ""
+        page_call_label = ""
+        page_call_phase = ""
         if coding_mode:
             run_entry = (
                 coding_run_by_key.get(page.instance_id)
@@ -1516,6 +1546,7 @@ def generate_html(data: ReportData, grid: bool = False) -> str:
             if not outputs and isinstance(stmt_meta.get("outputs"), dict):
                 outputs = stmt_meta["outputs"]
             phase = str(result.get("phase") or stmt_meta.get("phase") or "")
+            page_call_phase = phase
             if phase:
                 phase_cls = {
                     "completed": "coding-phase-ok",
@@ -1543,6 +1574,16 @@ def generate_html(data: ReportData, grid: bool = False) -> str:
                 coding_plan_by_sid.get(page.statement_id)
                 or coding_plan_by_sid.get(page.instance_id)
                 or {}
+            )
+            page_call_id = str(
+                run_entry.get("coding_call_id")
+                or plan_meta.get("call_id")
+                or ""
+            )
+            page_call_op = str(plan_meta.get("plan_op") or op or "")
+            page_call_label = (
+                _coding_call_label(page_call_op, flat)
+                if page_call_op else call_label
             )
             # Single badge: plan+step when expanded, else ctx.op. Avoid double chips.
             plan_expanded = bool(
@@ -1597,7 +1638,7 @@ def generate_html(data: ReportData, grid: bool = False) -> str:
                 # Call signature already shown under the header; avoid repeating it.
                 omit_call_label=True,
             )
-        pages_html += f"""
+        page_html = f"""
         <div class="statement" id="ms-{mid_safe}">
           <div class="statement-header">
             <h2>#{mid_disp}</h2>
@@ -1617,6 +1658,56 @@ def generate_html(data: ReportData, grid: bool = False) -> str:
           {_rd_outside}
           {checklist_data}
         </div>"""
+        page_chunks.append({
+            "call_id": page_call_id,
+            "op": page_call_op,
+            "label": page_call_label,
+            "phase": page_call_phase,
+            "html": page_html,
+        })
+
+    if coding_mode:
+        call_groups: list[dict] = []
+        for index, chunk in enumerate(page_chunks, 1):
+            key = str(chunk.get("call_id") or f"statement:{index}")
+            if call_groups and call_groups[-1]["key"] == key:
+                call_groups[-1]["chunks"].append(chunk)
+            else:
+                call_groups.append({"key": key, "chunks": [chunk]})
+        for call_no, group in enumerate(call_groups, 1):
+            chunks = group["chunks"]
+            op = str(chunks[0].get("op") or "?")
+            label = str(chunks[0].get("label") or f"ctx.{op}(…)")
+            phases = [str(chunk.get("phase") or "") for chunk in chunks]
+            if phases and all(phase == "completed" for phase in phases):
+                phase = "completed"
+                phase_cls = "coding-phase-ok"
+            elif any(phase in {"failed", "exhausted"} for phase in phases):
+                phase = next(
+                    phase for phase in phases if phase in {"failed", "exhausted"}
+                )
+                phase_cls = "coding-phase-fail"
+            else:
+                phase = next((value for value in phases if value), "")
+                phase_cls = "coding-phase-warn"
+            phase_html = (
+                f'<span class="coding-phase {phase_cls}">{_safe(phase)}</span>'
+                if phase else ""
+            )
+            pages_html += (
+                f'<details class="coding-call-card" id="ctx-call-{call_no}">'
+                f'<summary>'
+                f'<span class="coding-call-index">#{call_no}</span>'
+                f'<code class="coding-call-title">{_safe(label)}</code>'
+                f'{phase_html}'
+                f'<span class="coding-call-meta">{len(chunks)} 个内部阶段 · 默认收起</span>'
+                f'</summary>'
+                f'<div class="coding-call-body">'
+                f'{"".join(str(chunk["html"]) for chunk in chunks)}'
+                f'</div></details>'
+            )
+    else:
+        pages_html = "".join(str(chunk["html"]) for chunk in page_chunks)
 
     # any re-decompose whose trigger turn wasn't matched to a statement (edge) → banner at the end
     for _rd in redecomps:

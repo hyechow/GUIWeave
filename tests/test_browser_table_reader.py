@@ -20,6 +20,7 @@ def test_table_snapshot_js_is_serialized_expression():
     assert "viewport: detectPageViewport" in js
     assert "document.documentElement.scrollHeight" in js
     assert "return { type: 'static' }" in js
+    assert 'getAttribute("aria-colspan")' in js
 
 
 def test_normalize_table_snapshots_maps_rows_to_headers():
@@ -104,6 +105,65 @@ def test_normalize_without_links_leaves_headers_unchanged():
     tables = normalize_table_snapshots(raw)
     assert tables[0]["headers"] == ["A", "B"]
     assert tables[0]["rows"][0] == {"A": "1", "B": "2"}
+
+
+def test_normalize_preserves_empty_collection_schema() -> None:
+    tables = normalize_table_snapshots({
+        "url": "http://example.test/records",
+        "title": "Records",
+        "tables": [{
+            "source": "table",
+            "headers": ["Name", "Status"],
+            "rows": [],
+            "domRows": 1,
+            "totalRecords": 0,
+            "traversal": {
+                "type": "paged",
+                "page_index": 1,
+                "has_next_page": False,
+            },
+        }],
+    })
+
+    assert tables[0]["headers"] == ["Name", "Status"]
+    assert tables[0]["rows"] == []
+    assert tables[0]["total_records"] == 0
+
+
+def test_normalize_discards_total_smaller_than_visible_rows() -> None:
+    tables = normalize_table_snapshots({
+        "tables": [{
+            "headers": ["Name", "Status"],
+            "rows": [["A", "open"], ["B", "open"]],
+            "totalRecords": 1,
+            "traversal": {"type": "paged", "has_next_page": False},
+        }],
+    })
+
+    assert tables[0]["row_count"] == 2
+    assert tables[0]["total_records"] is None
+
+
+def test_terminal_single_page_reconciles_contradictory_total_to_dom_rows() -> None:
+    tables = normalize_table_snapshots({
+        "tables": [{
+            "headers": ["ID", "Nickname"],
+            "rows": [["351", "Emma"], ["349", "Seam Miller"], ["347", "Kai"]],
+            "domRows": 3,
+            "totalRecords": 4,
+            "partial": True,
+            "traversal": {
+                "type": "paged",
+                "page_index": 1,
+                "page_count": 1,
+                "page_size": 20,
+                "has_next_page": False,
+            },
+        }],
+    })
+
+    assert tables[0]["total_records"] == 3
+    assert tables[0]["partial"] is False
 
 
 def test_normalize_url_column_name_avoids_collision():

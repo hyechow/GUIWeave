@@ -198,6 +198,26 @@ def test_semantic_navigate_opens_exact_link_url() -> None:
     assert decision.action.url == "https://example.test/admin/attributes/"
 
 
+def test_semantic_activate_navigates_document_link_without_coordinate_click() -> None:
+    decision = resolve_semantic_action(
+        [{
+            "role": "link",
+            "key": "Edit",
+            "url": "https://example.test/admin/reviews/edit/351/",
+            "ref": 351,
+            "in_viewport": True,
+            "point": {"x": 945.0, "y": 561.0},
+        }],
+        target_control="Edit",
+        target_ref="351",
+        action_family="activate",
+    )
+
+    assert decision is not None
+    assert decision.action.action_type == "navigate"
+    assert decision.action.url == "https://example.test/admin/reviews/edit/351/"
+
+
 def test_native_select_can_bypass_visual_policy() -> None:
     controls = [{
         "label": "Status",

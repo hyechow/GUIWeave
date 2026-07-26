@@ -1,14 +1,12 @@
 import pytest
 
-from gui_agent.core.orchestrator import (
+from gui_agent.core.run.contracts import (
     ObservationBinding,
     OutputSpec,
     Read,
-    SourceCheck,
-    ValueRef,
+    StatementInvocation,
 )
-from gui_agent.core.orchestrator.runner import StatementInvocation
-from gui_agent.core.run.statements.binding import execute_read, execute_source_check
+from gui_agent.core.run.statements.binding import execute_read
 from gui_agent.core.schemas import Observation
 
 
@@ -16,56 +14,11 @@ def _read_invocation(returns, reads, *, inputs=None):
     return StatementInvocation(
         statement=Read(
             id="read",
-            inputs={name: ValueRef(var=name) for name in (inputs or {})},
             reads=reads,
             returns=returns,
         ),
         inputs=inputs or {},
     )
-
-
-def test_source_check_binds_exact_normalized_input_fields():
-    invocation = StatementInvocation(
-        statement=SourceCheck(
-            id="check",
-            required_fields=["purchase date", "status"],
-        ),
-        inputs={"records": [{"Purchase Date": "Jan 1, 2023", "Status": "Complete"}]},
-    )
-
-    outcome = execute_source_check(invocation, observation=None)
-
-    assert outcome.is_completed
-    assert outcome.verification == "confirmed"
-    assert outcome.outputs == {
-        "available": True,
-        "bindings": {"purchase date": "Purchase Date", "status": "Status"},
-        "missing_fields": [],
-    }
-
-
-def test_source_check_reports_missing_observation_fields():
-    invocation = StatementInvocation(
-        statement=SourceCheck(
-            id="check",
-            required_fields=["identity", "amount"],
-        )
-    )
-
-    outcome = execute_source_check(
-        invocation,
-        observation=Observation(
-            png_bytes=b"png",
-            source="browser",
-            tables=[{"headers": ["Identity"], "rows": []}],
-        ),
-    )
-
-    assert outcome.outputs == {
-        "available": False,
-        "bindings": {"identity": "Identity"},
-        "missing_fields": ["amount"],
-    }
 
 
 def test_read_rejects_typed_inputs():
@@ -79,7 +32,29 @@ def test_read_rejects_typed_inputs():
     )
 
     assert outcome.phase == "exhausted"
-    assert "Compute" in outcome.summary
+    assert "Python" in outcome.summary
+
+
+def test_read_accepts_ui_state_dependency() -> None:
+    outcome = execute_read(
+        _read_invocation(
+            {"url": OutputSpec(type="url")},
+            {"url": ObservationBinding(source="page", name="url")},
+            inputs={"ui_state": {
+                "token": "state:1",
+                "postcondition": {"kind": "target_fields_available"},
+                "observed_state": {},
+            }},
+        ),
+        observation=Observation(
+            png_bytes=b"",
+            source="browser",
+            url="https://example.test/detail",
+        ),
+    )
+
+    assert outcome.is_completed
+    assert outcome.outputs == {"url": "https://example.test/detail"}
 
 
 def test_read_binds_current_page_url():
@@ -177,7 +152,7 @@ def test_read_does_not_infer_empty_from_another_field():
         ),
     )
 
-    assert outcome.phase == "infeasible"
+    assert outcome.phase == "failed"
 
 
 def test_read_binds_structural_dataset_total():
@@ -206,7 +181,7 @@ def test_read_binds_structural_dataset_total():
 
 def test_read_uses_declared_field_for_direct_visual_extraction(monkeypatch):
     monkeypatch.setattr(
-        "gui_agent.core.orchestrator.primitives.structured_read.structured_read",
+        "gui_agent.core.run.structured_read.structured_read",
         lambda *_args, **_kwargs: {"amount": "1,234"},
     )
     outcome = execute_read(
@@ -221,9 +196,30 @@ def test_read_uses_declared_field_for_direct_visual_extraction(monkeypatch):
     assert outcome.verification == "accepted_unverified"
 
 
+def test_read_normalizes_single_numeric_value_with_display_unit(monkeypatch):
+    monkeypatch.setattr(
+        "gui_agent.core.run.structured_read.structured_read",
+        lambda *_args, **_kwargs: {"Detailed Rating": "5 stars"},
+    )
+    outcome = execute_read(
+        _read_invocation(
+            {"Detailed Rating": OutputSpec(type="json")},
+            {
+                "Detailed Rating": ObservationBinding(
+                    source="field",
+                    name="Detailed Rating",
+                )
+            },
+        ),
+        observation=Observation(png_bytes=b"png", source="browser"),
+    )
+
+    assert outcome.outputs == {"Detailed Rating": 5}
+
+
 def test_read_visual_missing_fact_requests_program_correction(monkeypatch):
     monkeypatch.setattr(
-        "gui_agent.core.orchestrator.primitives.structured_read.structured_read",
+        "gui_agent.core.run.structured_read.structured_read",
         lambda *_args, **_kwargs: {"amount": ""},
     )
     outcome = execute_read(
@@ -234,8 +230,7 @@ def test_read_visual_missing_fact_requests_program_correction(monkeypatch):
         observation=Observation(png_bytes=b"png", source="iphone"),
     )
 
-    assert outcome.phase == "infeasible"
-    assert "Interact" in (outcome.kickback or "")
+    assert outcome.phase == "failed"
 
 
 def test_read_rejects_conflicting_values_for_one_declared_field():
@@ -254,4 +249,4 @@ def test_read_rejects_conflicting_values_for_one_declared_field():
         ),
     )
 
-    assert outcome.phase == "infeasible"
+    assert outcome.phase == "failed"

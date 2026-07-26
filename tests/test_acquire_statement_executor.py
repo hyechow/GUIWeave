@@ -1,8 +1,7 @@
 from types import SimpleNamespace
 
 from gui_agent.adapters.browser.acquisition import validate_collection_action
-from gui_agent.core.orchestrator import Acquire, OutputSpec
-from gui_agent.core.orchestrator.runner import StatementInvocation
+from gui_agent.core.run.contracts import Acquire, OutputSpec, StatementInvocation
 from gui_agent.core.run.statements.acquire import (
     build_acquire_memory,
     execute_acquire_statement,
@@ -177,7 +176,7 @@ def test_acquire_consumes_exact_lookup_scope_in_multi_collection_frame(tmp_path)
     invalid.statement.required_fields = ["ID", "Missing"]
     empty_bundle = SimpleNamespace()
     rejected = _execute(invalid, tmp_path, empty_bundle)
-    assert rejected.phase == "infeasible"
+    assert rejected.phase == "failed"
     assert "Missing" in rejected.summary
 
 
@@ -285,7 +284,7 @@ def test_acquire_rejects_ambiguous_structured_collections(tmp_path):
         say=lambda _message: None,
         status=lambda _message: None,
     )
-    assert outcome.phase == "infeasible"
+    assert outcome.phase == "failed"
     assert "多个" in outcome.summary
     assert not context.journal.collection_slices
 
@@ -517,7 +516,7 @@ def test_react_fallback_rejects_business_action_family_before_dispatch(monkeypat
         say=lambda _message: None,
         status=lambda _message: None,
     )
-    assert outcome.phase == "infeasible"
+    assert outcome.phase == "failed"
     assert dispatched == []
     assert "rejected" in {
         event.status for event in context.journal.acquisition_receipts
@@ -562,7 +561,7 @@ def test_mobile_visual_acquire_is_journal_replayable_without_private_phase(monke
     )
     vision_calls = []
     monkeypatch.setattr(
-        "gui_agent.core.orchestrator.primitives.structured_read.structured_read_rows",
+        "gui_agent.core.run.structured_read.structured_read_rows",
         lambda *_args, **_kwargs: vision_calls.append(1) or [{"name": "A"}],
     )
     observation = Observation(png_bytes=b"png", source="android")

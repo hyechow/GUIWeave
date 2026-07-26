@@ -681,6 +681,7 @@ def _coding_runtime_calls(orchestrator: dict) -> list[dict]:
         out.append({
             "ordinal": index,
             "sid": _coding_statement_id(entry),
+            "call_id": str(entry.get("coding_call_id") or ""),
             "op": op,
             "phase": str(result.get("phase") or ""),
             "payload": payload,
@@ -695,6 +696,12 @@ def _coding_runtime_calls(orchestrator: dict) -> list[dict]:
 def _designed_plan_steps(plan_op: str, matched: list[dict]) -> int:
     """How many internal statements a plan-level API is designed to emit."""
     if plan_op == "query":
+        recorded = max(
+            (int(call.get("plan_steps") or 0) for call in matched),
+            default=0,
+        )
+        if recorded:
+            return recorded
         return 3
     if plan_op == "read":
         if any(str(c.get("op") or "") == "focus" for c in matched):
@@ -711,7 +718,12 @@ def _apply_plan_expansion_to_group(plan_op: str, matched: list[dict]) -> None:
     siblings = [int(c.get("ordinal") or 0) for c in matched]
     pending_ops: list[str] = []
     if plan_op == "query":
-        for pending_op in ("lookup", "constrain", "acquire"):
+        expected = (
+            ("lookup", "acquire")
+            if designed == 2
+            else ("lookup", "constrain", "acquire")
+        )
+        for pending_op in expected:
             if not any(c.get("op") == pending_op for c in matched):
                 pending_ops.append(pending_op)
     if plan_op == "read" and designed == 2 and not any(c.get("op") == "read" for c in matched):
@@ -742,6 +754,13 @@ def _match_runtime_to_plan_sites(
             continue
         allowed = _PLAN_RUNTIME_CONSUME.get(plan_op, (plan_op,))
         matched: list[dict] = []
+        call_id = str(queue[0].get("call_id") or "")
+        if call_id and queue[0].get("op") in allowed:
+            while queue and str(queue[0].get("call_id") or "") == call_id:
+                matched.append(queue.pop(0))
+            _apply_plan_expansion_to_group(plan_op, matched)
+            by_line.setdefault(lineno, []).extend(matched)
+            continue
         # Consume a contiguous prefix of allowed runtime ops (macro expansion).
         while queue and queue[0].get("op") in allowed:
             matched.append(queue.pop(0))
@@ -769,30 +788,44 @@ def _enrich_runtime_plan_expansion(
     if not runtime_calls:
         return {}
 
+    # New logs carry an explicit public ctx.* call id. It is the authoritative
+    # grouping boundary for the private statements of one public ctx call.
+    grouped_by_call: dict[str, list[dict]] = {}
+    for call in runtime_calls:
+        call_id = str(call.get("call_id") or "")
+        if call_id:
+            grouped_by_call.setdefault(call_id, []).append(call)
+    for grouped in grouped_by_call.values():
+        plan = str(grouped[0].get("plan_op") or grouped[0].get("op") or "gui")
+        _apply_plan_expansion_to_group(plan, grouped)
+
     plan_sites = _coding_plan_call_sites(source) if source else []
-    if plan_sites:
+    ungrouped = [
+        call for call in runtime_calls if not str(call.get("call_id") or "")
+    ]
+    if plan_sites and ungrouped:
         _by_line, leftovers = _match_runtime_to_plan_sites(
-            plan_sites, list(runtime_calls),
+            plan_sites, list(ungrouped),
         )
         for call in leftovers:
             plan = str(call.get("plan_op") or call.get("op") or "")
             if plan == "lookup" or call.get("op") == "lookup":
                 plan = str(call.get("plan_op") or "query")
             _apply_plan_expansion_to_group(plan or "gui", [call])
-    else:
+    elif ungrouped:
         # No source: group by recorded plan tags, else query phases by order.
         i = 0
-        while i < len(runtime_calls):
-            call = runtime_calls[i]
+        while i < len(ungrouped):
+            call = ungrouped[i]
             plan = str(call.get("plan_op") or "")
             if plan and int(call.get("plan_steps") or 0) > 1:
                 group = [call]
                 j = i + 1
                 while (
-                    j < len(runtime_calls)
-                    and str(runtime_calls[j].get("plan_op") or "") == plan
+                    j < len(ungrouped)
+                    and str(ungrouped[j].get("plan_op") or "") == plan
                 ):
-                    group.append(runtime_calls[j])
+                    group.append(ungrouped[j])
                     j += 1
                 _apply_plan_expansion_to_group(plan, group)
                 i = j
@@ -801,11 +834,11 @@ def _enrich_runtime_plan_expansion(
                 group = [call]
                 j = i + 1
                 while (
-                    j < len(runtime_calls)
-                    and runtime_calls[j].get("op") in {"constrain", "acquire"}
+                    j < len(ungrouped)
+                    and ungrouped[j].get("op") in {"constrain", "acquire"}
                 ):
-                    group.append(runtime_calls[j])
-                    if runtime_calls[j].get("op") == "acquire":
+                    group.append(ungrouped[j])
+                    if ungrouped[j].get("op") == "acquire":
                         j += 1
                         break
                     j += 1
@@ -832,6 +865,7 @@ def _enrich_runtime_plan_expansion(
             "plan_steps": steps,
             "op": str(call.get("op") or ""),
             "ordinal": int(call.get("ordinal") or 0),
+            "call_id": str(call.get("call_id") or ""),
             "siblings": list(call.get("plan_siblings") or [call.get("ordinal")]),
             "pending": list(call.get("plan_pending") or []),
             "expanded": bool(steps > 1 or plan_op in {"query", "read"} and plan_op != call.get("op")),
@@ -1018,12 +1052,18 @@ def _render_coding_program_shell(orchestrator: dict, program: dict) -> str:
         ),
         {},
     )
-    if review.get("repaired"):
-        review_label = "Review · 已修复"
+    if review.get("degraded"):
+        review_label = (
+            "Review · 不可用 · 程序已重生成"
+            if review.get("repaired")
+            else "Review · 不可用 · 已采用静态/探测"
+        )
+    elif review.get("repaired"):
+        review_label = "Review · 已重生成"
     elif review.get("approved"):
         review_label = "Review · 通过"
     elif review:
-        review_label = "Review · 未通过"
+        review_label = "Review · 审计意见"
     else:
         review_label = "Review · 未记录"
     runtime_n = len(_coding_runtime_calls(orchestrator))
@@ -1035,10 +1075,8 @@ def _render_coding_program_shell(orchestrator: dict, program: dict) -> str:
         f'</span>'
         '</div>'
     )
-    # Open source by default when there are runtime annotations to show.
-    open_attr = " open" if runtime_n else ""
     source_html = (
-        f'<details class="coding-source-wrap"{open_attr}>'
+        f'<details class="coding-source-wrap">'
         f'<summary>完整 Python 源码'
         f'<span class="coding-note"> · 运行调用已标注在对应行</span></summary>'
         f'{_render_annotated_coding_source(source, orchestrator)}'

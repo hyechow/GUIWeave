@@ -5,8 +5,7 @@ from __future__ import annotations
 from pathlib import Path
 from typing import Any, Callable
 
-from gui_agent.core.orchestrator.program import Command
-from gui_agent.core.orchestrator.runner import StatementInvocation
+from gui_agent.core.run.contracts import Command, StatementInvocation
 from gui_agent.core.schemas import JsonValue, StatementOutcome
 
 from .observation import ObservationCursor
@@ -89,12 +88,8 @@ def execute_command(
             evidence=[f"command:{statement.capability}"],
         )
     except Exception as exc:  # noqa: BLE001 - platform capability boundary
-        return StatementOutcome.infeasible(
+        return StatementOutcome.failed(
             f"Command {statement.capability} unavailable: {exc}",
-            kickback=(
-                f"平台无法执行确定性能力 {statement.capability}；"
-                "若该目标可由界面完成，请重编排为 Interact。"
-            ),
             observation=cursor.observation,
             observation_url=cursor.observation_url,
             failure_evidence=str(exc),

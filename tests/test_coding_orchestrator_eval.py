@@ -1,20 +1,16 @@
 from __future__ import annotations
 
-from gui_agent.core.coding_orchestrator.models import (
+from gui_agent.core.orchestrator.models import (
     CodingAttempt,
     CodingPlan,
     CodingReview,
     CodingRunResult,
 )
-from gui_agent.core.orchestrator import Program
-from gui_agent.core.orchestrator.decomposer import _PlanDraft, _StepDraft, to_program
-from gui_agent.core.orchestrator.program import ObservationBinding, OutputSpec, ValueRef
 from scripts.coding_orchestrator_eval import (
     _coding_sample,
     _evaluate_hidden_source,
     coding_verdict,
     fixture_for_task,
-    grade_dsl_program,
 )
 
 
@@ -28,7 +24,7 @@ def test_reviewed_sample_uses_prompt_review_not_frozen_task_answer(
             source="def run(ctx):\n    assert ctx, 'runtime exists'",
             run=CodingRunResult(ok=True),
         )],
-        review=CodingReview(text='{"approve": true, "edits": []}', approved=True),
+        review=CodingReview(text='{"approve": true, "issues": []}', approved=True),
     )
     monkeypatch.setattr(
         "scripts.coding_orchestrator_eval.generate_reviewed_code",
@@ -69,7 +65,7 @@ def test_blind_sample_hides_fixture_until_final_evaluation(monkeypatch) -> None:
             source=source,
             run=CodingRunResult(ok=True),
         )],
-        review=CodingReview(text='{"approve": true, "edits": []}', approved=True),
+        review=CodingReview(text='{"approve": true, "issues": []}', approved=True),
     )
 
     def generate(*args, **kwargs):
@@ -101,7 +97,7 @@ def test_task_193_hidden_fixture_checks_the_numeric_result() -> None:
         "    state = ctx.gui('Open orders', success={"
         "'entity': 'orders', "
         "'fields': ['Status', 'Purchase Date', 'Grand Total (Purchased)']})\n"
-        "    rows = ctx.query(state, entity='orders', field='ID', "
+        "    rows = ctx.query(state, entity='orders', "
         "filters={'Status': 'Complete'}, "
         "fields=['Status', 'Purchase Date', 'Grand Total (Purchased)'], "
         "coverage='complete')\n"
@@ -140,26 +136,3 @@ def test_coding_verdict_separates_functional_and_stability_gates() -> None:
         "coding_functionally_viable": True,
         "coding_stability_gate": True,
     }
-
-
-def test_task_549_dsl_grader_uses_same_business_state_requirements() -> None:
-    draft = _PlanDraft(steps=[
-        _StepDraft(
-            op="interact",
-            goal="add XXXL option to existing Size attribute",
-            success="Size attribute option XXXL saved",
-            required_values={"attribute": "size", "option": "XXXL"},
-            persistence="explicit_commit",
-        ),
-        _StepDraft(
-            op="interact",
-            goal="configure Minerva product",
-            success="configurable product configuration green XXXL saved",
-            required_values={"product": "Minerva", "color": "green", "size": "XXXL"},
-            persistence="explicit_commit",
-        ),
-    ])
-    program = to_program(draft, "configure product")
-
-    assert isinstance(program, Program)
-    assert grade_dsl_program(549, program) == []

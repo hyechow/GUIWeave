@@ -2,11 +2,12 @@
 
 from __future__ import annotations
 
+from typing import Any
+
 from llm.structured import get_llm_call_count, get_llm_token_usage
 
-from gui_agent.core.orchestrator.runner import StatementInvocation
+from gui_agent.core.run.contracts import StatementInvocation
 from gui_agent.core.run.interactive import statement_id, statement_info
-from gui_agent.core.run.program_runtime import ProgramRuntime
 from gui_agent.core.run.turns import make_immediate_statement_turn
 from gui_agent.core.schemas import PolicyContext, StatementOutcome, StatementOutcomeEvent
 
@@ -17,22 +18,13 @@ def record_statement_outcome(
     *,
     statement_index: int,
     context: PolicyContext,
-    program_runtime: ProgramRuntime,
+    program_runtime: Any,
     started_at: float,
     llm_calls_before: int,
     tokens_before: tuple[int, int],
     statement_instance_id: str = "",
     observation_url: str | None = None,
 ) -> None:
-    for notice in outcome.recovery_notices:
-        program_runtime.record_recovery(
-            notice.cls,
-            notice.mechanism,
-            notice.site,
-            detail=notice.detail,
-            outcome=notice.outcome,
-        )
-
     sid = statement_id(invocation, statement_index)
     info = statement_info(invocation, statement_index)
     iid = statement_instance_id or f"imm-{statement_index}:{sid}"

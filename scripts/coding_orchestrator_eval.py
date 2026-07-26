@@ -1,4 +1,4 @@
-"""Offline comparison for the DSL planner and coding orchestrator.
+"""Offline regression harness for the reviewed-Python orchestrator.
 
 White-box mode exposes task fixtures to generation and review for mechanism
 regression. Blind mode withholds them until the final source is frozen, then
@@ -24,24 +24,13 @@ from dotenv import load_dotenv  # noqa: E402
 
 load_dotenv(PROJECT_ROOT / ".env")
 
-from gui_agent.core.coding_orchestrator import (  # noqa: E402
+from gui_agent.core.orchestrator import (  # noqa: E402
     FixtureSpec,
     generate_reviewed_code,
 )
-from gui_agent.core.coding_orchestrator.sandbox import (  # noqa: E402
+from gui_agent.core.orchestrator.sandbox import (  # noqa: E402
     execute_code,
     validate_fixture_contract,
-)
-from gui_agent.core.data_types import ArithmeticStep  # noqa: E402
-from gui_agent.core.orchestrator import (  # noqa: E402
-    Acquire,
-    Compute,
-    ForEach,
-    If,
-    Interact,
-    Read,
-    decompose,
-    validate_program,
 )
 from gui_agent.core.router import resolve_intent  # noqa: E402
 from gui_agent.core.self_learning.app_summary import load_knowledge_for_app  # noqa: E402
@@ -652,96 +641,6 @@ def fixture_for_task(task_id: int) -> FixtureSpec:
         )
     raise ValueError(f"no coding fixture for task {task_id}")
 
-
-
-def _walk(statements):
-    for statement in statements:
-        yield statement
-        if isinstance(statement, If):
-            yield from _walk(statement.then)
-            yield from _walk(statement.otherwise)
-        elif isinstance(statement, ForEach):
-            yield from _walk(statement.body)
-
-
-def grade_dsl_program(task_id: int, program) -> list[str]:
-    failures = [f"VALIDATOR:{issue.code}" for issue in validate_program(program)]
-    statements = list(_walk(program.statements))
-    if task_id == 549:
-        durable = [
-            statement for statement in statements
-            if isinstance(statement, Interact) and statement.persistence == "explicit_commit"
-        ]
-        payloads = [statement.model_dump_json(exclude={"id"}).casefold() for statement in durable]
-        first = next((
-            index for index, payload in enumerate(payloads)
-            if "xxxl" in payload and "size" in payload
-            and any(word in payload for word in ("attribute", "option", "属性", "选项"))
-        ), None)
-        second = next((
-            index for index, payload in enumerate(payloads)
-            if all(value in payload for value in ("minerva", "green", "xxxl"))
-            and any(word in payload for word in (
-                "product", "configuration", "configurable", "产品", "配置",
-            ))
-        ), None)
-        if first is None:
-            failures.append("GT549:NO_DURABLE_SIZE_OPTION_STAGE")
-        if second is None:
-            failures.append("GT549:NO_DURABLE_PRODUCT_CONFIGURATION_STAGE")
-        if first is not None and second is not None and first >= second:
-            failures.append("GT549:STAGES_OUT_OF_ORDER")
-        return failures
-    if task_id == 778:
-        acquires = {
-            statement.bind: statement for statement in statements
-            if isinstance(statement, Acquire) and statement.bind
-        }
-        matched = False
-        for loop in (statement for statement in statements if isinstance(statement, ForEach)):
-            acquire = acquires.get(loop.items.var)
-            if acquire is None or acquire.returns.get("rows") is None:
-                continue
-            if acquire.returns["rows"].coverage != "complete":
-                continue
-            if "size" in {field.casefold() for field in acquire.required_fields}:
-                continue
-            body = list(_walk(loop.body))
-            reads = [
-                statement for statement in body
-                if isinstance(statement, Read) and {"size", "price"}.issubset(statement.returns)
-            ]
-            for guard in (statement for statement in body if isinstance(statement, If)):
-                if not (
-                    guard.cond.ref.var in {read.bind for read in reads}
-                    and guard.cond.ref.path == ["size"]
-                    and str(guard.cond.value) == "28"
-                    and guard.cond.cmp == "=="
-                ):
-                    continue
-                computes = [statement for statement in guard.then if isinstance(statement, Compute)]
-                for compute in computes:
-                    if not any(
-                        isinstance(step, ArithmeticStep)
-                        and step.operator == "multiply"
-                        and abs(step.operand - 0.865) < 1e-9
-                        and step.round_digits == 2
-                        for step in compute.steps
-                    ):
-                        continue
-                    if any(
-                        isinstance(statement, Interact)
-                        and any(ref.var == loop.item for ref in statement.inputs.values())
-                        and any(ref.var == compute.bind for ref in statement.inputs.values())
-                        for statement in guard.then
-                    ):
-                        matched = True
-        if not matched:
-            failures.append("GT778:NO_DETAIL_GUARDED_PRICE_LOOP")
-        return failures
-    return [f"UNSUPPORTED_TASK:{task_id}"]
-
-
 def _evaluate_hidden_source(
     source: str,
     fixture: FixtureSpec,
@@ -914,42 +813,6 @@ def _coding_sample(
     }
 
 
-def _dsl_sample(task: dict, knowledge: str, resolution: Any) -> dict[str, Any]:
-    calls_before = get_llm_call_count()
-    tokens_before = get_llm_token_usage()
-    started = time.perf_counter()
-    try:
-        program = decompose(
-            task["intent"],
-            knowledge=knowledge,
-            current_site="shopping_admin",
-            resolution=resolution,
-        )
-        failures = grade_dsl_program(task["task_id"], program)
-        executable = True
-        serialized = program.model_dump(mode="json")
-        error = ""
-    except Exception as exc:  # noqa: BLE001 - planner failure is an experiment result
-        failures = [f"DSL_NOT_EXECUTABLE:{type(exc).__name__}"]
-        executable = False
-        serialized = None
-        error = str(exc)
-    tokens_after = get_llm_token_usage()
-    return {
-        "ok": not failures,
-        "executable": executable,
-        "first_executable": executable,
-        "failures": failures,
-        "calls": get_llm_call_count() - calls_before,
-        "repairs": max(0, get_llm_call_count() - calls_before - 1),
-        "input_tokens": tokens_after[0] - tokens_before[0],
-        "output_tokens": tokens_after[1] - tokens_before[1],
-        "seconds": round(time.perf_counter() - started, 3),
-        "program": serialized,
-        "error": error,
-    }
-
-
 def _surface_summary(samples: list[dict[str, Any]]) -> dict[str, Any]:
     return {
         "samples": len(samples),
@@ -988,12 +851,6 @@ def main() -> int:
     parser.add_argument("--tasks", nargs="+", type=int, default=[549, 778])
     parser.add_argument("--k", type=int, default=5)
     parser.add_argument(
-        "--surfaces",
-        nargs="+",
-        choices=["dsl", "coding_reviewed"],
-        default=["dsl", "coding_reviewed"],
-    )
-    parser.add_argument(
         "--coding-eval-mode",
         choices=["whitebox", "blind"],
         default="blind",
@@ -1019,69 +876,45 @@ def main() -> int:
     for task in tasks:
         resolution = resolve_intent(task["intent"])
         task_knowledge = knowledge.decompose_context(task["intent"]) if knowledge else ""
-        row = {"task_id": task["task_id"], "intent": task["intent"], "surfaces": {}}
-        for surface in args.surfaces:
-            samples = []
-            for sample_index in range(args.k):
-                if surface == "coding_reviewed":
-                    sample = _coding_sample(
-                        task,
-                        task_knowledge,
-                        resolution,
-                        coding_eval_mode=args.coding_eval_mode,
-                    )
-                else:
-                    sample = _dsl_sample(task, task_knowledge, resolution)
-                samples.append(sample)
-                failures.update(f"{surface}:{failure}" for failure in sample["failures"])
-                mark = "✓" if sample["ok"] else "✗"
-                print(
-                    f"[{task['task_id']} {surface} {sample_index + 1}/{args.k}] {mark} "
-                    f"calls={sample['calls']} out={sample['output_tokens']} "
-                    f"fail={sample['failures'][:2]}",
-                    flush=True,
-                )
-            row["surfaces"][surface] = {"samples": samples, "summary": _surface_summary(samples)}
+        row = {"task_id": task["task_id"], "intent": task["intent"]}
+        samples = []
+        for sample_index in range(args.k):
+            sample = _coding_sample(
+                task,
+                task_knowledge,
+                resolution,
+                coding_eval_mode=args.coding_eval_mode,
+            )
+            samples.append(sample)
+            failures.update(sample["failures"])
+            mark = "✓" if sample["ok"] else "✗"
+            print(
+                f"[{task['task_id']} {sample_index + 1}/{args.k}] {mark} "
+                f"calls={sample['calls']} out={sample['output_tokens']} "
+                f"fail={sample['failures'][:2]}",
+                flush=True,
+            )
+        row["samples"] = samples
+        row["summary"] = _surface_summary(samples)
         results.append(row)
         (output_dir / "report.json").write_text(
             json.dumps({"tasks": results}, ensure_ascii=False, indent=1), encoding="utf-8",
         )
 
-    summaries: dict[str, dict[str, Any]] = {}
-    for surface in args.surfaces:
-        samples = [sample for row in results for sample in row["surfaces"][surface]["samples"]]
-        summaries[surface] = _surface_summary(samples)
-    verdict: dict[str, bool] = {}
-    if "coding_reviewed" in summaries:
-        coding_surface = "coding_reviewed"
-        per_task_passes = {
-            row["task_id"]: sum(
-                sample["ok"] for sample in row["surfaces"][coding_surface]["samples"]
-            )
-            for row in results
-        }
-        surface_verdict = coding_verdict(
-            summaries[coding_surface],
-            per_task_passes,
-            samples_per_task=args.k,
-        )
-        verdict.update({
-            key.replace("coding_", "coding_reviewed_", 1): value
-            for key, value in surface_verdict.items()
-        })
-    if {"coding_reviewed", "dsl"}.issubset(summaries):
-        verdict["quality_win"] = (
-            summaries["coding_reviewed"]["semantic_passes"]
-            > summaries["dsl"]["semantic_passes"]
-        )
-        verdict["cost_win"] = (
-            summaries["coding_reviewed"]["mean_output_tokens"]
-            < summaries["dsl"]["mean_output_tokens"]
-            and summaries["coding_reviewed"]["mean_calls"] <= summaries["dsl"]["mean_calls"]
-        )
+    samples = [sample for row in results for sample in row["samples"]]
+    summary = _surface_summary(samples)
+    per_task_passes = {
+        row["task_id"]: sum(sample["ok"] for sample in row["samples"])
+        for row in results
+    }
+    verdict = coding_verdict(
+        summary,
+        per_task_passes,
+        samples_per_task=args.k,
+    )
     report = {
         "coding_eval_mode": args.coding_eval_mode,
-        "summary": summaries,
+        "summary": summary,
         "verdict": verdict,
         "failure_codes": dict(failures.most_common()),
         "tasks": results,
@@ -1089,7 +922,7 @@ def main() -> int:
     (output_dir / "report.json").write_text(
         json.dumps(report, ensure_ascii=False, indent=1), encoding="utf-8",
     )
-    print(json.dumps({"summary": summaries, "verdict": verdict}, ensure_ascii=False, indent=2))
+    print(json.dumps({"summary": summary, "verdict": verdict}, ensure_ascii=False, indent=2))
     print(f"report -> {output_dir / 'report.json'}")
     return 0
 

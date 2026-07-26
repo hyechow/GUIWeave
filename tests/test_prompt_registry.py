@@ -50,7 +50,7 @@ def test_render_rejects_raw_prompts():
     from gui_agent.prompts import load_prompt
     from gui_agent.prompts.loader import PromptRegistryError
 
-    raw = load_prompt("task.orchestrator.decomposer")   # consumed verbatim, not via .format
+    raw = load_prompt("task.orchestrator.coding")
     assert raw.rendered is False
     try:
         raw.render(anything="x")
@@ -60,24 +60,16 @@ def test_render_rejects_raw_prompts():
         raise AssertionError("render() must refuse a raw prompt")
 
 
-def test_decomposer_contract_exposes_semantic_ir_not_runtime_components():
-    from gui_agent.core.orchestrator._decomposer.draft import _PlanDraft
+def test_coding_contract_exposes_only_public_ctx_api():
+    prompt = load_prompt_text("task.orchestrator.coding")
 
-    prompt = load_prompt_text("task.orchestrator.decomposer")
-    schema = json.dumps(_PlanDraft.model_json_schema(), ensure_ascii=False)
-    forbidden = ("supervisor", "checker", "planner", "replanner")
-
-    for source_name, source in (("prompt", prompt), ("schema", schema)):
-        for term in forbidden:
-            assert not re.search(rf"\b{term}\b", source, flags=re.IGNORECASE), (
-                f"decomposer {source_name} leaks runtime term {term!r}"
-            )
-
-    for dsl_term in ("interact", "read", "command", "foreach"):
-        assert dsl_term in prompt
-        assert dsl_term in schema
-    for retired in ("data_query", "body_goal", "covers_set", "function", "call"):
-        assert retired not in schema
+    for method in ("ctx.gui", "ctx.query", "ctx.read", "ctx.write"):
+        assert method in prompt
+    assert "filters={}" in prompt
+    assert "match={" not in prompt
+    assert "match_mode" not in prompt
+    for retired in ("ctx.lookup", "ctx.acquire", "ctx.interact", "redecompose"):
+        assert retired not in prompt
 
 
 def test_prompt_eval_suites_point_to_existing_paths():

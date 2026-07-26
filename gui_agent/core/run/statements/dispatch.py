@@ -9,15 +9,13 @@ from typing import Any, Callable
 
 from llm.structured import get_llm_call_count, get_llm_token_usage
 
-from gui_agent.core.orchestrator.program import Acquire, Command, Compute, Read, SourceCheck
+from gui_agent.core.run.contracts import Acquire, Command, Read
 from gui_agent.core.run.interactive import statement_id
-from gui_agent.core.run.program_runtime import ProgramRuntime
 from gui_agent.core.schemas import Observation, PolicyContext
 
 from .command import execute_command
-from .compute import execute_compute_statement
 from .acquire import execute_acquire_statement
-from .binding import execute_read, execute_source_check
+from .binding import execute_read
 from .observation import ObservationCursor
 from .recording import record_statement_outcome
 
@@ -28,20 +26,19 @@ class ImmediateDispatchResult:
     observation: Observation | None = None
     observation_url: str | None = None
     failure_evidence: str | None = None
-    replan_directive: str | None = None
 
 
 def is_immediate_statement(invocation, platform: Any, *, allow_navigation: bool = True) -> bool:
     del platform, allow_navigation
     return bool(
         invocation is not None
-        and isinstance(invocation.statement, (Acquire, Read, SourceCheck, Compute, Command))
+        and isinstance(invocation.statement, (Acquire, Read, Command))
     )
 
 
 def drain_immediate_statements(
     *,
-    program_runtime: ProgramRuntime,
+    program_runtime: Any,
     bundle: Any,
     platform: Any,
     log_dir: Path,
@@ -58,7 +55,6 @@ def drain_immediate_statements(
     del materialized_tables, allow_navigation
     invocation = program_runtime.current
     failure_evidence: str | None = None
-    replan_directive: str | None = None
     cursor = ObservationCursor(
         bundle=bundle,
         platform=platform,
@@ -105,24 +101,6 @@ def drain_immediate_statements(
                 say=say,
                 status=emit_status,
             )
-        elif isinstance(invocation.statement, SourceCheck):
-            emit_status(f"SourceCheck 检查中：{invocation.goal}")
-            if cursor.observation is None and not invocation.inputs:
-                cursor.ensure(program_runtime.index)
-            outcome = execute_source_check(
-                invocation,
-                observation=cursor.observation,
-                say=say,
-                status=emit_status,
-            )
-        elif isinstance(invocation.statement, Compute):
-            emit_status(f"Compute 数据计算中：{invocation.goal}")
-            outcome = execute_compute_statement(
-                invocation,
-                observation=cursor.observation,
-                say=say,
-                status=emit_status,
-            )
         else:
             outcome = execute_command(
                 invocation,
@@ -133,6 +111,7 @@ def drain_immediate_statements(
                 say=say,
             )
 
+        outcome = program_runtime.adapt_outcome(outcome)
         record_statement_outcome(
             invocation,
             outcome,
@@ -147,7 +126,6 @@ def drain_immediate_statements(
         )
         save_context()
         failure_evidence = outcome.failure_evidence or failure_evidence
-        replan_directive = outcome.kickback or replan_directive
         invocation = program_runtime.send_outcome(outcome)
         if program_runtime.finished:
             return ImmediateDispatchResult(
@@ -155,7 +133,6 @@ def drain_immediate_statements(
                 observation=cursor.observation,
                 observation_url=cursor.observation_url,
                 failure_evidence=failure_evidence,
-                replan_directive=replan_directive,
             )
         save_context()
 
@@ -163,7 +140,6 @@ def drain_immediate_statements(
         observation=cursor.observation,
         observation_url=cursor.observation_url,
         failure_evidence=failure_evidence,
-        replan_directive=replan_directive,
     )
 
 

@@ -64,8 +64,6 @@ def form_controls_js() -> str:
     return '';
   };
   const labelOf = (el) => {
-    const direct = clean(el.getAttribute('aria-label') || el.getAttribute('title'));
-    if (direct) return direct;
     if (el.labels && el.labels.length) {
       const text = clean(Array.from(el.labels).map(l => l.innerText || l.textContent).join(' '));
       if (text) return text;
@@ -75,6 +73,13 @@ def form_controls_js() -> str:
       const lbl = document.querySelector(`label[for="${css}"]`);
       const text = clean(lbl && (lbl.innerText || lbl.textContent));
       if (text) return text;
+    }
+    const direct = clean(el.getAttribute('aria-label') || el.getAttribute('title'));
+    if (direct) return direct;
+    const role = clean(el.getAttribute('role')).toLowerCase();
+    if (el.tagName === 'BUTTON' || el.tagName === 'A' || ['button', 'link'].includes(role)) {
+      const ownText = clean(el.innerText || el.textContent);
+      if (ownText) return ownText;
     }
     const container = labelFromContainer(el);
     if (container) return container;
@@ -295,6 +300,19 @@ def form_controls_js() -> str:
       continue;
     }
     const kind = kindOf(el);
+    const inlineHandler = clean(el.getAttribute('onclick') || '');
+    const dataAction = clean(el.getAttribute('data-action') || '');
+    const queryAction = (
+      /\bresetfilter\s*\(/i.test(inlineHandler)
+      || /filter[-_].*(reset|clear)|(reset|clear).*filter/i.test(dataAction)
+    )
+      ? 'reset'
+      : (
+        /\bdofilter\s*\(/i.test(inlineHandler)
+        || /filter[-_].*(apply|submit)|(apply|submit).*filter/i.test(dataAction)
+      )
+      ? 'submit'
+      : '';
     const isFilter = el.id.includes('_filter_')
       || !!el.closest('[data-role="filter-form"]')
       || !!el.closest('.admin__data-grid-filters');
@@ -333,9 +351,10 @@ def form_controls_js() -> str:
       item.group_field = repeatedGroup.field;
     }
     if (isFilter) item.is_filter = true;
+    if (queryAction) item.query_action = queryAction;
     if (isAuthentication) {
       item.effect_kind = 'authentication';
-    } else if (isFilter) {
+    } else if (isFilter || queryAction) {
       item.effect_kind = 'query_control';
     } else if (isPager) {
       item.effect_kind = 'pagination';
@@ -477,6 +496,8 @@ def normalize_form_control_snapshot(
             norm["focused"] = True
         if item.get("is_filter") is True:
             norm["is_filter"] = True
+        if item.get("query_action") in {"submit", "reset"}:
+            norm["query_action"] = item["query_action"]
         if item.get("effect_kind"):
             norm["effect_kind"] = _text(item.get("effect_kind"), 40)
         if item.get("is_datepicker") is True:

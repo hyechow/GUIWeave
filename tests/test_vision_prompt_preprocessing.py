@@ -52,7 +52,7 @@ def test_platform_bundle_vision_prompt_preprocessing():
 
 
 def test_structured_read_uses_injected_vision_preprocessor(monkeypatch):
-    mod = importlib.import_module("gui_agent.core.orchestrator.primitives.structured_read")
+    mod = importlib.import_module("gui_agent.core.run.structured_read")
 
     captured: dict[str, tuple[int, int]] = {}
 

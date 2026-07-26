@@ -23,6 +23,7 @@ from dataclasses import dataclass, field
 from typing import Any
 
 from gui_agent.core.run.statements.compute_kernel import normalize_table_rows
+from gui_agent.core.filter_contract import canonical_filter_value
 
 from .models import (
     CodeDiagnostic,
@@ -31,6 +32,7 @@ from .models import (
     UIStateHandle,
     WriteEvent,
     collection_postcondition,
+    field_projection,
     require_ui_state,
 )
 
@@ -38,7 +40,7 @@ from .models import (
 CTX_METHODS = frozenset({"gui", "query", "read", "write", "command"})
 CTX_SIGNATURES = {
     "query": (
-        ("state", "entity", "fields", "filters", "field", "fallback", "coverage"),
+        ("state", "entity", "fields", "filters", "coverage"),
         {"state", "entity", "fields"},
     ),
     "read": (("state", "target", "fields"), {"state", "fields"}),
@@ -91,6 +93,7 @@ SAFE_BUILTINS = {
     "tuple": tuple,
     "AssertionError": AssertionError,
     "Exception": Exception,
+    "IndexError": IndexError,
     "KeyError": KeyError,
     "RuntimeError": RuntimeError,
     "TypeError": TypeError,
@@ -680,14 +683,21 @@ def _literal_fields(node: ast.Call) -> list[str] | None:
         "fields",
         2 if _ctx_method(node) in {"query", "read"} else 1,
     )
-    if not isinstance(fields_node, (ast.List, ast.Tuple)):
-        return None
-    fields = [
-        element.value
-        for element in fields_node.elts
-        if isinstance(element, ast.Constant) and isinstance(element.value, str)
-    ]
-    return fields if len(fields) == len(fields_node.elts) else None
+    if isinstance(fields_node, (ast.List, ast.Tuple)):
+        fields = [
+            element.value
+            for element in fields_node.elts
+            if isinstance(element, ast.Constant) and isinstance(element.value, str)
+        ]
+        return fields if len(fields) == len(fields_node.elts) else None
+    if isinstance(fields_node, ast.Dict):
+        fields = [
+            key.value
+            for key in fields_node.keys
+            if isinstance(key, ast.Constant) and isinstance(key.value, str)
+        ]
+        return fields if len(fields) == len(fields_node.keys) else None
+    return None
 
 
 def _literal_strings(node: ast.AST | None) -> set[str]:
@@ -703,16 +713,16 @@ def _literal_strings(node: ast.AST | None) -> set[str]:
 def _literal_mapping(node: ast.AST | None) -> dict[str, Any] | None:
     if not isinstance(node, ast.Dict):
         return None
-    result: dict[str, Any] = {}
-    for key, value in zip(node.keys, node.values):
-        if (
-            not isinstance(key, ast.Constant)
-            or not isinstance(key.value, str)
-            or not isinstance(value, ast.Constant)
-        ):
-            return None
-        result[key.value] = value.value
-    return result
+    try:
+        result = ast.literal_eval(node)
+    except (TypeError, ValueError):
+        return None
+    return (
+        result
+        if isinstance(result, dict)
+        and all(isinstance(key, str) for key in result)
+        else None
+    )
 
 
 def _referenced_fields(node: ast.AST) -> set[str]:
@@ -742,6 +752,16 @@ def build_probe_fixture(source: str) -> FixtureSpec:
         tree = ast.parse(source)
     except SyntaxError:
         return FixtureSpec()
+    assignments = (
+        node for node in ast.walk(tree)
+        if isinstance(node, ast.Assign) and len(node.targets) == 1
+        and isinstance(node.targets[0], ast.Name)
+    )
+    constant_mappings = {
+        assignment.targets[0].id: value
+        for assignment in assignments
+        if (value := _literal_mapping(assignment.value)) is not None
+    }
     inferred: dict[str, Any] = {}
     for comparison in (node for node in ast.walk(tree) if isinstance(node, ast.Compare)):
         for field_name in _referenced_fields(comparison.left):
@@ -790,31 +810,52 @@ def build_probe_fixture(source: str) -> FixtureSpec:
             return index + 1
         return f"probe-{index + 1}"
 
+    def probe_filter_value(value: Any) -> Any:
+        if not isinstance(value, dict):
+            return value
+        lowered = {
+            str(key).strip().casefold(): item
+            for key, item in value.items()
+        }
+        return next(
+            (lowered[key] for key in ("from", "start", "min", "to", "end", "max")
+             if key in lowered),
+            next(iter(lowered.values()), value),
+        )
+
     lookups: dict[str, list[dict[str, Any]]] = {}
-    all_rows: list[dict[str, Any]] = []
     for call in (node for node in ast.walk(tree) if _ctx_method(node) == "query"):
         fields = _literal_fields(call)
-        names = {
-            value
-            for argument in (
-                _call_argument(call, "entity", 1),
-                _call_argument(call, "fallback", 5),
-            )
-            for value in _literal_strings(argument)
-        }
+        names = set(_literal_strings(_call_argument(call, "entity", 1)))
         if fields is None or not names:
             continue
-        filters = _literal_mapping(_call_argument(call, "filters", 3)) or {}
+        filter_node = _call_argument(call, "filters", 3)
+        filters = _literal_mapping(filter_node)
+        if filters is None and isinstance(filter_node, ast.Name):
+            filters = constant_mappings.get(filter_node.id)
+        filters = filters or {}
         rows = [
             {
                 **{field: probe_value(field, index) for field in fields},
-                **filters,
+                **{
+                    field: probe_filter_value(value)
+                    for field, value in filters.items()
+                },
             }
             for index in range(row_count)
         ]
-        all_rows.extend(rows)
         for name in names:
-            lookups[name.strip().casefold()] = rows
+            key = name.strip().casefold()
+            existing = lookups.get(key)
+            if existing is None:
+                lookups[key] = rows
+                continue
+            for current, row in zip(existing, rows):
+                current.update({
+                    field: value
+                    for field, value in row.items()
+                    if field not in current
+                })
 
     read_fields = {
         field
@@ -823,10 +864,12 @@ def build_probe_fixture(source: str) -> FixtureSpec:
         for field in (_literal_fields(call) or [])
     }
     reads = {
-        next(_identity_values(row), str(row)): {
-            field: probe_value(field, index) for field in read_fields
+        _target_key(row): {
+            field: probe_value(field, index % row_count) for field in read_fields
         }
-        for index, row in enumerate(all_rows)
+        for index, row in enumerate(
+            row for rows in lookups.values() for row in rows
+        )
     } if read_fields else {}
     commands = {
         value: True
@@ -855,7 +898,8 @@ def validate_fixture_contract(
     collection_fields = {_semantic_key(field_name) for field_name in fixture.fields()}
     detail_fields = {
         _semantic_key(field_name)
-        for field_name in fixture.fields(include_reads=True)
+        for detail in fixture.reads.values()
+        for field_name in detail
     }
     gui_lines = [
         node.lineno
@@ -925,7 +969,6 @@ class _ProjectionVisitor(ast.NodeVisitor):
     def __init__(self) -> None:
         self.mapping_fields: dict[str, set[str]] = {}
         self.sequence_fields: dict[str, set[str]] = {}
-        self.normalized_dates: set[str] = set()
         self.diagnostics: list[CodeDiagnostic] = []
 
     @staticmethod
@@ -959,10 +1002,9 @@ class _ProjectionVisitor(ast.NodeVisitor):
             return self.sequence_fields.get(node.id)
         if (
             isinstance(node, ast.Subscript)
-            and isinstance(node.value, ast.Name)
             and isinstance(node.slice, ast.Slice)
         ):
-            return self.sequence_fields.get(node.value.id)
+            return self._infer_sequence(node.value)
         if (
             isinstance(node, ast.Call)
             and isinstance(node.func, ast.Name)
@@ -994,24 +1036,10 @@ class _ProjectionVisitor(ast.NodeVisitor):
             return
         self.mapping_fields.pop(target.id, None)
         self.sequence_fields.pop(target.id, None)
-        self.normalized_dates.discard(target.id)
         if mapping is not None:
             self.mapping_fields[target.id] = set(mapping)
         if sequence is not None:
             self.sequence_fields[target.id] = set(sequence)
-
-    def _is_normalized_date(self, node: ast.AST) -> bool:
-        if isinstance(node, ast.Name) and node.id in self.normalized_dates:
-            return True
-        sources = self.mapping_fields.keys() | self.sequence_fields.keys()
-        from_normalized_source = bool(_loaded_names(node) & sources) or any(
-            _ctx_method(child) in {"query", "read"} for child in ast.walk(node)
-        )
-        return from_normalized_source and any(
-            {"date", "datetime", "time", "timestamp"}
-            & set(re.findall(r"[a-z0-9]+", field.casefold().replace("_", " ")))
-            for field in _referenced_fields(node)
-        )
 
     def _check_field(self, node: ast.AST, variable: str, field_name: str) -> None:
         available = self.mapping_fields.get(variable)
@@ -1030,23 +1058,17 @@ class _ProjectionVisitor(ast.NodeVisitor):
         self.visit(node.value)
         mapping = self._infer_mapping(node.value)
         sequence = self._infer_sequence(node.value)
-        normalized_date = self._is_normalized_date(node.value)
         for target in node.targets:
             self._bind(target, mapping=mapping, sequence=sequence)
-            if normalized_date and isinstance(target, ast.Name):
-                self.normalized_dates.add(target.id)
 
     def visit_AnnAssign(self, node: ast.AnnAssign) -> None:
         if node.value is not None:
             self.visit(node.value)
-            normalized_date = self._is_normalized_date(node.value)
             self._bind(
                 node.target,
                 mapping=self._infer_mapping(node.value),
                 sequence=self._infer_sequence(node.value),
             )
-            if normalized_date and isinstance(node.target, ast.Name):
-                self.normalized_dates.add(node.target.id)
 
     def visit_For(self, node: ast.For) -> None:
         self.visit(node.iter)
@@ -1078,21 +1100,6 @@ class _ProjectionVisitor(ast.NodeVisitor):
             and isinstance(node.args[0].value, str)
         ):
             self._check_field(node, node.func.value.id, node.args[0].value)
-        if (
-            isinstance(node.func, ast.Attribute)
-            and node.func.attr == "split"
-            and self._is_normalized_date(node.func.value)
-            and (
-                not node.args
-                or isinstance(node.args[0], ast.Constant)
-                and not str(node.args[0].value or "").strip()
-            )
-        ):
-            self.diagnostics.append(_diag(
-                node,
-                "NORMALIZED_DATE_DISPLAY_PARSE",
-                "date/time query fields are ISO-8601; use datetime.fromisoformat",
-            ))
         self.generic_visit(node)
 
     def visit_Subscript(self, node: ast.Subscript) -> None:
@@ -1203,6 +1210,30 @@ def _field_value(mapping: dict[str, Any], field_name: str) -> tuple[bool, Any]:
     return key is not None, mapping.get(key)
 
 
+def _literal_filter_matches(actual: Any, expected: Any) -> bool:
+    if isinstance(expected, dict):
+        bounds = {
+            str(key).strip().casefold(): canonical_filter_value(value)
+            for key, value in expected.items()
+        }
+        actual_value = canonical_filter_value(actual)
+        lower = next(
+            (bounds[key] for key in ("from", "start", "min") if key in bounds),
+            None,
+        )
+        upper = next(
+            (bounds[key] for key in ("to", "end", "max") if key in bounds),
+            None,
+        )
+        return (
+            (lower is None or actual_value >= lower)
+            and (upper is None or actual_value <= upper)
+        )
+    if isinstance(actual, str) and isinstance(expected, str):
+        return expected.strip().casefold() in actual.strip().casefold()
+    return actual == expected
+
+
 def _identity_values(mapping: dict[str, Any]):
     return (
         str(mapping[field_name])
@@ -1213,7 +1244,10 @@ def _identity_values(mapping: dict[str, Any]):
 
 def _target_key(target: Any) -> str:
     if isinstance(target, dict):
-        return next(_identity_values(target), str(target))
+        return next(
+            _identity_values(target),
+            repr(sorted(target.items(), key=lambda item: str(item[0]))),
+        )
     return str(target)
 
 
@@ -1248,27 +1282,14 @@ class _FixtureContext:
         state: UIStateHandle,
         *,
         entity: str,
-        fields: list[str],
+        fields: list[str] | dict[str, str],
         filters: dict[str, Any] | None = None,
-        field: str = "name",
-        fallback: str | None = None,
         coverage: str = "complete",
     ) -> list[dict[str, Any]]:
-        require_ui_state(state, entity=entity, fields=fields)
-        candidates = [
-            _lookup_rows(self.fixture.lookups, value)
-            for value in (entity, fallback or "")
-            if value
-        ]
-        rows = next(
-            (
-                candidate for candidate in candidates
-                if candidate
-                and all(any(_field_value(row, name)[0] for row in candidate) for name in fields)
-            ),
-            next((candidate for candidate in candidates if candidate is not None), []),
-        )
-        requested_filters = filters or {}
+        field_names, field_types = field_projection(fields)
+        require_ui_state(state, entity=entity, fields=field_names)
+        requested_filters = dict(filters or {})
+        rows = _lookup_rows(self.fixture.lookups, entity) or []
         missing_filters = [
             name for name in requested_filters
             if rows and not any(_field_value(row, name)[0] for row in rows)
@@ -1282,12 +1303,15 @@ class _FixtureContext:
             row for row in rows
             if all(
                 _field_value(row, field_name)[0]
-                and _field_value(row, field_name)[1] == expected
+                and _literal_filter_matches(
+                    _field_value(row, field_name)[1],
+                    expected,
+                )
                 for field_name, expected in requested_filters.items()
             )
         ]
         missing = [
-            name for name in fields
+            name for name in field_names
             if rows and not any(_field_value(row, name)[0] for row in rows)
         ]
         if missing:
@@ -1300,19 +1324,21 @@ class _FixtureContext:
                 f"collection fields {missing!r} are unavailable for query {entity!r}; "
                 f"available_fields={available_fields!r}"
             )
-        projected = normalize_table_rows([
-            {name: _field_value(row, name)[1] for name in fields}
-            for row in rows
-        ])
+        projected = normalize_table_rows(
+            [
+                {name: _field_value(row, name)[1] for name in field_names}
+                for row in rows
+            ],
+            field_types,
+        )
         self.trace.append(TraceEvent(
             "query",
             (entity,),
             {
-                "fields": list(fields),
+                "fields": field_names,
+                "field_types": field_types,
                 "ui_state": state.token,
                 "filters": copy.deepcopy(requested_filters),
-                "field": field,
-                "fallback": fallback,
                 "coverage": coverage,
             },
             projected,
@@ -1324,25 +1350,36 @@ class _FixtureContext:
         state: UIStateHandle,
         *,
         target: Any = None,
-        fields: list[str] | None = None,
+        fields: list[str] | dict[str, str] | None = None,
     ) -> dict[str, Any]:
         require_ui_state(state)
         if fields is None:
             raise TypeError("ctx.read requires fields")
+        field_names, field_types = field_projection(fields)
         actual_target = self.current_target if target is None else target
         key = _target_key(actual_target)
         key = self.read_aliases.get(key, key)
         if key not in self.state:
             raise KeyError(f"no fixture read state for target {key!r}")
         record = self.state[key]
-        missing = [name for name in fields if not _field_value(record, name)[0]]
+        missing = [
+            name for name in field_names
+            if not _field_value(record, name)[0]
+        ]
         if missing:
             raise KeyError(f"fixture target {key!r} has no fields {missing}")
-        result = {name: _field_value(record, name)[1] for name in fields}
+        result = normalize_table_rows([{
+            name: _field_value(record, name)[1]
+            for name in field_names
+        }], field_types)[0]
         self.trace.append(TraceEvent(
             "read",
             (actual_target,),
-            {"fields": list(fields), "ui_state": state.token},
+            {
+                "fields": field_names,
+                "field_types": field_types,
+                "ui_state": state.token,
+            },
             result,
         ))
         return result

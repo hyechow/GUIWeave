@@ -38,11 +38,12 @@ def canonical_filter_value(value: JsonValue) -> JsonValue:
     if match is None:
         return text
     a, b, c = match.group("a"), match.group("b"), match.group("c")
-    separator = match.group("sep")
     if len(a) == 4:
-        return f"{a}{separator}{int(b):02d}{separator}{int(c):02d}"
-    year = f"20{c}" if len(c) == 2 else c
-    return f"{int(a):02d}{separator}{int(b):02d}{separator}{year}"
+        year, month, day = a, b, c
+    else:
+        year = f"20{c}" if len(c) == 2 else c
+        month, day = a, b
+    return f"{year}-{int(month):02d}-{int(day):02d}"
 
 
 class FilterPredicate(BaseModel):

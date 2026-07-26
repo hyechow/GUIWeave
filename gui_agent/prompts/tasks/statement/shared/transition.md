@@ -91,6 +91,9 @@ assessment 与 kind 必须一致：
 - checkbox、radio、switch 等选择控件使用 `activate`；`input` 只表示向可编辑文本控件写入文字。
 - `navigate`：仅用于 affordance 明确支持的真实页面 URL；`#`、当前页或菜单开关不是导航。
 - `iterate`：把 offscreen 目标带入视口，本帧不能同时激活。
+- 关闭临时弹层时优先使用明确的关闭控件、原切换按钮或平台返回动作；不要把表格行、
+  列表项或其他业务对象当作“空白区域”点击。若误入详情页但可通过返回恢复当前
+  Statement 的集合上下文，这仍是 `act`，不是 `infeasible`。
 
 ### complete
 

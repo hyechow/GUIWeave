@@ -186,19 +186,15 @@ def orchestration_result(
     *,
     current=None,
 ) -> AgentResult:
-    """Build the final result for DSL orchestrator mode."""
-
-    from gui_agent.core.llm.output import compose_orchestration_reply
+    """Build the final result for the reviewed-Python orchestrator."""
 
     report_fields = {
         "phase",
         "summary",
         "verification",
-        "kickback",
         "outputs",
         "evidence",
         "observation_url",
-        "recovery_notices",
         "failure_evidence",
     }
     run_log = []
@@ -219,6 +215,9 @@ def orchestration_result(
         if coding_op:
             entry["coding_op"] = coding_op
             entry["coding_payload"] = dict(getattr(record, "coding_payload", {}) or {})
+            call_id = str(getattr(record, "coding_call_id", "") or "")
+            if call_id:
+                entry["coding_call_id"] = call_id
             plan = str(getattr(record, "coding_plan", "") or "")
             if plan:
                 entry["coding_plan"] = plan
@@ -229,24 +228,7 @@ def orchestration_result(
                     getattr(record, "coding_plan_steps", 0) or 0
                 )
         run_log.append(entry)
-    digest = [
-        {
-            "name": r.name,
-            "executor": r.executor,
-            "phase": r.result.phase,
-            "verification": r.result.verification,
-            "outputs": dict(r.result.outputs),
-            "summary": r.result.summary,
-        }
-        for r in interp.run_log
-    ]
-    coding = bool(getattr(interp, "source", ""))
-    reply = terminal if coding else compose_orchestration_reply(
-        context.goal,
-        digest,
-        current=(current.goal if current is not None else ""),
-        terminal=terminal,
-    )
+    reply = terminal
     # A program that reached finish but answered on an entirely-empty read produced no real
     # answer (the read found nothing on the frame) — do not let it masquerade as success.
     finish_incomplete = getattr(interp, "finish_incomplete", False)
@@ -280,7 +262,7 @@ def orchestration_result(
     return base.model_copy(update={
         "output": reply,
         "orchestrator": {
-            "kind": "coding" if coding else "dsl",
+            "kind": "coding",
             "reply": reply,
             "terminal": terminal,
             "run_log": run_log,

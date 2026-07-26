@@ -10,19 +10,22 @@ from typing import Any, Literal
 
 from pydantic import BaseModel, ConfigDict
 
-from gui_agent.core.orchestrator.program import (
+from gui_agent.core.run.contracts import (
     Acquire,
     Command,
     Interact,
     ObservationBinding,
     OutputSpec,
     Read,
+    RunRecord,
+    StatementInvocation,
 )
-from gui_agent.core.orchestrator.recovery import RecoveryLedger
-from gui_agent.core.orchestrator.runner import RunRecord, StatementInvocation
 from gui_agent.core.run.lookup_scope import is_lookup_scope
 from gui_agent.core.run.statements.compute_kernel import normalize_table_rows
-from gui_agent.core.filter_contract import compile_filter_predicates
+from gui_agent.core.filter_contract import (
+    canonical_filter_field,
+    compile_filter_predicates,
+)
 from gui_agent.core.schemas import (
     CollectionIntent,
     StatementContract,
@@ -30,7 +33,12 @@ from gui_agent.core.schemas import (
 )
 
 from .sandbox import SAFE_BUILTINS, validate_code
-from .models import UIStateHandle, collection_postcondition, require_ui_state
+from .models import (
+    UIStateHandle,
+    collection_postcondition,
+    field_projection,
+    require_ui_state,
+)
 
 
 class CodingProgram(BaseModel):
@@ -107,7 +115,9 @@ def _report_coding_payload(op: str, payload: dict[str, Any]) -> dict[str, Any]:
             "state": scope.get("ui_state_token"),
             "entity": scope.get("entity"),
             "fields": payload.get("fields") or [],
+            "field_types": payload.get("field_types") or {},
             "coverage": payload.get("coverage") or "complete",
+            "requested_filters": payload.get("requested_filters") or {},
         }
     if op == "focus":
         return {
@@ -119,6 +129,7 @@ def _report_coding_payload(op: str, payload: dict[str, Any]) -> dict[str, Any]:
         return {
             "state": _state_token(payload.get("state")),
             "fields": payload.get("fields") or [],
+            "field_types": payload.get("field_types") or {},
         }
     if op == "command":
         return {
@@ -126,6 +137,19 @@ def _report_coding_payload(op: str, payload: dict[str, Any]) -> dict[str, Any]:
             **(dict(payload.get("arguments") or {}) if isinstance(payload.get("arguments"), dict) else {}),
         }
     return {key: _clip(value) for key, value in payload.items()}
+
+
+def _unique_target_url(target: Any) -> str:
+    if not isinstance(target, dict):
+        return ""
+    urls = {
+        str(value).strip()
+        for key, value in target.items()
+        if str(key).casefold().endswith(("url", "href"))
+        and isinstance(value, str)
+        and value.strip().casefold().startswith(("http://", "https://"))
+    }
+    return next(iter(urls)) if len(urls) == 1 else ""
 
 
 class CodingCompileError(ValueError):
@@ -138,16 +162,8 @@ class CodingCompileError(ValueError):
         ]
         if attempt is not None and attempt.run is not None and attempt.run.error:
             failures.append(attempt.run.error)
-        if plan.review is not None and plan.review.error:
-            failures.append(plan.review.error)
-        if (
-            plan.review is not None
-            and not plan.review.approved
-            and not plan.repaired
-        ):
-            failures.append("coding review rejected the unrepaired program")
         super().__init__(
-            "; ".join(failures) or "coding review did not produce an executable program"
+            "; ".join(failures) or "coding program is not executable"
         )
 
 
@@ -197,11 +213,18 @@ class _RuntimeContext:
 
     def __init__(self, connection: Any) -> None:
         self._connection = connection
+        self._call_seq = 0
+        self._query_filters: dict[tuple[str, str], dict[str, Any]] = {}
+
+    def _call_id(self, op: str) -> str:
+        self._call_seq += 1
+        return f"{self._call_seq}:{op}"
 
     def _request(
         self,
         op: str,
         *,
+        call_id: str,
         plan: str = "",
         plan_step: int = 0,
         plan_steps: int = 0,
@@ -212,6 +235,7 @@ class _RuntimeContext:
             "kind": "call",
             "op": op,
             "payload": payload,
+            "call_id": call_id,
             "plan": plan or op,
             "plan_step": int(plan_step or 1),
             "plan_steps": int(plan_steps or 1),
@@ -226,43 +250,68 @@ class _RuntimeContext:
         state: UIStateHandle,
         *,
         entity: str,
-        fields: list[str],
+        fields: list[str] | dict[str, str],
         filters: dict[str, Any] | None = None,
-        field: str = "name",
-        fallback: str | None = None,
         coverage: str = "complete",
     ) -> list[dict[str, Any]]:
-        # Macro: locate source, establish the exact filter state, then materialize rows.
+        field_names, field_types = field_projection(fields)
+        call_id = self._call_id("query")
+        # Private source session: locate, optionally constrain, then materialize.
+        # The caller sees one ctx.query contract rather than executor phases.
+        filters = dict(filters or {})
+        filter_key = (state.token, canonical_filter_field(entity))
+        desired_filters = compile_filter_predicates(filters)
+        known_filters = self._query_filters.get(filter_key)
+        needs_constrain = (
+            bool(filters) if known_filters is None
+            else desired_filters != known_filters
+        )
+        plan_steps = 3 if needs_constrain else 2
+        source_fields = list(field_names)
+        source_field_keys = {
+            canonical_filter_field(field) for field in field_names
+        }
+        source_fields.extend(
+            field for field in compile_filter_predicates(filters)
+            if field not in source_field_keys
+        )
         scope = self._request(
             "lookup",
+            call_id=call_id,
             plan="query",
             plan_step=1,
-            plan_steps=3,
+            plan_steps=plan_steps,
             state=state,
             entity=entity,
-            field=field,
-            fallback=fallback or "",
-            required_fields=fields,
+            field="name",
+            fallback="",
+            required_fields=source_fields,
         )
-        scope = self._request(
-            "constrain",
-            plan="query",
-            plan_step=2,
-            plan_steps=3,
-            state=state,
-            scope=scope,
-            entity=entity,
-            filters=dict(filters or {}),
-        )
+        if needs_constrain:
+            scope = self._request(
+                "constrain",
+                call_id=call_id,
+                plan="query",
+                plan_step=2,
+                plan_steps=plan_steps,
+                state=state,
+                scope=scope,
+                entity=entity,
+                filters=filters,
+            )
+            self._query_filters[filter_key] = desired_filters
         return self._request(
             "acquire",
+            call_id=call_id,
             plan="query",
-            plan_step=3,
-            plan_steps=3,
+            plan_step=plan_steps,
+            plan_steps=plan_steps,
             state=state,
             scope=scope,
-            fields=fields,
+            fields=field_names,
+            field_types=field_types,
             coverage=coverage,
+            requested_filters=filters,
         )
 
     def read(
@@ -270,35 +319,33 @@ class _RuntimeContext:
         state: UIStateHandle,
         *,
         target: Any = None,
-        fields: list[str] | None = None,
+        fields: list[str] | dict[str, str] | None = None,
     ) -> dict[str, Any]:
         if fields is None:
             raise TypeError("ctx.read requires fields")
+        field_names, field_types = field_projection(fields)
+        call_id = self._call_id("read")
+        steps = 2 if target is not None else 1
         if target is not None:
             state = self._request(
                 "focus",
+                call_id=call_id,
                 plan="read",
                 plan_step=1,
-                plan_steps=2,
+                plan_steps=steps,
                 state=state,
                 target=target,
-                fields=fields,
-            )
-            return self._request(
-                "read",
-                plan="read",
-                plan_step=2,
-                plan_steps=2,
-                state=state,
-                fields=fields,
+                fields=field_names,
             )
         return self._request(
             "read",
+            call_id=call_id,
             plan="read",
-            plan_step=1,
-            plan_steps=1,
+            plan_step=steps,
+            plan_steps=steps,
             state=state,
-            fields=fields,
+            fields=field_names,
+            field_types=field_types,
         )
 
     def gui(
@@ -310,6 +357,7 @@ class _RuntimeContext:
     ) -> UIStateHandle:
         return self._request(
             "gui",
+            call_id=self._call_id("gui"),
             plan="gui",
             plan_step=1,
             plan_steps=1,
@@ -328,6 +376,7 @@ class _RuntimeContext:
         inputs = {"target": target} if target is not None else {}
         self._request(
             "write",
+            call_id=self._call_id("write"),
             plan="write",
             plan_step=1,
             plan_steps=1,
@@ -339,6 +388,7 @@ class _RuntimeContext:
     def command(self, capability: str, **arguments: Any) -> Any:
         return self._request(
             "command",
+            call_id=self._call_id("command"),
             plan="command",
             plan_step=1,
             plan_steps=1,
@@ -371,7 +421,7 @@ def _runtime_worker(source: str, connection: Any) -> None:
 
 @dataclass
 class CodingProgramRuntime:
-    """Steppable runtime with the subset of ProgramRuntime used by the agent loop."""
+    """Steppable runtime for reviewed Python and statement executors."""
 
     program: CodingProgram
     interpreter: CodingInterpreter
@@ -381,6 +431,7 @@ class CodingProgramRuntime:
     current_instance_id: str = ""
     current_coding_op: str = ""
     current_coding_payload: dict[str, Any] = field(default_factory=dict)
+    current_coding_call_id: str = ""
     current_coding_plan: str = ""
     current_coding_plan_step: int = 0
     current_coding_plan_steps: int = 0
@@ -388,7 +439,6 @@ class CodingProgramRuntime:
     _statement_seq: int = 0
     _process: Any = None
     _connection: Any = None
-    _recovery: RecoveryLedger = field(default_factory=RecoveryLedger)
 
     @classmethod
     def start(cls, program: CodingProgram) -> "CodingProgramRuntime":
@@ -418,6 +468,16 @@ class CodingProgramRuntime:
     @property
     def finished(self) -> bool:
         return self.current is None and self.reply is not None
+
+    @staticmethod
+    def adapt_outcome(outcome: StatementOutcome) -> StatementOutcome:
+        """Keep Program-rewrite signals outside the coding coroutine protocol."""
+        if outcome.phase in {"completed", "failed"}:
+            return outcome
+        details = outcome.model_dump(
+            exclude={"phase", "summary", "verification", "kickback"},
+        )
+        return StatementOutcome.failed(outcome.summary, **details)
 
     def _id(self) -> str:
         self._statement_seq += 1
@@ -503,6 +563,24 @@ class CodingProgramRuntime:
             state = require_ui_state(payload.get("state"))
             fields = [str(item) for item in payload.get("fields") or []]
             target = payload.get("target")
+            target_url = _unique_target_url(target)
+            if target_url:
+                return StatementInvocation(
+                    statement=Command(
+                        id=statement_id,
+                        capability="open_url",
+                        args={"url": target_url},
+                    ),
+                    task_goal=self.program.goal,
+                    inputs={
+                        "ui_state": state.snapshot(),
+                        "target": target,
+                    },
+                    args={
+                        "url": target_url,
+                        "ui_state_token": state.token,
+                    },
+                )
             statement = Interact(
                 id=statement_id,
                 goal=f"Expose fields {fields} for business target {target!r}",
@@ -584,7 +662,15 @@ class CodingProgramRuntime:
                 statement=statement,
                 task_goal=self.program.goal,
                 inputs={"ui_state": state.snapshot()},
-                args={"lookup_scope": scope, "ui_state_token": state.token},
+                args={
+                    "lookup_scope": scope,
+                    "ui_state_token": state.token,
+                    "field_types": dict(payload.get("field_types") or {}),
+                    "requested_filters": dict(
+                        payload.get("requested_filters") or {}
+                    ),
+                    "coverage": coverage,
+                },
             )
         if op == "read":
             state = require_ui_state(payload.get("state"))
@@ -603,7 +689,11 @@ class CodingProgramRuntime:
             return StatementInvocation(
                 statement=statement,
                 task_goal=self.program.goal,
-                **self._state_context(state),
+                inputs={"ui_state": state.snapshot()},
+                args={
+                    "ui_state_token": state.token,
+                    "field_types": dict(payload.get("field_types") or {}),
+                },
             )
         if op == "command":
             statement = Command(
@@ -631,6 +721,7 @@ class CodingProgramRuntime:
         if kind == "call":
             op = str(message.get("op") or "")
             payload = dict(message.get("payload") or {})
+            call_id = str(message.get("call_id") or "")
             plan = str(message.get("plan") or op or "")
             plan_step = int(message.get("plan_step") or 1)
             plan_steps = int(message.get("plan_steps") or 1)
@@ -638,12 +729,14 @@ class CodingProgramRuntime:
                 self.current = self._invocation(op, payload)
                 self.current_coding_op = op
                 self.current_coding_payload = _report_coding_payload(op, payload)
+                self.current_coding_call_id = call_id
                 self.current_coding_plan = plan
                 self.current_coding_plan_step = plan_step
                 self.current_coding_plan_steps = plan_steps
             except Exception as exc:  # noqa: BLE001 - generated call contract
                 self.current_coding_op = ""
                 self.current_coding_payload = {}
+                self.current_coding_call_id = ""
                 self.current_coding_plan = ""
                 self.current_coding_plan_step = 0
                 self.current_coding_plan_steps = 0
@@ -657,6 +750,7 @@ class CodingProgramRuntime:
             self.current = None
             self.current_coding_op = ""
             self.current_coding_payload = {}
+            self.current_coding_call_id = ""
             self.current_coding_plan = ""
             self.current_coding_plan_step = 0
             self.current_coding_plan_steps = 0
@@ -670,6 +764,7 @@ class CodingProgramRuntime:
         self.current = None
         self.current_coding_op = ""
         self.current_coding_payload = {}
+        self.current_coding_call_id = ""
         self.current_coding_plan = ""
         self.current_coding_plan_step = 0
         self.current_coding_plan_steps = 0
@@ -700,19 +795,21 @@ class CodingProgramRuntime:
         return self.current_instance_id
 
     def send_outcome(self, outcome: StatementOutcome) -> StatementInvocation | None:
+        outcome = self.adapt_outcome(outcome)
         invocation = self.current
         if invocation is None:
             raise RuntimeError("coding runtime has no active statement")
         instance_id = self.current_instance_id
         coding_op = self.current_coding_op
         coding_payload = dict(self.current_coding_payload)
+        coding_call_id = self.current_coding_call_id
         issued_ui_state: UIStateHandle | None = None
         if outcome.is_completed and coding_op in {"gui", "focus"}:
             if coding_op == "focus":
                 postcondition = {
                     "kind": "target_fields_available",
                     "target": invocation.inputs.get("target"),
-                    "fields": list(invocation.statement.observe_fields),
+                    "fields": list(coding_payload.get("fields") or []),
                 }
             else:
                 postcondition = dict(coding_payload.get("success") or {})
@@ -732,6 +829,7 @@ class CodingProgramRuntime:
             instance_id=instance_id,
             coding_op=coding_op,
             coding_payload=coding_payload,
+            coding_call_id=coding_call_id,
             coding_plan=self.current_coding_plan,
             coding_plan_step=self.current_coding_plan_step,
             coding_plan_steps=self.current_coding_plan_steps,
@@ -739,6 +837,7 @@ class CodingProgramRuntime:
         self.current_instance_id = ""
         self.current_coding_op = ""
         self.current_coding_payload = {}
+        self.current_coding_call_id = ""
         self.current_coding_plan = ""
         self.current_coding_plan_step = 0
         self.current_coding_plan_steps = 0
@@ -770,9 +869,15 @@ class CodingProgramRuntime:
             value = issued_ui_state
         elif isinstance(invocation.statement, Acquire):
             rows = outcome.outputs.get("rows", [])
-            value = normalize_table_rows(rows if isinstance(rows, list) else [])
+            value = normalize_table_rows(
+                rows if isinstance(rows, list) else [],
+                dict(invocation.args.get("field_types") or {}),
+            )
         elif isinstance(invocation.statement, Read):
-            value = dict(outcome.outputs)
+            value = normalize_table_rows(
+                [dict(outcome.outputs)],
+                dict(invocation.args.get("field_types") or {}),
+            )[0]
         elif isinstance(invocation.statement, Command):
             value = dict(outcome.outputs) or True
         assert self._connection is not None
@@ -795,25 +900,6 @@ class CodingProgramRuntime:
             "interaction_intent": contract.interaction_intent,
         })
         self.current = self.current.model_copy(update={"statement": statement})
-
-    def record_recovery(
-        self,
-        cls: str,
-        mechanism: str,
-        site: str,
-        *,
-        detail: str = "",
-        outcome: str = "",
-    ) -> None:
-        self._recovery.record(cls, mechanism, site, detail=detail, outcome=outcome)
-
-    @property
-    def has_recovery(self) -> bool:
-        return bool(self._recovery.events)
-
-    def recovery_summary(self) -> dict[str, Any]:
-        return self._recovery.summary()
-
 
 def _render_return(value: Any) -> str:
     if value is None:

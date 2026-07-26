@@ -59,6 +59,7 @@ def resolve_lookup_scope(
         if str(value or "").strip()
     }
     mentions = {_semantic_key(value) for value in mention_values}
+    required = {_semantic_key(field_name) for field_name in required_fields}
     eligible = [
         candidate for candidate in candidates
         if _semantic_key(candidate.get("caption")) in mentions
@@ -69,6 +70,14 @@ def resolve_lookup_scope(
             title_words & _semantic_words(value) for value in mention_values
         ):
             eligible = candidates
+    if len(eligible) != 1 and required:
+        eligible = [
+            candidate for candidate in candidates
+            if required <= {
+                _semantic_key(header)
+                for header in candidate.get("headers") or []
+            }
+        ]
     if len(eligible) != 1:
         field_key = _semantic_key(field)
         matching = [
@@ -82,7 +91,6 @@ def resolve_lookup_scope(
             return None
     chosen = eligible[0]
     available_fields = [str(value) for value in chosen.get("headers") or []]
-    required = {_semantic_key(field_name) for field_name in required_fields}
     if not required <= {_semantic_key(field) for field in available_fields}:
         return None
     return {

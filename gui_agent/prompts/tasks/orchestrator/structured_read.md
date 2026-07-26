@@ -4,7 +4,7 @@ source_type: task_template
 platform: shared
 scope:
   - data
-owner: gui_agent.core.orchestrator.primitives.structured_read
+owner: gui_agent.core.run.structured_read
 eval_suites:
 version: 2
 ---

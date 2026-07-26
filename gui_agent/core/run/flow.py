@@ -82,7 +82,7 @@ def finish_terminal_step(
     say: Callable[[str], None],
     end_statement: Callable[[Any], None],
 ) -> AgentResult:
-    """Send the authoritative terminal outcome into ProgramRuntime."""
+    """Send the authoritative terminal outcome into the coding runtime."""
     reason = outcome.summary or "statement stopped"
     del turn_no
 

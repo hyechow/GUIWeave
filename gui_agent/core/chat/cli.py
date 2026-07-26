@@ -117,20 +117,35 @@ def run_chat_turn(
 ) -> AgentResult:
     """Thin wrapper around run_agent_loop with silent stdio, HUD and live_state spinner."""
     context_path = log_dir / "context.json"
-    from gui_agent.core.orchestrator import decompose
+    from gui_agent.core.orchestrator import (
+        generate_reviewed_code,
+        program_from_plan,
+    )
     from gui_agent.core.router import resolve_intent
 
     reports: list[dict] = []
     resolution = resolve_intent(goal)
-    program = decompose(
+    plan = generate_reviewed_code(
         goal,
         knowledge=decompose_knowledge,
         current_url=current_url,
         current_title=current_title,
         current_site=current_site,
-        context_reports=reports,
         resolution=resolution,
     )
+    reports.append({
+        "kind": "coding_review",
+        "source": plan.source,
+        "approved": bool(plan.review and plan.review.approved),
+        "issues": [
+            issue.render() for issue in (plan.review.issues if plan.review else ())
+        ],
+        "error": plan.review.error if plan.review else "",
+        "degraded": bool(plan.review and plan.review.unavailable),
+        "repaired": plan.repaired,
+        "events": [event.to_dict() for event in plan.events],
+    })
+    program = program_from_plan(plan)
     # HUD comes from the platform bundle (make_status_reporter(True) -> the HUD
     # context manager); same object the standalone runner uses, no adapter import.
     with _silent_stdio(log_dir), build_platform().make_status_reporter(True) as hud:

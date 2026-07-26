@@ -38,11 +38,8 @@ from gui_agent.core.run.flow import (
     handle_loading_frame,
 )
 from gui_agent.core.run.statements import drain_immediate_statements
-from gui_agent.core.coding_orchestrator import CodingProgram, CodingProgramRuntime
-from gui_agent.core.orchestrator.program import Acquire, Interact, Program
-from gui_agent.core.orchestrator.recovery import MAX_KICKBACK_REPLANS
-from gui_agent.core.run.program_runtime import ProgramRuntime
-from gui_agent.core.run.recovery_router import RecoveryRouter
+from gui_agent.core.orchestrator import CodingProgram, CodingProgramRuntime
+from gui_agent.core.run.contracts import Interact
 from gui_agent.core.run.statements.outcome import StatementOutcome
 from gui_agent.core.run.interactive import (
     contract_for_interact,
@@ -129,7 +126,7 @@ def run_agent_loop(
     log_dir: Path,
     context_path: Path,
     *,
-    program: Program | CodingProgram,
+    program: CodingProgram,
     max_turns: int = 20,
     auto_continue: bool = False,
     hud: AgentHUD | None = None,
@@ -141,14 +138,13 @@ def run_agent_loop(
     router: dict | None = None,    # RouterResult dict (chat path); None for bin/runner
     on_session_open: object = None,  # callable(platform) run once after session open, before the loop
     knowledge: dict | None = None,  # injected app-knowledge summary {app_name, nav_chars, ...}; None if no match
-    redecompose: object = None,  # callable(directive:str)->Program|None; Program-level hot recompile.
     orchestrator_context_reports: list[dict] | None = None,
     stop_requested: object = None,  # callable() -> bool; true means stop after current turn settles
     platform: object = None,  # already-open session (runner pre-opens it so router/decompose can see the current front-tab url/title; see cli.py); None → open here (chat path, unchanged)
     headless: bool = False,  # suppress the action visualizer (cursor/overlay) on every platform; HUD is gated by the caller
 ) -> AgentResult:
-    if not isinstance(program, (Program, CodingProgram)):
-        raise TypeError("run_agent_loop requires a compiled DSL or coding program")
+    if not isinstance(program, CodingProgram):
+        raise TypeError("run_agent_loop requires a compiled coding program")
     _run_started = time.perf_counter()  # for context.wall_clock_s (true end-to-end elapsed)
 
     def _say(s: str) -> None:
@@ -176,8 +172,7 @@ def run_agent_loop(
         context.knowledge = knowledge
     _prior_wall_clock_s = float(context.wall_clock_s or 0.0)
 
-    # Bound after ProgramRuntime.start; _save_ctx / _finish close over this name.
-    rt: ProgramRuntime | CodingProgramRuntime | None = None
+    rt: CodingProgramRuntime | None = None
 
     def _save_ctx() -> None:
         """Persist context, stamping the run's wall-clock elapsed so far — so the final file
@@ -198,15 +193,6 @@ def run_agent_loop(
                     **context.orchestrator,
                     "report_run_log": report_run_log,
                 }
-        if (
-            rt is not None
-            and rt.has_recovery
-            and isinstance(context.orchestrator, dict)
-        ):
-            context.orchestrator = {
-                **context.orchestrator,
-                "recovery": rt.recovery_summary(),
-            }
         sync_context_program_outcome(context, result)
         _save_ctx()
         return result
@@ -293,47 +279,9 @@ def run_agent_loop(
                 hud.reposition(*dock_rect(*_wb))
 
         # ── Semantic runtime (sole statement-scheduling owner) ────────────────────
-        _immediate_failure: "str | None" = None
-        _immediate_kickback: "str | None" = None
-        if isinstance(program, CodingProgram):
-            if context.journal.events:
-                raise ValueError(
-                    "coding orchestrator does not yet support checkpoint resume"
-                )
-            rt = CodingProgramRuntime.start(program)
-        else:
-            rt = ProgramRuntime.resume(program, context.journal)
-        recovery_router = RecoveryRouter()
-        if rt.current_instance_id:
-            if rt.current is None:
-                raise ValueError(
-                    "journal resumed an active instance without a current statement"
-                )
-            if isinstance(rt.current.statement, Interact):
-                resume_statement = getattr(supervisor, "resume_statement", None)
-                if not callable(resume_statement):
-                    raise TypeError("configured supervisor cannot resume statement runtime")
-                latest_snapshot = next(
-                    (
-                        turn.runtime_state
-                        for turn in reversed(context.journal.turns)
-                        if turn.statement_instance_id == rt.current_instance_id
-                        and turn.runtime_state is not None
-                    ),
-                    None,
-                )
-                if latest_snapshot is not None:
-                    rt.restore_current_contract(latest_snapshot.contract)
-                resume_statement(
-                    contract_for_interact(rt.current, rt.index),
-                    instance_id=rt.current_instance_id,
-                    history=context.journal.turns,
-                )
-            elif not isinstance(rt.current.statement, Acquire):
-                raise ValueError(
-                    "only Interact or journal-backed Acquire may resume an active instance"
-                )
-            _say(f"  [Resume] 恢复 statement {rt.current_instance_id}")
+        if context.journal.events:
+            raise ValueError("coding runtime starts from a fresh execution journal")
+        rt = CodingProgramRuntime.start(program)
         _record_llm_mark = get_llm_call_count()
         _record_token_mark = get_llm_token_usage()
         observation = None
@@ -356,7 +304,6 @@ def run_agent_loop(
             allow_navigation: bool = True,
         ) -> "str | None":
             """Execute inline statements, then begin the next interactive statement."""
-            nonlocal _immediate_failure, _immediate_kickback
             nonlocal _record_llm_mark, _record_token_mark
             nonlocal observation, observation_url_for_turn, prep_future
             result = drain_immediate_statements(
@@ -389,8 +336,6 @@ def run_agent_loop(
                     rt.index,
                     instance_id=iid,
                 )
-            _immediate_failure = result.failure_evidence
-            _immediate_kickback = result.replan_directive
             if result.observation is not None:
                 observation = result.observation
                 observation_url_for_turn = result.observation_url or observation_url_for_turn
@@ -402,7 +347,7 @@ def run_agent_loop(
             turn_no: int,
             outcome: StatementOutcome,
         ) -> dict:
-            """Terminal interactive statement → ProgramRuntime.send → task result."""
+            """Terminal interactive statement → coding runtime → task result."""
             return finish_terminal_step(
                 outcome=outcome,
                 turn_no=turn_no,
@@ -414,7 +359,10 @@ def run_agent_loop(
             )
 
         def _outcome_from_step(sv_step):
-            return sv_step.outcome
+            outcome = sv_step.outcome
+            if outcome is not None:
+                return rt.adapt_outcome(outcome)
+            return outcome
 
         def _record_statement_outcome(sv_step, outcome) -> None:
             """Persist one terminal fact before Program advance/runtime teardown.
@@ -480,127 +428,11 @@ def run_agent_loop(
         context.outcome = None
         _save_ctx()
 
-        def _perform_replan(
-            directive: str,
-            observation=None,
-            *,
-            cls: str = "infeasible_route",
-            terminal_outcome: StatementOutcome | None = None,
-        ) -> "tuple[bool, str | None]":
-            """Re-decompose remaining plan; hot-swap via ProgramRuntime.replace_program."""
-            if not (directive and callable(redecompose)):
-                return (False, None)
-            kick_n = rt.begin_kickback()
-            if kick_n is None:
-                return (False, None)
-            failed_run = rt.current
-            _site = failed_run.id if failed_run is not None else "program"
-            _say(f"\n[Kickback] 重规划 ({kick_n}/{MAX_KICKBACK_REPLANS})：{directive[:120]}")
-            _rd_calls0 = get_llm_call_count()
-            _rd_tok0 = get_llm_token_usage()
-            _rd_t0 = time.perf_counter()
-            _rd_reports: list = []
-            from gui_agent.core.orchestrator import summarize_progress
-
-            _experience, _remaining = summarize_progress(
-                rt.program, rt.interpreter.run_log, failed_run,
-            )
-            _available_bindings = {
-                name: outputs
-                for name, outputs in rt.interpreter.binding_contracts.items()
-                if name in rt.interpreter.env
-            }
-            _prev_log_len = len(rt.interpreter.run_log)
-            if _experience:
-                _say(
-                    f"  [Kickback] 已执行经验 {_prev_log_len} 步、剩余目标若干"
-                    " → 仅重排剩余（带经验+当前页面）"
-                )
-            try:
-                _new = redecompose(
-                    directive, _rd_reports,
-                    observation=observation,
-                    prior_experience=_experience,
-                    remaining_plan=_remaining,
-                    available_bindings=_available_bindings,
-                )  # type: ignore[operator]
-            except Exception as _exc:  # noqa: BLE001
-                _say(f"[Kickback] 重规划失败（{_exc}），按原结果收尾")
-                rt.record_recovery(
-                    cls, "kickback_redecompose", _site,
-                    detail=str(_exc)[:200], outcome="redecompose_failed",
-                )
-                return (False, None)
-            if _new is None or not _new.statements:
-                rt.record_recovery(cls, "kickback_redecompose", _site, outcome="no_plan")
-                return (False, None)
-
-            rt.record_recovery(
-                cls, "kickback_redecompose", _site,
-                detail=directive[:160], outcome="replanned",
-            )
-            # Close an interactive runtime before hot-swapping. Every executor has already
-            # recorded its terminal Journal fact; the replacement starts at _drain_immediate.
-            if terminal_outcome is not None:
-                supervisor.end_statement(terminal_outcome)
-            rt.replace_program(
-                _new,
-                drop_failed_from_log=True,
-                reason=directive,
-                terminal_disposition=(
-                    "abandon" if terminal_outcome is not None else "record_then_drop"
-                ),
-            )
-            _prior = context.orchestrator or {}
-            _redecomps = list(_prior.get("redecomposes") or [])
-            _redecomps.append({
-                "kickback_n": kick_n,
-                "directive": directive,
-                "at_turn": len(context.journal.turns),
-                "program": _new.model_dump(mode="json"),
-                "llm_calls": get_llm_call_count() - _rd_calls0,
-                "token_usage": {"orchestrator.redecompose": {
-                    "input": get_llm_token_usage()[0] - _rd_tok0[0],
-                    "output": get_llm_token_usage()[1] - _rd_tok0[1],
-                }},
-                "timings": {"orchestrator.redecompose": time.perf_counter() - _rd_t0},
-                "context_reports": _rd_reports,
-            })
-            context.orchestrator = {
-                **_prior,
-                "program": rt.program.model_dump(mode="json"),
-                "redecomposes": _redecomps,
-                "replanned_from_kickback": kick_n,
-            }
-            _save_ctx()
-            if rt.finished:
-                return (True, rt.reply or "")
-            _reply2 = _drain_immediate()
-            return (True, _reply2) if _reply2 is not None else (True, None)
-
         if rt.finished:
             return _finish(_orch_result(context, rt.interpreter, rt.reply or ""))
         _reply = _drain_immediate()
         if _reply is not None:
-            _initial_decision = recovery_router.route_program_end(
-                replan_directive=_immediate_kickback,
-                can_redecompose=callable(redecompose),
-            )
-            if _initial_decision.action == "kickback":
-                assert _initial_decision.recovery_class is not None
-                _handled, _replanned_reply = _perform_replan(
-                    _immediate_kickback or "",
-                    observation,
-                    cls=_initial_decision.recovery_class,
-                )
-                if _handled and _replanned_reply is not None:
-                    return _finish(
-                        _orch_result(context, rt.interpreter, _replanned_reply)
-                    )
-                if not _handled:
-                    return _finish(_orch_result(context, rt.interpreter, _reply))
-            else:
-                return _finish(_orch_result(context, rt.interpreter, _reply))
+            return _finish(_orch_result(context, rt.interpreter, _reply))
 
         while True:
             interrupted = _stop_after_esc(_interactive_turn_count(context))
@@ -659,7 +491,6 @@ def run_agent_loop(
             # as the verdict-frame carry-forward, just merged into this turn instead of the next.
             _orch_reply: "str | None" = None    # set if the program ended during a hand-off
             _did_loading = False
-            _did_kickback_replan = False
             # Each completed step writes its own timing/token diagnostics into the
             # OutcomeEvent before the next same-frame step clears supervisor state.
             while True:
@@ -681,8 +512,7 @@ def run_agent_loop(
                 _step_outcome = _outcome_from_step(sv_step)
                 if (
                     _step_outcome is None
-                    or recovery_router.route_statement(_step_outcome).action
-                    != "advance_program"
+                    or not _step_outcome.is_completed
                 ):
                     break  # act/observe/wait or non-completed terminal → turn body
 
@@ -717,27 +547,6 @@ def run_agent_loop(
             # Every completed statement already recorded its own terminal event inside the
             # loop above, so no separate program-end verdict is needed here.
             if _orch_reply is not None:
-                # An executor can report a structural contract/data-source conflict that the
-                # current Program cannot resolve. Route that evidence to Program-level hot
-                # recompile instead of treating it as an action-level rejection.
-                _program_end_decision = recovery_router.route_program_end(
-                    replan_directive=_immediate_kickback,
-                    can_redecompose=callable(redecompose),
-                )
-                if _program_end_decision.action == "kickback":
-                    assert _program_end_decision.recovery_class is not None
-                    _directive = _immediate_kickback or ""
-                    _handled, _r = _perform_replan(
-                        _directive,
-                        observation,
-                        cls=_program_end_decision.recovery_class,
-                    )
-                    if _handled and _r is not None:
-                        return _finish(_orch_result(context, rt.interpreter, _r))
-                    if _handled:
-                        _immediate_failure = None
-                        _immediate_kickback = None
-                        continue
                 return _finish(_orch_result(context, rt.interpreter, _orch_reply))
 
             if _budget_reconcile and not _did_loading:
@@ -751,9 +560,6 @@ def run_agent_loop(
                     turn_no=turn_no,
                     outcome=_budget_outcome,
                 )
-
-            if _did_kickback_replan:
-                continue
 
             # 页面未稳定（白屏/加载中）：等待并重新观察，本帧不写入 context.journal.turns、不消耗
             # Loading is an adapter fact, not a model no-op: wait without writing a turn.
@@ -781,23 +587,6 @@ def run_agent_loop(
             _turn_outcome = _outcome_from_step(sv_step)
             if _turn_outcome is not None:
                 _record_statement_outcome(sv_step, _turn_outcome)
-                _terminal_decision = recovery_router.route_statement(
-                    _turn_outcome,
-                    can_redecompose=callable(redecompose),
-                )
-                if _terminal_decision.action == "kickback":
-                    assert _terminal_decision.recovery_class is not None
-                    _say("\n[Kickback] statement 判定不可行 → 重规划")
-                    _handled, _reply = _perform_replan(
-                        _turn_outcome.kickback or "",
-                        observation,
-                        cls=_terminal_decision.recovery_class,
-                        terminal_outcome=_turn_outcome,
-                    )
-                    if _handled and _reply is not None:
-                        return _finish(_orch_result(context, rt.interpreter, _reply))
-                    if _handled:
-                        continue
                 return _finish_statement(
                     turn_no=turn_no,
                     outcome=_turn_outcome,
@@ -843,22 +632,6 @@ def run_agent_loop(
             _post_grounding_outcome = _outcome_from_step(sv_step)
             if _post_grounding_outcome is not None:
                 _record_statement_outcome(sv_step, _post_grounding_outcome)
-                _post_decision = recovery_router.route_statement(
-                    _post_grounding_outcome,
-                    can_redecompose=callable(redecompose),
-                )
-                if _post_decision.action == "kickback":
-                    assert _post_decision.recovery_class is not None
-                    _handled, _reply = _perform_replan(
-                        _post_grounding_outcome.kickback or "",
-                        observation,
-                        cls=_post_decision.recovery_class,
-                        terminal_outcome=_post_grounding_outcome,
-                    )
-                    if _handled and _reply is not None:
-                        return _finish(_orch_result(context, rt.interpreter, _reply))
-                    if _handled:
-                        continue
                 if _post_grounding_outcome.is_completed:
                     try:
                         rt.send_outcome(_post_grounding_outcome)
