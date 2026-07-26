@@ -275,6 +275,15 @@ def test_coding_report_groups_statements_by_public_ctx_call():
     # Runtime calls remain annotated on Python source lines.
     assert "coding-source-annotated" in html
     assert "coding-src-chip" in html
+    assert "源码右侧 #N 对应下方运行调用索引" in html
+    assert "coding-src-run-ref" in html
+    assert "运行调用索引" in html
+    assert '<details class="coding-src-index">' in html
+    assert '<details class="coding-src-index" open' not in html
+    assert ".coding-src-index').open=true" in html
+    code_css = html.split(".coding-src-code {", 1)[1].split("}", 1)[0]
+    assert "white-space: pre-wrap" in code_css
+    assert "overflow-x: auto" not in code_css
     assert 'href="#ms-c1"' in html
     assert "coding-stmt-data" in html
     assert "ctx.gui" in html

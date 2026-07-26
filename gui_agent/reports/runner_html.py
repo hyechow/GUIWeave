@@ -119,11 +119,11 @@ HTML_TEMPLATE = """\
     border-bottom: 1px solid #e2e8f0;
   }}
   .coding-source-annotated {{
-    margin: 0; padding: 8px 0 10px; overflow-x: auto; background: #0f172a; color: #e2e8f0;
+    margin: 0; padding: 8px 0 10px; overflow-x: hidden; background: #0f172a; color: #e2e8f0;
     font: 12px/1.65 ui-monospace, SFMono-Regular, Menlo, Consolas, monospace; tab-size: 4;
   }}
   .coding-src-line {{
-    display: grid; grid-template-columns: 40px minmax(12em, 1fr) auto;
+    display: grid; grid-template-columns: 40px minmax(0, 1fr) auto;
     gap: 0 10px; align-items: start; padding: 0 12px; min-height: 22px;
   }}
   .coding-src-line:hover {{ background: rgba(148,163,184,0.08); }}
@@ -131,11 +131,16 @@ HTML_TEMPLATE = """\
   .coding-src-ln {{
     color: #64748b; text-align: right; user-select: none; padding-top: 1px;
   }}
-  .coding-src-code {{ white-space: pre; min-width: 0; overflow-x: auto; color: #e2e8f0; }}
-  .coding-src-ann {{
-    display: flex; flex-wrap: wrap; gap: 4px; align-items: center;
-    justify-content: flex-end; padding: 1px 0; max-width: 42%;
+  .coding-src-code {{
+    min-width: 0; color: #e2e8f0; white-space: pre-wrap;
+    overflow-wrap: anywhere;
   }}
+  .coding-src-run-ref {{
+    margin-top: 1px; padding: 0 6px; border: 1px solid #0ea5e9; border-radius: 999px;
+    background: #0c4a6e; color: #bae6fd; font-size: 10px; font-weight: 700;
+    line-height: 18px; text-decoration: none; white-space: nowrap;
+  }}
+  .coding-src-run-ref:hover {{ background: #075985; }}
   .coding-src-chip {{
     display: inline-flex; align-items: center; gap: 4px;
     background: #1e293b; border: 1px solid #334155; border-radius: 999px;
@@ -170,11 +175,28 @@ HTML_TEMPLATE = """\
     text-decoration: none; flex-shrink: 0;
   }}
   .coding-call-link:hover {{ background: #c7d2fe; }}
-  .coding-src-footer {{
-    display: flex; flex-wrap: wrap; gap: 6px; align-items: center;
-    margin: 8px 12px 4px; padding: 8px 10px; border-top: 1px dashed #334155;
+  .coding-src-index {{
+    border-top: 1px solid #334155; background: #111c2e;
   }}
-  .coding-src-footer-label {{ font-size: 10px; color: #94a3b8; margin-right: 4px; }}
+  .coding-src-index > summary {{
+    display: flex; align-items: center; gap: 8px; padding: 8px 12px;
+    color: #cbd5e1; font-size: 11px; font-weight: 700; cursor: pointer;
+    list-style: none;
+  }}
+  .coding-src-index > summary::-webkit-details-marker {{ display: none; }}
+  .coding-src-index > summary::before {{ content: "▸"; color: #7dd3fc; }}
+  .coding-src-index[open] > summary::before {{ content: "▾"; }}
+  .coding-src-index > summary span {{ color: #64748b; font-size: 10px; font-weight: 500; }}
+  .coding-src-index[open] > summary {{ border-bottom: 1px solid #334155; }}
+  .coding-src-index-body {{ padding: 6px 12px 9px; }}
+  .coding-src-index-row {{
+    display: flex; flex-wrap: wrap; align-items: center; gap: 5px;
+    padding: 3px 0; scroll-margin-top: 12px;
+  }}
+  .coding-src-index-line {{
+    width: 42px; color: #7dd3fc; font-size: 10px; font-weight: 700;
+    text-decoration: none; flex-shrink: 0;
+  }}
   /* Coding: data strip inside the existing statement card (between header and gallery). */
   .coding-stmt-data {{
     margin: 0; border: 0; border-bottom: 1px solid var(--border);

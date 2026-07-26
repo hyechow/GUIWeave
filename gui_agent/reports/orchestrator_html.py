@@ -989,39 +989,62 @@ def _render_annotated_coding_source(source: str, orchestrator: dict) -> str:
         by_line = {}
 
     row_html: list[str] = []
+    index_html: list[str] = []
     for lineno, raw in enumerate(lines, 1):
         code = _safe(raw) if raw else " "
-        ann = _render_runtime_ann_chips(by_line.get(lineno) or [])
-        ann_html = f'<span class="coding-src-ann">{ann}</span>' if ann else ""
-        has_ann = " coding-src-line-hit" if ann else ""
+        calls = by_line.get(lineno) or []
+        has_ann = " coding-src-line-hit" if calls else ""
+        ref = ""
+        if calls:
+            ordinals = [int(call.get("ordinal") or 0) for call in calls]
+            label = (
+                f"#{ordinals[0]}"
+                if len(ordinals) == 1
+                else f"#{ordinals[0]}–{ordinals[-1]}"
+            )
+            ref = (
+                f'<a class="coding-src-run-ref" href="#coding-src-calls-{lineno}" '
+                f'onclick="this.closest(\'.coding-source-wrap\').querySelector('
+                f'\'.coding-src-index\').open=true" '
+                f'title="查看运行调用 {", ".join(f"#{n}" for n in ordinals)}">{label}</a>'
+            )
+            index_html.append(
+                f'<div class="coding-src-index-row" id="coding-src-calls-{lineno}">'
+                f'<a class="coding-src-index-line" href="#coding-src-line-{lineno}">'
+                f'L{lineno}</a>{_render_runtime_ann_chips(calls)}</div>'
+            )
         row_html.append(
-            f'<div class="coding-src-line{has_ann}">'
+            f'<div class="coding-src-line{has_ann}" id="coding-src-line-{lineno}">'
             f'<span class="coding-src-ln">{lineno}</span>'
             f'<span class="coding-src-code">{code}</span>'
-            f'{ann_html}'
+            f'{ref}'
             f'</div>'
         )
 
-    footer = ""
     if leftovers:
-        footer = (
-            '<div class="coding-src-footer">'
-            '<span class="coding-src-footer-label">未对齐到源码行的运行调用</span>'
-            f'{_render_runtime_ann_chips(leftovers)}'
-            '</div>'
+        index_html.append(
+            '<div class="coding-src-index-row">'
+            '<span class="coding-src-index-line">其他</span>'
+            f'{_render_runtime_ann_chips(leftovers)}</div>'
         )
+    call_index = (
+        '<details class="coding-src-index">'
+        '<summary>运行调用索引'
+        f'<span>{len(runtime_calls)} 次调用 · 默认收起</span></summary>'
+        f'<div class="coding-src-index-body">{"".join(index_html)}</div></details>'
+        if index_html else ""
+    )
     note = (
         '<div class="coding-src-legend">'
-        '行尾：计划 API 展开的 Statement 步骤（如 query→lookup+constrain+acquire），'
-        '点击 #N 跳转卡片'
+        '源码右侧 #N 对应下方运行调用索引；索引中的 #N 可跳转 Statement 卡片'
         '</div>'
     )
     return (
         f'{note}'
         f'<div class="coding-source coding-source-annotated">'
         f'{"".join(row_html)}'
-        f'{footer}'
         f'</div>'
+        f'{call_index}'
     )
 
 
@@ -1071,14 +1094,14 @@ def _render_coding_program_shell(orchestrator: dict, program: dict) -> str:
         '<div class="compat-row">'
         f'<span class="compat-chip">{_safe(review_label)}</span>'
         f'<span class="coding-note">'
-        f'源码行尾标注 {runtime_n} 次运行调用 · 点击跳转卡片'
+        f'源码标注 {runtime_n} 次运行调用 · 点击跳转卡片'
         f'</span>'
         '</div>'
     )
     source_html = (
         f'<details class="coding-source-wrap">'
         f'<summary>完整 Python 源码'
-        f'<span class="coding-note"> · 运行调用已标注在对应行</span></summary>'
+        f'<span class="coding-note"> · 右侧标记对应下方运行调用索引</span></summary>'
         f'{_render_annotated_coding_source(source, orchestrator)}'
         f'</details>'
     )
