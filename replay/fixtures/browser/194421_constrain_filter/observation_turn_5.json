@@ -1,0 +1,24 @@
+{
+  "version": 1,
+  "observation": {
+    "source": "browser",
+    "loading": false,
+    "url": "http://192.168.1.102:7780/admin/sales/order/",
+    "title": "Orders / Operations / Sales / Magento Admin",
+    "semantic_tree": [
+      {
+        "role": "button",
+        "key": "Apply Filters",
+        "value": "",
+        "url": "",
+        "ref": 99381,
+        "depth": 0,
+        "in_viewport": true,
+        "point": {
+          "x": 931.163537549407,
+          "y": 662.6780063291139
+        }
+      }
+    ]
+  }
+}

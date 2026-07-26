@@ -1,0 +1,8 @@
+{
+  "task": "WebArena 108 (monthly completed-order counts, Jan–May 2023)",
+  "history_source": "logs/gui_agent/webarena/browser/20260726_100005",
+  "turn": 6,
+  "observation_source": "structured adapter evidence after navigation reached the Orders collection on page 2 of 2",
+  "purpose": "Regression for ctx.gui/Statement ownership. The navigation statement must finish from the typed collection-available state before it can consume pagination. Program must then hand the same structured Orders table to ctx.query locate/constrain/acquire.",
+  "screenshot_excluded": "The deterministic replay reconstructs Observation from this bounded JSON payload with placeholder png bytes. Raw screenshots and customer rows are intentionally excluded."
+}

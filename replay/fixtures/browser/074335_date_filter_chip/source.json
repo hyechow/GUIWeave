@@ -1,0 +1,8 @@
+{
+  "task": "WebArena 108 (monthly completed-order counts, Jan–May 2023)",
+  "history_source": "logs/gui_agent/webarena/browser/20260724_074335/context.json",
+  "turn": 9,
+  "observation_source": "structured adapter evidence for turn 9 (filters already applied; chips show Purchase Date without month zero-padding)",
+  "purpose": "Deterministic constrain success-predicate replay: applied_filters_match must accept Magento chip '1/01/2023 - 5/31/2023' as covering contract filter '01/01/2023 - 05/31/2023'. Without date normalization this frame exhausted with 'requested filter is not yet active on the current view'.",
+  "screenshot_excluded": "replay/**/*.png is gitignored; the deterministic match test reconstructs Observation from the JSON payload with placeholder png bytes and never needs the frame image."
+}
