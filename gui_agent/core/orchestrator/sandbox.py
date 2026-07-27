@@ -525,7 +525,7 @@ def _ctx_state_contract_diagnostics(
 ) -> list[CodeDiagnostic]:
     reach_assignments: dict[
         str,
-        list[tuple[int, str | None, frozenset[str]]],
+        list[tuple[int, str | None]],
     ] = {}
     for node in ast.walk(function):
         if (
@@ -554,13 +554,13 @@ def _ctx_state_contract_diagnostics(
                 else None
             )
             reach_assignments.setdefault(node.targets[0].id, []).append(
-                (node.lineno, entity, frozenset(success_items))
+                (node.lineno, entity)
             )
 
     def latest_reach(
         name: str,
         before_line: int,
-    ) -> tuple[int, str | None, frozenset[str]] | None:
+    ) -> tuple[int, str | None] | None:
         return max(
             (
                 assignment
@@ -627,42 +627,6 @@ def _ctx_state_contract_diagnostics(
                         f"{reach[1]!r}"
                     ),
                 ))
-            if method == "query" and reach is not None:
-                projected = {
-                    _semantic_key(field)
-                    for field in (_literal_fields(node) or [])
-                }
-                filters_node = _call_argument(node, "filters", 3)
-                filter_fields = (
-                    {
-                        _semantic_key(key.value)
-                        for key in filters_node.keys
-                        if isinstance(key, ast.Constant)
-                        and isinstance(key.value, str)
-                    }
-                    if isinstance(filters_node, ast.Dict)
-                    else set()
-                )
-                missing = []
-                for field in reach[2] - {"entity", "fields"}:
-                    base = re.sub(
-                        r"(?i)[ _-]+(?:from|to|min|max|start|end)$",
-                        "",
-                        field,
-                    )
-                    key = _semantic_key(base)
-                    if key in projected and key not in filter_fields:
-                        missing.append(base)
-                if missing:
-                    diagnostics.append(_diag(
-                        node,
-                        "QUERY_CONSTRAINT_NOT_DECLARED",
-                        (
-                            "ctx.query must declare source filters for reach-state "
-                            f"selection fields {sorted(set(missing))!r}; "
-                            "reach.success does not scope retrieved rows"
-                        ),
-                    ))
         elif method == "commit":
             target = _call_argument(node, "target", 1)
             if (
@@ -677,52 +641,6 @@ def _ctx_state_contract_diagnostics(
                         "pass an owning business row or omit target for creation"
                     ),
                 ))
-    return diagnostics
-
-
-def _top_n_shrink_diagnostics(function: ast.FunctionDef) -> list[CodeDiagnostic]:
-    assignments = {
-        node.targets[0].id: node.value
-        for node in ast.walk(function)
-        if (
-            isinstance(node, ast.Assign)
-            and len(node.targets) == 1
-            and isinstance(node.targets[0], ast.Name)
-        )
-    }
-    diagnostics: list[CodeDiagnostic] = []
-    for node in ast.walk(function):
-        if not isinstance(node, ast.Subscript) or not isinstance(node.slice, ast.Slice):
-            continue
-        upper = node.slice.upper
-        if isinstance(upper, ast.Name):
-            upper = assignments.get(upper.id)
-        if (
-            isinstance(upper, ast.Call)
-            and isinstance(upper.func, ast.Name)
-            and upper.func.id == "min"
-            and any(
-                isinstance(argument, ast.Constant)
-                and isinstance(argument.value, int)
-                and not isinstance(argument.value, bool)
-                and argument.value > 1
-                for argument in upper.args
-            )
-            and any(
-                isinstance(argument, ast.Call)
-                and isinstance(argument.func, ast.Name)
-                and argument.func.id == "len"
-                for argument in upper.args
-            )
-        ):
-            diagnostics.append(_diag(
-                node,
-                "TOP_N_SHRINK",
-                (
-                    "do not shrink a fixed top-N request with min(N, len(rows)); "
-                    "assert that at least N qualifying rows exist, then slice [:N]"
-                ),
-            ))
     return diagnostics
 
 
@@ -760,7 +678,6 @@ def validate_code(source: str) -> list[CodeDiagnostic]:
     visitor.diagnostics.extend(_date_constructor_diagnostics(function))
     visitor.diagnostics.extend(_undefined_name_diagnostics(source, function))
     visitor.diagnostics.extend(_ctx_state_contract_diagnostics(function))
-    visitor.diagnostics.extend(_top_n_shrink_diagnostics(function))
     visitor.diagnostics.extend(validate_projection_contract(source))
     return visitor.diagnostics
 

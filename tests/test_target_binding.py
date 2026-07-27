@@ -183,7 +183,7 @@ def test_opaque_dom_id_cannot_contradict_a_visual_choice_target() -> None:
 
     assert binding is not None
     assert binding.status == "unresolved"
-    assert "no semantic label" in binding.reason
+    assert "text identity" in binding.reason
 
 
 def test_native_select_binds_via_target_option_despite_a_bad_label() -> None:
@@ -247,7 +247,7 @@ def test_identity_gap_is_unresolved_not_contradicted() -> None:
     assert binding.status == "unresolved"
 
 
-def test_activate_point_on_a_different_control_is_contradicted() -> None:
+def test_control_label_mismatch_is_unresolved_not_contradicted() -> None:
     observation = Observation(
         png_bytes=b"frame",
         source="browser",
@@ -280,8 +280,8 @@ def test_activate_point_on_a_different_control_is_contradicted() -> None:
     binding = BrowserTargetBinder().bind(step, observation, decision)
 
     assert binding is not None
-    assert binding.status == "contradicted"
-    assert "Visible" in binding.reason
+    assert binding.status == "unresolved"
+    assert "text identity" in binding.reason
 
 
 def test_exact_semantic_link_ref_becomes_bound_navigation() -> None:
@@ -515,7 +515,7 @@ def _run_action(tmp_path, step: SupervisorStep):
     return result, executor
 
 
-def test_contradicted_activation_is_recorded_without_dispatch(tmp_path) -> None:
+def test_label_mismatch_does_not_block_activation_dispatch(tmp_path) -> None:
     step = SupervisorStep(
         action_intent=ActionIntent(
             instruction="open the size row",
@@ -560,23 +560,23 @@ def test_contradicted_activation_is_recorded_without_dispatch(tmp_path) -> None:
         say=lambda _message: None,
     )
 
-    assert result.executed is False
-    assert executor.calls == 0
+    assert result.executed is True
+    assert executor.calls == 1
     assert result.binding is not None
-    assert result.binding.status == "contradicted"
+    assert result.binding.status == "unresolved"
     turn = make_interactive_turn(
         index=5,
         observation_source="browser",
         supervisor_step=step,
         action_decision=result.action_decision,
-        executed=False,
+        executed=True,
         suppressed_reason=result.suppressed_reason,
         binding=result.binding,
         statement_instance_id="i3:s3",
     )
     assert turn.action_signal is not None
-    assert turn.action_signal.execution == "not_attempted"
-    assert turn.action_signal.target == "off_target"
+    assert turn.action_signal.execution == "dispatched"
+    assert turn.action_signal.target == "unknown"
 
 
 def test_write_binding_is_recorded_only_after_a_dispatchable_target(tmp_path) -> None:

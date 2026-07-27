@@ -258,37 +258,12 @@ def test_native_select_id_and_name_are_the_same_select_affordance(
     assert step.action_intent.target_value == "Complete"
 
 
-def test_invalid_contract_write_value_fails_without_fuzzy_field_binding(monkeypatch) -> None:
+def test_runtime_does_not_second_guess_action_semantics_from_strings(monkeypatch) -> None:
     statement = StatementContract(
         id="s1",
-        goal="set status",
-        success="Status is Active",
+        goal="expose priority",
+        success="priority is visible",
         required_values={"semantic status": "Active"},
-    )
-    policy = _policy(statement)
-    monkeypatch.setattr(
-        policy,
-        "_invoke_statement_transition",
-        lambda *a, **k: _act(
-            family="select",
-            control="Current status",
-            value="Disabled",
-            role="write",
-        ),
-    )
-
-    step = policy._run_single_turn(statement, _observation(), [])
-
-    assert step.outcome is not None
-    assert "outside required_values" in step.outcome.summary
-
-
-def test_observed_field_cannot_be_selected_even_as_prepare_action(monkeypatch) -> None:
-    statement = StatementContract(
-        id="s1",
-        goal="locate the owner and expose its current priority",
-        success="the owner's current priority is visible",
-        inputs={"owner_identity": "account-east"},
         observe_fields=["Priority"],
     )
     policy = _policy(statement)
@@ -305,42 +280,10 @@ def test_observed_field_cannot_be_selected_even_as_prepare_action(monkeypatch) -
 
     step = policy._run_single_turn(statement, _observation(), [])
 
-    assert step.outcome is not None
-    assert "read-only" in step.outcome.summary
-
-
-def test_offscreen_observed_field_bypasses_transition_with_deterministic_iterate(
-    monkeypatch,
-) -> None:
-    statement = StatementContract(
-        id="s1",
-        goal="expose the current Material value",
-        success="Material is visible",
-        observe_fields=["Material"],
-    )
-    policy = _policy(statement)
-    monkeypatch.setattr(
-        policy,
-        "_invoke_statement_transition",
-        lambda *_args, **_kwargs: pytest.fail("offscreen transport must not invoke Transition"),
-    )
-
-    step = policy._run_single_turn(
-        statement,
-        _observation(form_control_state=[{
-            "kind": "native_select",
-            "label": "Material",
-            "value": "33",
-            "selected_text": "Cotton, Lycra",
-            "rect": {"x": 414, "y": -27, "w": 250, "h": 176},
-        }]),
-        [],
-    )
-
+    assert step.outcome is None
     assert step.action_intent is not None
-    assert step.action_intent.family == "iterate"
-    assert step.action_intent.target_control == "Material"
-    assert step.action_intent.direction == "up"
+    assert step.action_intent.target_control == "Priority"
+    assert step.action_intent.target_value == "High"
 
 
 def test_complete_rejects_inherited_filter_outside_declared_scope(monkeypatch) -> None:

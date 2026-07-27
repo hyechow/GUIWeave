@@ -14,7 +14,6 @@ from gui_agent.core.orchestrator import (
     program_from_plan,
 )
 from gui_agent.core.orchestrator.planner import (
-    _resolution_diagnostics,
     _resolution_block,
 )
 from gui_agent.core.orchestrator.sandbox import (
@@ -283,7 +282,7 @@ def run(ctx):
     assert result.ok, result.error
 
 
-def test_reach_state_does_not_hide_dependent_query_constraints() -> None:
+def test_reach_state_conditions_do_not_become_compile_time_query_strategy() -> None:
     source = """
 def run(ctx):
     start = "01/01/2023"
@@ -303,15 +302,7 @@ def run(ctx):
     )
 """
 
-    assert any(
-        item.code == "QUERY_CONSTRAINT_NOT_DECLARED"
-        for item in validate_code(source)
-    )
-    corrected = source.replace(
-        'filters={"Status": "Complete"}',
-        'filters={"Status": "Complete", "Purchase Date": {"from": start}}',
-    )
-    assert validate_code(corrected) == []
+    assert validate_code(source) == []
 
 
 def test_query_owns_fields_but_remains_bound_to_reach_entity() -> None:
@@ -1310,6 +1301,7 @@ def test_router_search_key_is_an_explicit_literal_query_branch() -> None:
 
     assert block is not None
     assert "not a source entity" in block.content
+    assert "REQUIRED PROGRAM BRANCH" in block.content
     assert "full mention 'Aurora jacket'" in block.content
     assert "only if that result is empty" in block.content
     assert "strictly query 'Aurora'" in block.content
@@ -1318,47 +1310,6 @@ def test_router_search_key_is_an_explicit_literal_query_branch() -> None:
     assert "match_mode" not in block.content
     assert "'type'" not in block.content
     assert "'reason'" not in block.content
-
-
-def test_router_lookup_fallback_is_a_compile_time_contract() -> None:
-    resolution = IntentResolution(entities=[EntityRef(
-        mention="Selene Yoga Hoodie",
-        search_key="Selene",
-    )])
-    missing = """
-def run(ctx):
-    state = ctx.reach("Open reviews", success={"entity": "All Reviews"})
-    return ctx.query(
-        state,
-        entity="All Reviews",
-        fields=["Action"],
-        filters={"Product": "Selene Yoga Hoodie"},
-    )
-"""
-    complete = """
-def run(ctx):
-    state = ctx.reach("Open reviews", success={"entity": "All Reviews"})
-    rows = ctx.query(
-        state,
-        entity="All Reviews",
-        fields=["Action"],
-        filters={"Product": "Selene Yoga Hoodie"},
-    )
-    if not rows:
-        rows = ctx.query(
-            state,
-            entity="All Reviews",
-            fields=["Action"],
-            filters={"Product": "Selene"},
-        )
-    return rows
-"""
-
-    assert any(
-        item.code == "LOOKUP_FALLBACK_REQUIRED"
-        for item in _resolution_diagnostics(missing, resolution)
-    )
-    assert _resolution_diagnostics(complete, resolution) == []
 
 
 def test_program_owns_full_then_short_phrase_query_branch() -> None:

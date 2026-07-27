@@ -85,47 +85,12 @@ def _binding(control: dict) -> TargetBinding:
     )
 
 
-def _control_identity(control: dict) -> str:
-    return next(
-        (
-            str(control.get(field) or "").strip()
-            for field in ("group_field", "label", "name", "id")
-            if str(control.get(field) or "").strip()
-        ),
-        "another rendered control",
-    )
-
-
-def _has_positive_semantic_identity(control: dict, target: str) -> bool:
-    """Whether the owner name can prove that it is a different semantic target.
-
-    DOM readers fall back to ``id`` when a rendered control has no accessible label.  Such an
-    opaque id proves point ownership but not business identity, so it may leave binding
-    unresolved but must not contradict a visually grounded action.
-    """
-    label = str(control.get("label") or "").strip()
-    control_id = str(control.get("id") or "").strip()
-    name = str(control.get("name") or "").strip()
-    group_field = str(control.get("group_field") or "").strip()
-    id_fallback_only = bool(
-        control_id
-        and label == control_id
-        and not name
-        and group_field in {"", control_id}
-    )
-    if not id_fallback_only:
-        return True
-    owner_key = "".join(char.casefold() for char in control_id if char.isalnum())
-    target_key = "".join(char.casefold() for char in target if char.isalnum())
-    return bool(target_key and (target_key in owner_key or owner_key in target_key))
-
-
 class BrowserTargetBinder:
     """Compare a visual proposal with rendered control ownership.
 
     Control identity is resolved from the adapter control inventory (a control's own
-    label / name / options / group) and the concrete action point. A proven different
-    activation target is ``contradicted``; incomplete identity remains ``unresolved``.
+    label / name / options / group) and the concrete action point. Text identity may
+    confirm a binding, but only an exact target-ref point mismatch can contradict it.
     """
 
     def bind(
@@ -222,26 +187,16 @@ class BrowserTargetBinder:
             if len(select_owners) == 1 and _select_has_option(select_owners[0], target_value):
                 return _binding(select_owners[0])
 
-        # Activation at a structurally identified *different form control* is a positive
-        # contradiction, not an identity guess. Writes remain unresolved here because adapter
-        # labels can be incomplete or wrong (log 20260715_215953).
+        # A point owner without matching semantic identity is evidence of physical
+        # ownership, not proof that the LLM chose the wrong business target. Keep it
+        # unresolved so dispatch can fail open; only exact target-ref geometry above
+        # may produce a hard contradiction.
         if point_owners and intent.family in {"activate", "navigate"}:
-            owner = point_owners[0]
-            if not _has_positive_semantic_identity(owner, intent.target_control):
-                return TargetBinding(
-                    status="unresolved",
-                    reason=(
-                        "the action point is owned by a rendered control whose DOM id has "
-                        "no semantic label"
-                    ),
-                )
             return TargetBinding(
-                status="contradicted",
-                source="structural",
-                unit_id=str(owner.get("group_id") or "__form__"),
+                status="unresolved",
                 reason=(
-                    f"action point belongs to {_control_identity(owner)!r}, "
-                    f"not the declared target {intent.target_control!r}"
+                    "the action point is owned by a rendered control, but text identity "
+                    "does not confirm the declared target"
                 ),
             )
 

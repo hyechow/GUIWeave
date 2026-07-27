@@ -54,8 +54,9 @@ rows = ctx.query(
 | `focus` | state + target | target fields 可读，签发派生 state |
 | `read` | state | 结构化字段值 |
 
-动作派发只校验声明值、目标身份、结构能力和数据流，不从控件文案、DOM id
+动作派发只校验提案结构、精确 target-ref、物理落点和数据流，不从控件文案、DOM id
 或 adapter 推测的业务效果派生权限。平台观测可以辅助决策，但不能成为硬拒绝 gate。
+查询 fallback、Top-N 和字段约束传递属于编排策略，只由提示词指导，不编译成硬诊断。
 
 ## Statement 语义
 

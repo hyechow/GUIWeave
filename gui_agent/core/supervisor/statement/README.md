@@ -11,7 +11,7 @@ For each non-loading observation:
 2. The screenshot supplies the portable visual baseline; adapter affordances are optional evidence.
 3. Transition receives the immutable contract, Memory, current observation and relevant knowledge.
 4. Transition assesses the current state and proposes one `act | complete | failed` result.
-5. Runtime validates proposal shape, declared values, observable fields and target capability.
+5. Runtime validates proposal shape and exact target-ref capability.
 6. The adapter grounds the physical action to the declared target before dispatch.
 7. A valid terminal proposal becomes `StatementOutcome`.
 
@@ -30,7 +30,7 @@ Runtime does **not** hold final business authority. It may only:
 | Kind | Role | On failure |
 |------|------|------------|
 | **Typed adapter predicate** | Compare contracts only with explicit typed adapter state, such as complete applied filters | Admit or short-circuit `complete` only on a proven match |
-| **Proposal mechanics** | Validate declared values, target refs, capabilities and observable-field rules | Give one same-frame correction, then fail the current Statement |
+| **Proposal mechanics** | Validate proposal schema and exact target-ref capabilities | Give one same-frame correction, then fail the current Statement |
 | **Hard structural** | Invented journal citations, hard-budget final frame | May terminal-fail |
 
 `exhausted` is reserved for truly unrecoverable cases (e.g. hard-budget final frame or a corrupt
@@ -54,7 +54,8 @@ An action identifies:
 Free-text instruction is a human-readable rendering, not a source of permission. Platform
 adapters may expose control facts, but runtime permission never derives from labels, DOM ids, or
 inferred business effects. Runtime also does not re-check a completed semantic state by matching
-ordinary DOM control labels and display strings.
+ordinary DOM control labels and display strings. Label/name/id mismatches may leave a target
+unresolved, but cannot veto dispatch; only an exact target-ref geometry contradiction can.
 
 ## State boundary
 

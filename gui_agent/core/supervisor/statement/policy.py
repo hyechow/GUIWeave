@@ -1,7 +1,6 @@
 """Agentic control owner for one interactive Statement."""
 
 from collections.abc import Callable, Iterable
-import re
 from typing import Literal, Optional
 
 from llm.structured import StructuredOutputError
@@ -40,50 +39,6 @@ from .schemas import (
     _StatementTransitionResult,
     _TransitionAction,
 )
-
-def _declared_string_values(values: dict[str, JsonValue]) -> set[str]:
-    result: set[str] = set()
-
-    def visit(value: JsonValue) -> None:
-        if isinstance(value, dict):
-            for item in value.values():
-                visit(item)
-        elif isinstance(value, list):
-            for item in value:
-                visit(item)
-        elif isinstance(value, (str, int, float, bool)):
-            result.add(str(value).strip().casefold())
-
-    for value in values.values():
-        visit(value)
-    return {value for value in result if value}
-
-
-def _semantic_terms(value: str) -> set[str]:
-    return set(re.findall(r"[\w]+", value.casefold().replace("_", " ")))
-
-
-def _action_targets(
-    view: StatementObservationView,
-    plan: _ActionDraft,
-) -> list[dict]:
-    if plan.target_ref:
-        return [
-            item for item in view.affordances
-            if plan.target_ref in {
-                str(item.get("ref") or ""),
-                *(str(value) for value in item.get("ref_aliases") or []),
-            }
-        ]
-    target = plan.target_control.strip().casefold()
-    target_terms = _semantic_terms(target)
-    matches = [
-        item for item in view.affordances
-        if _semantic_terms(str(item.get("label") or "")) == target_terms
-    ]
-    visible = [item for item in matches if item.get("visibility") == "visible"]
-    return visible if len(visible) == 1 else matches
-
 
 def _resolved_lookup(
     statement: StatementContract,
@@ -180,32 +135,6 @@ def _resolved_reach_collection(
 def _reach_is_structurally_complete(statement: StatementContract) -> bool:
     """Whether collection identity proves the complete declared reach state."""
     return set(statement.expected_state) <= {"entity", "fields"}
-
-
-def _declared_action_values(statement: StatementContract) -> set[str]:
-    """Values an input/select action may place while satisfying this contract."""
-    allowed = {
-        str(canonical_filter_value(value)).strip().casefold()
-        for value in _declared_string_values({
-            **statement.expected_state,
-            **statement.required_values,
-        })
-    }
-    intent = statement.interaction_intent
-    if intent is not None and intent.phase == "constrain":
-        for predicate in intent.predicates.values():
-            allowed.update(
-                str(value).strip().casefold()
-                for value in predicate.values
-                if value is not None and str(value).strip()
-            )
-    elif intent is not None and intent.phase == "locate":
-        allowed.update(
-            str(canonical_filter_value(value)).strip().casefold()
-            for value in (intent.entity, intent.fallback)
-            if value.strip()
-        )
-    return allowed
 
 
 class StatementSupervisorPolicy(
@@ -449,126 +378,6 @@ class StatementSupervisorPolicy(
             ), ""
         except Exception as exc:
             return None, f"invalid action proposal: {exc}"
-
-    @staticmethod
-    def _validate_declared_write(
-        statement: StatementContract,
-        plan: _ActionDraft,
-    ) -> str:
-        allowed = _declared_action_values(statement)
-        restricted_query = (
-            statement.interaction_intent is not None
-            and statement.interaction_intent.phase in {"locate", "constrain"}
-        )
-        writes_value = plan.action_family in {"input", "select"}
-        if restricted_query and writes_value and not allowed:
-            return "typed interaction intent declares no writable query value"
-        if not allowed or not (plan.atomic_role == "write" or writes_value):
-            return ""
-        value = str(canonical_filter_value(plan.target_value)).strip().casefold()
-        if value not in allowed:
-            boundary = (
-                "typed interaction intent"
-                if restricted_query
-                else "required_values"
-            )
-            return f"write value {plan.target_value!r} is outside {boundary}"
-        return ""
-
-    @staticmethod
-    def _validate_observed_field_write(
-        statement: StatementContract,
-        plan: _ActionDraft,
-    ) -> str:
-        if plan.action_family not in {"input", "select"}:
-            return ""
-        target = plan.target_control.strip().casefold()
-        observed = {field.strip().casefold() for field in statement.observe_fields}
-        if target in observed:
-            return f"observed field {plan.target_control!r} is read-only"
-        return ""
-
-    @staticmethod
-    def _validate_observed_field_visibility(
-        statement: StatementContract,
-        observation: Observation,
-        plan: _ActionDraft,
-    ) -> str:
-        target = StatementSupervisorPolicy._offscreen_observed_field(
-            statement, observation
-        )
-        if target is None:
-            return ""
-        field, position = target
-        if plan.action_family != "iterate":
-            return (
-                f"observed field {field!r} is offscreen {position}; "
-                "only iterate toward that field is allowed"
-            )
-        if plan.target_control.strip().casefold() != field.strip().casefold():
-            return f"iterate must target the offscreen observed field {field!r}"
-        expected_direction = "up" if position == "above" else "down"
-        if plan.direction is not None and plan.direction != expected_direction:
-            return (
-                f"observed field {field!r} is {position}; "
-                f"iterate direction must be {expected_direction}"
-            )
-        plan.direction = expected_direction
-        return ""
-
-    @staticmethod
-    def _offscreen_observed_field(
-        statement: StatementContract,
-        observation: Observation,
-    ) -> tuple[str, str] | None:
-        controls = observation.form_control_state or observation.form_controls or []
-        for field in statement.observe_fields:
-            target = field.strip().casefold()
-            for control in controls:
-                if not isinstance(control, dict):
-                    continue
-                identities = {
-                    str(control.get(key) or "").strip().casefold()
-                    for key in ("label", "name", "id", "group_field")
-                }
-                position = str(control.get("viewport_pos") or "").strip().casefold()
-                rect = control.get("rect") or {}
-                if not position and isinstance(rect.get("y"), (int, float)):
-                    if rect["y"] < 0:
-                        position = "above"
-                if target in identities and position in {"above", "below"}:
-                    return field, position
-        return None
-
-    def _offscreen_observed_field_step(
-        self,
-        statement: StatementContract,
-        observation: Observation,
-        *,
-        execution_scope: str,
-    ) -> SupervisorStep | None:
-        target = self._offscreen_observed_field(statement, observation)
-        if target is None:
-            return None
-        field, position = target
-        direction = "up" if position == "above" else "down"
-        direction_text = "向上" if direction == "up" else "向下"
-        summary = f"{field} 字段位于当前视口{direction_text}方，需定向滚动"
-        instruction = f"在当前页面{direction_text}滚动，将 {field} 字段带入可观察视口。"
-        return self._mechanical_step(
-            statement,
-            execution_scope=execution_scope,
-            summary=summary,
-            established=f"结构化控件状态确认 {field} 位于视口 {position}。",
-            gap=f"{field} 尚未进入可观察视口。",
-            reason="offscreen observed fields use deterministic viewport transport",
-            instruction=instruction,
-            role="iterate",
-            family="iterate",
-            target_control=field,
-            expected_result=f"{field} 字段进入当前视口并可读取。",
-            direction=direction,
-        )
 
     def _mechanical_step(
         self,
@@ -818,12 +627,19 @@ class StatementSupervisorPolicy(
         view: StatementObservationView,
         plan: _ActionDraft,
     ) -> str:
-        candidates = _action_targets(view, plan)
-        if plan.target_ref:
-            if not candidates:
-                return f"target_ref {plan.target_ref!r} is absent from current frame"
-            if len(candidates) > 1:
-                return f"target_ref {plan.target_ref!r} is ambiguous in current frame"
+        if not plan.target_ref:
+            return ""
+        candidates = [
+            item for item in view.affordances
+            if plan.target_ref in {
+                str(item.get("ref") or ""),
+                *(str(value) for value in item.get("ref_aliases") or []),
+            }
+        ]
+        if not candidates:
+            return f"target_ref {plan.target_ref!r} is absent from current frame"
+        if len(candidates) > 1:
+            return f"target_ref {plan.target_ref!r} is ambiguous in current frame"
         if candidates and not any(
             plan.action_family in (item.get("supported_operations") or [])
             for item in candidates
@@ -843,17 +659,6 @@ class StatementSupervisorPolicy(
             return None, "act transition did not provide an action"
         plan, rejection = self._proposal_plan(decision.action, decision)
         if plan is None:
-            return None, rejection
-        rejection = self._validate_declared_write(statement, plan)
-        if rejection:
-            return None, rejection
-        rejection = self._validate_observed_field_write(statement, plan)
-        if rejection:
-            return None, rejection
-        rejection = self._validate_observed_field_visibility(
-            statement, observation, plan
-        )
-        if rejection:
             return None, rejection
         view = build_observation_view(statement, observation, [])
         rejection = self._validate_action_capability(view, plan)
@@ -1048,13 +853,6 @@ class StatementSupervisorPolicy(
                 summary=summary,
                 **_ctx(statement),
             )
-        transport = self._offscreen_observed_field_step(
-            statement,
-            observation,
-            execution_scope=execution_scope,
-        )
-        if transport is not None:
-            return transport
         turn_history = [event for event in history if isinstance(event, PolicyTurn)]
         scoped_history = history_for_scope(
             turn_history,
