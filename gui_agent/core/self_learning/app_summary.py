@@ -47,7 +47,9 @@ class AppKnowledge:
     navigation: str  # _app.md content → Supervisor
     elements: str    # _elements.md content → statement execution and fallback
     app_name: str
-    sections: dict[str, str] = field(default_factory=dict)  # per-section bodies → progressive load
+    # Complete per-feature facts and procedures. Initial orchestration receives their
+    # compiler-facing Planning boundary; statement execution retains the full source.
+    sections: dict[str, str] = field(default_factory=dict)
     check: str = ""  # _check.md content → Checker-only observable completion rules
     metadata: dict[str, dict[str, Any]] = field(default_factory=dict)  # channel/stem -> frontmatter
     # Hand-maintained overlay channels actually present this run → {"_check"|"_deploy"|"_skill"|
@@ -58,9 +60,7 @@ class AppKnowledge:
     def orchestrator_sections(self, goal: str) -> list[str]:
         """Pick functional sections relevant to initial Program planning.
 
-        Only sections explicitly scoped to ``orchestrator`` participate. This keeps page-level HOW
-        out of the initial Program while making resource ownership, field semantics, and stable
-        capability constraints available before execution.
+        Only sections explicitly scoped to ``orchestrator`` participate.
         """
         from gui_agent.core.self_learning.progressive import ProgressiveKnowledge
 
@@ -74,17 +74,37 @@ class AppKnowledge:
                 eligible[stem] = text
         if not eligible:
             return []
-        return ProgressiveKnowledge(eligible).match_signals([goal])
+        return ProgressiveKnowledge(eligible).match_signals(
+            [goal],
+            min_overlap=2,
+            match_titles=False,
+        )
 
     def orchestrator_context(self, goal: str) -> str:
-        """Application overview plus a small goal-matched functional knowledge slice."""
+        """Project goal-matched knowledge into its compiler-facing interface facts."""
         from gui_agent.core.self_learning.progressive import ProgressiveKnowledge
 
         stems = self.orchestrator_sections(goal)
         if not stems:
             return self.navigation
-        selected = ProgressiveKnowledge({stem: self.sections[stem] for stem in stems}).bodies(stems)
-        return f"{self.navigation}\n\n{selected}" if selected else self.navigation
+        boundaries = [
+            boundary
+            for stem in stems
+            if (boundary := _planning_boundary(self.sections[stem]))
+        ]
+        if boundaries:
+            return (
+                "## Required application interface facts\n\n"
+                "These are authoritative interface facts, not a task checklist. Select only the "
+                "resources causally required by the user goal; alternatives listed in the same "
+                "table are not additional steps. For each resource the program does use, preserve "
+                "its exact fields, types, ownership discriminators, and state dimensions.\n\n"
+                + "\n\n".join(boundaries)
+            )
+        return ProgressiveKnowledge({
+            stem: self.sections[stem]
+            for stem in stems
+        }).bodies(stems)
 
     def summary(self) -> dict[str, object]:
         """Compact, log-friendly description of what got injected (→ context.json knowledge)."""
@@ -109,6 +129,19 @@ def _split_knowledge_frontmatter(text: str) -> tuple[dict[str, Any], str]:
     from gui_agent.core.self_learning.progressive import split_frontmatter
 
     return split_frontmatter(text)
+
+
+def _planning_boundary(text: str) -> str:
+    """Extract the initial compiler contract while retaining the complete knowledge source."""
+    _, body = _split_knowledge_frontmatter(text)
+    match = re.search(
+        (
+            r"(?ms)^##[ \t]+Planning boundary[^\n]*\n.*?"
+            r"(?=^<!-- /planning-boundary -->|^#{1,6}[ \t]|\Z)"
+        ),
+        body,
+    )
+    return match.group(0).strip() if match is not None else ""
 
 
 def _read_knowledge_markdown(path: Path) -> tuple[dict[str, Any], str]:

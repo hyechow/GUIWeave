@@ -5,17 +5,24 @@ platform: browser
 app: shopping_admin
 scope:
   - decompose
+  - orchestrator
   - planner
   - replanner
-selector_when: 当需要查看 Admin dashboard 的 top/most-used/recent search terms、实时销售数据、图表或启动页面时查阅本节
-when: 当需要查看 Admin dashboard 的 top/most-used/recent search terms、实时销售数据、图表或启动页面时查阅本节
+selector_when: 当需要使用 Admin dashboard 的 sales overview、search term statistics、Top Search Terms、chart 或 startup page 能力时查阅本节
+when: 当需要使用 Admin dashboard 的 sales overview、search term statistics、Top Search Terms、chart 或 startup page 能力时查阅本节
 source: manual_distilled
 confidence: medium
 sensitivity: internal
 ttl: session
-version: 1
+version: 3
 ---
 # Admin dashboard
+
+## Planning boundary
+
+**Top Search Terms** is an exact read-only collection with text field
+**Search Term** and numeric fields **Results** and **Uses**.
+<!-- /planning-boundary -->
 
 The dashboard is usually the first page that appears when you log in to the _Admin_ and can provide a real-time overview of sales and customer activity. Dashboard data provides a snapshot of lifetime sales, average order amount, recent orders, and search terms. The chart shows completed orders and amounts for the selected date range, and can be generated from either dynamic, real-time data, or historical aggregated data. The tabs at the bottom provide quick reports of your best-selling products, most viewed products, new customers, and customers who have purchased the most.
 

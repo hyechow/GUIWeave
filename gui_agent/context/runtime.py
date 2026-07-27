@@ -127,6 +127,10 @@ def knowledge_block(kind: str, content: str | None, *, source: str = "knowledge_
         return None
     titles = {
         "app_navigation": "## 应用导航知识",
+        "app_knowledge": (
+            "## 应用事实与接口知识"
+            "（实体、字段、类型、所有权、枚举和能力边界是权威事实，必须逐字遵循）"
+        ),
         "page_elements": "## 页面元素知识",
         "check_rules": (
             "## 应用验收观察规则（来自知识库，描述该应用界面的实际显示形态与完成标志；"

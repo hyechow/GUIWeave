@@ -18,6 +18,11 @@ from typing import Any
 from gui_agent.context import ContextBlock, render_context_blocks
 
 _MAX_SELECTED = 3  # cap injected bodies per turn
+_ENGLISH_STOPWORDS = frozenset({
+    "a", "all", "an", "and", "are", "as", "at", "be", "by", "for", "from",
+    "in", "is", "it", "of", "on", "or", "that", "the", "their", "this", "to",
+    "was", "with",
+})
 
 _FRONTMATTER_RE = re.compile(r"^---\s*\n(.*?)\n---\s*\n?", re.DOTALL)
 
@@ -79,7 +84,12 @@ def _tokens(s: str) -> set[str]:
     rewrites (「创建启用虚拟机器人时」vs「新建机器人并设为启用」); token/bigram overlap bridges
     them. Coarse on purpose — this only feeds the deterministic knowledge FALLBACK."""
     s = (s or "").lower()
-    words = {w for w in re.split(r"[\W_]+", s, flags=re.UNICODE) if len(w) >= 2 and not re.search(r"[一-鿿]", w)}
+    words = {
+        w for w in re.split(r"[\W_]+", s, flags=re.UNICODE)
+        if len(w) >= 2
+        and w not in _ENGLISH_STOPWORDS
+        and not re.search(r"[一-鿿]", w)
+    }
     cjk = "".join(re.findall(r"[一-鿿]+", s))
     bigrams = {cjk[i : i + 2] for i in range(len(cjk) - 1)}
     return words | bigrams
@@ -115,35 +125,53 @@ class ProgressiveKnowledge:
                 return orig
         return None
 
-    def match_signals(self, signals: list[str]) -> list[str]:
+    def match_signals(
+        self,
+        signals: list[str],
+        *,
+        min_overlap: int = 1,
+        match_titles: bool = True,
+    ) -> list[str]:
         """Deterministically select sections from route/title/statement signals.
 
         Two passes, both capped at ``_MAX_SELECTED``: (1) bidirectional substring match of each
         signal against section titles (reuses :meth:`_match`, the strongest signal); (2) token /
         CJK-bigram overlap of the combined signals against each section's selector_when line,
-        ranked by overlap size — this bridges the synonym gaps a bare title misses."""
+        weighted toward terms that distinguish one section from the rest — this bridges the
+        synonym gaps a bare title misses without letting generic words dominate."""
         raw = [s for s in signals if s and s.strip()]
         if not raw:
             return []
         picked: list[str] = []
         seen: set[str] = set()
-        for nm in raw:
-            key = self._match(nm)
-            if key and key not in seen:
-                seen.add(key)
-                picked.append(key)
-            if len(picked) >= _MAX_SELECTED:
-                return picked
+        if match_titles:
+            for nm in raw:
+                key = self._match(nm)
+                if key and key not in seen:
+                    seen.add(key)
+                    picked.append(key)
+                if len(picked) >= _MAX_SELECTED:
+                    return picked
         sig_tokens = _tokens(" ".join(raw))
         if sig_tokens:
-            scored: list[tuple[int, str]] = []
+            section_tokens = {
+                stem: _tokens(when)
+                for stem, when in self.whens.items()
+                if when
+            }
+            frequency = {
+                token: sum(token in tokens for tokens in section_tokens.values())
+                for token in sig_tokens
+            }
+            scored: list[tuple[float, int, str]] = []
             for stem, when in self.whens.items():
                 if stem in seen or not when:
                     continue
-                overlap = len(sig_tokens & _tokens(when))
-                if overlap:
-                    scored.append((overlap, stem))
-            for _, stem in sorted(scored, key=lambda x: (-x[0], x[1])):
+                overlap = sig_tokens & section_tokens[stem]
+                if len(overlap) >= min_overlap:
+                    score = sum(1 / frequency[token] for token in overlap)
+                    scored.append((score, len(overlap), stem))
+            for _, _, stem in sorted(scored, key=lambda x: (-x[0], -x[1], x[2])):
                 seen.add(stem)
                 picked.append(stem)
                 if len(picked) >= _MAX_SELECTED:

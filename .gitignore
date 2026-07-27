@@ -9,6 +9,15 @@ debug.log
 tmp_scripts/
 knowledge/*
 !knowledge/README.md
+# Curated shopping_admin planning contracts promoted to repository source.
+!knowledge/browser/
+knowledge/browser/*
+!knowledge/browser/shopping_admin/
+knowledge/browser/shopping_admin/*
+!knowledge/browser/shopping_admin/Admin_dashboard.md
+!knowledge/browser/shopping_admin/Pages.md
+!knowledge/browser/shopping_admin/Price_rules.md
+!knowledge/browser/shopping_admin/Product_attributes.md
 models/
 test.sh
 data/

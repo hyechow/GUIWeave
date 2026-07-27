@@ -5,17 +5,28 @@ platform: browser
 app: shopping_admin
 scope:
   - decompose
+  - orchestrator
   - planner
   - replanner
-selector_when: 在 Products 页面需要按 Name/Quantity/Color/Material/Size 查找产品、区分 Configurable 父商品与 Simple 变体、创建或编辑产品时查阅
-when: 在 Products 页面需要按 Name/Quantity/Color/Material/Size 查找产品、区分 Configurable 父商品与 Simple 变体、创建或编辑产品时查阅
+selector_when: 当需要 lookup/find existing catalog owner by Name/SKU/Type、区分 configurable owner 与 variations 时查阅
+when: 当需要 lookup/find existing catalog owner by Name/SKU/Type、区分 configurable owner 与 variations 时查阅
 source: manual_distilled
 confidence: medium
 sensitivity: internal
 ttl: session
-version: 2
+version: 6
 ---
 # Products list
+
+## Planning boundary
+
+**Products** is the target-selection collection. Its source-native identity filter is **Name**,
+and its owner-discrimination fields are **Name** and **Type**. The collection can contain both
+`Configurable Product` parents and `Simple Product` variations with related names.
+Configurations and aggregate product state belong to the configurable parent; variation Price,
+Quantity, Size, and Color belong to the simple child. The entity and field labels **Products**,
+**Name**, and **Type** are exact and retain their capitalization.
+<!-- /planning-boundary -->
 
 All products in the catalog are accessible from the _Products_ page in the Admin, where you can create products and edit existing ones. For a multi-site installation, each website can offer a different selection of products for sale from the same catalog.
 

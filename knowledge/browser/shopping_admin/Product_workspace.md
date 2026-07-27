@@ -5,17 +5,35 @@ platform: browser
 app: shopping_admin
 scope:
   - decompose
+  - orchestrator
   - planner
   - replanner
-selector_when: 当需要管理 Product workspace 的 Configurations/变体、Price、Quantity、Stock Status、Material、Short Description/Description 或保存产品状态时查阅本节
-when: 当需要管理 Product workspace 的 Configurations/变体、Price、Quantity、Stock Status、Material、Short Description/Description 或保存产品状态时查阅本节
+selector_when: 当需要 update/edit existing catalog 的 Configurations、Price、Quantity、Stock、Material、Short Description/Description 时查阅本节
+when: 当需要 update/edit existing catalog 的 Configurations、Price、Quantity、Stock、Material、Short Description/Description 时查阅本节
 source: manual_distilled
 confidence: medium
 sensitivity: internal
 ttl: session
-version: 2
+version: 8
 ---
 # Product workspace
+
+## Planning boundary
+
+|Resource|Filter / discriminator|Query fields|Owned mutable fields|
+|---|---|---|---|
+|Products collection|**Name**|**Name** (`text`), **Type** (`text`)|—|
+|Configurable parent|**Type** = `Configurable Product`|**Name**, **Type**|**Short Description**, **Configurations**|
+|Simple variation|**Type** = `Simple Product`|**Name**, **Type**|**Price**, **Quantity**, **Stock Status**|
+
+A Name lookup can contain both the configurable parent and its simple variations, so **Type** is
+an owner filter rather than optional display data. To mutate **Short Description** or
+**Configurations**, every full-name and fallback query retains `Type = Configurable Product`;
+assert that this filtered result has one owner, then issue one parent commit. Do not branch into a
+Simple Product commit. The owner identity for either field is the pair (**Name**, **Type** =
+`Configurable Product`); **Name** alone does not identify that mutable resource.
+
+<!-- /planning-boundary -->
 
 The product workspace is basically the same for all product types, although the selection of fields changes depending on the attribute set that is used. The product attributes are at the top of the form, followed by expandable sections of product information. When a new product is saved for the first time, the _Store View_ chooser appears at the upper left of the form.
 
@@ -68,9 +86,9 @@ parent's Price and not an attribute selector on another variation. Percentage ch
 from the variation's live current Price.
 
 Adding one requested color/size combination and saving the configurable parent form one durable
-Configurations mutation. The DSL should use one action whose terminal state says the saved
-Configurations collection contains the exact combination; opening the section, using its wizard,
-generating the row, and clicking the final Save remain runtime steps inside that action.
+Configurations mutation. The durable state is the saved **Configurations** collection containing
+the exact Size/Color combination. The section, wizard, and generated row are editor surfaces of
+that same parent resource rather than independently persisted resources.
 
 Size and Color belong to the variation. Material can be inherited/owned by the configurable parent
 and may be empty on a Simple child. Variation SKUs commonly append size and color segments to the

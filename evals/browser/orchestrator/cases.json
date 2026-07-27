@@ -1,0 +1,297 @@
+[
+  {
+    "task_id": 42,
+    "group": "query_20260726",
+    "intent": "Get the top 2 search term(s) in my store",
+    "contract": {
+      "method_counts": {"commit": 0},
+      "required_calls": [
+        {"method": "reach", "success_include": {"entity": "Top Search Terms"}},
+        {"method": "query", "entity": "Top Search Terms", "fields_include": ["Search Term", "Uses"]}
+      ],
+      "features": ["returns_value", "sorts"],
+      "slice_stops": [2]
+    }
+  },
+  {
+    "task_id": 63,
+    "group": "query_20260726",
+    "intent": "Get customer email(s) who completed the second most number of orders in the entire history",
+    "contract": {
+      "method_counts": {"commit": 0},
+      "required_calls": [
+        {"method": "reach", "success_include": {"entity": "Orders"}},
+        {
+          "method": "query",
+          "entity": "Orders",
+          "fields_include": ["Customer Email"],
+          "filters_include": {"Status": "Complete"}
+        }
+      ],
+      "features": ["returns_value", "sorts"],
+      "literal_values": ["Customer Email", 2]
+    }
+  },
+  {
+    "task_id": 108,
+    "group": "query_20260726",
+    "intent": "Get the monthly count of completed orders from January 2023 through May 2023, inclusive. Return a list of objects with keys \"month\" (month name) and \"count\" (as integer) only, without any additional details.",
+    "contract": {
+      "method_counts": {"commit": 0},
+      "required_calls": [
+        {"method": "reach", "success_include": {"entity": "Orders"}},
+        {
+          "method": "query",
+          "entity": "Orders",
+          "fields_include": ["Purchase Date"],
+          "field_types_include": {"Purchase Date": "datetime"},
+          "filters_include": {
+            "Status": "Complete",
+            "Purchase Date": {"from": "01/01/2023", "to": "05/31/2023"}
+          }
+        }
+      ],
+      "features": ["returns_value"],
+      "literal_values": ["month", "count", "January", "February", "March", "April", "May"]
+    }
+  },
+  {
+    "task_id": 113,
+    "group": "query_20260726",
+    "intent": "Return the customer nickname(s) who gave a rating of 3 stars or below for Olivia zip jacket",
+    "contract": {
+      "method_counts": {"commit": 0},
+      "required_calls": [
+        {"method": "reach", "success_include": {"entity": "All Reviews"}},
+        {
+          "method": "query",
+          "entity": "All Reviews",
+          "fields_include": ["Action"],
+          "filters_include": {"Product": "Olivia zip jacket"}
+        },
+        {
+          "method": "query",
+          "entity": "All Reviews",
+          "filter_keys": ["Product"],
+          "inside_if": true
+        },
+        {
+          "method": "read",
+          "fields_include": ["Detailed Rating"],
+          "field_types_include": {"Detailed Rating": "number"}
+        }
+      ],
+      "required_any_calls": [
+        [
+          {"method": "query", "entity": "All Reviews", "fields_include": ["Nickname"]},
+          {"method": "read", "fields_include": ["Nickname"]}
+        ]
+      ],
+      "features": ["returns_value"],
+      "literal_values": ["Olivia", "Nickname", 3]
+    }
+  },
+  {
+    "task_id": 193,
+    "group": "query_20260726",
+    "intent": "Get the total payment amount of the last 2 completed orders. Return the value as a number (e.g., 10.99) only, without any additional details.",
+    "contract": {
+      "method_counts": {"commit": 0},
+      "required_calls": [
+        {"method": "reach", "success_include": {"entity": "Orders"}},
+        {
+          "method": "query",
+          "entity": "Orders",
+          "fields_include": ["Purchase Date", "Grand Total (Purchased)"],
+          "field_types_include": {
+            "Purchase Date": "datetime",
+            "Grand Total (Purchased)": "money"
+          },
+          "filters_include": {"Status": "Complete"}
+        }
+      ],
+      "features": ["returns_value", "sorts"],
+      "slice_stops": [2]
+    }
+  },
+  {
+    "task_id": 488,
+    "group": "form_submission",
+    "intent": "Change the page title of \"Home Page\" page on my site to \"This is the home page!! Leave here!!\".",
+    "contract": {
+      "method_counts": {"commit": 1},
+      "required_calls": [
+        {"method": "query", "entity": "Pages", "fields_include": ["Title"], "filters_include": {"Title": "Home Page"}},
+        {"method": "query", "entity": "Pages", "filters_include": {"Title": "Home"}, "inside_if": true},
+        {
+          "method": "commit",
+          "target_mode": "present",
+          "values_include": {"Page Title": "This is the home page!! Leave here!!"}
+        }
+      ]
+    }
+  },
+  {
+    "task_id": 491,
+    "group": "form_submission",
+    "intent": "Notify Sarah Miller in their most recent pending order with message \"the order is ready to be shipped soon!\"",
+    "contract": {
+      "method_counts": {"commit": 1},
+      "method_min_counts": {"query": 2},
+      "required_calls": [
+        {
+          "method": "query",
+          "entity": "Orders",
+          "fields_include": ["Purchase Date"],
+          "field_types_include": {"Purchase Date": "datetime"},
+          "filter_keys": ["Status"]
+        },
+        {
+          "method": "commit",
+          "target_mode": "present",
+          "values_include": {
+            "Comment": "the order is ready to be shipped soon!",
+            "Notify Customer by Email": true
+          }
+        }
+      ],
+      "required_any_calls": [
+        [
+          {"method": "query", "entity": "Orders", "filter_keys": ["Bill-to Name"]},
+          {"method": "query", "entity": "Orders", "filter_keys": ["Ship-to Name"]},
+          {"method": "query", "entity": "Orders", "filter_keys": ["Customer Email"]}
+        ],
+        [
+          {"method": "query", "inside_if": true}
+        ]
+      ],
+      "features": ["sorts"]
+    }
+  },
+  {
+    "task_id": 499,
+    "group": "form_submission",
+    "intent": "Update order #304 with the USPS tracking number 13849373987",
+    "contract": {
+      "method_counts": {"commit": 1},
+      "required_calls": [
+        {"method": "query", "entity": "Orders", "fields_include": ["ID"], "filter_keys": ["ID"]},
+        {
+          "method": "commit",
+          "target_mode": "present",
+          "values_include": {
+            "Carrier": "United States Postal Service",
+            "Tracking Number": "13849373987"
+          }
+        }
+      ]
+    }
+  },
+  {
+    "task_id": 544,
+    "group": "form_submission",
+    "intent": "Update the product description of Selene Yoga Hoodie to \"{count} customer(s) love it!\" where count is the number of reviews with 4 stars or above, or \"don't miss out on this amazing product\" when there are no such reviews.",
+    "contract": {
+      "method_counts": {"commit": 1},
+      "method_min_counts": {"query": 3},
+      "required_calls": [
+        {
+          "method": "query",
+          "entity": "All Reviews",
+          "fields_include": ["Action"],
+          "filter_keys": ["Product"]
+        },
+        {
+          "method": "read",
+          "fields_include": ["Detailed Rating"],
+          "field_types_include": {"Detailed Rating": "number"}
+        },
+        {"method": "query", "entity": "Products", "fields_include": ["Name", "Type"], "filter_keys": ["Name"]},
+        {"method": "query", "inside_if": true},
+        {"method": "commit", "target_mode": "present", "value_keys": ["Short Description"]}
+      ],
+      "literal_values": ["Configurable Product", 4, "don't miss out on this amazing product"]
+    }
+  },
+  {
+    "task_id": 549,
+    "group": "form_submission",
+    "intent": "Add a new size XXXL to green Minerva LumaTech V-Tee",
+    "contract": {
+      "method_counts": {"commit": 2},
+      "ordered_calls": [
+        {"method": "query", "entity": "Product Attributes", "fields_include": ["Attribute Code"]},
+        {"method": "commit", "values_include": {"Admin Description": "XXXL", "Admin Swatch": "XXXL"}},
+        {"method": "query", "entity": "Products", "filters_include": {"Name": "Minerva LumaTech V-Tee"}},
+        {"method": "query", "entity": "Products", "filters_include": {"Name": "Minerva"}, "inside_if": true},
+        {"method": "commit", "target_mode": "present", "value_keys": ["Configurations"]}
+      ],
+      "literal_values": ["Configurable Product", "green", "XXXL"]
+    }
+  },
+  {
+    "task_id": 694,
+    "group": "form_submission",
+    "intent": "Add a simple product named \"Energy-Bulk Women Shirt\" with 50 in stock, available in size S and color blue, priced at $60 using the appropriate attribute set.",
+    "contract": {
+      "method_counts": {"reach": 0, "query": 0, "read": 0, "commit": 1},
+      "required_calls": [
+        {
+          "method": "commit",
+          "target_mode": "none",
+          "values_include": {
+            "Name": "Energy-Bulk Women Shirt",
+            "Price": 60,
+            "Quantity": 50,
+            "Stock Status": "In Stock",
+            "Size": "S",
+            "Color": "blue"
+          }
+        }
+      ],
+      "features": ["no_return_value"]
+    }
+  },
+  {
+    "task_id": 701,
+    "group": "form_submission",
+    "intent": "Create a new marketing price rule called \"Mother's day sale\" for all registered customers that offers 15% discount on checkout on all their cart",
+    "contract": {
+      "method_counts": {"reach": 0, "query": 0, "read": 0, "commit": 1},
+      "required_calls": [
+        {
+          "method": "commit",
+          "target_mode": "none",
+          "values_include": {
+            "Rule Name": "Mother's day sale",
+            "Websites": ["Main Website"],
+            "Customer Groups": ["General", "Wholesale", "Retailer"],
+            "Coupon": "No Coupon",
+            "Apply": "Percent of product price discount",
+            "Discount Amount": 15
+          }
+        }
+      ],
+      "features": ["no_return_value"],
+      "forbidden_literals": ["NOT LOGGED IN"]
+    }
+  },
+  {
+    "task_id": 709,
+    "group": "form_submission",
+    "intent": "Show the orders report from May 1, 2021 to March 31, 2022.",
+    "contract": {
+      "method_counts": {"reach": 1, "query": 0, "read": 0, "commit": 0},
+      "required_calls": [
+        {
+          "method": "reach",
+          "success_include": {"entity": "Sales Reports", "rendered": true},
+          "success_keys": ["From", "To"]
+        }
+      ],
+      "features": ["no_return_value"],
+      "literal_values": ["Orders"],
+      "date_values": ["2021-05-01", "2022-03-31"]
+    }
+  }
+]

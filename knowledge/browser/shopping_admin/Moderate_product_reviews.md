@@ -5,15 +5,16 @@ platform: browser
 app: shopping_admin
 scope:
   - decompose
+  - orchestrator
   - planner
   - replanner
-selector_when: 当需要查询产品评论、评分/rating/stars、Nickname、Review Title/Summary，或更新/批量处理 Commerce product reviews 时查阅本节
-when: 当需要查询产品评论、评分/rating/stars、Nickname、Review Title/Summary，或更新/批量处理 Commerce product reviews 时查阅本节
+selector_when: 当需要使用 product reviews、rating/stars、Product association、Nickname、Review Summary 或评论修改能力时查阅本节
+when: 当需要使用 product reviews、rating/stars、Product association、Nickname、Review Summary 或评论修改能力时查阅本节
 source: manual_distilled
 confidence: medium
 sensitivity: internal
 ttl: session
-version: 3
+version: 14
 ---
 # Moderate product reviews
 
@@ -33,6 +34,28 @@ available in the grid, use **Title**; on the detail form, the corresponding revi
 Therefore a complete review collection may take Product, Title, Nickname, Review, and the Action URL from
 the grid, but it cannot declare Rating as a grid row field. Rating-dependent analysis must obtain
 Detailed Rating from each row's linked review-detail resource before aggregating.
+
+## Planning boundary
+
+**All Reviews** is the exact review collection literal; `Reviews` is not an alias.
+
+- Filter: **Product**
+- Query fields: **Action**, **Nickname**, **Title**, **Review**
+- Detail-only field: **Detailed Rating** (`number`), unavailable to `query`
+
+**Action** is the row locator required when a queried review feeds a detail `read`.
+For rating comparison, query **Action**, then read every row with
+`fields={"Detailed Rating": "number"}`. Never put **Detailed Rating** in query fields or filters.
+For a review-only read or aggregation, a product mention binds directly to the **Product** filter
+on **All Reviews**; do not pre-query **Products**. Include **Nickname** in the review query whenever
+it is a requested output. A separate **Products** lookup is needed only when the goal also mutates
+the product-owned resource itself.
+
+Product fields owned by **Products** include **Name**, **Type**, and
+**Short Description**; configurable parent products use Type value
+`Configurable Product`. A Short Description mutation filters both the full-name and fallback
+Products queries by that Type, asserts one filtered owner, and commits once.
+<!-- /planning-boundary -->
 
 ## View product reviews in the Admin
 

@@ -118,6 +118,45 @@ def test_orchestrator_context_selects_only_goal_matched_functional_sections(tmp_
     assert "发货功能说明" not in context
     assert "不应进入初始编排" not in context
     assert "联调实验" not in context
+    assert "左侧菜单" not in context
+
+
+def test_orchestrator_context_projects_planning_boundary(tmp_path, monkeypatch):
+    app_dir = _make_app(tmp_path, with_skill=False)
+    (app_dir / "订单.md").write_text(
+        "---\nscope:\n  - orchestrator\nselector_when: order tracking\n---\n"
+        "# Orders\n"
+        "## Planning boundary\n"
+        "Orders 行拥有 Tracking Number 字段。\n"
+        "## UI manual\n"
+        "点击很多按钮的执行期细节。\n",
+        encoding="utf-8",
+    )
+    monkeypatch.setattr(app_summary, "KNOWLEDGE_DIR", tmp_path)
+
+    knowledge = app_summary.auto_discover_knowledge(
+        "在 testapp update order tracking",
+        "browser",
+    )
+    assert knowledge is not None
+    context = knowledge.orchestrator_context("update order tracking")
+
+    assert "点击很多按钮的执行期细节" in knowledge.sections["订单"]
+    assert "Orders 行拥有 Tracking Number 字段" in context
+    assert "点击很多按钮的执行期细节" not in context
+    assert "Required application interface facts" in context
+    assert context.count("Orders 行拥有 Tracking Number 字段") == 1
+    assert "左侧菜单" not in context
+
+
+def test_app_knowledge_block_marks_facts_as_authoritative() -> None:
+    from gui_agent.context.runtime import knowledge_block
+
+    block = knowledge_block("app_knowledge", "Entity: Orders")
+
+    assert block is not None
+    assert "应用事实与接口知识" in block.content
+    assert "权威事实" in block.content
 
 
 # ── _check.md（Checker 专用动态验收知识：静态 prompt 留通用原则,app 显示形态按 app 注入）──

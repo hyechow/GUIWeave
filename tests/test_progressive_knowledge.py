@@ -78,6 +78,21 @@ def test_match_signals_title_then_when_fallback():
     assert pk.match_signals(["", "  "]) == []
 
 
+def test_when_matching_ignores_stopwords_and_prefers_distinctive_terms():
+    pk = ProgressiveKnowledge({
+        "Reviews": "---\nselector_when: product reviews rating stars\n---\n评论正文",
+        "Workspace": "---\nselector_when: product description price\n---\n商品正文",
+        "Orders": "---\nselector_when: number of customer orders\n---\n订单正文",
+    })
+
+    assert pk.match_signals(["Change the page title of Home Page"]) == []
+    assert pk.match_signals([
+        "Update product description using the number of reviews with four stars",
+    ])[:2] == ["Reviews", "Workspace"]
+    assert pk.match_signals(["Update a price rule"], min_overlap=2) == []
+    assert pk.match_signals(["Update product description"], min_overlap=2) == ["Workspace"]
+
+
 def test_bodies_render_selected_stems():
     pk = _pk()
     names = ["如何创建用户", "如何查询订单的执行状态"]
