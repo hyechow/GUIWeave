@@ -277,7 +277,6 @@ def form_controls_js() -> str:
     pushControl({
       label: text,
       kind: 'section_toggle',
-      effect_kind: 'presentation',
       name: cut(el.getAttribute('name') || '', 80),
       id: cut(el.id || '', 80),
       value: expandedState(el),
@@ -316,20 +315,7 @@ def form_controls_js() -> str:
     const isFilter = el.id.includes('_filter_')
       || !!el.closest('[data-role="filter-form"]')
       || !!el.closest('.admin__data-grid-filters');
-    const isPager = !!el.closest(
-      '[class*="pagination"],[class*="pager"],[class*="pages-items"]'
-    );
-    const form = el.closest('form');
-    const isAuthentication = !!(
-      form && form.querySelector('input[type="password"]')
-    );
     const isDatepicker = el.classList && el.classList.contains('_has-datepicker');
-    const role = clean(el.getAttribute('role')).toLowerCase();
-    const isNavigation = el.tagName === 'A' || role === 'link';
-    const isPresentation = !!(
-      el.hasAttribute('aria-expanded')
-      || el.closest('[role="menu"],[class*="columns"]')
-    );
     const label = isFilter ? (gridHeaderLabelOf(el) || labelOf(el)) : labelOf(el);
     const item = {
       label: cut(label, 80),
@@ -352,21 +338,6 @@ def form_controls_js() -> str:
     }
     if (isFilter) item.is_filter = true;
     if (queryAction) item.query_action = queryAction;
-    if (isAuthentication) {
-      item.effect_kind = 'authentication';
-    } else if (isFilter || queryAction) {
-      item.effect_kind = 'query_control';
-    } else if (isPager) {
-      item.effect_kind = 'pagination';
-    } else if (isNavigation) {
-      item.effect_kind = 'navigation';
-    } else if (isPresentation) {
-      item.effect_kind = 'presentation';
-    } else if (el.tagName === 'BUTTON' || role === 'button') {
-      item.effect_kind = 'business_commit';
-    } else {
-      item.effect_kind = 'field_write';
-    }
     if (isDatepicker) item.is_datepicker = true;
     if (requiredOf(el)) item.required = true;
     if (el.tagName === 'SELECT') {
@@ -498,8 +469,6 @@ def normalize_form_control_snapshot(
             norm["is_filter"] = True
         if item.get("query_action") in {"submit", "reset"}:
             norm["query_action"] = item["query_action"]
-        if item.get("effect_kind"):
-            norm["effect_kind"] = _text(item.get("effect_kind"), 40)
         if item.get("is_datepicker") is True:
             norm["is_datepicker"] = True
         if item.get("required") is True:

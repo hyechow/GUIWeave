@@ -302,6 +302,30 @@ def test_completed_coding_retrieve_wraps_scalar_for_webarena_protocol():
     assert resp.retrieved_data == [182.4]
 
 
+def test_completed_coding_ui_state_uses_program_effect_not_intent_guess():
+    resp = _synthesize_response(
+        "Show the orders report from May 1, 2021 to March 31, 2022.",
+        _result(
+            task_type="browser",
+            phase="completed",
+            verification="confirmed",
+            output='{"token":"c1:state","postcondition":{"rendered":true}}',
+            orchestrator={
+                "kind": "coding",
+                "effect": "ui_state",
+                "run_log": [{"coding_op": "reach"}],
+            },
+        ),
+    )
+
+    assert resp == WAResponse(
+        task_type="NAVIGATE",
+        status="SUCCESS",
+        retrieved_data=None,
+        error_details=None,
+    )
+
+
 def test_completed_mutate_response_does_not_infer_failure_from_summary_text():
     resp = _completed_mutate_response(
         "Update product",

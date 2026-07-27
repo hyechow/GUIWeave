@@ -612,11 +612,12 @@ class CodingProgramRuntime:
                     entity=entity,
                     required_fields=required_fields,
                 )
-                success_text = f"The non-durable UI state is established: {success!r}"
+                success_text = "Every declared expected-state condition is established"
             statement = Interact(
                 id=statement_id,
                 goal=task,
                 success=success_text,
+                expected_state=success if op == "reach" else {},
                 **(
                     {"interaction_intent": interaction_intent}
                     if interaction_intent is not None
@@ -894,6 +895,7 @@ class CodingProgramRuntime:
         statement = self.current.statement.model_copy(update={
             "goal": contract.goal,
             "success": contract.success,
+            "expected_state": contract.expected_state,
             "interaction_intent": contract.interaction_intent,
         })
         self.current = self.current.model_copy(update={"statement": statement})
@@ -901,6 +903,8 @@ class CodingProgramRuntime:
 def _render_return(value: Any) -> str:
     if value is None:
         return "Coding program completed"
+    if isinstance(value, UIStateHandle):
+        value = value.snapshot()
     if isinstance(value, str):
         return value
     return json.dumps(value, ensure_ascii=False, default=str)

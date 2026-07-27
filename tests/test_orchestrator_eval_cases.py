@@ -162,7 +162,7 @@ from datetime import date
 def run(ctx):
     start = date(2021, 5, 1).strftime("%m/%d/%Y")
     end = date(2022, 3, 31).strftime("%m/%d/%Y")
-    ctx.reach(
+    return ctx.reach(
         "Show Orders report",
         success={
             "entity": "Sales Reports",

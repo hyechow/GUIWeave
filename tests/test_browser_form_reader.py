@@ -24,14 +24,11 @@ def test_form_controls_js_is_serialized_expression():
     assert "iframe[id$=\"_ifr\"]" in js
     assert "fieldset-wrapper-content" in js
     assert "_hide" in js
-    assert "input[type=\"password\"]" in js
-    assert "authentication" in js
     assert "a[href]" in js
-    assert "pagination" in js
-    assert "business_commit" in js
     assert "query_action" in js
     assert "data-action" in js
     assert "filter[-_].*(apply|submit)" in js
+    assert "effect_kind" not in js
 
 
 def test_form_progress_fingerprint_excludes_transient_focus() -> None:
@@ -91,24 +88,11 @@ def test_normalize_form_controls_keeps_native_select_options():
     }]
 
 
-def test_normalize_form_controls_keeps_structural_effect_classification():
-    controls = normalize_form_controls({
-        "controls": [{
-            "label": "Localized status label",
-            "kind": "native_select",
-            "effect_kind": "query_control",
-        }]
-    })
-
-    assert controls[0]["effect_kind"] == "query_control"
-
-
 def test_normalize_form_controls_keeps_structural_query_action():
     controls = normalize_form_controls({
         "controls": [{
             "label": "Localized submit label",
             "kind": "button",
-            "effect_kind": "query_control",
             "query_action": "submit",
         }]
     })

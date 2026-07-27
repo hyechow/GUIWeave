@@ -119,6 +119,13 @@ def _contract_lines(contract: StatementContract) -> list[str]:
     ]
     if contract.success:
         lines.append(f"验收条件：{contract.success}")
+    if contract.expected_state:
+        payload = json.dumps(
+            contract.expected_state,
+            ensure_ascii=False,
+            default=str,
+        )
+        lines.append(f"expected_state：{payload[:4000]}")
     if contract.inputs:
         payload = json.dumps(contract.inputs, ensure_ascii=False, default=str)
         lines.append(f"本次调用 inputs：{payload[:4000]}")
@@ -144,18 +151,16 @@ def _contract_requirements(contract: StatementContract) -> list[str]:
     requirements: list[str] = []
     intent = contract.interaction_intent
     if intent is not None:
-        allowed = (
-            "navigation/authentication/presentation/viewport"
-            if intent.phase == "reach"
-            else "query_control/presentation/viewport"
-        )
         proof = (
-            f"唯一集合 entity={intent.entity!r} 覆盖 fields={intent.required_fields!r}"
+            (
+                f"唯一集合 entity={intent.entity!r} 覆盖 fields={intent.required_fields!r}，"
+                f"且 expected_state={contract.expected_state!r} 的每一项均有证据"
+            )
             if intent.phase != "constrain"
             else f"完整 applied_filter_state 精确等于 {intent.predicates!r}"
         )
         requirements.append(
-            f"这是 {intent.phase}_collection：仅允许 {allowed} 效应；"
+            f"这是 {intent.phase}_collection："
             f"只有结构证据证明 {proof} 时才可 complete。"
         )
     if contract.persistence == "explicit_commit":

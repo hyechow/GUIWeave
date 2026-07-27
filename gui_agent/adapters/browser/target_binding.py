@@ -81,7 +81,6 @@ def _binding(control: dict) -> TargetBinding:
         status="bound",
         source="structural",
         unit_id=group_id or "__form__",
-        effect_kind=str(control.get("effect_kind") or "unknown"),
         reason="browser control inventory uniquely owns the concrete action point",
     )
 
@@ -163,7 +162,6 @@ class BrowserTargetBinder:
                         status="bound",
                         source="structural",
                         unit_id=f"ref:{intent.target_ref}",
-                        effect_kind=str(semantic[0].get("effect_kind") or "unknown"),
                         reason="navigation URL is owned by the declared semantic target ref",
                     )
                 point = semantic[0].get("point")
@@ -187,7 +185,6 @@ class BrowserTargetBinder:
                             status="bound",
                             source="structural",
                             unit_id=f"ref:{intent.target_ref}",
-                            effect_kind=str(semantic[0].get("effect_kind") or "unknown"),
                             reason="action point is owned by the declared semantic target ref",
                         )
             # A ref may come from the optional form-control inventory rather than the

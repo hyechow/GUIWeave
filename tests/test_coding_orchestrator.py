@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import json
 from types import SimpleNamespace
 
 import pytest
@@ -13,6 +14,7 @@ from gui_agent.core.orchestrator import (
     program_from_plan,
 )
 from gui_agent.core.orchestrator.planner import (
+    _resolution_diagnostics,
     _resolution_block,
 )
 from gui_agent.core.orchestrator.sandbox import (
@@ -175,9 +177,15 @@ def test_validate_code_rejects_removed_planning_api(method: str) -> None:
         ),
         (
             "def run(ctx):\n"
-            "    state = ctx.reach('show', success={'entity': 'Report'})\n"
+            "    return ctx.commit('save', values={'Status': 'Complete'})",
+            "RETURN_COMMIT_NONE",
+        ),
+        (
+            "def run(ctx):\n"
+            "    state = ctx.reach('open', success={'entity': 'Records'})\n"
+            "    ctx.commit('save', values={'Status': 'Complete'})\n"
             "    return state",
-            "RETURN_UI_STATE",
+            "STALE_UI_STATE_RETURN",
         ),
         ("def run(ctx):\n    assert True, 'always'", "BUSINESS_ASSERTION_CONSTANT"),
     ],
@@ -252,24 +260,58 @@ def run(ctx):
     assert validate_code(source) == []
 
 
-def test_dependent_reach_state_rejects_query_conditions() -> None:
+def test_verified_reach_state_with_extra_conditions_remains_composable() -> None:
     source = """
 def run(ctx):
     state = ctx.reach(
-        "Open records",
+        "Open the filtered records view",
         success={
             "entity": "Records",
-            "filters": {"Status": "Complete"},
+            "view": "Filtered records",
         },
     )
-    return ctx.query(state, entity="Records", fields=["Name"])
+    return ctx.query(
+        state,
+        entity="Records",
+        fields=["Name"],
+        filters={"Status": "Complete"},
+    )
 """
 
-    diagnostics = validate_code(source)
-    assert any(item.code == "REACH_DEPENDENT_STATE" for item in diagnostics)
+    assert validate_code(source) == []
     result = execute_code(source, build_probe_fixture(source))
-    assert not result.ok
-    assert "REACH_DEPENDENT_STATE" in result.error
+    assert result.ok, result.error
+
+
+def test_reach_state_does_not_hide_dependent_query_constraints() -> None:
+    source = """
+def run(ctx):
+    start = "01/01/2023"
+    state = ctx.reach(
+        "Open Orders",
+        success={
+            "entity": "Orders",
+            "Purchase Date from": start,
+            "Status": "Complete",
+        },
+    )
+    return ctx.query(
+        state,
+        entity="Orders",
+        fields={"Purchase Date": "datetime"},
+        filters={"Status": "Complete"},
+    )
+"""
+
+    assert any(
+        item.code == "QUERY_CONSTRAINT_NOT_DECLARED"
+        for item in validate_code(source)
+    )
+    corrected = source.replace(
+        'filters={"Status": "Complete"}',
+        'filters={"Status": "Complete", "Purchase Date": {"from": start}}',
+    )
+    assert validate_code(corrected) == []
 
 
 def test_query_owns_fields_but_remains_bound_to_reach_entity() -> None:
@@ -363,24 +405,57 @@ def run(ctx):
     assert validate_code(source) == []
 
 
-def test_validate_code_rejects_an_unused_reach_state() -> None:
+def test_validate_code_does_not_assign_terminal_semantics_to_reach_state() -> None:
     source = """
 def run(ctx):
     state = ctx.reach("Open the editor", success={"entity": "Record"})
     ctx.commit("Create a record", values={"Name": "Example"})
 """
 
-    assert any(item.code == "REACH_STATE_UNUSED" for item in validate_code(source))
+    assert any(
+        item.code == "UNUSED_RUNTIME_VALUE"
+        for item in validate_runtime_dataflow(source)
+    )
 
 
-def test_validate_code_rejects_nonterminal_unassigned_reach() -> None:
+def test_validate_code_allows_sequential_unassigned_reach() -> None:
     source = """
 def run(ctx):
     ctx.reach("Open form", success={"entity": "Records"})
     ctx.commit("Create record", target=None, values={"Name": "Example"})
 """
 
-    assert any(item.code == "REACH_NOT_TERMINAL" for item in validate_code(source))
+    assert validate_code(source) == []
+
+
+def test_runtime_returns_verified_reach_state_as_program_output(request) -> None:
+    source = """
+def run(ctx):
+    return ctx.reach(
+        "Configure and show the Orders report",
+        success={
+            "entity": "Sales Reports",
+            "Report Subtype": "Orders",
+            "From": "05/01/2021",
+            "To": "03/31/2022",
+            "rendered": True,
+        },
+    )
+"""
+    runtime = CodingProgramRuntime.start(CodingProgram(
+        goal="Show the requested Orders report",
+        source=source,
+    ))
+    request.addfinalizer(runtime.close)
+
+    assert isinstance(runtime.current.statement, Interact)
+    assert runtime.current.statement.expected_state["From"] == "05/01/2021"
+    assert runtime.current.statement.expected_state["rendered"] is True
+    runtime.send_outcome(StatementOutcome.completed("report rendered"))
+
+    output = json.loads(runtime.reply)
+    assert output["postcondition"]["Report Subtype"] == "Orders"
+    assert output["postcondition"]["rendered"] is True
 
 
 def test_projection_contract_tracks_query_rows() -> None:
@@ -394,6 +469,23 @@ def run(ctx):
     diagnostics = validate_projection_contract(source)
 
     assert any(item.code == "PROJECTED_FIELD_UNAVAILABLE" for item in diagnostics)
+
+
+def test_projection_contract_tracks_rank_key_lambda_fields() -> None:
+    source = """
+def run(ctx):
+    rows = ctx.query(
+        ui_state,
+        entity="Orders",
+        fields={"Grand Total": "money"},
+    )
+    return sorted(rows, key=lambda row: row["Purchase Date"])
+"""
+
+    assert any(
+        item.code == "PROJECTED_FIELD_UNAVAILABLE"
+        for item in validate_projection_contract(source)
+    )
 
 
 def test_runtime_dataflow_requires_consuming_read_values() -> None:
@@ -1226,6 +1318,47 @@ def test_router_search_key_is_an_explicit_literal_query_branch() -> None:
     assert "match_mode" not in block.content
     assert "'type'" not in block.content
     assert "'reason'" not in block.content
+
+
+def test_router_lookup_fallback_is_a_compile_time_contract() -> None:
+    resolution = IntentResolution(entities=[EntityRef(
+        mention="Selene Yoga Hoodie",
+        search_key="Selene",
+    )])
+    missing = """
+def run(ctx):
+    state = ctx.reach("Open reviews", success={"entity": "All Reviews"})
+    return ctx.query(
+        state,
+        entity="All Reviews",
+        fields=["Action"],
+        filters={"Product": "Selene Yoga Hoodie"},
+    )
+"""
+    complete = """
+def run(ctx):
+    state = ctx.reach("Open reviews", success={"entity": "All Reviews"})
+    rows = ctx.query(
+        state,
+        entity="All Reviews",
+        fields=["Action"],
+        filters={"Product": "Selene Yoga Hoodie"},
+    )
+    if not rows:
+        rows = ctx.query(
+            state,
+            entity="All Reviews",
+            fields=["Action"],
+            filters={"Product": "Selene"},
+        )
+    return rows
+"""
+
+    assert any(
+        item.code == "LOOKUP_FALLBACK_REQUIRED"
+        for item in _resolution_diagnostics(missing, resolution)
+    )
+    assert _resolution_diagnostics(complete, resolution) == []
 
 
 def test_program_owns_full_then_short_phrase_query_branch() -> None:

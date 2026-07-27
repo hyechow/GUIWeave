@@ -17,7 +17,6 @@ from gui_agent.core.run.statement_runtime import StatementRuntimeState
 from gui_agent.core.run.statement_transition import validate_evidence_references
 from gui_agent.core.schemas import (
     ActionIntent,
-    ActionEffectKind,
     CollectionIntent,
     JournalEvent,
     JsonValue,
@@ -41,13 +40,6 @@ from .schemas import (
     _StatementTransitionResult,
     _TransitionAction,
 )
-
-_COLLECTION_EFFECTS = {
-    "reach": {"navigation", "authentication", "presentation", "viewport"},
-    "locate": {"query_control", "presentation", "viewport"},
-    "constrain": {"query_control", "presentation", "viewport"},
-}
-
 
 def _declared_string_values(values: dict[str, JsonValue]) -> set[str]:
     result: set[str] = set()
@@ -140,7 +132,7 @@ def _filter_controls(observation: Observation, field: str) -> list[dict]:
         for control in _controls(observation)
         if (
             control.get("is_filter") is True
-            or control.get("effect_kind") == "query_control"
+            or control.get("query_action") in {"submit", "reset"}
         )
         and target in _control_identities(control)
     ]
@@ -163,7 +155,6 @@ def _query_action(
         for item in view.affordances
         if "activate" in (item.get("supported_operations") or [])
         and str(item.get("label") or "").strip()
-        and item.get("effect_kind") == "query_control"
         and item.get("query_action") == action
     ]
     return matches[0] if len(matches) == 1 else None
@@ -186,11 +177,19 @@ def _resolved_reach_collection(
     )
 
 
+def _reach_is_structurally_complete(statement: StatementContract) -> bool:
+    """Whether collection identity proves the complete declared reach state."""
+    return set(statement.expected_state) <= {"entity", "fields"}
+
+
 def _declared_action_values(statement: StatementContract) -> set[str]:
     """Values an input/select action may place while satisfying this contract."""
     allowed = {
         str(canonical_filter_value(value)).strip().casefold()
-        for value in _declared_string_values(statement.required_values)
+        for value in _declared_string_values({
+            **statement.expected_state,
+            **statement.required_values,
+        })
     }
     intent = statement.interaction_intent
     if intent is not None and intent.phase == "constrain":
@@ -342,48 +341,6 @@ class StatementSupervisorPolicy(
     def add_static_constraint(self, text: str) -> None:
         if text and text not in self._static_constraints:
             self._static_constraints.append(text)
-
-    def authorize_grounded_action(
-        self,
-        effect: ActionEffectKind,
-    ) -> str:
-        """Authorize an adapter-grounded effect for the active interaction intent.
-
-        Reach and query phases reject only structurally identified effects outside
-        their ownership. Unknown means the gate lacks evidence and therefore abstains;
-        target binding and execution validation remain responsible for the action.
-        """
-        statement = self._active_statement
-        if statement is None:
-            return "cannot authorize an action without an active statement"
-        intent = statement.interaction_intent
-        if intent is None:
-            if effect == "pagination":
-                return (
-                    "pagination belongs to collection acquisition, not an "
-                    "ordinary interactive statement"
-                )
-            return ""
-        if effect == "unknown":
-            return ""
-        if effect in _COLLECTION_EFFECTS[intent.phase]:
-            return ""
-        return (
-            f"{intent.phase}_collection requires an allowed structural effect; "
-            f"grounded effect is {effect}"
-        )
-
-    def reject_grounded_effect(self, reason: str) -> SupervisorStep:
-        """Return a deterministic terminal result; do not retry on the same frame."""
-        statement = self._active_statement
-        if statement is None:
-            raise RuntimeError("cannot reject an effect without an active statement")
-        message = f"Grounded action authorization rejected: {reason}"
-        return SupervisorStep(
-            outcome=StatementOutcome.failed(message),
-            summary=message,
-            **_ctx(statement),
-        )
 
     def _scope_for(self, statement: StatementContract, observation: Observation) -> str:
         return execution_scope_for(
@@ -768,38 +725,6 @@ class StatementSupervisorPolicy(
         )
 
     @staticmethod
-    def _validate_input_matches(
-        statement: StatementContract,
-        observation: Observation,
-    ) -> str:
-        controls = [
-            control
-            for control in observation.form_controls or []
-            if isinstance(control, dict)
-        ]
-        for field, expected in statement.inputs.items():
-            if not isinstance(expected, (str, int, float, bool)):
-                continue
-            target = field.strip().casefold()
-            for control in controls:
-                identities = {
-                    str(control.get(key) or "").strip().casefold()
-                    for key in ("label", "name", "id", "group_field")
-                }
-                if target not in identities:
-                    continue
-                key = "selected_text" if "selected_text" in control else "value"
-                if key not in control:
-                    continue
-                actual = str(control[key]).strip()
-                if actual.casefold() != str(expected).strip().casefold():
-                    return (
-                        f"current {field!r} value {actual!r} does not exactly match "
-                        f"input {expected!r}"
-                    )
-        return ""
-
-    @staticmethod
     def _staged_input_submission(
         statement: StatementContract,
         observation: Observation,
@@ -832,8 +757,8 @@ class StatementSupervisorPolicy(
                 if target_label in _control_identities(control)
             ), None)
             if matched_control is None or not (
-                str(matched_control.get("effect_kind") or "") == "query_control"
-                or matched_control.get("is_filter") is True
+                matched_control.get("is_filter") is True
+                or matched_control.get("query_action") in {"submit", "reset"}
             ):
                 return None
             expected = intent.target_value.strip().casefold()
@@ -1069,7 +994,10 @@ class StatementSupervisorPolicy(
             statement,
             observation,
         )
-        if reach_collection_scope is not None:
+        if (
+            reach_collection_scope is not None
+            and _reach_is_structurally_complete(statement)
+        ):
             summary = f"子目标「{statement.goal}」已由当前结构化集合满足。"
             return SupervisorStep(
                 outcome=StatementOutcome.completed(
@@ -1222,10 +1150,9 @@ class StatementSupervisorPolicy(
                     statement, decision, refs.reason, execution_scope=execution_scope
                 )
         if decision.kind == "complete":
-            rejection = self._validate_input_matches(statement, observation)
+            rejection = ""
             if (
-                not rejection
-                and _collection_intent(statement, "reach") is not None
+                _collection_intent(statement, "reach") is not None
                 and _resolved_reach_collection(statement, observation) is None
             ):
                 rejection = (
@@ -1258,11 +1185,10 @@ class StatementSupervisorPolicy(
             ):
                 rejection = (
                     "requested exact filter predicate set is not established: "
-                    f"{'unknown' if filter_status is None else 'mismatched'}"
+                    "mismatched"
                 )
             if rejection:
-                # Soft effect / contract miss: demote complete → continue acting.
-                # Never escalate filter/string mismatch to exhausted.
+                # A typed structural miss demotes complete → continue acting.
                 return self._soft_reject_and_retry(
                     statement,
                     observation,
@@ -1271,7 +1197,7 @@ class StatementSupervisorPolicy(
                     reason=rejection,
                     execution_scope=execution_scope,
                     guidance=(
-                        "上一个 complete 候选未通过效应/合同校验："
+                        "上一个 complete 候选未通过结构化合同校验："
                         f"{rejection}。不要结束 statement；继续 act 使视图满足合同，"
                         "或在筛选已语义生效时再 complete。"
                     ),
@@ -1290,7 +1216,12 @@ class StatementSupervisorPolicy(
                     summary,
                     verification=verification,  # type: ignore[arg-type]
                     evidence=self._outcome_evidence(decision),
-                    outputs={"scope": lookup_scope} if lookup_scope is not None else {},
+                    outputs=(
+                        {"scope": lookup_scope or reach_collection_scope}
+                        if lookup_scope is not None
+                        or reach_collection_scope is not None
+                        else {}
+                    ),
                     observation=observation,
                     observation_url=observation.url,
                 ),

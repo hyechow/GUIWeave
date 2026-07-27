@@ -343,34 +343,6 @@ def test_offscreen_observed_field_bypasses_transition_with_deterministic_iterate
     assert step.action_intent.direction == "up"
 
 
-def test_complete_rejects_prefix_match_for_runtime_input(monkeypatch) -> None:
-    statement = StatementContract(
-        id="s1",
-        goal="locate the exact account",
-        success="the exact account is open",
-        inputs={"Account Code": "account-east"},
-    )
-    policy = _policy(statement)
-    monkeypatch.setattr(
-        policy,
-        "_invoke_statement_transition",
-        lambda *a, **k: _complete("the account is open"),
-    )
-
-    step = policy._run_single_turn(
-        statement,
-        _observation(form_controls=[{
-            "kind": "text_input",
-            "label": "Account Code",
-            "value": "account-east-user",
-        }]),
-        [],
-    )
-
-    assert step.outcome is not None
-    assert "does not exactly match" in step.outcome.summary
-
-
 def test_complete_rejects_inherited_filter_outside_declared_scope(monkeypatch) -> None:
     statement = StatementContract(
         id="s1",
@@ -405,7 +377,6 @@ def test_complete_rejects_inherited_filter_outside_declared_scope(monkeypatch) -
                 "kind": "button",
                 "label": "Clear all",
                 "id": "reset",
-                "effect_kind": "query_control",
                 "query_action": "reset",
             }],
         ),
@@ -462,7 +433,6 @@ def test_staged_query_activates_matching_submit_before_pagination(monkeypatch) -
                 "key": "Search",
                 "ref": 42,
                 "in_viewport": True,
-                "effect_kind": "query_control",
                 "query_action": "submit",
             }],
         ),
@@ -529,7 +499,6 @@ def test_staged_filter_uses_typed_predicate_not_visual_input_text(monkeypatch) -
                 "key": "Search",
                 "ref": 42,
                 "in_viewport": True,
-                "effect_kind": "query_control",
                 "query_action": "submit",
             }],
         ),
@@ -650,7 +619,7 @@ def test_query_only_lookup_returns_structural_scope_on_complete(monkeypatch) -> 
         ("Save Search", "prepare"),
     ],
 )
-def test_query_only_lookup_permission_uses_grounded_effect_not_control_label(
+def test_query_proposal_does_not_infer_permissions_from_control_label(
     monkeypatch, control, role,
 ) -> None:
     statement = _lookup_statement()
@@ -670,10 +639,8 @@ def test_query_only_lookup_permission_uses_grounded_effect_not_control_label(
         }],
     )
 
-    # Proposal materialization is label-agnostic; permission is checked after grounding.
+    # Proposal materialization is label-agnostic; labels are not a permission gate.
     assert step.action_intent is not None
-    rejection = _policy(statement).authorize_grounded_action("business_commit")
-    assert rejection
 
 
 def test_query_only_lookup_allows_structural_filter_input(monkeypatch) -> None:
@@ -928,3 +895,53 @@ def test_valid_completion_uses_runtime_evidence_grade(monkeypatch) -> None:
     assert step.outcome is not None and step.outcome.phase == "completed"
     assert step.outcome.verification == "confirmed"
     assert policy._last_transition_record["validation_error"] == ""
+
+
+def test_rich_reach_state_does_not_complete_from_collection_identity_alone(
+    monkeypatch,
+) -> None:
+    statement = StatementContract(
+        id="s1",
+        goal="configure and show the Orders report",
+        success="every declared expected-state condition is established",
+        expected_state={
+            "entity": "Sales Reports",
+            "Report Subtype": "Orders",
+            "From": "05/01/2021",
+            "To": "03/31/2022",
+            "rendered": True,
+        },
+        interaction_intent=CollectionIntent(
+            phase="reach",
+            entity="Sales Reports",
+        ),
+    )
+    policy = _policy(statement)
+    calls = 0
+
+    def decide(*_args, **_kwargs):
+        nonlocal calls
+        calls += 1
+        return _act(
+            family="input",
+            control="From",
+            value="05/01/2021",
+        )
+
+    monkeypatch.setattr(policy, "_invoke_statement_transition", decide)
+    step = policy._run_single_turn(
+        statement,
+        _observation(tables=[{
+            "path": "#sales-report",
+            "caption": "Sales Reports",
+            "headers": ["Order"],
+            "rows": [{"Order": "1"}],
+        }]),
+        [],
+    )
+
+    assert calls == 1
+    assert step.outcome is None
+    assert step.action_intent is not None
+    assert step.action_intent.target_control == "From"
+    assert step.action_intent.target_value == "05/01/2021"

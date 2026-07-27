@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import ast
 import json
 import re
 import time
@@ -17,6 +18,7 @@ from gui_agent.prompts import load_prompt_text
 
 from .models import (
     CodingAttempt,
+    CodeDiagnostic,
     CodingEvent,
     CodingPlan,
     CodingRunResult,
@@ -214,6 +216,94 @@ def _diagnostics(
     return diagnostics
 
 
+def _resolution_diagnostics(source: str, resolution: Any) -> list[CodeDiagnostic]:
+    """Compile routed full-mention/search-key facts into a control-flow invariant."""
+    entities = getattr(resolution, "entities", None) or []
+    lookups = []
+    for entity in entities:
+        raw = entity.model_dump() if hasattr(entity, "model_dump") else vars(entity)
+        mention = str(raw.get("mention") or "")
+        search_key = str(raw.get("search_key") or "")
+        if raw.get("role") == "lookup" and search_key and search_key != mention:
+            lookups.append((mention, search_key))
+    if not lookups:
+        return []
+    try:
+        tree = ast.parse(source)
+    except SyntaxError:
+        return []
+
+    records: list[tuple[str, str, bool, ast.Call]] = []
+
+    class QueryVisitor(ast.NodeVisitor):
+        inside_if = 0
+
+        def visit_If(self, node: ast.If) -> None:  # noqa: N802
+            self.visit(node.test)
+            self.inside_if += 1
+            for child in [*node.body, *node.orelse]:
+                self.visit(child)
+            self.inside_if -= 1
+
+        def visit_Call(self, node: ast.Call) -> None:  # noqa: N802
+            if (
+                isinstance(node.func, ast.Attribute)
+                and isinstance(node.func.value, ast.Name)
+                and node.func.value.id == "ctx"
+                and node.func.attr == "query"
+            ):
+                filters = next(
+                    (
+                        item.value
+                        for item in node.keywords
+                        if item.arg == "filters"
+                    ),
+                    node.args[3] if len(node.args) > 3 else None,
+                )
+                try:
+                    values = ast.literal_eval(filters) if filters is not None else {}
+                except (TypeError, ValueError, SyntaxError):
+                    values = {}
+                if isinstance(values, dict):
+                    records.extend(
+                        (
+                            str(field),
+                            value,
+                            self.inside_if > 0,
+                            node,
+                        )
+                        for field, value in values.items()
+                        if isinstance(value, str)
+                    )
+            self.generic_visit(node)
+
+    QueryVisitor().visit(tree)
+    diagnostics = []
+    for mention, search_key in lookups:
+        if any(
+            full_field == short_field and short_conditional
+            for full_field, full_value, _, _ in records
+            for short_field, short_value, short_conditional, _ in records
+            if full_value == mention and short_value == search_key
+        ):
+            continue
+        node = next(
+            (record[3] for record in records if record[1] == mention),
+            tree,
+        )
+        diagnostics.append(CodeDiagnostic(
+            code="LOOKUP_FALLBACK_REQUIRED",
+            message=(
+                f"lookup {mention!r} requires a strict full-mention query followed, "
+                f"only when empty, by strict search-key query {search_key!r} "
+                "on the same source field"
+            ),
+            line=getattr(node, "lineno", 0),
+            column=getattr(node, "col_offset", 0),
+        ))
+    return diagnostics
+
+
 def _default_llm() -> Any:
     cfg = resolve_llm_config("orchestrator")
     if not cfg.model:
@@ -313,12 +403,14 @@ def _evaluate_source(
     source: str,
     fixture: FixtureSpec | None,
     contract_fixture: FixtureSpec | None = None,
+    resolution: Any = None,
 ) -> CodingAttempt:
     diagnostics = _diagnostics(
         source,
         fixture or contract_fixture,
         match_lookup_sources=fixture is None and contract_fixture is not None,
     )
+    diagnostics.extend(_resolution_diagnostics(source, resolution))
     run = execute_code(source, fixture or build_probe_fixture(source)) if not diagnostics else None
     if fixture is None and run is not None and not run.ok:
         final_error = run.error.strip().splitlines()[-1] if run.error.strip() else ""
@@ -468,6 +560,7 @@ def generate_code(
             generated,
             fixture,
             contract_fixture,
+            resolution,
         )
         attempt.input_tokens = input_tokens
         attempt.output_tokens = output_tokens

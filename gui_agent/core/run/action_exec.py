@@ -282,34 +282,6 @@ class ActionExecutor:
                     "  [TargetBinding] "
                     f"{binding.source}:{binding.unit_id or 'control'}"
                 )
-        effect_resolver = getattr(action_policy, "resolve_action_effect", None)
-        resolved_effect = (
-            effect_resolver(
-                sv_step,
-                observation,
-                action_decision,
-                result.binding,
-            )
-            if callable(effect_resolver)
-            else "unknown"
-        )
-        effect = resolved_effect if isinstance(resolved_effect, str) else "unknown"
-        authorize = getattr(supervisor, "authorize_grounded_action", None)
-        if callable(authorize):
-            reason = authorize(effect)
-            if reason:
-                code = (
-                    "effect_unknown"
-                    if effect == "unknown"
-                    else "effect_forbidden"
-                )
-                result.suppressed_reason = reason
-                say(f"  [EffectGate] {code}: {reason}")
-                status(turn_no, "动作效应超出当前 Statement 权限，未派发")
-                reject_effect = getattr(supervisor, "reject_grounded_effect", None)
-                if callable(reject_effect):
-                    result.supervisor_step = reject_effect(reason)
-                return result
         status(turn_no, f"[{action_label(action.action_type)}] {action.description}")
 
         flash(action)

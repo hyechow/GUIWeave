@@ -38,25 +38,24 @@ rows = ctx.query(
   生成代码无法构造这种 Runtime 类型。
 
 没有独立的 `surface_active` 抽象。当前需求只需要 collection 状态；用 document title
-再建一套跨平台 surface schema 会扩大核心、adapter 和 gate，却不能改善查询交接。
+再建一套跨平台 surface schema 会扩大核心、adapter 和校验器，却不能改善查询交接。
 
 ## 阶段所有权
 
 这些内部步骤共用一个 `CollectionIntent`，只由 `phase=reach|locate|constrain`
 区分，不再维护三个意图类和判别联合。
 
-| phase | 输入 | 后置条件 | 可拥有的效果 |
-| --- | --- | --- | --- |
-| `reach_collection` | — | 唯一 collection 覆盖 required fields，签发 state | navigation、authentication、presentation、viewport |
-| `locate_collection` | state | 唯一 collection scope | query_control、presentation、viewport |
-| `constrain_collection` | scope | adapter 的完整筛选谓词与请求精确相等 | query_control、presentation、viewport |
-| `acquire` | constrained scope | materialized rows | pagination 与 collection traversal |
-| `focus` | state + target | target fields 可读，签发派生 state | 普通交互 |
-| `read` | state | 结构化字段值 | 读取 |
+| phase | 输入 | 后置条件 |
+| --- | --- | --- |
+| `reach_collection` | — | 唯一 collection 覆盖 required fields 和 expected state，签发 state |
+| `locate_collection` | state | 唯一 collection scope |
+| `constrain_collection` | scope | adapter 的完整筛选谓词与请求精确相等 |
+| `acquire` | constrained scope | materialized rows |
+| `focus` | state + target | target fields 可读，签发派生 state |
+| `read` | state | 结构化字段值 |
 
-动作准入基于 browser adapter 在结构 grounding 后产生的单一 `effect_kind`，
-不读取 Apply、Save、Previous 等本地化文案。受限阶段遇到
-未知效果 fail closed；普通 Interact 也不能抢占 Acquire 的 pagination 所有权。
+动作派发只校验声明值、目标身份、结构能力和数据流，不从控件文案、DOM id
+或 adapter 推测的业务效果派生权限。平台观测可以辅助决策，但不能成为硬拒绝 gate。
 
 ## Statement 语义
 
@@ -84,5 +83,5 @@ scope 来源，不再维护状态注册表，也不在 AST 层另建一套 def-u
   `reach -> ui:1 -> locate -> constrain -> acquire`；WebArena score 为 `1.0`，
   Jan–May 结果为 `12 / 7 / 5 / 9 / 5`。
 
-核心 prompt 和 gate 不包含 WebArena、Magento 或 task 编号知识；运行日志只作为回放证据，
+核心 prompt 和 Runtime 校验不包含 WebArena、Magento 或 task 编号知识；运行日志只作为回放证据，
 不成为生产依赖。

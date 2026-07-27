@@ -203,6 +203,11 @@ class StatementReportReducer:
                 inputs = info.get("inputs")
                 if isinstance(inputs, dict) and inputs:
                     view.inputs = dict(inputs)
+                expected_state = info.get("expected_state")
+                if isinstance(expected_state, dict) and expected_state:
+                    merged = dict(view.inputs)
+                    merged.setdefault("expected_state", expected_state)
+                    view.inputs = merged
                 required_values = info.get("required_values")
                 if isinstance(required_values, dict) and required_values:
                     # Surface write values next to other statement inputs in reports.
@@ -217,6 +222,7 @@ class StatementReportReducer:
                         "executor",
                         "goal",
                         "success",
+                        "expected_state",
                         "on",
                         "scope",
                         "persistence",

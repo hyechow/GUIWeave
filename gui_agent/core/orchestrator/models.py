@@ -93,12 +93,6 @@ def require_ui_state(
             "ctx.query/ctx.read require the UIStateHandle returned by ctx.reach"
         )
     postcondition = value.postcondition
-    extra = set(postcondition) - {"entity", "fields"}
-    if extra and postcondition.get("kind") != "target_fields_available":
-        raise ValueError(
-            "ctx.query/ctx.read require a structural ctx.reach state; "
-            f"move conditions {sorted(extra)!r} to the dependent operation"
-        )
     if entity and postcondition.get("entity") != entity:
         raise ValueError("ctx.reach collection state does not satisfy ctx.query")
     return value

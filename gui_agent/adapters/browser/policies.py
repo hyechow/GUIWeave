@@ -29,7 +29,6 @@ from gui_agent.adapters.browser.control_grounding import (
 )
 from gui_agent.adapters.browser.target_binding import BrowserTargetBinder
 from gui_agent.core.policies.base import BaseActionPolicy
-from gui_agent.core.schemas import ActionEffectKind
 from gui_agent.prompts import load_prompt_text
 
 load_dotenv()
@@ -88,32 +87,6 @@ class BrowserActionPolicy(BaseActionPolicy):
 
     def bind(self, step, observation, action_decision):
         return self._target_binder.bind(step, observation, action_decision)
-
-    def resolve_action_effect(
-        self,
-        step,
-        observation,
-        action_decision,
-        binding=None,
-    ) -> ActionEffectKind:
-        """Read effect evidence produced by grounding; never rematch target text."""
-        del step, observation
-        action = action_decision.action
-        action_type = str(getattr(action, "action_type", "") or "").casefold()
-        primitive: ActionEffectKind | None = (
-            "viewport"
-            if action_type in {"scroll", "drag", "scroll_to_ref"}
-            else "navigation"
-            if action_type in {
-                "navigate", "back", "new_tab", "select_tab", "close_tab"
-            }
-            else None
-        )
-        if primitive:
-            return primitive
-        if binding is not None and binding.status == "bound":
-            return binding.effect_kind
-        return "unknown"
 
     def _prepare_png(self, png_bytes: bytes) -> bytes:
         return _prepare_browser_png(png_bytes)

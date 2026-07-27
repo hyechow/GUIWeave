@@ -424,7 +424,7 @@ class _SafetyVisitor(ast.NodeVisitor):
                     (
                         "ctx.reach success must be a literal dictionary with "
                         "a nonempty entity and optional fields list of strings; "
-                        "terminal observable conditions belong in top-level success keys"
+                        "preserve entity while adding other observable state keys"
                     ),
                 ))
         values = keywords.get("values")
@@ -525,7 +525,7 @@ def _ctx_state_contract_diagnostics(
 ) -> list[CodeDiagnostic]:
     reach_assignments: dict[
         str,
-        list[tuple[int, str | None, frozenset[str], ast.AST]],
+        list[tuple[int, str | None, frozenset[str]]],
     ] = {}
     for node in ast.walk(function):
         if (
@@ -535,29 +535,32 @@ def _ctx_state_contract_diagnostics(
             and isinstance(node.value, ast.Call)
             and _ctx_method(node.value) == "reach"
         ):
-            success = _literal_value(_call_argument(node.value, "success", 1))
+            success_node = _call_argument(node.value, "success", 1)
+            success_items = (
+                {
+                    key.value: value
+                    for key, value in zip(success_node.keys, success_node.values)
+                    if isinstance(key, ast.Constant) and isinstance(key.value, str)
+                }
+                if isinstance(success_node, ast.Dict)
+                else {}
+            )
             entity = (
-                success["entity"]
-                if isinstance(success, dict)
-                and isinstance(success.get("entity"), str)
+                value
+                if isinstance(
+                    value := _literal_value(success_items.get("entity")),
+                    str,
+                )
                 else None
             )
-            extra = frozenset(success or {}) - {"entity", "fields"} if isinstance(
-                success, dict,
-            ) else frozenset()
             reach_assignments.setdefault(node.targets[0].id, []).append(
-                (
-                    node.lineno,
-                    entity,
-                    extra,
-                    _call_argument(node.value, "success", 1) or node.value,
-                )
+                (node.lineno, entity, frozenset(success_items))
             )
 
     def latest_reach(
         name: str,
         before_line: int,
-    ) -> tuple[int, str | None, frozenset[str], ast.AST] | None:
+    ) -> tuple[int, str | None, frozenset[str]] | None:
         return max(
             (
                 assignment
@@ -568,20 +571,35 @@ def _ctx_state_contract_diagnostics(
         )
 
     diagnostics: list[CodeDiagnostic] = []
-    consumed_reaches: set[tuple[str, int]] = set()
+    commit_lines = {
+        node.lineno
+        for node in ast.walk(function)
+        if isinstance(node, ast.Call) and _ctx_method(node) == "commit"
+    }
     for node in ast.walk(function):
-        if isinstance(node, ast.Return) and (
-            _ctx_method(node.value) == "reach"
-            or (
-                isinstance(node.value, ast.Name)
-                and latest_reach(node.value.id, node.lineno) is not None
-            )
-        ):
+        if isinstance(node, ast.Return) and _ctx_method(node.value) == "commit":
             diagnostics.append(_diag(
                 node,
-                "RETURN_UI_STATE",
-                "UIState from ctx.reach is an opaque capability and cannot be returned as output",
+                "RETURN_COMMIT_NONE",
+                "ctx.commit returns None; call it as a statement instead of returning it",
             ))
+            continue
+        if isinstance(node, ast.Return) and isinstance(node.value, ast.Name):
+            reach = latest_reach(node.value.id, node.lineno)
+            if (
+                reach is not None
+                and any(reach[0] < line < node.lineno for line in commit_lines)
+            ):
+                diagnostics.append(_diag(
+                    node,
+                    "STALE_UI_STATE_RETURN",
+                    (
+                        f"UI state {node.value.id!r} predates a durable commit; "
+                        "remove both that preparatory ctx.reach and this return because "
+                        "ctx.commit already owns the durable operation"
+                    ),
+                ))
+            continue
         if not isinstance(node, ast.Call):
             continue
         method = _ctx_method(node)
@@ -592,18 +610,6 @@ def _ctx_state_contract_diagnostics(
                 if isinstance(state, ast.Name)
                 else None
             )
-            if reach is not None and isinstance(state, ast.Name):
-                consumed_reaches.add((state.id, reach[0]))
-            if reach is not None and reach[2]:
-                diagnostics.append(_diag(
-                    reach[3],
-                    "REACH_DEPENDENT_STATE",
-                    (
-                        "ctx.reach state consumed by ctx.query/read may contain only "
-                        f"'entity' and 'fields'; move {sorted(reach[2])!r} to the "
-                        "dependent operation"
-                    ),
-                ))
             entity = _literal_value(_call_argument(node, "entity", 1))
             if (
                 method == "query"
@@ -621,6 +627,42 @@ def _ctx_state_contract_diagnostics(
                         f"{reach[1]!r}"
                     ),
                 ))
+            if method == "query" and reach is not None:
+                projected = {
+                    _semantic_key(field)
+                    for field in (_literal_fields(node) or [])
+                }
+                filters_node = _call_argument(node, "filters", 3)
+                filter_fields = (
+                    {
+                        _semantic_key(key.value)
+                        for key in filters_node.keys
+                        if isinstance(key, ast.Constant)
+                        and isinstance(key.value, str)
+                    }
+                    if isinstance(filters_node, ast.Dict)
+                    else set()
+                )
+                missing = []
+                for field in reach[2] - {"entity", "fields"}:
+                    base = re.sub(
+                        r"(?i)[ _-]+(?:from|to|min|max|start|end)$",
+                        "",
+                        field,
+                    )
+                    key = _semantic_key(base)
+                    if key in projected and key not in filter_fields:
+                        missing.append(base)
+                if missing:
+                    diagnostics.append(_diag(
+                        node,
+                        "QUERY_CONSTRAINT_NOT_DECLARED",
+                        (
+                            "ctx.query must declare source filters for reach-state "
+                            f"selection fields {sorted(set(missing))!r}; "
+                            "reach.success does not scope retrieved rows"
+                        ),
+                    ))
         elif method == "commit":
             target = _call_argument(node, "target", 1)
             if (
@@ -635,40 +677,6 @@ def _ctx_state_contract_diagnostics(
                         "pass an owning business row or omit target for creation"
                     ),
                 ))
-    for name, assignments in reach_assignments.items():
-        for line, _, _, source_node in assignments:
-            if (name, line) not in consumed_reaches:
-                diagnostics.append(_diag(
-                    source_node,
-                    "REACH_STATE_UNUSED",
-                    (
-                        f"ctx.reach result {name!r} is not consumed by ctx.query/read; "
-                        "remove the entire reach call because ctx.commit owns editor "
-                        "navigation, or leave reach unassigned only for a terminal UI task"
-                    ),
-                ))
-    world_calls = sorted(
-        (
-            node
-            for node in ast.walk(function)
-            if isinstance(node, ast.Call) and _ctx_method(node) in CTX_METHODS
-        ),
-        key=lambda node: (node.lineno, node.col_offset),
-    )
-    for statement in (
-        node
-        for node in ast.walk(function)
-        if isinstance(node, ast.Expr) and _ctx_method(node.value) == "reach"
-    ):
-        if any(call.lineno > statement.lineno for call in world_calls):
-            diagnostics.append(_diag(
-                statement,
-                "REACH_NOT_TERMINAL",
-                (
-                    "an unassigned ctx.reach is only a terminal UI outcome and must "
-                    "be the final world-facing call; remove it before query/read/commit"
-                ),
-            ))
     return diagnostics
 
 
@@ -1245,6 +1253,36 @@ class _ProjectionVisitor(ast.NodeVisitor):
     visit_GeneratorExp = visit_ListComp
 
     def visit_Call(self, node: ast.Call) -> None:
+        ranker = (
+            node.func.id
+            if isinstance(node.func, ast.Name)
+            and node.func.id in {"sorted", "min", "max"}
+            else ""
+        )
+        key = next((item.value for item in node.keywords if item.arg == "key"), None)
+        if (
+            ranker
+            and node.args
+            and isinstance(key, ast.Lambda)
+            and len(key.args.args) == 1
+        ):
+            self.visit(node.args[0])
+            fields = self._infer_sequence(node.args[0])
+            parameter = key.args.args[0].arg
+            previous = self.mapping_fields.get(parameter)
+            if fields is not None:
+                self.mapping_fields[parameter] = set(fields)
+            self.visit(key.body)
+            if previous is None:
+                self.mapping_fields.pop(parameter, None)
+            else:
+                self.mapping_fields[parameter] = previous
+            for argument in node.args[1:]:
+                self.visit(argument)
+            for keyword in node.keywords:
+                if keyword.arg != "key":
+                    self.visit(keyword.value)
+            return
         if (
             isinstance(node.func, ast.Attribute)
             and node.func.attr == "get"
@@ -1296,7 +1334,7 @@ def validate_projection_contract(source: str) -> list[CodeDiagnostic]:
 
 
 def validate_runtime_dataflow(source: str) -> list[CodeDiagnostic]:
-    """Report values derived from ctx.read that are assigned but never consumed."""
+    """Report assigned runtime capabilities or values that are never consumed."""
     try:
         tree = ast.parse(source)
     except SyntaxError:
@@ -1324,7 +1362,7 @@ def validate_runtime_dataflow(source: str) -> list[CodeDiagnostic]:
             for name in ast.walk(value)
             if isinstance(name, ast.Name) and isinstance(name.ctx, ast.Load)
         }
-        if _ctx_method(value) == "read":
+        if _ctx_method(value) in {"reach", "read"}:
             direct_read_vars.add(target.id)
     runtime_vars = set(direct_read_vars)
     changed = True
@@ -1339,15 +1377,21 @@ def validate_runtime_dataflow(source: str) -> list[CodeDiagnostic]:
         if loads.get(variable, 0) > 0:
             continue
         node = assignments[variable]
+        source_method = _ctx_method(node.value)
+        message = (
+            f"ctx.reach state {variable!r} is assigned but never used; remove the entire "
+            "ctx.reach assignment rather than returning it merely to silence this diagnostic"
+            if source_method == "reach"
+            else (
+                f"runtime-derived value {variable!r} is assigned but never used; consume the "
+                "observed value in a dependent call, calculation, or return, or delete the "
+                "unnecessary assignment and its ctx call"
+            )
+        )
         diagnostics.append(_diag(
             node,
             "UNUSED_RUNTIME_VALUE",
-            (
-                f"runtime-derived value {variable!r} is assigned but never used; when the task "
-                "requests a relative change, consume it in the requested calculation and pass "
-                "the result to ctx.commit values; otherwise delete the entire unnecessary read "
-                "assignment—leaving the assignment unchanged never fixes this diagnostic"
-            ),
+            message,
         ))
     return diagnostics
 

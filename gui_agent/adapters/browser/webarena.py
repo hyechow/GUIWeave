@@ -195,6 +195,14 @@ def _finalize_response(
 
 
 def _webarena_task_type_from_result(intent: str, result: AgentResult) -> str:
+    effect = str((result.orchestrator or {}).get("effect") or "").strip()
+    effect_type = {
+        "mutation": "MUTATE",
+        "data": "RETRIEVE",
+        "ui_state": "NAVIGATE",
+    }.get(effect)
+    if effect_type is not None:
+        return effect_type
     task_type = str(result.task_type or "").strip().upper()
     if task_type in _TASK_TYPES:
         return task_type
@@ -648,6 +656,16 @@ def _synthesize_response(
     completed_mutate = _completed_mutate_response(intent, result)
     if completed_mutate is not None:
         return completed_mutate
+    if (
+        result.phase == "completed"
+        and _webarena_task_type_from_result(intent, result) == "NAVIGATE"
+    ):
+        return WAResponse(
+            task_type="NAVIGATE",
+            status="SUCCESS",
+            retrieved_data=None,
+            error_details=None,
+        )
     if (
         result.phase == "completed"
         and (result.orchestrator or {}).get("kind") == "coding"

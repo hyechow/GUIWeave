@@ -227,6 +227,20 @@ def orchestration_result(
                     getattr(record, "coding_plan_steps", 0) or 0
                 )
         run_log.append(entry)
+    coding_ops = {
+        str(entry.get("coding_op") or "")
+        for entry in run_log
+        if entry.get("coding_op")
+    }
+    program_effect = (
+        "mutation"
+        if "commit" in coding_ops
+        else "data"
+        if coding_ops & {"acquire", "read"}
+        else "ui_state"
+        if "reach" in coding_ops
+        else "none"
+    )
     reply = terminal
     # A program that reached finish but answered on an entirely-empty read produced no real
     # answer (the read found nothing on the frame) — do not let it masquerade as success.
@@ -262,6 +276,7 @@ def orchestration_result(
         "output": reply,
         "orchestrator": {
             "kind": "coding",
+            "effect": program_effect,
             "terminal": terminal,
             "run_log": run_log,
         },

@@ -185,7 +185,7 @@ def _compact_affordances(view: StatementObservationView) -> list[dict]:
     """Keep target identity and capability; geometry stays in the adapter observation."""
     keys = (
         "label", "ref", "role", "visibility", "supported_operations",
-        "effect_kind", "query_action",
+        "query_action",
     )
     return [
         {key: item[key] for key in keys if key in item}

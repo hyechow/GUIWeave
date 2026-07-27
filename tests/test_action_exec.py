@@ -325,37 +325,3 @@ def test_target_directed_iterate_scroll_dispatches_exactly_once(tmp_path):
     assert result.action_key.endswith("|iterate|scroll|down|@-")
     assert len(executor.calls) == 1
     assert executor.calls[0]["decision"].action == action
-
-
-def test_grounded_effect_gate_runs_before_executor_dispatch(tmp_path):
-    class _EffectPolicy:
-        def resolve_action_effect(self, *_args, **_kwargs):
-            return "business_commit"
-
-    class _GateSupervisor:
-        def authorize_grounded_action(self, effect):
-            assert effect == "business_commit"
-            return "restricted query phase forbids business_commit"
-
-    decision = BaseActionDecision(
-        action=BaseAction(action_type="tap", x=10, y=20, description="activate")
-    )
-    executor = _Executor()
-
-    result = ActionExecutor().run(
-        sv_step=_step(decision),
-        observation=Observation(png_bytes=b"png", source="browser"),
-        action_policy=_EffectPolicy(),
-        supervisor=_GateSupervisor(),
-        executor=executor,
-        prep_future=_Future(),
-        log_dir=tmp_path,
-        turn_no=8,
-        flash=lambda _action: None,
-        status=lambda _turn_no, _message: None,
-        say=lambda _message: None,
-    )
-
-    assert result.executed is False
-    assert "business_commit" in result.suppressed_reason
-    assert executor.calls == []

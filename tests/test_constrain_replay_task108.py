@@ -1,10 +1,8 @@
-"""Replay the task-108 frame without reviving label-based authorization.
+"""Replay the task-108 frame without reviving label-based semantics.
 
-The retained observation predates structural effect tags. It contains a button
-labelled ``Apply Filters`` but not the DOM ancestry that proves the button is a
-query-control effect. The new gate must therefore fail closed. Live browser
-classification from filter-container ancestry is covered separately by
-``test_browser_form_reader``.
+The retained observation contains a button labelled ``Apply Filters`` but no
+structured query action. Its label must remain observation text, not become a
+runtime permission or postcondition.
 """
 
 from __future__ import annotations
@@ -12,18 +10,13 @@ from __future__ import annotations
 import json
 from pathlib import Path
 
-from gui_agent.adapters.browser.actions import BrowserAction, BrowserActionDecision
-from gui_agent.adapters.browser.policies import BrowserActionPolicy
 from gui_agent.core.filter_contract import compile_filter_predicates
 from gui_agent.core.schemas import (
-    ActionIntent,
     CollectionIntent,
     Observation,
     StatementContract,
-    SupervisorStep,
 )
 from gui_agent.core.supervisor.statement.observation_view import build_observation_view
-from gui_agent.core.supervisor.statement.policy import StatementSupervisorPolicy
 
 _FIXTURE = (
     Path(__file__).resolve().parents[1]
@@ -49,7 +42,7 @@ def _contract() -> StatementContract:
     )
 
 
-def test_recorded_label_does_not_fabricate_query_effect() -> None:
+def test_recorded_label_does_not_fabricate_structured_query_action() -> None:
     observation = _recorded_observation()
     contract = _contract()
     view = build_observation_view(contract, observation, [])
@@ -58,34 +51,4 @@ def test_recorded_label_does_not_fabricate_query_effect() -> None:
         if str(item.get("label") or "").strip().casefold() == "apply filters"
     )
     assert "activate" in (apply.get("supported_operations") or [])
-    assert apply.get("effect_kind") is None
-
-    step = SupervisorStep(
-        action_intent=ActionIntent(
-            instruction="activate the grounded filter submission control",
-            family="activate",
-            target_control="Apply Filters",
-            target_ref=str(apply["ref"]),
-        ),
-        summary="submit filter",
-    )
-    decision = BrowserActionDecision(
-        action=BrowserAction(
-            action_type="tap",
-            x=500,
-            y=500,
-            description="activate grounded control",
-        )
-    )
-    effect = BrowserActionPolicy().resolve_action_effect(
-        step,
-        observation,
-        decision,
-    )
-
-    policy = StatementSupervisorPolicy()
-    policy.begin_statement(contract, instance_id="i1:c1")
-    decision = policy.authorize_grounded_action(effect)
-
-    assert effect == "unknown"
-    assert decision == ""
+    assert apply.get("query_action") is None

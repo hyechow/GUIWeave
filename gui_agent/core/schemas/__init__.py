@@ -71,17 +71,6 @@ StatementPhase = Literal["completed", "failed", "exhausted", "interrupted"]
 Verification = Literal["confirmed", "accepted_unverified"]
 BindingSource = Literal["visual", "structural"]
 BindingStatus = Literal["bound", "contradicted", "unresolved"]
-ActionEffectKind = Literal[
-    "query_control",
-    "presentation",
-    "viewport",
-    "pagination",
-    "navigation",
-    "field_write",
-    "business_commit",
-    "authentication",
-    "unknown",
-]
 TargetValue = str | list[str]
 
 
@@ -133,7 +122,6 @@ class TargetBinding(BaseModel):
     status: BindingStatus
     source: Optional[BindingSource] = None
     unit_id: str = ""
-    effect_kind: ActionEffectKind = "unknown"
     reason: str = ""
 
 
@@ -681,6 +669,7 @@ class StatementContract(BaseModel):
     id: str
     goal: str
     success: str
+    expected_state: dict[str, JsonValue] = Field(default_factory=dict)
     interaction_intent: InteractionIntent = None
     on: Literal["main"] = "main"
     inputs: dict[str, JsonValue] = Field(default_factory=dict)
@@ -698,6 +687,7 @@ class StatementInfo(BaseModel):
     executor: Literal["interact", "acquire", "read", "command"] = "interact"
     goal: str = ""
     success: str = ""
+    expected_state: dict[str, JsonValue] = Field(default_factory=dict)
     interaction_intent: InteractionIntent = None
     on: Literal["main"] = "main"
     inputs: dict[str, JsonValue] = Field(default_factory=dict)

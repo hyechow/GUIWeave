@@ -38,6 +38,7 @@ class Interact(StatementNode):
     op: Literal["interact"] = "interact"
     goal: str
     success: str
+    expected_state: dict[str, JsonValue] = Field(default_factory=dict)
     interaction_intent: InteractionIntent = None
     on: SurfaceName = "main"
     required_values: dict[str, JsonValue] = Field(default_factory=dict)
