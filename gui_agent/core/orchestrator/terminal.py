@@ -50,28 +50,6 @@ class CodingTerminalRenderer:
             else:
                 error = str(data.get("error") or "").strip().splitlines()
                 self.write(f"  ✗ {error[-1] if error else 'execution failed'}")
-        elif event.kind == "review_started":
-            self._section(f"Reviewer · pass {data['pass_index']}")
-            self.write("  … reviewing candidate and evidence")
-        elif event.kind == "review_completed":
-            if data.get("approved"):
-                self.write(f"  ✓ Approved · {data['seconds']:.2f}s")
-            elif data.get("error"):
-                error = str(data["error"])
-                if error.startswith(("[REVIEW_IO]", "[REVIEW_PROTOCOL]")):
-                    self.write(
-                        f"  △ Unavailable · deterministic validation retained · {error}"
-                    )
-                else:
-                    self.write(f"  ✗ Invalid review · {error}")
-            else:
-                issues = data.get("issues") or []
-                self.write(
-                    f"  △ Rejected · {len(issues)} issue(s)"
-                    f" · {data['seconds']:.2f}s"
-                )
-                for issue in issues:
-                    self.write(f"  ✗ {issue}")
         elif event.kind == "finalized":
             self._section("Final")
             regeneration = str(data.get("repair_status") or "not_needed")

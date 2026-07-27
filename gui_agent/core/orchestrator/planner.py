@@ -16,11 +16,9 @@ from gui_agent.core.llm.messages import assemble_messages
 from gui_agent.prompts import load_prompt_text
 
 from .models import (
-    CodeDiagnostic,
     CodingAttempt,
     CodingEvent,
     CodingPlan,
-    CodingReview,
     CodingRunResult,
 )
 from .sandbox import (
@@ -34,10 +32,8 @@ from .sandbox import (
 
 
 _SYSTEM = load_prompt_text("task.orchestrator.coding")
-_REVIEW_SYSTEM = load_prompt_text("task.orchestrator.coding_review")
 _CODE_BLOCK_RE = re.compile(r"```(?:python)?\s*\n(.*?)```", re.DOTALL | re.IGNORECASE)
 _GENERATION_MAX_OUTPUT_TOKENS = 2048
-_REVIEW_MAX_OUTPUT_TOKENS = 4096
 
 
 def _response_text(content: Any) -> str:
@@ -61,9 +57,30 @@ def _resolution_block(resolution: Any) -> ContextBlock | None:
         return None
     lines = []
     for entity in entities:
-        dump = entity.model_dump() if hasattr(entity, "model_dump") else vars(entity)
-        dump = {key: value for key, value in dump.items() if key != "match_mode"}
-        lines.append(f"- {dump}")
+        raw = entity.model_dump() if hasattr(entity, "model_dump") else vars(entity)
+        role = raw.get("role")
+        mention = str(raw.get("mention") or "")
+        search_key = str(raw.get("search_key") or "")
+        if role == "lookup":
+            if search_key and search_key != mention:
+                instruction = (
+                    f"strictly query the full mention {mention!r}; only if that result is "
+                    f"empty, strictly query {search_key!r} on the same source field"
+                )
+            else:
+                instruction = f"strictly query {mention!r} once"
+            cardinality = str(raw.get("cardinality") or "single")
+            selector = str(raw.get("selector") or "")
+            suffix = ""
+            if cardinality == "set":
+                suffix = "; the mention denotes a set—preserve every qualifying member"
+                if selector:
+                    suffix += f" selected by {selector!r}"
+            lines.append(f"- LOOKUP: {instruction}{suffix}")
+        elif role in {"target_value", "qualifier_value", "collection_scope"}:
+            members = raw.get("value_members") or []
+            value = members if members else mention
+            lines.append(f"- {str(role).upper()}: {value!r}")
     return ContextBlock(
         id="runtime.intent_facts",
         budget="required",
@@ -72,13 +89,15 @@ def _resolution_block(resolution: Any) -> ContextBlock | None:
         ttl="turn",
         priority=20,
         content=(
-            "## Router intent facts\n"
+            "## Required user facts\n"
             + "\n".join(lines)
-            + "\nThese facts describe a mention and its matching semantics, not a required "
-            "standalone collection. Query the authoritative source field that also owns the "
-            "requested output. Phrase broadening is an orchestration branch: query the full "
-            "mention first, then explicitly query the shorter search key only when empty. "
-            "Both are strict literal queries."
+            + "\nImplement every listed fact in executable code. A LOOKUP is a literal and "
+            "control-flow requirement, not a source entity; application knowledge determines its "
+            "authoritative source and field. A singular mention never implies that the source "
+            "query returns one row; ranking, aggregation, and collection coverage still come from "
+            "the raw goal. These facts supplement rather than replace the goal's operations and "
+            "qualifiers. TARGET_VALUE and QUALIFIER_VALUE go into the requested operation. When "
+            "there is no LOOKUP, do not invent a preflight query."
         ),
     )
 
@@ -290,83 +309,6 @@ def _fixture_schema_block(fixture: FixtureSpec | None) -> ContextBlock | None:
     )
 
 
-def _review_evidence_block(
-    source: str,
-    attempt: CodingAttempt,
-    fixture: FixtureSpec | None,
-) -> ContextBlock:
-    diagnostics = "\n".join(
-        f"- {diagnostic.render()}"
-        for diagnostic in attempt.diagnostics
-    ) or "- none"
-    run = attempt.run
-    if attempt.diagnostics:
-        runtime_status = "NOT_RUN: static diagnostics must be fixed first"
-    elif run is None:
-        runtime_status = "NOT_RUN: no mock fixture was supplied"
-    elif run.ok:
-        runtime_status = "PASS"
-    else:
-        runtime_status = "FAIL"
-    return ContextBlock(
-        id="runtime.coding_review_evidence",
-        budget="required",
-        source_type="runtime_state",
-        source="coding_mock_runtime",
-        ttl="turn",
-        priority=5,
-        content=(
-            "## Candidate solution.py\n"
-            f"```python\n{source}\n```\n\n"
-            f"## Static validation\n{diagnostics}\n\n"
-            f"## Mock runtime status\n{runtime_status}\n\n"
-            f"## Runtime error\n{run.error if run is not None else '- not available'}\n\n"
-            f"## Observed execution trace\n{run.trace if run is not None else []!r}\n\n"
-            f"## Return value\n{run.return_value if run is not None else None!r}\n\n"
-            f"## Mocked Statement effects with available before/after state\n"
-            f"{run.writes if run is not None else []!r}\n\n"
-            "## Mock API schema\n"
-            f"{_fixture_review_text(fixture)}\n"
-            "The available_fields are the exact mock API schema for this review."
-        ),
-    )
-
-
-def _decode_review_response(
-    text: str,
-) -> tuple[bool, tuple[CodeDiagnostic, ...], str]:
-    try:
-        payload = json.loads(text)
-    except (TypeError, ValueError):
-        return False, (), "reviewer returned invalid JSON"
-    if (
-        not isinstance(payload, dict)
-        or not isinstance(payload.get("approve"), bool)
-    ):
-        return False, (), "reviewer returned an invalid review object"
-    raw_issues = payload.get("issues")
-    if not isinstance(raw_issues, list):
-        return False, (), "reviewer issues must be a list"
-    issues: list[CodeDiagnostic] = []
-    for item in raw_issues:
-        if (
-            not isinstance(item, dict)
-            or not isinstance(item.get("code"), str)
-            or not item["code"].strip()
-            or not isinstance(item.get("message"), str)
-            or not item["message"].strip()
-        ):
-            return False, (), "reviewer issue must contain code and message"
-        issues.append(CodeDiagnostic(
-            code=item["code"].strip(),
-            message=item["message"].strip(),
-        ))
-    approved = payload["approve"]
-    if approved == bool(issues):
-        return False, (), "reviewer approval and issues conflict"
-    return approved, tuple(issues), ""
-
-
 def _evaluate_source(
     source: str,
     fixture: FixtureSpec | None,
@@ -381,11 +323,19 @@ def _evaluate_source(
     if fixture is None and run is not None and not run.ok:
         final_error = run.error.strip().splitlines()[-1] if run.error.strip() else ""
         definite = (
-            "AssertionError", "AttributeError", "TypeError", "NameError",
-            "UnboundLocalError", "KeyError", "IndexError", "ValueError",
+            "AttributeError", "TypeError", "NameError",
+            "UnboundLocalError", "KeyError", "IndexError",
             "ZeroDivisionError",
         )
-        if not final_error.startswith(tuple(f"{name}:" for name in definite)):
+        business_value_error = (
+            final_error.startswith("ValueError:")
+            and any(event.op in {"query", "read"} for event in run.trace)
+        )
+        is_definite = (
+            final_error.startswith(tuple(f"{name}:" for name in definite))
+            or final_error.startswith("ValueError:") and not business_value_error
+        )
+        if not is_definite:
             run = CodingRunResult(
                 ok=True,
                 trace=run.trace,
@@ -417,7 +367,7 @@ def _regeneration_block(
         id="runtime.coding_regeneration",
         budget="required",
         source_type="runtime_state",
-        source="coding_review",
+        source="coding_compile",
         ttl="turn",
         priority=1,
         content=(
@@ -431,77 +381,7 @@ def _regeneration_block(
     )
 
 
-def _review_attempt(
-    *,
-    llm: Any,
-    blocks: list[ContextBlock | None],
-    source: str,
-    attempt: CodingAttempt,
-    fixture: FixtureSpec | None,
-) -> CodingReview:
-    started = time.perf_counter()
-    messages = assemble_messages(
-        _REVIEW_SYSTEM,
-        None,
-        human_blocks=[*blocks, _review_evidence_block(source, attempt, fixture)],
-        image_resize="none",
-        label="orchestrator.coding_reviewed.review",
-        decision_text="",
-    )
-    review_runner = (
-        llm.bind(
-            max_tokens=_REVIEW_MAX_OUTPUT_TOKENS,
-            temperature=0,
-            response_format={"type": "json_object"},
-        )
-        if callable(getattr(llm, "bind", None))
-        else llm
-    )
-    input_tokens = 0
-    output_tokens = 0
-    last_error = ""
-    last_text = ""
-    for attempt_index in range(2):
-        try:
-            response = review_runner.invoke(messages)
-        except Exception as exc:  # noqa: BLE001 - provider/protocol boundary
-            last_error = f"{type(exc).__name__}: {exc}"
-            if attempt_index == 0:
-                continue
-            return CodingReview(
-                text="",
-                approved=False,
-                error=f"[REVIEW_IO] {last_error}",
-                seconds=time.perf_counter() - started,
-            )
-        used_in, used_out = _usage(response)
-        input_tokens += used_in
-        output_tokens += used_out
-        last_text = _response_text(response.content)
-        approved, issues, error = _decode_review_response(last_text)
-        if not error:
-            return CodingReview(
-                text=last_text,
-                approved=approved,
-                issues=issues,
-                input_tokens=input_tokens,
-                output_tokens=output_tokens,
-                seconds=time.perf_counter() - started,
-            )
-        last_error = error
-        if attempt_index == 0:
-            continue
-    return CodingReview(
-        text=last_text,
-        approved=False,
-        error=f"[REVIEW_PROTOCOL] {last_error}",
-        input_tokens=input_tokens,
-        output_tokens=output_tokens,
-        seconds=time.perf_counter() - started,
-    )
-
-
-def generate_reviewed_code(
+def generate_code(
     goal: str,
     *,
     knowledge: str = "",
@@ -515,11 +395,7 @@ def generate_reviewed_code(
     llm: Any = None,
     on_event: Callable[[CodingEvent], None] | None = None,
 ) -> CodingPlan:
-    """Generate, review, and deterministically regenerate at most once.
-
-    Reviewer output is retained as structured audit evidence. Only static/probe
-    failures can trigger the bounded rewrite or block execution.
-    """
+    """Generate and deterministically regenerate at most once."""
     events: list[CodingEvent] = []
 
     def emit(kind: str, **data: Any) -> None:
@@ -558,20 +434,17 @@ def generate_reviewed_code(
     )
     common_blocks: list[ContextBlock | None] = [
         task_goal_block(goal),
-        _resolution_block(resolution),
         file_reference_block(file_section),
     ]
     observation_schema = _observation_schema_block(current_observation)
     contract_fixture = _observation_contract_fixture(current_observation)
-    review_blocks = [
+    blocks = [
         *common_blocks,
         knowledge_block("app_knowledge", knowledge),
         _location_block(current_site, current_title, current_url),
         observation_schema,
-    ]
-    blocks = [
-        *review_blocks,
         _fixture_schema_block(fixture),
+        _resolution_block(resolution),
     ]
 
     def generate(
@@ -586,12 +459,16 @@ def generate_reviewed_code(
             None,
             human_blocks=[*blocks, *(extra_blocks or [])],
             image_resize="none",
-            label="orchestrator.coding_reviewed.generate",
+            label="orchestrator.coding.generate",
             decision_text="",
         ))
         generated = _extract_source(response.content)
         input_tokens, output_tokens = _usage(response)
-        attempt = _evaluate_source(generated, fixture, contract_fixture)
+        attempt = _evaluate_source(
+            generated,
+            fixture,
+            contract_fixture,
+        )
         attempt.input_tokens = input_tokens
         attempt.output_tokens = output_tokens
         attempt.seconds = time.perf_counter() - started
@@ -606,34 +483,8 @@ def generate_reviewed_code(
         emit_validation(phase, attempt)
         return attempt
 
-    def review_attempt(
-        attempt: CodingAttempt,
-        *,
-        pass_index: int,
-    ) -> CodingReview:
-        emit("review_started", pass_index=pass_index)
-        result = _review_attempt(
-            llm=llm,
-            blocks=review_blocks,
-            source=attempt.source,
-            attempt=attempt,
-            fixture=fixture,
-        )
-        emit(
-            "review_completed",
-            pass_index=pass_index,
-            approved=result.approved,
-            source=attempt.source,
-            text=result.text,
-            error=result.error,
-            issues=[item.render() for item in result.issues],
-            seconds=result.seconds,
-        )
-        return result
-
     initial = generate(phase="initial")
     attempts = [initial]
-    review = review_attempt(initial, pass_index=1)
     current = initial
     regeneration_status = "not_needed"
     if not _attempt_executable(initial):
@@ -643,13 +494,11 @@ def generate_reviewed_code(
         )
         attempts.append(current)
         regeneration_status = "completed"
-        review = review_attempt(current, pass_index=2)
 
     plan = CodingPlan(
         goal=goal,
         source=current.source,
         attempts=attempts,
-        review=review,
         events=events,
     )
     emit(

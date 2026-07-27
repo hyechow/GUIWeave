@@ -214,7 +214,7 @@ def main(
             def _compile_program():
                 from gui_agent.core.orchestrator import (
                     CodingTerminalRenderer,
-                    generate_reviewed_code,
+                    generate_code,
                     program_from_plan,
                 )
                 from gui_agent.core.router import resolve_intent
@@ -232,7 +232,7 @@ def main(
                 orch_started = time.perf_counter()
                 orch_calls_before = get_llm_call_count()
                 orch_tokens_before = get_llm_token_usage()
-                plan = generate_reviewed_code(
+                plan = generate_code(
                     goal,
                     knowledge=knowledge.orchestrator_context(goal) if knowledge else "",
                     file_section=file_section,
@@ -244,15 +244,8 @@ def main(
                     on_event=CodingTerminalRenderer(),
                 )
                 orchestrator_context_reports.append({
-                    "kind": "coding_review",
+                    "kind": "coding_compile",
                     "source": plan.source,
-                    "approved": bool(plan.review and plan.review.approved),
-                    "issues": [
-                        issue.render()
-                        for issue in (plan.review.issues if plan.review else ())
-                    ],
-                    "error": plan.review.error if plan.review else "",
-                    "degraded": bool(plan.review and plan.review.unavailable),
                     "repaired": plan.repaired,
                     "events": [event.to_dict() for event in plan.events],
                 })

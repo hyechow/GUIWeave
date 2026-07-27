@@ -103,7 +103,12 @@ def _llm() -> ChatOpenAI:
     cfg = resolve_llm_config("supervisor.intent")
     if not cfg.model:
         cfg = resolve_llm_config("supervisor")
-    return ChatOpenAI(model=cfg.model, api_key=cfg.api_key, base_url=cfg.base_url)
+    return ChatOpenAI(
+        model=cfg.model,
+        api_key=cfg.api_key,
+        base_url=cfg.base_url,
+        temperature=0,
+    )
 
 
 def resolve_intent(

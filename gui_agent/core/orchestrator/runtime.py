@@ -1,4 +1,4 @@
-"""Production runtime bridge from reviewed Python to Statement executors."""
+"""Production runtime bridge from compiled Python to Statement executors."""
 
 from __future__ import annotations
 
@@ -35,14 +35,14 @@ from gui_agent.core.schemas import (
 from .sandbox import SAFE_BUILTINS, validate_code
 from .models import (
     UIStateHandle,
-    collection_postcondition,
     field_projection,
+    reach_postcondition,
     require_ui_state,
 )
 
 
 class CodingProgram(BaseModel):
-    """Reviewed restricted-Python planning artifact."""
+    """Compiled restricted-Python planning artifact."""
 
     model_config = ConfigDict(frozen=True, extra="forbid")
 
@@ -603,19 +603,16 @@ class CodingProgramRuntime:
             interaction_intent = None
             success_text = f"The GUI task is complete: {task}"
             if op == "reach":
-                success = collection_postcondition(payload.get("success"))
+                success = reach_postcondition(payload.get("success"))
                 if success is None:
-                    raise ValueError("ctx.reach success is not a collection postcondition")
+                    raise ValueError("ctx.reach success is not a structured state")
                 entity, required_fields = success["entity"], success["fields"]
                 interaction_intent = CollectionIntent(
                     phase="reach",
                     entity=entity,
                     required_fields=required_fields,
                 )
-                success_text = (
-                    f"One structural collection for {entity!r} is available "
-                    f"with fields {required_fields!r}"
-                )
+                success_text = f"The non-durable UI state is established: {success!r}"
             statement = Interact(
                 id=statement_id,
                 goal=task,

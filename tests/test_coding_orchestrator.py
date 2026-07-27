@@ -1,6 +1,5 @@
 from __future__ import annotations
 
-import json
 from types import SimpleNamespace
 
 import pytest
@@ -10,11 +9,10 @@ from gui_agent.core.orchestrator import (
     CodingProgram,
     CodingProgramRuntime,
     FixtureSpec,
-    generate_reviewed_code,
+    generate_code,
     program_from_plan,
 )
 from gui_agent.core.orchestrator.planner import (
-    _decode_review_response,
     _resolution_block,
 )
 from gui_agent.core.orchestrator.sandbox import (
@@ -93,6 +91,28 @@ def test_validate_code_accepts_normal_python_client_program() -> None:
     assert validate_code(GOOD_PROGRAM) == []
 
 
+def test_validate_code_accepts_structured_terminal_reach_state() -> None:
+    source = """
+def run(ctx):
+    ctx.reach(
+        "Show the requested report",
+        success={
+            "entity": "Sales Reports",
+            "report": "Orders",
+            "from": "05/01/2021",
+            "to": "03/31/2022",
+            "rendered": True,
+        },
+    )
+"""
+
+    assert validate_code(source) == []
+    result = execute_code(source, build_probe_fixture(source))
+    assert result.ok, result.error
+    assert result.trace[0].result.postcondition["report"] == "Orders"
+    assert result.trace[0].result.postcondition["rendered"] is True
+
+
 @pytest.mark.parametrize(
     "method",
     ["gui", "write", "lookup", "acquire", "interact", "compute"],
@@ -147,6 +167,18 @@ def test_validate_code_rejects_removed_planning_api(method: str) -> None:
             "    assert ctx, 'runtime exists'",
             "COMMIT_VALUES_REQUIRED",
         ),
+        (
+            "def run(ctx):\n"
+            "    state = ctx.reach('open', success={'entity': 'Records'})\n"
+            "    ctx.read(state, fields={'Options': 'list'})",
+            "FIELD_PROJECTION_CONTRACT",
+        ),
+        (
+            "def run(ctx):\n"
+            "    state = ctx.reach('show', success={'entity': 'Report'})\n"
+            "    return state",
+            "RETURN_UI_STATE",
+        ),
         ("def run(ctx):\n    assert True, 'always'", "BUSINESS_ASSERTION_CONSTANT"),
     ],
 )
@@ -177,6 +209,34 @@ def run(ctx):
     assert validate_code(source) == []
 
 
+def test_validate_code_allows_runtime_values_in_literal_reach_success() -> None:
+    source = """
+def run(ctx):
+    start = "05/01/2021"
+    ctx.reach(
+        "Show the requested report",
+        success={
+            "entity": "Sales Report",
+            "conditions": {"From": start, "rendered": True},
+        },
+    )
+"""
+
+    assert validate_code(source) == []
+
+
+def test_validate_code_allows_unassigned_terminal_reach() -> None:
+    source = """
+def run(ctx):
+    ctx.reach(
+        "Show the requested report",
+        success={"entity": "Sales Report", "rendered": True},
+    )
+"""
+
+    assert validate_code(source) == []
+
+
 def test_validate_code_allows_filter_fields_outside_return_projection() -> None:
     source = """
 def run(ctx):
@@ -190,6 +250,26 @@ def run(ctx):
 """
 
     assert validate_code(source) == []
+
+
+def test_dependent_reach_state_rejects_query_conditions() -> None:
+    source = """
+def run(ctx):
+    state = ctx.reach(
+        "Open records",
+        success={
+            "entity": "Records",
+            "filters": {"Status": "Complete"},
+        },
+    )
+    return ctx.query(state, entity="Records", fields=["Name"])
+"""
+
+    diagnostics = validate_code(source)
+    assert any(item.code == "REACH_DEPENDENT_STATE" for item in diagnostics)
+    result = execute_code(source, build_probe_fixture(source))
+    assert not result.ok
+    assert "REACH_DEPENDENT_STATE" in result.error
 
 
 def test_query_owns_fields_but_remains_bound_to_reach_entity() -> None:
@@ -214,7 +294,46 @@ def run(ctx):
         ),
         fixture,
     )
-    assert "collection state does not satisfy ctx.query" in mismatched.error
+    assert "STATE_ENTITY_MISMATCH" in mismatched.error
+
+
+def test_validate_code_rejects_literal_state_entity_mismatch() -> None:
+    source = """
+def run(ctx):
+    state = ctx.reach("Open orders", success={"entity": "Orders"})
+    return ctx.query(state, entity="Shipments", fields=["ID"])
+"""
+
+    assert any(
+        item.code == "STATE_ENTITY_MISMATCH"
+        for item in validate_code(source)
+    )
+
+
+def test_validate_code_tracks_reassigned_state_by_call_order() -> None:
+    source = """
+def run(ctx):
+    state = ctx.reach("Open customers", success={"entity": "Customers"})
+    customers = ctx.query(state, entity="Customers", fields=["Name"])
+    state = ctx.reach("Open orders", success={"entity": "Orders"})
+    orders = ctx.query(state, entity="Orders", fields=["ID"])
+    return [customers, orders]
+"""
+
+    assert validate_code(source) == []
+
+
+def test_validate_code_rejects_ui_state_as_commit_target() -> None:
+    source = """
+def run(ctx):
+    state = ctx.reach("Open form", success={"entity": "Form"})
+    ctx.commit("Save record", target=state, values={"Name": "Example"})
+"""
+
+    assert any(
+        item.code == "COMMIT_UI_STATE_TARGET"
+        for item in validate_code(source)
+    )
 
 
 def test_coding_runtime_normalizes_executor_terminal_phase() -> None:
@@ -242,6 +361,26 @@ def run(ctx):
 """
 
     assert validate_code(source) == []
+
+
+def test_validate_code_rejects_an_unused_reach_state() -> None:
+    source = """
+def run(ctx):
+    state = ctx.reach("Open the editor", success={"entity": "Record"})
+    ctx.commit("Create a record", values={"Name": "Example"})
+"""
+
+    assert any(item.code == "REACH_STATE_UNUSED" for item in validate_code(source))
+
+
+def test_validate_code_rejects_nonterminal_unassigned_reach() -> None:
+    source = """
+def run(ctx):
+    ctx.reach("Open form", success={"entity": "Records"})
+    ctx.commit("Create record", target=None, values={"Name": "Example"})
+"""
+
+    assert any(item.code == "REACH_NOT_TERMINAL" for item in validate_code(source))
 
 
 def test_projection_contract_tracks_query_rows() -> None:
@@ -384,6 +523,8 @@ def run(ctx):
 def test_probe_fixture_supports_typed_fields_and_structured_range_filters() -> None:
     source = """
 def run(ctx):
+    start_date = "01/01/2023"
+    end_date = "05/31/2023"
     state = ctx.reach("Open orders", success={"entity": "Orders"})
     rows = ctx.query(
         state,
@@ -392,8 +533,8 @@ def run(ctx):
         filters={
             "Status": "Complete",
             "Purchase Date": {
-                "from": "01/01/2023",
-                "to": "05/31/2023",
+                "from": start_date,
+                "to": end_date,
             },
         },
     )
@@ -581,6 +722,30 @@ def run(ctx):
 
     assert result.ok, result.error
     assert len(result.return_value) == 3
+
+
+def test_probe_fixture_accepts_dynamic_filter_field_not_in_projection() -> None:
+    source = """
+def run(ctx):
+    product_state = ctx.reach("Open products", success={"entity": "Products"})
+    products = ctx.query(
+        product_state,
+        entity="Products",
+        fields=["Name"],
+        filters={"Name": "Example"},
+    )
+    review_state = ctx.reach("Open reviews", success={"entity": "All Reviews"})
+    return ctx.query(
+        review_state,
+        entity="All Reviews",
+        fields=["Action"],
+        filters={"Product": products[0]["Name"]},
+    )
+"""
+
+    result = execute_code(source, build_probe_fixture(source))
+
+    assert result.ok, result.error
 
 
 def test_runtime_query_yields_lookup_then_constrain_then_acquire() -> None:
@@ -874,41 +1039,12 @@ def run(ctx):
     assert runtime.reply == '{"Rating": 3}'
 
 
-def test_review_response_contract() -> None:
-    assert _decode_review_response('{"approve": true, "issues": []}') == (
-        True,
-        (),
-        "",
-    )
-    approved, issues, error = _decode_review_response(json.dumps({
-        "approve": False,
-        "issues": [{"code": "WRONG_RESULT", "message": "x is not y"}],
-    }))
-    assert not approved
-    assert len(issues) == 1
-    assert issues[0].code == "WRONG_RESULT"
-    assert not error
-
-
-@pytest.mark.parametrize("payload", [
-    '{"approve": true, "issues": [{"code": "X", "message": "bad"}]}',
-    '{"approve": false, "issues": []}',
-])
-def test_review_response_rejects_conflicting_approval_and_issues(payload: str) -> None:
-    approved, issues, error = _decode_review_response(payload)
-
-    assert not approved
-    assert not issues
-    assert error
-
-
-def test_generate_reviewed_code_accepts_approved_program() -> None:
+def test_generate_code_accepts_validated_program() -> None:
     llm = _SequenceLLM(
         f"```python\n{GOOD_PROGRAM}\n```",
-        '{"approve": true, "issues": []}',
     )
 
-    plan = generate_reviewed_code(
+    plan = generate_code(
         "discount Sahara leggings by 20%",
         fixture=_fixture(),
         llm=llm,
@@ -921,64 +1057,67 @@ def test_generate_reviewed_code_accepts_approved_program() -> None:
         "generation_completed",
         "diagnostics",
         "probe",
-        "review_started",
-        "review_completed",
         "finalized",
     ]
 
 
-def test_reviewer_provider_error_retries_without_regenerating_program() -> None:
+def test_synthetic_cardinality_assertion_does_not_trigger_regeneration() -> None:
+    source = """
+def run(ctx):
+    state = ctx.reach("Open pages", success={"entity": "Pages"})
+    rows = ctx.query(
+        state,
+        entity="Pages",
+        fields=["Title"],
+        filters={"Title": "Home Page"},
+    )
+    assert len(rows) == 1, "one page is required"
+    ctx.commit("Update page title", target=rows[0], values={"Page Title": "New title"})
+"""
     llm = _SequenceLLM(
-        f"```python\n{GOOD_PROGRAM}\n```",
-        RuntimeError("temporary length limit"),
-        '{"approve": true, "issues": []}',
+        f"```python\n{source}\n```",
     )
 
-    plan = generate_reviewed_code(
-        "discount Sahara leggings by 20%",
-        fixture=_fixture(),
-        llm=llm,
-    )
+    plan = generate_code("update one page", llm=llm)
 
     assert plan.requirements_satisfied
     assert len(plan.attempts) == 1
-    assert len(llm.messages) == 3
+    assert plan.attempts[0].run is not None and plan.attempts[0].run.ok
 
 
-def test_reviewer_unavailable_is_not_a_negative_gate() -> None:
+def test_synthetic_business_value_error_does_not_trigger_regeneration() -> None:
+    source = """
+def run(ctx):
+    state = ctx.reach("Open products", success={"entity": "Products"})
+    rows = ctx.query(
+        state,
+        entity="Products",
+        fields=["Name", "Type"],
+        filters={"Name": "Example"},
+    )
+    owners = [row for row in rows if row["Type"] == "Configurable Product"]
+    if len(owners) != 1:
+        raise ValueError("one configurable owner is required")
+    ctx.commit("Update owner", target=owners[0], values={"Status": "Enabled"})
+"""
     llm = _SequenceLLM(
-        f"```python\n{GOOD_PROGRAM}\n```",
-        RuntimeError("provider unavailable"),
-        RuntimeError("provider unavailable"),
+        f"```python\n{source}\n```",
     )
 
-    plan = generate_reviewed_code(
-        "discount Sahara leggings by 20%",
-        fixture=_fixture(),
-        llm=llm,
-    )
+    plan = generate_code("update one configurable product", llm=llm)
 
     assert plan.requirements_satisfied
-    assert plan.review is not None and plan.review.unavailable
     assert len(plan.attempts) == 1
 
 
-def test_generate_reviewed_code_regenerates_whole_program_once() -> None:
+def test_generate_code_regenerates_whole_program_once() -> None:
     bad = GOOD_PROGRAM.replace('fields=["Price"]', 'fields=["Missing"]')
     llm = _SequenceLLM(
         f"```python\n{bad}\n```",
-        json.dumps({
-            "approve": False,
-            "issues": [{
-                "code": "MISSING_READ_FIELD",
-                "message": "Price must be read",
-            }],
-        }),
         f"```python\n{GOOD_PROGRAM}\n```",
-        '{"approve": true, "issues": []}',
     )
 
-    plan = generate_reviewed_code(
+    plan = generate_code(
         "discount Sahara leggings by 20%",
         fixture=_fixture(),
         llm=llm,
@@ -989,45 +1128,12 @@ def test_generate_reviewed_code_regenerates_whole_program_once() -> None:
     assert plan.repaired
     assert len(plan.attempts) == 2
     regeneration_prompt = "\n".join(
-        str(message.content) for message in llm.messages[2]
+        str(message.content) for message in llm.messages[1]
     )
     assert "complete replacement program" in regeneration_prompt
 
 
-def test_final_review_is_advisory_after_bounded_regeneration() -> None:
-    invalid = GOOD_PROGRAM.replace(
-        'fields=["Price"]',
-        'fields=["Missing"]',
-    )
-    llm = _SequenceLLM(
-        f"```python\n{invalid}\n```",
-        json.dumps({
-            "approve": False,
-            "issues": [{"code": "RECHECK", "message": "regenerate once"}],
-        }),
-        f"```python\n{GOOD_PROGRAM}\n```",
-        json.dumps({
-            "approve": False,
-            "issues": [{
-                "code": "FALSE_POSITIVE",
-                "message": "probabilistic audit disagrees",
-            }],
-        }),
-    )
-
-    plan = generate_reviewed_code(
-        "discount Sahara leggings by 20%",
-        fixture=_fixture(),
-        llm=llm,
-    )
-
-    assert plan.executable
-    assert plan.requirements_satisfied
-    assert plan.review is not None and not plan.review.approved
-    assert len(plan.attempts) == 2
-
-
-def test_static_diagnostics_override_incorrect_reviewer_approval() -> None:
+def test_static_diagnostics_trigger_one_regeneration() -> None:
     source = """
 def run(ctx):
     orders_state = ctx.reach(
@@ -1049,12 +1155,10 @@ def run(ctx):
     )
     llm = _SequenceLLM(
         f"```python\n{source}\n```",
-        '{"approve": true, "issues": []}',
         f"```python\n{repaired}\n```",
-        '{"approve": true, "issues": []}',
     )
 
-    plan = generate_reviewed_code(
+    plan = generate_code(
         "count orders",
         fixture=FixtureSpec(lookups={"orders": [{"ID": "1"}]}),
         llm=llm,
@@ -1062,28 +1166,20 @@ def run(ctx):
 
     assert plan.requirements_satisfied
     assert plan.source.strip() == repaired.strip()
-    assert len(llm.messages) == 4
+    assert len(llm.messages) == 2
 
 
-def test_reviewer_rejection_requires_valid_regenerated_program() -> None:
+def test_regeneration_still_requires_a_valid_program() -> None:
     invalid = GOOD_PROGRAM.replace(
         'fields=["Price"]',
         'fields=["Missing"]',
     )
     llm = _SequenceLLM(
         f"```python\n{invalid}\n```",
-        json.dumps({
-            "approve": False,
-            "issues": [{"code": "WRONG_RESULT", "message": "result is wrong"}],
-        }),
         "def run(ctx):\n    return missing",
-        json.dumps({
-            "approve": False,
-            "issues": [{"code": "UNDEFINED", "message": "missing is undefined"}],
-        }),
     )
 
-    plan = generate_reviewed_code(
+    plan = generate_code(
         "discount Sahara leggings by 20%",
         fixture=_fixture(),
         llm=llm,
@@ -1094,25 +1190,24 @@ def test_reviewer_rejection_requires_valid_regenerated_program() -> None:
         program_from_plan(plan)
 
 
-def test_reviewer_receives_knowledge_and_new_api_schema() -> None:
+def test_generator_receives_knowledge_and_api_schema() -> None:
     llm = _SequenceLLM(
         f"```python\n{GOOD_PROGRAM}\n```",
-        '{"approve": true, "issues": []}',
     )
 
-    generate_reviewed_code(
+    generate_code(
         "discount Sahara leggings",
         knowledge="Product Price is available on the product detail page.",
         fixture=_fixture(),
         llm=llm,
     )
 
-    review_text = "\n".join(
+    generation_text = "\n".join(
         str(message.content)
-        for message in llm.messages[1]
+        for message in llm.messages[0]
     )
-    assert "Product Price is available" in review_text
-    assert "collection sources" in review_text
+    assert "Product Price is available" in generation_text
+    assert "collection sources" in generation_text
 
 
 def test_router_search_key_is_an_explicit_literal_query_branch() -> None:
@@ -1122,10 +1217,15 @@ def test_router_search_key_is_an_explicit_literal_query_branch() -> None:
     )]))
 
     assert block is not None
-    assert "not a required standalone collection" in block.content
-    assert "query the full mention first" in block.content
-    assert "strict literal queries" in block.content
+    assert "not a source entity" in block.content
+    assert "full mention 'Aurora jacket'" in block.content
+    assert "only if that result is empty" in block.content
+    assert "strictly query 'Aurora'" in block.content
+    assert "cardinality" not in block.content
+    assert "singular mention never implies" in block.content
     assert "match_mode" not in block.content
+    assert "'type'" not in block.content
+    assert "'reason'" not in block.content
 
 
 def test_program_owns_full_then_short_phrase_query_branch() -> None:

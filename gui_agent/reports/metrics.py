@@ -12,6 +12,8 @@ from gui_agent.core.config import model_price
 _MODULE_CFG: dict[str, str] = {
     "transition": "supervisor",
     "orchestrator.coding": "orchestrator",
+    "orchestrator.coding.generate": "orchestrator",
+    # Legacy report compatibility.
     "orchestrator.coding_reviewed.generate": "orchestrator",
     "orchestrator.coding_reviewed.review": "orchestrator",
     "action_policy": "action_policy",

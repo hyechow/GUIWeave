@@ -1,6 +1,6 @@
-"""Offline regression harness for the reviewed-Python orchestrator.
+"""Offline regression harness for the Python orchestrator.
 
-White-box mode exposes task fixtures to generation and review for mechanism
+White-box mode exposes task fixtures to generation for mechanism
 regression. Blind mode withholds them until the final source is frozen, then
 uses them only for independent contract and execution evaluation.
 """
@@ -26,7 +26,7 @@ load_dotenv(PROJECT_ROOT / ".env")
 
 from gui_agent.core.orchestrator import (  # noqa: E402
     FixtureSpec,
-    generate_reviewed_code,
+    generate_code,
 )
 from gui_agent.core.orchestrator.sandbox import (  # noqa: E402
     execute_code,
@@ -697,7 +697,7 @@ def _coding_sample(
     coding_eval_mode: str = "whitebox",
 ) -> dict[str, Any]:
     fixture = fixture_for_task(task["task_id"])
-    plan = generate_reviewed_code(
+    plan = generate_code(
         task["intent"],
         knowledge=knowledge,
         resolution=resolution,
@@ -755,7 +755,6 @@ def _coding_sample(
         )
     if not plan.requirements_satisfied:
         failures.append("PROMPT_REQUIREMENTS_NOT_SATISFIED")
-    reviews = [plan.review] if plan.review is not None else []
     return {
         "ok": not failures,
         "executable": executable,
@@ -765,27 +764,16 @@ def _coding_sample(
             if coding_eval_mode == "whitebox"
             else "blind_generalization"
         ),
-        "review_fixture_visible": coding_eval_mode == "whitebox",
+        "fixture_visible": coding_eval_mode == "whitebox",
         "hidden_evaluation": hidden,
         "first_executable": first_executable,
         "failures": failures,
-        "calls": 1 + len(reviews),
+        "calls": len(plan.attempts),
         "repairs": int(plan.repaired),
-        "input_tokens": (
-            sum(attempt.input_tokens for attempt in plan.attempts)
-            + sum(review.input_tokens for review in reviews)
-        ),
-        "output_tokens": (
-            sum(attempt.output_tokens for attempt in plan.attempts)
-            + sum(review.output_tokens for review in reviews)
-        ),
-        "seconds": round(
-            sum(attempt.seconds for attempt in plan.attempts)
-            + sum(review.seconds for review in reviews),
-            3,
-        ),
+        "input_tokens": sum(attempt.input_tokens for attempt in plan.attempts),
+        "output_tokens": sum(attempt.output_tokens for attempt in plan.attempts),
+        "seconds": round(sum(attempt.seconds for attempt in plan.attempts), 3),
         "source": plan.source,
-        "review": asdict(plan.review) if plan.review is not None else None,
         "attempts": [
             {
                 "source": attempt.source,

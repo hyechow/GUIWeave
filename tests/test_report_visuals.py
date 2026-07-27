@@ -61,7 +61,7 @@ def test_module_io_renders_summary_collapsed_schema_and_tokens():
     assert "transition" in html
 
 
-def test_coding_orchestrator_renders_reviewed_python_plan():
+def test_coding_orchestrator_renders_compiled_python_plan():
     html = _render_program_section({
         "program": {
             "kind": "coding",
@@ -74,15 +74,14 @@ def test_coding_orchestrator_renders_reviewed_python_plan():
             ),
         },
         "context_reports": [{
-            "kind": "coding_review",
-            "approved": False,
+            "kind": "coding_compile",
             "repaired": True,
         }],
         "timings": {"orchestrator.coding": 1.5},
     })
 
     assert "Coding Orchestrator · Python 执行计划" in html
-    assert "Review · 已重生成" in html
+    assert "Compile · 已重生成" in html
     assert "ctx.query" in html
     assert "coding-source-wrap" in html
     assert "完整 Python 源码" in html
@@ -173,8 +172,7 @@ def test_coding_report_groups_statements_by_public_ctx_call():
                 },
             }],
             "context_reports": [{
-                "kind": "coding_review",
-                "approved": True,
+                "kind": "coding_compile",
                 "repaired": False,
             }],
         },

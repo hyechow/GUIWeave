@@ -1,6 +1,6 @@
-"""Public surface for the sole reviewed-Python orchestrator."""
+"""Public surface for the sole Python orchestrator."""
 
-from .planner import generate_reviewed_code
+from .planner import generate_code
 from .runtime import (
     CodingCompileError,
     CodingProgram,
@@ -16,6 +16,6 @@ __all__ = [
     "CodingProgramRuntime",
     "CodingTerminalRenderer",
     "FixtureSpec",
-    "generate_reviewed_code",
+    "generate_code",
     "program_from_plan",
 ]

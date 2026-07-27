@@ -1104,7 +1104,7 @@ def main() -> int:
                             CodingCompileError,
                             CodingProgram,
                             CodingTerminalRenderer,
-                            generate_reviewed_code,
+                            generate_code,
                             program_from_plan,
                         )
                         from gui_agent.core.supervisor.statement.model_io import resolve_file_refs
@@ -1122,7 +1122,7 @@ def main() -> int:
                         orch_tokens_before = get_llm_token_usage()
                         compile_error: Exception | None = None
                         try:
-                            plan = generate_reviewed_code(
+                            plan = generate_code(
                                 intent,
                                 knowledge=(
                                     knowledge.orchestrator_context(intent)
@@ -1139,23 +1139,8 @@ def main() -> int:
                                 ),
                             )
                             orchestrator_context_reports.append({
-                                "kind": "coding_review",
+                                "kind": "coding_compile",
                                 "source": plan.source,
-                                "approved": bool(
-                                    plan.review and plan.review.approved
-                                ),
-                                "issues": [
-                                    issue.render()
-                                    for issue in (
-                                        plan.review.issues if plan.review else ()
-                                    )
-                                ],
-                                "error": (
-                                    plan.review.error if plan.review else ""
-                                ),
-                                "degraded": bool(
-                                    plan.review and plan.review.unavailable
-                                ),
                                 "repaired": plan.repaired,
                                 "events": [
                                     event.to_dict() for event in plan.events

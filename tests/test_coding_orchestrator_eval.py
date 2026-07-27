@@ -3,7 +3,6 @@ from __future__ import annotations
 from gui_agent.core.orchestrator.models import (
     CodingAttempt,
     CodingPlan,
-    CodingReview,
     CodingRunResult,
 )
 from scripts.coding_orchestrator_eval import (
@@ -14,7 +13,7 @@ from scripts.coding_orchestrator_eval import (
 )
 
 
-def test_reviewed_sample_uses_prompt_review_not_frozen_task_answer(
+def test_whitebox_sample_uses_fixture_during_generation(
     monkeypatch,
 ) -> None:
     plan = CodingPlan(
@@ -24,10 +23,9 @@ def test_reviewed_sample_uses_prompt_review_not_frozen_task_answer(
             source="def run(ctx):\n    assert ctx, 'runtime exists'",
             run=CodingRunResult(ok=True),
         )],
-        review=CodingReview(text='{"approve": true, "issues": []}', approved=True),
     )
     monkeypatch.setattr(
-        "scripts.coding_orchestrator_eval.generate_reviewed_code",
+        "scripts.coding_orchestrator_eval.generate_code",
         lambda *args, **kwargs: plan,
     )
 
@@ -40,9 +38,8 @@ def test_reviewed_sample_uses_prompt_review_not_frozen_task_answer(
 
     assert sample["ok"]
     assert sample["requirements_satisfied"]
-    assert plan.review is not None
     assert sample["evaluation_mode"] == "whitebox_regression"
-    assert sample["review_fixture_visible"]
+    assert sample["fixture_visible"]
     assert sample["hidden_evaluation"] is None
 
 
@@ -65,7 +62,6 @@ def test_blind_sample_hides_fixture_until_final_evaluation(monkeypatch) -> None:
             source=source,
             run=CodingRunResult(ok=True),
         )],
-        review=CodingReview(text='{"approve": true, "issues": []}', approved=True),
     )
 
     def generate(*args, **kwargs):
@@ -73,7 +69,7 @@ def test_blind_sample_hides_fixture_until_final_evaluation(monkeypatch) -> None:
         return plan
 
     monkeypatch.setattr(
-        "scripts.coding_orchestrator_eval.generate_reviewed_code",
+        "scripts.coding_orchestrator_eval.generate_code",
         generate,
     )
 
@@ -86,7 +82,7 @@ def test_blind_sample_hides_fixture_until_final_evaluation(monkeypatch) -> None:
 
     assert captured["fixture"] is None
     assert sample["evaluation_mode"] == "blind_generalization"
-    assert not sample["review_fixture_visible"]
+    assert not sample["fixture_visible"]
     assert sample["hidden_evaluation"] is not None
     assert sample["failures"] == [], sample["hidden_evaluation"]
 

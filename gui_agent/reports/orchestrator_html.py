@@ -149,7 +149,7 @@ def _estimate_tokens(chars: int) -> int:
     return max(1, (chars + 3) // 4)
 
 
-def has_reviewed_python_program(orchestrator: dict | None) -> bool:
+def has_coding_program(orchestrator: dict | None) -> bool:
     if not orchestrator:
         return False
     prog = orchestrator.get("program") or {}
@@ -168,11 +168,11 @@ def _coding_statement_id(record: dict) -> str:
 
 
 def _render_program_section(orchestrator: dict | None) -> str:
-    """Render the reviewed Python plan before its executed statements."""
+    """Render the compiled Python plan before its executed statements."""
     if not orchestrator:
         return ""
     prog0 = orchestrator.get("program") or {}
-    if not has_reviewed_python_program(orchestrator):
+    if not has_coding_program(orchestrator):
         return ""
     return _render_coding_program_shell(orchestrator, prog0)
 
@@ -874,7 +874,7 @@ def coding_source_line_by_call_id(orchestrator: dict | None) -> dict[str, int]:
 
 
 def _render_coding_program_shell(orchestrator: dict, program: dict) -> str:
-    """Coding plan shell: goal, review, annotated Python source."""
+    """Coding plan shell: goal, compile status, annotated Python source."""
     source = str(program.get("source") or "").strip()
     if not source:
         return ""
@@ -884,31 +884,34 @@ def _render_coding_program_shell(orchestrator: dict, program: dict) -> str:
         '<span class="prog-input-arrow">↓ Statement 卡片（数据 + UI 交互）</span></div>'
         if goal else ""
     )
-    review = next(
+    compile_report = next(
         (
             report for report in reversed(orchestrator.get("context_reports") or [])
-            if isinstance(report, dict) and report.get("kind") == "coding_review"
+            if isinstance(report, dict)
+            and report.get("kind") in {"coding_compile", "coding_review"}
         ),
         {},
     )
-    if review.get("degraded"):
-        review_label = (
-            "Review · 不可用 · 程序已重生成"
-            if review.get("repaired")
-            else "Review · 不可用 · 已采用静态/探测"
+    if compile_report.get("kind") == "coding_compile":
+        compile_label = (
+            "Compile · 已重生成"
+            if compile_report.get("repaired")
+            else "Compile · 通过"
         )
-    elif review.get("repaired"):
-        review_label = "Review · 已重生成"
-    elif review.get("approved"):
-        review_label = "Review · 通过"
-    elif review:
-        review_label = "Review · 审计意见"
+    elif compile_report.get("degraded"):
+        compile_label = "Review · 不可用"
+    elif compile_report.get("repaired"):
+        compile_label = "Review · 已重生成"
+    elif compile_report.get("approved"):
+        compile_label = "Review · 通过"
+    elif compile_report:
+        compile_label = "Review · 审计意见"
     else:
-        review_label = "Review · 未记录"
+        compile_label = "Compile · 未记录"
     runtime_n = len(_coding_runtime_calls(orchestrator))
-    review_html = (
+    compile_html = (
         '<div class="compat-row">'
-        f'<span class="compat-chip">{_safe(review_label)}</span>'
+        f'<span class="compat-chip">{_safe(compile_label)}</span>'
         f'<span class="coding-note">'
         f'源码高亮 {runtime_n} 次运行调用'
         f'</span>'
@@ -929,7 +932,7 @@ def _render_coding_program_shell(orchestrator: dict, program: dict) -> str:
         '<span class="statement-badge statement-badge-default">python</span>'
         f'{_render_orchestrator_metrics(orchestrator)}'
         '</div>'
-        f'<div class="prog-body">{input_html}{review_html}{source_html}'
+        f'<div class="prog-body">{input_html}{compile_html}{source_html}'
         f'{_render_orchestrator_context_reports(orchestrator)}'
         '</div>'
         '</div>'

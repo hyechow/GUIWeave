@@ -118,14 +118,14 @@ def run_chat_turn(
     """Thin wrapper around run_agent_loop with silent stdio, HUD and live_state spinner."""
     context_path = log_dir / "context.json"
     from gui_agent.core.orchestrator import (
-        generate_reviewed_code,
+        generate_code,
         program_from_plan,
     )
     from gui_agent.core.router import resolve_intent
 
     reports: list[dict] = []
     resolution = resolve_intent(goal)
-    plan = generate_reviewed_code(
+    plan = generate_code(
         goal,
         knowledge=orchestrator_knowledge,
         current_url=current_url,
@@ -134,14 +134,8 @@ def run_chat_turn(
         resolution=resolution,
     )
     reports.append({
-        "kind": "coding_review",
+        "kind": "coding_compile",
         "source": plan.source,
-        "approved": bool(plan.review and plan.review.approved),
-        "issues": [
-            issue.render() for issue in (plan.review.issues if plan.review else ())
-        ],
-        "error": plan.review.error if plan.review else "",
-        "degraded": bool(plan.review and plan.review.unavailable),
         "repaired": plan.repaired,
         "events": [event.to_dict() for event in plan.events],
     })

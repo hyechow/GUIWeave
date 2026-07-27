@@ -9,8 +9,6 @@ from typing import Any
 FIELD_VALUE_TYPES = frozenset(
     {"auto", "text", "number", "money", "datetime", "boolean"}
 )
-
-
 def field_projection(
     value: list[str] | dict[str, str],
 ) -> tuple[list[str], dict[str, str]]:
@@ -66,12 +64,11 @@ class UIStateHandle:
         }
 
 
-def collection_postcondition(value: Any) -> dict[str, Any] | None:
-    """Validate the one public ``ctx.reach`` success shape."""
+def reach_postcondition(value: Any) -> dict[str, Any] | None:
+    """Validate and preserve one public ``ctx.reach`` success state."""
     if (
         not isinstance(value, dict)
         or "entity" not in value
-        or not set(value) <= {"entity", "fields"}
     ):
         return None
     entity, fields = value["entity"], value.get("fields", [])
@@ -82,7 +79,7 @@ def collection_postcondition(value: Any) -> dict[str, Any] | None:
         or any(not isinstance(item, str) or not item.strip() for item in fields)
     ):
         return None
-    return {"entity": entity, "fields": list(fields)}
+    return {**value, "entity": entity, "fields": list(fields)}
 
 
 def require_ui_state(
@@ -96,6 +93,12 @@ def require_ui_state(
             "ctx.query/ctx.read require the UIStateHandle returned by ctx.reach"
         )
     postcondition = value.postcondition
+    extra = set(postcondition) - {"entity", "fields"}
+    if extra and postcondition.get("kind") != "target_fields_available":
+        raise ValueError(
+            "ctx.query/ctx.read require a structural ctx.reach state; "
+            f"move conditions {sorted(extra)!r} to the dependent operation"
+        )
     if entity and postcondition.get("entity") != entity:
         raise ValueError("ctx.reach collection state does not satisfy ctx.query")
     return value
@@ -137,21 +140,6 @@ class CodingAttempt:
 
 
 @dataclass(frozen=True)
-class CodingReview:
-    text: str
-    approved: bool
-    issues: tuple[CodeDiagnostic, ...] = ()
-    error: str = ""
-    input_tokens: int = 0
-    output_tokens: int = 0
-    seconds: float = 0.0
-
-    @property
-    def unavailable(self) -> bool:
-        return self.error.startswith(("[REVIEW_IO]", "[REVIEW_PROTOCOL]"))
-
-
-@dataclass(frozen=True)
 class CodingEvent:
     kind: str
     data: dict[str, Any] = field(default_factory=dict)
@@ -165,7 +153,6 @@ class CodingPlan:
     goal: str
     source: str
     attempts: list[CodingAttempt] = field(default_factory=list)
-    review: CodingReview | None = None
     events: list[CodingEvent] = field(default_factory=list)
 
     @property
@@ -182,5 +169,4 @@ class CodingPlan:
 
     @property
     def requirements_satisfied(self) -> bool:
-        # Reviewer output is audit evidence, never an execution gate.
         return self.executable

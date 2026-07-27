@@ -21,7 +21,7 @@ from .orchestrator_html import (
     _render_program_section,
     coding_plan_expansion_by_sid,
     coding_source_line_by_call_id,
-    has_reviewed_python_program,
+    has_coding_program,
 )
 from .prompt_html import _render_module_io_html
 
@@ -1341,7 +1341,7 @@ def generate_html(data: ReportData, grid: bool = False) -> str:
         data = f'<div id="{cid}" class="checklist-data" style="display:none">{"".join(rows)}</div>'
         return badge, data
 
-    coding_mode = has_reviewed_python_program(data.orchestrator)
+    coding_mode = has_coding_program(data.orchestrator)
     # Coding mode: index run_log by instance/statement id so each card can show a data strip.
     coding_run_by_key: dict[str, dict] = {}
     coding_plan_by_sid: dict[str, dict] = {}

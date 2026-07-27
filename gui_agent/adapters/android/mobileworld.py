@@ -303,7 +303,7 @@ def main() -> int:
                         cur_site = knowledge.app_name if knowledge is not None else ""
 
                         from gui_agent.core.orchestrator import (
-                            generate_reviewed_code,
+                            generate_code,
                             program_from_plan,
                         )
                         from gui_agent.core.supervisor.statement.model_io import resolve_file_refs
@@ -314,7 +314,7 @@ def main() -> int:
                         if resolution.entities:
                             print("[mobileworld] intent: " + "; ".join(
                                 f"{e.mention}→{e.type}/{e.match_mode}/key={e.search_key}" for e in resolution.entities))
-                        plan = generate_reviewed_code(
+                        plan = generate_code(
                             intent,
                             knowledge=knowledge.orchestrator_context(intent) if knowledge else "",
                             file_section=file_section,
@@ -324,19 +324,8 @@ def main() -> int:
                             resolution=resolution,
                         )
                         orchestrator_context_reports.append({
-                            "kind": "coding_review",
+                            "kind": "coding_compile",
                             "source": plan.source,
-                            "approved": bool(plan.review and plan.review.approved),
-                            "issues": [
-                                issue.render()
-                                for issue in (
-                                    plan.review.issues if plan.review else ()
-                                )
-                            ],
-                            "error": plan.review.error if plan.review else "",
-                            "degraded": bool(
-                                plan.review and plan.review.unavailable
-                            ),
                             "repaired": plan.repaired,
                             "events": [
                                 event.to_dict() for event in plan.events
