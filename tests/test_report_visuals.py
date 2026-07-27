@@ -4,6 +4,7 @@ from gui_agent.reports.builder import RunnerReportBuilder
 from gui_agent.reports.builder import _group_steps_by_statement
 from gui_agent.reports.models import ReportData, ReportStep
 from gui_agent.reports.orchestrator_html import (
+    _infer_coding_op,
     _match_public_calls_to_plan_sites,
     _render_non_ui_detail,
     _render_program_section,
@@ -11,6 +12,11 @@ from gui_agent.reports.orchestrator_html import (
 )
 from gui_agent.reports.prompt_html import _render_module_io_html
 from gui_agent.reports.runner_html import generate_html, _render_thumb_time, _turn_elapsed_seconds
+
+
+def test_report_normalizes_legacy_ctx_api_names():
+    assert _infer_coding_op(coding_op="gui") == "reach"
+    assert _infer_coding_op(coding_op="write") == "commit"
 
 
 def test_module_io_renders_summary_collapsed_schema_and_tokens():
@@ -62,7 +68,7 @@ def test_coding_orchestrator_renders_reviewed_python_plan():
             "goal": "return the top record",
             "source": (
                 'def run(ctx):\n'
-                '    state = ctx.gui("Open items", success={"entity": "Items"})\n'
+                '    state = ctx.reach("Open items", success={"entity": "Items"})\n'
                 '    rows = ctx.query(state, entity="Items", fields=["id"])\n'
                 '    return rows[0]\n'
             ),
@@ -114,7 +120,7 @@ def test_coding_report_groups_statements_by_public_ctx_call():
                 "kind": "coding",
                 "goal": "open orders",
                 "source": (
-                    'def run(ctx):\n    state = ctx.gui("Open orders", '
+                    'def run(ctx):\n    state = ctx.reach("Open orders", '
                     'success={"entity": "Orders", '
                     '"fields": ["Status", "Purchase Date"]})\n'
                     '    return ctx.query(state, entity="Orders", '
@@ -127,8 +133,8 @@ def test_coding_report_groups_statements_by_public_ctx_call():
                 "executor": "interact",
                 "name": "go_to",
                 "instance_id": "i1:c1",
-                "coding_call_id": "1:gui",
-                "coding_op": "gui",
+                "coding_call_id": "1:reach",
+                "coding_op": "reach",
                 "coding_payload": {
                     "goal": "Open orders",
                     "success": {
@@ -265,7 +271,7 @@ def test_coding_report_groups_statements_by_public_ctx_call():
     assert "overflow-x: auto" not in code_css
     assert 'href="#ms-c1"' in html
     assert "coding-stmt-data" in html
-    assert "ctx.gui" in html
+    assert "ctx.reach" in html
     assert "success=collection" in html
     assert "ui:1" in html
     assert "Orders List" in html or "Orders" in html
@@ -281,7 +287,7 @@ def test_coding_report_groups_statements_by_public_ctx_call():
     c1 = html.split('id="ms-c1"', 1)[1].split('id="ms-c2"', 1)[0]
     assert "coding-call-sc" in c1
     assert "验收：" not in c1
-    assert "ctx.gui" in c1
+    assert "ctx.reach" in c1
     assert "success=collection" in c1
     assert "ui:1" in c1
     assert "Orders List" in c1 or "Orders" in c1

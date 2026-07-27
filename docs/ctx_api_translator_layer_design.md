@@ -2,7 +2,7 @@
 
 ## 问题
 
-task-108 的旧程序把筛选、分页和采集都压进一个 GUI Statement。`ctx.gui` 没有返回值，
+task-108 的旧程序把筛选、分页和采集都压进一个 GUI Statement。旧导航 API 没有返回值，
 后续 `ctx.query/read` 只能依赖进程级“当前页面”；Statement 的 success 又只是 goal 的
 同义改写。结果是 executor 既没有可机械验收的局部终点，也没有向下一阶段交接状态的值流。
 
@@ -15,7 +15,7 @@ task-108 的旧程序把筛选、分页和采集都压进一个 GUI Statement。
 公共 API 只保留一条显式状态链：
 
 ```python
-state = ctx.gui(
+state = ctx.reach(
     "Open orders",
     success={
         "entity": "Orders",
@@ -30,7 +30,7 @@ rows = ctx.query(
 )
 ```
 
-- `ctx.gui(...) -> UIStateHandle`：只建立下游所需的结构化 collection。
+- `ctx.reach(...) -> UIStateHandle`：只建立下游所需的结构化 collection。
 - `ctx.query(state, ...)`：必须消费 Runtime 签发的状态，固定降解为
   `locate_collection -> constrain_collection -> acquire`。
 - `ctx.read(state, ...)`：必须消费状态；指定 target 时先 focus，focus 成功后签发派生状态。
@@ -69,8 +69,8 @@ Program/RunRecord，不复制进局部 contract，避免单个 Statement 持续�
 
 ## 静态与 Runtime 边界
 
-静态校验只要求 `ctx.gui.success` 是包含 `entity` 与 `fields` 的 literal，并检查 API 签名。
-实际执行和 probe fixture 统一验证 handle 类型、gui/query 的 entity/fields 对接和
+静态校验只要求 `ctx.reach.success` 是包含 `entity` 与 `fields` 的 literal，并检查 API 签名。
+实际执行和 probe fixture 统一验证 handle 类型、reach/query 的 entity/fields 对接和
 scope 来源，不再维护状态注册表，也不在 AST 层另建一套 def-use 分析。旧
 `lookup_request/constrain_request` schema 迁移不再保留，避免同时维护两套契约。
 
@@ -81,7 +81,7 @@ scope 来源，不再维护状态注册表，也不在 AST 层另建一套 def-u
 - 最小回放 `replay/fixtures/browser/100005_gui_handoff/` 证明 collection headers
   可以直接完成 `reach_collection` 并把 state 交给 query。
 - `logs/gui_agent/webarena/browser/20260726_112445`：report 展示
-  `gui -> ui:1 -> locate -> constrain -> acquire`；WebArena score 为 `1.0`，
+  `reach -> ui:1 -> locate -> constrain -> acquire`；WebArena score 为 `1.0`，
   Jan–May 结果为 `12 / 7 / 5 / 9 / 5`。
 
 核心 prompt 和 gate 不包含 WebArena、Magento 或 task 编号知识；运行日志只作为回放证据，

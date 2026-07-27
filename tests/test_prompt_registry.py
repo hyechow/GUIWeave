@@ -63,12 +63,19 @@ def test_render_rejects_raw_prompts():
 def test_coding_contract_exposes_only_public_ctx_api():
     prompt = load_prompt_text("task.orchestrator.coding")
 
-    for method in ("ctx.gui", "ctx.query", "ctx.read", "ctx.write"):
+    for method in ("ctx.reach", "ctx.query", "ctx.read", "ctx.commit"):
         assert method in prompt
     assert "filters={}" in prompt
     assert "match={" not in prompt
     assert "match_mode" not in prompt
-    for retired in ("ctx.lookup", "ctx.acquire", "ctx.interact", "redecompose"):
+    for retired in (
+        "ctx.gui",
+        "ctx.write",
+        "ctx.lookup",
+        "ctx.acquire",
+        "ctx.interact",
+        "redecompose",
+    ):
         assert retired not in prompt
 
 

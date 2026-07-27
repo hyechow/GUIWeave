@@ -67,7 +67,7 @@ class UIStateHandle:
 
 
 def collection_postcondition(value: Any) -> dict[str, Any] | None:
-    """Validate the one public ``ctx.gui`` success shape."""
+    """Validate the one public ``ctx.reach`` success shape."""
     if (
         not isinstance(value, dict)
         or "entity" not in value
@@ -93,11 +93,11 @@ def require_ui_state(
 ) -> UIStateHandle:
     if not isinstance(value, UIStateHandle):
         raise ValueError(
-            "ctx.query/ctx.read require the UIStateHandle returned by ctx.gui"
+            "ctx.query/ctx.read require the UIStateHandle returned by ctx.reach"
         )
     postcondition = value.postcondition
     if entity and postcondition.get("entity") != entity:
-        raise ValueError("ctx.gui collection state does not satisfy ctx.query")
+        raise ValueError("ctx.reach collection state does not satisfy ctx.query")
     return value
 
 

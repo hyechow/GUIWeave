@@ -148,7 +148,7 @@ def _observation_schema_block(observation: Any) -> ContextBlock | None:
             "This is an interface schema, not task-result data. A collection source names the "
             "business scope to establish, and its fields are the exact semantic names available "
             "to query from that source only while the program remains in this current context. "
-            "After ctx.gui changes application context, do not reuse these collection fields; "
+            "After ctx.reach changes application context, do not reuse these collection fields; "
             "use the selected application knowledge for the destination source. Runtime code must "
             "still query and compute from the actual rows."
         ),

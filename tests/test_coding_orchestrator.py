@@ -35,7 +35,7 @@ from gui_agent.core.schemas import (
 
 GOOD_PROGRAM = """
 def run(ctx):
-    products_state = ctx.gui(
+    products_state = ctx.reach(
         "Open the Sahara leggings collection",
         success={
             "entity": "Sahara leggings",
@@ -53,7 +53,7 @@ def run(ctx):
         detail = ctx.read(products_state, target=product, fields=["Price"])
         new_price = round(detail["Price"] * 0.8, 2)
         assert new_price < detail["Price"], "price must decrease"
-        ctx.write(
+        ctx.commit(
             "Update the product price",
             target=product,
             values={"Price": new_price},
@@ -93,7 +93,10 @@ def test_validate_code_accepts_normal_python_client_program() -> None:
     assert validate_code(GOOD_PROGRAM) == []
 
 
-@pytest.mark.parametrize("method", ["lookup", "acquire", "interact", "compute"])
+@pytest.mark.parametrize(
+    "method",
+    ["gui", "write", "lookup", "acquire", "interact", "compute"],
+)
 def test_validate_code_rejects_removed_planning_api(method: str) -> None:
     source = f"def run(ctx):\n    ctx.{method}('x')\n    assert ctx, 'runtime exists'"
 
@@ -109,40 +112,40 @@ def test_validate_code_rejects_removed_planning_api(method: str) -> None:
         ("def run(ctx):\n    ctx.query('x')\n    assert ctx, 'runtime exists'", "CTX_SIGNATURE"),
         (
             "def run(ctx):\n"
-            "    ctx.write('save', values={'tags': {'a'}})\n"
+            "    ctx.commit('save', values={'tags': {'a'}})\n"
             "    assert ctx, 'runtime exists'",
             "CTX_JSON_VALUE",
         ),
         (
             "def run(ctx):\n"
-            "    ctx.gui('open', values={'Status': 'Complete'})\n"
+            "    ctx.reach('open', values={'Status': 'Complete'})\n"
             "    assert ctx, 'runtime exists'",
             "CTX_SIGNATURE",
         ),
         (
             "def run(ctx):\n"
-            "    ctx.gui('open')\n"
+            "    ctx.reach('open')\n"
             "    assert ctx, 'runtime exists'",
             "CTX_SIGNATURE",
         ),
         (
             "def run(ctx):\n"
             "    success = {'entity': 'Records', 'fields': ['ID']}\n"
-            "    ctx.gui('open records', success=success)\n"
+            "    ctx.reach('open records', success=success)\n"
             "    assert ctx, 'runtime exists'",
-            "GUI_SUCCESS_CONTRACT",
+            "REACH_SUCCESS_CONTRACT",
         ),
         (
             "def run(ctx):\n"
-            "    ctx.gui('open records', success={'kind': 'done', 'name': 'Records'})\n"
+            "    ctx.reach('open records', success={'kind': 'done', 'name': 'Records'})\n"
             "    assert ctx, 'runtime exists'",
-            "GUI_SUCCESS_CONTRACT",
+            "REACH_SUCCESS_CONTRACT",
         ),
         (
             "def run(ctx):\n"
-            "    ctx.write('save', values={})\n"
+            "    ctx.commit('save', values={})\n"
             "    assert ctx, 'runtime exists'",
-            "WRITE_VALUES_REQUIRED",
+            "COMMIT_VALUES_REQUIRED",
         ),
         ("def run(ctx):\n    assert True, 'always'", "BUSINESS_ASSERTION_CONSTANT"),
     ],
@@ -159,7 +162,7 @@ def run(ctx):
     def newest(rows):
         return sorted(rows, key=lambda row: datetime.fromisoformat(row["Date"]), reverse=True)
 
-    orders_state = ctx.gui(
+    orders_state = ctx.reach(
         "Open orders",
         success={
             "entity": "Orders",
@@ -177,7 +180,7 @@ def run(ctx):
 def test_validate_code_allows_filter_fields_outside_return_projection() -> None:
     source = """
 def run(ctx):
-    state = ctx.gui("Open records", success={
+    state = ctx.reach("Open records", success={
         "entity": "Records", "fields": ["Name"],
     })
     return ctx.query(
@@ -189,10 +192,10 @@ def run(ctx):
     assert validate_code(source) == []
 
 
-def test_query_owns_fields_but_remains_bound_to_gui_entity() -> None:
+def test_query_owns_fields_but_remains_bound_to_reach_entity() -> None:
     source = """
 def run(ctx):
-    state = ctx.gui(
+    state = ctx.reach(
         "Open records",
         success={"entity": "Records", "fields": ["ID"]},
     )
@@ -227,7 +230,7 @@ def test_coding_runtime_normalizes_executor_terminal_phase() -> None:
 def test_validate_code_does_not_require_an_unnecessary_assertion() -> None:
     source = """
 def run(ctx):
-    orders_state = ctx.gui(
+    orders_state = ctx.reach(
         "Open orders",
         success={
             "entity": "Orders",
@@ -285,7 +288,7 @@ def run(ctx):
     assert any(item.code == "MOCK_FIELD_UNAVAILABLE" for item in diagnostics)
 
 
-def test_fixture_contract_requires_gui_context_for_absent_query_source() -> None:
+def test_fixture_contract_requires_reach_context_for_absent_query_source() -> None:
     source = """
 def run(ctx):
     rows = ctx.query(ui_state, entity="Orders", fields=["ID"])
@@ -305,7 +308,7 @@ def run(ctx):
 def test_fixture_contract_keeps_collection_and_detail_sources_separate() -> None:
     source = """
 def run(ctx):
-    state = ctx.gui("Open reviews", success={
+    state = ctx.reach("Open reviews", success={
         "entity": "Reviews", "fields": ["Title"],
     })
     detail = ctx.read(state, target={"Title": "review"}, fields=["Nickname"])
@@ -324,7 +327,7 @@ def run(ctx):
 def test_execute_code_filters_normalizes_and_returns_query_rows() -> None:
     source = """
 def run(ctx):
-    orders_state = ctx.gui(
+    orders_state = ctx.reach(
         "Open orders",
         success={
             "entity": "Orders",
@@ -373,7 +376,7 @@ def run(ctx):
         row["Purchase Date"].year == 2023
         for row in result.return_value
     )
-    assert result.trace[0].op == "gui"
+    assert result.trace[0].op == "reach"
     assert result.trace[1].op == "query"
     assert result.trace[1].kwargs["filters"] == {"Status": "Complete"}
 
@@ -381,7 +384,7 @@ def run(ctx):
 def test_probe_fixture_supports_typed_fields_and_structured_range_filters() -> None:
     source = """
 def run(ctx):
-    state = ctx.gui("Open orders", success={"entity": "Orders"})
+    state = ctx.reach("Open orders", success={"entity": "Orders"})
     rows = ctx.query(
         state,
         entity="Orders",
@@ -406,7 +409,7 @@ def run(ctx):
 def test_fixture_query_does_not_fuzz_or_correct_literal_filter_phrase() -> None:
     source = """
 def run(ctx):
-    state = ctx.gui("Open products", success={"entity": "Products"})
+    state = ctx.reach("Open products", success={"entity": "Products"})
     return ctx.query(
         state,
         entity="Products",
@@ -424,7 +427,7 @@ def run(ctx):
     assert result.return_value == []
 
 
-def test_execute_code_write_updates_fixture_state() -> None:
+def test_execute_code_commit_updates_fixture_state() -> None:
     result = execute_code(GOOD_PROGRAM, _fixture())
 
     assert result.ok, result.error
@@ -433,17 +436,17 @@ def test_execute_code_write_updates_fixture_state() -> None:
     assert result.writes[0].target_id == "p1"
     assert result.writes[0].required_values == {"Price": 80.0}
     assert [event.op for event in result.trace] == [
-        "gui",
+        "reach",
         "query",
         "read",
-        "write",
+        "commit",
     ]
 
 
 def test_fixture_query_normalizes_unique_phone_alias() -> None:
     source = """
 def run(ctx):
-    customer_state = ctx.gui(
+    customer_state = ctx.reach(
         "Open the customer collection",
         success={
             "entity": "+1 205 881 2302",
@@ -471,7 +474,7 @@ def run(ctx):
 def test_fixture_semantic_fields_ignore_case_spaces_and_underscores() -> None:
     source = """
 def run(ctx):
-    orders_state = ctx.gui(
+    orders_state = ctx.reach(
         "Open orders",
         success={
             "entity": "Orders",
@@ -496,10 +499,10 @@ def run(ctx):
     assert result.return_value == 12.5
 
 
-def test_fixture_preserves_gui_write_evidence_when_later_code_fails() -> None:
+def test_fixture_preserves_reach_commit_evidence_when_later_code_fails() -> None:
     source = """
 def run(ctx):
-    products_state = ctx.gui(
+    products_state = ctx.reach(
         "Open products",
         success={
             "entity": "Products",
@@ -507,7 +510,7 @@ def run(ctx):
         },
     )
     product = ctx.query(products_state, entity="Products", fields=["id"])[0]
-    ctx.write("Update price", target=product, values={"Price": 80})
+    ctx.commit("Update price", target=product, values={"Price": 80})
     assert product["missing"], "later check fails"
 """
     fixture = FixtureSpec(
@@ -525,7 +528,7 @@ def run(ctx):
 def test_probe_fixture_supports_query_filters_and_numeric_fields() -> None:
     source = """
 def run(ctx):
-    orders_state = ctx.gui(
+    orders_state = ctx.reach(
         "Open orders",
         success={
             "entity": "Orders",
@@ -552,7 +555,7 @@ def run(ctx):
 def test_probe_read_target_survives_query_field_merge_and_dynamic_filter() -> None:
     source = """
 def run(ctx):
-    state = ctx.gui("Open reviews", success={"entity": "Reviews"})
+    state = ctx.reach("Open reviews", success={"entity": "Reviews"})
     product_filter = {"Product": "Olivia jacket"}
     products = ctx.query(
         state,
@@ -583,7 +586,7 @@ def run(ctx):
 def test_runtime_query_yields_lookup_then_constrain_then_acquire() -> None:
     source = """
 def run(ctx):
-    orders_state = ctx.gui(
+    orders_state = ctx.reach(
         "Open orders",
         success={
             "entity": "Orders",
@@ -608,7 +611,7 @@ def run(ctx):
 """
     runtime = CodingProgramRuntime.start(CodingProgram(goal="sum orders", source=source))
 
-    # Public ctx.gui produces the verified state capability consumed by ctx.query.
+    # Public ctx.reach produces the verified state capability consumed by ctx.query.
     assert isinstance(runtime.current.statement, Interact)
     assert isinstance(
         runtime.current.statement.interaction_intent,
@@ -690,7 +693,7 @@ def run(ctx):
 def test_runtime_query_without_predicates_skips_constrain() -> None:
     source = """
 def run(ctx):
-    state = ctx.gui("Open terms", success={"entity": "Terms"})
+    state = ctx.reach("Open terms", success={"entity": "Terms"})
     return ctx.query(state, entity="Terms", fields=["Term", "Uses"])
 """
     runtime = CodingProgramRuntime.start(CodingProgram(goal="list terms", source=source))
@@ -720,7 +723,7 @@ def run(ctx):
 
     assert runtime.finished
     assert [record.coding_op for record in runtime.interpreter.run_log] == [
-        "gui",
+        "reach",
         "lookup",
         "acquire",
     ]
@@ -729,7 +732,7 @@ def run(ctx):
 def test_runtime_program_explicitly_branches_from_full_to_short_phrase() -> None:
     source = """
 def run(ctx):
-    state = ctx.gui("Open products", success={"entity": "Products"})
+    state = ctx.reach("Open products", success={"entity": "Products"})
     rows = ctx.query(
         state, entity="Products", fields=["Name"],
         filters={"Name": "Aurora jacket"},
@@ -778,10 +781,10 @@ def run(ctx):
     assert "Aurora jacket waterproof" in runtime.reply
 
 
-def test_runtime_write_infers_internal_statement_contract() -> None:
+def test_runtime_commit_infers_internal_statement_contract() -> None:
     source = """
 def run(ctx):
-    ctx.write("Update order status", target={"ID": "1"}, values={"Status": "Complete"})
+    ctx.commit("Update order status", target={"ID": "1"}, values={"Status": "Complete"})
     assert ctx, "runtime exists"
 """
     runtime = CodingProgramRuntime.start(CodingProgram(goal="update order", source=source))
@@ -797,7 +800,7 @@ def run(ctx):
 def test_runtime_read_target_remains_one_public_call_with_internal_focus() -> None:
     source = """
 def run(ctx):
-    order_state = ctx.gui(
+    order_state = ctx.reach(
         "Open orders",
         success={
             "entity": "Orders",
@@ -848,7 +851,7 @@ def run(ctx):
 def test_runtime_read_uses_unique_row_url_as_deterministic_transport() -> None:
     source = """
 def run(ctx):
-    state = ctx.gui("Open reviews", success={"entity": "Reviews"})
+    state = ctx.reach("Open reviews", success={"entity": "Reviews"})
     return ctx.read(
         state,
         target={"ID": "351", "Action_url": "https://example.test/reviews/351"},
@@ -1027,7 +1030,7 @@ def test_final_review_is_advisory_after_bounded_regeneration() -> None:
 def test_static_diagnostics_override_incorrect_reviewer_approval() -> None:
     source = """
 def run(ctx):
-    orders_state = ctx.gui(
+    orders_state = ctx.reach(
         "Open orders",
         success={
             "entity": "Orders",
@@ -1128,7 +1131,7 @@ def test_router_search_key_is_an_explicit_literal_query_branch() -> None:
 def test_program_owns_full_then_short_phrase_query_branch() -> None:
     source = """
 def run(ctx):
-    state = ctx.gui("Open products", success={
+    state = ctx.reach("Open products", success={
         "entity": "Products", "fields": ["Name"],
     })
     rows = ctx.query(
@@ -1163,7 +1166,7 @@ def run(ctx):
 def test_query_rejects_invented_match_mode_argument() -> None:
     source = """
 def run(ctx):
-    state = ctx.gui("Open products", success={
+    state = ctx.reach("Open products", success={
         "entity": "Products",
     })
     return ctx.query(

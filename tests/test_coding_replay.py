@@ -21,7 +21,7 @@ FIXTURE = (
 SOURCES = {
     42: """
 def run(ctx):
-    state = ctx.gui("Open search terms", success={"entity": "Search Terms"})
+    state = ctx.reach("Open search terms", success={"entity": "Search Terms"})
     rows = ctx.query(
         state,
         entity="Search Terms",
@@ -34,7 +34,7 @@ def run(ctx):
 """,
     63: """
 def run(ctx):
-    state = ctx.gui("Open orders", success={"entity": "Orders"})
+    state = ctx.reach("Open orders", success={"entity": "Orders"})
     rows = ctx.query(
         state,
         entity="Orders",
@@ -54,7 +54,7 @@ def run(ctx):
 from datetime import datetime
 
 def run(ctx):
-    state = ctx.gui("Open orders", success={"entity": "Orders"})
+    state = ctx.reach("Open orders", success={"entity": "Orders"})
     rows = ctx.query(
         state,
         entity="Orders",
@@ -72,7 +72,7 @@ def run(ctx):
 """,
     113: """
 def run(ctx):
-    state = ctx.gui("Open all reviews", success={"entity": "All Reviews"})
+    state = ctx.reach("Open all reviews", success={"entity": "All Reviews"})
     rows = ctx.query(
         state,
         entity="All Reviews",
@@ -97,7 +97,7 @@ def run(ctx):
 """,
     193: """
 def run(ctx):
-    state = ctx.gui("Open orders", success={"entity": "Orders"})
+    state = ctx.reach("Open orders", success={"entity": "Orders"})
     rows = ctx.query(
         state,
         entity="Orders",

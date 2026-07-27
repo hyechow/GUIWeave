@@ -30,7 +30,7 @@ GUIWeave: Goal ─► reviewed Python ─► CodingProgramRuntime ─► Program
 
 ```python
 def run(ctx):
-    state = ctx.gui(
+    state = ctx.reach(
         "Open orders",
         success={"entity": "Orders", "fields": ["Status", "Purchase Date"]},
     )
@@ -77,7 +77,7 @@ flowchart TD
     Planner --> Prog[Reviewed CodingProgram]
     Prog --> RT[CodingProgramRuntime]
 
-    RT --> API[ctx.gui / ctx.query / ctx.read / ctx.command]
+    RT --> API[ctx.reach / ctx.query / ctx.read / ctx.commit / ctx.command]
     API --> SE[Statement executor]
     SE --> SO
     SO --> RT

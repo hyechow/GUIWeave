@@ -81,15 +81,15 @@ def _report_coding_payload(op: str, payload: dict[str, Any]) -> dict[str, Any]:
         return value.token if isinstance(value, UIStateHandle) else ""
 
     # Prefer the structured request keys that the report data panel already understands.
-    if op == "gui":
+    if op == "reach":
         return {
             "goal": payload.get("goal"),
             "success": payload.get("success"),
             **({"target": payload.get("target")} if payload.get("target") is not None else {}),
         }
-    if op == "write":
+    if op == "commit":
         return {
-            "task": payload.get("task"),
+            "goal": payload.get("goal"),
             **(dict(payload.get("inputs") or {}) if isinstance(payload.get("inputs"), dict) else {}),
             "values": payload.get("values") or {},
         }
@@ -348,7 +348,7 @@ class _RuntimeContext:
             field_types=field_types,
         )
 
-    def gui(
+    def reach(
         self,
         goal: str,
         *,
@@ -356,9 +356,9 @@ class _RuntimeContext:
         target: Any = None,
     ) -> UIStateHandle:
         return self._request(
-            "gui",
-            call_id=self._call_id("gui"),
-            plan="gui",
+            "reach",
+            call_id=self._call_id("reach"),
+            plan="reach",
             plan_step=1,
             plan_steps=1,
             goal=goal,
@@ -366,21 +366,21 @@ class _RuntimeContext:
             target=target,
         )
 
-    def write(
+    def commit(
         self,
-        task: str,
+        goal: str,
         *,
         target: Any = None,
         values: dict[str, Any],
     ) -> None:
         inputs = {"target": target} if target is not None else {}
         self._request(
-            "write",
-            call_id=self._call_id("write"),
-            plan="write",
+            "commit",
+            call_id=self._call_id("commit"),
+            plan="commit",
             plan_step=1,
             plan_steps=1,
-            task=task,
+            goal=goal,
             inputs=inputs,
             values=values,
         )
@@ -597,15 +597,15 @@ class CodingProgramRuntime:
                 },
                 args={"ui_state_token": state.token},
             )
-        if op in {"gui", "write"}:
-            task = str(payload.get("goal") if op == "gui" else payload["task"])
-            values = dict(payload.get("values") or {}) if op == "write" else {}
+        if op in {"reach", "commit"}:
+            task = str(payload["goal"])
+            values = dict(payload.get("values") or {}) if op == "commit" else {}
             interaction_intent = None
             success_text = f"The GUI task is complete: {task}"
-            if op == "gui":
+            if op == "reach":
                 success = collection_postcondition(payload.get("success"))
                 if success is None:
-                    raise ValueError("ctx.gui success is not a collection postcondition")
+                    raise ValueError("ctx.reach success is not a collection postcondition")
                 entity, required_fields = success["entity"], success["fields"]
                 interaction_intent = CollectionIntent(
                     phase="reach",
@@ -633,7 +633,7 @@ class CodingProgramRuntime:
                 task_goal=self.program.goal,
                 inputs=(
                     {"target": payload.get("target")}
-                    if op == "gui" and payload.get("target") is not None
+                    if op == "reach" and payload.get("target") is not None
                     else dict(payload.get("inputs") or {})
                 ),
             )
@@ -804,7 +804,7 @@ class CodingProgramRuntime:
         coding_payload = dict(self.current_coding_payload)
         coding_call_id = self.current_coding_call_id
         issued_ui_state: UIStateHandle | None = None
-        if outcome.is_completed and coding_op in {"gui", "focus"}:
+        if outcome.is_completed and coding_op in {"reach", "focus"}:
             if coding_op == "focus":
                 postcondition = {
                     "kind": "target_fields_available",

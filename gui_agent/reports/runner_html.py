@@ -1555,8 +1555,8 @@ def generate_html(data: ReportData, grid: bool = False) -> str:
                 if isinstance(run_entry.get("coding_payload"), dict) else None,
                 inputs=inputs if isinstance(inputs, dict) else {},
             )
-            if op == "gui" and not flat.get("task") and page.statement_name:
-                flat = {**flat, "task": page.statement_name}
+            if op == "reach" and not flat.get("goal") and page.statement_name:
+                flat = {**flat, "goal": page.statement_name}
             call_label = _coding_call_label(op, flat) if op else ""
             plan_meta = (
                 coding_plan_by_sid.get(page.statement_id)

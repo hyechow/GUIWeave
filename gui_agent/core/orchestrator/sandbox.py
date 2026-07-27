@@ -37,15 +37,15 @@ from .models import (
 )
 
 
-CTX_METHODS = frozenset({"gui", "query", "read", "write", "command"})
+CTX_METHODS = frozenset({"reach", "query", "read", "commit", "command"})
 CTX_SIGNATURES = {
     "query": (
         ("state", "entity", "fields", "filters", "coverage"),
         {"state", "entity", "fields"},
     ),
     "read": (("state", "target", "fields"), {"state", "fields"}),
-    "gui": (("goal", "success", "target"), {"goal", "success"}),
-    "write": (("task", "target", "values"), {"task", "values"}),
+    "reach": (("goal", "success", "target"), {"goal", "success"}),
+    "commit": (("goal", "target", "values"), {"goal", "values"}),
     "command": (("capability",), {"capability"}),
 }
 SAFE_MODULES = {
@@ -327,7 +327,7 @@ class _SafetyVisitor(ast.NodeVisitor):
                     "CTX_SIGNATURE",
                     f"ctx.{method} has unexpected arguments {unexpected}",
                 ))
-        if method in {"gui", "write"}:
+        if method in {"reach", "commit"}:
             self._check_world_contract(node, method)
 
     def _check_world_contract(self, node: ast.Call, method: str) -> None:
@@ -336,7 +336,7 @@ class _SafetyVisitor(ast.NodeVisitor):
             for keyword in node.keywords
             if keyword.arg is not None
         }
-        text_argument_name = "goal" if method == "gui" else "task"
+        text_argument_name = "goal"
         task = _call_argument(node, text_argument_name, 0)
         if (
             isinstance(task, ast.Constant) and not isinstance(task.value, str)
@@ -348,7 +348,7 @@ class _SafetyVisitor(ast.NodeVisitor):
                 f"ctx.{method} {text_argument_name} must be text",
             ))
         for argument_name in (
-            ("target", "values") if method == "write" else ("success", "target")
+            ("target", "values") if method == "commit" else ("success", "target")
         ):
             argument = keywords.get(argument_name)
             if argument is None:
@@ -376,25 +376,25 @@ class _SafetyVisitor(ast.NodeVisitor):
                     ),
                 ))
         success = keywords.get("success")
-        if method == "gui" and success is not None and (
+        if method == "reach" and success is not None and (
             not isinstance(success, ast.Dict)
             or collection_postcondition(_literal_value(success)) is None
         ):
             self.diagnostics.append(_diag(
                 success,
-                "GUI_SUCCESS_CONTRACT",
-                "ctx.gui success must be a literal with nonempty entity and fields",
+                "REACH_SUCCESS_CONTRACT",
+                "ctx.reach success must be a literal with nonempty entity and fields",
             ))
         values = keywords.get("values")
-        if method == "write" and (
+        if method == "commit" and (
             values is None
             or isinstance(values, ast.Dict) and not values.keys
             or isinstance(values, ast.Constant) and values.value is None
         ):
             self.diagnostics.append(_diag(
                 node,
-                "WRITE_VALUES_REQUIRED",
-                "ctx.write requires nonempty business values",
+                "COMMIT_VALUES_REQUIRED",
+                "ctx.commit requires nonempty business values",
             ))
 
 def _literal_value(node: ast.AST | None) -> Any:
@@ -901,10 +901,10 @@ def validate_fixture_contract(
         for detail in fixture.reads.values()
         for field_name in detail
     }
-    gui_lines = [
+    reach_lines = [
         node.lineno
         for node in ast.walk(tree)
-        if isinstance(node, ast.Call) and _ctx_method(node) == "gui"
+        if isinstance(node, ast.Call) and _ctx_method(node) == "reach"
     ]
     diagnostics: list[CodeDiagnostic] = []
     for node in ast.walk(tree):
@@ -931,13 +931,13 @@ def validate_fixture_contract(
                 for row in rows
             ]
             if not matching_rows:
-                if not any(line < node.lineno for line in gui_lines):
+                if not any(line < node.lineno for line in reach_lines):
                     diagnostics.append(_diag(
                         node,
                         "QUERY_CONTEXT_REQUIRED",
                         (
                             "query source is absent from the current observation; "
-                            "establish its application context with ctx.gui first"
+                            "establish its application context with ctx.reach first"
                         ),
                     ))
                 continue
@@ -1191,7 +1191,7 @@ def validate_runtime_dataflow(source: str) -> list[CodeDiagnostic]:
             (
                 f"runtime-derived value {variable!r} is assigned but never used; when the task "
                 "requests a relative change, consume it in the requested calculation and pass "
-                "the result to ctx.write values; otherwise delete the entire unnecessary read "
+                "the result to ctx.commit values; otherwise delete the entire unnecessary read "
                 "assignment—leaving the assignment unchanged never fixes this diagnostic"
             ),
         ))
@@ -1418,7 +1418,7 @@ class _FixtureContext:
         resolved = list(resolved_by_key.values())
         return resolved[0] if len(resolved) == 1 else (None, None)
 
-    def gui(
+    def reach(
         self,
         goal: str,
         *,
@@ -1427,7 +1427,7 @@ class _FixtureContext:
     ) -> UIStateHandle:
         normalized = collection_postcondition(success)
         if normalized is None:
-            raise ValueError("ctx.gui success is not a collection postcondition")
+            raise ValueError("ctx.reach success is not a collection postcondition")
         state = UIStateHandle(
             token=f"fixture-ui:{len(self.trace) + 1}",
             postcondition=normalized,
@@ -1441,14 +1441,14 @@ class _FixtureContext:
         )
         return state
 
-    def write(
+    def commit(
         self,
-        task: str,
+        goal: str,
         *,
         target: Any = None,
         values: dict[str, Any],
     ) -> None:
-        self._world_task(task, target=target, values=values)
+        self._world_task(goal, target=target, values=values)
 
     def _world_task(
         self,
@@ -1491,7 +1491,7 @@ class _FixtureContext:
                 applied=True,
             ))
         self.trace.append(TraceEvent(
-            "write" if desired_values else "gui",
+            "commit" if desired_values else "reach",
             (task,),
             {
                 "target": copy.deepcopy(inputs.get("target")),

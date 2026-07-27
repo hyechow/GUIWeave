@@ -185,7 +185,9 @@ def _infer_coding_op(
 ) -> str:
     """Resolve ctx.* op from structured runtime fields."""
     if coding_op:
-        return str(coding_op)
+        return {"gui": "reach", "write": "commit"}.get(
+            str(coding_op), str(coding_op),
+        )
     inputs = inputs if isinstance(inputs, dict) else {}
     if "lookup_request" in inputs:
         return "lookup"
@@ -199,8 +201,8 @@ def _infer_coding_op(
         return "command"
     if executor == "interact":
         if isinstance(inputs.get("values"), dict) and inputs.get("values"):
-            return "write"
-        return "gui"
+            return "commit"
+        return "reach"
     return executor or ""
 
 
@@ -228,7 +230,7 @@ def _coding_call_label(op: str, payload: dict | None = None) -> str:
     payload = payload if isinstance(payload, dict) else {}
     if not op:
         return "ctx.?"
-    if op == "gui":
+    if op == "reach":
         goal = payload.get("goal") or payload.get("task") or ""
         success = payload.get("success")
         target = payload.get("target")
@@ -251,13 +253,13 @@ def _coding_call_label(op: str, payload: dict | None = None) -> str:
         )
         if goal:
             return (
-                f"ctx.gui({goal!r}{success_text}{target_text})"
+                f"ctx.reach({goal!r}{success_text}{target_text})"
                 f"{result_text}"
             )
-        return "ctx.gui(…)"
-    if op == "write":
-        task = payload.get("task") or ""
-        return f"ctx.write({task!r}, …)" if task else "ctx.write(…)"
+        return "ctx.reach(…)"
+    if op == "commit":
+        goal = payload.get("goal") or payload.get("task") or ""
+        return f"ctx.commit({goal!r}, …)" if goal else "ctx.commit(…)"
     if op == "lookup":
         state = payload.get("state")
         entity = payload.get("entity") or "?"
@@ -307,14 +309,14 @@ def _coding_call_label(op: str, payload: dict | None = None) -> str:
 
 
 _CODING_CTX_PLAN_OPS = frozenset({
-    "gui", "write", "query", "lookup", "constrain", "focus",
+    "reach", "commit", "gui", "write", "query", "lookup", "constrain", "focus",
     "acquire", "read", "command", "interact",
 })
 
 # Plan-level ctx.* call → ordered runtime ops it may expand into.
 _PLAN_RUNTIME_CONSUME: dict[str, tuple[str, ...]] = {
-    "gui": ("gui",),
-    "write": ("write",),
+    "reach": ("reach",),
+    "commit": ("commit",),
     "query": ("lookup", "constrain", "acquire"),
     "lookup": ("lookup",),
     "constrain": ("constrain",),
@@ -322,7 +324,7 @@ _PLAN_RUNTIME_CONSUME: dict[str, tuple[str, ...]] = {
     "read": ("focus", "read"),
     "focus": ("focus",),
     "command": ("command",),
-    "interact": ("gui", "write"),
+    "interact": ("reach", "commit"),
 }
 
 
@@ -345,7 +347,9 @@ def _coding_plan_call_sites(source: str) -> list[dict]:
         ):
             continue
         sites.append({
-            "op": func.attr,
+            "op": {"gui": "reach", "write": "commit"}.get(
+                func.attr, func.attr,
+            ),
             "lineno": int(getattr(node, "lineno", 0) or 0),
             "end_lineno": int(
                 getattr(node, "end_lineno", None)
@@ -375,8 +379,8 @@ def _coding_runtime_calls(orchestrator: dict) -> list[dict]:
             executor=str(entry.get("executor") or ""),
             inputs=payload,
         )
-        if op == "gui" and not payload.get("task"):
-            payload = {**payload, "task": name}
+        if op == "reach" and not payload.get("goal"):
+            payload = {**payload, "goal": name}
         plan = str(entry.get("coding_plan") or "")
         plan_step = int(entry.get("coding_plan_step") or 0)
         plan_steps = int(entry.get("coding_plan_steps") or 0)
@@ -466,8 +470,8 @@ def _match_runtime_to_plan_sites(
         # Consume a contiguous prefix of allowed runtime ops (macro expansion).
         while queue and queue[0].get("op") in allowed:
             matched.append(queue.pop(0))
-            # gui/write/command: exactly one
-            if plan_op in {"gui", "write", "command", "lookup", "constrain", "acquire", "focus"}:
+            # reach/commit/command: exactly one
+            if plan_op in {"reach", "commit", "command", "lookup", "constrain", "acquire", "focus"}:
                 break
             # query: stop after acquire if present, else keep taking its ordered phases
             if plan_op == "query" and matched[-1].get("op") == "acquire":
@@ -547,7 +551,7 @@ def _enrich_runtime_plan_expansion(
         if call_id:
             grouped_by_call.setdefault(call_id, []).append(call)
     for grouped in grouped_by_call.values():
-        plan = str(grouped[0].get("plan_op") or grouped[0].get("op") or "gui")
+        plan = str(grouped[0].get("plan_op") or grouped[0].get("op") or "reach")
         _apply_plan_expansion_to_group(plan, grouped)
 
     plan_sites = _coding_plan_call_sites(source) if source else []
@@ -562,7 +566,7 @@ def _enrich_runtime_plan_expansion(
             plan = str(call.get("plan_op") or call.get("op") or "")
             if plan == "lookup" or call.get("op") == "lookup":
                 plan = str(call.get("plan_op") or "query")
-            _apply_plan_expansion_to_group(plan or "gui", [call])
+            _apply_plan_expansion_to_group(plan or "reach", [call])
     elif ungrouped:
         # No source: group by recorded plan tags, else query phases by order.
         i = 0
@@ -598,7 +602,7 @@ def _enrich_runtime_plan_expansion(
                 continue
             else:
                 _apply_plan_expansion_to_group(
-                    str(call.get("plan_op") or call.get("op") or "gui"), [call],
+                    str(call.get("plan_op") or call.get("op") or "reach"), [call],
                 )
             i += 1
 
@@ -961,10 +965,10 @@ def _build_statement_call_params(
             call.get("inputs") if isinstance(call.get("inputs"), dict) else {}
         ),
     )
-    if op == "gui" and not flat.get("task"):
-        task = name or str(call.get("goal") or "")
-        if task:
-            flat = {**flat, "task": task}
+    if op == "reach" and not flat.get("goal"):
+        goal = name or str(call.get("goal") or "")
+        if goal:
+            flat = {**flat, "goal": goal}
 
     params: dict = {}
     if op:
@@ -1053,8 +1057,8 @@ def _coding_details(title: str, body: str, *, plan: bool = False) -> str:
 
 # Preferred field order for ctx payload rows — matches common call signatures.
 _CTX_PAYLOAD_KEY_ORDER: dict[str, tuple[str, ...]] = {
-    "gui": ("task", "target"),
-    "write": ("task", "target", "values"),
+    "reach": ("goal", "target"),
+    "commit": ("goal", "target", "values"),
     "lookup": ("entity", "field", "fallback", "filters", "required_fields", "fields"),
     "constrain": ("entity", "filters"),
     "acquire": ("entity", "fields", "coverage", "scope"),

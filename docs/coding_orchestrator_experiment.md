@@ -323,7 +323,7 @@ detail = ctx.read(products_state, target=product, fields=["price"])
 new_price = round(detail["price"] * 0.8, 2)
 assert new_price < detail["price"], "discount must reduce the price"
 
-ctx.write(
+ctx.commit(
     "更新商品价格",
     target=product,
     values={"price": new_price},

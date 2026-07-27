@@ -46,7 +46,7 @@ grounded-effect veto.
   missing predicates and extra predicates are not success.
 - **acquire**: materialize rows from the resolved collection handle.
 
-`ctx.gui` lowers to **`reach_collection`** using the downstream entity and required fields, then
+`ctx.reach` lowers to **`reach_collection`** using the downstream entity and required fields, then
 hands control back to Program as soon as that typed state exists. It may navigate or authenticate,
 but cannot filter, paginate, collect, or mutate.
 
