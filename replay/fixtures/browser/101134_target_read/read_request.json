@@ -1,0 +1,25 @@
+{
+  "target": {
+    "ID": "1182",
+    "Name": "Eos V-Neck Hoodie-S-Blue",
+    "Type": "Simple Product",
+    "SKU": "WH11-S-Blue",
+    "Quantity": 3,
+    "Action_url": "http://192.168.1.102:7780/admin/catalog/product/edit/id/1182/"
+  },
+  "fields": {
+    "Material": "text"
+  },
+  "first_viewport_fields": [
+    "Enable Product",
+    "Attribute Set",
+    "Product Name",
+    "SKU",
+    "Price",
+    "Tax Class",
+    "Quantity",
+    "Stock Status",
+    "Weight",
+    "Categories"
+  ]
+}

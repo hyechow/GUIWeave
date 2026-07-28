@@ -119,7 +119,7 @@ def _report_coding_payload(op: str, payload: dict[str, Any]) -> dict[str, Any]:
             "coverage": payload.get("coverage") or "complete",
             "requested_filters": payload.get("requested_filters") or {},
         }
-    if op == "focus":
+    if op in {"open_target", "focus", "restore_source"}:
         return {
             "state": _state_token(payload.get("state")),
             "target": payload.get("target"),
@@ -325,28 +325,55 @@ class _RuntimeContext:
             raise TypeError("ctx.read requires fields")
         field_names, field_types = field_projection(fields)
         call_id = self._call_id("read")
-        steps = 2 if target is not None else 1
+        source_state = state
+        target_url = _unique_target_url(target)
+        steps = 4 if target_url else 3 if target is not None else 1
         if target is not None:
+            if target_url:
+                state = self._request(
+                    "open_target",
+                    call_id=call_id,
+                    plan="read",
+                    plan_step=1,
+                    plan_steps=steps,
+                    state=state,
+                    target=target,
+                    fields=field_names,
+                    url=target_url,
+                )
             state = self._request(
                 "focus",
                 call_id=call_id,
                 plan="read",
-                plan_step=1,
+                plan_step=2 if target_url else 1,
                 plan_steps=steps,
                 state=state,
                 target=target,
                 fields=field_names,
             )
-        return self._request(
+        result = self._request(
             "read",
             call_id=call_id,
             plan="read",
-            plan_step=steps,
+            plan_step=steps - 1 if target is not None else steps,
             plan_steps=steps,
             state=state,
             fields=field_names,
             field_types=field_types,
         )
+        if target is not None:
+            self._request(
+                "restore_source",
+                call_id=call_id,
+                plan="read",
+                plan_step=steps,
+                plan_steps=steps,
+                state=source_state,
+                current_state=state,
+                target=target,
+                fields=field_names,
+            )
+        return result
 
     def reach(
         self,
@@ -510,12 +537,14 @@ class CodingProgramRuntime:
             statement = Interact(
                 id=statement_id,
                 goal=(
-                    f"Locate collection {entity!r} as the single local source in the current "
-                    f"business context; {request_text}"
+                    f"Bind the structural collection surface for {entity!r}; ensure its "
+                    f"available columns satisfy {request_text}. Collection identity is "
+                    "independent of its current filters and number of records"
                 ),
                 success=(
-                    f"Exactly one local collection satisfies {request_text}; "
-                    "the business context is unchanged"
+                    f"One structural collection surface for {entity!r} is bound with the "
+                    f"available columns required by {request_text}; row count is unrestricted "
+                    "and the business context is unchanged"
                 ),
                 interaction_intent=CollectionIntent(
                     phase="locate",
@@ -559,28 +588,32 @@ class CodingProgramRuntime:
                 inputs={"ui_state": state.snapshot()},
                 args={"lookup_scope": scope, "ui_state_token": state.token},
             )
+        if op == "open_target":
+            state = require_ui_state(payload.get("state"))
+            target = payload.get("target")
+            target_url = str(payload.get("url") or "")
+            if not target_url or target_url != _unique_target_url(target):
+                raise ValueError("open_target requires one URL owned by its target")
+            return StatementInvocation(
+                statement=Command(
+                    id=statement_id,
+                    capability="open_url",
+                    args={"url": target_url},
+                ),
+                task_goal=self.program.goal,
+                inputs={
+                    "ui_state": state.snapshot(),
+                    "target": target,
+                },
+                args={
+                    "url": target_url,
+                    "ui_state_token": state.token,
+                },
+            )
         if op == "focus":
             state = require_ui_state(payload.get("state"))
             fields = [str(item) for item in payload.get("fields") or []]
             target = payload.get("target")
-            target_url = _unique_target_url(target)
-            if target_url:
-                return StatementInvocation(
-                    statement=Command(
-                        id=statement_id,
-                        capability="open_url",
-                        args={"url": target_url},
-                    ),
-                    task_goal=self.program.goal,
-                    inputs={
-                        "ui_state": state.snapshot(),
-                        "target": target,
-                    },
-                    args={
-                        "url": target_url,
-                        "ui_state_token": state.token,
-                    },
-                )
             statement = Interact(
                 id=statement_id,
                 goal=f"Expose fields {fields} for business target {target!r}",
@@ -594,6 +627,39 @@ class CodingProgramRuntime:
                 inputs={
                     "ui_state": state.snapshot(),
                     "target": target,
+                },
+                args={"ui_state_token": state.token},
+            )
+        if op == "restore_source":
+            state = require_ui_state(payload.get("state"))
+            current_state = require_ui_state(payload.get("current_state"))
+            expected = dict(state.postcondition)
+            entity = str(expected.get("entity") or "")
+            fields = [str(item) for item in expected.get("fields") or []]
+            if not entity:
+                raise ValueError("restore_source requires an entity-bearing source state")
+            statement = Interact(
+                id=statement_id,
+                goal=(
+                    "Restore the source UI state after inspecting the target; "
+                    f"required source state: {expected!r}"
+                ),
+                success="The original source UI state is active again",
+                expected_state=expected,
+                interaction_intent=CollectionIntent(
+                    phase="reach",
+                    entity=entity,
+                    required_fields=fields,
+                ),
+                persistence="immediate",
+            )
+            return StatementInvocation(
+                statement=statement,
+                task_goal=self.program.goal,
+                inputs={
+                    "ui_state": state.snapshot(),
+                    "current_ui_state": current_state.snapshot(),
+                    "target": payload.get("target"),
                 },
                 args={"ui_state_token": state.token},
             )
@@ -802,12 +868,20 @@ class CodingProgramRuntime:
         coding_payload = dict(self.current_coding_payload)
         coding_call_id = self.current_coding_call_id
         issued_ui_state: UIStateHandle | None = None
-        if outcome.is_completed and coding_op in {"reach", "focus"}:
+        if (
+            outcome.is_completed
+            and coding_op in {"reach", "open_target", "focus"}
+        ):
             if coding_op == "focus":
                 postcondition = {
                     "kind": "target_fields_available",
                     "target": invocation.inputs.get("target"),
                     "fields": list(coding_payload.get("fields") or []),
+                }
+            elif coding_op == "open_target":
+                postcondition = {
+                    "kind": "target_open",
+                    "target": invocation.inputs.get("target"),
                 }
             else:
                 postcondition = dict(coding_payload.get("success") or {})

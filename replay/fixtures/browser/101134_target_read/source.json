@@ -1,0 +1,5 @@
+{
+  "source_log": "logs/gui_agent/webarena/browser/20260728_101134",
+  "task_id": 185,
+  "purpose": "Replay the target-read compilation path where opening a unique row URL did not expose the requested below-fold field."
+}

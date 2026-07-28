@@ -92,6 +92,17 @@ def test_validate_code_accepts_normal_python_client_program() -> None:
     assert validate_code(GOOD_PROGRAM) == []
 
 
+def test_validate_code_accepts_deterministic_set_deduplication() -> None:
+    source = """
+def run(ctx):
+    values = set()
+    values.add("Cotton")
+    return sorted(values)
+"""
+
+    assert validate_code(source) == []
+
+
 def test_validate_code_accepts_structured_terminal_reach_state() -> None:
     source = """
 def run(ctx):
@@ -889,6 +900,8 @@ def run(ctx):
         "Grand Total (Purchased)",
         "status",
     ]
+    assert "number of records" in runtime.current.statement.goal
+    assert "row count is unrestricted" in runtime.current.statement.success
     assert runtime.current_coding_plan_step == 1
     assert runtime.current_coding_plan_steps == 3
     query_call_id = runtime.current_coding_call_id
@@ -1093,6 +1106,14 @@ def run(ctx):
         "status read",
         outputs={"Status": "Complete"},
     ))
+    assert isinstance(runtime.current.statement, Interact)
+    assert runtime.current_coding_op == "restore_source"
+    assert runtime.current.statement.expected_state == {
+        "entity": "Orders",
+        "fields": ["ID"],
+    }
+
+    runtime.send_outcome(StatementOutcome.completed("orders restored"))
     assert runtime.reply == "Complete"
 
 
@@ -1112,13 +1133,39 @@ def run(ctx):
     assert isinstance(runtime.current.statement, Command)
     assert runtime.current.statement.capability == "open_url"
     assert runtime.current.args["url"] == "https://example.test/reviews/351"
+    assert runtime.current_coding_op == "open_target"
+    assert runtime.current_coding_plan_step == 1
+    assert runtime.current_coding_plan_steps == 4
+
     runtime.send_outcome(StatementOutcome.completed("detail opened"))
+    assert isinstance(runtime.current.statement, Interact)
+    assert runtime.current.statement.observe_fields == ["Rating"]
+    assert runtime.current_coding_op == "focus"
+    assert runtime.current_coding_plan_step == 2
+    assert runtime.current.inputs["ui_state"]["postcondition"] == {
+        "kind": "target_open",
+        "target": {
+            "ID": "351",
+            "Action_url": "https://example.test/reviews/351",
+        },
+    }
+
+    runtime.send_outcome(StatementOutcome.completed("rating exposed"))
     assert isinstance(runtime.current.statement, Read)
+    assert runtime.current_coding_plan_step == 3
     assert runtime.current.args["field_types"] == {"Rating": "number"}
     runtime.send_outcome(StatementOutcome.completed(
         "rating read",
         outputs={"Rating": "3 stars"},
     ))
+    assert isinstance(runtime.current.statement, Interact)
+    assert runtime.current_coding_op == "restore_source"
+    assert runtime.current_coding_plan_step == 4
+    assert runtime.current.statement.expected_state == {
+        "entity": "Reviews",
+    }
+
+    runtime.send_outcome(StatementOutcome.completed("reviews restored"))
     assert runtime.reply == '{"Rating": 3}'
 
 
