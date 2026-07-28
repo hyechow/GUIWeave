@@ -37,6 +37,16 @@ exact page section, while `selector_when` fallback uses contract semantics and r
 matching terms. Detailed knowledge remains in its source file; unrelated manuals are not injected
 into the live frame.
 
+## Context compression
+
+Projection classifies affordances as `current`, `contract_target`, `supporting` or `background`;
+the internal classification is never sent to the model. `context_variants.py` offers a smaller
+TransitionFrame that removes only background offscreen affordances. The shared
+`ContextCompressor` selects this variant only when the complete prompt exceeds its ceiling. If
+safe variants are insufficient, the same compressor drops whole blocks by budget tier and TTL as
+its final strategy. It does not summarize knowledge, infer facts or judge completion. One
+`context_compression` report audits kept, compressed and dropped blocks.
+
 ## Typed postconditions and action validation
 
 Runtime does **not** hold final business authority. It may only:

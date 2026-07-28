@@ -20,7 +20,8 @@ from gui_agent.core.schemas import Observation, StatementContract
 from gui_agent.prompts import load_prompt_text
 from llm.structured import invoke_structured
 
-from .context_projection import transition_frame_block
+from .context_projection import project_transition_frame
+from .context_variants import transition_frame_block
 from .observation_view import StatementObservationView, build_observation_view
 from .schemas import StatementPrompts, _StatementTransitionResult
 
@@ -159,17 +160,18 @@ def run_statement_transition(
     prompt = (prompts.transition or "").strip() or load_prompt_text(
         "task.statement.transition"
     )
+    projected_frame = project_transition_frame(
+        statement,
+        observation,
+        memory_view,
+        observation_view,
+        initial_filters=initial_filters,
+    )
     messages = assemble_messages(
         prompt,
         observation,
         system_blocks=[
-            transition_frame_block(
-                statement,
-                observation,
-                memory_view,
-                observation_view,
-                initial_filters=initial_filters,
-            ),
+            transition_frame_block(projected_frame),
             constraints_block(constraints or []),
         ],
         human_blocks=[

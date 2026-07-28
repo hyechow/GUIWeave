@@ -1,6 +1,11 @@
 from __future__ import annotations
 
-from gui_agent.context import ContextBlock, ContextBudgeter, ContextBundle
+from gui_agent.context import (
+    ContextBlock,
+    ContextBundle,
+    ContextCompressor,
+    ContextVariant,
+)
 from gui_agent.context.runtime import (
     form_controls_block,
     render_prompt_context,
@@ -44,7 +49,7 @@ def test_context_bundle_preserves_order_by_default_and_can_sort_by_priority():
 
 def test_budgeter_keeps_all_when_under_ceiling():
     blocks = [_blk("a", "low", 100), _blk("b", "high", 100)]
-    result = ContextBudgeter(max_chars=10_000).apply(blocks)
+    result = ContextCompressor(max_chars=10_000).apply(blocks)
     assert not result.dropped
     assert {b.id for b in result.kept} == {"a", "b"}
 
@@ -58,7 +63,7 @@ def test_budgeter_drops_lowest_tier_first_and_never_required():
         _blk("med", "medium", 800),
         _blk("lo", "low", 800),
     ]
-    result = ContextBudgeter(max_chars=2000).apply(blocks)
+    result = ContextCompressor(max_chars=2000).apply(blocks)
     dropped = {b.id for b in result.dropped}
     kept = {b.id for b in result.kept}
     assert "req" in kept and "hi" in kept       # required never dropped; high outranks low/medium
@@ -68,7 +73,7 @@ def test_budgeter_drops_lowest_tier_first_and_never_required():
 
 def test_budgeter_preserves_render_order_of_kept_blocks():
     blocks = [_blk("first", "high", 50), _blk("mid", "low", 4000), _blk("last", "high", 50)]
-    text = ContextBudgeter(max_chars=500).apply(blocks).text
+    text = ContextCompressor(max_chars=500).apply(blocks).text
     assert "context: mid" not in text                       # the big low-tier block was dropped
     assert text.index("context: first") < text.index("context: last")  # order preserved
 
@@ -81,13 +86,13 @@ def test_budgeter_within_tier_keeps_live_turn_over_stale_session():
         _blk("turn_med", "medium", 350, ttl="turn"),
         _blk("session_med", "medium", 350, ttl="session"),
     ]
-    result = ContextBudgeter(max_chars=2000).apply(blocks)
+    result = ContextCompressor(max_chars=2000).apply(blocks)
     assert {b.id for b in result.dropped} == {"session_med"}
 
 
 def test_budgeter_required_over_ceiling_keeps_required_and_flags_over_budget():
     blocks = [_blk("req", "required", 5000), _blk("lo", "low", 100)]
-    result = ContextBudgeter(max_chars=1000).apply(blocks)
+    result = ContextCompressor(max_chars=1000).apply(blocks)
     assert {b.id for b in result.kept} == {"req"}   # required survives even alone over budget
     assert {b.id for b in result.dropped} == {"lo"}
     assert result.over_budget is True
@@ -124,7 +129,7 @@ def test_budgeter_long_files_knowledge_history_keep_required_and_report_reasons(
         ),
     ]
 
-    result = ContextBudgeter(max_chars=4700).apply(blocks)
+    result = ContextCompressor(max_chars=4700).apply(blocks)
     report = result.to_report(label="transition.knowledge")
 
     kept = {b.id for b in result.kept}
@@ -132,6 +137,7 @@ def test_budgeter_long_files_knowledge_history_keep_required_and_report_reasons(
     assert "runtime.task.file_refs" in kept
     assert "knowledge.section.orders" in kept
     assert dropped == {"runtime.history.recent_actions"}
+    assert report["kind"] == "context_compression"
     assert report["included_count"] == 2
     assert report["dropped_count"] == 1
     file_row = next(b for b in report["blocks"] if b["id"] == "runtime.task.file_refs")
@@ -156,10 +162,92 @@ def test_render_prompt_context_enforces_ceiling_and_logs_drops():
         report_sink=reports,
     )
     assert "context: keep" in text and "context: drop" not in text
-    assert any("ContextBudget" in line and "transition" in line and "drop" in line for line in logs)
+    assert any("ContextCompressor" in line and "transition" in line for line in logs)
     assert reports[0]["label"] == "transition"
     assert reports[0]["included"][0]["id"] == "keep"
     assert reports[0]["dropped"][0]["id"] == "drop"
+
+
+def test_compressor_uses_variant_only_when_full_context_exceeds_ceiling():
+    block = ContextBlock(
+        "frame",
+        "decision_frame",
+        "test",
+        "full" * 300,
+        budget="required",
+        variants=(ContextVariant(
+            strategy="compact_frame",
+            content="compact",
+            reason="remove redundant index",
+        ),),
+    )
+
+    full = ContextCompressor(max_chars=5000).apply([block])
+    compressed = ContextCompressor(max_chars=500).apply([block])
+
+    assert full.kept[0].content == block.content
+    assert full.decisions[0].action == "kept"
+    assert compressed.kept[0].content == "compact"
+    assert compressed.decisions[0].action == "compressed"
+    assert compressed.decisions[0].strategy == "compact_frame"
+
+
+def test_compressor_prefers_block_variant_before_dropping_other_blocks():
+    frame = ContextBlock(
+        "frame",
+        "decision_frame",
+        "test",
+        "f" * 1800,
+        budget="required",
+        variants=(ContextVariant(
+            strategy="compact_frame",
+            content="f" * 200,
+        ),),
+    )
+    knowledge = ContextBlock(
+        "knowledge",
+        "knowledge_section",
+        "test",
+        "k" * 800,
+        budget="medium",
+    )
+
+    result = ContextCompressor(max_chars=1300).apply([frame, knowledge])
+
+    assert not result.dropped
+    assert {decision.action for decision in result.decisions} == {
+        "compressed",
+        "kept",
+    }
+    assert "k" * 100 in result.text
+
+
+def test_compressor_drops_block_only_after_safe_variants_are_insufficient():
+    frame = ContextBlock(
+        "frame",
+        "decision_frame",
+        "test",
+        "f" * 1800,
+        budget="required",
+        variants=(ContextVariant(
+            strategy="compact_frame",
+            content="f" * 1000,
+        ),),
+    )
+    optional = ContextBlock(
+        "optional",
+        "knowledge_section",
+        "test",
+        "o" * 800,
+        budget="low",
+    )
+
+    result = ContextCompressor(max_chars=1200).apply([frame, optional])
+
+    decisions = {decision.id: decision for decision in result.decisions}
+    assert decisions["frame"].action == "compressed"
+    assert decisions["optional"].action == "dropped"
+    assert [block.id for block in result.kept] == ["frame"]
 
 
 def test_form_controls_context_marks_adapter_source():

@@ -6,9 +6,6 @@ summarize, truncate, enforce a size budget, call an LLM, or decide Statement pro
 
 from __future__ import annotations
 
-import json
-
-from gui_agent.context import ContextBlock
 from gui_agent.core.run.statement_memory import StatementMemoryView
 from gui_agent.core.schemas import Observation, StatementContract
 from gui_agent.core.self_learning.progressive import ProgressiveKnowledge
@@ -117,7 +114,7 @@ def _compact_control_state(
 def _compact_affordances(
     statement: StatementContract,
     view: StatementObservationView,
-) -> tuple[list[dict], bool]:
+) -> list[dict]:
     intent = statement.interaction_intent
     source = (
         tuple(
@@ -126,12 +123,7 @@ def _compact_affordances(
             if item.get("is_filter") is True or item.get("query_action")
         )
         if intent is not None and intent.phase == "constrain"
-        else tuple(
-            item
-            for item in view.affordances
-            if item.get("visibility") != "offscreen"
-            or _matches_contract_field(statement, item.get("label"))
-        )
+        else view.affordances
     )
     keys = (
         "label",
@@ -143,24 +135,32 @@ def _compact_affordances(
         "query_action",
     )
     return [
-        {key: item[key] for key in keys if key in item}
+        {
+            **{key: item[key] for key in keys if key in item},
+            "_relevance": _affordance_relevance(statement, item),
+        }
         for item in source
-    ], len(source) < len(view.affordances)
+    ]
+
+
+def _affordance_relevance(
+    statement: StatementContract,
+    item: dict,
+) -> str:
+    """Classify affordance value for later capacity-driven compression."""
+    if item.get("visibility") != "offscreen":
+        return "current"
+    if _matches_contract_field(statement, item.get("label")):
+        return "contract_target"
+    if item.get("query_action"):
+        return "supporting"
+    return "background"
 
 
 def _matches_contract_field(
     statement: StatementContract,
     label: object,
 ) -> bool:
-    """Return whether an offscreen affordance names a structured contract field."""
-
-    def normalized(value: object) -> str:
-        return "".join(
-            char.casefold()
-            for char in str(value or "")
-            if char.isalnum()
-        )
-
     terms: list[object] = [*statement.observe_fields]
     terms.extend(statement.required_values)
     terms.extend(statement.expected_state)
@@ -169,11 +169,19 @@ def _matches_contract_field(
         terms.extend((intent.entity, *intent.required_fields))
         terms.extend(predicate.field for predicate in intent.predicates)
 
-    label_key = normalized(label)
+    label_key = _normalized(label)
     return bool(label_key) and any(
-        (term_key := normalized(term))
+        (term_key := _normalized(term))
         and (term_key in label_key or label_key in term_key)
         for term in terms
+    )
+
+
+def _normalized(value: object) -> str:
+    return "".join(
+        char.casefold()
+        for char in str(value or "")
+        if char.isalnum()
     )
 
 
@@ -212,18 +220,15 @@ def project_transition_observation(
     initial_filters: dict[str, str] | None,
 ) -> dict:
     """Project the current observation for this Transition consumer."""
-    affordances, affordances_projected = _compact_affordances(statement, view)
     return {
         "title": observation.title,
         "url": observation.url,
-        "affordance_coverage": (
-            "partial" if affordances_projected else view.affordance_coverage
-        ),
+        "affordance_coverage": view.affordance_coverage,
         "control_state": _compact_control_state(statement, observation),
         "applied_filters": observation.applied_filters or {},
         "initial_filters": initial_filters or {},
         "tables": _project_tables(statement, observation),
-        "affordances": affordances,
+        "affordances": _compact_affordances(statement, view),
     }
 
 
@@ -244,16 +249,16 @@ def _last_action_result(memory: StatementMemoryView) -> str:
     return "unknown"
 
 
-def transition_frame_block(
+def project_transition_frame(
     statement: StatementContract,
     observation: Observation,
     memory: StatementMemoryView,
     view: StatementObservationView,
     *,
     initial_filters: dict[str, str] | None,
-) -> ContextBlock:
-    """Build the one decision packet; it contains facts, never a Runtime verdict."""
-    frame = {
+) -> dict:
+    """Build the canonical decision packet before size compression."""
+    return {
         "contract": statement.model_dump(mode="json", exclude_none=True),
         "memory": {
             "instance_id": memory.instance_id,
@@ -280,28 +285,10 @@ def transition_frame_block(
             initial_filters=initial_filters,
         ),
     }
-    return ContextBlock(
-        id="runtime.transition_frame",
-        budget="required",
-        source_type="decision_frame",
-        source="journal+observation+contract",
-        ttl="turn",
-        priority=20,
-        content=(
-            "## TransitionFrame（本帧唯一决策包）\n"
-            "以下是合同、Journal 事实和当前观察；其中没有预先计算的完成状态或路线。\n"
-            + json.dumps(
-                frame,
-                ensure_ascii=False,
-                separators=(",", ":"),
-                default=str,
-            )
-        ),
-    )
 
 
 __all__ = [
+    "project_transition_frame",
     "project_transition_observation",
     "select_transition_knowledge",
-    "transition_frame_block",
 ]

@@ -7,7 +7,7 @@ from collections.abc import Callable, MutableSequence, Sequence
 
 from langchain_core.messages import HumanMessage, SystemMessage
 
-from gui_agent.context.blocks import ContextBlock, ContextBudgeter, render_context_blocks
+from gui_agent.context.blocks import ContextBlock, ContextCompressor, render_context_blocks
 from gui_agent.context.runtime import DEFAULT_CONTEXT_BLOCKS_MAX_CHARS, current_date_block
 from gui_agent.core.policies.base import resize_to_logical_png
 from gui_agent.core.schemas import Observation
@@ -40,31 +40,50 @@ def assemble_messages(
     context_reports: MutableSequence[dict] | Callable[[dict], None] | None = None,
     decision_text: str = "请根据当前屏幕做出决策。",
 ) -> list:
-    """Assemble a vision LLM call through one budgeted context path.
+    """Assemble a vision LLM call through one capacity-managed context path.
 
     ``task_prompt`` is the stable task instruction. Runtime data belongs in
-    ``system_blocks`` or ``human_blocks`` and is budgeted in one union pass before
+    ``system_blocks`` or ``human_blocks`` and is compressed in one union pass before
     being placed in the message.
     """
     sys_live = [b for b in system_blocks if b is not None and (b.content or "").strip()]
     hum_live = [b for b in human_blocks if b is not None and (b.content or "").strip()]
-    budgeter = ContextBudgeter(max_chars or DEFAULT_CONTEXT_BLOCKS_MAX_CHARS)
-    result = budgeter.apply([*sys_live, *hum_live])
+    compressor = ContextCompressor(max_chars or DEFAULT_CONTEXT_BLOCKS_MAX_CHARS)
+    result = compressor.apply([*sys_live, *hum_live])
     if context_reports is not None and result.decisions:
         _append_report(context_reports, result.to_report(label=label))
+    compressed = [
+        decision for decision in result.decisions
+        if decision.action == "compressed"
+    ]
+    if compressed:
+        names = "、".join(
+            f"{decision.id}({decision.original_chars}→{decision.chars}字)"
+            for decision in compressed
+        )
+        print(f"  [ContextCompressor] {label} 压缩 {len(compressed)} 块: {names}")
     if result.dropped:
         names = "、".join(f"{b.id}[{b.budget}]({len(b.render())}字)" for b in result.dropped)
-        print(f"  [ContextBudget] {label} 超预算({budgeter.max_chars}字),丢弃 {len(result.dropped)} 块: {names}")
+        print(f"  [ContextCompressor] {label} 丢弃 {len(result.dropped)} 块: {names}")
     if result.over_budget:
-        print(f"  [ContextBudget] ⚠️ {label} 必留块已达 {result.kept_chars} 字 / 上限 {budgeter.max_chars} 字")
+        print(
+            f"  [ContextCompressor] ⚠️ {label} 必留块已达 {result.kept_chars} 字 / "
+            f"上限 {compressor.max_chars} 字"
+        )
 
-    kept = {id(b) for b in result.kept}
+    resolved: dict[int, ContextBlock] = {}
+    kept_iter = iter(result.kept)
+    for original, decision in zip([*sys_live, *hum_live], result.decisions):
+        if decision.included:
+            resolved[id(original)] = next(kept_iter)
     # Provenance ([context: id | type=… | source=… | ttl=…]) is for the trace/report only —
     # to_report(...) above carries it. The MODEL sees just the block bodies (each already
     # carries its own "## 标题" markdown header), so render headerless: no machine-tag token
     # tax / salience dilution in the prompt.
-    sys_text = render_context_blocks([b for b in sys_live if id(b) in kept], include_headers=False)
-    hum_text = render_context_blocks([b for b in hum_live if id(b) in kept], include_headers=False)
+    sys_kept = [resolved[id(b)] for b in sys_live if id(b) in resolved]
+    hum_kept = [resolved[id(b)] for b in hum_live if id(b) in resolved]
+    sys_text = render_context_blocks(sys_kept, include_headers=False)
+    hum_text = render_context_blocks(hum_kept, include_headers=False)
 
     date_block = current_date_block()
     system = (
@@ -102,8 +121,8 @@ def assemble_messages(
             _prompt_snapshot_report(
                 label=label,
                 task_prompt=task_prompt,
-                system_blocks=[b for b in sys_live if id(b) in kept],
-                human_blocks=[b for b in hum_live if id(b) in kept],
+                system_blocks=sys_kept,
+                human_blocks=hum_kept,
                 date_block=date_block,
                 decision_text=decision_text,
                 image_report=image_report,

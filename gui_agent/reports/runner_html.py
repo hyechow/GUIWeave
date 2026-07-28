@@ -309,7 +309,7 @@ HTML_TEMPLATE = """\
   .run-status-badge:hover::after {{ content: attr(data-tip); position:absolute; left:0; top:calc(100% + 7px); z-index:100; width:max-content; max-width:520px; white-space:normal; line-height:1.45; padding:8px 10px; border-radius:7px; background:#111827; color:#fff; font-size:12px; font-weight:500; box-shadow:0 8px 24px rgba(15,23,42,0.22); }}
   .run-status-badge:hover::before {{ content:""; position:absolute; left:16px; top:calc(100% + 2px); z-index:101; border:5px solid transparent; border-bottom-color:#111827; }}
 
-  /* Final output / 最终输出 card */
+  /* Final reply / 最终回复 card */
   .result-card {{ max-width: 1080px; margin: 0 auto 20px; padding: 16px 20px; background: var(--card); border-radius: var(--radius); box-shadow: 0 1px 3px rgba(0,0,0,0.08); border-left: 4px solid #22c55e; }}
   .result-card-interrupted {{ border-left-color: #d97706; }}
   .result-card-failed {{ border-left-color: #dc2626; }}
@@ -318,9 +318,6 @@ HTML_TEMPLATE = """\
   .result-card-interrupted .result-label {{ color: #d97706; }}
   .result-card-failed .result-label {{ color: #dc2626; }}
   .result-card-stopped .result-label {{ color: #dc2626; }}
-  .result-output {{ padding: 10px 0; }}
-  .result-output + .result-output {{ border-top: 1px solid var(--border); }}
-  .result-output-label {{ margin-bottom: 5px; color: var(--muted); font-size: 11px; font-weight: 700; }}
   .result-body {{ font-size: 14px; color: var(--text); line-height: 1.6; white-space: pre-wrap; word-break: break-word; }}
 
   /* WebArena final response */
@@ -873,6 +870,40 @@ def _render_context_decisions_html(reports: list[dict]) -> str:
                     f'budget={_safe(str(block.get("budget") or ""))} '
                     f'{block.get("estimated_chars", 0)} chars/{block.get("estimated_tokens", 0)} tok · '
                     f'{_safe(str(block.get("truncation_reason") or block.get("reason") or ""))}</div>'
+                )
+        elif kind == "context_compression":
+            before = int(report.get("before_chars") or 0)
+            after = int(report.get("after_chars") or 0)
+            saved = int(report.get("saved_chars") or max(0, before - after))
+            compressed = int(report.get("compressed_count") or 0)
+            dropped = int(report.get("dropped_count") or 0)
+            summaries.append(
+                f"{label}: {before}→{after} · c{compressed}/d{dropped}"
+            )
+            rows.append(
+                f'<div class="ctx-row"><strong>{label}</strong> '
+                f'<span class="ctx-keep">saved={saved} chars</span> '
+                f'{before} → {after} chars · '
+                f'strategy={_safe(str(report.get("strategy") or ""))}</div>'
+            )
+            for decision in report.get("blocks") or report.get("decisions") or []:
+                action = str(decision.get("action") or "compressed")
+                original = decision.get(
+                    "original_chars",
+                    decision.get("before_count", 0),
+                )
+                final = decision.get(
+                    "final_chars",
+                    decision.get("after_count", 0),
+                )
+                rows.append(
+                    f'<div class="ctx-row '
+                    f'{"ctx-drop" if action == "dropped" else "ctx-keep"}">  '
+                    f'{_safe(action)} '
+                    f'{_safe(str(decision.get("id") or decision.get("path") or ""))} · '
+                    f'{_safe(str(decision.get("strategy") or decision.get("operation") or ""))} · '
+                    f'{original} → {final} chars · '
+                    f'{_safe(str(decision.get("reason") or ""))}</div>'
                 )
     summary = _safe(" · ".join(summaries[:4]) + (" ..." if len(summaries) > 4 else ""))
     return (
@@ -1770,15 +1801,8 @@ def generate_html(data: ReportData, grid: bool = False) -> str:
         result_class = "result-card" if status_cls == "completed" else f"result-card result-card-{status_cls}"
         result_html = (
             f'<div class="{result_class}">'
-            f'<div class="result-label">最终输出</div>'
-            f'<div class="result-output">'
-            f'<div class="result-output-label">编排程序输出结果</div>'
-            f'<div class="result-body">{_safe(data.program_output or "（无）")}</div>'
-            f'</div>'
-            f'<div class="result-output">'
-            f'<div class="result-output-label">Reply 回复输出</div>'
+            f'<div class="result-label">最终回复</div>'
             f'<div class="result-body">{_safe(data.reply or "（未生成）")}</div>'
-            f'</div>'
             f'</div>'
         )
 

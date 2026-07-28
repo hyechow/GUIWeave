@@ -1,13 +1,13 @@
 """assemble_messages: the single context entry path for statement vision calls.
 
 Locks two things: (1) kept blocks land exactly where the legacy _build_msgs + _inject_* path
-put them (system-prompt tail / human-message head), and (2) budgeting is ONE pass over the
+put them (system-prompt tail / human-message head), and (2) compression is ONE pass over the
 system+human UNION (a per-prompt ceiling), not the old per-call-site cap.
 """
 
 from __future__ import annotations
 
-from gui_agent.context import ContextBlock
+from gui_agent.context import ContextBlock, ContextVariant
 from gui_agent.context.runtime import acceptance_items_block, form_controls_block
 from gui_agent.core.llm.messages import assemble_messages
 
@@ -92,6 +92,50 @@ def test_context_reports_include_prompt_snapshot_segments():
     assert roles["system"][0]["text"] == "TASK"
     assert roles["human"][0]["text"] == "HUM"
     assert "image_url omitted" in roles["human"][-1]["text"]
+
+
+def test_message_assembly_prefers_variant_to_dropping_and_reports_one_decision():
+    reports: list[dict] = []
+    frame = ContextBlock(
+        "frame",
+        "decision_frame",
+        "unit",
+        "FULL_FRAME_" * 200,
+        budget="required",
+        variants=(ContextVariant(
+            strategy="compact_frame",
+            content="COMPACT_FRAME",
+        ),),
+    )
+    knowledge = ContextBlock(
+        "knowledge",
+        "knowledge_section",
+        "unit",
+        "KNOWLEDGE",
+        budget="medium",
+    )
+
+    messages = assemble_messages(
+        "TASK",
+        None,
+        system_blocks=[frame],
+        human_blocks=[knowledge],
+        max_chars=500,
+        context_reports=reports,
+    )
+
+    assert "COMPACT_FRAME" in messages[0].content
+    assert "FULL_FRAME_" not in messages[0].content
+    assert "KNOWLEDGE" in _texts(messages[1].content)[0]
+    report = next(
+        item for item in reports
+        if item["kind"] == "context_compression"
+    )
+    assert report["compressed_count"] == 1
+    assert report["dropped_count"] == 0
+    frame_row = next(item for item in report["blocks"] if item["id"] == "frame")
+    assert frame_row["action"] == "compressed"
+    assert frame_row["strategy"] == "compact_frame"
 
 
 def test_report_module_io_combines_input_and_output():

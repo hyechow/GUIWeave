@@ -7,13 +7,13 @@ import json
 from gui_agent.core.filter_contract import compile_filter_predicates
 from gui_agent.core.run.statement_memory import build_memory_view
 from gui_agent.core.schemas import CollectionIntent, Observation, StatementContract
-from gui_agent.core.supervisor.statement.context_projection import transition_frame_block
+from gui_agent.core.supervisor.statement.context_projection import project_transition_frame
 from gui_agent.core.supervisor.statement.observation_view import build_observation_view
 
 
 def _frame(statement: StatementContract, observation: Observation) -> dict:
     view = build_observation_view(statement, observation, [])
-    block = transition_frame_block(
+    return project_transition_frame(
         statement,
         observation,
         build_memory_view(
@@ -24,7 +24,6 @@ def _frame(statement: StatementContract, observation: Observation) -> dict:
         view,
         initial_filters=None,
     )
-    return json.loads(block.content[block.content.index("{"):])
 
 
 def _table() -> dict:
@@ -194,7 +193,7 @@ def test_untyped_statement_keeps_bounded_field_state_but_not_row_or_button_dupli
     }
 
 
-def test_transition_projects_offscreen_affordances_by_structured_contract_field() -> None:
+def test_projection_preserves_canonical_offscreen_affordance_index() -> None:
     statement = StatementContract(
         id="r1",
         goal="Expose requested business fields",
@@ -232,8 +231,5 @@ def test_transition_projects_offscreen_affordances_by_structured_contract_field(
 
     projected = _frame(statement, observation)["observation"]
 
-    assert [item["label"] for item in projected["affordances"]] == [
-        "Back",
-        "[global] Material",
-    ]
-    assert projected["affordance_coverage"] == "partial"
+    assert len(projected["affordances"]) == 302
+    assert projected["affordance_coverage"] == "complete"

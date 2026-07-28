@@ -11,7 +11,12 @@ from gui_agent.reports.orchestrator_html import (
     _render_runtime_index_group,
 )
 from gui_agent.reports.prompt_html import _render_module_io_html
-from gui_agent.reports.runner_html import generate_html, _render_thumb_time, _turn_elapsed_seconds
+from gui_agent.reports.runner_html import (
+    _render_context_decisions_html,
+    _render_thumb_time,
+    _turn_elapsed_seconds,
+    generate_html,
+)
 
 
 def test_report_normalizes_legacy_ctx_api_names():
@@ -59,6 +64,33 @@ def test_module_io_renders_summary_collapsed_schema_and_tokens():
     assert "schema_instruction · _StatementTransitionResult · 2 required / 1 optional" in html
     assert "prompt-token-total" not in html
     assert "transition" in html
+
+
+def test_context_decisions_render_compression_audit() -> None:
+    html = _render_context_decisions_html([{
+        "kind": "context_compression",
+        "label": "transition",
+        "strategy": "deterministic_baseline",
+        "before_chars": 44489,
+        "after_chars": 18341,
+        "saved_chars": 26148,
+        "compressed_count": 1,
+        "dropped_count": 0,
+        "blocks": [{
+            "id": "runtime.transition_frame",
+            "action": "compressed",
+            "strategy": "drop_background_offscreen_affordances",
+            "original_chars": 44489,
+            "final_chars": 18341,
+            "reason": "keep current targets",
+        }],
+    }])
+
+    assert "上下文决策" in html
+    assert "44489→18341" in html
+    assert "saved=26148 chars" in html
+    assert "runtime.transition_frame" in html
+    assert "44489 → 18341 chars" in html
 
 
 def test_coding_orchestrator_renders_compiled_python_plan():
@@ -332,7 +364,7 @@ def test_runner_report_omits_subgoal_outline_sidebar():
     assert '<nav class="sidebar">' not in html
 
 
-def test_runner_report_replays_program_and_reply_outputs(tmp_path):
+def test_runner_report_displays_only_reply_output(tmp_path):
     raw_output = '["Emma", "seam miller"]'
     cases = [
         ({
@@ -365,8 +397,10 @@ def test_runner_report_replays_program_and_reply_outputs(tmp_path):
         html = generate_html(data)
         assert data.program_output == raw_output
         assert data.reply == reply
-        assert "编排程序输出结果" in html
-        assert "Reply 回复输出" in html
+        assert "编排程序输出结果" not in html
+        assert raw_output not in html
+        assert "最终回复" in html
+        assert "Reply 回复输出" not in html
         assert ("（未生成）" in html) is (not reply)
 
 

@@ -7,7 +7,7 @@ metadata for the model and logs to see where each snippet came from.
 
 from __future__ import annotations
 
-from dataclasses import dataclass, field
+from dataclasses import dataclass, field, replace
 from typing import Any, Callable, Iterable, Mapping
 
 
@@ -23,6 +23,16 @@ _TTL_DROP_RANK = {"task": 0, "session": 1, "turn": 2}
 
 
 @dataclass(frozen=True)
+class ContextVariant:
+    """A producer-supplied, semantically safe smaller representation of one block."""
+
+    strategy: str
+    content: str
+    priority: int = 100
+    reason: str = ""
+
+
+@dataclass(frozen=True)
 class ContextBlock:
     """One prompt context fragment with source metadata."""
 
@@ -32,9 +42,10 @@ class ContextBlock:
     content: str
     priority: int = 100
     ttl: str = "turn"
-    # Budget tier (see BUDGET_TIERS): which blocks the ContextBudgeter may drop under a hard
+    # Budget tier (see BUDGET_TIERS): which blocks the ContextCompressor may drop under a hard
     # char ceiling. Producers tag load-bearing blocks `required`; default is droppable `medium`.
     budget: str = "medium"
+    variants: tuple[ContextVariant, ...] = ()
     metadata: Mapping[str, Any] = field(default_factory=dict)
     # Signal-source authority (see context/signal_source_architecture.md). Which claim/domains this
     # block is authoritative for, and (optionally) explicitly NOT — so a source can't be read
@@ -117,8 +128,8 @@ def render_context_blocks(
 
 
 @dataclass(frozen=True)
-class BudgetResult:
-    """Outcome of applying a char ceiling to a set of context blocks."""
+class ContextCompressionResult:
+    """Outcome of adaptive block compression followed by last-resort block dropping."""
 
     text: str
     kept: tuple[ContextBlock, ...]
@@ -140,15 +151,23 @@ class BudgetResult:
     def kept_tokens(self) -> int:
         return _estimate_tokens(self.kept_chars)
 
+    @property
+    def saved_chars(self) -> int:
+        return self.total_chars - self.kept_chars
+
     def to_report(self, *, label: str = "context") -> dict[str, Any]:
-        """Serialize the budget decision for run reports."""
+        """Serialize compression and dropping as one context decision."""
         blocks = [decision.to_dict() for decision in self.decisions]
         included = [block for block in blocks if block.get("included")]
         dropped = [block for block in blocks if not block.get("included")]
         return {
-            "kind": "context_budget",
+            "kind": "context_compression",
             "label": label,
+            "strategy": "adaptive",
             "max_chars": self.max_chars,
+            "before_chars": self.total_chars,
+            "after_chars": self.kept_chars,
+            "saved_chars": self.saved_chars,
             "estimated_chars": self.total_chars,
             "estimated_tokens": self.estimated_tokens,
             "kept_chars": self.kept_chars,
@@ -157,6 +176,9 @@ class BudgetResult:
             "over_budget": self.over_budget,
             "included_count": len(included),
             "dropped_count": len(dropped),
+            "compressed_count": sum(
+                block.get("action") == "compressed" for block in blocks
+            ),
             "included": included,
             "dropped": dropped,
             "blocks": blocks,
@@ -165,7 +187,7 @@ class BudgetResult:
 
 @dataclass(frozen=True)
 class ContextBlockDecision:
-    """Report row for one context block after budget selection."""
+    """Report row for one context block after adaptive compression."""
 
     id: str
     source_type: str
@@ -173,8 +195,11 @@ class ContextBlockDecision:
     priority: int
     ttl: str
     budget: str
+    original_chars: int
     chars: int
     included: bool
+    action: str
+    strategy: str
     reason: str
     truncation_reason: str
 
@@ -190,23 +215,26 @@ class ContextBlockDecision:
             "priority": self.priority,
             "ttl": self.ttl,
             "budget": self.budget,
+            "original_chars": self.original_chars,
             "estimated_chars": self.chars,
             "estimated_tokens": self.estimated_tokens,
+            "final_chars": self.chars if self.included else 0,
+            "saved_chars": self.original_chars - (self.chars if self.included else 0),
             "included": self.included,
+            "action": self.action,
+            "strategy": self.strategy,
             "reason": self.reason,
             "truncation_reason": self.truncation_reason,
         }
 
 
-class ContextBudgeter:
-    """Hard char ceiling for assembled context blocks — DROP-ONLY (v1).
+class ContextCompressor:
+    """Keep context within a ceiling using safe variants before dropping blocks.
 
-    No compression (truncating a block body risks feeding a half-config / half-rule = silent
-    corruption) and NO reordering (prompt order affects model behavior; render order is
-    preserved, blocks are only removed). When the total estimated size exceeds ``max_chars``,
-    droppable blocks are shed lowest-tier-first (low → medium → high), then most-transient ttl,
-    then oldest, until it fits. ``required`` blocks are never dropped. Sizing is a char count
-    for v1; pass ``estimate`` to swap in a real tokenizer later."""
+    Producers may offer ordered semantic variants; arbitrary text truncation is forbidden.
+    Variants are used only when the full context exceeds ``max_chars``. If safe variants are
+    insufficient, droppable blocks are shed lowest-tier-first. Prompt order is preserved and
+    ``required`` blocks are never dropped."""
 
     def __init__(
         self,
@@ -219,13 +247,40 @@ class ContextBudgeter:
         self.include_headers = include_headers
         self._estimate = estimate or (lambda b: len(b.render(include_header=include_headers)))
 
-    def apply(self, blocks: Iterable[ContextBlock | None]) -> BudgetResult:
+    def apply(self, blocks: Iterable[ContextBlock | None]) -> ContextCompressionResult:
         live = [b for b in blocks if b is not None and (b.content or "").strip()]
         idx = {id(b): i for i, b in enumerate(live)}
-        sizes = {id(b): self._estimate(b) for b in live}
-        total = sum(sizes.values())
+        original_sizes = {id(b): self._estimate(b) for b in live}
+        selected = {id(b): b for b in live}
+        selected_sizes = dict(original_sizes)
+        selected_strategy: dict[int, ContextVariant] = {}
+        total = sum(original_sizes.values())
+        cur = total
+
+        if cur > self.max_chars:
+            variants = sorted(
+                (
+                    (variant.priority, idx[id(block)], order, block, variant)
+                    for block in live
+                    for order, variant in enumerate(block.variants)
+                ),
+                key=lambda item: item[:3],
+            )
+            for _, _, _, block, variant in variants:
+                if cur <= self.max_chars:
+                    break
+                candidate = replace(block, content=variant.content, variants=())
+                candidate_size = self._estimate(candidate)
+                block_id = id(block)
+                if candidate_size >= selected_sizes[block_id]:
+                    continue
+                cur -= selected_sizes[block_id] - candidate_size
+                selected[block_id] = candidate
+                selected_sizes[block_id] = candidate_size
+                selected_strategy[block_id] = variant
+
         dropped_ids: set[int] = set()
-        if total > self.max_chars:
+        if cur > self.max_chars:
             order = sorted(
                 (b for b in live if b.budget != "required"),
                 key=lambda b: (
@@ -234,16 +289,19 @@ class ContextBudgeter:
                     idx[id(b)],
                 ),
             )
-            cur = total
             for b in order:
                 if cur <= self.max_chars:
                     break
                 dropped_ids.add(id(b))
-                cur -= sizes[id(b)]
-        kept = tuple(b for b in live if id(b) not in dropped_ids)
-        dropped = tuple(b for b in live if id(b) in dropped_ids)
-        kept_chars = sum(sizes[id(b)] for b in kept)
-        dropped_chars = sum(sizes[id(b)] for b in dropped)
+                cur -= selected_sizes[id(b)]
+        kept = tuple(selected[id(b)] for b in live if id(b) not in dropped_ids)
+        dropped = tuple(selected[id(b)] for b in live if id(b) in dropped_ids)
+        kept_chars = sum(
+            selected_sizes[id(b)] for b in live if id(b) not in dropped_ids
+        )
+        dropped_chars = sum(
+            selected_sizes[id(b)] for b in live if id(b) in dropped_ids
+        )
         decisions = tuple(
             ContextBlockDecision(
                 id=b.id,
@@ -252,16 +310,40 @@ class ContextBudgeter:
                 priority=b.priority,
                 ttl=b.ttl,
                 budget=b.budget,
-                chars=sizes[id(b)],
+                original_chars=original_sizes[id(b)],
+                chars=selected_sizes[id(b)],
                 included=id(b) not in dropped_ids,
-                reason=_decision_reason(b, id(b) in dropped_ids, total > self.max_chars),
+                action=(
+                    "dropped"
+                    if id(b) in dropped_ids
+                    else "compressed"
+                    if id(b) in selected_strategy
+                    else "kept"
+                ),
+                strategy=(
+                    "drop_block"
+                    if id(b) in dropped_ids
+                    else selected_strategy[id(b)].strategy
+                    if id(b) in selected_strategy
+                    else ""
+                ),
+                reason=_decision_reason(
+                    b,
+                    dropped=id(b) in dropped_ids,
+                    variant=selected_strategy.get(id(b)),
+                    was_over_budget=total > self.max_chars,
+                ),
                 truncation_reason=(
-                    "dropped_over_budget" if id(b) in dropped_ids else "not_truncated"
+                    "dropped_over_budget"
+                    if id(b) in dropped_ids
+                    else "compressed_over_budget"
+                    if id(b) in selected_strategy
+                    else "not_truncated"
                 ),
             )
             for b in live
         )
-        return BudgetResult(
+        return ContextCompressionResult(
             text=render_context_blocks(kept, include_headers=self.include_headers),
             kept=kept,
             dropped=dropped,
@@ -287,9 +369,17 @@ def _estimate_tokens(chars: int) -> int:
     return max(1, (chars + 3) // 4)
 
 
-def _decision_reason(block: ContextBlock, dropped: bool, was_over_budget: bool) -> str:
+def _decision_reason(
+    block: ContextBlock,
+    *,
+    dropped: bool,
+    variant: ContextVariant | None,
+    was_over_budget: bool,
+) -> str:
     if dropped:
         return f"dropped: over budget; tier={block.budget}; ttl={block.ttl}; priority={block.priority}"
+    if variant is not None:
+        return variant.reason or f"compressed: {variant.strategy}"
     if block.budget == "required":
         return "included: required"
     if was_over_budget:

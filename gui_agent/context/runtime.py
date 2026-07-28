@@ -6,7 +6,7 @@ import os
 from datetime import datetime
 from typing import Any, Callable, Iterable, MutableSequence  # Any: memory block duck-typing
 
-from gui_agent.context.blocks import ContextBlock, ContextBudgeter
+from gui_agent.context.blocks import ContextBlock, ContextCompressor
 
 # Hard char ceiling for the dynamic context blocks assembled around a prompt. Generous by
 # default (insurance against runaway inflation — knowledge blobs + history + @file refs piling
@@ -520,22 +520,31 @@ def render_prompt_context(
     say: Callable[[str], None] = print,
     report_sink: MutableSequence[dict] | Callable[[dict], None] | None = None,
 ) -> str:
-    """Render context blocks under a hard char ceiling (the ContextBudgeter, drop-only).
+    """Render context blocks through the adaptive ContextCompressor.
 
-    All call sites go through here, so there is no bare/unbudgeted render path. Dropped blocks
-    are logged so the trace shows exactly what was shed. The default ceiling is generous; pass
-    ``max_chars`` to tighten per call site."""
-    budgeter = ContextBudgeter(max_chars or DEFAULT_CONTEXT_BLOCKS_MAX_CHARS)
-    result = budgeter.apply(blocks)
+    All call sites go through here, so there is no bare/unbounded render path. Safe producer
+    variants are preferred; block dropping is the last resort."""
+    compressor = ContextCompressor(max_chars or DEFAULT_CONTEXT_BLOCKS_MAX_CHARS)
+    result = compressor.apply(blocks)
     if report_sink is not None and result.decisions:
         _append_report(report_sink, result.to_report(label=label))
+    compressed = [
+        decision for decision in result.decisions
+        if decision.action == "compressed"
+    ]
+    if compressed:
+        names = "、".join(
+            f"{decision.id}({decision.original_chars}→{decision.chars}字)"
+            for decision in compressed
+        )
+        say(f"  [ContextCompressor] {label} 压缩 {len(compressed)} 块: {names}")
     if result.dropped:
         names = "、".join(f"{b.id}[{b.budget}]({len(b.render())}字)" for b in result.dropped)
-        say(f"  [ContextBudget] {label} 超预算({budgeter.max_chars}字),丢弃 {len(result.dropped)} 块: {names}")
+        say(f"  [ContextCompressor] {label} 丢弃 {len(result.dropped)} 块: {names}")
     if result.over_budget:
         say(
-            f"  [ContextBudget] ⚠️ {label} 必留(required)块已达 {result.kept_chars} 字 / 上限 "
-            f"{budgeter.max_chars} 字,无可丢弃块"
+            f"  [ContextCompressor] ⚠️ {label} 必留(required)块已达 {result.kept_chars} 字 / 上限 "
+            f"{compressor.max_chars} 字,无可丢弃块"
         )
     return result.text
 
