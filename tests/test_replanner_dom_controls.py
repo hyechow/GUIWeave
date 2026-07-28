@@ -84,7 +84,7 @@ def test_transition_human_blocks_include_dom_form_controls(monkeypatch):
     human_text = " ".join(
         getattr(block, "content", "") for block in captured["human_blocks"]
     )
-    assert '"control_state"' in system_text
+    assert '"form_units"' in system_text
     assert '"value":"Olivia zip jacket"' in system_text
     assert '"supported_operations":["input"]' in system_text
     assert "保存成功提示表示本次提交已被接受" in human_text

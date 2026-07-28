@@ -35,6 +35,7 @@ import argparse
 import json
 import os
 import re
+import shutil
 import sys
 import time
 from pathlib import Path
@@ -886,11 +887,65 @@ def _warn_if_pre_loop_page_changed(device, *, initial_url: str, initial_title: s
     print("[webarena] 这通常表示人工点击或外部 CDP 控制在编排后改动了页面；本次将以当前页继续执行。")
 
 
+def _resume_inputs(log_dir: Path) -> tuple[dict, Path, Path, object]:
+    raw = json.loads((log_dir / "context.json").read_text(encoding="utf-8"))
+    metadata = raw.get("webarena")
+    if not isinstance(metadata, dict):
+        raise ValueError("resume context does not contain WebArena metadata")
+    program_data = (raw.get("orchestrator") or {}).get("program")
+    from gui_agent.core.orchestrator import CodingProgram
+
+    task_output_dir = Path(str(metadata["task_output_dir"]))
+    task = {
+        "task_id": int(metadata["task_id"]),
+        "intent": str(metadata.get("intent") or raw.get("goal") or ""),
+        "sites": list(metadata.get("sites") or []),
+        "start_urls": [metadata["start_url"]] if metadata.get("start_url") else [],
+    }
+    return (
+        task,
+        task_output_dir,
+        Path(str(metadata.get("har_path") or task_output_dir / "network.har")),
+        CodingProgram.model_validate(program_data),
+    )
+
+
+def _stage_resume_assets(source: Path, target: Path) -> None:
+    """Copy report-facing history into a self-contained derived run."""
+    prefixes = ("screenshot_", "observation_", "structured_output_")
+    for path in source.iterdir():
+        if path.is_file() and path.name.startswith(prefixes):
+            shutil.copy2(path, target / path.name)
+
+
+def _merge_har_segment(base_path: Path, segment_path: Path) -> tuple[int, int]:
+    """Append one resumed capture to the original task HAR."""
+    segment = json.loads(segment_path.read_text(encoding="utf-8"))
+    segment_entries = list((segment.get("log") or {}).get("entries") or [])
+    if not base_path.is_file():
+        shutil.copy2(segment_path, base_path)
+        return 0, len(segment_entries)
+    base = json.loads(base_path.read_text(encoding="utf-8"))
+    entries = (base.setdefault("log", {})).setdefault("entries", [])
+    before = len(entries)
+    entries.extend(segment_entries)
+    base_path.write_text(json.dumps(base), encoding="utf-8")
+    return before, len(segment_entries)
+
+
 def main() -> int:
     parser = argparse.ArgumentParser(description="Run a WebArena-Verified task on the browser agent")
-    parser.add_argument("--tasks-file", type=Path, required=True, help="agent-input-get output JSON")
-    parser.add_argument("--task-id", type=int, required=True)
-    parser.add_argument("--task-output-dir", type=Path, required=True, help="where agent_response.json + network.har go")
+    parser.add_argument("--tasks-file", type=Path, help="agent-input-get output JSON")
+    parser.add_argument("--task-id", type=int)
+    parser.add_argument("--task-output-dir", type=Path, help="where agent_response.json + network.har go")
+    parser.add_argument(
+        "--resume-log-dir",
+        type=Path,
+        help=(
+            "fork a failed run from its context.json; the source log remains immutable, "
+            "the current browser page is preserved, and --max-turns is additional"
+        ),
+    )
     parser.add_argument("--storage-state", type=Path, default=None, help="Playwright storage_state JSON for auth cookies (optional)")
     parser.add_argument("--cdp-url", type=str, default=None, help="Chrome CDP url (default env CHROME_CDP_URL or :9222)")
     parser.add_argument("--headless", action="store_true", help="launch an isolated headless Chromium instead of attaching to Chrome CDP")
@@ -926,6 +981,15 @@ def main() -> int:
              "Also read from env WA_HOST / .env (lower precedence than --host).",
     )
     args = parser.parse_args()
+    is_resume = args.resume_log_dir is not None
+    if is_resume and args.headless:
+        parser.error("--resume-log-dir requires the retained headed browser session")
+    if not is_resume and None in (
+        args.tasks_file,
+        args.task_id,
+        args.task_output_dir,
+    ):
+        parser.error("--tasks-file, --task-id and --task-output-dir are required")
 
     # Force the browser platform for build_platform() (here and inside run_agent_loop).
     os.environ["AGENT_PLATFORM"] = "browser"
@@ -954,10 +1018,37 @@ def main() -> int:
     from gui_agent.core.runner import run_agent_loop, build_policy, build_supervisor
     from gui_agent.adapters.browser.har_recorder import HarRecorder
 
-    task = _load_task(args.tasks_file, args.task_id)
+    resume_program = None
+    resume_source_dir: Path | None = None
+    resume_source_har: Path | None = None
+    if is_resume:
+        resume_source_dir = args.resume_log_dir.expanduser().resolve()
+        try:
+            task, resume_output_base, resume_source_har, resume_program = (
+                _resume_inputs(resume_source_dir)
+            )
+        except (KeyError, OSError, TypeError, ValueError, json.JSONDecodeError) as exc:
+            parser.error(str(exc))
+        args.task_id = int(task["task_id"])
+    else:
+        assert args.tasks_file is not None
+        assert args.task_id is not None
+        assert args.task_output_dir is not None
+        task = _load_task(args.tasks_file, args.task_id)
+        out_dir = args.task_output_dir
+    log_dir = create_run_dir(
+        "webarena",
+        "browser/resume" if is_resume else "browser",
+    )
+    if is_resume:
+        assert resume_source_dir is not None
+        out_dir = resume_output_base / f"resume_{log_dir.name}"
+        _stage_resume_assets(resume_source_dir, log_dir)
+        print(f"[webarena] resume source (read-only): {resume_source_dir}")
+        print(f"[webarena] resume derived run: {log_dir}")
     intent = task["intent"]
     start_urls = task.get("start_urls") or []
-    if host_override and start_urls:
+    if host_override and start_urls and not is_resume:
         rewritten = [_rewrite_url_host(u, host_override) for u in start_urls]
         for old, new in zip(start_urls, rewritten):
             if old != new:
@@ -968,11 +1059,12 @@ def main() -> int:
     print(f"[webarena] intent: {intent}")
     print(f"[webarena] start_url: {start_url}")
 
-    out_dir: Path = args.task_output_dir
+    out_dir = Path(out_dir)
     out_dir.mkdir(parents=True, exist_ok=True)
     har_path = out_dir / "network.har"
     resp_path = out_dir / "agent_response.json"
-
+    if resume_source_har is not None and resume_source_har.is_file():
+        shutil.copy2(resume_source_har, har_path)
     if args.headless:
         raw_profile = (
             args.user_data_dir
@@ -994,7 +1086,6 @@ def main() -> int:
     # (the unified visibility switch). The agent loop repositions it onto the exact CDP
     # window rect once connected.
     hud = build_platform().make_status_reporter(not args.headless)
-    log_dir = create_run_dir("webarena", "browser")
     print(f"[webarena] agent logs: {log_dir}")
 
     from gui_agent.core.run.io import tee_stdio
@@ -1056,6 +1147,10 @@ def main() -> int:
 
         def _prime(platform) -> None:
             device = platform.client
+            if is_resume:
+                recorder_holder["rec"] = HarRecorder(device).start()
+                print("[webarena] resume: keeping current page; start_url navigation skipped")
+                return
             # 1) auth: inject cookies (raw CDP) — no headless ui_login.
             if args.storage_state:
                 print("[webarena]", device.load_cookies(str(args.storage_state)))
@@ -1101,6 +1196,18 @@ def main() -> int:
                         cur_title = ""
                         cur_site = knowledge.app_name if knowledge is not None else ""
                         initial_obs = None
+                        if resume_program is not None:
+                            print("[webarena] resume: reusing persisted reviewed Python")
+                            _print_program(resume_program)
+                            return (
+                                resume_program,
+                                orchestrator_metrics,
+                                run_max_turns,
+                                compile_blocked,
+                                initial_observed_url,
+                                initial_observed_title,
+                                compile_result,
+                            )
                         try:
                             initial_obs = bundle.make_perception(
                                 platform, log_dir / "screenshot_initial.png"
@@ -1273,7 +1380,11 @@ def main() -> int:
                                 intent,
                                 action_policy,
                                 supervisor,
-                                None,                       # input_context_path
+                                (
+                                    resume_source_dir / "context.json"
+                                    if resume_source_dir is not None
+                                    else None
+                                ),
                                 log_dir,
                                 log_dir / "context.json",
                                 max_turns=run_max_turns,
@@ -1289,6 +1400,7 @@ def main() -> int:
                                 }] if orchestrator_metrics else orchestrator_context_reports,
                                 stop_requested=esc_stop.requested if esc_stop.enabled else None,
                                 platform=platform,
+                                resume=is_resume,
                             )
                         eval_compat_reports = _run_eval_compat_probes(
                             enabled=eval_compat_enabled,
@@ -1312,10 +1424,27 @@ def main() -> int:
                 print(f"[webarena] reply generation failed ({exc})")
             rec = recorder_holder.get("rec")
             if rec is not None:
-                print("[webarena]", rec.dump(str(har_path)))
+                capture_path = (
+                    log_dir / "network_resume.har"
+                    if is_resume
+                    else har_path
+                )
+                print("[webarena]", rec.dump(str(capture_path)))
+                if is_resume:
+                    before, added = _merge_har_segment(har_path, capture_path)
+                    print(
+                        "[webarena] "
+                        f"OK merged resumed HAR ({before}+{added} entries) -> {har_path}"
+                    )
             else:
-                har_path.write_text('{"log":{"version":"1.2","creator":{"name":"gui_agent"},"entries":[]}}')
-                print(f"[webarena] OK har 0 entries (recorder unavailable) -> {har_path}")
+                if is_resume and har_path.is_file():
+                    print(
+                        "[webarena] resume HAR recorder unavailable; "
+                        f"preserving existing {har_path}"
+                    )
+                else:
+                    har_path.write_text('{"log":{"version":"1.2","creator":{"name":"gui_agent"},"entries":[]}}')
+                    print(f"[webarena] OK har 0 entries (recorder unavailable) -> {har_path}")
 
             try:
                 if result.failure_kind == "compile":

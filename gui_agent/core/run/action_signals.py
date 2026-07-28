@@ -13,6 +13,7 @@ from gui_agent.core.schemas import (
     ActionSignal,
     AtomicRole,
     MutationReceipt,
+    Observation,
     PolicyTurn,
     SupervisorStep,
     TargetBinding,
@@ -22,6 +23,28 @@ _COMMIT_ACTIONS = frozenset({"tap", "click", "press_enter"})
 _ITERATIVE_ACTIONS = frozenset({"scroll", "drag", "scroll_to_ref"})
 _WRITE_ACTIONS = frozenset({"type", "clear_text", "select_option"})
 _POSITION_BIN = 50
+
+
+def has_uncommitted_write(
+    history: Iterable[PolicyTurn],
+    *,
+    commit_intent: bool = False,
+) -> bool:
+    """Whether the latest valid write awaits commit, optionally after commit intent."""
+    for turn in reversed(list(history)):
+        signal = turn.action_signal
+        if (
+            signal is None
+            or signal.execution != "dispatched"
+            or signal.target == "off_target"
+            or signal.role not in {"write", "commit"}
+        ):
+            continue
+        if signal.role == "commit":
+            return False
+        intent = turn.supervisor.action_intent
+        return not commit_intent or (intent is not None and intent.role == "commit")
+    return False
 
 
 def latest_action(
@@ -80,7 +103,11 @@ def action_signature(action: Any) -> str:
     return f"{action_type}|{target}|{text}"
 
 
-def effective_action_role(step: SupervisorStep, action: Any) -> AtomicRole:
+def effective_action_role(
+    step: SupervisorStep,
+    action: Any,
+    observation: Observation | None = None,
+) -> AtomicRole:
     """Resolve the lifecycle role from the concrete primitive."""
     action_type = str(getattr(action, "action_type", "") or "").lower()
     if action_type in _ITERATIVE_ACTIONS:
@@ -90,12 +117,45 @@ def effective_action_role(step: SupervisorStep, action: Any) -> AtomicRole:
     if action_type not in _COMMIT_ACTIONS:
         return "prepare"
     intent = step.action_intent
-    return intent.role if intent is not None else "prepare"
+    role = intent.role if intent is not None else "prepare"
+    if observation is None:
+        return role
+    snap = getattr(action, "snap", None) or {}
+    point = snap.get("snapped") or (
+        getattr(action, "x", None),
+        getattr(action, "y", None),
+    )
+    commit_rects = [
+        control.get("rect")
+        for control in (
+            observation.form_control_state
+            or observation.form_controls
+            or []
+        )
+        if control.get("form_action") == "commit"
+        and isinstance(control.get("rect"), dict)
+    ]
+    if not commit_rects or None in point:
+        return role
+    x, y = point
+    if any(
+        rect["x"] <= x <= rect["x"] + rect["w"]
+        and rect["y"] <= y <= rect["y"] + rect["h"]
+        for rect in commit_rects
+        if all(key in rect for key in ("x", "y", "w", "h"))
+    ):
+        return "commit"
+    return "write" if role == "commit" else role
 
 
-def semantic_action_key(step: SupervisorStep, action: Any) -> str:
+def semantic_action_key(
+    step: SupervisorStep,
+    action: Any,
+    *,
+    role: AtomicRole | None = None,
+) -> str:
     """Return one stable identity for the concrete action in its execution scope."""
-    role = effective_action_role(step, action)
+    role = role or effective_action_role(step, action)
     prefix = f"{step.execution_scope or ''}|{step.statement_id or ''}|{role}"
     if role == "commit":
         return prefix
@@ -241,6 +301,7 @@ __all__ = [
     "action_signature",
     "build_action_signal",
     "effective_action_role",
+    "has_uncommitted_write",
     "latest_action",
     "normalize_action_text",
     "record_latest_structured_response",

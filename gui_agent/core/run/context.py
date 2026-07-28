@@ -22,7 +22,10 @@ def write_json_atomic(path: Path, payload: object) -> None:
     temporary.replace(path)
 
 
-def save_context(path: Path, context: PolicyContext) -> None:
+def save_context(
+    path: Path,
+    context: PolicyContext,
+) -> None:
     write_json_atomic(path, context.model_dump(mode="json"))
 
 

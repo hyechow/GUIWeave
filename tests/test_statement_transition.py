@@ -35,6 +35,18 @@ def test_act_transition_requires_one_explicit_where_and_what_action():
     assert result.action.target_value == "31"
 
 
+def test_iterate_family_has_one_canonical_atomic_role():
+    action = _TransitionAction(
+        instruction="Scroll down until Configurations is visible",
+        atomic_role="prepare",
+        action_family="iterate",
+        target_control="Configurations",
+        expected_result="Configurations becomes visible",
+    )
+
+    assert action.atomic_role == "iterate"
+
+
 def test_transition_schema_does_not_offer_stop_or_no_action_kinds():
     with pytest.raises(ValidationError):
         _StatementTransitionResult.model_validate(

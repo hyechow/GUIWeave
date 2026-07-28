@@ -28,6 +28,7 @@ from gui_agent.core.filter_contract import (
 )
 from gui_agent.core.schemas import (
     CollectionIntent,
+    EventJournal,
     StatementContract,
     StatementOutcome,
 )
@@ -491,6 +492,75 @@ class CodingProgramRuntime:
         child.close()
         runtime._advance()
         return runtime
+
+    @classmethod
+    def resume(
+        cls,
+        program: CodingProgram,
+        journal: EventJournal,
+    ) -> "CodingProgramRuntime":
+        """Rebuild Python execution state from completed Statement receipts.
+
+        The generated process is intentionally disposable. Restarting the exact
+        reviewed source and returning persisted results to each yielded ``ctx.*``
+        call reconstructs locals and branch decisions without serializing Python
+        frames or touching the GUI.
+        """
+        events = journal.statement_outcomes
+        runtime = cls.start(program)
+        runtime._instance_seq = max(
+            (
+                cls._instance_number(
+                    str(getattr(event, "statement_instance_id", "") or "")
+                )
+                for event in journal.events
+            ),
+            default=0,
+        )
+        try:
+            for event in events:
+                if not event.outcome.is_completed:
+                    continue
+                invocation = runtime.current
+                if invocation is None:
+                    raise ValueError(
+                        "cannot resume coding program: journal has completed "
+                        f"statement {event.statement_id!r} after program termination"
+                    )
+                if invocation.id != event.statement_id:
+                    raise ValueError(
+                        "cannot resume coding program: journal/program diverged at "
+                        f"{event.statement_id!r}; program yielded {invocation.id!r}"
+                    )
+                runtime.current_instance_id = event.statement_instance_id
+                runtime.send_outcome(event.outcome)
+            if runtime.current is not None:
+                terminal = {
+                    event.statement_instance_id for event in journal.statement_outcomes
+                }
+                for turn in reversed(journal.turns):
+                    statement_id = str(
+                        getattr(turn.supervisor, "statement_id", "")
+                        or getattr(turn.statement, "id", "")
+                        or ""
+                    )
+                    if (
+                        turn.statement_instance_id not in terminal
+                        and statement_id == runtime.current.id
+                    ):
+                        runtime.current_instance_id = turn.statement_instance_id
+                        break
+            return runtime
+        except Exception:
+            runtime.close()
+            raise
+
+    @staticmethod
+    def _instance_number(instance_id: str) -> int:
+        prefix = str(instance_id or "").partition(":")[0]
+        if prefix.startswith("i") and prefix[1:].isdigit():
+            return int(prefix[1:])
+        return 0
 
     @property
     def finished(self) -> bool:

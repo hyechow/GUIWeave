@@ -124,6 +124,7 @@ class BrowserActionPolicy(BaseActionPolicy):
                 target_group_id=target_group_id,
                 action_family=action_family,
                 instruction=instruction,
+                target_ref=target_ref,
             )
         if decision is not None:
             action = decision.action
@@ -151,6 +152,7 @@ class BrowserActionPolicy(BaseActionPolicy):
             target_value=target_value,
             target_group_id=target_group_id,
             action_family=action_family,
+            target_ref=target_ref,
         )
 
     def action_evidence_context(
@@ -170,6 +172,7 @@ class BrowserActionPolicy(BaseActionPolicy):
                 target_value=target_value,
                 target_group_id=target_group_id,
                 action_family=action_family,
+                target_ref=target_ref,
             ),
             semantic_target_evidence(
                 getattr(observation, "semantic_tree", None),

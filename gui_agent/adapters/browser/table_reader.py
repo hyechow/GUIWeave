@@ -29,6 +29,16 @@ def table_snapshot_js() -> str:
     const r = el.getBoundingClientRect();
     return r.width > 0 && r.height > 0;
   }};
+  const viewportState = (el) => {{
+    const r = el.getBoundingClientRect();
+    const vh = innerHeight || document.documentElement.clientHeight;
+    const vw = innerWidth || document.documentElement.clientWidth;
+    const inViewport = r.bottom >= 0 && r.right >= 0 && r.top <= vh && r.left <= vw;
+    let viewportPos = "in";
+    if (r.bottom < 0) viewportPos = "above";
+    else if (r.top > vh) viewportPos = "below";
+    return {{ in_viewport: inViewport, viewport_pos: viewportPos }};
+  }};
   const cellsOf = (row, selector) => Array.from(row.querySelectorAll(selector))
     .filter(visible).slice(0, MAX_CELLS).map(text);
   // A cell's href is part of the cell's complete content, not a special "url" field:
@@ -495,6 +505,7 @@ def table_snapshot_js() -> str:
       totalRecords: totalRecordsNear(table),
       path: uniquePath(table),
       traversal,
+      ...viewportState(table),
     }}));
     seen.add(table);
   }}
@@ -528,6 +539,7 @@ def table_snapshot_js() -> str:
       totalRecords: totalRecordsNear(grid),
       path: uniquePath(grid),
       traversal,
+      ...viewportState(grid),
     }}));
   }}
 
@@ -627,6 +639,12 @@ def normalize_table_snapshots(raw: Any) -> list[dict[str, Any]]:
                 ),
                 "path": str(item.get("path") or ""),
                 "page": page,
+                "in_viewport": item.get("in_viewport")
+                if isinstance(item.get("in_viewport"), bool)
+                else None,
+                "viewport_pos": item.get("viewport_pos")
+                if item.get("viewport_pos") in {"above", "below", "in"}
+                else None,
                 # Surface-scoped traversal evidence. Consumers must move this exact table rather
                 # than borrowing the page-level viewport or another table's pager.
                 "traversal": traversal if isinstance(traversal, dict) else None,

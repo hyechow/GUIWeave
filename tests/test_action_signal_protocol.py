@@ -8,6 +8,7 @@ from gui_agent.core.schemas import (
     ActionIntent,
     BaseAction,
     BaseActionDecision,
+    Observation,
     SupervisorStep,
     TargetBinding,
 )
@@ -52,6 +53,36 @@ def test_concrete_scroll_is_recorded_as_iterate_not_commit():
         description="show lower content",
     )
     assert effective_action_role(_step("commit"), action) == "iterate"
+
+
+def test_commit_role_follows_adapter_declared_control_geometry():
+    observation = Observation(
+        png_bytes=b"x",
+        source="browser",
+        form_controls=[{
+            "kind": "button",
+            "label": "Persist form",
+            "form_action": "commit",
+            "rect": {"x": 800, "y": 20, "w": 100, "h": 40},
+        }],
+    )
+
+    assert effective_action_role(
+        _step("prepare"),
+        BaseAction(
+            action_type="tap",
+            x=790,
+            y=10,
+            description="Persist form",
+            snap={"method": "dom", "snapped": [850, 40]},
+        ),
+        observation,
+    ) == "commit"
+    assert effective_action_role(
+        _step("commit"),
+        BaseAction(action_type="tap", x=500, y=500, description="Apply child changes"),
+        observation,
+    ) == "write"
 
 
 def test_action_signal_records_dispatch_fact_without_business_effect_state():

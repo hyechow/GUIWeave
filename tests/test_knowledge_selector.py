@@ -4,7 +4,11 @@ from __future__ import annotations
 
 import inspect
 
+from gui_agent.core.schemas import CollectionIntent, Observation, StatementContract
 from gui_agent.core.self_learning.progressive import ProgressiveKnowledge
+from gui_agent.core.supervisor.statement.context_projection import (
+    select_transition_knowledge,
+)
 from gui_agent.core.supervisor.statement import llm_runtime
 
 
@@ -26,6 +30,40 @@ def test_irrelevant_signals_select_no_sections() -> None:
     })
 
     assert knowledge.match_signals(["无关页面", "检查连通性"]) == []
+
+
+def test_reach_selects_target_knowledge_instead_of_departure_page() -> None:
+    knowledge = ProgressiveKnowledge({
+        "Old editor": "---\nselector_when: edit old resource\n---\nold body",
+        "Products": (
+            "---\nselector_when: query read filter Products Name SKU Type\n---\n"
+            "products body"
+        ),
+    })
+    statement = StatementContract(
+        id="s2",
+        goal="Reach Products",
+        success="Products collection is visible",
+        expected_state={
+            "entity": "Products",
+            "Name": "requested item",
+            "Type": "requested type",
+        },
+        interaction_intent=CollectionIntent(
+            phase="reach",
+            entity="Products",
+        ),
+    )
+    observation = Observation(
+        png_bytes=b"x",
+        source="browser",
+        title="Old editor",
+        url="https://example.test/old/editor",
+    )
+
+    assert select_transition_knowledge(statement, observation, knowledge) == [
+        "Products",
+    ]
 
 
 def test_transition_bridge_has_no_selector_llm_or_cache_route() -> None:

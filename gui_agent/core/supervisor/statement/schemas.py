@@ -138,6 +138,8 @@ class _TransitionAction(BaseModel):
             raise ValueError("transition action requires target_control")
         if self.action_family in {"input", "select"} and not self.target_value.strip():
             raise ValueError(f"{self.action_family} transition requires target_value")
+        if self.action_family == "iterate":
+            self.atomic_role = "iterate"
         return self
 
 

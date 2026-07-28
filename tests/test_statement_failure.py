@@ -1,4 +1,4 @@
-"""Terminal failure is owned by Transition and requires cited evidence."""
+"""A model-declared blockage is diagnostic, not a Program terminal."""
 
 from __future__ import annotations
 
@@ -31,7 +31,7 @@ def _decision() -> _StatementTransitionResult:
     )
 
 
-def test_transition_failure_is_not_reclassified_by_inventory_heuristics(monkeypatch) -> None:
+def test_model_declared_failure_keeps_statement_running(monkeypatch) -> None:
     statement = StatementContract(
         id="m1",
         goal="set rating",
@@ -47,14 +47,14 @@ def test_transition_failure_is_not_reclassified_by_inventory_heuristics(monkeypa
         Observation(
             png_bytes=b"x",
             source="browser",
-            form_controls_meta={"coverage": "partial", "truncated": True},
+            form_controls_meta={"coverage": "complete", "truncated": False},
         ),
         [],
     )
 
-    assert step.outcome is not None and step.outcome.phase == "failed"
-    assert "no viable action" in step.outcome.summary
-    assert policy._last_transition_record["validation_error"] == ""
+    assert step.outcome is None
+    assert step.retry_transition is True
+    assert "not a terminal runtime fact" in step.summary
 
 
 def test_failed_requires_evidence_in_schema() -> None:

@@ -26,6 +26,8 @@ def test_form_controls_js_is_serialized_expression():
     assert "_hide" in js
     assert "a[href]" in js
     assert "query_action" in js
+    assert "form_action" in js
+    assert "data-form-role" in js
     assert "data-action" in js
     assert "filter[-_].*(apply|submit)" in js
     assert "effect_kind" not in js
@@ -98,6 +100,18 @@ def test_normalize_form_controls_keeps_structural_query_action():
     })
 
     assert controls[0]["query_action"] == "submit"
+
+
+def test_normalize_form_controls_keeps_structural_commit_action():
+    controls = normalize_form_controls({
+        "controls": [{
+            "label": "Localized save label",
+            "kind": "button",
+            "form_action": "commit",
+        }]
+    })
+
+    assert controls[0]["form_action"] == "commit"
 
 
 def test_normalize_form_controls_keeps_section_toggle_affordance():

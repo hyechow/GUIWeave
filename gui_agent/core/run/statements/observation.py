@@ -21,7 +21,13 @@ class ObservationCursor:
 
     def ensure(self, statement_index: int) -> Observation:
         if self.observation is None:
-            self.refresh(f"screenshot_read_{statement_index}.png")
+            stem = f"screenshot_read_{statement_index}"
+            filename = f"{stem}.png"
+            suffix = 2
+            while (self.log_dir / filename).exists():
+                filename = f"{stem}_{suffix}.png"
+                suffix += 1
+            self.refresh(filename)
         assert self.observation is not None
         return self.observation
 

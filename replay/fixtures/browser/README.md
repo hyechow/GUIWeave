@@ -27,6 +27,10 @@ uv run python -m replay \
   logs/gui_agent/webarena/browser/<run-id> --turn <N>
 ```
 
+`--turn` always means the Journal Turn shown by the runtime and report. Replay follows that
+event's persisted `observation_url`; screenshot filenames are internal assets and may have a
+different suffix in a derived resume run.
+
 The command exits nonzero when the live supervisor or optional action-policy decision violates the
 expectation. It never dispatches the returned action. A screenshot without its observation JSON is
 intentionally rejected because it cannot reproduce DOM controls, filters, traversal state, or

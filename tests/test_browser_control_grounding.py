@@ -12,6 +12,7 @@ def _description_controls() -> list[dict]:
     return [
         {
             "label": "Description",
+            "name": "optiontext[value][option_19][0]",
             "kind": "text_input",
             "value": "38",
             "group_id": "collection:19",
@@ -20,6 +21,7 @@ def _description_controls() -> list[dict]:
         },
         {
             "label": "Description",
+            "name": "optiontext[value][option_20][0]",
             "kind": "text_input",
             "value": "",
             "group_id": "collection:20",
@@ -28,6 +30,7 @@ def _description_controls() -> list[dict]:
         },
         {
             "label": "Description",
+            "name": "optiontext[value][option_20][1]",
             "kind": "text_input",
             "value": "",
             "group_id": "collection:20",
@@ -76,6 +79,25 @@ def test_rendered_input_is_not_grounded_without_explicit_group_identity() -> Non
     )
 
     assert decision is visual
+
+
+def test_rendered_input_uses_exact_form_control_ref() -> None:
+    visual = BrowserActionDecision(action=BrowserAction(
+        action_type="type", x=820, y=175, text="XXXL", description="输入 XXXL"
+    ))
+
+    decision = ground_rendered_action(
+        visual,
+        _description_controls(),
+        target_control="Admin Description input in the new blank row",
+        target_value="XXXL",
+        target_group_id="",
+        action_family="input",
+        target_ref="optiontext[value][option_20][0]",
+    )
+
+    assert (decision.action.x, decision.action.y) == (578, 668)
+    assert decision.action.snap["info"] == "Admin Description"
 
 
 def test_generic_label_does_not_choose_one_grouped_column() -> None:
@@ -216,6 +238,26 @@ def test_semantic_activate_navigates_document_link_without_coordinate_click() ->
     assert decision is not None
     assert decision.action.action_type == "navigate"
     assert decision.action.url == "https://example.test/admin/reviews/edit/351/"
+
+
+def test_semantic_activate_transports_unique_offscreen_target_before_click() -> None:
+    decision = resolve_semantic_action(
+        [{
+            "role": "button",
+            "key": "Edit Configurations",
+            "ref": 415757,
+            "in_viewport": False,
+            "point": {"x": 913.0, "y": 1603.0},
+        }],
+        target_control="Edit Configurations",
+        target_ref="",
+        action_family="activate",
+        instruction="Click Edit Configurations",
+    )
+
+    assert decision is not None
+    assert decision.action.action_type == "scroll_to_ref"
+    assert decision.action.target_ref == 415757
 
 
 def test_native_select_can_bypass_visual_policy() -> None:

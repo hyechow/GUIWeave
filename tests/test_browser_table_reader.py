@@ -360,6 +360,25 @@ def test_normalize_handles_malformed_traversal():
     assert tables[0]["traversal"] is None
 
 
+def test_normalize_preserves_table_viewport_state():
+    raw = {
+        "url": "http://example.test/product",
+        "title": "Product",
+        "tables": [{
+            "source": "table",
+            "headers": ["A", "B"],
+            "rows": [{"A": "1", "B": "2"}],
+            "in_viewport": False,
+            "viewport_pos": "below",
+        }],
+    }
+
+    table = normalize_table_snapshots(raw)[0]
+
+    assert table["in_viewport"] is False
+    assert table["viewport_pos"] == "below"
+
+
 # ── viewport: the page-level traversal signal, independent of any table ────────────
 
 def test_normalize_viewport_extracts_page_level_paged_state():

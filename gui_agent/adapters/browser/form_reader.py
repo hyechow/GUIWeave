@@ -338,6 +338,21 @@ def form_controls_js() -> str:
     }
     if (isFilter) item.is_filter = true;
     if (queryAction) item.query_action = queryAction;
+    const inputType = clean(el.getAttribute('type') || el.type || '').toLowerCase();
+    const formRole = clean(
+      el.getAttribute('data-form-role')
+      || el.getAttribute('data-action')
+      || ''
+    ).toLowerCase();
+    if (
+      !isFilter
+      && !queryAction
+      && (
+        inputType === 'submit'
+        || formRole === 'save'
+        || formRole === 'submit'
+      )
+    ) item.form_action = 'commit';
     if (isDatepicker) item.is_datepicker = true;
     if (requiredOf(el)) item.required = true;
     if (el.tagName === 'SELECT') {
@@ -469,6 +484,8 @@ def normalize_form_control_snapshot(
             norm["is_filter"] = True
         if item.get("query_action") in {"submit", "reset"}:
             norm["query_action"] = item["query_action"]
+        if item.get("form_action") == "commit":
+            norm["form_action"] = "commit"
         if item.get("is_datepicker") is True:
             norm["is_datepicker"] = True
         if item.get("required") is True:

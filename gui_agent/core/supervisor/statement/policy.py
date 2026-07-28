@@ -10,6 +10,7 @@ from gui_agent.core.filter_contract import (
     canonical_filter_value,
     match_filter_state,
 )
+from gui_agent.core.run.action_signals import has_uncommitted_write
 from gui_agent.core.run.statement_memory import available_event_refs, build_memory_view
 from gui_agent.core.run.lookup_scope import resolve_lookup_scope
 from gui_agent.core.run.statement_runtime import StatementRuntimeState
@@ -23,12 +24,17 @@ from gui_agent.core.schemas import (
     PolicyTurn,
     StatementContract,
     StatementOutcome,
+    StatementOutcomeEvent,
     SupervisorStep,
 )
 from gui_agent.core.self_learning.progressive import ProgressiveKnowledge
 from gui_agent.core.vision.frame_analysis import is_loading_frame
 
 from .action_normalization import StatementActionNormalizationMixin
+from .context_projection import (
+    declared_target_affordances,
+    resolve_required_write_ref,
+)
 from .execution_scope import execution_scope_for, history_for_scope
 from .llm_runtime import StatementLLMRuntimeMixin
 from .observation_view import StatementObservationView, build_observation_view
@@ -58,6 +64,24 @@ def _collection_intent(
 ) -> CollectionIntent | None:
     intent = statement.interaction_intent
     return intent if intent is not None and intent.phase == phase else None
+
+
+def _previous_statement_handoff(
+    history: list[JournalEvent],
+    current_instance_id: str,
+) -> dict[str, str] | None:
+    """Project only the nearest closed predecessor, never its turn history."""
+    for event in reversed(history):
+        if (
+            isinstance(event, StatementOutcomeEvent)
+            and event.statement_instance_id != current_instance_id
+        ):
+            return {
+                "status": "closed",
+                "statement_id": event.statement_id,
+                "outcome": event.outcome.phase,
+            }
+    return None
 
 
 def _controls(observation: Observation) -> list[dict]:
@@ -660,7 +684,35 @@ class StatementSupervisorPolicy(
         plan, rejection = self._proposal_plan(decision.action, decision)
         if plan is None:
             return None, rejection
+        if (
+            not plan.target_ref
+            and plan.atomic_role == "write"
+            and plan.action_family in {"input", "select"}
+        ):
+            plan.target_ref = resolve_required_write_ref(
+                statement,
+                observation,
+                target_control=plan.target_control,
+                target_value=plan.target_value,
+            )
         view = build_observation_view(statement, observation, [])
+        declared_targets = declared_target_affordances(statement, view)
+        if (
+            declared_targets
+            and not any(
+                item.get("visibility") == "visible"
+                for item in declared_targets
+            )
+            and any(
+                item.get("visibility") == "offscreen"
+                for item in declared_targets
+            )
+            and plan.action_family != "iterate"
+        ):
+            return None, (
+                "declared mutation target is offscreen; "
+                "the next operation must transport it into view"
+            )
         rejection = self._validate_action_capability(view, plan)
         if rejection:
             return None, rejection
@@ -698,24 +750,6 @@ class StatementSupervisorPolicy(
             "validation_error": error,
         }
 
-    def _transition_failure(
-        self,
-        statement: StatementContract,
-        decision: _StatementTransitionResult,
-        reason: str,
-        *,
-        execution_scope: str,
-    ) -> SupervisorStep:
-        """Hard terminal for truly unrecoverable proposal failures (not soft gates)."""
-        self._record_transition(decision, reason)
-        message = f"Statement Transition validation failed: {reason}"
-        return SupervisorStep(
-            outcome=StatementOutcome.exhausted(message),
-            summary=message,
-            execution_scope=execution_scope,
-            **_ctx(statement),
-        )
-
     def _soft_reject_and_retry(
         self,
         statement: StatementContract,
@@ -727,16 +761,14 @@ class StatementSupervisorPolicy(
         execution_scope: str,
         guidance: str,
         validation_retries: int,
-        keep_running: bool = False,
     ) -> SupervisorStep:
-        """Give one same-frame correction before applying the caller's policy."""
+        """Give one same-frame correction, then continue on the next frame."""
         if decision is not None:
             self._record_transition(decision, reason)
         if validation_retries <= 0:
             message = f"Statement postcondition remains unsatisfied: {reason}"
             return SupervisorStep(
-                retry_transition=keep_running,
-                outcome=None if keep_running else StatementOutcome.failed(message),
+                retry_transition=True,
                 summary=message,
                 execution_scope=execution_scope,
                 **_ctx(statement),
@@ -867,6 +899,10 @@ class StatementSupervisorPolicy(
             contract=statement,
             history=turn_history,
             observation=observation,
+            previous_statement=_previous_statement_handoff(
+                history,
+                self._active_instance_id,
+            ),
         )
         view = build_observation_view(statement, observation, scoped_history)
         filter_reset = self._structured_filter_reset_step(
@@ -946,13 +982,24 @@ class StatementSupervisorPolicy(
                 available_refs=citable_refs,
             )
             if not refs.allowed:
-                return self._transition_failure(
-                    statement, decision, refs.reason, execution_scope=execution_scope
+                return self._soft_reject_and_retry(
+                    statement,
+                    observation,
+                    history,
+                    decision=decision,
+                    reason=refs.reason,
+                    execution_scope=execution_scope,
+                    guidance=(
+                        "上一个终态候选引用了不存在的证据。保持当前目标，"
+                        "基于本帧真实证据重新返回 act 或 complete。"
+                    ),
+                    validation_retries=validation_retries,
                 )
         if decision.kind == "complete":
             rejection = ""
-            filter_unmet = False
             if (
+                _reach_is_structurally_complete(statement)
+                and
                 _collection_intent(statement, "reach") is not None
                 and _resolved_reach_collection(statement, observation) is None
             ):
@@ -988,7 +1035,15 @@ class StatementSupervisorPolicy(
                     "requested exact filter predicate set is not established: "
                     "mismatched"
                 )
-                filter_unmet = True
+            if (
+                not rejection
+                and statement.persistence == "explicit_commit"
+                and has_uncommitted_write(scoped_history)
+            ):
+                rejection = (
+                    "explicit_commit requires a commit receipt after the latest "
+                    "write receipt"
+                )
             if rejection:
                 # A typed structural miss demotes complete → continue acting.
                 return self._soft_reject_and_retry(
@@ -1000,11 +1055,10 @@ class StatementSupervisorPolicy(
                     execution_scope=execution_scope,
                     guidance=(
                         "上一个 complete 候选未通过结构化合同校验："
-                        f"{rejection}。不要结束 statement；继续 act 使视图满足合同，"
-                        "或在筛选已语义生效时再 complete。"
+                        f"{rejection}。不要结束 statement；继续 act 完成缺失的"
+                        "合同条件，获得相应的结构化证据后再 complete。"
                     ),
                     validation_retries=validation_retries,
-                    keep_running=filter_unmet,
                 )
             self._record_transition(decision)
             executed = any(
@@ -1033,21 +1087,28 @@ class StatementSupervisorPolicy(
                 **_ctx(statement),
             )
         if decision.kind == "failed":
-            self._record_transition(decision)
-            return SupervisorStep(
-                outcome=StatementOutcome.failed(
-                    decision.reason,
-                    evidence=self._outcome_evidence(decision),
+            return self._soft_reject_and_retry(
+                statement,
+                observation,
+                history,
+                decision=decision,
+                reason="model-declared blockage is not a terminal runtime fact",
+                execution_scope=execution_scope,
+                guidance=(
+                    "failed 只是当前帧的受阻判断，不能终止 Program。"
+                    "保持当前目标，并返回一个恢复、导航或继续观察的 act。"
                 ),
-                summary=decision.assessment.summary,
-                **_ctx(statement),
+                validation_retries=validation_retries,
             )
         if self._terminal_only:
-            return self._transition_failure(
-                statement,
-                decision,
-                "hard-budget final frame cannot dispatch another action",
+            reason = "hard-budget final frame cannot dispatch another action"
+            self._record_transition(decision, reason)
+            message = f"Statement Transition validation failed: {reason}"
+            return SupervisorStep(
+                outcome=StatementOutcome.exhausted(message),
+                summary=message,
                 execution_scope=execution_scope,
+                **_ctx(statement),
             )
         step, rejection = self._materialize_action(
             decision,
@@ -1067,6 +1128,29 @@ class StatementSupervisorPolicy(
                     "上一个 Transition 候选未执行，因为护栏/机械校验拒绝："
                     f"{rejection or 'invalid action'}。基于同一画面重新判断；"
                     "保持 typed interaction intent，并给出另一条可落成动作。"
+                ),
+                validation_retries=validation_retries,
+            )
+        if (
+            statement.persistence == "explicit_commit"
+            and has_uncommitted_write(scoped_history, commit_intent=True)
+            and step.action_intent is not None
+            and step.action_intent.role not in {"commit", "iterate"}
+        ):
+            return self._soft_reject_and_retry(
+                statement,
+                observation,
+                history,
+                decision=decision,
+                reason=(
+                    "a commit-intended writeback is awaiting the actual "
+                    "persistence boundary"
+                ),
+                execution_scope=execution_scope,
+                guidance=(
+                    "Journal 表明最近一次 commit 意图实际只形成 write receipt，"
+                    "其后尚无真正 commit。不要重开或重复写入子流程；只能通过 "
+                    "iterate 定位当前表面的最终提交入口，或对该入口执行 commit。"
                 ),
                 validation_retries=validation_retries,
             )

@@ -51,6 +51,15 @@ def _in_group(control: dict, target_group_id: str) -> bool:
     return actual == target_group_id
 
 
+def _matches_ref(control: dict, target_ref: str) -> bool:
+    if not target_ref:
+        return True
+    return target_ref in {
+        str(control.get(key) or "").strip()
+        for key in ("ref", "id", "name")
+    }
+
+
 def rendered_target_evidence(
     controls: list[dict] | None,
     *,
@@ -58,6 +67,7 @@ def rendered_target_evidence(
     target_value: str,
     target_group_id: str,
     action_family: str,
+    target_ref: str = "",
 ) -> str:
     """Describe one exact rendered target to the vision action policy.
 
@@ -74,6 +84,7 @@ def rendered_target_evidence(
         for control in controls or []
         if isinstance(control, dict)
         and (not target_group_id or _in_group(control, target_group_id))
+        and _matches_ref(control, target_ref)
         and matches_target_control(control, target_control)
     ]
     if len(candidates) != 1:
@@ -152,21 +163,32 @@ def resolve_semantic_action(
     action_family: str,
     instruction: str = "",
 ) -> BrowserActionDecision | None:
-    """Use an exact current-frame ref as a deterministic adapter capability."""
-    if action_family not in {"activate", "navigate", "iterate"} or not target_ref:
+    """Ground one unique semantic target, transporting it before activation if offscreen."""
+    if action_family not in {"activate", "navigate", "iterate"}:
         return None
-    candidates = [
-        node
-        for node in nodes or []
-        if isinstance(node, dict)
-        and str(node.get("ref") or "").strip() == str(target_ref).strip()
-    ]
+    if target_ref:
+        candidates = [
+            node
+            for node in nodes or []
+            if isinstance(node, dict)
+            and str(node.get("ref") or "").strip() == str(target_ref).strip()
+        ]
+    else:
+        target = _norm(target_control)
+        candidates = [
+            node
+            for node in nodes or []
+            if isinstance(node, dict)
+            and target
+            and _norm(node.get("key")) == target
+        ]
     if len(candidates) != 1:
         return None
     node = candidates[0]
-    if action_family == "iterate":
+    resolved_ref = str(node.get("ref") or "").strip()
+    if action_family == "iterate" or node.get("in_viewport") is False:
         try:
-            backend_node_id = int(target_ref)
+            backend_node_id = int(resolved_ref)
         except (TypeError, ValueError):
             return None
         return BrowserActionDecision(
@@ -176,8 +198,6 @@ def resolve_semantic_action(
                 description=instruction or f"将 {target_control} 移入视口",
             )
         )
-    if node.get("in_viewport") is False:
-        return None
     link_url = str(node.get("url") or "").strip()
     is_document_link = bool(
         str(node.get("role") or "").casefold() == "link"
@@ -220,6 +240,7 @@ def resolve_native_control_action(
     target_group_id: str,
     action_family: str,
     instruction: str = "",
+    target_ref: str = "",
 ) -> BrowserActionDecision | None:
     """Directly execute native selection or transport an offscreen form control.
 
@@ -237,6 +258,8 @@ def resolve_native_control_action(
         if not isinstance(control, dict):
             continue
         if target_group_id and not _in_group(control, target_group_id):
+            continue
+        if not _matches_ref(control, target_ref):
             continue
         if not matches_target_control(control, target_control):
             continue
@@ -299,6 +322,7 @@ def ground_rendered_action(
     target_value: str,
     target_group_id: str,
     action_family: str,
+    target_ref: str = "",
 ) -> BrowserActionDecision:
     """Correct a visual action's coordinate when one rendered input owns the target.
 
@@ -318,6 +342,8 @@ def ground_rendered_action(
         if not isinstance(control, dict):
             continue
         if target_group_id and not _in_group(control, target_group_id):
+            continue
+        if not _matches_ref(control, target_ref):
             continue
         if not matches_target_control(control, target_control):
             continue

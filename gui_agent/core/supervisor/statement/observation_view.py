@@ -194,8 +194,8 @@ def _control_affordance(control: dict) -> dict | None:
     if len(refs) > 1:
         result["ref_aliases"] = refs[1:]
     for key in (
-        "name", "id", "value", "options", "group_id", "is_filter",
-        "query_action",
+        "name", "id", "value", "options", "group_id", "group_index",
+        "group_field", "is_filter", "query_action", "form_action",
     ):
         value = control.get(key)
         if value is not None and value != "":

@@ -13,7 +13,8 @@ For each non-loading observation:
 4. Transition assesses the current state and proposes one `act | complete | failed` result.
 5. Runtime validates proposal shape and exact target-ref capability.
 6. The adapter grounds the physical action to the declared target before dispatch.
-7. A valid terminal proposal becomes `StatementOutcome`.
+7. A valid `complete` proposal becomes `StatementOutcome`; model-declared blockage remains
+   diagnostic and keeps the Statement open.
 
 Transition is therefore the only component that answers:
 
@@ -55,7 +56,7 @@ Runtime does **not** hold final business authority. It may only:
 |------|------|------------|
 | **Typed adapter predicate** | Compare contracts only with explicit typed adapter state, such as complete applied filters | Admit or short-circuit `complete` only on a proven match |
 | **Proposal mechanics** | Validate proposal schema and exact target-ref capabilities | Correct on the same frame; if output remains malformed, record a retry turn and keep the current Statement |
-| **Hard structural** | Invented journal citations, hard-budget final frame | May terminal-fail |
+| **Hard runtime boundary** | Hard-budget final frame | May terminal-fail |
 
 Contract and adapter producers normalize their values into the same typed schema before
 comparison. `AcceptanceMatcher` then performs exact structural comparison and returns only
@@ -66,7 +67,7 @@ Transition.
 An invalid Transition payload is not a business verdict. After its same-frame structural
 correction is exhausted, Runtime records the diagnostic and retries the same Statement on a fresh
 observation. Only a hard external budget may stop that recovery; an invalid payload itself never
-produces `failed` or `exhausted`.
+produces `failed` or `exhausted`. A model-declared `failed` proposal follows the same rule.
 
 `ctx.query` lowers to three typed phases:
 

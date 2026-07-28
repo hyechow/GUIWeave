@@ -62,6 +62,7 @@ class StatementMemoryView:
     durable_facts: tuple[DurableFact, ...]
     recent_steps: tuple[RecentStep, ...]
     compressed_history: tuple[str, ...]
+    previous_statement: dict[str, str] | None = None
 
     def render_prompt_section(self) -> str:
         """Render the bounded Journal projection consumed by the unified Transition."""
@@ -210,6 +211,7 @@ def _durable_from_turn(turn: PolicyTurn, statement_id: str) -> list[DurableFact]
                 metadata={
                     "role": signal_role,
                     "action_key": signal.action_key,
+                    "surface_id": signal.surface_id,
                     "target_control": signal.target_control,
                     "response": signal.response,
                 },
@@ -259,8 +261,6 @@ def _step_summary(turn: PolicyTurn) -> str:
     parts: list[str] = []
     if turn.operation_mode != "interactive":
         parts.append(f"mode={turn.operation_mode}")
-    if turn.supervisor and turn.supervisor.summary:
-        parts.append(turn.supervisor.summary.strip())
     instr = _instruction(turn)
     role = _role(turn)
     if instr:
@@ -276,14 +276,6 @@ def _step_summary(turn: PolicyTurn) -> str:
             f"signal exec={signal.execution} target={signal.target} response={signal.response}"
         )
     if turn.transition is not None:
-        proposal = turn.transition.get("proposal") or {}
-        assessment = proposal.get("assessment") or {}
-        status = str(assessment.get("status") or "")
-        if status:
-            parts.append(f"模型状态={status}")
-        kind = str(proposal.get("kind") or "")
-        if kind:
-            parts.append(f"模型决定={kind}")
         validation_error = str(turn.transition.get("validation_error") or "")
         if validation_error:
             parts.append(f"机械校验失败：{validation_error}")
@@ -319,6 +311,7 @@ def build_memory_view(
     contract: StatementContract,
     history: list[PolicyTurn],
     observation: Observation | None = None,
+    previous_statement: dict[str, str] | None = None,
     recent_k: int = DEFAULT_RECENT_K,
     compressed_k: int = DEFAULT_COMPRESSED_K,
 ) -> StatementMemoryView:
@@ -374,6 +367,7 @@ def build_memory_view(
         durable_facts=tuple(durable),
         recent_steps=recent_steps,
         compressed_history=tuple(compressed),
+        previous_statement=previous_statement,
     )
 
 

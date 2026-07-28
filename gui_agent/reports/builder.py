@@ -534,13 +534,13 @@ class RunnerReportBuilder:
                     to_y=action.get("to_y"),
                     snap=action.get("snap"),
                 )
-                ann_path = run_dir / f"screenshot_turn_{idx}_ann.jpg"
+                ann_path = run_dir / f"{ss_path.stem}_ann.jpg"
                 _save_report_img(annotated_img, ann_path)
                 annotated_url = ann_path.name
                 # Full-resolution annotated frame for click-to-zoom: the thumbnail uses the
                 # downscaled ann.jpg, but zoom shows the action marker at full size (previously
                 # zoom fell back to the raw screenshot and dropped the annotation).
-                full_ann_path = run_dir / f"screenshot_turn_{idx}_ann_full.jpg"
+                full_ann_path = run_dir / f"{ss_path.stem}_ann_full.jpg"
                 _save_report_img(annotated_img, full_ann_path, max_w=None)
                 annotated_full_url = full_ann_path.name
             elif ss_path.exists():

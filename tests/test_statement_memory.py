@@ -23,7 +23,12 @@ def _contract() -> StatementContract:
     )
 
 
-def _turn(index: int, instance_id: str, *, dispatched: bool = True) -> PolicyTurn:
+def _turn(
+    index: int,
+    instance_id: str,
+    *,
+    dispatched: bool = True,
+) -> PolicyTurn:
     intent = ActionIntent(
         instruction=f"perform step {index}",
         role="write",
@@ -87,3 +92,31 @@ def test_failed_dispatch_is_retained_as_a_fact_not_a_runtime_phase():
         history=[_turn(1, "i1:edit", dispatched=False)],
     )
     assert durable_kinds_present(view) == {"dispatch_failure"}
+
+
+def test_recent_history_excludes_prior_model_assessments():
+    base = _turn(1, "i1:edit")
+    turn = base.model_copy(update={
+        "supervisor": base.supervisor.model_copy(
+            update={"summary": "unsupported model belief"},
+        ),
+        "transition": {
+            "proposal": {
+                "assessment": {"status": "in_progress"},
+                "kind": "act",
+            },
+            "validation_error": "",
+        },
+    })
+    view = build_memory_view(
+        instance_id="i1:edit",
+        contract=_contract(),
+        history=[turn],
+    )
+
+    text = view.recent_steps[0].text
+    assert "unsupported model belief" not in text
+    assert "模型状态" not in text
+    assert "模型决定" not in text
+    assert "指令[write]" in text
+    assert "signal exec=dispatched" in text

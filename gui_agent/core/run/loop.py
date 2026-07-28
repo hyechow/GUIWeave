@@ -91,9 +91,12 @@ def _needs_terminal_reconciliation(context: PolicyContext) -> bool:
 def _turn_budget_mode(
     context: PolicyContext,
     max_turns: int,
+    *,
+    start_turns: int = 0,
 ) -> Literal["normal", "reconcile", "stop"]:
     """Choose the next loop mode without ever increasing the caller's hard limit."""
-    if _interactive_turn_count(context) + 1 <= max_turns:
+    consumed = max(0, _interactive_turn_count(context) - start_turns)
+    if consumed + 1 <= max_turns:
         return "normal"
     if _needs_terminal_reconciliation(context):
         return "reconcile"
@@ -142,6 +145,7 @@ def run_agent_loop(
     stop_requested: object = None,  # callable() -> bool; true means stop after current turn settles
     platform: object = None,  # already-open session so routing/planning sees the current front-tab URL/title; None → open here
     headless: bool = False,  # suppress the action visualizer (cursor/overlay) on every platform; HUD is gated by the caller
+    resume: bool = False,  # rebuild the reviewed-Python runtime from this context's completed Statement receipts
 ) -> AgentResult:
     if not isinstance(program, CodingProgram):
         raise TypeError("run_agent_loop requires a compiled coding program")
@@ -171,6 +175,7 @@ def run_agent_loop(
     if knowledge is not None:
         context.knowledge = knowledge
     _prior_wall_clock_s = float(context.wall_clock_s or 0.0)
+    _resume_turn_offset = _interactive_turn_count(context) if resume else 0
 
     rt: CodingProgramRuntime | None = None
 
@@ -208,6 +213,13 @@ def run_agent_loop(
 
     action_executor = ActionExecutor()
     loading_streak = 0
+    capture_index = max(
+        (
+            int(path.stem.rpartition("_")[2])
+            for path in log_dir.glob("screenshot_turn_*.png")
+        ),
+        default=0,
+    )
 
     # The platform bundle is the single seam through which the agent loop obtains
     # the session, executor and perception — no adapter
@@ -280,9 +292,32 @@ def run_agent_loop(
                 hud.reposition(*dock_rect(*_wb))
 
         # ── Semantic runtime (sole statement-scheduling owner) ────────────────────
-        if context.journal.events:
+        if context.journal.events and not resume:
             raise ValueError("coding runtime starts from a fresh execution journal")
-        rt = CodingProgramRuntime.start(program)
+        if resume:
+            rt = CodingProgramRuntime.resume(
+                program,
+                context.journal,
+            )
+            _resume_instance_id = rt.current_instance_id
+            context.journal.append_recovery(
+                "program_resume",
+                "journal_fast_forward",
+                bundle.platform,
+                detail=(
+                    f"replayed {len(rt.interpreter.run_log)} completed statements; "
+                    f"continue at {rt.current.id if rt.current is not None else '<return>'}"
+                ),
+                outcome="started",
+            )
+            _say(
+                "[Resume] "
+                f"已快进 {len(rt.interpreter.run_log)} 个完成步骤，"
+                f"从 {rt.current.id if rt.current is not None else '程序返回'} 继续"
+            )
+        else:
+            rt = CodingProgramRuntime.start(program)
+            _resume_instance_id = ""
         _record_llm_mark = get_llm_call_count()
         _record_token_mark = get_llm_token_usage()
         observation = None
@@ -307,6 +342,7 @@ def run_agent_loop(
             """Execute inline statements, then begin the next interactive statement."""
             nonlocal _record_llm_mark, _record_token_mark
             nonlocal observation, observation_url_for_turn, prep_future
+            nonlocal _resume_instance_id
             result = drain_immediate_statements(
                 program_runtime=rt,
                 bundle=bundle,
@@ -316,7 +352,7 @@ def run_agent_loop(
                 context=context,
                 save_context=_save_ctx,
                 say=_say,
-                status=lambda msg: _status(max(1, _interactive_turn_count(context)), msg),
+                status=lambda msg: _status(len(context.journal.turns) + 1, msg),
                 observation=observation_for_statements,
                 observation_url=observation_url,
                 allow_navigation=allow_navigation,
@@ -330,13 +366,21 @@ def run_agent_loop(
                 and getattr(supervisor, "_statement_rt", None) is None
             ):
                 sid = statement_id(rt.current, rt.index)
-                iid = rt.next_instance_id(sid)
-                start_statement(
-                    supervisor,
-                    rt.current,
-                    rt.index,
-                    instance_id=iid,
-                )
+                iid = rt.current_instance_id or rt.next_instance_id(sid)
+                if _resume_instance_id and iid == _resume_instance_id:
+                    supervisor.resume_statement(
+                        contract_for_interact(rt.current, rt.index),
+                        instance_id=iid,
+                        history=context.journal.turns,
+                    )
+                    _resume_instance_id = ""
+                else:
+                    start_statement(
+                        supervisor,
+                        rt.current,
+                        rt.index,
+                        instance_id=iid,
+                    )
             if result.observation is not None:
                 observation = result.observation
                 observation_url_for_turn = result.observation_url or observation_url_for_turn
@@ -427,6 +471,8 @@ def run_agent_loop(
             ),
         }
         context.outcome = None
+        if resume:
+            context.reply = None
         _save_ctx()
 
         if rt.finished:
@@ -441,7 +487,13 @@ def run_agent_loop(
                 return interrupted
 
             turn_no = len(context.journal.turns) + 1
-            _budget_mode = _turn_budget_mode(context, max_turns)
+            capture_index += 1
+            capture_no = capture_index
+            _budget_mode = _turn_budget_mode(
+                context,
+                max_turns,
+                start_turns=_resume_turn_offset,
+            )
             _budget_reconcile = _budget_mode == "reconcile"
             if _budget_mode == "stop":
                 _say(f"\n达到最大轮数 {max_turns}，agent-loop 停止")
@@ -469,11 +521,11 @@ def run_agent_loop(
             # on, preserving transient hints + saving a screenshot) is now done WITHIN the turn
             # by the decision-phase loop below — it no longer crosses a turn boundary.
             _status(turn_no, "截图分析中…")
-            observation_url_for_turn = f"screenshot_turn_{turn_no}.png"
+            observation_url_for_turn = f"screenshot_turn_{capture_no}.png"
             perception = bundle.make_perception(platform, log_dir / observation_url_for_turn)
             observation = perception.observe()
             save_observation_snapshot(
-                log_dir / f"observation_turn_{turn_no}.json",
+                log_dir / f"observation_turn_{capture_no}.json",
                 observation,
                 screenshot=observation_url_for_turn,
             )
@@ -616,6 +668,8 @@ def run_agent_loop(
                 executor=executor,
                 prep_future=prep_future,
                 log_dir=log_dir,
+                # The capture sequence is an internal asset key. HUD, action artifacts and
+                # journal records all use the one public logical Turn number.
                 turn_no=turn_no,
                 flash=_flash,
                 status=_status,

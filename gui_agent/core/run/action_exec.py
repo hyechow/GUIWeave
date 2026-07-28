@@ -292,11 +292,14 @@ class ActionExecutor:
             is_home_screen=sv_step.is_home_screen,
             target_control=intent.target_control,
         )
+        result.action_role = effective_action_role(sv_step, action, observation)
         if result.executed and has_snapped_point(action_decision):
             flash(action)
         if result.executed:
             result.action_key = semantic_action_key(
-                sv_step, result.action_decision.action
+                sv_step,
+                result.action_decision.action,
+                role=result.action_role,
             )
         return result
 

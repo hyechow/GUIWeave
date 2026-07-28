@@ -16,6 +16,7 @@ from __future__ import annotations
 
 import argparse
 import json
+import re
 import sys
 from pathlib import Path
 from typing import Any
@@ -32,8 +33,13 @@ from gui_agent.adapters.browser.factory import _build_action_policy, _build_supe
 from gui_agent.adapters.browser.target_binding import BrowserTargetBinder
 from gui_agent.core.run.context import load_observation_snapshot
 from gui_agent.core.run.target_binding import bind_action_target
-from gui_agent.core.orchestrator.program import Interact
-from gui_agent.core.schemas import StatementContract, PolicyContext, PolicyTurn
+from gui_agent.core.run.contracts import Interact
+from gui_agent.core.schemas import (
+    PolicyContext,
+    PolicyTurn,
+    StatementContract,
+    StatementOutcomeEvent,
+)
 from gui_agent.core.self_learning.app_summary import load_knowledge_for_app
 
 
@@ -97,12 +103,13 @@ def _statement_for_terminal_observation(
     raise ValueError(f"statement {statement_id!r} is absent from orchestrator.program")
 
 
-def _terminal_event_for_observation(
+def _terminal_event_for_turn(
     raw: dict[str, Any],
     *,
     turn: int,
     statement_id: str = "",
 ) -> dict[str, Any] | None:
+    """Resolve a terminal decision by Journal Turn, with legacy capture fallback."""
     screenshot = f"screenshot_turn_{turn}.png"
     fallback = None
     for event in reversed((raw.get("journal") or {}).get("events") or []):
@@ -110,13 +117,9 @@ def _terminal_event_for_observation(
             continue
         if statement_id and event.get("statement_id") != statement_id:
             continue
-        if event.get("observation_url") == screenshot:
+        if event.get("after_turn") == turn:
             return event
-        if (
-            fallback is None
-            and not event.get("observation_url")
-            and event.get("after_turn") == turn - 1
-        ):
+        if fallback is None and event.get("observation_url") == screenshot:
             fallback = event
     return fallback
 
@@ -129,6 +132,39 @@ def _load_snapshot(run_dir: Path, turn: int):
             "filter, viewport and semantic-tree signals"
         )
     return load_observation_snapshot(path)
+
+
+def _snapshot_turn(observation_url: str, fallback: int) -> int:
+    match = re.fullmatch(
+        r"observation_turn_(\d+)\.json|screenshot_turn_(\d+)\.(?:png|jpe?g)",
+        Path(observation_url or "").name,
+    )
+    if match is None:
+        return fallback
+    return int(match.group(1) or match.group(2))
+
+
+def _history_before_selected_event(
+    context: PolicyContext,
+    *,
+    target_index: int,
+    terminal_event: dict[str, Any] | None,
+) -> list[Any]:
+    """Restore the exact journal prefix preceding the replayed decision."""
+    for position, event in enumerate(context.journal.events):
+        if terminal_event is None:
+            if isinstance(event, PolicyTurn) and event.index == target_index:
+                return list(context.journal.events[:position])
+            continue
+        if (
+            isinstance(event, StatementOutcomeEvent)
+            and event.after_turn == terminal_event.get("after_turn")
+            and event.statement_id == terminal_event.get("statement_id")
+            and event.statement_instance_id
+            == terminal_event.get("statement_instance_id")
+        ):
+            return list(context.journal.events[:position])
+    raise ValueError(f"selected replay event for turn {target_index} is absent from journal")
 
 
 def _configure_knowledge(supervisor: Any, context: PolicyContext) -> None:
@@ -292,13 +328,13 @@ def main() -> int:
     parser.add_argument(
         "--turn",
         type=int,
-        help="observation/decision turn; defaults to replay_expectation.json",
+        help="Journal Turn; defaults to replay_expectation.json",
     )
     parser.add_argument(
         "--statement-id",
         help=(
-            "replay this StatementOutcome on the selected observation even when the same "
-            "physical turn also recorded the next statement's action"
+            "replay this StatementOutcome after the selected Journal Turn even when that "
+            "Turn also recorded another statement's action"
         ),
     )
     parser.add_argument("--expect-role", choices=("prepare", "write", "commit", "iterate"))
@@ -353,7 +389,7 @@ def main() -> int:
     target_turn = next((turn for turn in context.journal.turns if turn.index == target_index), None)
     warnings: list[str] = []
     terminal_event = (
-        _terminal_event_for_observation(
+        _terminal_event_for_turn(
             raw,
             turn=target_index,
             statement_id=args.statement_id,
@@ -364,21 +400,38 @@ def main() -> int:
     if target_turn is not None and terminal_event is None:
         statement_instance_id = target_turn.statement_instance_id
         statement = _statement_for_turn(raw, target_turn)
+        observation_turn = _snapshot_turn(target_turn.observation_url or "", target_index)
     else:
-        terminal_event = terminal_event or _terminal_event_for_observation(
+        terminal_event = terminal_event or _terminal_event_for_turn(
             raw,
             turn=target_index,
         )
         if terminal_event is None:
             raise ValueError(
-                f"turn {target_index} and its terminal observation are absent from "
+                f"turn {target_index} and its terminal event are absent from "
                 f"{run_dir / 'context.json'}"
             )
         statement_instance_id = str(terminal_event.get("statement_instance_id") or "")
         statement_id = str(terminal_event.get("statement_id") or "")
         if not statement_instance_id or not statement_id:
-            raise ValueError(f"terminal observation {target_index} lacks statement identity")
+            raise ValueError(f"terminal event after turn {target_index} lacks statement identity")
         statement_info = terminal_event.get("statement")
+        if not isinstance(statement_info, dict):
+            statement_info = next(
+                (
+                    event.get("statement")
+                    for event in raw.get("journal", {}).get("events", [])
+                    if event.get("statement_instance_id") == statement_instance_id
+                    and isinstance(event.get("statement"), dict)
+                ),
+                None,
+            )
+        if isinstance(statement_info, dict):
+            statement_info = {
+                key: value
+                for key, value in statement_info.items()
+                if key != "executor"
+            }
         statement = (
             StatementContract.model_validate(statement_info)
             if isinstance(statement_info, dict)
@@ -388,11 +441,21 @@ def main() -> int:
             "replaying the selected StatementOutcome on this observation; statement identity "
             "was recovered from the terminal event"
         )
+        observation_turn = _snapshot_turn(
+            str(terminal_event.get("observation_url") or ""),
+            target_index,
+        )
     if (context.platform or "browser") != "browser":
         raise ValueError("this replay runner currently supports the browser supervisor only")
 
-    observation = _load_snapshot(run_dir, target_index)
-    history = [turn for turn in context.journal.turns if turn.index < target_index]
+    observation = _load_snapshot(run_dir, observation_turn)
+    observation_asset = f"observation_turn_{observation_turn}.json"
+    history_events = _history_before_selected_event(
+        context,
+        target_index=target_index,
+        terminal_event=terminal_event,
+    )
+    history = [event for event in history_events if isinstance(event, PolicyTurn)]
     supervisor = _build_supervisor(context.supervisor_policy_name)
     _configure_knowledge(supervisor, context)
     supervisor._goal = context.goal
@@ -415,11 +478,12 @@ def main() -> int:
         )
     statement = supervisor._active_statement
 
-    decision = supervisor.step(observation, context.goal, history)
+    decision = supervisor.step(observation, context.goal, history_events)
     checker = getattr(supervisor, "_last_check", None)
     result = {
         "source": str(run_dir),
         "turn": target_index,
+        "observation_asset": observation_asset,
         "history_turns": len(history),
         "statement": statement.model_dump(mode="json", exclude_none=True),
         "observation": {
@@ -429,7 +493,11 @@ def main() -> int:
             "form_controls_meta": observation.form_controls_meta,
         },
         "checker": checker.model_dump(mode="json") if checker is not None else None,
-        "decision": decision.model_dump(mode="json", exclude_none=True),
+        "decision": decision.model_dump(
+            mode="json",
+            exclude_none=True,
+            exclude={"outcome": {"observation"}},
+        ),
         "warnings": warnings,
     }
     failures = _expectation_failures(expectation, decision, supervisor)
@@ -476,6 +544,7 @@ def main() -> int:
         json.dumps(
             {
                 "turn": target_index,
+                "observation_asset": observation_asset,
                 "checker_status": getattr(checker, "status", None),
                 "checker_effect": getattr(checker, "effect_status", None),
                 "assessment": (
@@ -490,7 +559,14 @@ def main() -> int:
                     else None
                 ),
                 "should_act": decision.action_intent is not None,
-                "outcome": decision.outcome.model_dump(mode="json") if decision.outcome else None,
+                "outcome": (
+                    decision.outcome.model_dump(
+                        mode="json",
+                        exclude={"observation"},
+                    )
+                    if decision.outcome
+                    else None
+                ),
                 "atomic_role": (
                     decision.action_intent.role
                     if decision.action_intent is not None

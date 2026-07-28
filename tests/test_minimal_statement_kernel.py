@@ -13,11 +13,14 @@ from gui_agent.core.filter_contract import (
     compile_filter_predicates,
 )
 from gui_agent.core.schemas import (
+    ActionSignal,
     ActionIntent,
     CollectionIntent,
     Observation,
     PolicyTurn,
     StatementContract,
+    StatementOutcome,
+    StatementOutcomeEvent,
     SupervisorStep,
 )
 from gui_agent.core.supervisor.statement import policy as policy_module
@@ -158,6 +161,128 @@ def test_transition_preserves_complete_visual_semantic_instruction(monkeypatch) 
     assert step.action_intent.expected_result == "the target reflects the requested operation"
 
 
+def test_offscreen_declared_subject_rejects_unrelated_write_and_replans_to_iterate(
+    monkeypatch,
+) -> None:
+    statement = StatementContract(
+        id="s1",
+        goal="add one configuration",
+        success="the configuration is saved",
+        required_values={"Configurations": [{"Color": "green", "Size": "XXXL"}]},
+    )
+    policy = _policy(statement)
+    decisions = iter([
+        _act(
+            family="select",
+            control="Size",
+            value="XXXL",
+            role="write",
+        ),
+        _act(
+            family="iterate",
+            control="Configurations",
+            role="iterate",
+        ),
+    ])
+    monkeypatch.setattr(
+        policy,
+        "_invoke_statement_transition",
+        lambda *args, **kwargs: next(decisions),
+    )
+    observation = _observation(
+        form_controls=[
+            {"kind": "native_select", "label": "Size", "value": ""},
+            {
+                "kind": "section_toggle",
+                "label": "Configurations",
+                "in_viewport": False,
+                "viewport_pos": "below",
+            },
+        ],
+    )
+
+    step = policy._run_single_turn(statement, observation, [])
+
+    assert step.action_intent is not None
+    assert step.action_intent.family == "iterate"
+    assert step.action_intent.target_control == "Configurations"
+
+
+def test_declared_write_binds_to_leading_projected_form_unit(monkeypatch) -> None:
+    statement = StatementContract(
+        id="s1",
+        goal="add one member",
+        success="the member is saved",
+        required_values={
+            "Admin Description": "XXXL",
+            "Admin Swatch": "XXXL",
+        },
+    )
+    policy = _policy(statement)
+    monkeypatch.setattr(
+        policy,
+        "_invoke_statement_transition",
+        lambda *a, **k: _act(
+            family="input",
+            control="Admin Description input in the new row",
+            value="XXXL",
+            role="write",
+        ),
+    )
+    controls = [
+        {
+            "kind": "text_input",
+            "label": label,
+            "name": f"{label.lower()}[{index}]",
+            "value": None,
+            "group_id": f"collection:{index}",
+            "group_index": index,
+            "group_field": "Admin",
+        }
+        for index in (20, 21)
+        for label in ("Description", "Swatch")
+    ]
+
+    step = policy._run_single_turn(
+        statement,
+        _observation(form_controls=controls),
+        [],
+    )
+
+    assert step.action_intent is not None
+    assert step.action_intent.target_ref == "description[21]"
+
+
+def test_new_statement_receives_only_the_closed_predecessor_handoff(monkeypatch) -> None:
+    statement = StatementContract(
+        id="s1",
+        goal="open the next resource",
+        success="the next resource is visible",
+    )
+    policy = _policy(statement)
+    captured = None
+
+    def decide(*_args, memory_view, **_kwargs):
+        nonlocal captured
+        captured = memory_view.previous_statement
+        return _act()
+
+    monkeypatch.setattr(policy, "_invoke_statement_transition", decide)
+    previous = StatementOutcomeEvent(
+        statement_instance_id="run:previous",
+        statement_id="s1",
+        outcome=StatementOutcome.completed("the previous edit was saved"),
+    )
+
+    policy._run_single_turn(statement, _observation(), [previous])
+
+    assert captured == {
+        "status": "closed",
+        "statement_id": "s1",
+        "outcome": "completed",
+    }
+
+
 def test_offscreen_action_gets_one_same_frame_transition_retry(monkeypatch) -> None:
     statement = StatementContract(
         id="s1",
@@ -183,8 +308,9 @@ def test_offscreen_action_gets_one_same_frame_transition_retry(monkeypatch) -> N
     step = policy._run_single_turn(statement, observation, [])
 
     assert calls == 2
-    assert step.outcome is not None and step.outcome.phase == "failed"
-    assert "does not support operation 'activate'" in step.outcome.summary
+    assert step.outcome is None
+    assert step.retry_transition is True
+    assert "does not support operation 'activate'" in step.summary
     assert policy._last_transition_record["validation_error"]
 
 
@@ -215,7 +341,9 @@ def test_wrong_target_ref_gets_one_same_frame_transition_retry(monkeypatch) -> N
     )
 
     assert calls == 2
-    assert step.outcome is not None and "target_ref" in step.outcome.summary
+    assert step.outcome is None
+    assert step.retry_transition is True
+    assert "target_ref" in step.summary
 
 
 @pytest.mark.parametrize("target_ref", ["WACSU99", "status"])
@@ -913,6 +1041,144 @@ def test_transition_completion_is_not_reinterpreted_by_a_hidden_persistence_fsm(
     assert step.pre_existing is True
 
 
+def test_explicit_commit_rejects_completion_after_uncommitted_write(monkeypatch) -> None:
+    statement = StatementContract(
+        id="s1",
+        goal="save status",
+        success="Status is saved",
+        persistence="explicit_commit",
+    )
+    policy = _policy(statement)
+    decisions = iter([
+        _complete("Status looks Active"),
+        _act(family="activate", control="Save", role="commit"),
+    ])
+    monkeypatch.setattr(
+        policy,
+        "_invoke_statement_transition",
+        lambda *a, **k: next(decisions),
+    )
+    write = PolicyTurn(
+        index=1,
+        observation_source="browser",
+        statement_instance_id=INSTANCE,
+        executed=True,
+        supervisor=SupervisorStep(
+            action_intent=ActionIntent(
+                instruction="set status",
+                role="write",
+                family="select",
+                target_control="Status",
+                target_value="Active",
+            ),
+            summary="status set",
+            statement_id="s1",
+        ),
+        action_signal=ActionSignal(
+            role="write",
+            execution="dispatched",
+            target="unknown",
+        ),
+    )
+
+    step = policy._run_single_turn(statement, _observation(), [write])
+
+    assert step.outcome is None
+    assert step.action_intent is not None
+    assert step.action_intent.role == "commit"
+
+
+def test_explicit_commit_accepts_completion_after_later_commit(monkeypatch) -> None:
+    statement = StatementContract(
+        id="s1",
+        goal="save status",
+        success="Status is saved",
+        persistence="explicit_commit",
+    )
+    policy = _policy(statement)
+    monkeypatch.setattr(
+        policy,
+        "_invoke_statement_transition",
+        lambda *a, **k: _complete("Status was submitted"),
+    )
+    history = [
+        PolicyTurn(
+            index=index,
+            observation_source="browser",
+            statement_instance_id=INSTANCE,
+            executed=True,
+            supervisor=SupervisorStep(
+                action_intent=ActionIntent(
+                    instruction=role,
+                    role=role,
+                    family="input" if role == "write" else "activate",
+                ),
+                summary=role,
+                statement_id="s1",
+            ),
+            action_signal=ActionSignal(
+                role=role,
+                execution="dispatched",
+                target="unknown",
+            ),
+        )
+        for index, role in enumerate(("write", "commit"), start=1)
+    ]
+
+    step = policy._run_single_turn(statement, _observation(), history)
+
+    assert step.outcome is not None
+    assert step.outcome.phase == "completed"
+    assert step.pre_existing is False
+
+
+def test_commit_writeback_cannot_restart_preparation(monkeypatch) -> None:
+    statement = StatementContract(
+        id="s1",
+        goal="save generated values",
+        success="Generated values are saved",
+        persistence="explicit_commit",
+    )
+    policy = _policy(statement)
+    decisions = iter([
+        _act(family="activate", control="Edit values", role="prepare"),
+        _act(family="activate", control="Save", role="commit"),
+    ])
+    monkeypatch.setattr(
+        policy,
+        "_invoke_statement_transition",
+        lambda *a, **k: next(decisions),
+    )
+    writeback = PolicyTurn(
+        index=1,
+        observation_source="browser",
+        statement_instance_id=INSTANCE,
+        executed=True,
+        supervisor=SupervisorStep(
+            action_intent=ActionIntent(
+                instruction="apply generated values",
+                role="commit",
+                family="activate",
+                target_control="Apply",
+            ),
+            summary="values written back",
+            statement_id="s1",
+        ),
+        action_signal=ActionSignal(
+            role="write",
+            execution="dispatched",
+            target="on_target",
+        ),
+    )
+
+    step = policy._run_single_turn(statement, _observation(), [writeback])
+
+    assert step.outcome is None
+    assert step.action_intent is not None
+    assert step.action_intent.role == "commit"
+    assert step.action_intent.target_control == "Save"
+
+
 def test_terminal_budget_does_not_replace_act_with_a_terminal_decision(monkeypatch) -> None:
     statement = StatementContract(
         id="s1",
@@ -992,3 +1258,42 @@ def test_rich_reach_state_does_not_complete_from_collection_identity_alone(
     assert step.action_intent is not None
     assert step.action_intent.target_control == "From"
     assert step.action_intent.target_value == "05/01/2021"
+
+
+def test_structurally_invalid_reach_complete_keeps_statement_running(
+    monkeypatch,
+) -> None:
+    statement = StatementContract(
+        id="s1",
+        goal="open the Items collection",
+        success="the Items collection is established",
+        expected_state={"entity": "Items"},
+        interaction_intent=CollectionIntent(
+            phase="reach",
+            entity="Items",
+        ),
+    )
+    policy = _policy(statement)
+    calls = 0
+
+    def complete(*_args, **_kwargs):
+        nonlocal calls
+        calls += 1
+        return _complete("an Item Attributes collection is visible")
+
+    monkeypatch.setattr(policy, "_invoke_statement_transition", complete)
+    step = policy._run_single_turn(
+        statement,
+        _observation(tables=[{
+            "path": "#item-attributes",
+            "caption": "Item Attributes",
+            "headers": ["Attribute"],
+            "rows": [{"Attribute": "Color"}],
+        }]),
+        [],
+    )
+
+    assert calls == 2
+    assert step.outcome is None
+    assert step.retry_transition is True
+    assert "requested structural collection" in step.summary
