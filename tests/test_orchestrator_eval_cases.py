@@ -30,7 +30,7 @@ def test_eval_groups_cover_query_and_form_regression_tasks() -> None:
     }
 
     assert by_group == {
-        "query_20260726": {42, 63, 108, 113, 193},
+        "query_20260726": {42, 63, 108, 113, 185, 193},
         "form_submission": {488, 491, 499, 544, 549, 694, 701, 709},
     }
 

@@ -92,6 +92,31 @@
     }
   },
   {
+    "task_id": 185,
+    "group": "query_20260726",
+    "intent": "Give me the material of the products that have 3 units left",
+    "contract": {
+      "method_counts": {"commit": 0},
+      "required_calls": [
+        {"method": "reach", "success_include": {"entity": "Products"}},
+        {
+          "method": "query",
+          "entity": "Products",
+          "fields_include": ["Name", "Type", "SKU"],
+          "filters_include": {"Quantity": 3}
+        },
+        {
+          "method": "read",
+          "target_mode": "present",
+          "fields_include": ["Material"],
+          "field_types_include": {"Material": "text"}
+        }
+      ],
+      "features": ["returns_value"],
+      "literal_values": ["Material"]
+    }
+  },
+  {
     "task_id": 193,
     "group": "query_20260726",
     "intent": "Get the total payment amount of the last 2 completed orders. Return the value as a number (e.g., 10.99) only, without any additional details.",
