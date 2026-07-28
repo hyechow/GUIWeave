@@ -272,7 +272,10 @@ def typed_applied_filter_state(
         or str(metadata.get("fallback_channel") or "") == "present"
     )
     return AppliedFilterState(
-        predicates=compile_filter_predicates(filters or {}),
+        predicates=compile_filter_predicates(
+            filters or {},
+            display_numeric_ranges=True,
+        ),
         coverage="complete" if complete_channel else "unavailable",
         source=source,
     )

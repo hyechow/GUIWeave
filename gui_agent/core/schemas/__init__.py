@@ -621,17 +621,30 @@ class SupervisorStep(BaseModel):
         default=False,
         description="当前帧页面尚未渲染稳定（白屏/加载中），应等待重新观察而非执行/计数",
     )
+    retry_transition: bool = Field(
+        default=False,
+        description=(
+            "本帧未形成合法的 Transition 决策；保持当前 Statement，记录诊断后"
+            "重新观察和决策，不把模型输出错误提升为业务终态。"
+        ),
+    )
 
     @model_validator(mode="after")
     def _separate_running_and_terminal_decisions(self) -> "SupervisorStep":
         if self.outcome is not None and (
-            self.action_intent is not None or self.is_loading
+            self.action_intent is not None or self.is_loading or self.retry_transition
         ):
             raise ValueError(
-                "terminal SupervisorStep cannot request an action or loading wait"
+                "terminal SupervisorStep cannot request an action, loading wait, or transition retry"
             )
         if self.is_loading and self.action_intent is not None:
             raise ValueError("loading SupervisorStep cannot carry an ActionIntent")
+        if self.retry_transition and (
+            self.action_intent is not None or self.is_loading
+        ):
+            raise ValueError(
+                "transition retry cannot carry an ActionIntent or loading wait"
+            )
         if self.preformed_action is not None and self.action_intent is None:
             raise ValueError("preformed action requires an ActionIntent")
         return self

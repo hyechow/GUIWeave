@@ -18,3 +18,13 @@ def test_filter_channels_determine_typed_coverage(filters, meta, coverage) -> No
         assert state.predicates["status"].values == ["complete"]
     else:
         assert state.predicates == {}
+
+
+def test_equal_bound_numeric_chip_projects_to_exact_scalar_predicate() -> None:
+    state = typed_applied_filter_state(
+        {"Quantity": "3.0000 - 3"},
+        {"source": "chips"},
+    )
+
+    assert state.predicates["quantity"].operator == "eq"
+    assert state.predicates["quantity"].values == ["3"]

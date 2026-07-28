@@ -4,9 +4,12 @@ from __future__ import annotations
 
 import re
 import unicodedata
+from decimal import Decimal, InvalidOperation
 from typing import Any, Literal
 
 from pydantic import BaseModel, ConfigDict, Field, JsonValue, model_validator
+
+from gui_agent.core.acceptance import AcceptanceMatcher, AcceptanceResult
 
 
 FilterOperator = Literal["eq", "gte", "lte", "range"]
@@ -18,6 +21,11 @@ _BOUND_SUFFIX = re.compile(
 )
 _DATE = r"(?:\d{4}[-/]\d{1,2}[-/]\d{1,2}|\d{1,2}[-/]\d{1,2}[-/]\d{2,4})"
 _DATE_RANGE = re.compile(rf"^\s*(?P<lower>{_DATE})\s+-\s+(?P<upper>{_DATE})\s*$")
+_NUMBER = r"[+-]?(?:\d+(?:\.\d*)?|\.\d+)"
+_NUMBER_VALUE = re.compile(rf"^{_NUMBER}$")
+_NUMBER_RANGE = re.compile(
+    rf"^\s*(?P<lower>{_NUMBER})\s+-\s+(?P<upper>{_NUMBER})\s*$"
+)
 _DATE_VALUE = re.compile(
     r"^(?P<a>\d{1,4})(?P<sep>[-/])(?P<b>\d{1,2})(?P=sep)(?P<c>\d{1,4})$"
 )
@@ -28,7 +36,24 @@ def canonical_filter_field(value: Any) -> str:
     return re.sub(r"\s+", " ", text.replace("_", " "))
 
 
+def _canonical_number(value: int | float | str) -> str:
+    try:
+        number = Decimal(str(value))
+    except InvalidOperation:
+        return str(value)
+    if not number.is_finite():
+        return str(value)
+    text = format(number, "f")
+    if "." in text:
+        text = text.rstrip("0").rstrip(".")
+    return "0" if text in {"-0", "+0"} else text
+
+
 def canonical_filter_value(value: JsonValue) -> JsonValue:
+    if isinstance(value, bool):
+        return value
+    if isinstance(value, (int, float)):
+        return _canonical_number(value)
     if not isinstance(value, str):
         return value
     text = re.sub(
@@ -44,6 +69,13 @@ def canonical_filter_value(value: JsonValue) -> JsonValue:
         year = f"20{c}" if len(c) == 2 else c
         month, day = a, b
     return f"{year}-{int(month):02d}-{int(day):02d}"
+
+
+def _canonical_bound_value(value: JsonValue) -> JsonValue:
+    normalized = canonical_filter_value(value)
+    if isinstance(normalized, str) and _NUMBER_VALUE.fullmatch(normalized):
+        return _canonical_number(normalized)
+    return normalized
 
 
 class FilterPredicate(BaseModel):
@@ -70,9 +102,20 @@ class AppliedFilterState(BaseModel):
     source: str = ""
 
 
-def _bounds(value: Any) -> tuple[JsonValue | None, JsonValue | None] | None:
+def _bounds(
+    value: Any,
+    *,
+    display_numeric_ranges: bool,
+) -> tuple[JsonValue | None, JsonValue | None] | None:
     if isinstance(value, str):
         match = _DATE_RANGE.fullmatch(value)
+        if match is None and display_numeric_ranges:
+            match = _NUMBER_RANGE.fullmatch(value)
+            if match is not None:
+                return (
+                    _canonical_number(match.group("lower")),
+                    _canonical_number(match.group("upper")),
+                )
         return (
             (
                 canonical_filter_value(match.group("lower")),
@@ -89,14 +132,19 @@ def _bounds(value: Any) -> tuple[JsonValue | None, JsonValue | None] | None:
         index = 0 if key in _LOWER else 1 if key in _UPPER else -1
         if index < 0:
             return None
-        normalized = canonical_filter_value(raw_value)
+        normalized = _canonical_bound_value(raw_value)
         if result[index] is not None and result[index] != normalized:
             raise ValueError("conflicting range bounds")
         result[index] = normalized
     return result[0], result[1]
 
 
-def compile_filter_predicates(filters: dict[str, Any] | None) -> FilterPredicateSet:
+def compile_filter_predicates(
+    filters: dict[str, Any] | None,
+    *,
+    display_numeric_ranges: bool = False,
+) -> FilterPredicateSet:
+    """Compile contract filters, optionally decoding adapter display ranges."""
     predicates: FilterPredicateSet = {}
     pending: dict[str, tuple[JsonValue | None, JsonValue | None]] = {}
     for raw_field, raw_value in (filters or {}).items():
@@ -107,14 +155,17 @@ def compile_filter_predicates(filters: dict[str, Any] | None) -> FilterPredicate
         key = canonical_filter_field(suffix.group("field") if suffix else field)
         if suffix:
             lower, upper = pending.get(key, (None, None))
-            value = canonical_filter_value(raw_value)
+            value = _canonical_bound_value(raw_value)
             if suffix.group("bound").casefold() in _LOWER:
                 lower = value
             else:
                 upper = value
             pending[key] = lower, upper
             continue
-        bounds = _bounds(raw_value)
+        bounds = _bounds(
+            raw_value,
+            display_numeric_ranges=display_numeric_ranges,
+        )
         if bounds is not None:
             pending[key] = bounds
         else:
@@ -128,20 +179,36 @@ def compile_filter_predicates(filters: dict[str, Any] | None) -> FilterPredicate
         values = [value for value in (lower, upper) if value is not None]
         if values:
             operator = (
-                "range"
+                "eq"
+                if len(values) == 2 and values[0] == values[1]
+                else "range"
                 if len(values) == 2
                 else "gte"
                 if lower is not None
                 else "lte"
             )
+            if operator == "eq":
+                values = values[:1]
             predicates[key] = FilterPredicate(operator=operator, values=values)
     return dict(sorted(predicates.items()))
+
+
+def match_filter_state(
+    requested: FilterPredicateSet,
+    actual: AppliedFilterState | None,
+) -> AcceptanceResult[FilterPredicateSet]:
+    """Match canonical filter structures with tri-state evidence semantics."""
+    return AcceptanceMatcher.exact(
+        requested,
+        actual.predicates if actual is not None else None,
+        evidence_complete=actual is not None and actual.coverage == "complete",
+    )
 
 
 def compare_filter_state(
     requested: FilterPredicateSet,
     actual: AppliedFilterState | None,
 ) -> bool | None:
-    if actual is None or actual.coverage != "complete":
-        return None
-    return requested == actual.predicates
+    """Compatibility projection for callers not yet migrated to AcceptanceMatcher."""
+    result = match_filter_state(requested, actual)
+    return True if result.status == "met" else False if result.status == "unmet" else None

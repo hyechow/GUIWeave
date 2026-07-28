@@ -8,7 +8,7 @@ from llm.structured import StructuredOutputError
 from gui_agent.core.filter_contract import (
     canonical_filter_field,
     canonical_filter_value,
-    compare_filter_state,
+    match_filter_state,
 )
 from gui_agent.core.run.statement_memory import available_event_refs, build_memory_view
 from gui_agent.core.run.lookup_scope import resolve_lookup_scope
@@ -727,14 +727,16 @@ class StatementSupervisorPolicy(
         execution_scope: str,
         guidance: str,
         validation_retries: int,
+        keep_running: bool = False,
     ) -> SupervisorStep:
-        """Give one same-frame correction, then fail the current statement."""
+        """Give one same-frame correction before applying the caller's policy."""
         if decision is not None:
             self._record_transition(decision, reason)
         if validation_retries <= 0:
             message = f"Statement postcondition remains unsatisfied: {reason}"
             return SupervisorStep(
-                outcome=StatementOutcome.failed(message),
+                retry_transition=keep_running,
+                outcome=None if keep_running else StatementOutcome.failed(message),
                 summary=message,
                 execution_scope=execution_scope,
                 **_ctx(statement),
@@ -832,15 +834,15 @@ class StatementSupervisorPolicy(
                 **_ctx(statement),
             )
         constrain_intent = _collection_intent(statement, "constrain")
-        filter_status = (
-            compare_filter_state(
+        filter_match = (
+            match_filter_state(
                 constrain_intent.predicates,
                 observation.applied_filter_state,
             )
             if constrain_intent is not None
             else None
         )
-        if filter_status is True:
+        if filter_match is not None and filter_match.status == "met":
             summary = f"子目标「{statement.goal}」已由当前视图筛选状态满足。"
             return SupervisorStep(
                 outcome=StatementOutcome.completed(
@@ -927,7 +929,7 @@ class StatementSupervisorPolicy(
                     "validation_error": message,
                 }
                 return SupervisorStep(
-                    outcome=StatementOutcome.exhausted(message),
+                    retry_transition=True,
                     summary=message,
                     execution_scope=execution_scope,
                     **_ctx(statement, None),
@@ -949,6 +951,7 @@ class StatementSupervisorPolicy(
                 )
         if decision.kind == "complete":
             rejection = ""
+            filter_unmet = False
             if (
                 _collection_intent(statement, "reach") is not None
                 and _resolved_reach_collection(statement, observation) is None
@@ -968,8 +971,8 @@ class StatementSupervisorPolicy(
                     "collection for the lookup request"
                 )
             constrain_intent = _collection_intent(statement, "constrain")
-            filter_status = (
-                compare_filter_state(
+            filter_match = (
+                match_filter_state(
                     constrain_intent.predicates,
                     observation.applied_filter_state,
                 )
@@ -978,13 +981,14 @@ class StatementSupervisorPolicy(
             )
             if (
                 not rejection
-                and filter_status is not None
-                and filter_status is not True
+                and filter_match is not None
+                and filter_match.status == "unmet"
             ):
                 rejection = (
                     "requested exact filter predicate set is not established: "
                     "mismatched"
                 )
+                filter_unmet = True
             if rejection:
                 # A typed structural miss demotes complete → continue acting.
                 return self._soft_reject_and_retry(
@@ -1000,6 +1004,7 @@ class StatementSupervisorPolicy(
                         "或在筛选已语义生效时再 complete。"
                     ),
                     validation_retries=validation_retries,
+                    keep_running=filter_unmet,
                 )
             self._record_transition(decision)
             executed = any(

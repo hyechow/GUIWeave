@@ -1,0 +1,27 @@
+{
+  "contract_filters": {
+    "Quantity": 3
+  },
+  "adapter_state": {
+    "filters": {
+      "Quantity": "3 - 3"
+    },
+    "meta": {
+      "source": "chips",
+      "indicator_channel": "present",
+      "fallback_channel": "absent",
+      "chip_container": "present",
+      "legacy_grid": "absent"
+    }
+  },
+  "visible_rows": [
+    {
+      "Name": "Eos V-Neck Hoodie-S-Blue",
+      "Quantity": "3.0000"
+    },
+    {
+      "Name": "Minerva LumaTech™ V-Tee-XS-Blue",
+      "Quantity": "3.0000"
+    }
+  ]
+}

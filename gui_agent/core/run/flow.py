@@ -60,6 +60,9 @@ def evaluate_turn_progress(
     executed: bool,
 ) -> ProgressDecision:
     """Return execution failures to the same Statement for a fresh transition."""
+    if sv_step.retry_transition:
+        return ProgressDecision()
+
     if not executed and sv_step.action_intent is not None:
         return ProgressDecision()
 

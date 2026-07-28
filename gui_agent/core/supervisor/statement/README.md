@@ -23,6 +23,20 @@ Transition is therefore the only component that answers:
 Assessment is diagnostic output, not persisted state. The next frame is reconstructed from the
 contract, Journal facts and current observation.
 
+## Context projection
+
+`context_projection.py` owns the pure, deterministic projection used by Transition. It performs
+no summarization, truncation or budget enforcement. Transition receives this decision projection,
+not a dump of every adapter index. The screenshot remains the portable visual baseline. For typed
+collection phases, `reach`/`locate` receive collection structure without row payloads or form
+state; `constrain` additionally receives filter controls and query actions. Raw rows belong to
+Acquire, while the complete control and affordance indexes remain available to Runtime validation.
+
+Knowledge retrieval keeps route identity separate from Statement intent: route/title may select an
+exact page section, while `selector_when` fallback uses contract semantics and requires multiple
+matching terms. Detailed knowledge remains in its source file; unrelated manuals are not injected
+into the live frame.
+
 ## Typed postconditions and action validation
 
 Runtime does **not** hold final business authority. It may only:
@@ -30,11 +44,19 @@ Runtime does **not** hold final business authority. It may only:
 | Kind | Role | On failure |
 |------|------|------------|
 | **Typed adapter predicate** | Compare contracts only with explicit typed adapter state, such as complete applied filters | Admit or short-circuit `complete` only on a proven match |
-| **Proposal mechanics** | Validate proposal schema and exact target-ref capabilities | Give one same-frame correction, then fail the current Statement |
+| **Proposal mechanics** | Validate proposal schema and exact target-ref capabilities | Correct on the same frame; if output remains malformed, record a retry turn and keep the current Statement |
 | **Hard structural** | Invented journal citations, hard-budget final frame | May terminal-fail |
 
-`exhausted` is reserved for truly unrecoverable cases (e.g. hard-budget final frame or a corrupt
-transition payload after its structural correction), not for an unproven filter state.
+Contract and adapter producers normalize their values into the same typed schema before
+comparison. `AcceptanceMatcher` then performs exact structural comparison and returns only
+`met | unmet | unknown`; it does not parse display text or create a terminal outcome. `met` may
+short-circuit completion, `unmet` keeps the Statement open, and `unknown` leaves the decision to
+Transition.
+
+An invalid Transition payload is not a business verdict. After its same-frame structural
+correction is exhausted, Runtime records the diagnostic and retries the same Statement on a fresh
+observation. Only a hard external budget may stop that recovery; an invalid payload itself never
+produces `failed` or `exhausted`.
 
 `ctx.query` lowers to three typed phases:
 

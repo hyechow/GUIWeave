@@ -94,7 +94,10 @@ def test_action_intent_is_frozen():
         intent.target_control = "Add"  # type: ignore[misc]
 
 
-@pytest.mark.parametrize("running_field", ["action_intent", "is_loading"])
+@pytest.mark.parametrize(
+    "running_field",
+    ["action_intent", "is_loading", "retry_transition"],
+)
 def test_terminal_step_rejects_running_signals(running_field):
     fields = {
         "summary": "done",

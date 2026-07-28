@@ -330,6 +330,83 @@ def test_complete_rejects_inherited_filter_outside_declared_scope(monkeypatch) -
     assert step.action_intent.target_control == "Clear all"
 
 
+def test_canonical_filter_acceptance_completes_without_transition(monkeypatch) -> None:
+    statement = StatementContract(
+        id="s1",
+        goal="filter records by quantity",
+        success="only quantity 3 records remain",
+        interaction_intent=CollectionIntent(
+            phase="constrain",
+            entity="Records",
+            predicates=compile_filter_predicates({"Quantity": 3}),
+        ),
+    )
+    policy = _policy(statement)
+    monkeypatch.setattr(
+        policy,
+        "_invoke_statement_transition",
+        lambda *_args, **_kwargs: pytest.fail(
+            "typed acceptance must bypass Transition"
+        ),
+    )
+
+    step = policy._run_single_turn(
+        statement,
+        _observation(
+            applied_filter_state=AppliedFilterState(
+                predicates=compile_filter_predicates(
+                    {"Quantity": "3 - 3"},
+                    display_numeric_ranges=True,
+                ),
+                coverage="complete",
+                source="chips",
+            ),
+        ),
+        [],
+    )
+
+    assert step.outcome is not None and step.outcome.phase == "completed"
+    assert step.outcome.verification == "confirmed"
+
+
+def test_filter_acceptance_mismatch_keeps_statement_running(monkeypatch) -> None:
+    statement = StatementContract(
+        id="s1",
+        goal="filter records by quantity",
+        success="only quantity 3 records remain",
+        interaction_intent=CollectionIntent(
+            phase="constrain",
+            entity="Records",
+            predicates=compile_filter_predicates({"Quantity": 3}),
+        ),
+    )
+    policy = _policy(statement)
+    calls = 0
+
+    def complete(*_args, **_kwargs):
+        nonlocal calls
+        calls += 1
+        return _complete("the filter looks active")
+
+    monkeypatch.setattr(policy, "_invoke_statement_transition", complete)
+
+    step = policy._run_single_turn(
+        statement,
+        _observation(
+            applied_filter_state=AppliedFilterState(
+                predicates=compile_filter_predicates({"Quantity": 4}),
+                coverage="complete",
+                source="test",
+            ),
+        ),
+        [],
+    )
+
+    assert calls == 2
+    assert step.outcome is None
+    assert step.retry_transition is True
+
+
 def test_staged_query_activates_matching_submit_before_pagination(monkeypatch) -> None:
     statement = StatementContract(
         id="s1",
@@ -730,6 +807,33 @@ def test_invalid_structured_transition_retries_once(monkeypatch) -> None:
     assert step.outcome is None
     assert step.action_intent is not None
     assert step.action_intent.target_control == "Back"
+
+
+def test_repeated_invalid_transition_keeps_statement_running(monkeypatch) -> None:
+    statement = StatementContract(
+        id="s1",
+        goal="set the exact quantity",
+        success="Quantity=3 is applied",
+        required_values={"Quantity": "3"},
+    )
+    policy = _policy(statement)
+    calls = 0
+
+    def transition(*_args, **_kwargs):
+        nonlocal calls
+        calls += 1
+        raise StructuredOutputError("input transition requires target_value")
+
+    monkeypatch.setattr(policy, "_invoke_statement_transition", transition)
+
+    step = policy._run_single_turn(statement, _observation(), [])
+
+    assert calls == 2
+    assert step.outcome is None
+    assert step.action_intent is None
+    assert step.retry_transition is True
+    assert "target_value" in step.summary
+    assert policy._last_transition_record["validation_error"]
 
 
 def test_adaptive_ui_field_name_is_allowed_when_value_matches_contract(monkeypatch) -> None:

@@ -101,7 +101,7 @@ SAFE_BUILTINS = {
     "zip": zip,
 }
 SAFE_METHODS = frozenset({
-    "append", "casefold", "count", "date", "endswith", "extend", "find", "fromisoformat",
+    "add", "append", "casefold", "count", "date", "endswith", "extend", "find", "fromisoformat",
     "format", "get", "index", "items", "join", "keys", "lower", "lstrip", "partition",
     "removeprefix", "removesuffix", "replace", "reverse", "rfind", "rpartition",
     "rsplit", "rstrip", "sort", "split", "splitlines", "startswith", "strftime",

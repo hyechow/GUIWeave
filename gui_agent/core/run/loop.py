@@ -553,6 +553,16 @@ def run_agent_loop(
             if _budget_reconcile and not _did_loading:
                 _budget_outcome = _outcome_from_step(sv_step)
                 if _budget_outcome is None:
+                    if sv_step.retry_transition:
+                        return _finish(_orch_result(
+                            context,
+                            rt.interpreter,
+                            (
+                                f"达到最大轮数 {max_turns}；末次 Transition "
+                                "未形成合法动作或终态"
+                            ),
+                            current=rt.current,
+                        ))
                     raise RuntimeError(
                         "terminal-only reconciliation returned a running step"
                     )

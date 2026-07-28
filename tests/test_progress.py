@@ -35,3 +35,16 @@ def test_no_action_running_turn_stops_immediately():
     )
 
     assert decision.stop_reason == "运行中的 Statement 未产生动作或终态"
+
+
+def test_invalid_transition_output_retries_without_stopping():
+    decision = evaluate_turn_progress(
+        sv_step=SupervisorStep(
+            summary="Transition output invalid",
+            statement_id="m1",
+            retry_transition=True,
+        ),
+        executed=False,
+    )
+
+    assert decision.stop_reason is None

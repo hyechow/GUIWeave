@@ -220,6 +220,31 @@ def test_date_filter_values_compare_by_typed_value_not_display_format() -> None:
     assert iso == display
 
 
+def test_numeric_filter_contract_uses_a_canonical_scalar() -> None:
+    integer = compile_filter_predicates({"Quantity": 3})
+    decimal = compile_filter_predicates({"Quantity": 3.0})
+
+    assert integer == decimal
+    assert integer["quantity"].operator == "eq"
+    assert integer["quantity"].values == ["3"]
+
+
+def test_numeric_bounds_use_the_same_canonical_value_format() -> None:
+    predicate = compile_filter_predicates({
+        "Quantity": {"from": "3.0000", "to": 3},
+    })["quantity"]
+
+    assert predicate.operator == "eq"
+    assert predicate.values == ["3"]
+
+
+def test_contract_text_is_not_reinterpreted_as_a_numeric_display_range() -> None:
+    predicate = compile_filter_predicates({"Name": "3 - 3"})["name"]
+
+    assert predicate.operator == "eq"
+    assert predicate.values == ["3 - 3"]
+
+
 def test_applied_filters_require_exact_predicate_set() -> None:
     observation = Observation(
         png_bytes=b"png",
