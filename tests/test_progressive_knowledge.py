@@ -61,6 +61,15 @@ def test_no_match_returns_empty():
     assert pk.bodies(pk.match_signals(["不存在的页面XYZ"])) == ""
 
 
+def test_title_only_matching_does_not_use_selector_when_fallback():
+    pk = ProgressiveKnowledge({
+        "Products": "---\nselector_when: catalog products quantity\n---\n正文",
+    })
+
+    assert pk.match_signals(["catalog quantity"], match_whens=False) == []
+    assert pk.match_signals(["Products"], match_whens=False) == ["Products"]
+
+
 def test_match_signals_title_then_when_fallback():
     # Title substring match first, then selector_when token/bigram overlap.
     pk = ProgressiveKnowledge({

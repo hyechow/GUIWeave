@@ -5,6 +5,7 @@ from __future__ import annotations
 from gui_agent.core.run.statement_memory import StatementMemoryView, build_memory_view
 from gui_agent.core.schemas import StatementContract, Observation, PolicyTurn
 
+from .context_projection import select_transition_knowledge
 from .model_io import run_statement_transition
 from .observation_view import StatementObservationView, build_observation_view
 from .schemas import _StatementTransitionResult
@@ -45,15 +46,11 @@ class StatementLLMRuntimeMixin:
         )
         elements = self._elements_knowledge
         if self._pk is not None:
-            # Select from deterministic current route/title/statement signals. This is retrieval
-            # only, never another LLM or control transition.
-            signals = [
-                str(observation.title or ""),
-                str(observation.url or ""),
-                statement.goal,
-                statement.success,
-            ]
-            stems = self._pk.match_signals(signals)
+            stems = select_transition_knowledge(
+                statement,
+                observation,
+                self._pk,
+            )
             self._last_sections_loaded = stems
             elements = self._pk.bodies(stems)
         return run_statement_transition(

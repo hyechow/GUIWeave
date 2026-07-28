@@ -34,4 +34,11 @@ def test_transition_bridge_has_no_selector_llm_or_cache_route() -> None:
     assert "run_selector" not in source
     assert "_select_sections" not in source
     assert "_selector_cache" not in source
-    assert "match_signals" in source
+    # Deterministic selection moved to context_projection; the bridge must route
+    # through it, and that projection must stay match_signals-based (no LLM/cache).
+    assert "select_transition_knowledge" in source
+
+    from gui_agent.core.supervisor.statement import context_projection
+
+    projection = inspect.getsource(context_projection.select_transition_knowledge)
+    assert "match_signals" in projection

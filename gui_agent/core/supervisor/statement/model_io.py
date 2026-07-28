@@ -2,7 +2,6 @@
 
 from __future__ import annotations
 
-import json
 import re
 from pathlib import Path
 from typing import Optional
@@ -10,7 +9,6 @@ from typing import Optional
 from dotenv import load_dotenv
 from langchain_openai import ChatOpenAI
 
-from gui_agent.context import ContextBlock
 from gui_agent.context.runtime import (
     constraints_block,
     knowledge_block,
@@ -22,6 +20,7 @@ from gui_agent.core.schemas import Observation, StatementContract
 from gui_agent.prompts import load_prompt_text
 from llm.structured import invoke_structured
 
+from .context_projection import transition_frame_block
 from .observation_view import StatementObservationView, build_observation_view
 from .schemas import StatementPrompts, _StatementTransitionResult
 
@@ -138,122 +137,6 @@ def _build_msgs(
     return assemble_messages(system_prompt, png_bytes, image_resize=image_resize)
 
 
-def _last_action_result(memory: StatementMemoryView) -> str:
-    if not memory.recent_steps and not memory.durable_facts:
-        return "none"
-    if memory.recent_steps and "no_effect" in memory.recent_steps[-1].text:
-        return "no_effect"
-    for fact in reversed(memory.durable_facts):
-        if fact.kind != "action_receipt":
-            continue
-        response = str(fact.metadata.get("response") or "")
-        if response == "none_observed":
-            return "no_effect"
-        if response == "observed":
-            return "effective"
-        return "unknown"
-    return "unknown"
-
-
-def _compact_control_state(observation: Observation) -> list[dict]:
-    """Remove geometry and duplicated adapter detail from the semantic state channel."""
-    source = observation.form_control_state or observation.form_controls or []
-    keys = (
-        "kind",
-        "label",
-        "name",
-        "id",
-        "value",
-        "selected_text",
-        "checked",
-        "required",
-        "in_viewport",
-        "viewport_pos",
-        "group_id",
-        "group_index",
-        "group_field",
-        "options",
-    )
-    return [
-        {key: item[key] for key in keys if key in item}
-        for item in source
-        if isinstance(item, dict)
-    ]
-
-
-def _compact_affordances(view: StatementObservationView) -> list[dict]:
-    """Keep target identity and capability; geometry stays in the adapter observation."""
-    keys = (
-        "label", "ref", "role", "visibility", "supported_operations",
-        "query_action",
-    )
-    return [
-        {key: item[key] for key in keys if key in item}
-        for item in view.affordances
-    ]
-
-
-def _transition_frame_block(
-    statement: StatementContract,
-    observation: Observation,
-    memory: StatementMemoryView,
-    view: StatementObservationView,
-    *,
-    initial_filters: dict[str, str] | None,
-) -> ContextBlock:
-    """Build the one decision packet; it contains facts, never a Runtime verdict."""
-    durable = [
-        {
-            "kind": fact.kind,
-            "event_ref": fact.event_ref,
-            "text": fact.text,
-            "metadata": fact.metadata,
-        }
-        for fact in memory.durable_facts
-    ]
-    frame = {
-        "contract": statement.model_dump(mode="json", exclude_none=True),
-        "memory": {
-            "instance_id": memory.instance_id,
-            "durable_facts": durable,
-            "recent_steps": [
-                {"event_ref": step.event_ref, "text": step.text}
-                for step in memory.recent_steps
-            ],
-            "compressed_history": list(memory.compressed_history),
-            "last_action_result": _last_action_result(memory),
-        },
-        "observation": {
-            "title": observation.title,
-            "url": observation.url,
-            "affordance_coverage": view.affordance_coverage,
-            "control_state": _compact_control_state(observation),
-            "applied_filters": observation.applied_filters or {},
-            "initial_filters": initial_filters or {},
-            "tables": observation.tables or [],
-            "affordances": _compact_affordances(view),
-        },
-    }
-    return ContextBlock(
-        id="runtime.transition_frame",
-        budget="required",
-        source_type="decision_frame",
-        source="journal+observation+contract",
-        ttl="turn",
-        priority=20,
-        content=(
-            "## TransitionFrame（本帧唯一决策包）\n"
-            "以下是合同、Journal 事实和当前观察；其中没有预先计算的完成状态或路线。\n"
-            + json.dumps(
-                frame,
-                ensure_ascii=False,
-                separators=(",", ":"),
-                default=str,
-            )
-        ),
-    )
-
-
 def run_statement_transition(
     statement: StatementContract,
     observation: Observation,
@@ -280,7 +163,7 @@ def run_statement_transition(
         prompt,
         observation,
         system_blocks=[
-            _transition_frame_block(
+            transition_frame_block(
                 statement,
                 observation,
                 memory_view,

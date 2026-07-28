@@ -149,6 +149,20 @@ def test_orchestrator_context_projects_planning_boundary(tmp_path, monkeypatch):
     assert "左侧菜单" not in context
 
 
+def test_shopping_admin_material_query_receives_product_field_contract() -> None:
+    knowledge = app_summary.load_knowledge_for_app("shopping_admin", "browser")
+    assert knowledge is not None
+
+    goal = "Give me the material of the products that have 3 units left"
+    sections = knowledge.orchestrator_sections(goal)
+    context = knowledge.orchestrator_context(goal)
+
+    assert "Products_list" in sections
+    assert "**Quantity**" in context
+    assert "**Material** and **Size** are detail-only fields" in context
+    assert "`ctx.read`" in context
+
+
 def test_app_knowledge_block_marks_facts_as_authoritative() -> None:
     from gui_agent.context.runtime import knowledge_block
 

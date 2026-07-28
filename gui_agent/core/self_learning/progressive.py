@@ -131,6 +131,7 @@ class ProgressiveKnowledge:
         *,
         min_overlap: int = 1,
         match_titles: bool = True,
+        match_whens: bool = True,
     ) -> list[str]:
         """Deterministically select sections from route/title/statement signals.
 
@@ -152,6 +153,8 @@ class ProgressiveKnowledge:
                     picked.append(key)
                 if len(picked) >= _MAX_SELECTED:
                     return picked
+        if not match_whens:
+            return picked
         sig_tokens = _tokens(" ".join(raw))
         if sig_tokens:
             section_tokens = {
