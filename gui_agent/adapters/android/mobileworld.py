@@ -201,8 +201,22 @@ def _init_task_then_wait_for_android(
 
 
 def _final_answer(result: AgentResult) -> str:
-    """Return the Program's user-facing output for answer-style tasks."""
+    """Return the Program's exact output for MobileWorld answer-style grading."""
     return result.output.strip()
+
+
+def _generate_and_persist_reply(
+    context_path: Path,
+    goal: str,
+    result: AgentResult,
+) -> str:
+    """Generate the frontend reply without changing the evaluator-facing output."""
+    from gui_agent.core.llm.output import generate_reply
+    from gui_agent.core.run.state import write_final_reply
+
+    reply = generate_reply(goal, result.model_dump(mode="json"))
+    write_final_reply(context_path, reply)
+    return reply
 
 
 def _write_mobileworld_context(
@@ -431,6 +445,16 @@ def main() -> int:
             # ----- post-run: answer bridge + official state-based eval -----
             if result is None:
                 raise RuntimeError("MobileWorld run ended without AgentResult")
+            try:
+                reply = _generate_and_persist_reply(
+                    log_dir / "context.json",
+                    goal,
+                    result,
+                )
+                print("[mobileworld] FINAL_REPLY")
+                print(reply)
+            except Exception as exc:  # noqa: BLE001 - reply is not evaluator input
+                print(f"[mobileworld] reply generation failed ({exc})")
             if task_initialized and not args.no_answer_bridge:
                 answer = _final_answer(result)
                 if answer:
