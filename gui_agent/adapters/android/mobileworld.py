@@ -13,7 +13,8 @@ capable than the backend's ``/step`` (it has clear_text / keycodes / amount-awar
 scroll). MobileWorld's HTTP API is used ONLY for the task lifecycle:
 
   pre-run  : POST /init (controller) + POST /task/init (reset the app to the task's
-             start state) + GET /task/goal (the intent) — in the ``_prime`` hook.
+             start state), wait for external adb to recover, then open a fresh
+             Android session; GET /task/goal supplies the intent.
   run      : generate a reviewed Python program, then run_agent_loop
              drives each statement over adb.
   post-run : (optional) POST /step answer to set the backend's interaction_cache for
@@ -41,8 +42,9 @@ import argparse
 import json
 import os
 import sys
+import time
 from pathlib import Path
-from typing import Optional
+from typing import Callable, Optional
 
 if __package__ is None or __package__ == "":
     sys.path.insert(0, str(Path(__file__).resolve().parents[3]))
@@ -156,6 +158,48 @@ class MobileWorldEnv:
         )
 
 
+def _init_task_then_wait_for_android(
+    env: MobileWorldEnv,
+    task_name: str,
+    setup_check: Callable[[], object],
+    *,
+    ready_timeout_s: float = 120.0,
+    poll_s: float = 2.0,
+    monotonic: Callable[[], float] = time.monotonic,
+    sleep: Callable[[float], None] = time.sleep,
+):
+    """Reset task state before opening an adb session, then wait for adb readiness.
+
+    MobileWorld task initialization may restart or temporarily disconnect the
+    emulator.  Opening :class:`AndroidSession` first leaves the run holding a stale
+    adbutils device handle.  This lifecycle boundary deliberately completes the
+    backend reset first and only lets the caller open a fresh session after the
+    platform setup check reports a live ``device`` transport.
+    """
+    print(f"[mobileworld] init_task {task_name} (resetting app state)...")
+    env.init_task(task_name)
+    print("[mobileworld] init_task OK; waiting for external adb...")
+
+    deadline = monotonic() + max(0.0, ready_timeout_s)
+    attempt = 0
+    while True:
+        attempt += 1
+        setup = setup_check()
+        if getattr(setup, "ok", False):
+            if attempt > 1:
+                print(f"[mobileworld] external adb ready after {attempt} checks")
+            return setup
+        remaining = deadline - monotonic()
+        if remaining <= 0:
+            return setup
+        summary = getattr(setup, "summary", "android environment unavailable")
+        print(
+            f"[mobileworld] adb not ready ({summary}); "
+            f"retrying in {min(poll_s, remaining):.1f}s"
+        )
+        sleep(min(poll_s, remaining))
+
+
 def _final_answer(result: AgentResult) -> str:
     """Return the Program's user-facing output for answer-style tasks."""
     return result.output.strip()
@@ -199,6 +243,12 @@ def main() -> int:
     parser.add_argument("--list", action="store_true", help="list GUI-only task names and exit")
     parser.add_argument("--all-tasks", action="store_true", help="with --list, include non-GUI (mcp/user-interaction) tasks")
     parser.add_argument("--max-turns", type=int, default=25)
+    parser.add_argument(
+        "--adb-ready-timeout",
+        type=float,
+        default=120.0,
+        help="seconds to wait for external adb after /task/init (default 120)",
+    )
     parser.add_argument("--headless", action="store_true", help="run fully headless (no HUD / cursor overlay)")
     parser.add_argument("--no-teardown", action="store_true", help="skip /task/tear_down (leave app state for inspection)")
     parser.add_argument("--no-answer-bridge", action="store_true", help="do not POST a final answer to the backend before eval")
@@ -239,7 +289,10 @@ def main() -> int:
     intent = goal
     action_policy = build_policy("android_vision")
     supervisor = build_supervisor("statement")
-    hud = build_platform().make_status_reporter(not args.headless)
+    # Task initialization may restart the emulator.  Defer HUD/scrcpy construction
+    # until after it finishes for the same reason we defer AndroidSession: neither
+    # should retain a pre-reset adb transport.
+    hud = None
     log_dir = create_run_dir("mobileworld", "android")
     print(f"[mobileworld] agent logs: {log_dir}")
 
@@ -273,31 +326,42 @@ def main() -> int:
             if apps:
                 print(f"[mobileworld] knowledge: none for apps={apps} — running bare")
 
-        def _prime(_platform) -> None:
-            # Reset the app to the task's start state via the backend (the only HTTP we
-            # need pre-run; actions thereafter go over adb).
-            print(f"[mobileworld] init_task {args.task} (resetting app state)...")
-            env.init_task(args.task)
-            print("[mobileworld] init_task OK")
-
         result: AgentResult | None = None
+        task_initialized = False
         try:
             bundle = build_platform()
-            setup = bundle.setup_check()
-            for line in setup.lines:
-                print(line)
-            if not setup.ok:
+            try:
+                setup = _init_task_then_wait_for_android(
+                    env,
+                    args.task,
+                    bundle.setup_check,
+                    ready_timeout_s=args.adb_ready_timeout,
+                )
+                task_initialized = True
+            except Exception as exc:  # noqa: BLE001
+                setup = None
                 result = failed_result(
                     goal,
-                    f"环境检查未通过：{setup.summary}",
+                    f"MobileWorld 任务初始化失败：{exc}",
                     task_type="RETRIEVE",
                     failure_kind="environment",
                 )
-            else:
-                orchestrator_context_reports: list[dict] = []
-                with bundle.open_session() as platform:
-                    _prime(platform)
+                print(f"[mobileworld] init_task failed: {exc}")
 
+            if setup is not None:
+                for line in setup.lines:
+                    print(line)
+            if result is None and setup is not None and not setup.ok:
+                result = failed_result(
+                    goal,
+                    f"任务初始化完成，但外部 adb 未恢复：{setup.summary}",
+                    task_type="RETRIEVE",
+                    failure_kind="environment",
+                )
+            elif result is None and setup is not None:
+                orchestrator_context_reports: list[dict] = []
+                hud = bundle.make_status_reporter(not args.headless)
+                with bundle.open_session() as platform:
                     def _compile_program():
                         run_max_turns = args.max_turns
                         cur_site = knowledge.app_name if knowledge is not None else ""
@@ -367,7 +431,7 @@ def main() -> int:
             # ----- post-run: answer bridge + official state-based eval -----
             if result is None:
                 raise RuntimeError("MobileWorld run ended without AgentResult")
-            if not args.no_answer_bridge:
+            if task_initialized and not args.no_answer_bridge:
                 answer = _final_answer(result)
                 if answer:
                     try:
@@ -378,13 +442,16 @@ def main() -> int:
 
             score: float | None = None
             reason: str | None = None
-            try:
-                score, reason = env.eval(args.task)
-                print(f"[mobileworld] OFFICIAL_EVAL score={score} reason={reason!r}")
-            except Exception as exc:  # noqa: BLE001
-                print(f"[mobileworld] eval failed ({exc})")
+            if task_initialized:
+                try:
+                    score, reason = env.eval(args.task)
+                    print(f"[mobileworld] OFFICIAL_EVAL score={score} reason={reason!r}")
+                except Exception as exc:  # noqa: BLE001
+                    print(f"[mobileworld] eval failed ({exc})")
+            else:
+                print("[mobileworld] eval skipped (task initialization did not complete)")
 
-            if not args.no_teardown:
+            if task_initialized and not args.no_teardown:
                 try:
                     env.tear_down(args.task)
                     print("[mobileworld] tear_down OK")

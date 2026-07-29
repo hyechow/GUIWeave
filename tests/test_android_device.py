@@ -9,6 +9,7 @@ keyevent mappings (home/back/recents/enter/wakeup) are correct.
 from __future__ import annotations
 
 import types
+from unittest.mock import Mock
 
 import pytest
 from PIL import Image
@@ -17,9 +18,14 @@ from PIL import Image
 class _FakeDev:
     """Records the adb calls the device makes (one per adbutils convenience method)."""
 
-    def __init__(self, calls: list, size=(1080, 2400)):
+    def __init__(self, calls: list, size=(1080, 2400), state="device"):
         self.calls = calls
         self._size = size
+        self._state = state
+
+    def get_state(self):
+        self.calls.append(("get_state",))
+        return self._state
 
     def keyevent(self, code):
         self.calls.append(("key", int(code)))
@@ -77,8 +83,47 @@ def _connected_device(serial="192.168.31.240:5555"):
 def test_wireless_connect_and_wake(calls):
     dev = _connected_device()
     assert ("connect", "192.168.31.240:5555") in calls  # host:port -> adb connect
+    assert ("get_state",) in calls  # real transport probe, not just a device handle
     assert ("key", 224) in calls  # KEYCODE_WAKEUP on connect
     assert (dev.win_w, dev.win_h) == (1080, 2400)  # cached from window_size()
+
+
+def test_connect_rejects_offline_device_handle(monkeypatch):
+    """adbutils.device(serial) returns a handle even when the transport is offline."""
+    import adbutils
+
+    calls: list = []
+    client = _FakeClient(calls)
+    client._dev = _FakeDev(calls, state="offline")
+    monkeypatch.setattr(adbutils, "AdbClient", lambda *a, **k: client)
+
+    from gui_agent.adapters.android.device import AndroidDevice
+
+    with pytest.raises(RuntimeError, match=r"is offline .*expected device"):
+        AndroidDevice(serial="192.168.1.102:5556").connect()
+    assert ("get_state",) in calls
+    assert ("key", 224) not in calls  # no input is sent through an unproven transport
+
+
+def test_connect_uses_probe_when_wireless_refresh_raises(monkeypatch):
+    """A failed best-effort `adb connect` must not mask an already-live transport."""
+    import adbutils
+
+    calls: list = []
+    client = _FakeClient(calls)
+
+    def fail_refresh(addr, timeout=5.0):
+        calls.append(("connect_failed", addr))
+        raise TimeoutError("refresh timed out")
+
+    client.connect = fail_refresh
+    monkeypatch.setattr(adbutils, "AdbClient", lambda *a, **k: client)
+
+    from gui_agent.adapters.android.device import AndroidDevice
+
+    dev = AndroidDevice(serial="192.168.1.102:5556").connect()
+    assert dev._dev is client._dev
+    assert ("get_state",) in calls
 
 
 def test_tap_passes_device_pixels_unchanged(calls):
@@ -182,7 +227,7 @@ def test_executor_denorm_maps_normalized_to_device_pixels(calls):
 
 # --------------------------------------------------------------------------- #
 # IME handling: per-connect detect (read-only) vs setup-time switch.           #
-# ADBKeyboard is the non-ASCII (Chinese) input path. The SWITCH lives in        #
+# ADBKeyboard is the preferred all-character input path. The SWITCH lives in   #
 # ensure_adbkeyboard (env setup / setup_check); the per-connect _detect_ime     #
 # only OBSERVES, never mutates the IME.                                         #
 # --------------------------------------------------------------------------- #
@@ -255,9 +300,8 @@ def test_ensure_adbkeyboard_noop_when_not_installed():
     assert not any(s.startswith("ime set") for s in fake.shell_log)
 
 
-def test_type_text_single_adbkeyboard_path_for_ascii_and_chinese():
-    """ADBKeyboard is the ONE input method: both ASCII and non-ASCII go through the
-    ADB_INPUT_B64 broadcast — no `input text` / ASCII-vs-Chinese split."""
+def test_type_text_prefers_adbkeyboard_for_ascii_and_chinese():
+    """When active, ADBKeyboard handles every character set through one path."""
     from gui_agent.adapters.android.constants import ADBKEYBOARD_IME
 
     for text in ("hello world", "你好 hello 123"):
@@ -266,10 +310,18 @@ def test_type_text_single_adbkeyboard_path_for_ascii_and_chinese():
         assert dev.type_text(text).startswith("OK type")
         log = dev._dev.shell_log
         assert any("ADB_INPUT_B64" in s for s in log)
-        assert not any("input text" in s for s in log)  # never the old ASCII path
+        assert not any("input text" in s for s in log)
 
 
-def test_type_text_fails_clearly_when_adbkeyboard_not_ready():
+def test_type_text_falls_back_to_input_text_for_ascii_without_adbkeyboard():
+    inactive = _device_with(_ImeFakeDev(installed=False, current_ime="com.baidu.input/.X"))
+    inactive._adbkeyboard_active = False
+    assert inactive.type_text("hello world 123") == "OK type 'hello world 123'"
+    assert any("input text hello%sworld%s123" in s for s in inactive._dev.shell_log)
+    assert not any("ADB_INPUT_B64" in s for s in inactive._dev.shell_log)
+
+
+def test_type_text_fails_non_ascii_when_adbkeyboard_not_ready():
     inactive = _device_with(_ImeFakeDev(installed=False, current_ime="com.baidu.input/.X"))
     inactive._adbkeyboard_active = False
     out = inactive.type_text("你好")
@@ -290,3 +342,108 @@ def test_clear_text_uses_adbkeyboard_native_broadcast_when_active():
     inactive._adbkeyboard_active = False
     assert inactive.clear_text() == "OK clear"
     assert any("keyevent" in s for s in inactive._dev.shell_log)  # fallback DEL loop
+
+
+def _execute_android(action, **statuses):
+    from gui_agent.adapters.android.actions import AndroidActionDecision
+    from gui_agent.adapters.android.executor import AndroidExecutor
+
+    client = Mock(viewport_size=(1080, 2400))
+    for name in (
+        "tap",
+        "clear_text",
+        "type_text",
+        "press_enter",
+        "scroll",
+        "drag",
+        "press_home",
+        "back",
+        "app_switch",
+    ):
+        getattr(client, name).return_value = statuses.get(name, f"OK {name}")
+    ok = AndroidExecutor(types.SimpleNamespace(client=client)).execute(
+        AndroidActionDecision(action=action)
+    )
+    return ok, client
+
+
+@pytest.mark.parametrize(
+    ("action_kwargs", "status_name", "status"),
+    [
+        (
+            {"action_type": "tap", "x": 500, "y": 500, "description": "点击"},
+            "tap",
+            "failed: offline",
+        ),
+        (
+            {"action_type": "clear_text", "description": "清空"},
+            "clear_text",
+            "interrupted by user",
+        ),
+        (
+            {"action_type": "press_enter", "description": "回车"},
+            "press_enter",
+            "paused: blocked",
+        ),
+        (
+            {
+                "action_type": "scroll",
+                "direction": "down",
+                "description": "滚动",
+            },
+            "scroll",
+            "failed: offline",
+        ),
+        (
+            {
+                "action_type": "drag",
+                "x": 100,
+                "y": 200,
+                "to_x": 800,
+                "to_y": 200,
+                "description": "拖动",
+            },
+            "drag",
+            "failed: offline",
+        ),
+        (
+            {"action_type": "home", "description": "主屏"},
+            "press_home",
+            "failed: offline",
+        ),
+        (
+            {"action_type": "back", "description": "返回"},
+            "back",
+            "interrupted",
+        ),
+        (
+            {"action_type": "app_switch", "description": "切换"},
+            "app_switch",
+            "paused",
+        ),
+    ],
+)
+def test_executor_propagates_device_action_failures(action_kwargs, status_name, status):
+    from gui_agent.adapters.android.actions import AndroidAction
+
+    ok, _ = _execute_android(AndroidAction(**action_kwargs), **{status_name: status})
+    assert ok is False
+
+
+def test_type_stops_when_clear_fails_and_propagates_type_failure():
+    from gui_agent.adapters.android.actions import AndroidAction
+
+    action = AndroidAction(
+        action_type="type",
+        x=500,
+        y=500,
+        text="hello",
+        description="输入 hello",
+    )
+    clear_ok, clear_client = _execute_android(action, clear_text="failed: offline")
+    assert clear_ok is False
+    clear_client.type_text.assert_not_called()
+
+    type_ok, type_client = _execute_android(action, type_text="failed: IME unavailable")
+    assert type_ok is False
+    type_client.type_text.assert_called_once_with("hello")

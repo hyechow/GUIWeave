@@ -50,7 +50,7 @@ class AndroidExecutor(VisionExecutor):
             return amount_map.get(action.amount, 1)
         return self._amount_units(action.amount)
 
-    def _execute_scroll_action(self, action: AndroidAction) -> None:
+    def _execute_scroll_action(self, action: AndroidAction) -> bool:
         client = self._client()
         ax = action.x if action.x is not None else 500
         ay = action.y if action.y is not None else 500
@@ -58,10 +58,12 @@ class AndroidExecutor(VisionExecutor):
         amount = self._amount_units_for_action(action)
         direction = action.direction or "down"
         print(f"  scroll {direction} amount={amount} @({px:.0f},{py:.0f})")
-        print(f"  结果: {client.scroll(direction, amount, px, py)}")
+        result = client.scroll(direction, amount, px, py)
+        print(f"  结果: {result}")
+        return self._result_succeeded(result, "滚动")
 
-    def execute_scroll(self, action, *, ticks: int = 0, delta_px: int = 0) -> None:
-        self._execute_scroll_action(action)
+    def execute_scroll(self, action, *, ticks: int = 0, delta_px: int = 0) -> bool:
+        return self._execute_scroll_action(action)
 
     def execute(
         self,
@@ -74,8 +76,7 @@ class AndroidExecutor(VisionExecutor):
         action = decision.action
         if action.action_type == "scroll" and action.direction:
             print(f"\n动作: [{action.action_type}] {action.description}")
-            self._execute_scroll_action(action)
-            return True
+            return self._execute_scroll_action(action)
         return super().execute(
             decision,
             app_name=app_name,
@@ -88,14 +89,17 @@ class AndroidExecutor(VisionExecutor):
         at = action.action_type
         if at == "home":
             print("回到主屏幕")
-            print(f"  结果: {client.press_home()}")
-            return True
+            result = client.press_home()
+            print(f"  结果: {result}")
+            return self._result_succeeded(result, "回到主屏幕")
         if at == "back":
             print("返回上一级")
-            print(f"  结果: {client.back()}")
-            return True
+            result = client.back()
+            print(f"  结果: {result}")
+            return self._result_succeeded(result, "返回")
         if at == "app_switch":
             print("打开 App 切换器（多任务）")
-            print(f"  结果: {client.app_switch()}")
-            return True
+            result = client.app_switch()
+            print(f"  结果: {result}")
+            return self._result_succeeded(result, "打开 App 切换器")
         return None

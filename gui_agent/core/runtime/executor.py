@@ -9,6 +9,10 @@ overrides only:
   - ``_clear_before_type`` — how the focused field is cleared before a ``type``
     (default: ``clear_text``; browser overrides for contenteditable safety).
 
+Every device primitive returns a status string.  Dispatch treats ``failed``,
+``interrupted`` and ``paused`` uniformly for every action so the runner never
+records an unsuccessful device call as executed.
+
 iPhone does NOT use this base — its executor is genuinely different (YOLO/OCR snap,
 2x-retina ``logical_xy``, picker gesture computation, daemon/mirroir text paths).
 
@@ -63,7 +67,7 @@ class VisionExecutor:
         range when it needs both fine (wheel-picker, ~1 row) and coarse (list) steps."""
         return amount_to_units(amount)
 
-    def execute_scroll(self, action, *, ticks: int = 0, delta_px: int = 0) -> None:
+    def execute_scroll(self, action, *, ticks: int = 0, delta_px: int = 0) -> bool:
         """Scroll without execute()'s bool wrapper (runner scroll-cache path).
         ``ticks`` / ``delta_px`` are iphone scroll-probe params and are ignored."""
         client = self._client()
@@ -73,7 +77,9 @@ class VisionExecutor:
         amount = self._amount_units(action.amount)
         direction = action.direction or "down"
         print(f"  scroll {direction} amount={amount} @({px:.0f},{py:.0f})")
-        print(f"  结果: {client.scroll(direction, amount, px, py)}")
+        result = client.scroll(direction, amount, px, py)
+        print(f"  结果: {result}")
+        return self._result_succeeded(result, "滚动")
 
     def execute(
         self,
@@ -101,24 +107,27 @@ class VisionExecutor:
             else:
                 print("未提供输入坐标，默认当前输入框已聚焦，直接输入文字")
             if not self._type_intercept(client, action.text):
-                self._clear_before_type(client, action.text)
-                print(f"  结果: {client.type_text(action.text)}")
+                if not self._clear_before_type(client, action.text):
+                    return False
+                result = client.type_text(action.text)
+                print(f"  结果: {result}")
+                return self._result_succeeded(result, "输入")
+            return True
 
         elif action.action_type == "clear_text":
             print("清空当前输入框")
-            print(f"  结果: {client.clear_text()}")
+            result = client.clear_text()
+            print(f"  结果: {result}")
+            return self._result_succeeded(result, "清空")
 
         elif action.action_type == "press_enter":
             print("按回车确认输入")
-            print(f"  结果: {client.press_enter()}")
+            result = client.press_enter()
+            print(f"  结果: {result}")
+            return self._result_succeeded(result, "回车")
 
         elif action.action_type == "scroll" and action.direction:
-            ax = action.x if action.x is not None else 500
-            ay = action.y if action.y is not None else 500
-            px, py = self._denorm(ax, ay)
-            amount = self._amount_units(action.amount)
-            print(f"  scroll {action.direction} amount={amount} @({px:.0f},{py:.0f})")
-            print(f"  结果: {client.scroll(action.direction, amount, px, py)}")
+            return self.execute_scroll(action)
 
         elif action.action_type == "drag":
             if action.x is None or action.y is None or action.to_x is None or action.to_y is None:
@@ -128,7 +137,9 @@ class VisionExecutor:
             tx, ty = self._denorm(action.to_x, action.to_y)
             duration_ms = action.duration_ms or 1000
             print(f"  drag ({fx:.0f},{fy:.0f})->({tx:.0f},{ty:.0f}), {duration_ms}ms")
-            print(f"  结果: {client.drag(fx, fy, tx, ty, duration_ms)}")
+            result = client.drag(fx, fy, tx, ty, duration_ms)
+            print(f"  结果: {result}")
+            return self._result_succeeded(result, "拖动")
 
         else:
             handled = self._dispatch_extra(action, client)
@@ -143,9 +154,24 @@ class VisionExecutor:
         print(f"执行点击: ({px:.0f}, {py:.0f})")
         result = self._client().tap(px, py)
         print(f"结果: {result}")
-        low = result.lower()
-        if "interrupted" in low or "failed" in low:
+        if not self._result_succeeded(result, "点击"):
             print("点击失败：跳过")
+            return False
+        return True
+
+    @staticmethod
+    def _result_succeeded(result: object, action_name: str = "动作") -> bool:
+        """Interpret the status contract shared by device input primitives.
+
+        A missing/non-string status is a protocol violation and fails closed.  A
+        successful implementation returns an explicit status such as ``OK tap``.
+        """
+        if not isinstance(result, str) or not result.strip():
+            print(f"{action_name}失败：设备未返回有效状态")
+            return False
+        low = result.lower()
+        if any(marker in low for marker in ("failed", "interrupted", "paused")):
+            print(f"{action_name}失败：{result}")
             return False
         return True
 
@@ -157,10 +183,12 @@ class VisionExecutor:
         that require a non-keyboard interaction to set a value correctly."""
         return False
 
-    def _clear_before_type(self, client, text: str) -> None:
+    def _clear_before_type(self, client, text: str) -> bool:
         """Clear the focused field before typing ``text`` (default: clear_text)."""
         print(f"  清空并输入: {text!r}")
-        print(f"  结果: {client.clear_text()}")
+        result = client.clear_text()
+        print(f"  结果: {result}")
+        return self._result_succeeded(result, "输入前清空")
 
     def _dispatch_extra(self, action, client) -> Optional[bool]:
         """Dispatch a platform-specific action_type. Return a bool when handled,

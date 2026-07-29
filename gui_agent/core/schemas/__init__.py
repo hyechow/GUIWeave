@@ -298,7 +298,7 @@ class BaseAction(BaseModel):
     )
     direction: Optional[str] = Field(
         default=None,
-        description="内容方向：up（查看上方内容）、down（查看下方内容）、left（查看右侧内容）、right（查看左侧内容）。普通列表 scroll/drag 使用",
+        description="内容方向：up（查看上方内容）、down（查看下方内容）、left（查看右侧内容）、right（查看左侧内容）。scroll 使用；drag 指定终点时可留空",
     )
     target_area: BaseScrollTargetArea = Field(
         default="main_content",
@@ -310,11 +310,11 @@ class BaseAction(BaseModel):
     )
     to_x: Optional[float] = Field(
         default=None,
-        description="drag 的可选结束点归一化 x 坐标；不需要指定结束点时留空",
+        description="drag 的结束点归一化 x 坐标；由平台根据方向生成手势时可留空",
     )
     to_y: Optional[float] = Field(
         default=None,
-        description="drag 的可选结束点归一化 y 坐标；不需要指定结束点时留空",
+        description="drag 的结束点归一化 y 坐标；由平台根据方向生成手势时可留空",
     )
     duration_ms: Optional[int] = Field(
         default=None,
@@ -340,10 +340,18 @@ class BaseAction(BaseModel):
             self.action_type = "clear_text"
         # value_direction is an iphone-only field (picker); getattr keeps this base
         # validator correct for both the base and the iphone subclass.
-        if self.action_type in {"scroll", "drag"} and not (
-            self.direction or getattr(self, "value_direction", None)
+        value_direction = getattr(self, "value_direction", None)
+        if self.action_type == "scroll" and not (self.direction or value_direction):
+            raise ValueError("scroll 动作必须填写 direction 或 value_direction")
+        if self.action_type == "drag" and not (
+            self.direction
+            or value_direction
+            or all(value is not None for value in (self.x, self.y, self.to_x, self.to_y))
         ):
-            raise ValueError("scroll/drag 动作必须填写 direction 或 value_direction")
+            raise ValueError(
+                "drag 动作必须填写完整 x/y/to_x/to_y，"
+                "或填写由平台生成手势所需的 direction/value_direction"
+            )
         return self
 
 

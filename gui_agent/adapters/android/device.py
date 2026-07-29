@@ -67,6 +67,11 @@ class AndroidDevice:
 
         ``serial`` semantics: ``host:port`` -> wireless (``adb connect`` first);
         a bare USB serial -> direct; ``None`` -> auto-select the sole device.
+
+        Merely obtaining an ``AdbDevice`` handle does not prove the transport is
+        usable: adbutils creates that handle even for an offline serial.  Always
+        issue ``get-state`` and require the authoritative ``device`` state before
+        setup or a session is allowed to continue.
         """
         import adbutils
 
@@ -78,13 +83,17 @@ class AndroidDevice:
 
         client = adbutils.AdbClient()
         serial = self.serial
+        connect_error: Optional[Exception] = None
         if serial:
             if ":" in serial:  # wireless host:port — ensure the transport exists
                 try:
                     client.connect(serial, timeout=5.0)
-                except Exception:  # noqa: BLE001 — may already be connected
-                    pass
-            self._dev = client.device(serial)
+                except Exception as exc:  # noqa: BLE001
+                    # A transport may already exist even when this best-effort
+                    # refresh failed.  Preserve the error for diagnostics, then
+                    # let get-state below make the authoritative decision.
+                    connect_error = exc
+            candidate = client.device(serial)
         else:
             devices = client.device_list()
             if not devices:
@@ -94,7 +103,22 @@ class AndroidDevice:
             if len(devices) > 1:
                 serials = ", ".join(d.serial for d in devices)
                 raise RuntimeError(f"multiple adb devices; set ANDROID_SERIAL ({serials})")
-            self._dev = devices[0]
+            candidate = devices[0]
+
+        try:
+            state = candidate.get_state().strip().lower()
+        except Exception as exc:  # noqa: BLE001
+            detail = f"; adb connect: {connect_error}" if connect_error else ""
+            raise RuntimeError(
+                f"adb device {serial or '<auto>'} probe failed: {exc}{detail}"
+            ) from exc
+        if state != "device":
+            detail = f"; adb connect: {connect_error}" if connect_error else ""
+            raise RuntimeError(
+                f"adb device {serial or '<auto>'} is {state or 'unknown'} "
+                f"(expected device){detail}"
+            )
+        self._dev = candidate
 
         # screencap returns black when the screen is off — wake it on connect.
         try:
@@ -224,19 +248,28 @@ class AndroidDevice:
         return f"OK tap ({x:.0f},{y:.0f})"
 
     def type_text(self, text: str) -> str:
-        """Type into the focused field via the ADBKeyboard IME — the SINGLE input path
-        for android. It handles every character (ASCII, Chinese, symbols, emoji) the
-        same way, so there is no ASCII-vs-non-ASCII split: the text is base64-encoded
-        and sent with ``am broadcast -a ADB_INPUT_B64``, inserted at the cursor (the
-        executor clears the field first). ADBKeyboard is switched on once in setup_check;
-        ``_adbkeyboard_active`` (set by _detect_ime at connect) gates this."""
-        if not self._adbkeyboard_active:
-            return "failed: 需 ADBKeyboard 输入法（setup_check 未就绪 / 未安装）"
-        import base64
+        """Type into the focused field.
 
-        b64 = base64.b64encode(text.encode("utf-8")).decode()
+        Prefer ADBKeyboard for every character set so ASCII and non-ASCII text have
+        identical replacement semantics.  When setup could not activate that IME,
+        retain adb's built-in ``input text`` as an ASCII-only fallback; this keeps
+        the setup warning's “ASCII 正常” guarantee true while failing non-ASCII
+        input explicitly instead of silently corrupting it.
+        """
         try:
-            self._require_dev().shell(["am", "broadcast", "-a", "ADB_INPUT_B64", "--es", "msg", b64])
+            if self._adbkeyboard_active:
+                import base64
+
+                b64 = base64.b64encode(text.encode("utf-8")).decode()
+                self._require_dev().shell(
+                    ["am", "broadcast", "-a", "ADB_INPUT_B64", "--es", "msg", b64]
+                )
+            elif text.isascii():
+                # Android's input command recognizes %s as a space.  Passing a
+                # list lets adbutils quote all other shell metacharacters.
+                self._require_dev().shell(["input", "text", text.replace(" ", "%s")])
+            else:
+                return "failed: 非 ASCII 输入需 ADBKeyboard（setup_check 未就绪 / 未安装）"
         except Exception as exc:  # noqa: BLE001
             return f"failed: {exc}"
         return f"OK type {text!r}"

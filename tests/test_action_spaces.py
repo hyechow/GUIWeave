@@ -56,6 +56,35 @@ def test_android_vocabulary():
     assert "navigate" not in v
 
 
+def test_android_drag_requires_explicit_start_and_end_points():
+    # Android has no semantic drag synthesizer: point-to-point is the adapter
+    # contract, and unlike scroll it does not need a direction.
+    action = AndroidAction(
+        action_type="drag",
+        x=100,
+        y=500,
+        to_x=900,
+        to_y=500,
+        description="向右拖动滑块",
+    )
+    assert action.direction is None
+    with pytest.raises(Exception, match="x/y/to_x/to_y"):
+        AndroidAction(
+            action_type="drag",
+            x=100,
+            y=500,
+            direction="right",
+            description="缺少终点",
+        )
+
+
+def test_android_prompt_matches_drag_endpoint_contract():
+    from gui_agent.adapters.android.policies import SYSTEM_PROMPT
+
+    assert "必须填写起点 x/y 和终点 to_x/to_y" in SYSTEM_PROMPT
+    assert "drag 只需给出起点" not in SYSTEM_PROMPT
+
+
 # --- construction: positive + negative (rejects foreign action_type) -------- #
 def test_positive_construction():
     IPhoneAction(action_type="app_switch", description="打开切换器")

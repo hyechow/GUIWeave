@@ -28,7 +28,8 @@ expected visible result 只帮助判断目标位置是否符合指令，不能�
 - clear_text：清空当前聚焦输入框的内容，无需坐标。
 - scroll：滚动列表或页面以显示更多内容。填写 direction（down 看下方、up 看上方、left 看左侧、right 看右侧）、amount（small/medium/large）；
   局部滚动容器需填写 x/y 作为滚动锚点，落在要滚动的区域内。
-- drag：拖动滑块、进度条等需要拖拽的控件。填写起点 x/y。
+- drag：拖动滑块、进度条等需要拖拽的控件。必须填写起点 x/y 和终点 to_x/to_y；
+  direction 不用于推导 drag 终点，可留空。duration_ms 仅在需要控制长按拖动时填写。
 - home：回到手机主屏幕（等价于系统主屏键），无需坐标。
 - back：系统返回键，返回上一级 / 关闭当前弹窗或页面，无需坐标。
 - app_switch：打开 App 切换器 / 最近任务（多任务视图），随后可 tap 卡片切换 App，无需坐标。
@@ -38,7 +39,7 @@ Android 操作约定：
 - 屏幕顶部是状态栏 / 通知栏，底部常有导航栏（多个标签 tab）。应用列表 / 抽屉中的图标用 tap 打开。
 - 输入文字后软键盘会从屏幕下半部分弹出并遮挡内容；输入完成后用 press_enter 提交并收起键盘。
 - amount 表示滚动幅度：small（细微调整）、medium（普通翻看）、large（快速翻页）。普通整页滚动可不填 x/y；局部容器 / 分栏滚动必须填 x/y 落在该区域中心。
-- 不要填写 to_x/to_y/duration_ms（drag 只需给出起点）。
+- scroll 不要填写 to_x/to_y/duration_ms；drag 必须填写 x/y/to_x/to_y。
 - description 用中文简要说明操作目标，必须与指令中的目标元素名称一致。
 
 ## 滚轮选择器（字段枚举 picker）

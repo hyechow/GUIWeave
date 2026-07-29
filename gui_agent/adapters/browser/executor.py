@@ -110,10 +110,10 @@ class BrowserExecutor(VisionExecutor):
             target_control=target_control,
         )
 
-    def execute_scroll(self, action, *, ticks: int = 0, delta_px: int = 0) -> None:
+    def execute_scroll(self, action, *, ticks: int = 0, delta_px: int = 0) -> bool:
         """Resolve omitted browser wheel coordinates before dispatch."""
         self._prepare_scroll_anchor(action)
-        super().execute_scroll(action, ticks=ticks, delta_px=delta_px)
+        return super().execute_scroll(action, ticks=ticks, delta_px=delta_px)
 
     def _prepare_scroll_anchor(self, action) -> None:
         """Put coordinate-free region/page scrolling on a non-control DOM surface.
@@ -234,7 +234,7 @@ class BrowserExecutor(VisionExecutor):
             pass
         return False
 
-    def _clear_before_type(self, client, text: str) -> None:
+    def _clear_before_type(self, client, text: str) -> bool:
         # Replace existing contents: select-all + type. BUT only for plain
         # <input>/<textarea>. On a contenteditable rich block editor (Feishu/Notion),
         # Cmd+A on an empty block enters BLOCK-NODE selection and the following type is
@@ -244,9 +244,12 @@ class BrowserExecutor(VisionExecutor):
         kind = _focused_kind(client)
         if kind == "input":
             print(f"  清空并输入: {text!r}")
-            print(f"  结果: {client.select_all()}")
+            result = client.select_all()
+            print(f"  结果: {result}")
+            return self._result_succeeded(result, "输入前全选")
         else:
             print(f"  输入（{kind}，跳过 select_all 防块编辑器吞字）: {text!r}")
+            return True
 
     def _dispatch_extra(self, action: BrowserAction, client) -> Optional[bool]:
         at = action.action_type
@@ -258,24 +261,28 @@ class BrowserExecutor(VisionExecutor):
             print(f"导航到地址栏: {url}")
             result = client.navigate(url)
             print(f"  结果: {result}")
-            return "failed" not in result.lower()
+            return self._result_succeeded(result, "导航")
         if at == "back":
             print("浏览器历史后退")
-            print(f"  结果: {client.go_back()}")
-            return True
+            result = client.go_back()
+            print(f"  结果: {result}")
+            return self._result_succeeded(result, "浏览器后退")
         if at == "new_tab":
             url = _normalize_url(action.url) if action.url else None
             print(f"新建标签页{('，导航到 ' + url) if url else ''}")
-            print(f"  结果: {client.new_tab(url)}")
-            return True
+            result = client.new_tab(url)
+            print(f"  结果: {result}")
+            return self._result_succeeded(result, "新建标签页")
         if at == "select_tab":
             print(f"切换到标签页（匹配 {action.tab_match!r}）")
-            print(f"  结果: {client.select_tab(action.tab_match)}")
-            return True
+            result = client.select_tab(action.tab_match)
+            print(f"  结果: {result}")
+            return self._result_succeeded(result, "切换标签页")
         if at == "close_tab":
             print(f"关闭标签页（{action.tab_match or '当前'}）")
-            print(f"  结果: {client.close_tab(action.tab_match)}")
-            return True
+            result = client.close_tab(action.tab_match)
+            print(f"  结果: {result}")
+            return self._result_succeeded(result, "关闭标签页")
         if at == "upload":
             if not action.file_path or action.x is None or action.y is None:
                 print("上传失败：缺少 file_path 或上传控件坐标 x/y")
@@ -284,7 +291,7 @@ class BrowserExecutor(VisionExecutor):
             print(f"上传文件 {action.file_path} → 点击上传控件 ({px:.0f},{py:.0f})，经 file chooser 送文件")
             result = client.upload_file(px, py, action.file_path)
             print(f"  结果: {result}")
-            return "failed" not in result.lower()
+            return self._result_succeeded(result, "上传")
         if at == "select_option":
             if not action.text:
                 print("选择下拉选项失败：缺少 text")
@@ -297,7 +304,7 @@ class BrowserExecutor(VisionExecutor):
                 print(f"选择当前聚焦下拉选项 {action.text!r}")
             result = client.select_option(px, py, action.text)
             print(f"  结果: {result}")
-            return "failed" not in result.lower()
+            return self._result_succeeded(result, "选择下拉选项")
         if at == "scroll_to_ref":
             if action.target_ref is None:
                 print("精确滚动失败：缺少 target_ref")
@@ -305,7 +312,7 @@ class BrowserExecutor(VisionExecutor):
             print(f"将语义目标 ref={action.target_ref} 移入视口")
             result = client.scroll_to_ref(action.target_ref)
             print(f"  结果: {result}")
-            return "failed" not in result.lower()
+            return self._result_succeeded(result, "精确滚动")
         return None
 
 
