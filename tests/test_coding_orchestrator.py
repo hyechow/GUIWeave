@@ -19,6 +19,7 @@ from gui_agent.core.orchestrator.planner import (
 from gui_agent.core.orchestrator.sandbox import (
     build_probe_fixture,
     execute_code,
+    repair_direct_read_fields,
     validate_code,
     validate_fixture_contract,
     validate_projection_contract,
@@ -352,6 +353,45 @@ def run(ctx):
         item.code == "STATE_ENTITY_MISMATCH"
         for item in validate_code(source)
     )
+
+
+def test_validate_code_requires_direct_read_fields_in_reach_contract() -> None:
+    source = """
+def run(ctx):
+    state = ctx.reach("Show one result", success={"entity": "VisibleResult"})
+    return ctx.read(state, fields={"temperature": "number"})
+"""
+
+    diagnostics = validate_code(source)
+
+    assert any(
+        item.code == "DIRECT_READ_FIELDS_UNDECLARED"
+        and "add them to that reach success.fields list" in item.message
+        for item in diagnostics
+    )
+    assert validate_code(source.replace(
+        '{"entity": "VisibleResult"}',
+        '{"entity": "VisibleResult", "fields": ["temperature"]}',
+    )) == []
+
+
+def test_repair_direct_read_fields_strengthens_literal_reach_contract() -> None:
+    source = """
+def run(ctx):
+    state = ctx.reach(
+        "Show one result",
+        success={"entity": "VisibleResult", "fields": ["title"]},
+    )
+    first = ctx.read(state, fields={"temperature": "number"})
+    second = ctx.read(state, fields=["title", "humidity"])
+    return [first, second]
+"""
+
+    repaired = repair_direct_read_fields(source)
+
+    assert repaired is not None
+    assert validate_code(repaired) == []
+    assert "'fields': ['title', 'temperature', 'humidity']" in repaired
 
 
 def test_validate_code_tracks_reassigned_state_by_call_order() -> None:
@@ -818,6 +858,25 @@ def run(ctx):
     assert len(result.return_value) == 3
 
 
+def test_probe_fixture_supports_read_directly_from_reached_state() -> None:
+    source = """
+def run(ctx):
+    state = ctx.reach(
+        "Render connectivity settings",
+        success={"entity": "DeviceSettings", "fields": ["flight_mode"]},
+    )
+    current = ctx.read(state, fields=["flight_mode"])
+    return current["flight_mode"]
+"""
+
+    fixture = build_probe_fixture(source)
+    result = execute_code(source, fixture)
+
+    assert fixture.reads["None"]["flight_mode"]
+    assert result.ok, result.error
+    assert [event.op for event in result.trace] == ["reach", "read"]
+
+
 def test_probe_fixture_accepts_dynamic_filter_field_not_in_projection() -> None:
     source = """
 def run(ctx):
@@ -1058,6 +1117,43 @@ def run(ctx):
     assert runtime.current.inputs["target"] == {"ID": "1"}
 
 
+def test_commit_date_time_values_match_probe_and_runtime_json_contract() -> None:
+    source = """
+from datetime import date, datetime, time
+
+def run(ctx):
+    ctx.commit(
+        "Set a weekend alarm",
+        values={
+            "time": time(8, 25),
+            "start_date": date(2026, 7, 28),
+            "created_at": datetime(2026, 7, 28, 8, 25),
+            "days": ["Saturday", "Sunday"],
+        },
+    )
+"""
+    expected = {
+        "time": "08:25:00",
+        "start_date": "2026-07-28",
+        "created_at": "2026-07-28T08:25:00",
+        "days": ["Saturday", "Sunday"],
+    }
+
+    probe = execute_code(source, build_probe_fixture(source))
+    assert probe.ok, probe.error
+    assert probe.writes[0].required_values == expected
+
+    runtime = CodingProgramRuntime.start(
+        CodingProgram(goal="set alarm", source=source)
+    )
+    try:
+        assert isinstance(runtime.current.statement, Interact)
+        assert runtime.current.statement.required_values == expected
+        assert not runtime.interpreter.control_error
+    finally:
+        runtime.close()
+
+
 def test_runtime_read_target_remains_one_public_call_with_internal_focus() -> None:
     source = """
 def run(ctx):
@@ -1261,6 +1357,56 @@ def test_generate_code_regenerates_whole_program_once() -> None:
         str(message.content) for message in llm.messages[1]
     )
     assert "complete replacement program" in regeneration_prompt
+
+
+def test_generate_code_deterministically_repairs_direct_read_fields() -> None:
+    source = """
+def run(ctx):
+    state = ctx.reach(
+        "Search for the requested weather",
+        success={"entity": "SearchResults"},
+    )
+    result = ctx.read(state, fields={"temperature": "number"})
+    return int(result["temperature"])
+"""
+    llm = _SequenceLLM(f"```python\n{source}\n```")
+
+    plan = generate_code("return the visible temperature", llm=llm)
+
+    assert plan.requirements_satisfied
+    assert plan.repaired
+    assert len(llm.messages) == 1
+    assert "'fields': ['temperature']" in plan.source
+    assert any(
+        event.kind == "deterministic_repair_completed"
+        for event in plan.events
+    )
+
+
+def test_generate_code_repairs_direct_read_fields_after_regeneration() -> None:
+    invalid = """
+def run(ctx):
+    state = ctx.reach("Open results", success={"entity": "Results"})
+    return ctx.query(state, entity="Other", fields=["value"])
+"""
+    repairable = """
+def run(ctx):
+    state = ctx.reach("Show the result", success={"entity": "VisibleResult"})
+    result = ctx.read(state, fields={"value": "number"})
+    return result["value"]
+"""
+    llm = _SequenceLLM(
+        f"```python\n{invalid}\n```",
+        f"```python\n{repairable}\n```",
+    )
+
+    plan = generate_code("return the visible value", llm=llm)
+
+    assert plan.requirements_satisfied
+    assert len(llm.messages) == 2
+    assert len(plan.attempts) == 3
+    assert "'fields': ['value']" in plan.source
+    assert plan.events[-1].data["repair_status"] == "deterministic"
 
 
 def test_static_diagnostics_trigger_one_regeneration() -> None:

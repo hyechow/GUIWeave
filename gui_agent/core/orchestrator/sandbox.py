@@ -22,7 +22,7 @@ import _strptime
 from dataclasses import dataclass, field
 from typing import Any
 
-from gui_agent.core.run.statements.compute_kernel import normalize_table_rows
+from gui_agent.core.run.statements.compute_kernel import json_value, normalize_table_rows
 from gui_agent.core.filter_contract import canonical_filter_value
 
 from .models import (
@@ -520,12 +520,12 @@ def _undefined_name_diagnostics(
     return diagnostics
 
 
-def _ctx_state_contract_diagnostics(
+def _reach_assignments(
     function: ast.FunctionDef,
-) -> list[CodeDiagnostic]:
-    reach_assignments: dict[
+) -> dict[str, list[tuple[int, str | None, frozenset[str], ast.Dict]]]:
+    assignments: dict[
         str,
-        list[tuple[int, str | None]],
+        list[tuple[int, str | None, frozenset[str], ast.Dict]],
     ] = {}
     for node in ast.walk(function):
         if (
@@ -536,15 +536,13 @@ def _ctx_state_contract_diagnostics(
             and _ctx_method(node.value) == "reach"
         ):
             success_node = _call_argument(node.value, "success", 1)
-            success_items = (
-                {
-                    key.value: value
-                    for key, value in zip(success_node.keys, success_node.values)
-                    if isinstance(key, ast.Constant) and isinstance(key.value, str)
-                }
-                if isinstance(success_node, ast.Dict)
-                else {}
-            )
+            if not isinstance(success_node, ast.Dict):
+                continue
+            success_items = {
+                key.value: value
+                for key, value in zip(success_node.keys, success_node.values)
+                if isinstance(key, ast.Constant) and isinstance(key.value, str)
+            }
             entity = (
                 value
                 if isinstance(
@@ -553,14 +551,27 @@ def _ctx_state_contract_diagnostics(
                 )
                 else None
             )
-            reach_assignments.setdefault(node.targets[0].id, []).append(
-                (node.lineno, entity)
+            declared_fields = _literal_value(success_items.get("fields"))
+            field_keys = frozenset(
+                _semantic_key(field_name)
+                for field_name in declared_fields
+                if isinstance(field_name, str)
+            ) if isinstance(declared_fields, list) else frozenset()
+            assignments.setdefault(node.targets[0].id, []).append(
+                (node.lineno, entity, field_keys, success_node)
             )
+    return assignments
+
+
+def _ctx_state_contract_diagnostics(
+    function: ast.FunctionDef,
+) -> list[CodeDiagnostic]:
+    reach_assignments = _reach_assignments(function)
 
     def latest_reach(
         name: str,
         before_line: int,
-    ) -> tuple[int, str | None] | None:
+    ) -> tuple[int, str | None, frozenset[str], ast.Dict] | None:
         return max(
             (
                 assignment
@@ -627,6 +638,31 @@ def _ctx_state_contract_diagnostics(
                         f"{reach[1]!r}"
                     ),
                 ))
+            if method == "read" and reach is not None:
+                target = _call_argument(node, "target", 1)
+                direct_read = target is None or (
+                    isinstance(target, ast.Constant) and target.value is None
+                )
+                read_fields = _literal_fields(node)
+                missing_fields = (
+                    [
+                        field_name
+                        for field_name in read_fields
+                        if _semantic_key(field_name) not in reach[2]
+                    ]
+                    if direct_read and read_fields is not None
+                    else []
+                )
+                if missing_fields:
+                    diagnostics.append(_diag(
+                        node,
+                        "DIRECT_READ_FIELDS_UNDECLARED",
+                        (
+                            f"direct ctx.read fields {missing_fields!r} are not declared "
+                            f"by {state.id!r} from ctx.reach; add them to that "
+                            "reach success.fields list"
+                        ),
+                    ))
         elif method == "commit":
             target = _call_argument(node, "target", 1)
             if (
@@ -642,6 +678,88 @@ def _ctx_state_contract_diagnostics(
                     ),
                 ))
     return diagnostics
+
+
+def repair_direct_read_fields(source: str) -> str | None:
+    """Complete literal reach field contracts from dependent direct reads.
+
+    The repair is intentionally narrow: it only adds literal field names to the
+    literal ``success["fields"]`` list of the latest assigned ``ctx.reach`` state.
+    It never changes targets, operations, business values, or returned data.
+    """
+    try:
+        tree = ast.parse(source, filename="<coding-plan>")
+    except SyntaxError:
+        return None
+    functions = [
+        node for node in tree.body
+        if isinstance(node, ast.FunctionDef) and node.name == "run"
+    ]
+    if len(functions) != 1:
+        return None
+    function = functions[0]
+    reaches = _reach_assignments(function)
+
+    changed = False
+    calls = sorted(
+        (
+            node for node in ast.walk(function)
+            if isinstance(node, ast.Call) and _ctx_method(node) == "read"
+        ),
+        key=lambda node: node.lineno,
+    )
+    for call in calls:
+        state = _call_argument(call, "state", 0)
+        target = _call_argument(call, "target", 1)
+        direct_read = target is None or (
+            isinstance(target, ast.Constant) and target.value is None
+        )
+        fields = _literal_fields(call)
+        if not direct_read or not isinstance(state, ast.Name) or fields is None:
+            continue
+        reach = max(
+            (
+                item for item in reaches.get(state.id, [])
+                if item[0] < call.lineno
+            ),
+            default=None,
+        )
+        if reach is None:
+            continue
+        success = reach[3]
+        fields_index = next(
+            (
+                index
+                for index, key in enumerate(success.keys)
+                if isinstance(key, ast.Constant) and key.value == "fields"
+            ),
+            None,
+        )
+        if fields_index is None:
+            success.keys.append(ast.Constant(value="fields"))
+            success.values.append(ast.List(elts=[], ctx=ast.Load()))
+            fields_node = success.values[-1]
+        else:
+            fields_node = success.values[fields_index]
+        if not isinstance(fields_node, ast.List):
+            return None
+        existing = {
+            _semantic_key(item.value)
+            for item in fields_node.elts
+            if isinstance(item, ast.Constant) and isinstance(item.value, str)
+        }
+        for field_name in fields:
+            key = _semantic_key(field_name)
+            if key in existing:
+                continue
+            fields_node.elts.append(ast.Constant(value=field_name))
+            existing.add(key)
+            changed = True
+
+    if not changed:
+        return None
+    ast.fix_missing_locations(tree)
+    return ast.unparse(tree).strip()
 
 
 def validate_code(source: str) -> list[CodeDiagnostic]:
@@ -936,10 +1054,14 @@ def build_probe_fixture(source: str) -> FixtureSpec:
                     if field not in current
                 })
 
-    read_fields = {
-        field
+    read_calls = [
+        call
         for call in ast.walk(tree)
         if isinstance(call, ast.Call) and _ctx_method(call) == "read"
+    ]
+    read_fields = {
+        field
+        for call in read_calls
         for field in (_literal_fields(call) or [])
     }
     reads = {
@@ -950,6 +1072,19 @@ def build_probe_fixture(source: str) -> FixtureSpec:
             row for rows in lookups.values() for row in rows
         )
     } if read_fields else {}
+    direct_read_fields = {
+        field
+        for call in read_calls
+        if _call_argument(call, "target", 1) is None
+        for field in (_literal_fields(call) or [])
+    }
+    if direct_read_fields:
+        # ctx.read(state, fields=...) reads the reached UI state itself.  The
+        # fixture context represents an omitted target as None, whose canonical
+        # key is "None"; seed that state even when the program has no query rows.
+        reads[_target_key(None)] = {
+            field: probe_value(field, 0) for field in direct_read_fields
+        }
     commands = {
         value: True
         for call in ast.walk(tree)
@@ -1403,7 +1538,7 @@ class _FixtureContext:
     ) -> list[dict[str, Any]]:
         field_names, field_types = field_projection(fields)
         require_ui_state(state, entity=entity, fields=field_names)
-        requested_filters = dict(filters or {})
+        requested_filters = dict(json_value(dict(filters or {})))
         rows = _lookup_rows(self.fixture.lookups, entity) or []
         missing_filters = [
             name for name in requested_filters
@@ -1471,7 +1606,11 @@ class _FixtureContext:
         if fields is None:
             raise TypeError("ctx.read requires fields")
         field_names, field_types = field_projection(fields)
-        actual_target = self.current_target if target is None else target
+        actual_target = (
+            self.current_target
+            if target is None
+            else json_value(target)
+        )
         key = _target_key(actual_target)
         key = self.read_aliases.get(key, key)
         if key not in self.state:
@@ -1540,7 +1679,7 @@ class _FixtureContext:
         success: dict[str, Any],
         target: Any = None,
     ) -> UIStateHandle:
-        normalized = reach_postcondition(success)
+        normalized = reach_postcondition(json_value(success))
         if normalized is None:
             raise ValueError("ctx.reach success is not a structured state")
         state = UIStateHandle(
@@ -1574,8 +1713,13 @@ class _FixtureContext:
         trace_extra: dict[str, Any] | None = None,
         result: Any = None,
     ) -> None:
-        inputs = {"target": copy.deepcopy(target)} if target is not None else {}
-        desired_values = copy.deepcopy(values)
+        normalized_target = json_value(target) if target is not None else None
+        inputs = (
+            {"target": copy.deepcopy(normalized_target)}
+            if normalized_target is not None
+            else {}
+        )
+        desired_values = dict(json_value(copy.deepcopy(values)))
         state, key = self._statement_target(inputs)
         if state is not None:
             self.current_target = state
@@ -1618,7 +1762,9 @@ class _FixtureContext:
 
     def command(self, capability: str, **kwargs: Any) -> Any:
         result = self.fixture.command_results.get(capability)
-        self.trace.append(TraceEvent("command", (capability,), dict(kwargs), result))
+        self.trace.append(
+            TraceEvent("command", (capability,), dict(json_value(kwargs)), result)
+        )
         return result
 
 def _worker(source: str, fixture: FixtureSpec, output: Any) -> None:

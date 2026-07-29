@@ -21,7 +21,7 @@ from gui_agent.core.run.contracts import (
     StatementInvocation,
 )
 from gui_agent.core.run.lookup_scope import is_lookup_scope
-from gui_agent.core.run.statements.compute_kernel import normalize_table_rows
+from gui_agent.core.run.statements.compute_kernel import json_value, normalize_table_rows
 from gui_agent.core.filter_contract import (
     canonical_filter_field,
     compile_filter_predicates,
@@ -259,7 +259,7 @@ class _RuntimeContext:
         call_id = self._call_id("query")
         # Private source session: locate, optionally constrain, then materialize.
         # The caller sees one ctx.query contract rather than executor phases.
-        filters = dict(filters or {})
+        filters = dict(json_value(dict(filters or {})))
         filter_key = (state.token, canonical_filter_field(entity))
         desired_filters = compile_filter_predicates(filters)
         known_filters = self._query_filters.get(filter_key)
@@ -327,6 +327,7 @@ class _RuntimeContext:
         field_names, field_types = field_projection(fields)
         call_id = self._call_id("read")
         source_state = state
+        target = json_value(target) if target is not None else None
         target_url = _unique_target_url(target)
         steps = 4 if target_url else 3 if target is not None else 1
         if target is not None:
@@ -383,6 +384,8 @@ class _RuntimeContext:
         success: dict[str, Any],
         target: Any = None,
     ) -> UIStateHandle:
+        normalized_success = json_value(success)
+        normalized_target = json_value(target) if target is not None else None
         return self._request(
             "reach",
             call_id=self._call_id("reach"),
@@ -390,8 +393,8 @@ class _RuntimeContext:
             plan_step=1,
             plan_steps=1,
             goal=goal,
-            success=success,
-            target=target,
+            success=dict(normalized_success),
+            target=normalized_target,
         )
 
     def commit(
@@ -401,7 +404,9 @@ class _RuntimeContext:
         target: Any = None,
         values: dict[str, Any],
     ) -> None:
-        inputs = {"target": target} if target is not None else {}
+        normalized_target = json_value(target) if target is not None else None
+        normalized_values = json_value(values)
+        inputs = {"target": normalized_target} if normalized_target is not None else {}
         self._request(
             "commit",
             call_id=self._call_id("commit"),
@@ -410,10 +415,11 @@ class _RuntimeContext:
             plan_steps=1,
             goal=goal,
             inputs=inputs,
-            values=values,
+            values=dict(normalized_values),
         )
 
     def command(self, capability: str, **arguments: Any) -> Any:
+        normalized_arguments = json_value(arguments)
         return self._request(
             "command",
             call_id=self._call_id("command"),
@@ -421,7 +427,7 @@ class _RuntimeContext:
             plan_step=1,
             plan_steps=1,
             capability=capability,
-            arguments=arguments,
+            arguments=dict(normalized_arguments),
         )
 
 def _runtime_worker(source: str, connection: Any) -> None:

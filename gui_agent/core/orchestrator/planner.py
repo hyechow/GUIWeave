@@ -25,6 +25,7 @@ from .sandbox import (
     FixtureSpec,
     build_probe_fixture,
     execute_code,
+    repair_direct_read_fields,
     validate_code,
     validate_fixture_contract,
     validate_runtime_dataflow,
@@ -486,15 +487,51 @@ def generate_code(
 
     initial = generate(phase="initial")
     attempts = [initial]
-    current = initial
-    regeneration_status = "not_needed"
-    if not _attempt_executable(initial):
+    repair_status = "not_needed"
+
+    def apply_direct_read_repair(
+        attempt: CodingAttempt,
+    ) -> CodingAttempt | None:
+        if (
+            _attempt_executable(attempt)
+            or not attempt.diagnostics
+            or any(
+                item.code != "DIRECT_READ_FIELDS_UNDECLARED"
+                for item in attempt.diagnostics
+            )
+        ):
+            return None
+        repaired_source = repair_direct_read_fields(attempt.source)
+        if repaired_source is None:
+            return None
+        repaired = _evaluate_source(
+            repaired_source,
+            fixture,
+            contract_fixture,
+        )
+        attempts.append(repaired)
+        emit(
+            "deterministic_repair_completed",
+            repair="direct_read_fields",
+            source=repaired_source,
+        )
+        emit_validation("deterministic_repair", repaired)
+        return repaired
+
+    current = apply_direct_read_repair(initial) or initial
+    if current is not initial:
+        repair_status = "deterministic"
+    if not _attempt_executable(current):
         current = generate(
             phase="regenerated",
-            extra_blocks=[_regeneration_block(initial.source, initial)],
+            extra_blocks=[_regeneration_block(current.source, current)],
         )
         attempts.append(current)
-        regeneration_status = "completed"
+        repair_status = "completed"
+        repaired = apply_direct_read_repair(current)
+        if repaired is not None:
+            current = repaired
+            repair_status = "deterministic"
 
     plan = CodingPlan(
         goal=goal,
@@ -506,6 +543,6 @@ def generate_code(
         "finalized",
         status="passed" if plan.requirements_satisfied else "failed",
         source=current.source,
-        repair_status=regeneration_status,
+        repair_status=repair_status,
     )
     return plan

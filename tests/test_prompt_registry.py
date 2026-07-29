@@ -79,6 +79,23 @@ def test_coding_contract_exposes_only_public_ctx_api():
         assert retired not in prompt
 
 
+def test_coding_contract_keeps_settings_atomic_and_visual_retrieval_on_source():
+    prompt = load_prompt_text("task.orchestrator.coding")
+
+    assert "emit exactly one `commit` with all requested setting" in prompt
+    assert "Do not precede it with `reach` or `read`" in prompt
+    assert "Never replace a requested" in prompt
+    assert "in-application search or visible-page lookup with an API" in prompt
+    assert "`reach.success` must contain" in prompt
+    assert "raw HTML, page content, or display text" in prompt
+    assert "matching typed read and return its value directly" in prompt
+    assert "use exactly `reach` followed by" in prompt
+    assert "The reached `entity` names the semantic result or view" in prompt
+    assert "every requested field must already" in prompt
+    assert 'literal `success["fields"]` list' in prompt
+    assert "not a different data source" in prompt
+
+
 def test_prompt_eval_suites_point_to_existing_paths():
     for prompt in iter_prompt_templates():
         for suite in prompt.eval_suites:

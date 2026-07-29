@@ -32,6 +32,10 @@ class CodingTerminalRenderer:
         elif event.kind == "generation_completed":
             self.write(f"  ✓ generated in {data['seconds']:.2f}s")
             self._source(str(data["source"]))
+        elif event.kind == "deterministic_repair_completed":
+            self._section("Deterministic Repair")
+            self.write(f"  ✓ applied {data.get('repair')}")
+            self._source(str(data["source"]))
         elif event.kind == "diagnostics":
             self._section(f"Static Review · {data['phase']}")
             diagnostics = data.get("diagnostics") or []
@@ -55,6 +59,8 @@ class CodingTerminalRenderer:
             regeneration = str(data.get("repair_status") or "not_needed")
             suffix = (
                 f" · regeneration {regeneration}"
+                if regeneration == "completed"
+                else f" · repair {regeneration}"
                 if regeneration != "not_needed"
                 else ""
             )

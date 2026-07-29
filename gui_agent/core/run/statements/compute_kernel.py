@@ -4,7 +4,7 @@ from __future__ import annotations
 
 import calendar
 import re
-from datetime import datetime, timezone
+from datetime import date, datetime, time, timezone
 from decimal import ROUND_HALF_UP, Decimal, InvalidOperation
 from typing import Any
 
@@ -38,13 +38,15 @@ class ComputeKernelError(ValueError):
 def json_value(value: Any) -> JsonValue:
     if isinstance(value, BaseModel):
         return value.model_dump(mode="json")
-    if isinstance(value, list):
+    if isinstance(value, (list, tuple)):
         return [json_value(item) for item in value]
+    if isinstance(value, (set, frozenset)):
+        return [json_value(item) for item in sorted(value, key=repr)]
     if isinstance(value, dict):
         return {str(key): json_value(item) for key, item in value.items()}
     if isinstance(value, Decimal):
         return int(value) if value == value.to_integral_value() else float(value)
-    if isinstance(value, datetime):
+    if isinstance(value, (datetime, date, time)):
         return value.isoformat()
     if value is None or isinstance(value, (str, int, float, bool)):
         return value
