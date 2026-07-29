@@ -85,6 +85,26 @@ def test_android_prompt_matches_drag_endpoint_contract():
     assert "drag 只需给出起点" not in SYSTEM_PROMPT
 
 
+@pytest.mark.parametrize(
+    ("instruction", "expected"),
+    [
+        (
+            "在 Brightness level 部分，将亮度调节滑块拖动至最右端并设置为 100%。",
+            (None, None, None, None),
+        ),
+        (
+            "调整分钟列，从 17 分设置为 30 分。",
+            ("increase", "minute", 13, "down"),
+        ),
+    ],
+    ids=("brightness-slider", "minute-picker"),
+)
+def test_android_picker_inference_is_time_specific(instruction, expected):
+    from gui_agent.adapters.android.policies import _resolve_picker_hints
+
+    assert _resolve_picker_hints(instruction, None, None, None) == expected
+
+
 # --- construction: positive + negative (rejects foreign action_type) -------- #
 def test_positive_construction():
     IPhoneAction(action_type="app_switch", description="打开切换器")

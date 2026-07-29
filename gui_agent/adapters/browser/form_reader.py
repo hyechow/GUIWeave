@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import re
 from typing import Any
 
 MAX_CONTROLS = 40
@@ -10,6 +11,11 @@ MAX_CONTROLS = 40
 OFF_VIEWPORT_RESERVE = 8
 MAX_OPTIONS = 30
 MAX_TEXT = 80
+_COMMIT_LABEL_RE = re.compile(
+    r"^(?:save|submit|update|publish)\b|^(?:保存|提交|更新|发布)",
+    re.IGNORECASE,
+)
+_COMMIT_CONTROL_KINDS = frozenset({"button", "submit"})
 
 
 def form_controls_js() -> str:
@@ -484,7 +490,13 @@ def normalize_form_control_snapshot(
             norm["is_filter"] = True
         if item.get("query_action") in {"submit", "reset"}:
             norm["query_action"] = item["query_action"]
-        if item.get("form_action") == "commit":
+        if (
+            item.get("form_action") == "commit"
+            or (
+                kind in _COMMIT_CONTROL_KINDS
+                and _COMMIT_LABEL_RE.search(label or value)
+            )
+        ):
             norm["form_action"] = "commit"
         if item.get("is_datepicker") is True:
             norm["is_datepicker"] = True

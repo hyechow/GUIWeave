@@ -21,8 +21,15 @@ from gui_agent.core.schemas import (
 
 _COMMIT_ACTIONS = frozenset({"tap", "click", "press_enter"})
 _ITERATIVE_ACTIONS = frozenset({"scroll", "drag", "scroll_to_ref"})
+_VIEW_ITERATION_ACTIONS = frozenset({"scroll", "scroll_to_ref"})
 _WRITE_ACTIONS = frozenset({"type", "clear_text", "select_option"})
 _POSITION_BIN = 50
+_MOBILE_WRITE_THROUGH_SOURCES = frozenset({"android", "iphone"})
+_WRITE_THROUGH_TOGGLE = re.compile(r"(?:\bswitch\b|\btoggle\b|开关)", re.IGNORECASE)
+_WRITE_THROUGH_SLIDER = re.compile(
+    r"(?:\bslider\b|\bseek\s*bar\b|\bseekbar\b|滑块)",
+    re.IGNORECASE,
+)
 
 
 def has_uncommitted_write(
@@ -110,14 +117,42 @@ def effective_action_role(
 ) -> AtomicRole:
     """Resolve the lifecycle role from the concrete primitive."""
     action_type = str(getattr(action, "action_type", "") or "").lower()
-    if action_type in _ITERATIVE_ACTIONS:
+    if action_type in _VIEW_ITERATION_ACTIONS:
         return "iterate"
+    intent = step.action_intent
+    role = intent.role if intent is not None else "prepare"
+    commit_rects = [
+        control.get("rect")
+        for control in (
+            (observation.form_control_state or observation.form_controls or [])
+            if observation is not None
+            else []
+        )
+        if (
+            control.get("form_action") == "commit"
+            or control.get("query_action") == "submit"
+        )
+        and isinstance(control.get("rect"), dict)
+    ]
+    if action_type == "drag":
+        if role == "iterate" or (intent is not None and intent.family == "iterate"):
+            return "iterate"
+        if (
+            observation is not None
+            and observation.source in _MOBILE_WRITE_THROUGH_SOURCES
+            and not commit_rects
+            and intent is not None
+            and _WRITE_THROUGH_SLIDER.search(intent.target_control)
+        ):
+            # Native mobile sliders apply as they move.  Use the concrete
+            # control/gesture contract rather than trusting the lifecycle label
+            # selected by the model.
+            return "commit"
+        return role
     if action_type in _WRITE_ACTIONS:
         return "write"
     if action_type not in _COMMIT_ACTIONS:
         return "prepare"
-    intent = step.action_intent
-    role = intent.role if intent is not None else "prepare"
     if observation is None:
         return role
     snap = getattr(action, "snap", None) or {}
@@ -125,16 +160,17 @@ def effective_action_role(
         getattr(action, "x", None),
         getattr(action, "y", None),
     )
-    commit_rects = [
-        control.get("rect")
-        for control in (
-            observation.form_control_state
-            or observation.form_controls
-            or []
-        )
-        if control.get("form_action") == "commit"
-        and isinstance(control.get("rect"), dict)
-    ]
+    if (
+        not commit_rects
+        and observation.source in _MOBILE_WRITE_THROUGH_SOURCES
+        and intent is not None
+        and intent.family == "activate"
+        and _WRITE_THROUGH_TOGGLE.search(intent.target_control)
+    ):
+        # Native mobile switches/toggles without a separately declared form
+        # boundary apply on activation. Normalize the dispatched receipt here so
+        # persistence does not depend on the model choosing the lifecycle label.
+        return "commit"
     if not commit_rects or None in point:
         return role
     x, y = point

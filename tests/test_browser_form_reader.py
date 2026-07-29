@@ -114,6 +114,14 @@ def test_normalize_form_controls_keeps_structural_commit_action():
     assert controls[0]["form_action"] == "commit"
 
 
+def test_commit_label_inference_is_limited_to_buttons():
+    for kind, expected in (("button", "commit"), ("text_input", None)):
+        control = normalize_form_controls({
+            "controls": [{"label": "Save Attribute", "kind": kind}]
+        })[0]
+        assert control.get("form_action") == expected
+
+
 def test_normalize_form_controls_keeps_section_toggle_affordance():
     controls = normalize_form_controls({
         "controls": [{

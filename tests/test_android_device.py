@@ -344,7 +344,7 @@ def test_clear_text_uses_adbkeyboard_native_broadcast_when_active():
     assert any("keyevent" in s for s in inactive._dev.shell_log)  # fallback DEL loop
 
 
-def _execute_android(action, **statuses):
+def _execute_android(action, *, target_control="", **statuses):
     from gui_agent.adapters.android.actions import AndroidActionDecision
     from gui_agent.adapters.android.executor import AndroidExecutor
 
@@ -362,7 +362,8 @@ def _execute_android(action, **statuses):
     ):
         getattr(client, name).return_value = statuses.get(name, f"OK {name}")
     ok = AndroidExecutor(types.SimpleNamespace(client=client)).execute(
-        AndroidActionDecision(action=action)
+        AndroidActionDecision(action=action),
+        target_control=target_control,
     )
     return ok, client
 
@@ -428,6 +429,31 @@ def test_executor_propagates_device_action_failures(action_kwargs, status_name, 
 
     ok, _ = _execute_android(AndroidAction(**action_kwargs), **{status_name: status})
     assert ok is False
+
+
+@pytest.mark.parametrize(
+    ("target_control", "expected_x"),
+    [("Brightness slider", 1079), ("Canvas object", 1034.208)],
+    ids=("slider-snaps", "ordinary-drag-preserved"),
+)
+def test_slider_endpoint_normalization(target_control, expected_x):
+    from gui_agent.adapters.android.actions import AndroidAction
+
+    action = AndroidAction(
+        action_type="drag",
+        x=501.5,
+        y=93.8,
+        to_x=957.6,
+        to_y=93.8,
+        description="向右拖动",
+    )
+    ok, client = _execute_android(action, target_control=target_control)
+
+    assert ok is True
+    client.drag.assert_called_once()
+    assert client.drag.call_args.args == pytest.approx(
+        (541.62, 225.12, expected_x, 225.12, 1000)
+    )
 
 
 def test_type_stops_when_clear_fails_and_propagates_type_failure():

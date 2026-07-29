@@ -72,6 +72,8 @@ _PICKER_WORDS = (
     "上午/下午",
 )
 _PICKER_ADJUST_WORDS = ("调整", "调到", "调至", "设置为", "设为", "改为")
+_CLOCK_MINUTE_RE = re.compile(r"(?:\bminute\b|分钟|\d{1,2}\s*分(?:钟)?\b)", re.IGNORECASE)
+_CLOCK_HOUR_RE = re.compile(r"(?:\bhour\b|小时|\d{1,2}\s*点(?:钟)?\b)", re.IGNORECASE)
 
 
 def _is_tap_only_instruction(instruction: str) -> bool:
@@ -84,15 +86,19 @@ def _is_tap_only_instruction(instruction: str) -> bool:
 def _looks_like_picker_adjust(instruction: str) -> bool:
     if any(w in instruction for w in _PICKER_WORDS):
         return True
-    has_time_column = any(w in instruction for w in ("小时", "分钟", "上午", "下午", "点", "分"))
+    has_time_column = (
+        any(w in instruction for w in ("上午", "下午"))
+        or _CLOCK_MINUTE_RE.search(instruction) is not None
+        or _CLOCK_HOUR_RE.search(instruction) is not None
+    )
     return has_time_column and any(w in instruction for w in _PICKER_ADJUST_WORDS)
 
 
 def _infer_picker_column(instruction: str) -> Optional[str]:
     text = instruction.lower()
-    if any(w in instruction for w in ("分钟", "分")) or "minute" in text:
+    if _CLOCK_MINUTE_RE.search(instruction):
         return "minute"
-    if any(w in instruction for w in ("小时", "点")) or "hour" in text:
+    if _CLOCK_HOUR_RE.search(instruction):
         return "hour"
     if any(w in instruction for w in ("上午", "下午", "时段")) or "am" in text or "pm" in text:
         return "period"

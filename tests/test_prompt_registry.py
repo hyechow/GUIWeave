@@ -96,6 +96,15 @@ def test_coding_contract_keeps_settings_atomic_and_visual_retrieval_on_source():
     assert "not a different data source" in prompt
 
 
+def test_statement_transition_separates_commit_boundary_from_action_family():
+    prompt = load_prompt_text("task.statement.transition")
+
+    assert "write-through 控件" in prompt
+    assert "`activate + commit`" in prompt
+    assert "`activate + write`" in prompt
+    assert "不要求存在名为 Save/Submit 的独立按钮" in prompt
+
+
 def test_prompt_eval_suites_point_to_existing_paths():
     for prompt in iter_prompt_templates():
         for suite in prompt.eval_suites:

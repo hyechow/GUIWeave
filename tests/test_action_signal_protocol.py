@@ -1,3 +1,5 @@
+import pytest
+
 from gui_agent.adapters.browser.actions import BrowserAction
 from gui_agent.core.run.action_signals import (
     build_action_signal,
@@ -83,6 +85,73 @@ def test_commit_role_follows_adapter_declared_control_geometry():
         BaseAction(action_type="tap", x=500, y=500, description="Apply child changes"),
         observation,
     ) == "write"
+
+
+_SAVE_CONTROL = {
+    "kind": "button",
+    "label": "Save",
+    "form_action": "commit",
+    "rect": {"x": 800, "y": 20, "w": 100, "h": 40},
+}
+_DRAG = BaseAction(
+    action_type="drag",
+    x=500,
+    y=500,
+    to_x=900,
+    to_y=500,
+    description="drag control",
+)
+
+
+@pytest.mark.parametrize(
+    ("source", "role", "family", "target", "action", "controls", "expected"),
+    [
+        (
+            "browser", "prepare", "activate", "Apply Filters",
+            BaseAction(action_type="tap", x=850, y=40, description="apply"),
+            [{**_SAVE_CONTROL, "query_action": "submit", "form_action": None}], "commit",
+        ),
+        (
+            "android", "prepare", "activate", "Airplane mode switch",
+            BaseAction(action_type="tap", x=500, y=500, description="toggle"), [], "commit",
+        ),
+        ("android", "prepare", "activate", "Brightness slider", _DRAG, [], "commit"),
+        ("android", "write", "input", "Threshold slider", _DRAG, [_SAVE_CONTROL], "write"),
+        ("iphone", "write", "input", "Minute picker", _DRAG, [], "write"),
+        (
+            "browser", "write", "activate", "Feature switch",
+            BaseAction(action_type="tap", x=500, y=500, description="toggle"),
+            [_SAVE_CONTROL], "write",
+        ),
+    ],
+    ids=(
+        "query-submit",
+        "mobile-switch",
+        "mobile-slider",
+        "staged-mobile-slider",
+        "picker",
+        "browser-form-switch",
+    ),
+)
+def test_effective_action_role_boundaries(
+    source, role, family, target, action, controls, expected
+) -> None:
+    step = SupervisorStep(
+        action_intent=ActionIntent(
+            instruction="act on control",
+            role=role,
+            family=family,
+            target_control=target,
+        ),
+        summary="act",
+    )
+    observation = Observation(
+        png_bytes=b"x",
+        source=source,
+        form_controls=controls or None,
+    )
+
+    assert effective_action_role(step, action, observation) == expected
 
 
 def test_action_signal_records_dispatch_fact_without_business_effect_state():

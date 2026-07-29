@@ -11,6 +11,7 @@ the inherited ``_denorm`` (normalized 0-1000 -> ``viewport_size`` px) goes strai
 
 from __future__ import annotations
 
+import re
 from typing import Optional
 
 from gui_agent.adapters.android.actions import AndroidAction
@@ -28,6 +29,11 @@ _ANDROID_PICKER_AMOUNT_UNITS = {
     "ampm": {"small": 1, "medium": 1, "large": 1},
     "minute": {"small": 1, "medium": 2, "large": 3},
 }
+_SLIDER_CONTROL = re.compile(
+    r"(?:\bslider\b|\bseek\s*bar\b|\bseekbar\b|滑块)",
+    re.IGNORECASE,
+)
+_SLIDER_EDGE_THRESHOLD = 900.0
 
 
 class AndroidExecutor(VisionExecutor):
@@ -74,6 +80,19 @@ class AndroidExecutor(VisionExecutor):
         target_control: str = "",
     ) -> bool:
         action = decision.action
+        if (
+            action.action_type == "drag"
+            and _SLIDER_CONTROL.search(target_control)
+            and action.x is not None
+            and action.y is not None
+            and action.to_x is not None
+            and action.to_y is not None
+            and abs(action.to_x - action.x) >= abs(action.to_y - action.y)
+        ):
+            if action.to_x >= _SLIDER_EDGE_THRESHOLD:
+                action.to_x = 1000.0
+            elif action.to_x <= 1000.0 - _SLIDER_EDGE_THRESHOLD:
+                action.to_x = 0.0
         if action.action_type == "scroll" and action.direction:
             print(f"\n动作: [{action.action_type}] {action.description}")
             return self._execute_scroll_action(action)
