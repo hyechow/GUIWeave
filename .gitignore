@@ -25,6 +25,10 @@ evals/**/*.png
 evals/**/*.jpg
 replay/**/*.png
 replay/**/*.jpg
+# Curated browser replay collections are intentional, portable regression fixtures.
+!replay/fixtures/browser/orders_report_reach/*.png
+!replay/fixtures/browser/completed_orders_filter/*.png
+!replay/fixtures/browser/attribute_outer_save/*.png
 tests/**/*.png
 tests/**/*.jpg
 tests/**/*.jpeg

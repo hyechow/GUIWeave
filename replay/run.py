@@ -29,11 +29,11 @@ from dotenv import load_dotenv
 
 load_dotenv(PROJECT_ROOT / ".env")
 
-from gui_agent.adapters.browser.factory import _build_action_policy, _build_supervisor
-from gui_agent.adapters.browser.target_binding import BrowserTargetBinder
 from gui_agent.core.run.context import load_observation_snapshot
+from gui_agent.core.run.action_signals import effective_action_role
 from gui_agent.core.run.target_binding import bind_action_target
 from gui_agent.core.run.contracts import Interact
+from gui_agent.core.runtime.factory import build_platform
 from gui_agent.core.schemas import (
     PolicyContext,
     PolicyTurn,
@@ -194,9 +194,10 @@ def _expectation_failures(
     failures: list[str] = []
     outcome = decision.outcome
     intent = decision.action_intent
+    transition_record = supervisor._last_transition_record or {}
     actuals = {
         "assessment_status": (
-            supervisor._last_transition_record.get("proposal", {})
+            transition_record.get("proposal", {})
             .get("assessment", {})
             .get("status")
         ),
@@ -207,7 +208,7 @@ def _expectation_failures(
         "action_family": intent.family if intent is not None else "unknown",
         "target_control": intent.target_control if intent is not None else "",
         "expected_result": (
-            supervisor._last_transition_record.get("proposal", {})
+            transition_record.get("proposal", {})
             .get("action", {})
             .get("expected_result", "")
         ),
@@ -246,36 +247,39 @@ def _expectation_failures(
 def _action_expectation_failures(
     expectation: dict[str, Any],
     action_decision: Any,
+    receipt_role: str,
 ) -> list[str]:
     expected = expectation.get("action")
-    if not expected:
-        return []
     action = action_decision.action
     failures: list[str] = []
-    if expected.get("action_type") and action.action_type != expected["action_type"]:
+    if expected and expected.get("action_type") and action.action_type != expected["action_type"]:
         failures.append(
             f"expected action_type={expected['action_type']!r}, got {action.action_type!r}"
         )
     for field in ("x", "y"):
-        bounds = expected.get(f"{field}_range")
+        bounds = expected.get(f"{field}_range") if expected else None
         value = getattr(action, field, None)
         if bounds and (
             not isinstance(value, (int, float))
             or not float(bounds[0]) <= float(value) <= float(bounds[1])
         ):
             failures.append(f"expected {field} in {bounds!r}, got {value!r}")
+    expected_receipt_role = expectation.get("receipt_role")
+    if expected_receipt_role is not None and receipt_role != expected_receipt_role:
+        failures.append(
+            f"expected receipt_role={expected_receipt_role!r}, got {receipt_role!r}"
+        )
     return failures
 
 
 def _decide_action_without_dispatch(
-    context: PolicyContext,
     observation: Any,
     decision: Any,
+    action_policy: Any,
 ) -> Any:
     intent = decision.action_intent
     if intent is None:
         raise ValueError("action replay requires ActionIntent")
-    action_policy = _build_action_policy(context.action_policy_name)
     target_group_id = ""
     native = action_policy.resolve_native_action(
         observation,
@@ -359,6 +363,7 @@ def main() -> int:
         type=Path,
         help="expectation JSON; defaults to <run_dir>/replay_expectation.json when present",
     )
+    parser.add_argument("--expect-json", help="inline expectation JSON (used by suites)")
     parser.add_argument("--json", type=Path, help="write the compact replay result to this path")
     args = parser.parse_args()
 
@@ -370,6 +375,8 @@ def main() -> int:
     expectation: dict[str, Any] = {}
     if expectation_path is not None:
         expectation = json.loads(expectation_path.read_text(encoding="utf-8"))
+    if args.expect_json:
+        expectation.update(json.loads(args.expect_json))
     if args.expect_role is not None:
         expectation["atomic_role"] = args.expect_role
     if args.expect_family is not None:
@@ -445,9 +452,6 @@ def main() -> int:
             str(terminal_event.get("observation_url") or ""),
             target_index,
         )
-    if (context.platform or "browser") != "browser":
-        raise ValueError("this replay runner currently supports the browser supervisor only")
-
     observation = _load_snapshot(run_dir, observation_turn)
     observation_asset = f"observation_turn_{observation_turn}.json"
     history_events = _history_before_selected_event(
@@ -456,7 +460,9 @@ def main() -> int:
         terminal_event=terminal_event,
     )
     history = [event for event in history_events if isinstance(event, PolicyTurn)]
-    supervisor = _build_supervisor(context.supervisor_policy_name)
+    platform_name = context.platform or "browser"
+    bundle = build_platform(platform_name)
+    supervisor = bundle.make_supervisor(context.supervisor_policy_name)
     _configure_knowledge(supervisor, context)
     supervisor._goal = context.goal
     invocation_history = [
@@ -503,32 +509,50 @@ def main() -> int:
     failures = _expectation_failures(expectation, decision, supervisor)
     action_decision = None
     target_binding = None
+    receipt_role = None
     if args.with_action_policy or expectation.get("action") or expectation.get("binding_status"):
         if decision.action_intent is None:
             failures.append("action policy requested but supervisor returned no action")
         else:
+            action_policy = bundle.make_action_policy(context.action_policy_name)
             action_decision = _decide_action_without_dispatch(
-                context,
                 observation,
                 decision,
+                action_policy,
+            )
+            receipt_role = effective_action_role(
+                decision,
+                action_decision.action,
+                observation,
             )
             failures.extend(
-                _action_expectation_failures(expectation, action_decision)
+                _action_expectation_failures(
+                    expectation,
+                    action_decision,
+                    receipt_role,
+                )
             )
             # Replay the structural target binding too. It runs pre-dispatch (it decides
             # whether a write would be suppressed), so it is replay-safe, and it is the gate
             # whose verdict this harness otherwise could not observe.
-            target_binding = bind_action_target(
-                binder=BrowserTargetBinder(),
-                step=decision,
-                observation=observation,
-                action_decision=action_decision,
-            )
             expected_binding = expectation.get("binding_status")
-            if expected_binding and target_binding.status != expected_binding:
+            if platform_name == "browser":
+                from gui_agent.adapters.browser.target_binding import BrowserTargetBinder
+
+                target_binding = bind_action_target(
+                    binder=BrowserTargetBinder(),
+                    step=decision,
+                    observation=observation,
+                    action_decision=action_decision,
+                )
+                if expected_binding and target_binding.status != expected_binding:
+                    failures.append(
+                        f"expected binding_status={expected_binding!r}, "
+                        f"got {target_binding.status!r}: {target_binding.reason}"
+                    )
+            elif expected_binding:
                 failures.append(
-                    f"expected binding_status={expected_binding!r}, "
-                    f"got {target_binding.status!r}: {target_binding.reason}"
+                    f"binding replay is unavailable for platform {platform_name!r}"
                 )
     result["action_decision"] = (
         action_decision.model_dump(mode="json", exclude_none=True)
@@ -538,6 +562,7 @@ def main() -> int:
     result["target_binding"] = (
         target_binding.model_dump(mode="json") if target_binding is not None else None
     )
+    result["receipt_role"] = receipt_role
     result["expectation_failures"] = failures
 
     print(
@@ -548,9 +573,11 @@ def main() -> int:
                 "checker_status": getattr(checker, "status", None),
                 "checker_effect": getattr(checker, "effect_status", None),
                 "assessment": (
-                    supervisor._last_transition_record.get("proposal", {}).get("assessment")
+                    (supervisor._last_transition_record or {})
+                    .get("proposal", {})
+                    .get("assessment")
                 ),
-                "validation_error": supervisor._last_transition_record.get(
+                "validation_error": (supervisor._last_transition_record or {}).get(
                     "validation_error", ""
                 ),
                 "instruction": (
@@ -572,6 +599,7 @@ def main() -> int:
                     if decision.action_intent is not None
                     else "prepare"
                 ),
+                "receipt_role": result["receipt_role"],
                 "action_family": (
                     decision.action_intent.family
                     if decision.action_intent is not None

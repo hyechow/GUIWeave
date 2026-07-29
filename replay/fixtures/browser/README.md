@@ -15,10 +15,12 @@ A current replay directory contains:
 - `observation_turn_N.json`: structured adapter evidence for that frame.
 - `replay_expectation.json`: the expected decision contract.
 
-The screenshot is excluded from version control by the repo-wide `replay/**/*.png`
-ignore rule, so a freshly checked-out fixture is missing it; drop a `screenshot_turn_N.png`
-in place (or regenerate one from a live run) before replaying — `load_observation_snapshot`
-refuses to load an observation whose adjacent PNG is absent.
+Ad-hoc replay screenshots are excluded from version control by the repo-wide
+`replay/**/*.png` ignore rule. Curated suite fixtures may opt in their exact
+directories in `.gitignore`; those captures are intentional test data and make
+the suite portable. A local-only fixture still needs a matching
+`screenshot_turn_N.png` copied or regenerated before replay because
+`load_observation_snapshot` refuses screenshot-free observations.
 
 Replay a current run with:
 
@@ -26,6 +28,16 @@ Replay a current run with:
 uv run python -m replay \
   logs/gui_agent/webarena/browser/<run-id> --turn <N>
 ```
+
+Run the curated browser boundary collection with:
+
+```bash
+bin/replay_suite replay/suites/browser_key.json
+```
+
+The suite runs every case through the production replay command in an isolated
+process and exits nonzero if any declared assessment, action role, target,
+grounded primitive, or terminal outcome changes.
 
 `--turn` always means the Journal Turn shown by the runtime and report. Replay follows that
 event's persisted `observation_url`; screenshot filenames are internal assets and may have a

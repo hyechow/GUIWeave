@@ -221,6 +221,7 @@ bin/mobileworld <task_name>
 bin/iphone_recon --app 微信 --depth 2
 bin/report logs/…
 bin/replay_run logs/… [--json]
+bin/replay_suite replay/suites/browser_key.json
 ```
 
 iPhone screenshot server (`bin/sck_server`, ScreenCaptureKit) avoids firing the recording indicator every frame. Rebuild: `swiftc sck/sck_stream_server.swift -o bin/sck_server`.

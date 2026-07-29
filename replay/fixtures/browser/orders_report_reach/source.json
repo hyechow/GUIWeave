@@ -1,0 +1,13 @@
+{
+  "history_source": "logs/gui_agent/webarena/browser/20260727_194214/context.json",
+  "history_through": {
+    "event_type": "statement_outcome",
+    "turn": 2,
+    "statement_id": "c1"
+  },
+  "observation_turns": [
+    3
+  ],
+  "observation_captured_on": "2026-07-27",
+  "purpose": "Reach completes from the terminal Orders Report observation."
+}

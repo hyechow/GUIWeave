@@ -1,11 +1,20 @@
+import types
+
 from gui_agent.core.schemas import (
+    BaseAction,
+    BaseActionDecision,
     PolicyContext,
     PolicyTurn,
     StatementOutcome,
     StatementOutcomeEvent,
     SupervisorStep,
 )
-from replay.run import _history_before_selected_event, _terminal_event_for_turn
+from replay.run import (
+    _action_expectation_failures,
+    _expectation_failures,
+    _history_before_selected_event,
+    _terminal_event_for_turn,
+)
 
 
 def _turn(index: int) -> PolicyTurn:
@@ -60,3 +69,33 @@ def test_terminal_replay_resolves_journal_turn_before_capture_number() -> None:
 
     assert _terminal_event_for_turn(raw, turn=8, statement_id="c1") is not None
     assert _terminal_event_for_turn(raw, turn=10, statement_id="c1") is not None
+
+
+def test_terminal_expectation_does_not_require_transition_record() -> None:
+    decision = SupervisorStep(
+        summary="already complete",
+        outcome=StatementOutcome.completed("done", verification="confirmed"),
+    )
+    supervisor = types.SimpleNamespace(_last_transition_record=None)
+
+    assert _expectation_failures(
+        {
+            "should_act": False,
+            "phase": "completed",
+            "verification": "confirmed",
+        },
+        decision,
+        supervisor,
+    ) == []
+
+
+def test_action_expectation_can_assert_effective_receipt_role() -> None:
+    action = BaseActionDecision(
+        action=BaseAction(action_type="tap", x=850, y=40, description="Apply")
+    )
+
+    assert _action_expectation_failures(
+        {"receipt_role": "commit"},
+        action,
+        "commit",
+    ) == []

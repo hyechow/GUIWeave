@@ -1,0 +1,15 @@
+{
+  "history_source": "logs/gui_agent/webarena/browser/20260726_203858/context.json",
+  "history_through": {
+    "event_type": "statement_outcome",
+    "turn": 7,
+    "statement_id": "c3"
+  },
+  "observation_turns": [
+    6,
+    7,
+    8
+  ],
+  "observation_captured_on": "2026-07-26",
+  "purpose": "Date input remains staged, Apply Filters commits, then explicit_commit completes."
+}
