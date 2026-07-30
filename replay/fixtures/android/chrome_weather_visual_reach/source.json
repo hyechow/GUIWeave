@@ -1,0 +1,9 @@
+{
+  "history_source": "logs/gui_agent/mobileworld/android/20260729_120726/context.json",
+  "history_through_turn": 10,
+  "observation_turns": [
+    28
+  ],
+  "observation_captured_on": "2026-07-29",
+  "purpose": "A visual scalar result completes public reach without requiring a structural collection."
+}

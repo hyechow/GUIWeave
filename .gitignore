@@ -29,6 +29,7 @@ replay/**/*.jpg
 !replay/fixtures/browser/orders_report_reach/*.png
 !replay/fixtures/browser/completed_orders_filter/*.png
 !replay/fixtures/browser/attribute_outer_save/*.png
+!replay/fixtures/android/chrome_weather_visual_reach/*.png
 tests/**/*.png
 tests/**/*.jpg
 tests/**/*.jpeg

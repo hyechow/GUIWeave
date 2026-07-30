@@ -4,7 +4,7 @@ import json
 import subprocess
 from pathlib import Path
 
-from replay.suite import run_suite
+from replay.suite import _case_command, run_suite
 
 
 def _manifest(tmp_path: Path) -> Path:
@@ -62,3 +62,19 @@ def test_replay_suite_runs_every_case_and_aggregates_failures(tmp_path: Path) ->
     ]
     assert "--statement-id" in calls[1][0]
     assert "--with-action-policy" in calls[1][0]
+
+
+def test_replay_suite_routes_read_cases_to_single_frame_runner() -> None:
+    request = {"fields": {"temperature": "number"}}
+    command = _case_command({
+        "executor": "read",
+        "run_dir": "fixture",
+        "turn": 3,
+        "request": request,
+        "expectation": {"outputs": {"temperature": 34}},
+    })
+
+    assert command[1:3] == ["-m", "replay.read"]
+    assert json.loads(
+        command[command.index("--request-json") + 1]
+    ) == request

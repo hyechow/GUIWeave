@@ -23,16 +23,30 @@ def _case_command(case: dict[str, Any]) -> list[str]:
     run_dir = Path(str(case["run_dir"]))
     if not run_dir.is_absolute():
         run_dir = PROJECT_ROOT / run_dir
+    executor = str(case.get("executor") or "transition")
     command = [
         sys.executable,
         "-m",
-        "replay",
+        "replay.read" if executor == "read" else "replay",
         str(run_dir),
         "--turn",
         str(case["turn"]),
+    ]
+    if executor == "read":
+        command.extend([
+            "--request-json",
+            json.dumps(
+                case["request"],
+                ensure_ascii=False,
+                separators=(",", ":"),
+            ),
+        ])
+    elif executor != "transition":
+        raise ValueError(f"unsupported replay executor: {executor!r}")
+    command.extend([
         "--expect-json",
         json.dumps(case["expectation"], ensure_ascii=False, separators=(",", ":")),
-    ]
+    ])
     if statement_id := str(case.get("statement_id") or "").strip():
         command.extend(["--statement-id", statement_id])
     if case.get("with_action_policy"):

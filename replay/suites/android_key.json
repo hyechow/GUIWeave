@@ -1,0 +1,37 @@
+{
+  "schema_version": 1,
+  "name": "android-key-boundaries",
+  "description": "Critical Android visual reach and single-frame Read boundaries.",
+  "cases": [
+    {
+      "name": "weather_result_completes_visual_reach",
+      "run_dir": "replay/fixtures/android/chrome_weather_visual_reach",
+      "turn": 10,
+      "expectation": {
+        "assessment_status": "satisfied",
+        "should_act": false,
+        "phase": "completed",
+        "verification": "confirmed"
+      }
+    },
+    {
+      "name": "weather_result_reads_explicit_day_high",
+      "executor": "read",
+      "run_dir": "replay/fixtures/android/chrome_weather_visual_reach",
+      "turn": 28,
+      "request": {
+        "platform": "android",
+        "fields": {
+          "today_max_temp_celsius": "number"
+        }
+      },
+      "expectation": {
+        "phase": "completed",
+        "verification": "accepted_unverified",
+        "outputs": {
+          "today_max_temp_celsius": 34
+        }
+      }
+    }
+  ]
+}
