@@ -12,6 +12,7 @@ from gui_agent.core.run.interactive import contract_for_interact
 from gui_agent.core.schemas import (
     CollectionIntent,
     Observation,
+    StatementOutcome,
 )
 from gui_agent.core.supervisor.statement import policy as policy_module
 from gui_agent.core.supervisor.statement.policy import StatementSupervisorPolicy
@@ -63,7 +64,7 @@ def _complete_without_model(
     return step.outcome
 
 
-def test_100005_hands_structured_collection_state_to_query(
+def test_100005_hands_verified_gui_state_to_strict_query_lookup(
     monkeypatch,
     request,
 ) -> None:
@@ -97,24 +98,22 @@ def run(ctx):
     observation = _observation()
 
     assert isinstance(runtime.current.statement, Interact)
-    assert isinstance(
-        runtime.current.statement.interaction_intent,
-        CollectionIntent,
-    )
-    assert runtime.current.statement.interaction_intent.phase == "reach"
+    assert runtime.current.statement.interaction_intent is None
+    assert runtime.current.statement.expected_state == {
+        "entity": "Orders",
+        "fields": ["Status", "Purchase Date"],
+    }
     assert observation.tables[0]["total_records"] == 38
     assert observation.tables[0]["traversal"]["page_index"] == 2
 
-    # c1 finishes from structural collection state and issues the capability that
-    # the following query must consume; it never owns the table pager.
-    gui_outcome = _complete_without_model(
-        monkeypatch,
-        runtime.current,
-        observation,
-        0,
+    # c1 owns only the visible GUI state. Collection identity belongs to the
+    # query's following locate phase.
+    runtime.send_outcome(
+        StatementOutcome.completed(
+            "Orders GUI state is visible",
+            verification="accepted_unverified",
+        )
     )
-    assert gui_outcome.outputs["scope"]["entity"] == "Orders"
-    runtime.send_outcome(gui_outcome)
 
     # Control moves to query phase 1 and the same table resolves structurally.
     assert isinstance(runtime.current.statement, Interact)
@@ -124,12 +123,7 @@ def run(ctx):
     )
     assert runtime.current.statement.interaction_intent.phase == "locate"
     assert runtime.current.args["ui_state_token"].endswith(":state")
-    assert (
-        runtime.current.inputs["ui_state"]["observed_state"]["scope"][
-            "surface_fingerprint"
-        ]
-        == "table:div#container table.data-grid"
-    )
+    assert runtime.current.inputs["ui_state"]["observed_state"] == {}
     locate_outcome = _complete_without_model(
         monkeypatch,
         runtime.current,

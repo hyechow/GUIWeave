@@ -35,6 +35,7 @@ from .sandbox import (
 _SYSTEM = load_prompt_text("task.orchestrator.coding")
 _CODE_BLOCK_RE = re.compile(r"```(?:python)?\s*\n(.*?)```", re.DOTALL | re.IGNORECASE)
 _GENERATION_MAX_OUTPUT_TOKENS = 2048
+_MAX_REGENERATIONS = 3
 
 
 def _response_text(content: Any) -> str:
@@ -311,6 +312,26 @@ def _fixture_schema_block(fixture: FixtureSpec | None) -> ContextBlock | None:
     )
 
 
+def _unstructured_visual_block() -> ContextBlock:
+    return ContextBlock(
+        id="runtime.unstructured_visual_contract",
+        budget="required",
+        source_type="runtime_state",
+        source="coding_api",
+        ttl="turn",
+        priority=2,
+        content=(
+            "## Required unstructured visual-source contract\n"
+            "No structured source schema is available. For a visible scalar or named value, use "
+            "one semantic result/view `ctx.reach` followed by one typed direct `ctx.read`. Name "
+            "the result entity, not the current application, and name the same requested fields "
+            "in `success.fields` and `read.fields`; return the keyed value. Generic whole-page "
+            "fields and display-text parsing are allowed only when the user explicitly requests "
+            "that content."
+        ),
+    )
+
+
 def _evaluate_source(
     source: str,
     fixture: FixtureSpec | None,
@@ -377,8 +398,10 @@ def _regeneration_block(
             f"```python\n{source}\n```\n\n"
             "## Issues to resolve\n"
             + "\n".join(f"- {issue}" for issue in issues)
-            + "\n\nGenerate a complete replacement program. Preserve correct behavior, but do "
-            "not return a patch, edit list, or explanation."
+            + "\n\nDiscard the rejected implementation choices and re-derive a complete "
+            "replacement program from the task and API contracts. Do not carry forward a source, "
+            "field, entity, or parsing approach merely because the rejected candidate used it. "
+            "Return only the complete program, not a patch, edit list, or explanation."
         ),
     )
 
@@ -397,7 +420,7 @@ def generate_code(
     llm: Any = None,
     on_event: Callable[[CodingEvent], None] | None = None,
 ) -> CodingPlan:
-    """Generate and deterministically regenerate at most once."""
+    """Generate and review a program, with bounded whole-program regeneration."""
     events: list[CodingEvent] = []
 
     def emit(kind: str, **data: Any) -> None:
@@ -440,6 +463,15 @@ def generate_code(
     ]
     observation_schema = _observation_schema_block(current_observation)
     contract_fixture = _observation_contract_fixture(current_observation)
+    unstructured_visual = (
+        _unstructured_visual_block()
+        if (
+            fixture is None
+            and observation_schema is None
+            and "## Required application interface facts" not in knowledge
+        )
+        else None
+    )
     blocks = [
         *common_blocks,
         knowledge_block("app_knowledge", knowledge),
@@ -447,6 +479,7 @@ def generate_code(
         observation_schema,
         _fixture_schema_block(fixture),
         _resolution_block(resolution),
+        unstructured_visual,
     ]
 
     def generate(
@@ -521,9 +554,15 @@ def generate_code(
     current = apply_direct_read_repair(initial) or initial
     if current is not initial:
         repair_status = "deterministic"
-    if not _attempt_executable(current):
+    for regeneration in range(1, _MAX_REGENERATIONS + 1):
+        if _attempt_executable(current):
+            break
         current = generate(
-            phase="regenerated",
+            phase=(
+                "regenerated"
+                if regeneration == 1
+                else f"regenerated_{regeneration}"
+            ),
             extra_blocks=[_regeneration_block(current.source, current)],
         )
         attempts.append(current)

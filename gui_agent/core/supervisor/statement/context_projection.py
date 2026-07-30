@@ -30,6 +30,18 @@ _WRITE_ROLES = {
 }
 
 
+def _expected_state_signals(statement: StatementContract) -> list[str]:
+    signals = [str(key) for key in statement.expected_state]
+    for value in statement.expected_state.values():
+        values = value if isinstance(value, list) else [value]
+        signals.extend(
+            str(item)
+            for item in values
+            if isinstance(item, (str, int, float, bool))
+        )
+    return signals
+
+
 def select_transition_knowledge(
     statement: StatementContract,
     observation: Observation,
@@ -40,7 +52,11 @@ def select_transition_knowledge(
         [str(observation.title or ""), str(observation.url or "")],
         match_whens=False,
     )
-    intent_signals = [statement.goal, statement.success]
+    intent_signals = [
+        statement.goal,
+        statement.success,
+        *_expected_state_signals(statement),
+    ]
     if statement.interaction_intent is not None:
         intent_signals.append(
             _PHASE_KNOWLEDGE_HINTS[statement.interaction_intent.phase]
@@ -48,14 +64,13 @@ def select_transition_knowledge(
         intent_signals.extend([
             statement.interaction_intent.entity,
             *statement.interaction_intent.required_fields,
-            *statement.expected_state,
         ])
     intent_stems = knowledge.match_signals(
         intent_signals,
         min_overlap=2,
         match_titles=False,
     )
-    if (
+    if statement.expected_state or (
         statement.interaction_intent is not None
         and statement.interaction_intent.phase == "reach"
     ):

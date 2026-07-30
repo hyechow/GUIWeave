@@ -29,9 +29,11 @@ contract, Journal facts and current observation.
 `context_projection.py` owns the pure, deterministic projection used by Transition. It performs
 no summarization, truncation or budget enforcement. Transition receives this decision projection,
 not a dump of every adapter index. The screenshot remains the portable visual baseline. For typed
-collection phases, `reach`/`locate` receive collection structure without row payloads or form
-state; `constrain` additionally receives filter controls and query actions. Raw rows belong to
-Acquire, while the complete control and affordance indexes remain available to Runtime validation.
+collection phases, `locate` receives collection structure without row payloads or form state;
+`constrain` additionally receives filter controls and query actions. A public `reach` establishes
+its declared GUI state from the portable visual baseline plus any adapter evidence. Raw rows belong
+to Acquire, while the complete control and affordance indexes remain available to Runtime
+validation.
 
 Knowledge retrieval keeps route identity separate from Statement intent: route/title may select an
 exact page section, while `selector_when` fallback uses contract semantics and requires multiple
@@ -76,8 +78,10 @@ produces `failed` or `exhausted`. A model-declared `failed` proposal follows the
   missing predicates and extra predicates are not success.
 - **acquire**: materialize rows from the resolved collection handle.
 
-`ctx.reach` lowers to **`reach_collection`** using the downstream entity, required fields, and
-declared expected state, then hands control back to Program as soon as that typed state exists.
+`ctx.reach` establishes its declared non-durable GUI state and hands control back to Program after
+Transition verifies that state. It does not require a structural collection. A dependent
+`ctx.query` owns the strict collection boundary through `locate_collection`; internal source-state
+restoration may also use `reach_collection` when it must recover a previously resolved collection.
 
 An action identifies:
 

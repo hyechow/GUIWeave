@@ -742,29 +742,19 @@ class CodingProgramRuntime:
         if op in {"reach", "commit"}:
             task = str(payload["goal"])
             values = dict(payload.get("values") or {}) if op == "commit" else {}
-            interaction_intent = None
             success_text = f"The GUI task is complete: {task}"
+            success: dict[str, Any] = {}
             if op == "reach":
-                success = reach_postcondition(payload.get("success"))
-                if success is None:
+                reach_state = reach_postcondition(payload.get("success"))
+                if reach_state is None:
                     raise ValueError("ctx.reach success is not a structured state")
-                entity, required_fields = success["entity"], success["fields"]
-                interaction_intent = CollectionIntent(
-                    phase="reach",
-                    entity=entity,
-                    required_fields=required_fields,
-                )
+                success = reach_state
                 success_text = "Every declared expected-state condition is established"
             statement = Interact(
                 id=statement_id,
                 goal=task,
                 success=success_text,
-                expected_state=success if op == "reach" else {},
-                **(
-                    {"interaction_intent": interaction_intent}
-                    if interaction_intent is not None
-                    else {}
-                ),
+                expected_state=success,
                 required_values=values,
                 persistence="explicit_commit" if values else "immediate",
             )

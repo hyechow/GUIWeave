@@ -4,7 +4,7 @@ from __future__ import annotations
 
 import inspect
 
-from gui_agent.core.schemas import CollectionIntent, Observation, StatementContract
+from gui_agent.core.schemas import Observation, StatementContract
 from gui_agent.core.self_learning.progressive import ProgressiveKnowledge
 from gui_agent.core.supervisor.statement.context_projection import (
     select_transition_knowledge,
@@ -46,13 +46,8 @@ def test_reach_selects_target_knowledge_instead_of_departure_page() -> None:
         success="Products collection is visible",
         expected_state={
             "entity": "Products",
-            "Name": "requested item",
-            "Type": "requested type",
+            "fields": ["Name", "SKU", "Type"],
         },
-        interaction_intent=CollectionIntent(
-            phase="reach",
-            entity="Products",
-        ),
     )
     observation = Observation(
         png_bytes=b"x",

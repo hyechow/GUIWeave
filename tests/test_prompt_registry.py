@@ -80,20 +80,20 @@ def test_coding_contract_exposes_only_public_ctx_api():
 
 
 def test_coding_contract_keeps_settings_atomic_and_visual_retrieval_on_source():
+    from gui_agent.core.orchestrator.planner import _unstructured_visual_block
+
     prompt = load_prompt_text("task.orchestrator.coding")
+    visual_contract = _unstructured_visual_block().content
 
     assert "emit exactly one `commit` with all requested setting" in prompt
     assert "Do not precede it with `reach` or `read`" in prompt
     assert "Never replace a requested" in prompt
     assert "in-application search or visible-page lookup with an API" in prompt
-    assert "`reach.success` must contain" in prompt
-    assert "raw HTML, page content, or display text" in prompt
-    assert "matching typed read and return its value directly" in prompt
-    assert "use exactly `reach` followed by" in prompt
-    assert "The reached `entity` names the semantic result or view" in prompt
     assert "every requested field must already" in prompt
     assert 'literal `success["fields"]` list' in prompt
-    assert "not a different data source" in prompt
+    assert "one semantic result/view `ctx.reach`" in visual_contract
+    assert "same requested fields" in visual_contract
+    assert "Generic whole-page fields" in visual_contract
 
 
 def test_statement_transition_separates_commit_boundary_from_action_family():
@@ -112,6 +112,7 @@ def test_prompt_eval_suites_point_to_existing_paths():
 
 
 def test_migrated_prompt_constants_load_from_registry():
+    from gui_agent.adapters.android.router_prompt import ANDROID_ROUTER_SYSTEM
     from gui_agent.adapters.browser.router_prompt import BROWSER_ROUTER_SYSTEM
     from gui_agent.adapters.iphone.policies.structured_output import SYSTEM_PROMPT
     from gui_agent.core.self_learning.app_summary import (
@@ -121,10 +122,20 @@ def test_migrated_prompt_constants_load_from_registry():
     from gui_agent.core.self_learning.manual_pdf import _SECTION_SYSTEM as SECTION_SYS
 
     assert SYSTEM_PROMPT == load_prompt_text("task.action_policy.iphone")
+    assert ANDROID_ROUTER_SYSTEM == load_prompt_text("task.router.android")
     assert BROWSER_ROUTER_SYSTEM == load_prompt_text("task.router.browser")
     assert NAV_SYS == load_prompt_text("task.self_learning.app_summary.nav_system")
     assert ELEMENTS_SYS == load_prompt_text("task.self_learning.app_summary.elements_system")
     assert SECTION_SYS == load_prompt_text("task.self_learning.manual_pdf.section_system")
+
+
+def test_every_platform_router_includes_shared_goal_semantics():
+    from gui_agent.core.chat.session import _router_system_for
+
+    shared = load_prompt_text("context.router.shared_goal")
+    for platform in ("android", "browser", "iphone"):
+        system, _known_apps_rule = _router_system_for(platform)
+        assert shared in system
 
 
 def test_large_inline_prompt_constants_are_explicitly_allowlisted():

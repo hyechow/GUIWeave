@@ -929,13 +929,17 @@ def run(ctx):
 """
     runtime = CodingProgramRuntime.start(CodingProgram(goal="sum orders", source=source))
 
-    # Public ctx.reach produces the verified state capability consumed by ctx.query.
+    # Public ctx.reach produces the verified GUI-state capability consumed by ctx.query.
     assert isinstance(runtime.current.statement, Interact)
-    assert isinstance(
-        runtime.current.statement.interaction_intent,
-        CollectionIntent,
-    )
-    assert runtime.current.statement.interaction_intent.phase == "reach"
+    assert runtime.current.statement.interaction_intent is None
+    assert runtime.current.statement.expected_state == {
+        "entity": "Orders",
+        "fields": [
+            "Status",
+            "Purchase Date",
+            "Grand Total (Purchased)",
+        ],
+    }
     runtime.send_outcome(StatementOutcome.completed("orders available"))
 
     # 1. lookup — pure locate, filters no longer ride on the lookup request.
@@ -1170,11 +1174,11 @@ def run(ctx):
 """
     runtime = CodingProgramRuntime.start(CodingProgram(goal="read order", source=source))
 
-    assert isinstance(
-        runtime.current.statement.interaction_intent,
-        CollectionIntent,
-    )
-    assert runtime.current.statement.interaction_intent.phase == "reach"
+    assert runtime.current.statement.interaction_intent is None
+    assert runtime.current.statement.expected_state == {
+        "entity": "Orders",
+        "fields": ["ID"],
+    }
     runtime.send_outcome(StatementOutcome.completed("orders available"))
     assert isinstance(runtime.current.statement, Interact)
     assert runtime.current.inputs["target"] == {"ID": "1"}
@@ -1336,7 +1340,7 @@ def run(ctx):
     assert len(plan.attempts) == 1
 
 
-def test_generate_code_regenerates_whole_program_once() -> None:
+def test_generate_code_regenerates_whole_program() -> None:
     bad = GOOD_PROGRAM.replace('fields=["Price"]', 'fields=["Missing"]')
     llm = _SequenceLLM(
         f"```python\n{bad}\n```",
@@ -1453,6 +1457,8 @@ def test_regeneration_still_requires_a_valid_program() -> None:
     llm = _SequenceLLM(
         f"```python\n{invalid}\n```",
         "def run(ctx):\n    return missing",
+        "def run(ctx):\n    return missing",
+        "def run(ctx):\n    return missing",
     )
 
     plan = generate_code(
@@ -1462,8 +1468,44 @@ def test_regeneration_still_requires_a_valid_program() -> None:
     )
 
     assert not plan.requirements_satisfied
+    assert len(llm.messages) == 4
     with pytest.raises(CodingCompileError):
         program_from_plan(plan)
+
+
+def test_generate_code_retries_when_first_replacement_is_still_invalid() -> None:
+    unsafe_replacement = """
+import re
+
+def run(ctx):
+    return re.search("value", "value").group(0)
+"""
+    valid = """
+def run(ctx):
+    state = ctx.reach(
+        "Show the visible result",
+        success={"entity": "VisibleResult", "fields": ["value"]},
+    )
+    result = ctx.read(state, fields={"value": "number"})
+    return int(result["value"])
+"""
+    wrong_read_shape = valid.replace('result["value"]', "result")
+    llm = _SequenceLLM(
+        f"```python\n{wrong_read_shape}\n```",
+        f"```python\n{unsafe_replacement}\n```",
+        f"```python\n{valid}\n```",
+    )
+
+    plan = generate_code("return one visible numeric value", llm=llm)
+
+    assert plan.requirements_satisfied
+    assert plan.source.strip() == valid.strip()
+    assert len(llm.messages) == 3
+    assert [
+        event.data["phase"]
+        for event in plan.events
+        if event.kind == "generation_started"
+    ] == ["initial", "regenerated", "regenerated_2"]
 
 
 def test_generator_receives_knowledge_and_api_schema() -> None:

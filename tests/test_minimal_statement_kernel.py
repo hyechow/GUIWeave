@@ -1260,6 +1260,33 @@ def test_rich_reach_state_does_not_complete_from_collection_identity_alone(
     assert step.action_intent.target_value == "05/01/2021"
 
 
+def test_visual_reach_state_completes_without_a_structural_collection(
+    monkeypatch,
+) -> None:
+    statement = StatementContract(
+        id="s1",
+        goal="show the requested visible result",
+        success="every declared expected-state condition is established",
+        expected_state={
+            "entity": "VisibleResult",
+            "fields": ["value"],
+        },
+    )
+    policy = _policy(statement)
+    monkeypatch.setattr(
+        policy,
+        "_invoke_statement_transition",
+        lambda *_args, **_kwargs: _complete("the requested value is visible"),
+    )
+
+    step = policy._run_single_turn(statement, _observation(), [])
+
+    assert step.outcome is not None
+    assert step.outcome.is_completed
+    assert step.outcome.outputs == {}
+    assert policy._last_transition_record["validation_error"] == ""
+
+
 def test_structurally_invalid_reach_complete_keeps_statement_running(
     monkeypatch,
 ) -> None:
