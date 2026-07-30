@@ -6,7 +6,9 @@ from gui_agent.adapters.android.mobileworld import (
     _final_answer,
     _generate_and_persist_reply,
     _init_task_then_wait_for_android,
+    _route_mobileworld_goal,
 )
+from gui_agent.core.chat.session import RouterResult
 from gui_agent.core.run.result import AgentResult
 from gui_agent.core.runtime.factory import SetupCheckResult
 
@@ -17,6 +19,26 @@ class _FakeEnv:
 
     def init_task(self, task_name: str) -> None:
         self.events.append(f"init:{task_name}")
+
+
+def test_mobileworld_routes_backend_goal_as_android_and_preserves_raw_separately():
+    calls = []
+
+    def route(goal, *, session, platform):
+        calls.append((goal, session, platform))
+        return RouterResult(goal="明确后的任务目标")
+
+    routed, payload = _route_mobileworld_goal("raw goal", route=route)
+    fallback, empty_payload = _route_mobileworld_goal(
+        "raw goal",
+        route=lambda *_args, **_kwargs: RouterResult(),
+    )
+
+    assert routed == "明确后的任务目标"
+    assert payload["goal"] == routed
+    assert calls == [("raw goal", [], "android")]
+    assert fallback == "raw goal"
+    assert empty_payload["goal"] == ""
 
 
 def test_mobileworld_initializes_before_adb_probe_and_session_open():

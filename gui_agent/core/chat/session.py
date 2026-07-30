@@ -23,6 +23,9 @@ class RouterResult(BaseModel):
         description=(
             "生成一个自包含、可直接执行的任务目标。"
             "需要操控手机时填写，格式：「在[APP]中[操作]」。"
+            "若时间范围与极值或排名指标同时出现，必须把实际时间范围直接写进"
+            "指标作用域，例如把含糊的「最高值 today」明确为「今天这一天内的最高值」。"
+            "不得改变时间范围粒度或改写已经解析出的具体日期端点。"
             "不需要操控手机或信息不足无法确定 APP 时留空。"
         ),
     )
@@ -41,8 +44,8 @@ class RouterResult(BaseModel):
 
 def _router_system_for(platform: str) -> tuple[str, str | None]:
     """Select the platform's router system prompt + optional known-apps rule template.
-    The router FRAMEWORK is neutral; the prompt is platform-specific (iphone: 操控手机/APP;
-    browser: 网页任务). The known-apps rule is also per-platform: only platforms whose
+    The router FRAMEWORK is neutral; the prompt is platform-specific (iphone/android:
+    操控手机/APP; browser: 网页任务). The known-apps rule is also per-platform: only platforms whose
     entry point is an address the router can't see (browser: URL) provide a template —
     on iphone the app name IS the entry, and injecting the list there disturbed
     prefs/context-carry behavior (4/53 eval regressions). Lazy import keeps
@@ -52,9 +55,22 @@ def _router_system_for(platform: str) -> tuple[str, str | None]:
             BROWSER_KNOWN_APPS_RULE,
             BROWSER_ROUTER_SYSTEM,
         )
-        return BROWSER_ROUTER_SYSTEM, BROWSER_KNOWN_APPS_RULE
-    from gui_agent.adapters.iphone.router_prompt import IPHONE_ROUTER_SYSTEM
-    return IPHONE_ROUTER_SYSTEM, None
+        system = BROWSER_ROUTER_SYSTEM
+        known_apps_rule = BROWSER_KNOWN_APPS_RULE
+    elif platform == "android":
+        from gui_agent.adapters.android.router_prompt import ANDROID_ROUTER_SYSTEM
+
+        system = ANDROID_ROUTER_SYSTEM
+        known_apps_rule = None
+    else:
+        from gui_agent.adapters.iphone.router_prompt import IPHONE_ROUTER_SYSTEM
+
+        system = IPHONE_ROUTER_SYSTEM
+        known_apps_rule = None
+    from gui_agent.prompts import load_prompt_text
+
+    shared_goal_rules = load_prompt_text("context.router.shared_goal")
+    return f"{system}\n\n{shared_goal_rules}", known_apps_rule
 
 
 def _get_llm() -> ChatOpenAI:
@@ -78,7 +94,14 @@ def format_session_history(history: list[dict]) -> str:
             if entry.get("phase") == "completed"
             else "✗"
         )
-        lines.append(f"{i}. 用户说「{entry['user_msg']}」→ {status} {entry['output']}")
+        output = (
+            entry.get("output")
+            or entry.get("result_summary")
+            or entry.get("summary")
+            or entry.get("reply")
+            or ""
+        )
+        lines.append(f"{i}. 用户说「{entry['user_msg']}」→ {status} {output}")
     return "\n".join(lines)
 
 

@@ -1,0 +1,20 @@
+---
+id: context.router.shared_goal
+source_type: context_block
+platform: shared
+scope:
+  - router
+owner: gui_agent.core.chat.session
+schema: RouterResult
+eval_suites:
+  - evals/android/router
+  - evals/browser/router
+  - evals/iphone/router
+version: 1
+---
+生成 goal 时统一遵守以下语义规范化规则：
+- 用户明确提到的应用或网站、搜索词、输入内容、时间范围、条件和输出要求必须保留。已经解析成具体日期的时间范围须原样保留日期格式和两个端点。
+- 当原始指令过于简略，导致时间、对象、属性或指标之间的修饰关系可能有歧义时，只把这些语义关系改写清楚。
+- 当时间范围与极值或排名指标同时出现时，必须用原指令里的实际时间词，把时间范围直接挂到被读取的指标上。类似“最高值 today”的压缩表达应写成“今天这一天内的最高值”，不能仍写成“今天最高值”，也不能只把时间词留在搜索词中或放在句尾。不得改变时间范围的粒度：单日仍是单日，多日范围仍是完整范围，不能把多日范围写成“这一天”。这只是明确原指令的修饰关系，不是增加限制。
+- 不增加用户未提到的事实、单位、格式或限制，不添加解释性排除条件。
+- 不假设界面结构、控件、页面、导航路径或操作步骤；这些由后续运行时根据实际界面决定。

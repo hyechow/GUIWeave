@@ -205,6 +205,22 @@ def _final_answer(result: AgentResult) -> str:
     return result.output.strip()
 
 
+def _route_mobileworld_goal(
+    goal: str,
+    *,
+    route: Callable[..., object] | None = None,
+) -> tuple[str, dict]:
+    """Normalize one backend goal while preserving it as the raw evaluator input."""
+    if route is None:
+        from gui_agent.core.chat.session import route_message
+
+        route = route_message
+    result = route(goal, session=[], platform="android")
+    routed_goal = str(getattr(result, "goal", "") or "").strip()
+    payload = result.model_dump(mode="json")
+    return routed_goal or goal, payload
+
+
 def _generate_and_persist_reply(
     context_path: Path,
     goal: str,
@@ -311,6 +327,13 @@ def main() -> int:
     print(f"[mobileworld] agent logs: {log_dir}")
 
     with tee_stdio(log_dir):
+        router_payload: dict | None = None
+        try:
+            intent, router_payload = _route_mobileworld_goal(goal)
+            print(f"[mobileworld] route: {goal!r} -> {intent!r}")
+        except Exception as exc:  # noqa: BLE001 - preserve direct-run fallback
+            print(f"[mobileworld] route unavailable; using raw goal ({exc})")
+
         # Bind app knowledge by the task's declared apps (best-effort; none → run bare).
         from gui_agent.core.self_learning.app_summary import load_knowledge_for_app
 
@@ -355,7 +378,7 @@ def main() -> int:
             except Exception as exc:  # noqa: BLE001
                 setup = None
                 result = failed_result(
-                    goal,
+                    intent,
                     f"MobileWorld 任务初始化失败：{exc}",
                     task_type="RETRIEVE",
                     failure_kind="environment",
@@ -367,7 +390,7 @@ def main() -> int:
                     print(line)
             if result is None and setup is not None and not setup.ok:
                 result = failed_result(
-                    goal,
+                    intent,
                     f"任务初始化完成，但外部 adb 未恢复：{setup.summary}",
                     task_type="RETRIEVE",
                     failure_kind="environment",
@@ -433,8 +456,8 @@ def main() -> int:
                             max_turns=run_max_turns,
                             auto_continue=True,
                             hud=hud,
-                            raw_input=intent,
-                            router=None,
+                            raw_input=goal,
+                            router=router_payload,
                             knowledge=knowledge_summary,
                             program=program,
                             orchestrator_context_reports=orchestrator_context_reports,
@@ -448,7 +471,7 @@ def main() -> int:
             try:
                 reply = _generate_and_persist_reply(
                     log_dir / "context.json",
-                    goal,
+                    intent,
                     result,
                 )
                 print("[mobileworld] FINAL_REPLY")

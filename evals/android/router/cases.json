@@ -1,0 +1,33 @@
+[
+  {
+    "label": "clarify metric scope",
+    "user_msg": "Use Chrome to search for Beijing highest temperature today. ONLY give a integer number denoted Celsius degree.",
+    "session": [],
+    "expected": {
+      "required_patterns": [
+        "(?i)Chrome",
+        "(?i)Beijing|北京",
+        "(?i)today|今天|今日",
+        "(?i)today.*(daily|day|period|range).*(high|maximum)|(今天|今日).*(这一天|日最高|范围内|周期内).*(最高|气温)|(今天|今日).*日最高"
+      ],
+      "goal_not_contains": [
+        "天气卡片",
+        "多日预报",
+        "星期",
+        "左边"
+      ]
+    }
+  },
+  {
+    "label": "preserve direct action",
+    "user_msg": "Open Settings and turn off airplane mode",
+    "session": [],
+    "expected": {
+      "required_patterns": [
+        "(?i)Settings|设置",
+        "(?i)airplane mode|flight mode|飞行模式",
+        "(?i)turn off|关闭"
+      ]
+    }
+  }
+]
