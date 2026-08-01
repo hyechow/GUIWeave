@@ -100,8 +100,8 @@ def test_coding_orchestrator_renders_compiled_python_plan():
             "goal": "return the top record",
             "source": (
                 'def run(ctx):\n'
-                '    state = ctx.reach("Open items", success={"entity": "Items"})\n'
-                '    rows = ctx.query(state, entity="Items", fields=["id"])\n'
+                '    ctx.reach("Open items", success={"entity": "Items"})\n'
+                '    rows = ctx.query(entity="Items", fields=["id"])\n'
                 '    return rows[0]\n'
             ),
         },
@@ -151,10 +151,10 @@ def test_coding_report_groups_statements_by_public_ctx_call():
                 "kind": "coding",
                 "goal": "open orders",
                 "source": (
-                    'def run(ctx):\n    state = ctx.reach("Open orders", '
+                    'def run(ctx):\n    ctx.reach("Open orders", '
                     'success={"entity": "Orders", '
                     '"fields": ["Status", "Purchase Date"]})\n'
-                    '    return ctx.query(state, entity="Orders", '
+                    '    return ctx.query(entity="Orders", '
                     'fields=["Status", "Purchase Date"], '
                     'filters={"Status": "Complete"})\n'
                 ),

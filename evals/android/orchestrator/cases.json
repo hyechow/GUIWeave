@@ -1,0 +1,103 @@
+[
+  {
+    "task_name": "CloseFlightModeTask",
+    "group": "direct_setting",
+    "apps": ["Settings"],
+    "intent": "Turn off device flight mode",
+    "contract": {
+      "method_counts": {"commit": 1},
+      "required_any_calls": [[
+        {"method": "commit", "values_include": {"Flight Mode": false}},
+        {"method": "commit", "values_include": {"flight_mode": false}}
+      ]],
+      "features": ["no_return_value"]
+    }
+  },
+  {
+    "task_name": "AdjustBrightnessMaximumTask",
+    "group": "direct_setting",
+    "apps": ["Settings"],
+    "intent": "Set the brightness to the maximum level.",
+    "contract": {
+      "method_counts": {"commit": 1},
+      "required_any_calls": [[
+        {"method": "commit", "values_include": {"brightness": 100}},
+        {"method": "commit", "values_include": {"brightness_level": 100}},
+        {"method": "commit", "values_include": {"screen_brightness": 100}}
+      ]],
+      "features": ["no_return_value"]
+    }
+  },
+  {
+    "task_name": "SetAlarmTask",
+    "group": "structured_write",
+    "apps": ["Clock"],
+    "intent": "Set a weekend alarm for 8:25 a.m. with the ringtone \"beebeep\" and vibration off.",
+    "contract": {
+      "method_counts": {"commit": 1},
+      "required_calls": [
+        {"method": "reach", "success_include": {"entity": "Alarm", "vibration": false}},
+        {"method": "commit", "value_keys": ["time", "ringtone", "vibration", "days"]}
+      ],
+      "literal_values": ["beebeep", "Saturday", "Sunday"]
+    }
+  },
+  {
+    "task_name": "ChromeSearchBeijingWeatherTask",
+    "group": "read_compute",
+    "apps": ["Chrome"],
+    "intent": "Use Chrome to search for Beijing highest temperature today. ONLY give a integer number denoted Celsius degree.",
+    "contract": {
+      "method_counts": {"commit": 0},
+      "method_min_counts": {"reach": 1, "read": 1},
+      "features": ["returns_value"],
+      "literal_values": ["today"]
+    }
+  },
+  {
+    "task_name": "CheckCartPriceTask",
+    "group": "read_compute",
+    "apps": ["Taodian"],
+    "intent": "Find the three most expensive items in the TaoDian app shopping cart and calculate their total price. Respond only with an integer representing the total price, with no other text.",
+    "contract": {
+      "method_counts": {"commit": 0},
+      "required_any_calls": [[
+        {"method": "query", "entity": "Cart", "fields_include": ["price"]},
+        {"method": "query", "entity": "ShoppingCart", "fields_include": ["price"]}
+      ]],
+      "features": ["returns_value", "sorts"],
+      "slice_stops": [3]
+    }
+  },
+  {
+    "task_name": "SumFileLinesTask",
+    "group": "read_compute",
+    "apps": ["Files"],
+    "intent": "Check the all files inside the earliest zip file from July in the Downloads directory and count how many lines it contains in total. Respond only with an integer representing the line count, with no other text.",
+    "contract": {
+      "method_counts": {"commit": 0},
+      "method_min_counts": {"query": 1, "read": 1},
+      "required_calls": [
+        {"method": "query", "fields_include": ["created_at"]},
+        {"method": "read", "target_mode": "present", "fields_include": ["content"]}
+      ],
+      "features": ["returns_value", "sorts"]
+    }
+  },
+  {
+    "task_name": "MastodonConditionalFavoTask",
+    "group": "conditional_collection_write",
+    "apps": ["Mastodon"],
+    "intent": "favorite all toots tagged “#dogs” on Mastodon, but do not add them to my favorite list if they are already in my favorite list or bookmark list.",
+    "contract": {
+      "method_counts": {"commit": 1},
+      "ordered_calls": [
+        {"method": "query", "entity": "TaggedToots", "fields_include": ["author_handle", "content"], "filters_include": {"tag": "#dogs"}},
+        {"method": "query", "entity": "SavedFavorites", "fields_include": ["author_handle", "content"]},
+        {"method": "query", "entity": "SavedBookmarks", "fields_include": ["author_handle", "content"]},
+        {"method": "commit", "target_mode": "present", "inside_loop": true, "values_include": {"favorited": true}}
+      ],
+      "literal_values": ["#dogs", "SavedFavorites", "SavedBookmarks"]
+    }
+  }
+]

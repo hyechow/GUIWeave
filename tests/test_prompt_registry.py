@@ -91,6 +91,8 @@ def test_coding_contract_keeps_settings_atomic_and_visual_retrieval_on_source():
     assert "in-application search or visible-page lookup with an API" in prompt
     assert "every requested field must already" in prompt
     assert 'literal `success["fields"]` list' in prompt
+    assert "must be an inline dictionary literal at every call" in prompt
+    assert "never translate it into an inverse mutation" in prompt
     assert "one semantic result/view `ctx.reach`" in visual_contract
     assert "same requested fields" in visual_contract
     assert "Generic whole-page fields" in visual_contract

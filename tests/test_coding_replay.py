@@ -21,10 +21,8 @@ FIXTURE = (
 SOURCES = {
     42: """
 def run(ctx):
-    state = ctx.reach("Open search terms", success={"entity": "Search Terms"})
-    rows = ctx.query(
-        state,
-        entity="Search Terms",
+    ctx.reach("Open search terms", success={"entity": "Search Terms"})
+    rows = ctx.query(entity="Search Terms",
         fields=["Search Query", "Number of Uses"],
         coverage="complete",
     )
@@ -34,10 +32,8 @@ def run(ctx):
 """,
     63: """
 def run(ctx):
-    state = ctx.reach("Open orders", success={"entity": "Orders"})
-    rows = ctx.query(
-        state,
-        entity="Orders",
+    ctx.reach("Open orders", success={"entity": "Orders"})
+    rows = ctx.query(entity="Orders",
         fields=["ID", "Status", "Customer Email"],
         filters={"Status": "Complete"},
         coverage="complete",
@@ -54,10 +50,8 @@ def run(ctx):
 from datetime import datetime
 
 def run(ctx):
-    state = ctx.reach("Open orders", success={"entity": "Orders"})
-    rows = ctx.query(
-        state,
-        entity="Orders",
+    ctx.reach("Open orders", success={"entity": "Orders"})
+    rows = ctx.query(entity="Orders",
         fields=["Status", "Purchase Date"],
         filters={"Status": "Complete"},
         coverage="complete",
@@ -72,35 +66,29 @@ def run(ctx):
 """,
     113: """
 def run(ctx):
-    state = ctx.reach("Open all reviews", success={"entity": "All Reviews"})
-    rows = ctx.query(
-        state,
-        entity="All Reviews",
+    ctx.reach("Open all reviews", success={"entity": "All Reviews"})
+    rows = ctx.query(entity="All Reviews",
         fields=["ID", "Product", "Nickname"],
         filters={"Product": "Olivia zip jacket"},
         coverage="complete",
     )
     if not rows:
-        rows = ctx.query(
-            state,
-            entity="All Reviews",
+        rows = ctx.query(entity="All Reviews",
             fields=["ID", "Product", "Nickname"],
             filters={"Product": "Olivia"},
             coverage="complete",
         )
     nicknames = []
     for row in rows:
-        detail = ctx.read(state, target=row, fields=["Detailed Rating"])
+        detail = ctx.read(target=row, fields=["Detailed Rating"])
         if detail["Detailed Rating"] <= 3:
             nicknames.append(row["Nickname"])
     return nicknames
 """,
     193: """
 def run(ctx):
-    state = ctx.reach("Open orders", success={"entity": "Orders"})
-    rows = ctx.query(
-        state,
-        entity="Orders",
+    ctx.reach("Open orders", success={"entity": "Orders"})
+    rows = ctx.query(entity="Orders",
         fields=["Status", "Purchase Date", "Grand Total (Purchased)"],
         filters={"Status": "Complete"},
         coverage="complete",

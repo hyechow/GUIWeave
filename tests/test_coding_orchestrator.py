@@ -35,24 +35,25 @@ from gui_agent.core.schemas import (
 
 GOOD_PROGRAM = """
 def run(ctx):
-    products_state = ctx.reach(
+    ctx.reach(
         "Open the Sahara leggings collection",
         success={
             "entity": "Sahara leggings",
             "fields": ["id", "Name"],
         },
     )
-    products = ctx.query(
-        products_state,
-        entity="Sahara leggings",
+    products = ctx.query(entity="Sahara leggings",
         fields=["id", "Name"],
         filters={"Name": "Sahara leggings"},
     )
     assert products, "Sahara products are required"
+    updates = []
     for product in products:
-        detail = ctx.read(products_state, target=product, fields=["Price"])
+        detail = ctx.read(target=product, fields=["Price"])
         new_price = round(detail["Price"] * 0.8, 2)
         assert new_price < detail["Price"], "price must decrease"
+        updates.append([product, new_price])
+    for product, new_price in updates:
         ctx.commit(
             "Update the product price",
             target=product,
@@ -104,7 +105,7 @@ def run(ctx):
     assert validate_code(source) == []
 
 
-def test_validate_code_accepts_structured_terminal_reach_state() -> None:
+def test_validate_code_accepts_structured_terminal_reach() -> None:
     source = """
 def run(ctx):
     ctx.reach(
@@ -122,8 +123,9 @@ def run(ctx):
     assert validate_code(source) == []
     result = execute_code(source, build_probe_fixture(source))
     assert result.ok, result.error
-    assert result.trace[0].result.postcondition["report"] == "Orders"
-    assert result.trace[0].result.postcondition["rendered"] is True
+    assert result.return_value is None
+    assert result.trace[0].op == "reach"
+    assert result.trace[0].result is None
 
 
 @pytest.mark.parametrize(
@@ -182,8 +184,8 @@ def test_validate_code_rejects_removed_planning_api(method: str) -> None:
         ),
         (
             "def run(ctx):\n"
-            "    state = ctx.reach('open', success={'entity': 'Records'})\n"
-            "    ctx.read(state, fields={'Options': 'list'})",
+            "    ctx.reach('open', success={'entity': 'Records'})\n"
+            "    ctx.read(fields={'Options': 'list'})",
             "FIELD_PROJECTION_CONTRACT",
         ),
         (
@@ -194,9 +196,8 @@ def test_validate_code_rejects_removed_planning_api(method: str) -> None:
         (
             "def run(ctx):\n"
             "    state = ctx.reach('open', success={'entity': 'Records'})\n"
-            "    ctx.commit('save', values={'Status': 'Complete'})\n"
             "    return state",
-            "STALE_UI_STATE_RETURN",
+            "REACH_RETURNS_NONE",
         ),
         ("def run(ctx):\n    assert True, 'always'", "BUSINESS_ASSERTION_CONSTANT"),
     ],
@@ -213,14 +214,14 @@ def run(ctx):
     def newest(rows):
         return sorted(rows, key=lambda row: datetime.fromisoformat(row["Date"]), reverse=True)
 
-    orders_state = ctx.reach(
+    ctx.reach(
         "Open orders",
         success={
             "entity": "Orders",
             "fields": ["Date"],
         },
     )
-    rows = ctx.query(orders_state, entity="Orders", fields=["Date"])
+    rows = ctx.query(entity="Orders", fields=["Date"])
     assert rows, "orders are required"
     return newest(rows)[0]["Date"]
 """
@@ -259,11 +260,10 @@ def run(ctx):
 def test_validate_code_allows_filter_fields_outside_return_projection() -> None:
     source = """
 def run(ctx):
-    state = ctx.reach("Open records", success={
+    ctx.reach("Open records", success={
         "entity": "Records", "fields": ["Name"],
     })
-    return ctx.query(
-        state, entity="Records", fields=["Name"],
+    return ctx.query(entity="Records", fields=["Name"],
         filters={"Status": "Complete"},
     )
 """
@@ -274,16 +274,14 @@ def run(ctx):
 def test_verified_reach_state_with_extra_conditions_remains_composable() -> None:
     source = """
 def run(ctx):
-    state = ctx.reach(
+    ctx.reach(
         "Open the filtered records view",
         success={
             "entity": "Records",
             "view": "Filtered records",
         },
     )
-    return ctx.query(
-        state,
-        entity="Records",
+    return ctx.query(entity="Records",
         fields=["Name"],
         filters={"Status": "Complete"},
     )
@@ -298,7 +296,7 @@ def test_reach_state_conditions_do_not_become_compile_time_query_strategy() -> N
     source = """
 def run(ctx):
     start = "01/01/2023"
-    state = ctx.reach(
+    ctx.reach(
         "Open Orders",
         success={
             "entity": "Orders",
@@ -306,9 +304,7 @@ def run(ctx):
             "Status": "Complete",
         },
     )
-    return ctx.query(
-        state,
-        entity="Orders",
+    return ctx.query(entity="Orders",
         fields={"Purchase Date": "datetime"},
         filters={"Status": "Complete"},
     )
@@ -317,14 +313,204 @@ def run(ctx):
     assert validate_code(source) == []
 
 
+def test_validate_code_rejects_query_row_effects_in_reach_success() -> None:
+    source = """
+def run(ctx):
+    ctx.reach(
+        "View matching records",
+        success={
+            "entity": "Record",
+            "scope": "requested",
+            "bookmarked": True,
+            "favorited": True,
+            "rendered": True,
+        },
+    )
+    rows = ctx.query(entity="Record",
+        fields={"id": "text", "favorited": "boolean", "bookmarked": "boolean"},
+        filters={"scope": "requested"},
+    )
+    selected = [
+        row for row in rows
+        if not row["favorited"] and not row.get("bookmarked", False)
+    ]
+    for row in selected:
+        ctx.commit("Update record", target=row, values={"favorited": True})
+    return len(selected)
+"""
+
+    diagnostics = validate_code(source)
+
+    assert any(
+        item.code == "PREMATURE_MUTATION_POSTCONDITION"
+        and "favorited" in item.message
+        for item in diagnostics
+    )
+    assert any(
+        item.code == "ROW_FIELD_LEAKED_INTO_REACH"
+        and "bookmarked" in item.message
+        for item in diagnostics
+    )
+
+
+def test_validate_code_rejects_committed_reach_field_without_projection() -> None:
+    source = """
+def run(ctx):
+    ctx.reach(
+        "View matching records",
+        success={"entity": "Record", "saved": False},
+    )
+    rows = ctx.query(entity="Record",
+        fields={"id": "text", "content": "text"},
+        filters={"saved": False},
+    )
+    for row in rows:
+        ctx.commit("Save record", target=row, values={"saved": True})
+"""
+
+    diagnostics = validate_code(source)
+
+    assert any(
+        item.code == "PREMATURE_MUTATION_POSTCONDITION"
+        and "saved" in item.message
+        for item in diagnostics
+    )
+
+
+def test_validate_code_allows_reach_scope_before_query_and_commit() -> None:
+    source = """
+def run(ctx):
+    ctx.reach(
+        "View matching records",
+        success={"entity": "Record", "scope": "requested", "rendered": True},
+    )
+    rows = ctx.query(entity="Record",
+        fields={"id": "text", "favorited": "boolean", "bookmarked": "boolean"},
+        filters={"scope": "requested"},
+    )
+    selected = [
+        row for row in rows
+        if not row["favorited"] and not row.get("bookmarked", False)
+    ]
+    for row in selected:
+        ctx.commit("Update record", target=row, values={"favorited": True})
+    return len(selected)
+"""
+
+    assert validate_code(source) == []
+
+
+def test_validate_code_rejects_commit_after_target_source_is_replaced() -> None:
+    source = """
+def run(ctx):
+    ctx.reach("Open tagged records", success={"entity": "TaggedRecords"})
+    tagged = ctx.query(entity="TaggedRecords",
+        fields=["author_handle", "content"],
+    )
+    ctx.reach("Open saved favorites", success={"entity": "SavedFavorites"})
+    favorites = ctx.query(entity="SavedFavorites",
+        fields=["author_handle", "content"],
+    )
+    ctx.reach("Open saved bookmarks", success={"entity": "SavedBookmarks"})
+    bookmarks = ctx.query(entity="SavedBookmarks",
+        fields=["author_handle", "content"],
+    )
+    excluded = {
+        (row["author_handle"], row["content"])
+        for row in favorites + bookmarks
+    }
+    pending = [
+        row for row in tagged
+        if (row["author_handle"], row["content"]) not in excluded
+    ]
+    for row in pending:
+        ctx.commit("Favorite record", target=row, values={"favorited": True})
+    return len(pending)
+"""
+
+    diagnostics = validate_code(source)
+
+    assert any(
+        item.code == "COMMIT_TARGET_SOURCE_INACTIVE"
+        and "make the target-owning collection current" in item.message
+        for item in diagnostics
+    )
+
+
+def test_commit_replay_keeps_target_owning_collection_active() -> None:
+    source = """
+def run(ctx):
+    ctx.reach("Open saved favorites", success={"entity": "SavedFavorites"})
+    favorites = ctx.query(entity="SavedFavorites",
+        fields=["author_handle", "content"],
+    )
+    ctx.reach("Open saved bookmarks", success={"entity": "SavedBookmarks"})
+    bookmarks = ctx.query(entity="SavedBookmarks",
+        fields=["author_handle", "content"],
+    )
+    excluded = {
+        (row["author_handle"], row["content"])
+        for row in favorites + bookmarks
+    }
+    ctx.reach("Open tagged records", success={"entity": "TaggedRecords"})
+    tagged = ctx.query(entity="TaggedRecords",
+        fields=["id", "author_handle", "content"],
+    )
+    pending = [
+        row for row in tagged
+        if (row["author_handle"], row["content"]) not in excluded
+    ]
+    for row in pending:
+        ctx.commit("Favorite record", target=row, values={"favorited": True})
+    return len(pending)
+"""
+    fixture = FixtureSpec(lookups={
+        "savedfavorites": [
+            {"id": "saved", "author_handle": "@saved", "content": "old"},
+        ],
+        "savedbookmarks": [
+            {"id": "marked", "author_handle": "@marked", "content": "kept"},
+        ],
+        "taggedrecords": [
+            {"id": "saved", "author_handle": "@saved", "content": "old"},
+            {"id": "new", "author_handle": "@new", "content": "fresh"},
+        ],
+    })
+
+    assert validate_code(source) == []
+    result = execute_code(source, fixture)
+    assert result.ok, result.error
+    assert result.return_value == 1
+    assert [write.target_id for write in result.writes] == ["new"]
+
+
+def test_validate_code_allows_commit_with_global_target_locator() -> None:
+    source = """
+def run(ctx):
+    ctx.reach("Open source records", success={"entity": "SourceRecords"})
+    rows = ctx.query(entity="SourceRecords",
+        fields=["content", "permalink"],
+    )
+    ctx.reach("Open reference records", success={"entity": "ReferenceRecords"})
+    references = ctx.query(entity="ReferenceRecords", fields=["content"])
+    reference_content = {row["content"] for row in references}
+    pending = [row for row in rows if row["content"] not in reference_content]
+    for row in pending:
+        ctx.commit("Update record", target=row, values={"saved": True})
+    return len(pending)
+"""
+
+    assert validate_code(source) == []
+
+
 def test_query_owns_fields_but_remains_bound_to_reach_entity() -> None:
     source = """
 def run(ctx):
-    state = ctx.reach(
+    ctx.reach(
         "Open records",
         success={"entity": "Records", "fields": ["ID"]},
     )
-    return ctx.query(state, entity="Records", fields=["ID", "Status"])
+    return ctx.query(entity="Records", fields=["ID", "Status"])
 """
 
     fixture = FixtureSpec(lookups={
@@ -345,8 +531,8 @@ def run(ctx):
 def test_validate_code_rejects_literal_state_entity_mismatch() -> None:
     source = """
 def run(ctx):
-    state = ctx.reach("Open orders", success={"entity": "Orders"})
-    return ctx.query(state, entity="Shipments", fields=["ID"])
+    ctx.reach("Open orders", success={"entity": "Orders"})
+    return ctx.query(entity="Shipments", fields=["ID"])
 """
 
     assert any(
@@ -355,18 +541,110 @@ def run(ctx):
     )
 
 
+def test_validate_code_requires_current_ui_before_query() -> None:
+    source = """
+def run(ctx):
+    return ctx.query(entity="Orders", fields=["ID"])
+"""
+
+    assert any(
+        item.code == "ACTIVE_UI_REQUIRED"
+        for item in validate_code(source)
+    )
+
+
+def test_validate_code_requires_current_ui_on_every_control_flow_path() -> None:
+    source = """
+def run(ctx):
+    rows = []
+    if rows:
+        ctx.reach("Open orders", success={"entity": "Orders"})
+    return ctx.query(entity="Orders", fields=["ID"])
+"""
+
+    assert any(
+        item.code == "ACTIVE_UI_REQUIRED"
+        for item in validate_code(source)
+    )
+
+
+def test_validate_code_uses_only_the_latest_reach_as_current_ui() -> None:
+    source = """
+def run(ctx):
+    ctx.reach("Open orders", success={"entity": "Orders"})
+    ctx.reach("Open shipments", success={"entity": "Shipments"})
+    return ctx.query(entity="Orders", fields=["ID"])
+"""
+
+    assert any(
+        item.code == "STATE_ENTITY_MISMATCH"
+        and "active ctx.reach entity 'Shipments'" in item.message
+        for item in validate_code(source)
+    )
+
+
+@pytest.mark.parametrize(
+    "invalidator",
+    [
+        'ctx.commit("Save", values={"Status": "Complete"})',
+        'ctx.command("back")',
+    ],
+)
+def test_validate_code_requires_new_reach_after_ui_invalidation(
+    invalidator: str,
+) -> None:
+    source = f"""
+def run(ctx):
+    ctx.reach("Open orders", success={{"entity": "Orders"}})
+    {invalidator}
+    return ctx.query(entity="Orders", fields=["ID"])
+"""
+
+    assert any(
+        item.code == "ACTIVE_UI_REQUIRED"
+        for item in validate_code(source)
+    )
+
+
+def test_validate_code_rejects_current_ui_use_across_mutating_loop_iterations() -> None:
+    source = """
+def run(ctx):
+    ctx.reach("Open products", success={"entity": "Products"})
+    rows = ctx.query(entity="Products", fields=["ID"])
+    for row in rows:
+        detail = ctx.read(target=row, fields=["Price"])
+        ctx.commit("Update product", target=row, values={"Price": detail["Price"]})
+"""
+
+    assert any(
+        item.code == "ACTIVE_UI_REQUIRED"
+        and "may run again" in item.message
+        for item in validate_code(source)
+    )
+
+
+def test_validate_code_rejects_legacy_ui_argument() -> None:
+    source = """
+def run(ctx):
+    ctx.reach("Open orders", success={"entity": "Orders"})
+    return ctx.query(state, entity="Orders", fields=["ID"])
+"""
+
+    assert any(item.code == "CTX_SIGNATURE" for item in validate_code(source))
+
+
 def test_validate_code_requires_direct_read_fields_in_reach_contract() -> None:
     source = """
 def run(ctx):
-    state = ctx.reach("Show one result", success={"entity": "VisibleResult"})
-    return ctx.read(state, fields={"temperature": "number"})
+    ctx.reach("Show one result", success={"entity": "VisibleResult"})
+    return ctx.read(fields={"temperature": "number"})
 """
 
     diagnostics = validate_code(source)
 
     assert any(
         item.code == "DIRECT_READ_FIELDS_UNDECLARED"
-        and "add them to that reach success.fields list" in item.message
+        and "add them to its success.fields list" in item.message
         for item in diagnostics
     )
     assert validate_code(source.replace(
@@ -378,12 +656,12 @@ def run(ctx):
 def test_repair_direct_read_fields_strengthens_literal_reach_contract() -> None:
     source = """
 def run(ctx):
-    state = ctx.reach(
+    ctx.reach(
         "Show one result",
         success={"entity": "VisibleResult", "fields": ["title"]},
     )
-    first = ctx.read(state, fields={"temperature": "number"})
-    second = ctx.read(state, fields=["title", "humidity"])
+    first = ctx.read(fields={"temperature": "number"})
+    second = ctx.read(fields=["title", "humidity"])
     return [first, second]
 """
 
@@ -397,25 +675,25 @@ def run(ctx):
 def test_validate_code_tracks_reassigned_state_by_call_order() -> None:
     source = """
 def run(ctx):
-    state = ctx.reach("Open customers", success={"entity": "Customers"})
-    customers = ctx.query(state, entity="Customers", fields=["Name"])
-    state = ctx.reach("Open orders", success={"entity": "Orders"})
-    orders = ctx.query(state, entity="Orders", fields=["ID"])
+    ctx.reach("Open customers", success={"entity": "Customers"})
+    customers = ctx.query(entity="Customers", fields=["Name"])
+    ctx.reach("Open orders", success={"entity": "Orders"})
+    orders = ctx.query(entity="Orders", fields=["ID"])
     return [customers, orders]
 """
 
     assert validate_code(source) == []
 
 
-def test_validate_code_rejects_ui_state_as_commit_target() -> None:
+def test_validate_code_rejects_assigning_reach_result() -> None:
     source = """
 def run(ctx):
     state = ctx.reach("Open form", success={"entity": "Form"})
-    ctx.commit("Save record", target=state, values={"Name": "Example"})
+    return state
 """
 
     assert any(
-        item.code == "COMMIT_UI_STATE_TARGET"
+        item.code == "REACH_RETURNS_NONE"
         for item in validate_code(source)
     )
 
@@ -433,31 +711,28 @@ def test_coding_runtime_normalizes_executor_terminal_phase() -> None:
 def test_validate_code_does_not_require_an_unnecessary_assertion() -> None:
     source = """
 def run(ctx):
-    orders_state = ctx.reach(
+    ctx.reach(
         "Open orders",
         success={
             "entity": "Orders",
             "fields": ["Status"],
         },
     )
-    rows = ctx.query(orders_state, entity="Orders", fields=["Status"])
+    rows = ctx.query(entity="Orders", fields=["Status"])
     return [row["Status"] for row in rows]
 """
 
     assert validate_code(source) == []
 
 
-def test_validate_code_does_not_assign_terminal_semantics_to_reach_state() -> None:
+def test_runtime_dataflow_treats_reach_as_an_effect() -> None:
     source = """
 def run(ctx):
-    state = ctx.reach("Open the editor", success={"entity": "Record"})
+    ctx.reach("Open the editor", success={"entity": "Record"})
     ctx.commit("Create a record", values={"Name": "Example"})
 """
 
-    assert any(
-        item.code == "UNUSED_RUNTIME_VALUE"
-        for item in validate_runtime_dataflow(source)
-    )
+    assert validate_runtime_dataflow(source) == []
 
 
 def test_validate_code_allows_sequential_unassigned_reach() -> None:
@@ -470,10 +745,10 @@ def run(ctx):
     assert validate_code(source) == []
 
 
-def test_runtime_returns_verified_reach_state_as_program_output(request) -> None:
+def test_runtime_completes_terminal_reach_without_exposing_ui_state(request) -> None:
     source = """
 def run(ctx):
-    return ctx.reach(
+    ctx.reach(
         "Configure and show the Orders report",
         success={
             "entity": "Sales Reports",
@@ -495,15 +770,13 @@ def run(ctx):
     assert runtime.current.statement.expected_state["rendered"] is True
     runtime.send_outcome(StatementOutcome.completed("report rendered"))
 
-    output = json.loads(runtime.reply)
-    assert output["postcondition"]["Report Subtype"] == "Orders"
-    assert output["postcondition"]["rendered"] is True
+    assert runtime.reply == "Coding program completed"
 
 
 def test_projection_contract_tracks_query_rows() -> None:
     source = """
 def run(ctx):
-    rows = ctx.query(ui_state, entity="Orders", fields=["Status"])
+    rows = ctx.query(entity="Orders", fields=["Status"])
     assert rows, "orders are required"
     return [row["Total"] for row in rows]
 """
@@ -516,9 +789,7 @@ def run(ctx):
 def test_projection_contract_tracks_rank_key_lambda_fields() -> None:
     source = """
 def run(ctx):
-    rows = ctx.query(
-        ui_state,
-        entity="Orders",
+    rows = ctx.query(entity="Orders",
         fields={"Grand Total": "money"},
     )
     return sorted(rows, key=lambda row: row["Purchase Date"])
@@ -533,8 +804,8 @@ def run(ctx):
 def test_runtime_dataflow_requires_consuming_read_values() -> None:
     source = """
 def run(ctx):
-    row = ctx.query(ui_state, entity="Products", fields=["id"])[0]
-    state = ctx.read(ui_state, target=row, fields=["Price"])
+    row = ctx.query(entity="Products", fields=["id"])[0]
+    state = ctx.read(target=row, fields=["Price"])
     assert row, "product is required"
     return row
 """
@@ -547,7 +818,7 @@ def run(ctx):
 def test_fixture_contract_checks_query_fields_for_matching_source() -> None:
     source = """
 def run(ctx):
-    rows = ctx.query(ui_state, entity="Orders", fields=["Missing"])
+    rows = ctx.query(entity="Orders", fields=["Missing"])
     assert rows, "orders are required"
     return rows
 """
@@ -564,7 +835,7 @@ def run(ctx):
 def test_fixture_contract_requires_reach_context_for_absent_query_source() -> None:
     source = """
 def run(ctx):
-    rows = ctx.query(ui_state, entity="Orders", fields=["ID"])
+    rows = ctx.query(entity="Orders", fields=["ID"])
     assert rows, "orders are required"
     return rows
 """
@@ -581,10 +852,10 @@ def run(ctx):
 def test_fixture_contract_keeps_collection_and_detail_sources_separate() -> None:
     source = """
 def run(ctx):
-    state = ctx.reach("Open reviews", success={
+    ctx.reach("Open reviews", success={
         "entity": "Reviews", "fields": ["Title"],
     })
-    detail = ctx.read(state, target={"Title": "review"}, fields=["Nickname"])
+    detail = ctx.read(target={"Title": "review"}, fields=["Nickname"])
     return detail["Nickname"]
 """
     dashboard = FixtureSpec(lookups={"dashboard": [{"Nickname": "summary"}]})
@@ -600,7 +871,7 @@ def run(ctx):
 def test_execute_code_filters_normalizes_and_returns_query_rows() -> None:
     source = """
 def run(ctx):
-    orders_state = ctx.reach(
+    ctx.reach(
         "Open orders",
         success={
             "entity": "Orders",
@@ -611,9 +882,7 @@ def run(ctx):
             ],
         },
     )
-    rows = ctx.query(
-        orders_state,
-        entity="Orders",
+    rows = ctx.query(entity="Orders",
         filters={"Status": "Complete"},
         fields={
             "Purchase Date": "datetime",
@@ -659,10 +928,8 @@ def test_probe_fixture_supports_typed_fields_and_structured_range_filters() -> N
 def run(ctx):
     start_date = "01/01/2023"
     end_date = "05/31/2023"
-    state = ctx.reach("Open orders", success={"entity": "Orders"})
-    rows = ctx.query(
-        state,
-        entity="Orders",
+    ctx.reach("Open orders", success={"entity": "Orders"})
+    rows = ctx.query(entity="Orders",
         fields={"Purchase Date": "datetime"},
         filters={
             "Status": "Complete",
@@ -684,10 +951,8 @@ def run(ctx):
 def test_fixture_query_does_not_fuzz_or_correct_literal_filter_phrase() -> None:
     source = """
 def run(ctx):
-    state = ctx.reach("Open products", success={"entity": "Products"})
-    return ctx.query(
-        state,
-        entity="Products",
+    ctx.reach("Open products", success={"entity": "Products"})
+    return ctx.query(entity="Products",
         fields=["Name"],
         filters={"Name": "Auroar"},
     )
@@ -721,16 +986,14 @@ def test_execute_code_commit_updates_fixture_state() -> None:
 def test_fixture_query_normalizes_unique_phone_alias() -> None:
     source = """
 def run(ctx):
-    customer_state = ctx.reach(
+    ctx.reach(
         "Open the customer collection",
         success={
             "entity": "+1 205 881 2302",
             "fields": ["id", "phone"],
         },
     )
-    rows = ctx.query(
-        customer_state,
-        entity="+1 205 881 2302",
+    rows = ctx.query(entity="+1 205 881 2302",
         fields=["id", "phone"],
     )
     assert len(rows) == 1, "one customer is required"
@@ -749,16 +1012,14 @@ def run(ctx):
 def test_fixture_semantic_fields_ignore_case_spaces_and_underscores() -> None:
     source = """
 def run(ctx):
-    orders_state = ctx.reach(
+    ctx.reach(
         "Open orders",
         success={
             "entity": "Orders",
             "fields": ["Grand Total (Purchased)"],
         },
     )
-    rows = ctx.query(
-        orders_state,
-        entity="Orders",
+    rows = ctx.query(entity="Orders",
         fields=["Grand Total (Purchased)"],
     )
     assert rows, "orders are required"
@@ -777,14 +1038,14 @@ def run(ctx):
 def test_fixture_preserves_reach_commit_evidence_when_later_code_fails() -> None:
     source = """
 def run(ctx):
-    products_state = ctx.reach(
+    ctx.reach(
         "Open products",
         success={
             "entity": "Products",
             "fields": ["id"],
         },
     )
-    product = ctx.query(products_state, entity="Products", fields=["id"])[0]
+    product = ctx.query(entity="Products", fields=["id"])[0]
     ctx.commit("Update price", target=product, values={"Price": 80})
     assert product["missing"], "later check fails"
 """
@@ -803,16 +1064,14 @@ def run(ctx):
 def test_probe_fixture_supports_query_filters_and_numeric_fields() -> None:
     source = """
 def run(ctx):
-    orders_state = ctx.reach(
+    ctx.reach(
         "Open orders",
         success={
             "entity": "Orders",
             "fields": ["Status", "Grand Total (Purchased)"],
         },
     )
-    rows = ctx.query(
-        orders_state,
-        entity="Orders",
+    rows = ctx.query(entity="Orders",
         filters={"Status": "Complete"},
         fields=["Status", "Grand Total (Purchased)"],
     )
@@ -830,25 +1089,21 @@ def run(ctx):
 def test_probe_read_target_survives_query_field_merge_and_dynamic_filter() -> None:
     source = """
 def run(ctx):
-    state = ctx.reach("Open reviews", success={"entity": "Reviews"})
+    ctx.reach("Open reviews", success={"entity": "Reviews"})
     product_filter = {"Product": "Olivia jacket"}
-    products = ctx.query(
-        state,
-        entity="Reviews",
+    products = ctx.query(entity="Reviews",
         fields=["Product"],
         filters=product_filter,
     )
     product = products[0]["Product"]
-    rows = ctx.query(
-        state,
-        entity="Reviews",
+    rows = ctx.query(entity="Reviews",
         fields=["Nickname", "Product"],
         filters={"Product": product},
     )
     return [
         row["Nickname"]
         for row in rows
-        if ctx.read(state, target=row, fields=["Rating"])["Rating"] <= 3
+        if ctx.read(target=row, fields=["Rating"])["Rating"] <= 3
     ]
 """
 
@@ -861,11 +1116,11 @@ def run(ctx):
 def test_probe_fixture_supports_read_directly_from_reached_state() -> None:
     source = """
 def run(ctx):
-    state = ctx.reach(
+    ctx.reach(
         "Render connectivity settings",
         success={"entity": "DeviceSettings", "fields": ["flight_mode"]},
     )
-    current = ctx.read(state, fields=["flight_mode"])
+    current = ctx.read(fields=["flight_mode"])
     return current["flight_mode"]
 """
 
@@ -880,17 +1135,13 @@ def run(ctx):
 def test_probe_fixture_accepts_dynamic_filter_field_not_in_projection() -> None:
     source = """
 def run(ctx):
-    product_state = ctx.reach("Open products", success={"entity": "Products"})
-    products = ctx.query(
-        product_state,
-        entity="Products",
+    ctx.reach("Open products", success={"entity": "Products"})
+    products = ctx.query(entity="Products",
         fields=["Name"],
         filters={"Name": "Example"},
     )
-    review_state = ctx.reach("Open reviews", success={"entity": "All Reviews"})
-    return ctx.query(
-        review_state,
-        entity="All Reviews",
+    ctx.reach("Open reviews", success={"entity": "All Reviews"})
+    return ctx.query(entity="All Reviews",
         fields=["Action"],
         filters={"Product": products[0]["Name"]},
     )
@@ -904,7 +1155,7 @@ def run(ctx):
 def test_runtime_query_yields_lookup_then_constrain_then_acquire() -> None:
     source = """
 def run(ctx):
-    orders_state = ctx.reach(
+    ctx.reach(
         "Open orders",
         success={
             "entity": "Orders",
@@ -915,9 +1166,7 @@ def run(ctx):
             ],
         },
     )
-    rows = ctx.query(
-        orders_state,
-        entity="Orders",
+    rows = ctx.query(entity="Orders",
         filters={"Status": "Complete"},
         fields={
             "Purchase Date": "datetime",
@@ -929,7 +1178,7 @@ def run(ctx):
 """
     runtime = CodingProgramRuntime.start(CodingProgram(goal="sum orders", source=source))
 
-    # Public ctx.reach produces the verified GUI-state capability consumed by ctx.query.
+    # Public ctx.reach establishes the one active GUI state consumed by ctx.query.
     assert isinstance(runtime.current.statement, Interact)
     assert runtime.current.statement.interaction_intent is None
     assert runtime.current.statement.expected_state == {
@@ -1017,8 +1266,8 @@ def run(ctx):
 def test_runtime_query_without_predicates_skips_constrain() -> None:
     source = """
 def run(ctx):
-    state = ctx.reach("Open terms", success={"entity": "Terms"})
-    return ctx.query(state, entity="Terms", fields=["Term", "Uses"])
+    ctx.reach("Open terms", success={"entity": "Terms"})
+    return ctx.query(entity="Terms", fields=["Term", "Uses"])
 """
     runtime = CodingProgramRuntime.start(CodingProgram(goal="list terms", source=source))
 
@@ -1056,14 +1305,12 @@ def run(ctx):
 def test_runtime_program_explicitly_branches_from_full_to_short_phrase() -> None:
     source = """
 def run(ctx):
-    state = ctx.reach("Open products", success={"entity": "Products"})
-    rows = ctx.query(
-        state, entity="Products", fields=["Name"],
+    ctx.reach("Open products", success={"entity": "Products"})
+    rows = ctx.query(entity="Products", fields=["Name"],
         filters={"Name": "Aurora jacket"},
     )
     if not rows:
-        rows = ctx.query(
-            state, entity="Products", fields=["Name"],
+        rows = ctx.query(entity="Products", fields=["Name"],
             filters={"Name": "Aurora"},
         )
     return rows
@@ -1161,14 +1408,14 @@ def run(ctx):
 def test_runtime_read_target_remains_one_public_call_with_internal_focus() -> None:
     source = """
 def run(ctx):
-    order_state = ctx.reach(
+    ctx.reach(
         "Open orders",
         success={
             "entity": "Orders",
             "fields": ["ID"],
         },
     )
-    state = ctx.read(order_state, target={"ID": "1"}, fields=["Status"])
+    state = ctx.read(target={"ID": "1"}, fields=["Status"])
     assert state["Status"], "status is required"
     return state["Status"]
 """
@@ -1220,10 +1467,8 @@ def run(ctx):
 def test_runtime_read_uses_unique_row_url_as_deterministic_transport() -> None:
     source = """
 def run(ctx):
-    state = ctx.reach("Open reviews", success={"entity": "Reviews"})
-    return ctx.read(
-        state,
-        target={"ID": "351", "Action_url": "https://example.test/reviews/351"},
+    ctx.reach("Open reviews", success={"entity": "Reviews"})
+    return ctx.read(target={"ID": "351", "Action_url": "https://example.test/reviews/351"},
         fields={"Rating": "number"},
     )
 """
@@ -1294,10 +1539,8 @@ def test_generate_code_accepts_validated_program() -> None:
 def test_synthetic_cardinality_assertion_does_not_trigger_regeneration() -> None:
     source = """
 def run(ctx):
-    state = ctx.reach("Open pages", success={"entity": "Pages"})
-    rows = ctx.query(
-        state,
-        entity="Pages",
+    ctx.reach("Open pages", success={"entity": "Pages"})
+    rows = ctx.query(entity="Pages",
         fields=["Title"],
         filters={"Title": "Home Page"},
     )
@@ -1318,10 +1561,8 @@ def run(ctx):
 def test_synthetic_business_value_error_does_not_trigger_regeneration() -> None:
     source = """
 def run(ctx):
-    state = ctx.reach("Open products", success={"entity": "Products"})
-    rows = ctx.query(
-        state,
-        entity="Products",
+    ctx.reach("Open products", success={"entity": "Products"})
+    rows = ctx.query(entity="Products",
         fields=["Name", "Type"],
         filters={"Name": "Example"},
     )
@@ -1366,11 +1607,11 @@ def test_generate_code_regenerates_whole_program() -> None:
 def test_generate_code_deterministically_repairs_direct_read_fields() -> None:
     source = """
 def run(ctx):
-    state = ctx.reach(
+    ctx.reach(
         "Search for the requested weather",
         success={"entity": "SearchResults"},
     )
-    result = ctx.read(state, fields={"temperature": "number"})
+    result = ctx.read(fields={"temperature": "number"})
     return int(result["temperature"])
 """
     llm = _SequenceLLM(f"```python\n{source}\n```")
@@ -1390,13 +1631,13 @@ def run(ctx):
 def test_generate_code_repairs_direct_read_fields_after_regeneration() -> None:
     invalid = """
 def run(ctx):
-    state = ctx.reach("Open results", success={"entity": "Results"})
-    return ctx.query(state, entity="Other", fields=["value"])
+    ctx.reach("Open results", success={"entity": "Results"})
+    return ctx.query(entity="Other", fields=["value"])
 """
     repairable = """
 def run(ctx):
-    state = ctx.reach("Show the result", success={"entity": "VisibleResult"})
-    result = ctx.read(state, fields={"value": "number"})
+    ctx.reach("Show the result", success={"entity": "VisibleResult"})
+    result = ctx.read(fields={"value": "number"})
     return result["value"]
 """
     llm = _SequenceLLM(
@@ -1416,22 +1657,19 @@ def run(ctx):
 def test_static_diagnostics_trigger_one_regeneration() -> None:
     source = """
 def run(ctx):
-    orders_state = ctx.reach(
+    ctx.reach(
         "Open orders",
         success={
             "entity": "Orders",
             "fields": ["ID"],
         },
     )
-    rows = ctx.query(orders_state, entity="Orders")
+    rows = ctx.query(entity="Orders")
     return len(rows)
 """
     repaired = source.replace(
-        '    rows = ctx.query(orders_state, entity="Orders")',
-        (
-            '    rows = ctx.query('
-            'orders_state, entity="Orders", fields=["ID"])'
-        ),
+        '    rows = ctx.query(entity="Orders")',
+        '    rows = ctx.query(entity="Orders", fields=["ID"])',
     )
     llm = _SequenceLLM(
         f"```python\n{source}\n```",
@@ -1482,11 +1720,11 @@ def run(ctx):
 """
     valid = """
 def run(ctx):
-    state = ctx.reach(
+    ctx.reach(
         "Show the visible result",
         success={"entity": "VisibleResult", "fields": ["value"]},
     )
-    result = ctx.read(state, fields={"value": "number"})
+    result = ctx.read(fields={"value": "number"})
     return int(result["value"])
 """
     wrong_read_shape = valid.replace('result["value"]', "result")
@@ -1550,16 +1788,14 @@ def test_router_search_key_is_an_explicit_literal_query_branch() -> None:
 def test_program_owns_full_then_short_phrase_query_branch() -> None:
     source = """
 def run(ctx):
-    state = ctx.reach("Open products", success={
+    ctx.reach("Open products", success={
         "entity": "Products", "fields": ["Name"],
     })
-    rows = ctx.query(
-        state, entity="Products", fields=["Name"],
+    rows = ctx.query(entity="Products", fields=["Name"],
         filters={"Name": "Aurora trail jacket"},
     )
     if not rows:
-        rows = ctx.query(
-            state, entity="Products", fields=["Name"],
+        rows = ctx.query(entity="Products", fields=["Name"],
             filters={"Name": "Aurora"},
         )
     return rows
@@ -1585,11 +1821,10 @@ def run(ctx):
 def test_query_rejects_invented_match_mode_argument() -> None:
     source = """
 def run(ctx):
-    state = ctx.reach("Open products", success={
+    ctx.reach("Open products", success={
         "entity": "Products",
     })
-    return ctx.query(
-        state, entity="Products", fields=["ID"],
+    return ctx.query(entity="Products", fields=["ID"],
         match={
             "field": "Name",
             "mention": "Aurora trail jacket",

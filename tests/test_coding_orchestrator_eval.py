@@ -47,10 +47,10 @@ def test_blind_sample_hides_fixture_until_final_evaluation(monkeypatch) -> None:
     captured = {}
     source = (
         "def run(ctx):\n"
-        "    state = ctx.reach('Open products', success={"
+        "    ctx.reach('Open products', success={"
         "'entity': 'sahara', "
         "'fields': ['id', 'name']})\n"
-        "    rows = ctx.query(state, entity='sahara', "
+        "    rows = ctx.query(entity='sahara', "
         "fields=['id', 'name'], coverage='complete')\n"
         "    assert rows, 'matching products are required'\n"
         "    return len(rows)"
@@ -90,10 +90,10 @@ def test_blind_sample_hides_fixture_until_final_evaluation(monkeypatch) -> None:
 def test_task_193_hidden_fixture_checks_the_numeric_result() -> None:
     source = (
         "def run(ctx):\n"
-        "    state = ctx.reach('Open orders', success={"
+        "    ctx.reach('Open orders', success={"
         "'entity': 'orders', "
         "'fields': ['Status', 'Purchase Date', 'Grand Total (Purchased)']})\n"
-        "    rows = ctx.query(state, entity='orders', "
+        "    rows = ctx.query(entity='orders', "
         "filters={'Status': 'Complete'}, "
         "fields=['Status', 'Purchase Date', 'Grand Total (Purchased)'], "
         "coverage='complete')\n"

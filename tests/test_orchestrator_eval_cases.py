@@ -42,13 +42,11 @@ from datetime import datetime
 def run(ctx):
     start_date = "01/01/2023"
     end_date = "05/31/2023"
-    state = ctx.reach(
+    ctx.reach(
         "Go to Sales > Orders",
         success={"entity": "Orders"},
     )
-    rows = ctx.query(
-        state,
-        entity="Orders",
+    rows = ctx.query(entity="Orders",
         fields={"Purchase Date": "datetime"},
         filters={
             "Status": "Complete",
@@ -73,13 +71,11 @@ def run(ctx):
 def test_form_contract_accepts_attribute_then_product_fallback_plan() -> None:
     source = '''
 def run(ctx):
-    attribute_state = ctx.reach(
+    ctx.reach(
         "Go to Product Attributes",
         success={"entity": "Product Attributes"},
     )
-    attributes = ctx.query(
-        attribute_state,
-        entity="Product Attributes",
+    attributes = ctx.query(entity="Product Attributes",
         fields=["Attribute Code"],
         filters={"Default Label": "Size"},
     )
@@ -89,20 +85,16 @@ def run(ctx):
         target=attributes[0],
         values={"Admin Description": "XXXL", "Admin Swatch": "XXXL"},
     )
-    product_state = ctx.reach(
+    ctx.reach(
         "Go to Products",
         success={"entity": "Products"},
     )
-    products = ctx.query(
-        product_state,
-        entity="Products",
+    products = ctx.query(entity="Products",
         fields=["Name", "Type"],
         filters={"Name": "Minerva LumaTech V-Tee"},
     )
     if not products:
-        products = ctx.query(
-            product_state,
-            entity="Products",
+        products = ctx.query(entity="Products",
             fields=["Name", "Type"],
             filters={"Name": "Minerva"},
         )
@@ -128,13 +120,13 @@ def run(ctx):
 def test_form_contract_rejects_extra_navigation_for_direct_creation() -> None:
     source = '''
 def run(ctx):
-    state = ctx.reach(
+    ctx.reach(
         "Go to Catalog > Products",
         success={"entity": "Products"},
     )
     ctx.commit(
         "Create the simple product",
-        target=state,
+        target=None,
         values={
             "Name": "Energy-Bulk Women Shirt",
             "Price": 60,
@@ -152,7 +144,7 @@ def run(ctx):
     )
 
     assert failures
-    assert any("COMMIT_UI_STATE_TARGET" in item for item in failures)
+    assert any("METHOD_COUNT:reach" in item for item in failures)
 
 
 def test_report_contract_accepts_runtime_formatted_dates() -> None:
@@ -162,7 +154,7 @@ from datetime import date
 def run(ctx):
     start = date(2021, 5, 1).strftime("%m/%d/%Y")
     end = date(2022, 3, 31).strftime("%m/%d/%Y")
-    return ctx.reach(
+    ctx.reach(
         "Show Orders report",
         success={
             "entity": "Sales Reports",
@@ -183,17 +175,13 @@ def run(ctx):
 def test_ranked_contract_accepts_max_with_typed_key() -> None:
     source = '''
 def run(ctx):
-    state = ctx.reach("View Orders", success={"entity": "Orders"})
-    rows = ctx.query(
-        state,
-        entity="Orders",
+    ctx.reach("View Orders", success={"entity": "Orders"})
+    rows = ctx.query(entity="Orders",
         fields={"Purchase Date": "datetime"},
         filters={"Bill-to Name": "Sarah Miller", "Status": "Pending"},
     )
     if not rows:
-        rows = ctx.query(
-            state,
-            entity="Orders",
+        rows = ctx.query(entity="Orders",
             fields={"Purchase Date": "datetime"},
             filters={"Bill-to Name": "Sarah", "Status": "Pending"},
         )

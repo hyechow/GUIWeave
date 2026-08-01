@@ -185,15 +185,18 @@ def _call_records(tree: ast.AST) -> list[dict[str, Any]]:
         target = _argument(call, "target")
         parent = parents.get(call)
         inside_if = False
+        inside_loop = False
         while parent is not None:
             if isinstance(parent, ast.If):
                 inside_if = True
-                break
+            if isinstance(parent, (ast.For, ast.AsyncFor, ast.While)):
+                inside_loop = True
             parent = parents.get(parent)
         records.append({
             "method": method,
             "line": call.lineno,
             "inside_if": inside_if,
+            "inside_loop": inside_loop,
             "entity": _literal(_argument(call, "entity"), names),
             "fields": fields,
             "field_types": field_types,
@@ -222,7 +225,7 @@ def _subset(actual: Any, expected: Any) -> bool:
 def _matches(record: dict[str, Any], spec: dict[str, Any]) -> bool:
     if record["method"] != spec["method"]:
         return False
-    for key in ("entity", "inside_if", "target_mode"):
+    for key in ("entity", "inside_if", "inside_loop", "target_mode"):
         if key in spec and record[key] != spec[key]:
             return False
     for spec_key, record_key in (

@@ -32,8 +32,8 @@ def test_runtime_resume_rebuilds_locals_and_ignores_failed_attempt(request) -> N
         goal="update one order",
         source="""
 def run(ctx):
-    state = ctx.reach("Open Orders", success={"entity": "Orders"})
-    rows = ctx.query(state, entity="Orders", fields=["ID"])
+    ctx.reach("Open Orders", success={"entity": "Orders"})
+    rows = ctx.query(entity="Orders", fields=["ID"])
     if rows:
         ctx.commit(goal="Update order", target=rows[0], values={"Status": "Complete"})
     return len(rows)

@@ -19,16 +19,12 @@ def test_opening_target_url_does_not_claim_requested_fields_are_available() -> N
     request = json.loads(_FIXTURE.read_text(encoding="utf-8"))
     source = f"""
 def run(ctx):
-    state = ctx.reach("Open products", success={{"entity": "Products"}})
-    detail = ctx.read(
-        state,
-        target={request["target"]!r},
+    ctx.reach("Open products", success={{"entity": "Products"}})
+    detail = ctx.read(target={request["target"]!r},
         fields={request["fields"]!r},
     )
     if not detail["Material"]:
-        return ctx.query(
-            state,
-            entity="Products",
+        return ctx.query(entity="Products",
             fields={{"Name": "text", "Type": "text", "SKU": "text"}},
             filters={{"SKU": "WH11", "Type": "Configurable Product"}},
         )

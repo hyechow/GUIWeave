@@ -75,16 +75,14 @@ def test_100005_hands_verified_gui_state_to_strict_query_lookup(
     )
     source = """
 def run(ctx):
-    orders_state = ctx.reach(
+    ctx.reach(
         "Open the Orders list under Sales",
         success={
             "entity": "Orders",
             "fields": ["Status", "Purchase Date"],
         },
     )
-    return ctx.query(
-        orders_state,
-        entity="Orders",
+    return ctx.query(entity="Orders",
         fields=["Status", "Purchase Date"],
     )
 """
