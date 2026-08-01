@@ -1,0 +1,43 @@
+[
+  {
+    "label": "mastodon centered-logo splash",
+    "group": "splash",
+    "screenshot": "evals/android/loading/screenshots/mastodon_splash.png",
+    "expected": "loading",
+    "expected_route": "vlm",
+    "origin": "logs/gui_agent/mobileworld/android/20260801_175130 turn 2"
+  },
+  {
+    "label": "mastodon splash with ahead-of-surface UIAutomator tree",
+    "group": "splash",
+    "screenshot": "evals/android/loading/screenshots/mastodon_splash.png",
+    "observation": "evals/android/loading/observations/mastodon_splash_with_tree.json",
+    "expected": "loading",
+    "expected_route": "vlm",
+    "origin": "logs/gui_agent/mobileworld/android/20260801_181102 turn 2"
+  },
+  {
+    "label": "android launcher with app grid",
+    "group": "rendered",
+    "screenshot": "evals/android/loading/screenshots/android_launcher.png",
+    "expected": "rendered",
+    "expected_route": "heuristic",
+    "origin": "logs/gui_agent/mobileworld/android/20260801_175130 turn 1"
+  },
+  {
+    "label": "rendered alarm picker",
+    "group": "rendered",
+    "screenshot": "evals/android/action_policy/screenshots/alarm_picker.png",
+    "expected": "rendered",
+    "expected_route": "heuristic"
+  },
+  {
+    "label": "rendered sparse Mastodon search suggestions",
+    "group": "rendered",
+    "screenshot": "evals/android/loading/screenshots/mastodon_search_suggestions.png",
+    "observation": "evals/android/loading/observations/mastodon_search_suggestions.json",
+    "expected": "rendered",
+    "expected_route": "vlm",
+    "origin": "logs/gui_agent/mobileworld/android/20260801_184952 turn 9"
+  }
+]

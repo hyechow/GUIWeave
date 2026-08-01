@@ -1,0 +1,56 @@
+{
+  "observation": {
+    "source": "android-eval",
+    "loading": null,
+    "collection_regions": [
+      {
+        "ref": "android-collection:search-suggestions",
+        "surface_fingerprint": "android-collection:mastodon-search-suggestions",
+        "cells": [
+          {
+            "ref": "android:search:posts-tag",
+            "structural_key": "search-suggestion",
+            "content_key": "posts-dogs",
+            "texts": ["Posts with “#dogs”"],
+            "controls": []
+          },
+          {
+            "ref": "android:search:people-tag",
+            "structural_key": "search-suggestion",
+            "content_key": "people-dogs",
+            "texts": ["People with “#dogs”"],
+            "controls": []
+          },
+          {
+            "ref": "android:search:tag",
+            "structural_key": "search-suggestion",
+            "content_key": "tag-dogs",
+            "texts": ["dogs"],
+            "controls": []
+          }
+        ],
+        "traversal": {
+          "type": "scroll"
+        }
+      }
+    ],
+    "semantic_tree": [
+      {
+        "role": "textbox",
+        "key": "#dogs",
+        "value": "#dogs",
+        "in_viewport": true
+      },
+      {
+        "role": "button",
+        "key": "Clear",
+        "in_viewport": true
+      },
+      {
+        "role": "listitem",
+        "key": "Posts with “#dogs”",
+        "in_viewport": true
+      }
+    ]
+  }
+}

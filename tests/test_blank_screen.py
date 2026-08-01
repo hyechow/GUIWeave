@@ -19,7 +19,14 @@ import io
 import pytest
 from PIL import Image, ImageDraw
 
+from gui_agent.core.schemas import Observation
 from gui_agent.core.vision.frame_analysis import is_blank_screen
+from gui_agent.core.vision.loading import (
+    VisualLoadingDecision,
+    assess_loading,
+    heuristic_loading_assessment,
+    is_loading_frame,
+)
 
 W, H = 600, 1300
 
@@ -68,3 +75,57 @@ CASES = [
 @pytest.mark.parametrize("png,expected", [(c[1], c[2]) for c in CASES], ids=[c[0] for c in CASES])
 def testis_blank_screen(png, expected):
     assert is_blank_screen(png) is expected
+
+
+def test_visually_blank_surface_with_structure_routes_to_visual_fallback() -> None:
+    observation = Observation(
+        png_bytes=_make_png(239),
+        source="android",
+        semantic_tree=[
+            {"role": "textbox", "key": "query", "value": "#dogs"},
+            {"role": "text", "key": "Rendered result"},
+        ],
+    )
+
+    calls = 0
+
+    def classifier(_png_bytes: bytes) -> VisualLoadingDecision:
+        nonlocal calls
+        calls += 1
+        return VisualLoadingDecision(
+            state="loading",
+            confidence="high",
+            evidence="the visible surface is still an empty loading body",
+        )
+
+    assert is_blank_screen(observation.png_bytes)
+    assert heuristic_loading_assessment(observation).state == "uncertain"
+    assert assess_loading(observation, visual_classifier=classifier).is_loading
+    assert calls == 1
+
+
+def test_platform_loading_signal_remains_authoritative() -> None:
+    rendered = Observation(
+        png_bytes=_make_png(239, textured=True),
+        source="android",
+        loading=True,
+        semantic_tree=[{"role": "text", "key": "Rendered result"}],
+    )
+    blank = Observation(
+        png_bytes=_make_png(239),
+        source="android",
+        loading=False,
+    )
+
+    assert is_loading_frame(rendered)
+    assert not is_loading_frame(blank)
+
+
+def test_blank_frame_without_structured_content_still_waits() -> None:
+    observation = Observation(
+        png_bytes=_make_png(239),
+        source="android",
+        semantic_tree=[{"role": "group", "key": "root"}],
+    )
+
+    assert is_loading_frame(observation)

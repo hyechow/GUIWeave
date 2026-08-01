@@ -1,0 +1,1541 @@
+{
+  "version": 1,
+  "screenshot": "screenshot_turn_2.png",
+  "observation": {
+    "source": "android",
+    "loading": null,
+    "url": null,
+    "title": null,
+    "dom_state": null,
+    "tables": null,
+    "collection_regions": [
+      {
+        "ref": "android-collection:0.0.0.0.0.0.0.0.0.0.1.0.0.0",
+        "surface_fingerprint": "android-collection:fdccff5a8dc539c233bfcb287308035bbdda885b",
+        "cells": [
+          {
+            "ref": "android:0.0.0.0.0.0.0.0.0.0.1.0.0.0.0",
+            "structural_key": "dc329309ab8d68f1e3b7887bb54846309ba7760d",
+            "content_key": "e5eae83b3ccb55211bce2f6d9aa313b5e927e25e",
+            "class_name": "RelativeLayout",
+            "resource": "",
+            "bounds": [
+              0.0,
+              116.25,
+              1000.0,
+              186.66666666666666
+            ],
+            "texts": [
+              "Go to test’s profile",
+              "TEST",
+              "More options",
+              "now · @test"
+            ],
+            "controls": [
+              {
+                "ref": "android:0.0.0.0.0.0.0.0.0.0.1.0.0.0.0.0",
+                "role": "button",
+                "label": "Go to test’s profile"
+              },
+              {
+                "ref": "android:0.0.0.0.0.0.0.0.0.0.1.0.0.0.0.3",
+                "role": "img",
+                "label": "More options"
+              }
+            ],
+            "clipped_top": true,
+            "clipped_bottom": false
+          },
+          {
+            "ref": "android:0.0.0.0.0.0.0.0.0.0.1.0.0.0.1",
+            "structural_key": "ac145868694206400bae6164985e9829524f94df",
+            "content_key": "a999996f5a704e193b4fd98da35137dfa7d0c62a",
+            "class_name": "LinearLayout",
+            "resource": "",
+            "bounds": [
+              0.0,
+              186.66666666666666,
+              1000.0,
+              225.83333333333334
+            ],
+            "texts": [
+              "Which country has the largest land area?"
+            ],
+            "controls": [],
+            "clipped_top": false,
+            "clipped_bottom": false
+          },
+          {
+            "ref": "android:0.0.0.0.0.0.0.0.0.0.1.0.0.0.2",
+            "structural_key": "a76d2919802ebc2ce178589a1d7ae343457a9019",
+            "content_key": "69879e24952542ab92bfbc9b8313def1e7ff4a71",
+            "class_name": "FrameLayout",
+            "resource": "",
+            "bounds": [
+              0.0,
+              225.83333333333334,
+              1000.0,
+              282.9166666666667
+            ],
+            "texts": [
+              "USA",
+              "0%"
+            ],
+            "controls": [
+              {
+                "ref": "android:0.0.0.0.0.0.0.0.0.0.1.0.0.0.2.0",
+                "role": "group",
+                "label": "USA",
+                "value": false
+              }
+            ],
+            "clipped_top": false,
+            "clipped_bottom": false
+          },
+          {
+            "ref": "android:0.0.0.0.0.0.0.0.0.0.1.0.0.0.3",
+            "structural_key": "a76d2919802ebc2ce178589a1d7ae343457a9019",
+            "content_key": "266e937b82588fddb4beaea99a4234ad2b73cb8c",
+            "class_name": "FrameLayout",
+            "resource": "",
+            "bounds": [
+              0.0,
+              282.9166666666667,
+              1000.0,
+              340.0
+            ],
+            "texts": [
+              "China",
+              "0%"
+            ],
+            "controls": [
+              {
+                "ref": "android:0.0.0.0.0.0.0.0.0.0.1.0.0.0.3.0",
+                "role": "group",
+                "label": "China",
+                "value": false
+              }
+            ],
+            "clipped_top": false,
+            "clipped_bottom": false
+          },
+          {
+            "ref": "android:0.0.0.0.0.0.0.0.0.0.1.0.0.0.4",
+            "structural_key": "a76d2919802ebc2ce178589a1d7ae343457a9019",
+            "content_key": "e5099969ec36f5ad97d01aa9d0050243066ae61f",
+            "class_name": "FrameLayout",
+            "resource": "",
+            "bounds": [
+              0.0,
+              340.0,
+              1000.0,
+              397.0833333333333
+            ],
+            "texts": [
+              "Russia",
+              "0%"
+            ],
+            "controls": [
+              {
+                "ref": "android:0.0.0.0.0.0.0.0.0.0.1.0.0.0.4.0",
+                "role": "group",
+                "label": "Russia",
+                "value": false
+              }
+            ],
+            "clipped_top": false,
+            "clipped_bottom": false
+          },
+          {
+            "ref": "android:0.0.0.0.0.0.0.0.0.0.1.0.0.0.5",
+            "structural_key": "a76d2919802ebc2ce178589a1d7ae343457a9019",
+            "content_key": "28054c92c75928cc3e0ffc71398d1cd4ba1bf08c",
+            "class_name": "FrameLayout",
+            "resource": "",
+            "bounds": [
+              0.0,
+              397.0833333333333,
+              1000.0,
+              454.1666666666667
+            ],
+            "texts": [
+              "Brazil",
+              "0%"
+            ],
+            "controls": [
+              {
+                "ref": "android:0.0.0.0.0.0.0.0.0.0.1.0.0.0.5.0",
+                "role": "group",
+                "label": "Brazil",
+                "value": false
+              }
+            ],
+            "clipped_top": false,
+            "clipped_bottom": false
+          },
+          {
+            "ref": "android:0.0.0.0.0.0.0.0.0.0.1.0.0.0.6",
+            "structural_key": "f897cf5e1edd1ce4afd21146fd975e2b3dc26724",
+            "content_key": "d4ac7a161528269dd519cbf79deaa18920d63115",
+            "class_name": "LinearLayout",
+            "resource": "",
+            "bounds": [
+              0.0,
+              454.1666666666667,
+              1000.0,
+              532.9166666666666
+            ],
+            "texts": [
+              "0 votes · Closed",
+              "Vote"
+            ],
+            "controls": [
+              {
+                "ref": "android:0.0.0.0.0.0.0.0.0.0.1.0.0.0.6.1.0",
+                "role": "button",
+                "label": "Vote"
+              }
+            ],
+            "clipped_top": false,
+            "clipped_bottom": false
+          },
+          {
+            "ref": "android:0.0.0.0.0.0.0.0.0.0.1.0.0.0.7",
+            "structural_key": "04652a4e16b92485fee899c0768d608587b31827",
+            "content_key": "870803ce9ed1cf99e37bd38ca0cd68e0a317376c",
+            "class_name": "LinearLayout",
+            "resource": "",
+            "bounds": [
+              0.0,
+              532.9166666666666,
+              1000.0,
+              578.75
+            ],
+            "texts": [
+              "Reply",
+              "Boost",
+              "Favorite",
+              "Share"
+            ],
+            "controls": [
+              {
+                "ref": "android:0.0.0.0.0.0.0.0.0.0.1.0.0.0.7.0",
+                "role": "button",
+                "label": "Reply"
+              },
+              {
+                "ref": "android:0.0.0.0.0.0.0.0.0.0.1.0.0.0.7.1",
+                "role": "button",
+                "label": "Boost"
+              },
+              {
+                "ref": "android:0.0.0.0.0.0.0.0.0.0.1.0.0.0.7.2",
+                "role": "button",
+                "label": "Favorite"
+              },
+              {
+                "ref": "android:0.0.0.0.0.0.0.0.0.0.1.0.0.0.7.3",
+                "role": "button",
+                "label": "Share"
+              }
+            ],
+            "clipped_top": false,
+            "clipped_bottom": false
+          },
+          {
+            "ref": "android:0.0.0.0.0.0.0.0.0.0.1.0.0.0.8",
+            "structural_key": "dc329309ab8d68f1e3b7887bb54846309ba7760d",
+            "content_key": "b633b95defb7ffba437d408967587aac33050409",
+            "class_name": "RelativeLayout",
+            "resource": "",
+            "bounds": [
+              0.0,
+              578.75,
+              1000.0,
+              649.1666666666666
+            ],
+            "texts": [
+              "Go to pupper’s profile",
+              "pupper",
+              "More options",
+              "now · @pupper"
+            ],
+            "controls": [
+              {
+                "ref": "android:0.0.0.0.0.0.0.0.0.0.1.0.0.0.8.0",
+                "role": "button",
+                "label": "Go to pupper’s profile"
+              },
+              {
+                "ref": "android:0.0.0.0.0.0.0.0.0.0.1.0.0.0.8.3",
+                "role": "img",
+                "label": "More options"
+              }
+            ],
+            "clipped_top": false,
+            "clipped_bottom": false
+          },
+          {
+            "ref": "android:0.0.0.0.0.0.0.0.0.0.1.0.0.0.9",
+            "structural_key": "ac145868694206400bae6164985e9829524f94df",
+            "content_key": "19a0478d3452cc598118c511ac95e0ea34ba20fa",
+            "class_name": "LinearLayout",
+            "resource": "",
+            "bounds": [
+              0.0,
+              649.1666666666666,
+              1000.0,
+              860.4166666666666
+            ],
+            "texts": [
+              "The Border Collie is often regarded as the most intelligent dog breed, with exceptional herding instincts. They are energetic and thrive on mental challenges like agility training or obedience tasks. Without enough stimulation, they may become bored or restless. #puppy #dogs #pets #cute"
+            ],
+            "controls": [],
+            "clipped_top": false,
+            "clipped_bottom": false
+          },
+          {
+            "ref": "android:0.0.0.0.0.0.0.0.0.0.1.0.0.0.10",
+            "structural_key": "ccf81d2e42883ffd8d4f2851990890f91ebd14bd",
+            "content_key": "534268fc3d9aa6d9bdecd20731cb68781991229b",
+            "class_name": "FrameLayout",
+            "resource": "",
+            "bounds": [
+              0.0,
+              860.4166666666666,
+              1000.0,
+              886.25
+            ],
+            "texts": [
+              "Media without description"
+            ],
+            "controls": [
+              {
+                "ref": "android:0.0.0.0.0.0.0.0.0.0.1.0.0.0.10.1.0",
+                "role": "button",
+                "label": "Media without description"
+              }
+            ],
+            "clipped_top": false,
+            "clipped_bottom": true
+          }
+        ],
+        "bounds": [
+          0.0,
+          116.25,
+          1000.0,
+          886.25
+        ],
+        "caption": "",
+        "known_total": null,
+        "traversal": {
+          "type": "scroll"
+        }
+      }
+    ],
+    "form_controls": null,
+    "form_controls_meta": null,
+    "form_control_state": null,
+    "form_control_state_meta": null,
+    "viewport": null,
+    "semantic_tree": [
+      {
+        "role": "group",
+        "key": "content",
+        "ref": "android:0.0.0",
+        "depth": 2,
+        "scrollable": false,
+        "in_viewport": true,
+        "point": {
+          "x": 500.0,
+          "y": 500.0
+        },
+        "rect": {
+          "x": 500.0,
+          "y": 500.0,
+          "width": 1000.0,
+          "height": 1000.0
+        }
+      },
+      {
+        "role": "group",
+        "key": "fragment_wrap",
+        "ref": "android:0.0.0.0",
+        "depth": 3,
+        "scrollable": false,
+        "in_viewport": true,
+        "point": {
+          "x": 500.0,
+          "y": 500.0
+        },
+        "rect": {
+          "x": 500.0,
+          "y": 500.0,
+          "width": 1000.0,
+          "height": 1000.0
+        }
+      },
+      {
+        "role": "group",
+        "key": "fragment_wrap",
+        "ref": "android:0.0.0.0.0.0.0",
+        "depth": 6,
+        "scrollable": false,
+        "in_viewport": true,
+        "point": {
+          "x": 500.0,
+          "y": 443.125
+        },
+        "rect": {
+          "x": 500.0,
+          "y": 443.125,
+          "width": 1000.0,
+          "height": 886.25
+        }
+      },
+      {
+        "role": "group",
+        "key": "appkit_loader_root",
+        "ref": "android:0.0.0.0.0.0.0.0",
+        "depth": 7,
+        "scrollable": false,
+        "in_viewport": true,
+        "point": {
+          "x": 500.0,
+          "y": 443.125
+        },
+        "rect": {
+          "x": 500.0,
+          "y": 443.125,
+          "width": 1000.0,
+          "height": 886.25
+        }
+      },
+      {
+        "role": "region",
+        "key": "scroller",
+        "ref": "android:0.0.0.0.0.0.0.0.0",
+        "depth": 8,
+        "scrollable": true,
+        "in_viewport": true,
+        "point": {
+          "x": 500.0,
+          "y": 470.625
+        },
+        "rect": {
+          "x": 500.0,
+          "y": 470.625,
+          "width": 1000.0,
+          "height": 831.25
+        }
+      },
+      {
+        "role": "button",
+        "key": "toolbar",
+        "ref": "android:0.0.0.0.0.0.0.0.0.0.0",
+        "depth": 10,
+        "scrollable": false,
+        "in_viewport": true,
+        "point": {
+          "x": 500.0,
+          "y": 85.625
+        },
+        "rect": {
+          "x": 500.0,
+          "y": 85.625,
+          "width": 1000.0,
+          "height": 61.25
+        },
+        "selected": false
+      },
+      {
+        "role": "combobox",
+        "key": "scrollable region",
+        "ref": "android:0.0.0.0.0.0.0.0.0.0.0.0.0",
+        "depth": 12,
+        "scrollable": false,
+        "in_viewport": true,
+        "point": {
+          "x": 177.77777777777777,
+          "y": 85.625
+        },
+        "rect": {
+          "x": 177.77777777777777,
+          "y": 85.625,
+          "width": 277.77777777777777,
+          "height": 43.75
+        },
+        "selected": false
+      },
+      {
+        "role": "text",
+        "key": "Home",
+        "ref": "android:0.0.0.0.0.0.0.0.0.0.0.0.0.1",
+        "depth": 13,
+        "scrollable": false,
+        "in_viewport": true,
+        "point": {
+          "x": 226.38888888888889,
+          "y": 85.625
+        },
+        "rect": {
+          "x": 226.38888888888889,
+          "y": 85.625,
+          "width": 180.55555555555554,
+          "height": 43.75
+        }
+      },
+      {
+        "role": "button",
+        "key": "Settings",
+        "ref": "android:0.0.0.0.0.0.0.0.0.0.0.1.0",
+        "depth": 12,
+        "scrollable": false,
+        "in_viewport": true,
+        "point": {
+          "x": 844.4444444444445,
+          "y": 85.41666666666667
+        },
+        "rect": {
+          "x": 844.4444444444445,
+          "y": 85.41666666666667,
+          "width": 116.66666666666667,
+          "height": 52.5
+        },
+        "selected": false
+      },
+      {
+        "role": "button",
+        "key": "More options",
+        "ref": "android:0.0.0.0.0.0.0.0.0.0.0.1.1",
+        "depth": 12,
+        "scrollable": false,
+        "in_viewport": true,
+        "point": {
+          "x": 951.3888888888889,
+          "y": 85.41666666666667
+        },
+        "rect": {
+          "x": 951.3888888888889,
+          "y": 85.41666666666667,
+          "width": 97.22222222222223,
+          "height": 52.5
+        },
+        "selected": false
+      },
+      {
+        "role": "group",
+        "key": "appkit_loader_content",
+        "ref": "android:0.0.0.0.0.0.0.0.0.0.1",
+        "depth": 10,
+        "scrollable": false,
+        "in_viewport": true,
+        "point": {
+          "x": 500.0,
+          "y": 501.25
+        },
+        "rect": {
+          "x": 500.0,
+          "y": 501.25,
+          "width": 1000.0,
+          "height": 770.0
+        }
+      },
+      {
+        "role": "group",
+        "key": "refresh_layout",
+        "ref": "android:0.0.0.0.0.0.0.0.0.0.1.0",
+        "depth": 11,
+        "scrollable": false,
+        "in_viewport": true,
+        "point": {
+          "x": 500.0,
+          "y": 501.25
+        },
+        "rect": {
+          "x": 500.0,
+          "y": 501.25,
+          "width": 1000.0,
+          "height": 770.0
+        }
+      },
+      {
+        "role": "group",
+        "key": "content_wrap",
+        "ref": "android:0.0.0.0.0.0.0.0.0.0.1.0.0",
+        "depth": 12,
+        "scrollable": false,
+        "in_viewport": true,
+        "point": {
+          "x": 500.0,
+          "y": 501.25
+        },
+        "rect": {
+          "x": 500.0,
+          "y": 501.25,
+          "width": 1000.0,
+          "height": 770.0
+        }
+      },
+      {
+        "role": "list",
+        "key": "list",
+        "ref": "android:0.0.0.0.0.0.0.0.0.0.1.0.0.0",
+        "depth": 13,
+        "scrollable": true,
+        "in_viewport": true,
+        "point": {
+          "x": 500.0,
+          "y": 501.25
+        },
+        "rect": {
+          "x": 500.0,
+          "y": 501.25,
+          "width": 1000.0,
+          "height": 770.0
+        }
+      },
+      {
+        "role": "button",
+        "key": "Go to test’s profile",
+        "ref": "android:0.0.0.0.0.0.0.0.0.0.1.0.0.0.0.0",
+        "depth": 15,
+        "scrollable": false,
+        "in_viewport": true,
+        "point": {
+          "x": 463.4259259259259,
+          "y": 157.70833333333334
+        },
+        "rect": {
+          "x": 463.4259259259259,
+          "y": 157.70833333333334,
+          "width": 869.4444444444445,
+          "height": 52.916666666666664
+        },
+        "selected": false
+      },
+      {
+        "role": "img",
+        "key": "avatar",
+        "ref": "android:0.0.0.0.0.0.0.0.0.0.1.0.0.0.0.1",
+        "depth": 15,
+        "scrollable": false,
+        "in_viewport": true,
+        "point": {
+          "x": 87.5,
+          "y": 157.70833333333334
+        },
+        "rect": {
+          "x": 87.5,
+          "y": 157.70833333333334,
+          "width": 97.22222222222223,
+          "height": 43.75
+        }
+      },
+      {
+        "role": "group",
+        "key": "name_wrap",
+        "ref": "android:0.0.0.0.0.0.0.0.0.0.1.0.0.0.0.2",
+        "depth": 15,
+        "scrollable": false,
+        "in_viewport": true,
+        "point": {
+          "x": 521.7592592592592,
+          "y": 146.875
+        },
+        "rect": {
+          "x": 521.7592592592592,
+          "y": 146.875,
+          "width": 732.4074074074074,
+          "height": 26.25
+        }
+      },
+      {
+        "role": "text",
+        "key": "TEST",
+        "ref": "android:0.0.0.0.0.0.0.0.0.0.1.0.0.0.0.2.0",
+        "depth": 16,
+        "scrollable": false,
+        "in_viewport": true,
+        "point": {
+          "x": 202.3148148148148,
+          "y": 146.875
+        },
+        "rect": {
+          "x": 202.3148148148148,
+          "y": 146.875,
+          "width": 93.51851851851852,
+          "height": 26.25
+        }
+      },
+      {
+        "role": "img",
+        "key": "More options",
+        "ref": "android:0.0.0.0.0.0.0.0.0.0.1.0.0.0.0.3",
+        "depth": 15,
+        "scrollable": false,
+        "in_viewport": true,
+        "point": {
+          "x": 936.574074074074,
+          "y": 144.79166666666666
+        },
+        "rect": {
+          "x": 936.574074074074,
+          "y": 144.79166666666666,
+          "width": 58.333333333333336,
+          "height": 26.25
+        },
+        "selected": false
+      },
+      {
+        "role": "text",
+        "key": "now · @test",
+        "ref": "android:0.0.0.0.0.0.0.0.0.0.1.0.0.0.0.4",
+        "depth": 15,
+        "scrollable": false,
+        "in_viewport": true,
+        "point": {
+          "x": 521.7592592592592,
+          "y": 171.04166666666666
+        },
+        "rect": {
+          "x": 521.7592592592592,
+          "y": 171.04166666666666,
+          "width": 732.4074074074074,
+          "height": 22.083333333333332
+        }
+      },
+      {
+        "role": "text",
+        "key": "Which country has the largest land area?",
+        "ref": "android:0.0.0.0.0.0.0.0.0.0.1.0.0.0.1.0",
+        "depth": 15,
+        "scrollable": false,
+        "in_viewport": true,
+        "point": {
+          "x": 558.3333333333334,
+          "y": 206.25
+        },
+        "rect": {
+          "x": 558.3333333333334,
+          "y": 206.25,
+          "width": 883.3333333333334,
+          "height": 39.166666666666664
+        }
+      },
+      {
+        "role": "group",
+        "key": "button",
+        "ref": "android:0.0.0.0.0.0.0.0.0.0.1.0.0.0.2.0",
+        "depth": 15,
+        "scrollable": false,
+        "in_viewport": true,
+        "point": {
+          "x": 558.3333333333334,
+          "y": 250.0
+        },
+        "rect": {
+          "x": 558.3333333333334,
+          "y": 250.0,
+          "width": 805.5555555555555,
+          "height": 48.333333333333336
+        },
+        "value": false
+      },
+      {
+        "role": "text",
+        "key": "USA",
+        "ref": "android:0.0.0.0.0.0.0.0.0.0.1.0.0.0.2.0.0",
+        "depth": 16,
+        "scrollable": false,
+        "in_viewport": true,
+        "point": {
+          "x": 531.4814814814815,
+          "y": 249.79166666666666
+        },
+        "rect": {
+          "x": 531.4814814814815,
+          "y": 249.79166666666666,
+          "width": 692.5925925925926,
+          "height": 21.25
+        }
+      },
+      {
+        "role": "text",
+        "key": "0%",
+        "ref": "android:0.0.0.0.0.0.0.0.0.0.1.0.0.0.2.0.1",
+        "depth": 16,
+        "scrollable": false,
+        "in_viewport": true,
+        "point": {
+          "x": 914.3518518518518,
+          "y": 249.79166666666666
+        },
+        "rect": {
+          "x": 914.3518518518518,
+          "y": 249.79166666666666,
+          "width": 34.25925925925926,
+          "height": 16.25
+        }
+      },
+      {
+        "role": "group",
+        "key": "button",
+        "ref": "android:0.0.0.0.0.0.0.0.0.0.1.0.0.0.3.0",
+        "depth": 15,
+        "scrollable": false,
+        "in_viewport": true,
+        "point": {
+          "x": 558.3333333333334,
+          "y": 307.0833333333333
+        },
+        "rect": {
+          "x": 558.3333333333334,
+          "y": 307.0833333333333,
+          "width": 805.5555555555555,
+          "height": 48.333333333333336
+        },
+        "value": false
+      },
+      {
+        "role": "text",
+        "key": "China",
+        "ref": "android:0.0.0.0.0.0.0.0.0.0.1.0.0.0.3.0.0",
+        "depth": 16,
+        "scrollable": false,
+        "in_viewport": true,
+        "point": {
+          "x": 531.4814814814815,
+          "y": 306.875
+        },
+        "rect": {
+          "x": 531.4814814814815,
+          "y": 306.875,
+          "width": 692.5925925925926,
+          "height": 21.25
+        }
+      },
+      {
+        "role": "text",
+        "key": "0%",
+        "ref": "android:0.0.0.0.0.0.0.0.0.0.1.0.0.0.3.0.1",
+        "depth": 16,
+        "scrollable": false,
+        "in_viewport": true,
+        "point": {
+          "x": 914.3518518518518,
+          "y": 306.875
+        },
+        "rect": {
+          "x": 914.3518518518518,
+          "y": 306.875,
+          "width": 34.25925925925926,
+          "height": 16.25
+        }
+      },
+      {
+        "role": "group",
+        "key": "button",
+        "ref": "android:0.0.0.0.0.0.0.0.0.0.1.0.0.0.4.0",
+        "depth": 15,
+        "scrollable": false,
+        "in_viewport": true,
+        "point": {
+          "x": 558.3333333333334,
+          "y": 364.1666666666667
+        },
+        "rect": {
+          "x": 558.3333333333334,
+          "y": 364.1666666666667,
+          "width": 805.5555555555555,
+          "height": 48.333333333333336
+        },
+        "value": false
+      },
+      {
+        "role": "text",
+        "key": "Russia",
+        "ref": "android:0.0.0.0.0.0.0.0.0.0.1.0.0.0.4.0.0",
+        "depth": 16,
+        "scrollable": false,
+        "in_viewport": true,
+        "point": {
+          "x": 531.4814814814815,
+          "y": 363.9583333333333
+        },
+        "rect": {
+          "x": 531.4814814814815,
+          "y": 363.9583333333333,
+          "width": 692.5925925925926,
+          "height": 21.25
+        }
+      },
+      {
+        "role": "text",
+        "key": "0%",
+        "ref": "android:0.0.0.0.0.0.0.0.0.0.1.0.0.0.4.0.1",
+        "depth": 16,
+        "scrollable": false,
+        "in_viewport": true,
+        "point": {
+          "x": 914.3518518518518,
+          "y": 363.9583333333333
+        },
+        "rect": {
+          "x": 914.3518518518518,
+          "y": 363.9583333333333,
+          "width": 34.25925925925926,
+          "height": 16.25
+        }
+      },
+      {
+        "role": "group",
+        "key": "button",
+        "ref": "android:0.0.0.0.0.0.0.0.0.0.1.0.0.0.5.0",
+        "depth": 15,
+        "scrollable": false,
+        "in_viewport": true,
+        "point": {
+          "x": 558.3333333333334,
+          "y": 421.25
+        },
+        "rect": {
+          "x": 558.3333333333334,
+          "y": 421.25,
+          "width": 805.5555555555555,
+          "height": 48.333333333333336
+        },
+        "value": false
+      },
+      {
+        "role": "text",
+        "key": "Brazil",
+        "ref": "android:0.0.0.0.0.0.0.0.0.0.1.0.0.0.5.0.0",
+        "depth": 16,
+        "scrollable": false,
+        "in_viewport": true,
+        "point": {
+          "x": 531.4814814814815,
+          "y": 421.0416666666667
+        },
+        "rect": {
+          "x": 531.4814814814815,
+          "y": 421.0416666666667,
+          "width": 692.5925925925926,
+          "height": 21.25
+        }
+      },
+      {
+        "role": "text",
+        "key": "0%",
+        "ref": "android:0.0.0.0.0.0.0.0.0.0.1.0.0.0.5.0.1",
+        "depth": 16,
+        "scrollable": false,
+        "in_viewport": true,
+        "point": {
+          "x": 914.3518518518518,
+          "y": 421.0416666666667
+        },
+        "rect": {
+          "x": 914.3518518518518,
+          "y": 421.0416666666667,
+          "width": 34.25925925925926,
+          "height": 16.25
+        }
+      },
+      {
+        "role": "text",
+        "key": "0 votes · Closed",
+        "ref": "android:0.0.0.0.0.0.0.0.0.0.1.0.0.0.6.0",
+        "depth": 15,
+        "scrollable": false,
+        "in_viewport": true,
+        "point": {
+          "x": 558.3333333333334,
+          "y": 462.9166666666667
+        },
+        "rect": {
+          "x": 558.3333333333334,
+          "y": 462.9166666666667,
+          "width": 805.5555555555555,
+          "height": 17.5
+        }
+      },
+      {
+        "role": "button",
+        "key": "Vote",
+        "ref": "android:0.0.0.0.0.0.0.0.0.0.1.0.0.0.6.1.0",
+        "depth": 16,
+        "scrollable": false,
+        "in_viewport": true,
+        "point": {
+          "x": 558.3333333333334,
+          "y": 511.0416666666667
+        },
+        "rect": {
+          "x": 558.3333333333334,
+          "y": 511.0416666666667,
+          "width": 805.5555555555555,
+          "height": 43.75
+        },
+        "selected": false
+      },
+      {
+        "role": "button",
+        "key": "Reply",
+        "ref": "android:0.0.0.0.0.0.0.0.0.0.1.0.0.0.7.0",
+        "depth": 15,
+        "scrollable": false,
+        "in_viewport": true,
+        "point": {
+          "x": 213.88888888888889,
+          "y": 551.4583333333334
+        },
+        "rect": {
+          "x": 213.88888888888889,
+          "y": 551.4583333333334,
+          "width": 155.55555555555554,
+          "height": 37.083333333333336
+        },
+        "selected": false
+      },
+      {
+        "role": "text",
+        "key": "reply",
+        "ref": "android:0.0.0.0.0.0.0.0.0.0.1.0.0.0.7.0.0",
+        "depth": 16,
+        "scrollable": false,
+        "in_viewport": true,
+        "point": {
+          "x": 180.09259259259258,
+          "y": 551.4583333333334
+        },
+        "rect": {
+          "x": 180.09259259259258,
+          "y": 551.4583333333334,
+          "width": 49.074074074074076,
+          "height": 26.25
+        }
+      },
+      {
+        "role": "button",
+        "key": "Boost",
+        "ref": "android:0.0.0.0.0.0.0.0.0.0.1.0.0.0.7.1",
+        "depth": 15,
+        "scrollable": false,
+        "in_viewport": true,
+        "point": {
+          "x": 389.81481481481484,
+          "y": 551.4583333333334
+        },
+        "rect": {
+          "x": 389.81481481481484,
+          "y": 551.4583333333334,
+          "width": 155.55555555555554,
+          "height": 37.083333333333336
+        },
+        "selected": false
+      },
+      {
+        "role": "text",
+        "key": "boost",
+        "ref": "android:0.0.0.0.0.0.0.0.0.0.1.0.0.0.7.1.0",
+        "depth": 16,
+        "scrollable": false,
+        "in_viewport": true,
+        "point": {
+          "x": 356.01851851851853,
+          "y": 551.4583333333334
+        },
+        "rect": {
+          "x": 356.01851851851853,
+          "y": 551.4583333333334,
+          "width": 49.074074074074076,
+          "height": 26.25
+        }
+      },
+      {
+        "role": "button",
+        "key": "Favorite",
+        "ref": "android:0.0.0.0.0.0.0.0.0.0.1.0.0.0.7.2",
+        "depth": 15,
+        "scrollable": false,
+        "in_viewport": true,
+        "point": {
+          "x": 565.7407407407408,
+          "y": 551.4583333333334
+        },
+        "rect": {
+          "x": 565.7407407407408,
+          "y": 551.4583333333334,
+          "width": 155.55555555555554,
+          "height": 37.083333333333336
+        },
+        "selected": false
+      },
+      {
+        "role": "text",
+        "key": "favorite",
+        "ref": "android:0.0.0.0.0.0.0.0.0.0.1.0.0.0.7.2.0",
+        "depth": 16,
+        "scrollable": false,
+        "in_viewport": true,
+        "point": {
+          "x": 531.9444444444445,
+          "y": 551.4583333333334
+        },
+        "rect": {
+          "x": 531.9444444444445,
+          "y": 551.4583333333334,
+          "width": 49.074074074074076,
+          "height": 26.25
+        }
+      },
+      {
+        "role": "button",
+        "key": "Share",
+        "ref": "android:0.0.0.0.0.0.0.0.0.0.1.0.0.0.7.3",
+        "depth": 15,
+        "scrollable": false,
+        "in_viewport": true,
+        "point": {
+          "x": 936.574074074074,
+          "y": 551.4583333333334
+        },
+        "rect": {
+          "x": 936.574074074074,
+          "y": 551.4583333333334,
+          "width": 87.96296296296296,
+          "height": 37.083333333333336
+        },
+        "selected": false
+      },
+      {
+        "role": "img",
+        "key": "share",
+        "ref": "android:0.0.0.0.0.0.0.0.0.0.1.0.0.0.7.3.0",
+        "depth": 16,
+        "scrollable": false,
+        "in_viewport": true,
+        "point": {
+          "x": 936.574074074074,
+          "y": 551.4583333333334
+        },
+        "rect": {
+          "x": 936.574074074074,
+          "y": 551.4583333333334,
+          "width": 49.074074074074076,
+          "height": 26.25
+        }
+      },
+      {
+        "role": "button",
+        "key": "Go to pupper’s profile",
+        "ref": "android:0.0.0.0.0.0.0.0.0.0.1.0.0.0.8.0",
+        "depth": 15,
+        "scrollable": false,
+        "in_viewport": true,
+        "point": {
+          "x": 463.4259259259259,
+          "y": 620.2083333333334
+        },
+        "rect": {
+          "x": 463.4259259259259,
+          "y": 620.2083333333334,
+          "width": 869.4444444444445,
+          "height": 52.916666666666664
+        },
+        "selected": false
+      },
+      {
+        "role": "img",
+        "key": "avatar",
+        "ref": "android:0.0.0.0.0.0.0.0.0.0.1.0.0.0.8.1",
+        "depth": 15,
+        "scrollable": false,
+        "in_viewport": true,
+        "point": {
+          "x": 87.5,
+          "y": 620.2083333333334
+        },
+        "rect": {
+          "x": 87.5,
+          "y": 620.2083333333334,
+          "width": 97.22222222222223,
+          "height": 43.75
+        }
+      },
+      {
+        "role": "group",
+        "key": "name_wrap",
+        "ref": "android:0.0.0.0.0.0.0.0.0.0.1.0.0.0.8.2",
+        "depth": 15,
+        "scrollable": false,
+        "in_viewport": true,
+        "point": {
+          "x": 521.7592592592592,
+          "y": 609.375
+        },
+        "rect": {
+          "x": 521.7592592592592,
+          "y": 609.375,
+          "width": 732.4074074074074,
+          "height": 26.25
+        }
+      },
+      {
+        "role": "text",
+        "key": "pupper",
+        "ref": "android:0.0.0.0.0.0.0.0.0.0.1.0.0.0.8.2.0",
+        "depth": 16,
+        "scrollable": false,
+        "in_viewport": true,
+        "point": {
+          "x": 217.12962962962962,
+          "y": 609.375
+        },
+        "rect": {
+          "x": 217.12962962962962,
+          "y": 609.375,
+          "width": 123.14814814814815,
+          "height": 26.25
+        }
+      },
+      {
+        "role": "img",
+        "key": "More options",
+        "ref": "android:0.0.0.0.0.0.0.0.0.0.1.0.0.0.8.3",
+        "depth": 15,
+        "scrollable": false,
+        "in_viewport": true,
+        "point": {
+          "x": 936.574074074074,
+          "y": 607.2916666666666
+        },
+        "rect": {
+          "x": 936.574074074074,
+          "y": 607.2916666666666,
+          "width": 58.333333333333336,
+          "height": 26.25
+        },
+        "selected": false
+      },
+      {
+        "role": "text",
+        "key": "now · @pupper",
+        "ref": "android:0.0.0.0.0.0.0.0.0.0.1.0.0.0.8.4",
+        "depth": 15,
+        "scrollable": false,
+        "in_viewport": true,
+        "point": {
+          "x": 521.7592592592592,
+          "y": 633.5416666666666
+        },
+        "rect": {
+          "x": 521.7592592592592,
+          "y": 633.5416666666666,
+          "width": 732.4074074074074,
+          "height": 22.083333333333332
+        }
+      },
+      {
+        "role": "text",
+        "key": "The Border Collie is often regarded as the most intelligent dog breed, with exceptional herding instincts. They are energetic and thrive on mental challenges like agility training or obedience tasks. Without enough stimulation, they may become bored or restless.\n\n#puppy #dogs #pets #cute",
+        "ref": "android:0.0.0.0.0.0.0.0.0.0.1.0.0.0.9.0",
+        "depth": 15,
+        "scrollable": false,
+        "in_viewport": true,
+        "point": {
+          "x": 558.3333333333334,
+          "y": 754.7916666666666
+        },
+        "rect": {
+          "x": 558.3333333333334,
+          "y": 754.7916666666666,
+          "width": 883.3333333333334,
+          "height": 211.25
+        }
+      },
+      {
+        "role": "button",
+        "key": "scrollable region",
+        "ref": "android:0.0.0.0.0.0.0.0.0.0.1.0.0.0.10.1.0",
+        "depth": 16,
+        "scrollable": false,
+        "in_viewport": true,
+        "point": {
+          "x": 558.3333333333334,
+          "y": 873.3333333333334
+        },
+        "rect": {
+          "x": 558.3333333333334,
+          "y": 873.3333333333334,
+          "width": 805.5555555555555,
+          "height": 25.833333333333332
+        },
+        "selected": false
+      },
+      {
+        "role": "img",
+        "key": "Media without description",
+        "ref": "android:0.0.0.0.0.0.0.0.0.0.1.0.0.0.10.1.0.0",
+        "depth": 17,
+        "scrollable": false,
+        "in_viewport": true,
+        "point": {
+          "x": 558.3333333333334,
+          "y": 873.3333333333334
+        },
+        "rect": {
+          "x": 558.3333333333334,
+          "y": 873.3333333333334,
+          "width": 805.5555555555555,
+          "height": 25.833333333333332
+        }
+      },
+      {
+        "role": "group",
+        "key": "bottom_overlays",
+        "ref": "android:0.0.0.0.0.0.0.0.0.0.1.0.0.1",
+        "depth": 13,
+        "scrollable": false,
+        "in_viewport": true,
+        "point": {
+          "x": 500.0,
+          "y": 501.25
+        },
+        "rect": {
+          "x": 500.0,
+          "y": 501.25,
+          "width": 1000.0,
+          "height": 770.0
+        }
+      },
+      {
+        "role": "button",
+        "key": "New post",
+        "ref": "android:0.0.0.0.0.0.0.0.0.0.1.0.0.1.0",
+        "depth": 14,
+        "scrollable": false,
+        "in_viewport": true,
+        "point": {
+          "x": 893.0555555555555,
+          "y": 838.125
+        },
+        "rect": {
+          "x": 893.0555555555555,
+          "y": 838.125,
+          "width": 136.11111111111111,
+          "height": 61.25
+        },
+        "selected": false
+      },
+      {
+        "role": "group",
+        "key": "tabbar_wrap",
+        "ref": "android:0.0.0.0.0.0.1",
+        "depth": 6,
+        "scrollable": false,
+        "in_viewport": true,
+        "point": {
+          "x": 500.0,
+          "y": 943.125
+        },
+        "rect": {
+          "x": 500.0,
+          "y": 943.125,
+          "width": 1000.0,
+          "height": 113.75
+        }
+      },
+      {
+        "role": "group",
+        "key": "tabbar",
+        "ref": "android:0.0.0.0.0.0.1.0",
+        "depth": 7,
+        "scrollable": false,
+        "in_viewport": true,
+        "point": {
+          "x": 500.0,
+          "y": 930.0
+        },
+        "rect": {
+          "x": 500.0,
+          "y": 930.0,
+          "width": 1000.0,
+          "height": 87.5
+        }
+      },
+      {
+        "role": "button",
+        "key": "Home timeline",
+        "ref": "android:0.0.0.0.0.0.1.0.0",
+        "depth": 8,
+        "scrollable": false,
+        "in_viewport": true,
+        "point": {
+          "x": 125.0,
+          "y": 930.0
+        },
+        "rect": {
+          "x": 125.0,
+          "y": 930.0,
+          "width": 250.0,
+          "height": 87.5
+        },
+        "selected": true
+      },
+      {
+        "role": "text",
+        "key": "Home",
+        "ref": "android:0.0.0.0.0.0.1.0.0.1",
+        "depth": 9,
+        "scrollable": false,
+        "in_viewport": true,
+        "point": {
+          "x": 125.0,
+          "y": 947.5
+        },
+        "rect": {
+          "x": 125.0,
+          "y": 947.5,
+          "width": 229.62962962962962,
+          "height": 17.5
+        },
+        "selected": true
+      },
+      {
+        "role": "button",
+        "key": "Search",
+        "ref": "android:0.0.0.0.0.0.1.0.1",
+        "depth": 8,
+        "scrollable": false,
+        "in_viewport": true,
+        "point": {
+          "x": 375.0,
+          "y": 930.0
+        },
+        "rect": {
+          "x": 375.0,
+          "y": 930.0,
+          "width": 250.0,
+          "height": 87.5
+        },
+        "selected": false
+      },
+      {
+        "role": "text",
+        "key": "Explore",
+        "ref": "android:0.0.0.0.0.0.1.0.1.1",
+        "depth": 9,
+        "scrollable": false,
+        "in_viewport": true,
+        "point": {
+          "x": 375.0,
+          "y": 947.5
+        },
+        "rect": {
+          "x": 375.0,
+          "y": 947.5,
+          "width": 229.62962962962962,
+          "height": 17.5
+        }
+      },
+      {
+        "role": "button",
+        "key": "Notifications",
+        "ref": "android:0.0.0.0.0.0.1.0.2",
+        "depth": 8,
+        "scrollable": false,
+        "in_viewport": true,
+        "point": {
+          "x": 625.0,
+          "y": 930.0
+        },
+        "rect": {
+          "x": 625.0,
+          "y": 930.0,
+          "width": 250.0,
+          "height": 87.5
+        },
+        "selected": false
+      },
+      {
+        "role": "text",
+        "key": "Notifications",
+        "ref": "android:0.0.0.0.0.0.1.0.2.1",
+        "depth": 9,
+        "scrollable": false,
+        "in_viewport": true,
+        "point": {
+          "x": 625.0,
+          "y": 947.5
+        },
+        "rect": {
+          "x": 625.0,
+          "y": 947.5,
+          "width": 229.62962962962962,
+          "height": 17.5
+        }
+      },
+      {
+        "role": "button",
+        "key": "My profile",
+        "ref": "android:0.0.0.0.0.0.1.0.3",
+        "depth": 8,
+        "scrollable": false,
+        "in_viewport": true,
+        "point": {
+          "x": 875.0,
+          "y": 930.0
+        },
+        "rect": {
+          "x": 875.0,
+          "y": 930.0,
+          "width": 250.0,
+          "height": 87.5
+        },
+        "selected": false
+      },
+      {
+        "role": "img",
+        "key": "tab_profile_ava",
+        "ref": "android:0.0.0.0.0.0.1.0.3.0",
+        "depth": 9,
+        "scrollable": false,
+        "in_viewport": true,
+        "point": {
+          "x": 855.0925925925926,
+          "y": 916.875
+        },
+        "rect": {
+          "x": 855.0925925925926,
+          "y": 916.875,
+          "width": 58.333333333333336,
+          "height": 26.25
+        }
+      },
+      {
+        "role": "text",
+        "key": "Profile",
+        "ref": "android:0.0.0.0.0.0.1.0.3.2",
+        "depth": 9,
+        "scrollable": false,
+        "in_viewport": true,
+        "point": {
+          "x": 875.0,
+          "y": 947.5
+        },
+        "rect": {
+          "x": 875.0,
+          "y": 947.5,
+          "width": 229.62962962962962,
+          "height": 17.5
+        }
+      }
+    ],
+    "applied_filters": null,
+    "applied_filter_state": null,
+    "applied_filter_meta": null
+  }
+}
