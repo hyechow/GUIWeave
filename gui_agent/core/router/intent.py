@@ -151,7 +151,11 @@ def resolve_intent(
         e.match_mode = e.match_mode.strip().lower()
         if e.match_mode not in _VALID_MODES:
             e.match_mode = "approximate"
-        if not e.search_key.strip():
+        mention = e.mention.strip()
+        if mention.startswith(("#", "@")):
+            e.match_mode = "exact"
+            e.search_key = mention
+        elif not e.search_key.strip():
             e.search_key = e.mention
         e.value_members = list(target_value_options(e.value_members))
     return resolution
