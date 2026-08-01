@@ -9,6 +9,12 @@ debug.log
 tmp_scripts/
 knowledge/*
 !knowledge/README.md
+# Curated Android application planning contracts promoted to repository source.
+!knowledge/android/
+knowledge/android/*
+!knowledge/android/Mastodon/
+knowledge/android/Mastodon/*
+!knowledge/android/Mastodon/_app.md
 # Curated shopping_admin planning contracts promoted to repository source.
 !knowledge/browser/
 knowledge/browser/*
