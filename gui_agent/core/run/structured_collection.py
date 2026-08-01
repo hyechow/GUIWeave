@@ -28,11 +28,18 @@ class _FieldSource(BaseModel):
     source_ref: str
 
 
+class _ProjectedRecord(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+
+    record: str
+    fields: list[_FieldSource]
+
+
 class _Projection(BaseModel):
     model_config = ConfigDict(extra="forbid")
 
     anchor_cell: str = ""
-    fields: list[_FieldSource] = Field(default_factory=list)
+    records: list[_ProjectedRecord] = Field(default_factory=list)
 
 
 ProjectionCall = Callable[[dict[str, Any], type[BaseModel]], BaseModel]
@@ -146,11 +153,29 @@ def _record_segments(
         }
         for index, cell in enumerate(cells)
     ]
+    occurrences: dict[str, list[int]] = {}
+    for index, item in enumerate(summary):
+        occurrences.setdefault(str(item["structural_key"]), []).append(index)
+    candidates = []
+    for indexes in occurrences.values():
+        if len(indexes) < 2:
+            continue
+        samples = [
+            summary[start:(indexes[index + 1] if index + 1 < len(indexes) else len(summary))]
+            for index, start in enumerate(indexes[:2])
+        ]
+        candidates.append({"anchor_cell": f"c{indexes[0]}", "sample_records": samples})
+    if not candidates:
+        candidates = [
+            {"anchor_cell": f"c{index}", "sample_records": [summary[index:]]}
+            for index in range(len(summary))
+        ]
     selected = project(
         {
             "mode": "record_anchor",
             "requested_fields": fields,
             "ordered_cells": summary,
+            "anchor_candidates": candidates,
         },
         _Projection,
     )
@@ -176,14 +201,16 @@ def _record_segments(
 
 def _source_catalog(
     cells: list[dict[str, Any]],
+    prefix: str,
 ) -> tuple[list[dict[str, Any]], dict[str, JsonValue]]:
     catalog: list[dict[str, Any]] = []
     values: dict[str, JsonValue] = {}
     for cell_index, cell in enumerate(cells):
+        cell_ref = f"{prefix}c{cell_index}"
         sources: list[dict[str, JsonValue]] = []
         for text_index, raw in enumerate(cell.get("texts") or []):
             value = str(raw)
-            ref = f"c{cell_index}.t{text_index}"
+            ref = f"{cell_ref}.t{text_index}"
             values[ref] = value
             sources.append({"source_ref": ref, "value": value})
             for token_index, token in enumerate(re.findall(r"\S+", value)):
@@ -197,40 +224,58 @@ def _source_catalog(
                 value = control.get(key)
                 if value is None or isinstance(value, (dict, list)):
                     continue
-                ref = f"c{cell_index}.k{control_index}.{key}"
+                ref = f"{cell_ref}.k{control_index}.{key}"
                 values[ref] = value
                 sources.append({"source_ref": ref, "value": value})
-        catalog.append({"cell": f"c{cell_index}", "sources": sources})
+        catalog.append({"cell": cell_ref, "sources": sources})
     return catalog, values
 
 
-def _project_record(
-    cells: list[dict[str, Any]],
+def _project_records(
+    segments: list[list[dict[str, Any]]],
     fields: list[str],
     project: ProjectionCall,
-) -> dict[str, JsonValue]:
-    catalog, values = _source_catalog(cells)
+) -> list[dict[str, JsonValue]]:
+    catalogs: list[dict[str, Any]] = []
+    values: dict[str, JsonValue] = {}
+    for index, cells in enumerate(segments):
+        record = f"r{index}"
+        catalog, record_values = _source_catalog(cells, f"{record}.")
+        catalogs.append({"record": record, "cells": catalog})
+        values.update(record_values)
     selected = project(
         {
             "mode": "field_sources",
             "requested_fields": fields,
-            "record_cells": catalog,
+            "records": catalogs,
         },
         _Projection,
     )
     if not isinstance(selected, _Projection):
         raise TypeError("field source projection returned the wrong schema")
-    refs: dict[str, str] = {}
-    for item in selected.fields:
-        if item.field in refs:
-            raise ValueError(f"duplicate projected field {item.field!r}")
-        refs[item.field] = item.source_ref
-    if set(refs) != set(fields):
-        raise ValueError("projected fields do not match the requested schema")
-    unknown = [ref for ref in refs.values() if ref not in values]
+    projected: dict[str, dict[str, str]] = {}
+    for record in selected.records:
+        if record.record in projected:
+            raise ValueError(f"duplicate projected record {record.record!r}")
+        refs = {item.field: item.source_ref for item in record.fields}
+        if len(refs) != len(record.fields) or set(refs) != set(fields):
+            raise ValueError("projected fields do not match the requested schema")
+        if any(not ref.startswith(f"{record.record}.") for ref in refs.values()):
+            raise ValueError("projected field source belongs to another record")
+        projected[record.record] = refs
+    expected = {item["record"] for item in catalogs}
+    if set(projected) != expected:
+        raise ValueError("projected records do not match the input records")
+    unknown = [
+        ref for refs in projected.values() for ref in refs.values()
+        if ref not in values
+    ]
     if unknown:
         raise ValueError(f"projection returned unknown source refs: {unknown}")
-    return {field: values[refs[field]] for field in fields}
+    return [
+        {field: values[projected[item["record"]][field]] for field in fields}
+        for item in catalogs
+    ]
 
 
 def materialize_cell_records(
@@ -245,10 +290,12 @@ def materialize_cell_records(
         raise ValueError("cell projection requires unique requested fields")
     ordered = [dict(cell) for cell in cells]
     invoke = project or _default_projection
+    segments = _record_segments(ordered, requested, invoke)
+    if not segments:
+        return []
     rows: list[dict[str, JsonValue]] = []
     seen: set[str] = set()
-    for segment in _record_segments(ordered, requested, invoke):
-        row = _project_record(segment, requested, invoke)
+    for row in _project_records(segments, requested, invoke):
         identity = json.dumps(row, ensure_ascii=False, sort_keys=True)
         if identity not in seen:
             rows.append(row)
