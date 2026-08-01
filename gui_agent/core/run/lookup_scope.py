@@ -65,6 +65,12 @@ def resolve_lookup_scope(
         if _semantic_key(candidate.get("caption")) in mentions
     ]
     if len(eligible) != 1 and len(candidates) == 1:
+        # A raw-cell sensor establishes the address of the sole collection, but
+        # deliberately does not invent its business schema. Acquire validates the
+        # requested fields while projecting exact cell sources into records.
+        if candidates[0].get("projection") == "cells":
+            eligible = candidates
+    if len(eligible) != 1 and len(candidates) == 1:
         title_words = _semantic_words(observation.title)
         if title_words and any(
             title_words & _semantic_words(value) for value in mention_values
@@ -91,11 +97,16 @@ def resolve_lookup_scope(
             return None
     chosen = eligible[0]
     available_fields = [str(value) for value in chosen.get("headers") or []]
-    if not required <= {_semantic_key(field) for field in available_fields}:
+    projection = str(chosen.get("projection") or "rows")
+    if (
+        projection != "cells"
+        and not required <= {_semantic_key(field) for field in available_fields}
+    ):
         return None
     return {
         "kind": _KIND,
         "entity": entity,
         "surface_fingerprint": str(chosen["surface_fingerprint"]),
         "available_fields": available_fields,
+        "projection": projection,
     }

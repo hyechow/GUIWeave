@@ -23,6 +23,6 @@ def test_android_moves_only_the_bound_scroll_region() -> None:
     }
 
     assert move_collection(session, table, "scroll_forward") is True
-    assert client.calls == [("down", 4, 540.0, 1200.0)]
+    assert client.calls == [("down", 2, 540.0, 1200.0)]
     assert move_collection(session, table, "paginate_next") is False
     assert len(client.calls) == 1

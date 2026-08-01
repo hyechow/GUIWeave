@@ -225,6 +225,25 @@ def collection_candidates(
                 "record_count": len(rows),
             }
         )
+    for region in getattr(observation, "collection_regions", None) or []:
+        cells = [cell.model_dump(mode="json") for cell in region.cells]
+        candidates.append(
+            {
+                "ref": region.ref,
+                "table": {
+                    "_surface_fingerprint": region.surface_fingerprint,
+                    "_region_bounds": list(region.bounds) if region.bounds else None,
+                    "_collection_cells": cells,
+                    "traversal": dict(region.traversal),
+                },
+                "surface_fingerprint": region.surface_fingerprint,
+                "reliable": False,
+                "projection": "cells",
+                "caption": region.caption,
+                "headers": [],
+                "record_count": None,
+            }
+        )
     return candidates
 
 

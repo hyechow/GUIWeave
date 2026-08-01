@@ -26,7 +26,9 @@ def move_collection(session: Any, table: dict, family: str) -> bool:
     x = (float(bounds[0]) + float(bounds[2])) * width / 2000
     y = (float(bounds[1]) + float(bounds[3])) * height / 2000
     direction = "down" if family == "scroll_forward" else "up"
-    result = client.scroll(direction, amount=4, x=x, y=y)
+    # Keep part of the prior cell window visible so lossless stitching has an
+    # exact anchor. Collection traversal favors continuity over fling speed.
+    result = client.scroll(direction, amount=2, x=x, y=y)
     return str(result).startswith("OK ")
 
 

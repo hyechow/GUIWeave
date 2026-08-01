@@ -3,7 +3,7 @@
 from __future__ import annotations
 
 from dataclasses import dataclass, field
-from typing import Any
+from typing import Any, Literal
 
 from gui_agent.core.run.contracts import Acquire, StatementInvocation
 from gui_agent.core.run.collection_view import (
@@ -15,6 +15,7 @@ from gui_agent.core.run.collection_view import (
 )
 from gui_agent.core.run.observation_materializer import visual_dataset
 from gui_agent.core.run.lookup_scope import is_lookup_scope
+from gui_agent.core.run.structured_collection import CellStream, materialize_cell_records
 from gui_agent.core.schemas import (
     AcquisitionReceiptEvent,
     EventJournal,
@@ -27,7 +28,9 @@ from .observation import ObservationCursor
 
 
 MAX_ACQUIRE_MOVES = 40
+_MAX_CELL_ACQUIRE_MOVES = MAX_ACQUIRE_MOVES * 2
 VISUAL_NO_PROGRESS_CONFIRMATIONS = 2
+CELL_END_CONFIRMATIONS = 2
 _FORWARD = {"paginate_next", "scroll_forward", "load_more"}
 _ACTION_TYPES = {
     "paginate_next": {"tap"},
@@ -106,6 +109,79 @@ def _visual_boundary_confirmed(memory: AcquireMemoryView, view: CollectionView) 
         len(moves) == VISUAL_NO_PROGRESS_CONFIRMATIONS
         and all(event.after_content_key == boundary.before_content_key for event in moves)
     )
+
+
+@dataclass
+class _CellCollectionAdapter:
+    """Small adapter facade exposed to the cell Acquire loop."""
+
+    cursor: ObservationCursor
+    bundle: Any
+    platform: Any
+    surface_fingerprint: str
+    status: Any
+    max_moves: int
+    moves: int = 0
+
+    def _candidates(self) -> list[dict[str, Any]]:
+        observation = self.cursor.observation
+        if observation is None:
+            raise RuntimeError("cell collection has no current observation")
+        return [
+            item
+            for item in collection_candidates(observation)
+            if item.get("projection") == "cells"
+        ]
+
+    def _candidate(self) -> dict[str, Any]:
+        candidates = self._candidates()
+        candidate = _bound(candidates, self.surface_fingerprint)
+        if candidate is None and len(candidates) == 1:
+            candidate = candidates[0]
+            self.surface_fingerprint = candidate["surface_fingerprint"]
+        if candidate is None:
+            raise RuntimeError("bound cell collection disappeared")
+        return candidate
+
+    def observe_cells(self) -> list[dict[str, Any]]:
+        return list(self._candidate()["table"].get("_collection_cells") or [])
+
+    def _viewport_signature(self) -> tuple[tuple[str, tuple[Any, ...]], ...]:
+        return tuple(
+            (
+                str(cell.get("content_key") or ""),
+                tuple(cell.get("bounds") or ()),
+            )
+            for cell in self.observe_cells()
+        )
+
+    def _refresh_after_move(self, filename: str) -> None:
+        self.cursor.refresh(filename)
+        if self._candidates():
+            return
+        retry = filename.removesuffix(".png") + "_retry.png"
+        self.cursor.refresh(retry)
+
+    def move_next(self) -> Literal["moved", "end"]:
+        if self.bundle.move_collection is None:
+            raise RuntimeError("platform does not implement structured collection movement")
+        before = self._viewport_signature()
+        for confirmation in range(CELL_END_CONFIRMATIONS):
+            candidate = self._candidate()
+            self.status(f"Acquire cells 遍历 {self.moves + 1}/{self.max_moves}")
+            if not self.bundle.move_collection(
+                self.platform,
+                candidate["table"],
+                "scroll_forward",
+            ):
+                raise RuntimeError("adapter could not move the bound cell collection")
+            self._refresh_after_move(
+                f"screenshot_acquire_cells_{self.moves + 2}_{confirmation + 1}.png"
+            )
+            if self._viewport_signature() != before:
+                self.moves += 1
+                return "moved"
+        return "end"
 
 
 @dataclass
@@ -292,6 +368,59 @@ class _AcquireExecutor:
             observation=self.cursor.observation,
             observation_url=self.cursor.observation_url,
             context_reports=self.reports,
+        )
+
+    def run_cells(self, candidate: dict[str, Any], max_moves: int) -> StatementOutcome:
+        """Own the complete observe -> move -> project loop for one cell collection."""
+        source = _CellCollectionAdapter(
+            cursor=self.cursor,
+            bundle=self.bundle,
+            platform=self.platform,
+            surface_fingerprint=candidate["surface_fingerprint"],
+            status=self.status,
+            max_moves=max_moves,
+        )
+        stream = CellStream()
+        try:
+            stream.add(source.observe_cells())
+            complete = False
+            while source.moves < max_moves:
+                if source.move_next() == "end":
+                    complete = True
+                    break
+                stream.add(source.observe_cells())
+            rows = materialize_cell_records(
+                stream.cells,
+                self.statement.required_fields,
+            )
+        except (RuntimeError, TypeError, ValueError) as exc:
+            return StatementOutcome.failed(
+                f"结构化 cells 采集失败：{exc}",
+                observation=self.cursor.observation,
+                observation_url=self.cursor.observation_url,
+                context_reports=self.reports,
+            )
+
+        output, spec = next(iter(self.statement.returns.items()))
+        details = {
+            "observation": self.cursor.observation,
+            "observation_url": self.cursor.observation_url,
+            "context_reports": self.reports,
+        }
+        if not complete and spec.coverage != "best_effort":
+            return StatementOutcome.exhausted(
+                f"完整采集在 {max_moves} 次移动预算内未到达集合边界",
+                **details,
+            )
+        return StatementOutcome.completed(
+            (
+                f"已遍历到集合边界并采集 {len(rows)} 条记录"
+                if complete else f"采集预算耗尽，保留 {len(rows)} 条部分记录"
+            ),
+            verification="confirmed" if complete else "accepted_unverified",
+            outputs={output: rows},
+            evidence=[self.cursor.observation_url] if self.cursor.observation_url else [],
+            **details,
         )
 
     def budget_outcome(self, max_moves: int) -> StatementOutcome:
@@ -524,7 +653,7 @@ class _AcquireExecutor:
                 for field in self.statement.required_fields
                 if field.strip().casefold() not in available
             ]
-            if missing:
+            if missing and scope.get("projection") != "cells":
                 return StatementOutcome.failed(
                     f"lookup scope 不提供请求字段 {missing!r}",
                 )
@@ -534,6 +663,18 @@ class _AcquireExecutor:
             candidates = self.candidates()
             memory = self.memory()
             candidate = _bound(candidates, memory.bound_region) if memory.bound_region else None
+            cell_candidates = [
+                item for item in candidates if item.get("projection") == "cells"
+            ]
+            if len(cell_candidates) > 1:
+                return StatementOutcome.failed(
+                    "当前帧有多个结构化 cell 集合，Acquire 不能猜测业务目标",
+                )
+            if cell_candidates:
+                return self.run_cells(
+                    cell_candidates[0],
+                    max(max_moves, _MAX_CELL_ACQUIRE_MOVES),
+                )
             reliable = [item for item in candidates if item["reliable"]]
             if memory.bound_region and candidate is None:
                 return StatementOutcome.failed(
