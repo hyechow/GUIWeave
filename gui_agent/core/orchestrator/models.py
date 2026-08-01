@@ -49,8 +49,12 @@ class TraceEvent:
 
 
 @dataclass(frozen=True)
-class UIStateHandle:
-    """Runtime-issued capability and the verified state it represents."""
+class CurrentUI:
+    """Internal snapshot of the session's one active GUI state.
+
+    This is transported between the coding child and runtime only.  It is not a
+    public ``ctx`` value: user programs cannot retain or select among UI states.
+    """
 
     token: str
     postcondition: dict[str, Any] = field(default_factory=dict)
@@ -77,24 +81,27 @@ def reach_postcondition(value: Any) -> dict[str, Any] | None:
         or not entity.strip()
         or not isinstance(fields, list)
         or any(not isinstance(item, str) or not item.strip() for item in fields)
+        or any(
+            key not in {"entity", "fields"}
+            and isinstance(item, str)
+            and item in FIELD_VALUE_TYPES
+            for key, item in value.items()
+        )
     ):
         return None
     return {**value, "entity": entity, "fields": list(fields)}
 
 
-def require_ui_state(
+def require_current_ui(
     value: Any,
     *,
     entity: str = "",
-    fields: list[str] | None = None,
-) -> UIStateHandle:
-    if not isinstance(value, UIStateHandle):
-        raise ValueError(
-            "ctx.query/ctx.read require the UIStateHandle returned by ctx.reach"
-        )
+) -> CurrentUI:
+    if not isinstance(value, CurrentUI):
+        raise ValueError("ctx.query/ctx.read require one active UI established by ctx.reach")
     postcondition = value.postcondition
     if entity and postcondition.get("entity") != entity:
-        raise ValueError("ctx.reach collection state does not satisfy ctx.query")
+        raise ValueError("the active UI entity does not satisfy ctx.query")
     return value
 
 

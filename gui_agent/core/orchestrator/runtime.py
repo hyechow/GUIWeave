@@ -35,10 +35,10 @@ from gui_agent.core.schemas import (
 
 from .sandbox import SAFE_BUILTINS, validate_code
 from .models import (
-    UIStateHandle,
+    CurrentUI,
     field_projection,
     reach_postcondition,
-    require_ui_state,
+    require_current_ui,
 )
 
 
@@ -79,7 +79,7 @@ def _report_coding_payload(op: str, payload: dict[str, Any]) -> dict[str, Any]:
         return {}
 
     def _state_token(value: Any) -> str:
-        return value.token if isinstance(value, UIStateHandle) else ""
+        return value.token if isinstance(value, CurrentUI) else ""
 
     # Prefer the structured request keys that the report data panel already understands.
     if op == "reach":
@@ -216,6 +216,7 @@ class _RuntimeContext:
         self._connection = connection
         self._call_seq = 0
         self._query_filters: dict[tuple[str, str], dict[str, Any]] = {}
+        self._current_ui: CurrentUI | None = None
 
     def _call_id(self, op: str) -> str:
         self._call_seq += 1
@@ -248,7 +249,6 @@ class _RuntimeContext:
 
     def query(
         self,
-        state: UIStateHandle,
         *,
         entity: str,
         fields: list[str] | dict[str, str],
@@ -256,6 +256,7 @@ class _RuntimeContext:
         coverage: str = "complete",
     ) -> list[dict[str, Any]]:
         field_names, field_types = field_projection(fields)
+        state = require_current_ui(self._current_ui, entity=entity)
         call_id = self._call_id("query")
         # Private source session: locate, optionally constrain, then materialize.
         # The caller sees one ctx.query contract rather than executor phases.
@@ -317,11 +318,11 @@ class _RuntimeContext:
 
     def read(
         self,
-        state: UIStateHandle,
         *,
         target: Any = None,
         fields: list[str] | dict[str, str] | None = None,
     ) -> dict[str, Any]:
+        state = require_current_ui(self._current_ui)
         if fields is None:
             raise TypeError("ctx.read requires fields")
         field_names, field_types = field_projection(fields)
@@ -383,10 +384,10 @@ class _RuntimeContext:
         *,
         success: dict[str, Any],
         target: Any = None,
-    ) -> UIStateHandle:
+    ) -> None:
         normalized_success = json_value(success)
         normalized_target = json_value(target) if target is not None else None
-        return self._request(
+        self._current_ui = require_current_ui(self._request(
             "reach",
             call_id=self._call_id("reach"),
             plan="reach",
@@ -395,7 +396,7 @@ class _RuntimeContext:
             goal=goal,
             success=dict(normalized_success),
             target=normalized_target,
-        )
+        ))
 
     def commit(
         self,
@@ -417,10 +418,11 @@ class _RuntimeContext:
             inputs=inputs,
             values=dict(normalized_values),
         )
+        self._current_ui = None
 
     def command(self, capability: str, **arguments: Any) -> Any:
         normalized_arguments = json_value(arguments)
-        return self._request(
+        result = self._request(
             "command",
             call_id=self._call_id("command"),
             plan="command",
@@ -429,6 +431,8 @@ class _RuntimeContext:
             capability=capability,
             arguments=dict(normalized_arguments),
         )
+        self._current_ui = None
+        return result
 
 def _runtime_worker(source: str, connection: Any) -> None:
     namespace: dict[str, Any] = {
@@ -587,7 +591,7 @@ class CodingProgramRuntime:
         return f"c{self._statement_seq}"
 
     @staticmethod
-    def _state_context(state: UIStateHandle) -> dict[str, Any]:
+    def _state_context(state: CurrentUI) -> dict[str, Any]:
         return {
             "inputs": {"ui_state": state.snapshot()},
             "args": {"ui_state_token": state.token},
@@ -602,10 +606,9 @@ class CodingProgramRuntime:
             required_fields = [
                 str(value) for value in payload.get("required_fields") or []
             ]
-            state = require_ui_state(
+            state = require_current_ui(
                 payload.get("state"),
                 entity=entity,
-                fields=required_fields,
             )
             request_text = (
                 f"field={field_name!r}, fallback={fallback!r}, fields={required_fields!r}"
@@ -638,7 +641,7 @@ class CodingProgramRuntime:
             )
         if op == "constrain":
             scope = dict(payload.get("scope") or {})
-            state = require_ui_state(payload.get("state"))
+            state = require_current_ui(payload.get("state"))
             entity = str(payload["entity"])
             if str(scope.get("entity") or "") != entity:
                 raise ValueError(
@@ -665,7 +668,7 @@ class CodingProgramRuntime:
                 args={"lookup_scope": scope, "ui_state_token": state.token},
             )
         if op == "open_target":
-            state = require_ui_state(payload.get("state"))
+            state = require_current_ui(payload.get("state"))
             target = payload.get("target")
             target_url = str(payload.get("url") or "")
             if not target_url or target_url != _unique_target_url(target):
@@ -687,7 +690,7 @@ class CodingProgramRuntime:
                 },
             )
         if op == "focus":
-            state = require_ui_state(payload.get("state"))
+            state = require_current_ui(payload.get("state"))
             fields = [str(item) for item in payload.get("fields") or []]
             target = payload.get("target")
             statement = Interact(
@@ -707,8 +710,8 @@ class CodingProgramRuntime:
                 args={"ui_state_token": state.token},
             )
         if op == "restore_source":
-            state = require_ui_state(payload.get("state"))
-            current_state = require_ui_state(payload.get("current_state"))
+            state = require_current_ui(payload.get("state"))
+            current_state = require_current_ui(payload.get("current_state"))
             expected = dict(state.postcondition)
             entity = str(expected.get("entity") or "")
             fields = [str(item) for item in expected.get("fields") or []]
@@ -773,7 +776,7 @@ class CodingProgramRuntime:
                 raise ValueError(
                     "internal query scope was not produced by the lookup statement"
                 )
-            state = require_ui_state(payload.get("state"))
+            state = require_current_ui(payload.get("state"))
             fields = [str(item) for item in payload.get("fields") or []]
             coverage = str(payload.get("coverage") or "complete")
             statement = Acquire(
@@ -803,7 +806,7 @@ class CodingProgramRuntime:
                 },
             )
         if op == "read":
-            state = require_ui_state(payload.get("state"))
+            state = require_current_ui(payload.get("state"))
             fields = [str(item) for item in payload.get("fields") or []]
             statement = Read(
                 id=statement_id,
@@ -933,7 +936,7 @@ class CodingProgramRuntime:
         coding_op = self.current_coding_op
         coding_payload = dict(self.current_coding_payload)
         coding_call_id = self.current_coding_call_id
-        issued_ui_state: UIStateHandle | None = None
+        issued_ui_state: CurrentUI | None = None
         if (
             outcome.is_completed
             and coding_op in {"reach", "open_target", "focus"}
@@ -951,7 +954,7 @@ class CodingProgramRuntime:
                 }
             else:
                 postcondition = dict(coding_payload.get("success") or {})
-            issued_ui_state = UIStateHandle(
+            issued_ui_state = CurrentUI(
                 token=f"{invocation.id}:state",
                 postcondition=postcondition,
                 observed_state=dict(outcome.outputs),
@@ -1043,7 +1046,7 @@ class CodingProgramRuntime:
 def _render_return(value: Any) -> str:
     if value is None:
         return "Coding program completed"
-    if isinstance(value, UIStateHandle):
+    if isinstance(value, CurrentUI):
         value = value.snapshot()
     if isinstance(value, str):
         return value

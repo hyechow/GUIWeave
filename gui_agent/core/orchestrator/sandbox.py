@@ -29,21 +29,21 @@ from .models import (
     CodeDiagnostic,
     CodingRunResult,
     TraceEvent,
-    UIStateHandle,
+    CurrentUI,
     WriteEvent,
     field_projection,
     reach_postcondition,
-    require_ui_state,
+    require_current_ui,
 )
 
 
 CTX_METHODS = frozenset({"reach", "query", "read", "commit", "command"})
 CTX_SIGNATURES = {
     "query": (
-        ("state", "entity", "fields", "filters", "coverage"),
-        {"state", "entity", "fields"},
+        ("entity", "fields", "filters", "coverage"),
+        {"entity", "fields"},
     ),
-    "read": (("state", "target", "fields"), {"state", "fields"}),
+    "read": (("target", "fields"), {"fields"}),
     "reach": (("goal", "success", "target"), {"goal", "success"}),
     "commit": (("goal", "target", "values"), {"goal", "values"}),
     "command": (("capability",), {"capability"}),
@@ -112,6 +112,9 @@ IDENTITY_FIELDS = (
     "id", "ID", "order_id", "increment_id", "action_url", "Action_url", "Action",
     "sku", "SKU", "name", "Name", "title", "Title", "key",
 )
+GLOBAL_TARGET_LOCATOR_FIELDS = frozenset({
+    "actionurl", "href", "permalink", "url",
+})
 
 
 @dataclass(frozen=True)
@@ -313,11 +316,12 @@ class _SafetyVisitor(ast.NodeVisitor):
                 "CTX_SIGNATURE",
                 f"ctx.{method} is missing required arguments {missing}",
             ))
-        if len(node.args) > 1:
+        max_positional = 0 if method in {"query", "read"} else 1
+        if len(node.args) > max_positional:
             self.diagnostics.append(_diag(
                 node,
                 "CTX_SIGNATURE",
-                f"ctx.{method} accepts at most one positional argument",
+                f"ctx.{method} accepts at most {max_positional} positional arguments",
             ))
         if method != "command":
             unexpected = sorted(keyword_names - set(positional_names))
@@ -330,7 +334,7 @@ class _SafetyVisitor(ast.NodeVisitor):
         if method in {"reach", "commit"}:
             self._check_world_contract(node, method)
         if method in {"query", "read"}:
-            fields = _call_argument(node, "fields", 2)
+            fields = _call_argument(node, "fields", 1)
             if isinstance(fields, (ast.Constant, ast.Dict, ast.List, ast.Tuple)):
                 try:
                     field_projection(_literal_value(fields))
@@ -520,74 +524,114 @@ def _undefined_name_diagnostics(
     return diagnostics
 
 
-def _reach_assignments(
+def _reach_calls(
     function: ast.FunctionDef,
-) -> dict[str, list[tuple[int, str | None, frozenset[str], ast.Dict]]]:
-    assignments: dict[
-        str,
-        list[tuple[int, str | None, frozenset[str], ast.Dict]],
-    ] = {}
+) -> list[tuple[int, str | None, frozenset[str], ast.Dict]]:
+    calls: list[tuple[int, str | None, frozenset[str], ast.Dict]] = []
     for node in ast.walk(function):
-        if (
-            isinstance(node, ast.Assign)
-            and len(node.targets) == 1
-            and isinstance(node.targets[0], ast.Name)
-            and isinstance(node.value, ast.Call)
-            and _ctx_method(node.value) == "reach"
-        ):
-            success_node = _call_argument(node.value, "success", 1)
-            if not isinstance(success_node, ast.Dict):
-                continue
-            success_items = {
-                key.value: value
-                for key, value in zip(success_node.keys, success_node.values)
-                if isinstance(key, ast.Constant) and isinstance(key.value, str)
-            }
-            entity = (
-                value
-                if isinstance(
-                    value := _literal_value(success_items.get("entity")),
-                    str,
-                )
-                else None
-            )
-            declared_fields = _literal_value(success_items.get("fields"))
-            field_keys = frozenset(
-                _semantic_key(field_name)
-                for field_name in declared_fields
-                if isinstance(field_name, str)
-            ) if isinstance(declared_fields, list) else frozenset()
-            assignments.setdefault(node.targets[0].id, []).append(
-                (node.lineno, entity, field_keys, success_node)
-            )
-    return assignments
+        if not isinstance(node, ast.Call) or _ctx_method(node) != "reach":
+            continue
+        success_node = _call_argument(node, "success", 1)
+        if not isinstance(success_node, ast.Dict):
+            continue
+        success_items = {
+            key.value: value
+            for key, value in zip(success_node.keys, success_node.values)
+            if isinstance(key, ast.Constant) and isinstance(key.value, str)
+        }
+        entity_value = _literal_value(success_items.get("entity"))
+        entity = entity_value if isinstance(entity_value, str) else None
+        declared_fields = _literal_value(success_items.get("fields"))
+        field_keys = frozenset(
+            _semantic_key(field_name)
+            for field_name in declared_fields
+            if isinstance(field_name, str)
+        ) if isinstance(declared_fields, list) else frozenset()
+        calls.append((node.lineno, entity, field_keys, success_node))
+    return sorted(calls, key=lambda item: item[0])
 
 
 def _ctx_state_contract_diagnostics(
     function: ast.FunctionDef,
 ) -> list[CodeDiagnostic]:
-    reach_assignments = _reach_assignments(function)
+    reaches = _reach_calls(function)
+    parents = {
+        child: parent
+        for parent in ast.walk(function)
+        for child in ast.iter_child_nodes(parent)
+    }
 
-    def latest_reach(
-        name: str,
-        before_line: int,
-    ) -> tuple[int, str | None, frozenset[str], ast.Dict] | None:
-        return max(
-            (
-                assignment
-                for assignment in reach_assignments.get(name, [])
-                if assignment[0] < before_line
-            ),
-            default=None,
+    def control_path(node: ast.AST) -> dict[ast.AST, str]:
+        """Return branches/loops that must execute for ``node`` to run."""
+        path: dict[ast.AST, str] = {}
+        child = node
+        while (parent := parents.get(child)) is not None:
+            if isinstance(parent, ast.If):
+                if child in parent.body:
+                    path[parent] = "body"
+                elif child in parent.orelse:
+                    path[parent] = "orelse"
+            elif isinstance(parent, ast.IfExp):
+                if child is parent.body:
+                    path[parent] = "body"
+                elif child is parent.orelse:
+                    path[parent] = "orelse"
+            elif isinstance(parent, (ast.For, ast.AsyncFor)):
+                if child in parent.body:
+                    path[parent] = "body"
+                elif child in parent.orelse:
+                    path[parent] = "orelse"
+            child = parent
+        return path
+
+    def dominates(source: ast.AST, destination: ast.AST) -> bool:
+        source_path = control_path(source)
+        destination_path = control_path(destination)
+        return all(destination_path.get(owner) == branch for owner, branch in source_path.items())
+
+    def mutually_exclusive(left: ast.AST, right: ast.AST) -> bool:
+        left_path = control_path(left)
+        right_path = control_path(right)
+        return any(
+            isinstance(owner, (ast.If, ast.IfExp))
+            and owner in right_path
+            and right_path[owner] != branch
+            for owner, branch in left_path.items()
         )
 
+    def active_reach(node: ast.Call):
+        latest = max(
+            (
+                item
+                for item in reaches
+                if item[0] < node.lineno and dominates(item[3], node)
+            ),
+            key=lambda item: item[0],
+            default=None,
+        )
+        if latest is None:
+            return None
+        invalidated = any(
+            isinstance(call, ast.Call)
+            and _ctx_method(call) in {"commit", "command"}
+            and latest[0] < call.lineno < node.lineno
+            and not mutually_exclusive(call, node)
+            for call in ast.walk(function)
+        )
+        return None if invalidated else latest
+
     diagnostics: list[CodeDiagnostic] = []
-    commit_lines = {
-        node.lineno
-        for node in ast.walk(function)
-        if isinstance(node, ast.Call) and _ctx_method(node) == "commit"
-    }
+    diagnosed_consumers: set[ast.Call] = set()
     for node in ast.walk(function):
+        if isinstance(node, (ast.Assign, ast.AnnAssign)):
+            value = node.value
+            if isinstance(value, ast.Call) and _ctx_method(value) == "reach":
+                diagnostics.append(_diag(
+                    node,
+                    "REACH_RETURNS_NONE",
+                    "ctx.reach updates the one active UI and cannot be assigned",
+                ))
+            continue
         if isinstance(node, ast.Return) and _ctx_method(node.value) == "commit":
             diagnostics.append(_diag(
                 node,
@@ -595,36 +639,29 @@ def _ctx_state_contract_diagnostics(
                 "ctx.commit returns None; call it as a statement instead of returning it",
             ))
             continue
-        if isinstance(node, ast.Return) and isinstance(node.value, ast.Name):
-            reach = latest_reach(node.value.id, node.lineno)
-            if (
-                reach is not None
-                and any(reach[0] < line < node.lineno for line in commit_lines)
-            ):
-                diagnostics.append(_diag(
-                    node,
-                    "STALE_UI_STATE_RETURN",
-                    (
-                        f"UI state {node.value.id!r} predates a durable commit; "
-                        "remove both that preparatory ctx.reach and this return because "
-                        "ctx.commit already owns the durable operation"
-                    ),
-                ))
+        if isinstance(node, ast.Return) and _ctx_method(node.value) == "reach":
+            diagnostics.append(_diag(
+                node,
+                "RETURN_REACH_NONE",
+                "ctx.reach updates the active UI and returns None; call it as a statement",
+            ))
             continue
         if not isinstance(node, ast.Call):
             continue
         method = _ctx_method(node)
         if method in {"query", "read"}:
-            state = _call_argument(node, "state", 0)
-            reach = (
-                latest_reach(state.id, node.lineno)
-                if isinstance(state, ast.Name)
-                else None
-            )
-            entity = _literal_value(_call_argument(node, "entity", 1))
+            reach = active_reach(node)
+            if reach is None:
+                diagnostics.append(_diag(
+                    node,
+                    "ACTIVE_UI_REQUIRED",
+                    f"ctx.{method} requires a preceding active ctx.reach",
+                ))
+                diagnosed_consumers.add(node)
+                continue
+            entity = _literal_value(_call_argument(node, "entity", 0))
             if (
                 method == "query"
-                and reach is not None
                 and reach[1] is not None
                 and isinstance(entity, str)
                 and reach[1] != entity
@@ -634,12 +671,11 @@ def _ctx_state_contract_diagnostics(
                     "STATE_ENTITY_MISMATCH",
                     (
                         f"ctx.query entity {entity!r} does not match "
-                        f"{state.id!r} from ctx.reach entity "
-                        f"{reach[1]!r}"
+                        f"the active ctx.reach entity {reach[1]!r}"
                     ),
                 ))
-            if method == "read" and reach is not None:
-                target = _call_argument(node, "target", 1)
+            if method == "read":
+                target = _call_argument(node, "target", 0)
                 direct_read = target is None or (
                     isinstance(target, ast.Constant) and target.value is None
                 )
@@ -659,24 +695,258 @@ def _ctx_state_contract_diagnostics(
                         "DIRECT_READ_FIELDS_UNDECLARED",
                         (
                             f"direct ctx.read fields {missing_fields!r} are not declared "
-                            f"by {state.id!r} from ctx.reach; add them to that "
-                            "reach success.fields list"
+                            "by the active ctx.reach; add them to its success.fields list"
                         ),
                     ))
-        elif method == "commit":
-            target = _call_argument(node, "target", 1)
+
+    # A commit or command can invalidate CurrentUI before the next iteration.
+    # A consumer earlier in that loop therefore needs a loop-local reach, even
+    # when a reach before the loop makes the first iteration valid.
+    for loop in (
+        node for node in ast.walk(function)
+        if isinstance(node, (ast.For, ast.AsyncFor))
+    ):
+        body_calls = [
+            call
+            for statement in loop.body
+            for call in ast.walk(statement)
+            if isinstance(call, ast.Call)
+        ]
+        if not any(_ctx_method(call) in {"commit", "command"} for call in body_calls):
+            continue
+        loop_reaches = [
+            item
+            for item in reaches
+            if control_path(item[3]).get(loop) == "body"
+        ]
+        for call in body_calls:
             if (
-                isinstance(target, ast.Name)
-                and latest_reach(target.id, node.lineno) is not None
+                call in diagnosed_consumers
+                or _ctx_method(call) not in {"query", "read"}
+                or any(
+                    reach[0] < call.lineno and dominates(reach[3], call)
+                    for reach in loop_reaches
+                )
             ):
-                diagnostics.append(_diag(
-                    target,
-                    "COMMIT_UI_STATE_TARGET",
-                    (
-                        f"ctx.commit target {target.id!r} is a UIState from ctx.reach; "
-                        "pass an owning business row or omit target for creation"
-                    ),
-                ))
+                continue
+            diagnostics.append(_diag(
+                call,
+                "ACTIVE_UI_REQUIRED",
+                (
+                    f"ctx.{_ctx_method(call)} may run again after the loop invalidates "
+                    "CurrentUI; collect reads before commits or reach again inside the loop"
+                ),
+            ))
+            diagnosed_consumers.add(call)
+    return diagnostics
+
+
+def _ctx_effect_lineage_diagnostics(
+    function: ast.FunctionDef,
+) -> list[CodeDiagnostic]:
+    """Validate effects against reach contracts and query-row lineage."""
+    Reach = int
+    Binding = dict[str, list[tuple[int, set[Reach] | None]]]
+    reaches = _reach_calls(function)
+    reach_entities = {line: entity for line, entity, _, _ in reaches}
+    projected: dict[Reach, set[str]] = {}
+    sequences: Binding = {}
+    rows: Binding = {}
+
+    def latest_reach(line: int) -> Reach | None:
+        match = max(
+            (item for item in reaches if item[0] < line),
+            key=lambda item: item[0],
+            default=None,
+        )
+        return match[0] if match is not None else None
+
+    def lookup(bindings: Binding, name: str, line: int) -> set[Reach] | None:
+        return next(
+            (
+                lineage
+                for binding_line, lineage in reversed(bindings.get(name, []))
+                if binding_line <= line
+            ),
+            None,
+        )
+
+    def sequence_lineage(node: ast.AST) -> set[Reach] | None:
+        if isinstance(node, ast.Call) and _ctx_method(node) == "query":
+            reach = latest_reach(node.lineno)
+            fields = _literal_fields(node)
+            if reach is None or fields is None:
+                return None
+            projected.setdefault(reach, set()).update(map(_semantic_key, fields))
+            return {reach}
+        if isinstance(node, ast.Name):
+            return lookup(sequences, node.id, node.lineno)
+        if isinstance(node, ast.Subscript) and isinstance(node.slice, ast.Slice):
+            return sequence_lineage(node.value)
+        if (
+            isinstance(node, ast.Call)
+            and isinstance(node.func, ast.Name)
+            and node.func.id in {"list", "sorted"}
+            and node.args
+        ):
+            return sequence_lineage(node.args[0])
+        if (
+            isinstance(node, ast.ListComp)
+            and len(node.generators) == 1
+            and isinstance(node.elt, ast.Name)
+            and isinstance(node.generators[0].target, ast.Name)
+            and node.elt.id == node.generators[0].target.id
+        ):
+            return sequence_lineage(node.generators[0].iter)
+        return None
+
+    def row_lineage(node: ast.AST | None) -> set[Reach] | None:
+        if isinstance(node, ast.Name):
+            return lookup(rows, node.id, node.lineno)
+        if isinstance(node, ast.Subscript) and not isinstance(node.slice, ast.Slice):
+            return sequence_lineage(node.value)
+        return None
+
+    def bind(
+        target: ast.AST,
+        sequence: set[Reach] | None = None,
+        row: set[Reach] | None = None,
+    ) -> None:
+        if not isinstance(target, ast.Name):
+            return
+        sequences.setdefault(target.id, []).append(
+            (target.lineno, set(sequence) if sequence else None)
+        )
+        rows.setdefault(target.id, []).append(
+            (target.lineno, set(row) if row else None)
+        )
+
+    nodes = sorted(
+        ast.walk(function),
+        key=lambda node: (getattr(node, "lineno", 0), getattr(node, "col_offset", 0)),
+    )
+    for node in nodes:
+        if isinstance(node, ast.Assign):
+            for target in node.targets:
+                bind(target, sequence_lineage(node.value), row_lineage(node.value))
+        elif isinstance(node, ast.AnnAssign) and node.value is not None:
+            bind(node.target, sequence_lineage(node.value), row_lineage(node.value))
+        elif isinstance(node, ast.For):
+            bind(node.target, row=sequence_lineage(node.iter))
+        elif isinstance(node, (ast.ListComp, ast.GeneratorExp)):
+            for generator in node.generators:
+                bind(generator.target, row=sequence_lineage(generator.iter))
+        elif isinstance(node, ast.Call) and _ctx_method(node) == "query":
+            sequence_lineage(node)
+
+    predicates: dict[Reach, set[str]] = {}
+    commits: dict[Reach, set[str]] = {}
+    diagnostics: list[CodeDiagnostic] = []
+    predicate_nodes = [
+        branch
+        for node in nodes
+        for branch in (
+            [node.test]
+            if isinstance(node, (ast.If, ast.While, ast.IfExp))
+            else [condition for gen in node.generators for condition in gen.ifs]
+            if isinstance(node, (ast.ListComp, ast.GeneratorExp))
+            else []
+        )
+    ]
+    for predicate in predicate_nodes:
+        for node in ast.walk(predicate):
+            if isinstance(node, ast.Subscript) and isinstance(node.slice, ast.Constant):
+                owner, field_name = node.value, node.slice.value
+            elif (
+                isinstance(node, ast.Call)
+                and isinstance(node.func, ast.Attribute)
+                and node.func.attr == "get"
+                and node.args
+                and isinstance(node.args[0], ast.Constant)
+            ):
+                owner, field_name = node.func.value, node.args[0].value
+            else:
+                continue
+            if not isinstance(field_name, str):
+                continue
+            for reach in row_lineage(owner) or ():
+                predicates.setdefault(reach, set()).add(_semantic_key(field_name))
+
+    for call in (node for node in nodes if isinstance(node, ast.Call)):
+        if _ctx_method(call) != "commit":
+            continue
+        target = _call_argument(call, "target", 1)
+        target_sources = row_lineage(target) or set()
+        values = _call_argument(call, "values", 2)
+        fields = {
+            _semantic_key(key.value)
+            for key in values.keys
+            if isinstance(key, ast.Constant)
+            and isinstance(key.value, str)
+        } if isinstance(values, ast.Dict) else set()
+        for reach in target_sources:
+            commits.setdefault(reach, set()).update(fields)
+        current = latest_reach(call.lineno)
+        inactive_sources = [
+            reach
+            for reach in target_sources
+            if (
+                reach != current
+                and (
+                    reach_entities.get(reach) is None
+                    or reach_entities.get(reach) != reach_entities.get(current)
+                )
+                and projected.get(reach, set()).isdisjoint(
+                    GLOBAL_TARGET_LOCATOR_FIELDS
+                )
+            )
+        ]
+        if inactive_sources:
+            source_lines = ", ".join(map(str, sorted(inactive_sources)))
+            diagnostics.append(_diag(
+                target or call,
+                "COMMIT_TARGET_SOURCE_INACTIVE",
+                (
+                    "ctx.commit target comes from CurrentUI established by "
+                    f"ctx.reach at line(s) {source_lines}, but a later ctx.reach "
+                    "activated a different collection; collect reference data first "
+                    "and make the target-owning collection current before committing, "
+                    "or project a stable global locator such as action_url, url, "
+                    "permalink, or href"
+                ),
+            ))
+
+    for line, _, _, success in reaches:
+        for key, value in zip(success.keys, success.values):
+            if not (
+                isinstance(key, ast.Constant)
+                and isinstance(key.value, str)
+                and key.value not in {"entity", "fields"}
+            ):
+                continue
+            field = _semantic_key(key.value)
+            if field in commits.get(line, set()):
+                code = "PREMATURE_MUTATION_POSTCONDITION"
+                detail = (
+                    "later written by ctx.commit on a row from the same query; "
+                    "keep durable effects in commit"
+                )
+            elif (
+                field in projected.get(line, set())
+                and field in predicates.get(line, set())
+            ):
+                code = "ROW_FIELD_LEAKED_INTO_REACH"
+                detail = (
+                    "later read as a predicate on a row from the same query; "
+                    "keep row facts in query and Python"
+                )
+            else:
+                continue
+            diagnostics.append(_diag(
+                value,
+                code,
+                f"reach success field {key.value!r} is {detail}",
+            ))
     return diagnostics
 
 
@@ -684,7 +954,7 @@ def repair_direct_read_fields(source: str) -> str | None:
     """Complete literal reach field contracts from dependent direct reads.
 
     The repair is intentionally narrow: it only adds literal field names to the
-    literal ``success["fields"]`` list of the latest assigned ``ctx.reach`` state.
+    literal ``success["fields"]`` list of the latest ``ctx.reach`` call.
     It never changes targets, operations, business values, or returned data.
     """
     try:
@@ -698,7 +968,7 @@ def repair_direct_read_fields(source: str) -> str | None:
     if len(functions) != 1:
         return None
     function = functions[0]
-    reaches = _reach_assignments(function)
+    reaches = _reach_calls(function)
 
     changed = False
     calls = sorted(
@@ -709,19 +979,16 @@ def repair_direct_read_fields(source: str) -> str | None:
         key=lambda node: node.lineno,
     )
     for call in calls:
-        state = _call_argument(call, "state", 0)
-        target = _call_argument(call, "target", 1)
+        target = _call_argument(call, "target", 0)
         direct_read = target is None or (
             isinstance(target, ast.Constant) and target.value is None
         )
         fields = _literal_fields(call)
-        if not direct_read or not isinstance(state, ast.Name) or fields is None:
+        if not direct_read or fields is None:
             continue
         reach = max(
-            (
-                item for item in reaches.get(state.id, [])
-                if item[0] < call.lineno
-            ),
+            (item for item in reaches if item[0] < call.lineno),
+            key=lambda item: item[0],
             default=None,
         )
         if reach is None:
@@ -796,6 +1063,7 @@ def validate_code(source: str) -> list[CodeDiagnostic]:
     visitor.diagnostics.extend(_date_constructor_diagnostics(function))
     visitor.diagnostics.extend(_undefined_name_diagnostics(source, function))
     visitor.diagnostics.extend(_ctx_state_contract_diagnostics(function))
+    visitor.diagnostics.extend(_ctx_effect_lineage_diagnostics(function))
     visitor.diagnostics.extend(validate_projection_contract(source))
     return visitor.diagnostics
 
@@ -829,7 +1097,7 @@ def _literal_fields(node: ast.Call) -> list[str] | None:
     fields_node = _call_argument(
         node,
         "fields",
-        2 if _ctx_method(node) in {"query", "read"} else 1,
+        1,
     )
     if isinstance(fields_node, (ast.List, ast.Tuple)):
         fields = [
@@ -1012,10 +1280,10 @@ def build_probe_fixture(source: str) -> FixtureSpec:
     lookups: dict[str, list[dict[str, Any]]] = {}
     for call in (node for node in ast.walk(tree) if _ctx_method(node) == "query"):
         fields = _literal_fields(call)
-        names = set(_literal_strings(_call_argument(call, "entity", 1)))
+        names = set(_literal_strings(_call_argument(call, "entity", 0)))
         if fields is None or not names:
             continue
-        filter_node = _call_argument(call, "filters", 3)
+        filter_node = _call_argument(call, "filters", 2)
         filters = _literal_mapping(filter_node, constant_values)
         if filters is None and isinstance(filter_node, ast.Name):
             filters = constant_mappings.get(filter_node.id)
@@ -1075,11 +1343,11 @@ def build_probe_fixture(source: str) -> FixtureSpec:
     direct_read_fields = {
         field
         for call in read_calls
-        if _call_argument(call, "target", 1) is None
+        if _call_argument(call, "target", 0) is None
         for field in (_literal_fields(call) or [])
     }
     if direct_read_fields:
-        # ctx.read(state, fields=...) reads the reached UI state itself.  The
+        # Direct ctx.read(fields=...) reads the active UI itself.  The
         # fixture context represents an omitted target as None, whose canonical
         # key is "None"; seed that state even when the program has no query rows.
         reads[_target_key(None)] = {
@@ -1132,11 +1400,7 @@ def validate_fixture_contract(
         if match_lookup_sources and method == "query":
             aliases = {
                 _semantic_key(value)
-                for argument in (
-                    _call_argument(node, "entity", 1),
-                    _call_argument(node, "fallback", 5),
-                )
-                for value in _literal_strings(argument)
+                for value in _literal_strings(_call_argument(node, "entity", 0))
             }
             matching_rows = [
                 row
@@ -1414,7 +1678,7 @@ def validate_runtime_dataflow(source: str) -> list[CodeDiagnostic]:
             for name in ast.walk(value)
             if isinstance(name, ast.Name) and isinstance(name.ctx, ast.Load)
         }
-        if _ctx_method(value) in {"reach", "read"}:
+        if _ctx_method(value) == "read":
             direct_read_vars.add(target.id)
     runtime_vars = set(direct_read_vars)
     changed = True
@@ -1429,16 +1693,10 @@ def validate_runtime_dataflow(source: str) -> list[CodeDiagnostic]:
         if loads.get(variable, 0) > 0:
             continue
         node = assignments[variable]
-        source_method = _ctx_method(node.value)
         message = (
-            f"ctx.reach state {variable!r} is assigned but never used; remove the entire "
-            "ctx.reach assignment rather than returning it merely to silence this diagnostic"
-            if source_method == "reach"
-            else (
-                f"runtime-derived value {variable!r} is assigned but never used; consume the "
-                "observed value in a dependent call, calculation, or return, or delete the "
-                "unnecessary assignment and its ctx call"
-            )
+            f"runtime-derived value {variable!r} is assigned but never used; consume the "
+            "observed value in a dependent call, calculation, or return, or delete the "
+            "unnecessary assignment and its ctx call"
         )
         diagnostics.append(_diag(
             node,
@@ -1506,6 +1764,7 @@ class _FixtureContext:
         self.fixture = fixture
         self.trace: list[TraceEvent] = []
         self.writes: list[WriteEvent] = []
+        self._current_ui: CurrentUI | None = None
         self.current_target: Any = None
         self.read_aliases: dict[str, str] = {}
         self.state: dict[str, dict[str, Any]] = {}
@@ -1529,7 +1788,6 @@ class _FixtureContext:
 
     def query(
         self,
-        state: UIStateHandle,
         *,
         entity: str,
         fields: list[str] | dict[str, str],
@@ -1537,7 +1795,7 @@ class _FixtureContext:
         coverage: str = "complete",
     ) -> list[dict[str, Any]]:
         field_names, field_types = field_projection(fields)
-        require_ui_state(state, entity=entity, fields=field_names)
+        state = require_current_ui(self._current_ui, entity=entity)
         requested_filters = dict(json_value(dict(filters or {})))
         rows = _lookup_rows(self.fixture.lookups, entity) or []
         missing_filters = [
@@ -1597,12 +1855,11 @@ class _FixtureContext:
 
     def read(
         self,
-        state: UIStateHandle,
         *,
         target: Any = None,
         fields: list[str] | dict[str, str] | None = None,
     ) -> dict[str, Any]:
-        require_ui_state(state)
+        state = require_current_ui(self._current_ui)
         if fields is None:
             raise TypeError("ctx.read requires fields")
         field_names, field_types = field_projection(fields)
@@ -1678,11 +1935,11 @@ class _FixtureContext:
         *,
         success: dict[str, Any],
         target: Any = None,
-    ) -> UIStateHandle:
+    ) -> None:
         normalized = reach_postcondition(json_value(success))
         if normalized is None:
             raise ValueError("ctx.reach success is not a structured state")
-        state = UIStateHandle(
+        state = CurrentUI(
             token=f"fixture-ui:{len(self.trace) + 1}",
             postcondition=normalized,
         )
@@ -1691,9 +1948,8 @@ class _FixtureContext:
             target=target,
             values={},
             trace_extra={"success": success},
-            result=state,
         )
-        return state
+        self._current_ui = state
 
     def commit(
         self,
@@ -1703,6 +1959,7 @@ class _FixtureContext:
         values: dict[str, Any],
     ) -> None:
         self._world_task(goal, target=target, values=values)
+        self._current_ui = None
 
     def _world_task(
         self,
@@ -1765,6 +2022,7 @@ class _FixtureContext:
         self.trace.append(
             TraceEvent("command", (capability,), dict(json_value(kwargs)), result)
         )
+        self._current_ui = None
         return result
 
 def _worker(source: str, fixture: FixtureSpec, output: Any) -> None:

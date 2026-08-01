@@ -246,16 +246,8 @@ def _coding_call_label(op: str, payload: dict | None = None) -> str:
                 f"fields={fields!r})"
             )
         target_text = f", target={target!r}" if target is not None else ""
-        result_text = (
-            f" → {payload.get('produced_state')}"
-            if payload.get("produced_state")
-            else ""
-        )
         if goal:
-            return (
-                f"ctx.reach({goal!r}{success_text}{target_text})"
-                f"{result_text}"
-            )
+            return f"ctx.reach({goal!r}{success_text}{target_text})"
         return "ctx.reach(…)"
     if op == "commit":
         goal = payload.get("goal") or payload.get("task") or ""
@@ -290,10 +282,8 @@ def _coding_call_label(op: str, payload: dict | None = None) -> str:
             f"fields={list(fields)[:6]!r})"
         )
     if op == "read":
-        state = payload.get("state")
         fields = payload.get("fields") or []
-        state_text = f"{state}, " if state else ""
-        return f"ctx.read({state_text}fields={list(fields)[:8]!r})"
+        return f"ctx.read(fields={list(fields)[:8]!r})"
     if op == "focus":
         state = payload.get("state")
         fields = payload.get("fields") or []
