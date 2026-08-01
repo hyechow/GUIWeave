@@ -45,7 +45,7 @@ def _clamp(v: float, lo: float, hi: float) -> int:
 
 
 class AndroidDevice:
-    """adb-backed phone device. Vision-only; no UIAutomator tree access here."""
+    """adb-backed phone device with pixels, input, and optional UI hierarchy."""
 
     # Capability marker probed by core via getattr(client, "zero_preempt", False).
     # adb input injects on-device (never steals the Mac cursor), but it is not the
@@ -215,6 +215,33 @@ class AndroidDevice:
             except Exception as exc:  # noqa: BLE001
                 last_exc = exc
         raise RuntimeError(f"screenshot failed after retries: {last_exc}")
+
+    def dump_ui_hierarchy(self, timeout_s: float = 4.0) -> str | None:
+        """Return UIAutomator XML without making this optional sensor mandatory."""
+        dev = self._require_dev()
+        remote = "/sdcard/_gui_agent_window.xml"
+        try:
+            dev.shell(
+                f"uiautomator dump {remote}",
+                timeout=max(0.1, float(timeout_s)),
+            )
+            raw = dev.shell(
+                f"cat {remote}",
+                timeout=min(max(0.1, float(timeout_s)), 1.0),
+            )
+            value = (
+                raw.decode("utf-8", errors="replace")
+                if isinstance(raw, bytes)
+                else str(raw or "")
+            )
+            return value if "<hierarchy" in value and "<node" in value else None
+        except Exception:  # noqa: BLE001 - screenshots remain the required sensor
+            return None
+        finally:
+            try:
+                dev.shell(f"rm -f {remote}", timeout=1.0)
+            except Exception:  # noqa: BLE001 - best-effort device cleanup
+                pass
 
     def _screencap_pull(self) -> bytes:
         """File-based capture: screencap to /sdcard then pull (robust fallback)."""

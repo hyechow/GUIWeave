@@ -199,6 +199,7 @@ def build_android_bundle(
     backends today). ``serial`` flows through to the session (else the session falls
     back to env ``ANDROID_SERIAL``, else auto-selects the sole adb device).
     """
+    from gui_agent.adapters.android.acquisition import move_collection
     from gui_agent.adapters.android.executor import AndroidExecutor
     from gui_agent.adapters.android.perception import AndroidPerception, AndroidSession
 
@@ -213,7 +214,7 @@ def build_android_bundle(
         make_status_reporter=lambda enabled: (_make_android_hud() if enabled else None),
         make_action_visualizer=_make_action_visualizer,
         prepare_vision_prompt_png=_prepare_vision_prompt_png,
-        move_collection=None,
+        move_collection=move_collection,
         validate_collection_action=None,
         default_action_policy="android_vision",
         default_supervisor="statement",

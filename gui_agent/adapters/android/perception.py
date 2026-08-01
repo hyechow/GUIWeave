@@ -5,18 +5,21 @@
 :class:`AndroidDevice` on ``__enter__``, exposes ``.client`` + ``screenshot()`` and
 drops the handle on ``__exit__`` (without killing the adb server).
 
-``AndroidPerception`` wraps the session's screenshot in an ``Observation`` with
-``source='android'`` (satisfies ``Perception``). VISION-ONLY: pixels only, no
-element_tree / page_key — exactly like the iphone ``LivePerception`` and the
-browser ``BrowserPerception``.
+``AndroidPerception`` captures required pixels plus an optional UIAutomator tree.
+Hierarchy failures degrade to the screenshot-only path.
 """
 
 from __future__ import annotations
 
 import io
+from concurrent.futures import ThreadPoolExecutor
 from pathlib import Path
 from typing import Optional
 
+from gui_agent.adapters.android.accessibility import (
+    collection_regions_from_uiautomator,
+    semantic_tree_from_uiautomator,
+)
 from gui_agent.adapters.android.constants import SCREENSHOT_MAX_WIDTH
 from gui_agent.core.schemas import Observation
 
@@ -76,6 +79,15 @@ class AndroidSession:
             raise RuntimeError("Android 设备尚未连接")
         return self.client.screenshot()
 
+    def capture(self) -> tuple[bytes, str | None]:
+        """Capture both sensors concurrently; only screenshot failure is fatal."""
+        if self.client is None:
+            raise RuntimeError("Android 设备尚未连接")
+        with ThreadPoolExecutor(max_workers=2) as pool:
+            screenshot = pool.submit(self.client.screenshot)
+            hierarchy = pool.submit(self.client.dump_ui_hierarchy)
+            return screenshot.result(), hierarchy.result()
+
 
 class AndroidPerception:
     """Capture the current screen through an active android session."""
@@ -86,11 +98,27 @@ class AndroidPerception:
 
     def observe(self) -> Observation:
         print("截图中 (Android)...")
-        png_bytes = self.session.screenshot()
+        png_bytes, hierarchy = self.session.capture()
+        client = self.session.client
+        semantic_tree = semantic_tree_from_uiautomator(
+            hierarchy,
+            viewport_size=client.viewport_size if client is not None else (0, 0),
+        )
+        collection_regions = collection_regions_from_uiautomator(
+            hierarchy,
+            viewport_size=client.viewport_size if client is not None else (0, 0),
+        )
         # Downscale to the configured width (default 320) — cuts LLM tokens; tap
         # coords are unaffected (the executor denormalizes against device pixels).
         png_bytes = _downscale_width(png_bytes, SCREENSHOT_MAX_WIDTH)
         self.screenshot_path.parent.mkdir(parents=True, exist_ok=True)
         self.screenshot_path.write_bytes(png_bytes)
         print(f"截图大小: {len(png_bytes) // 1024} KB，已保存到 {self.screenshot_path}")
-        return Observation(png_bytes=png_bytes, source="android")
+        if semantic_tree is not None:
+            print(f"结构节点: {len(semantic_tree)}（UIAutomator）")
+        return Observation(
+            png_bytes=png_bytes,
+            source="android",
+            semantic_tree=semantic_tree,
+            collection_regions=collection_regions,
+        )

@@ -299,6 +299,7 @@ def _compact_affordances(
         "group_index",
         "group_field",
         "value",
+        "selected",
         "is_filter",
         "query_action",
         "form_action",

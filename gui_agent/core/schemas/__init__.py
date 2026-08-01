@@ -355,6 +355,44 @@ class BaseAction(BaseModel):
         return self
 
 
+class CollectionCellSnapshot(BaseModel):
+    """One ordered current-frame cell from a platform collection sensor."""
+
+    model_config = ConfigDict(frozen=True, extra="forbid")
+
+    ref: str
+    structural_key: str
+    content_key: str
+    class_name: str = ""
+    resource: str = ""
+    bounds: tuple[float, float, float, float] | None = None
+    texts: list[str] = Field(default_factory=list)
+    controls: list[dict[str, JsonValue]] = Field(default_factory=list)
+    clipped_top: bool = False
+    clipped_bottom: bool = False
+
+
+class CollectionRegionSnapshot(BaseModel):
+    """Read-only ordered cells for one collection visible in this observation."""
+
+    model_config = ConfigDict(frozen=True, extra="forbid")
+
+    ref: str
+    surface_fingerprint: str
+    cells: list[CollectionCellSnapshot] = Field(default_factory=list)
+    bounds: tuple[float, float, float, float] | None = None
+    caption: str = ""
+    known_total: int | None = Field(
+        default=None,
+        ge=0,
+        description=(
+            "Optional adapter-authoritative logical record count. None means the "
+            "cell sensor cannot distinguish records from collection chrome."
+        ),
+    )
+    traversal: dict[str, JsonValue] = Field(default_factory=dict)
+
+
 class Observation(BaseModel):
     """Raw environment observation used by policies."""
 
@@ -392,6 +430,13 @@ class Observation(BaseModel):
         description=(
             "平台感知层提供的当前页面表格/网格结构快照。"
             "用于表格类 read 任务优先按行列读取，避免靠视觉滚动/OCR 对齐。None=该平台不提供或当前页无表格。"
+        ),
+    )
+    collection_regions: Optional[list[CollectionRegionSnapshot]] = Field(
+        default=None,
+        description=(
+            "平台感知层提供的当前帧有序集合 cells；只包含结构、内容和当前帧控件引用，"
+            "不声明 record 边界或业务字段。"
         ),
     )
     form_controls: Optional[list[dict[str, Any]]] = Field(

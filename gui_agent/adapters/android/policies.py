@@ -28,8 +28,9 @@ from typing import Optional
 
 from dotenv import load_dotenv
 
-from gui_agent.adapters.android.actions import AndroidActionDecision
+from gui_agent.adapters.android.actions import AndroidAction, AndroidActionDecision
 from gui_agent.core.policies.base import BaseActionPolicy
+from gui_agent.core.schemas import TargetBinding
 from gui_agent.prompts import load_prompt_text
 
 load_dotenv()
@@ -74,6 +75,11 @@ _PICKER_WORDS = (
 _PICKER_ADJUST_WORDS = ("调整", "调到", "调至", "设置为", "设为", "改为")
 _CLOCK_MINUTE_RE = re.compile(r"(?:\bminute\b|分钟|\d{1,2}\s*分(?:钟)?\b)", re.IGNORECASE)
 _CLOCK_HOUR_RE = re.compile(r"(?:\bhour\b|小时|\d{1,2}\s*点(?:钟)?\b)", re.IGNORECASE)
+
+
+def _control_key(value: object) -> str:
+    text = re.sub(r"[(（][^()（）]*[)）]", "", str(value or "").casefold())
+    return re.sub(r"[\W_]+", "", text)
 
 
 def _is_tap_only_instruction(instruction: str) -> bool:
@@ -220,6 +226,77 @@ class AndroidActionPolicy(BaseActionPolicy):
     name = "android_vision"
     SYSTEM_PROMPT = SYSTEM_PROMPT
     decision_schema = AndroidActionDecision
+
+    @staticmethod
+    def _target_node(observation, target_ref: str) -> dict | None:
+        matches = [
+            node for node in observation.semantic_tree or []
+            if isinstance(node, dict)
+            and str(node.get("ref") or "").strip() == target_ref.strip()
+            and node.get("in_viewport") is True
+        ]
+        return matches[0] if len(matches) == 1 else None
+
+    def resolve_native_action(
+        self,
+        observation,
+        *,
+        target_control: str = "",
+        target_value: str = "",
+        target_ref: str = "",
+        target_group_id: str = "",
+        action_family: str = "",
+        instruction: str = "",
+    ) -> AndroidActionDecision | None:
+        """Tap one exact control from the current UIAutomator snapshot."""
+        del target_value, target_group_id
+        if action_family != "activate" or not target_ref:
+            return None
+        node = self._target_node(observation, target_ref)
+        if node is None:
+            return None
+        if target_control and _control_key(node.get("key")) != _control_key(target_control):
+            return None
+        point = node.get("point") or {}
+        x, y = point.get("x"), point.get("y")
+        if not isinstance(x, (int, float)) or not isinstance(y, (int, float)):
+            return None
+        return AndroidActionDecision(action=AndroidAction(
+            action_type="tap",
+            x=x,
+            y=y,
+            description=instruction or f"activate {target_control}",
+        ))
+
+    def bind(self, step, observation, action_decision) -> TargetBinding | None:
+        """Verify that a concrete action still owns its one-frame Android ref."""
+        intent = step.action_intent
+        if intent is None or not intent.target_ref:
+            return None
+        node = self._target_node(observation, intent.target_ref)
+        if node is None:
+            return TargetBinding(
+                status="unresolved", source="structural",
+                reason="declared current-frame Android ref is not unique and visible",
+            )
+        point = node.get("point") or {}
+        action = action_decision.action
+        actual = (getattr(action, "x", None), getattr(action, "y", None))
+        expected = (point.get("x"), point.get("y"))
+        if not all(isinstance(value, (int, float)) for value in (*actual, *expected)):
+            return TargetBinding(
+                status="unresolved", source="structural",
+                reason="declared current-frame Android ref has no actionable point",
+            )
+        if any(abs(left - right) > 12 for left, right in zip(actual, expected)):
+            return TargetBinding(
+                status="contradicted", source="structural",
+                reason="action point is outside the declared current-frame Android ref",
+            )
+        return TargetBinding(
+            status="bound", source="structural", unit_id=f"ref:{intent.target_ref}",
+            reason="bound to the exact current-frame Android ref",
+        )
 
     def _prepare_png(self, png_bytes: bytes) -> bytes:
         return _prepare_android_png(png_bytes)

@@ -134,9 +134,9 @@ def _semantic_affordance(node: dict, current_url: str) -> dict | None:
     }
     if url:
         result["url"] = url
-    for key in ("query_action",):
+    for key in ("query_action", "selected", "value"):
         value = node.get(key)
-        if value:
+        if value is not None and value != "":
             result[key] = value
     point = node.get("point")
     if isinstance(point, dict):
