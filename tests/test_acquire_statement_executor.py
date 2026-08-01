@@ -92,6 +92,145 @@ class _Perception:
         return self.observation
 
 
+def _cell_observation(
+    *contents: str,
+    fingerprint: str = "android-collection:feed",
+    y_offset: int = 0,
+) -> Observation:
+    return Observation(
+        png_bytes=b"png",
+        source="android",
+        collection_regions=[{
+            "ref": "android-collection:0",
+            "surface_fingerprint": fingerprint,
+            "bounds": (0, 0, 1000, 1000),
+            "traversal": {"type": "scroll"},
+            "cells": [
+                {
+                    "ref": f"android:0.{index}",
+                    "structural_key": "row",
+                    "content_key": content,
+                    "texts": [content],
+                    "bounds": (0, y_offset + index * 100, 1000, y_offset + (index + 1) * 100),
+                }
+                for index, content in enumerate(contents)
+            ],
+        }],
+    )
+
+
+def _cell_invocation() -> StatementInvocation:
+    return StatementInvocation(
+        statement=Acquire(
+            id="collect",
+            bind="rows",
+            goal="collect values",
+            required_fields=["value"],
+            returns={"records": OutputSpec(type="list[record]", coverage="complete")},
+        ),
+        args={
+            "lookup_scope": {
+                "kind": "resolved_collection",
+                "entity": "Records",
+                "surface_fingerprint": "android-collection:feed",
+                "available_fields": [],
+                "projection": "cells",
+            },
+        },
+    )
+
+
+def _run_cell_acquire(monkeypatch, tmp_path, first, observations):
+    moves = []
+    paths = []
+
+    def observe(_platform, path):
+        paths.append(path.name)
+        return _Perception(observations.pop(0))
+
+    bundle = SimpleNamespace(
+        make_perception=observe,
+        move_collection=lambda _platform, _table, family: moves.append(family) or True,
+    )
+    monkeypatch.setattr(
+        "gui_agent.core.run.statements.acquire.materialize_cell_records",
+        lambda cells, _fields: [{"value": cell["texts"][0]} for cell in cells],
+    )
+    return _execute(_cell_invocation(), tmp_path, bundle, first), moves, paths
+
+
+def test_cell_acquire_owns_stale_retry_boundary_and_returns_only_rows(
+    monkeypatch, tmp_path,
+) -> None:
+    first = _cell_observation("one", "overlap")
+    second = _cell_observation("overlap", "two")
+    outcome, moves, _ = _run_cell_acquire(
+        monkeypatch, tmp_path, first, [first, second, second, second],
+    )
+
+    assert outcome.is_completed
+    assert outcome.outputs == {"records": [
+        {"value": "one"},
+        {"value": "overlap"},
+        {"value": "two"},
+    ]}
+    assert moves == ["scroll_forward"] * 4
+
+
+def test_cell_acquire_does_not_confuse_position_only_scroll_with_end(
+    monkeypatch, tmp_path,
+) -> None:
+    first = _cell_observation("one", "two")
+    moved = _cell_observation("one", "two", y_offset=-50)
+    outcome, _, _ = _run_cell_acquire(
+        monkeypatch, tmp_path, first, [moved, moved, moved],
+    )
+
+    assert outcome.is_completed
+    assert outcome.outputs["records"] == [{"value": "one"}, {"value": "two"}]
+
+
+def test_cell_acquire_rebinds_one_drifting_adapter_region(
+    monkeypatch, tmp_path,
+) -> None:
+    first = _cell_observation("one", "overlap")
+    second = _cell_observation(
+        "overlap", "two", fingerprint="android-collection:feed-v2"
+    )
+    outcome, _, _ = _run_cell_acquire(
+        monkeypatch, tmp_path, first, [second, second, second],
+    )
+
+    assert outcome.is_completed
+    assert outcome.outputs["records"] == [
+        {"value": "one"},
+        {"value": "overlap"},
+        {"value": "two"},
+    ]
+
+
+def test_cell_acquire_reobserves_one_missing_structural_frame(
+    monkeypatch, tmp_path,
+) -> None:
+    first = _cell_observation("one", "overlap")
+    missing = Observation(png_bytes=b"png", source="android")
+    second = _cell_observation("overlap", "two")
+    outcome, _, observed_paths = _run_cell_acquire(
+        monkeypatch, tmp_path, first, [missing, second, second, second],
+    )
+
+    assert outcome.is_completed
+    assert outcome.outputs["records"] == [
+        {"value": "one"},
+        {"value": "overlap"},
+        {"value": "two"},
+    ]
+    assert observed_paths[:2] == [
+        "screenshot_acquire_cells_2_1.png",
+        "screenshot_acquire_cells_2_1_retry.png",
+    ]
+
+
 def test_structured_acquire_pages_without_policy_calls(tmp_path):
     observations = [_observation(2, has_next=False, total=2)]
     moves = []

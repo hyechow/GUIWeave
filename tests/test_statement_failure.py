@@ -55,6 +55,10 @@ def test_model_declared_failure_keeps_statement_running(monkeypatch) -> None:
     assert step.outcome is None
     assert step.retry_transition is True
     assert "not a terminal runtime fact" in step.summary
+    assert any("恢复、导航或继续观察" in item for item in policy.constraints_snapshot())
+
+    policy.end_statement()
+    assert policy.constraints_snapshot() == []
 
 
 def test_failed_requires_evidence_in_schema() -> None:

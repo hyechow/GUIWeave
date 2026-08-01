@@ -126,6 +126,35 @@ def test_lookup_resolves_unique_collection_from_required_field_schema() -> None:
     assert scope["surface_fingerprint"] == "table:#audit"
 
 
+def test_lookup_addresses_one_raw_cell_collection_without_inventing_schema() -> None:
+    scope = resolve_lookup_scope(
+        Observation(
+            png_bytes=b"png",
+            source="android",
+            collection_regions=[{
+                "ref": "android-collection:0",
+                "surface_fingerprint": "android-collection:feed",
+                "cells": [],
+                "bounds": (0, 0, 1000, 1000),
+                "traversal": {"type": "scroll"},
+            }],
+        ),
+        CollectionIntent(
+            phase="locate",
+            entity="Posts",
+            required_fields=["author", "content"],
+        ),
+    )
+
+    assert scope == {
+        "kind": "resolved_collection",
+        "entity": "Posts",
+        "surface_fingerprint": "android-collection:feed",
+        "available_fields": [],
+        "projection": "cells",
+    }
+
+
 def test_lookup_does_not_resolve_single_collection_from_generic_word_only() -> None:
     scope = resolve_lookup_scope(
         Observation(

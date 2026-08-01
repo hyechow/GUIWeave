@@ -73,3 +73,19 @@ def test_resolve_intent_normalizes_mode_and_search_key(monkeypatch):
     assert e0.match_mode == "approximate"      # unknown mode → approximate
     assert e0.search_key == "Olivia zip jacket"  # empty key → defaults to the mention
     assert res.entities[1].match_mode == "exact"  # valid mode preserved
+
+
+def test_resolve_intent_preserves_tag_and_handle_sigils(monkeypatch):
+    def _fake(_llm, _msgs, _schema, **_kw):
+        return IntentResolution(entities=[
+            EntityRef(mention="#dogs", match_mode="approximate", search_key="dogs"),
+            EntityRef(mention="@pupper", match_mode="approximate", search_key="pupper"),
+        ])
+
+    monkeypatch.setattr(ir, "invoke_structured", _fake)
+    result = resolve_intent("find #dogs posts from @pupper", llm=object())
+
+    assert [(item.match_mode, item.search_key) for item in result.entities] == [
+        ("exact", "#dogs"),
+        ("exact", "@pupper"),
+    ]

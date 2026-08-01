@@ -149,6 +149,25 @@ def test_orchestrator_context_projects_planning_boundary(tmp_path, monkeypatch):
     assert "左侧菜单" not in context
 
 
+def test_orchestrator_context_projects_navigation_planning_boundary_without_sections() -> None:
+    knowledge = app_summary.AppKnowledge(
+        navigation=(
+            "# App\n"
+            "Execution navigation details.\n"
+            "## Planning boundary\n"
+            "Records owns the name field.\n"
+        ),
+        elements="",
+        app_name="App",
+    )
+
+    context = knowledge.orchestrator_context("read records")
+
+    assert "Records owns the name field" in context
+    assert "Execution navigation details" not in context
+    assert "Required application interface facts" in context
+
+
 def test_shopping_admin_material_query_receives_product_field_contract() -> None:
     knowledge = app_summary.load_knowledge_for_app("shopping_admin", "browser")
     assert knowledge is not None
