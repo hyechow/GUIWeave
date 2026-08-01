@@ -57,7 +57,7 @@ class StatementLLMRuntimeMixin:
             statement,
             observation,
             memory_view=memory,
-            constraints=list(self._static_constraints),
+            constraints=self.constraints_snapshot(),
             prompts=self._prompts,
             context_reports=self._context_reports,
             app_knowledge=self._app_knowledge,

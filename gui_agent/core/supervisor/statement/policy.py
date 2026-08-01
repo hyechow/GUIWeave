@@ -12,6 +12,7 @@ from gui_agent.core.filter_contract import (
 )
 from gui_agent.core.run.action_signals import has_uncommitted_write
 from gui_agent.core.run.statement_memory import available_event_refs, build_memory_view
+from gui_agent.core.run.target_evidence import exact_target_evidence
 from gui_agent.core.run.lookup_scope import resolve_lookup_scope
 from gui_agent.core.run.statement_runtime import StatementRuntimeState
 from gui_agent.core.run.statement_transition import validate_evidence_references
@@ -186,6 +187,7 @@ class StatementSupervisorPolicy(
         self._surface_resolver = surface_resolver
         self._mutation_control_resolver = mutation_control_resolver
         self._static_constraints: list[str] = []
+        self._pending_transition_correction = ""
         self._statement_rt: StatementRuntimeState | None = None
         self.task_type: Literal["action", "analysis"] = "action"
         self._app_knowledge: str | None = None
@@ -248,6 +250,7 @@ class StatementSupervisorPolicy(
         if self._statement_rt is not None:
             raise RuntimeError("end the active statement before beginning another")
         self._initial_filters = None
+        self._pending_transition_correction = ""
         self._statement_rt = StatementRuntimeState(
             contract=contract,
             instance_id=instance_id,
@@ -286,10 +289,15 @@ class StatementSupervisorPolicy(
     def end_statement(self, outcome=None) -> None:
         del outcome
         self._statement_rt = None
+        self._pending_transition_correction = ""
 
     def constraints_snapshot(self, scope: str | None = None) -> list[str]:
         del scope
-        return list(self._static_constraints)
+        return [
+            *self._static_constraints,
+            *([self._pending_transition_correction]
+              if self._pending_transition_correction else []),
+        ]
 
     def add_static_constraint(self, text: str) -> None:
         if text and text not in self._static_constraints:
@@ -766,6 +774,7 @@ class StatementSupervisorPolicy(
         if decision is not None:
             self._record_transition(decision, reason)
         if validation_retries <= 0:
+            self._pending_transition_correction = guidance
             message = f"Statement postcondition remains unsatisfied: {reason}"
             return SupervisorStep(
                 retry_transition=True,
@@ -1035,6 +1044,16 @@ class StatementSupervisorPolicy(
                     "requested exact filter predicate set is not established: "
                     "mismatched"
                 )
+            target_evidence = exact_target_evidence(statement, observation)
+            if (
+                not rejection
+                and target_evidence["status"] == "absent"
+            ):
+                rejection = (
+                    "current structured observation does not contain the exact "
+                    "target identity fields: "
+                    f"{target_evidence['missing_fields']!r}"
+                )
             if (
                 not rejection
                 and statement.persistence == "explicit_commit"
@@ -1155,6 +1174,7 @@ class StatementSupervisorPolicy(
                 validation_retries=validation_retries,
             )
         self._record_transition(decision)
+        self._pending_transition_correction = ""
         return step
 
 

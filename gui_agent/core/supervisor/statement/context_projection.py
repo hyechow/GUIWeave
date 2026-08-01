@@ -7,6 +7,7 @@ summarize, truncate, enforce a size budget, call an LLM, or decide Statement pro
 from __future__ import annotations
 
 from gui_agent.core.run.statement_memory import StatementMemoryView
+from gui_agent.core.run.target_evidence import exact_target_evidence
 from gui_agent.core.schemas import Observation, StatementContract
 from gui_agent.core.self_learning.progressive import ProgressiveKnowledge
 
@@ -427,6 +428,7 @@ def project_transition_observation(
     """Project the current observation for this Transition consumer."""
     controls = _decision_controls(statement, observation)
     affordances = _compact_affordances(statement, view)
+    target_evidence = exact_target_evidence(statement, observation)
     return {
         "title": observation.title,
         "url": observation.url,
@@ -445,6 +447,11 @@ def project_transition_observation(
         "initial_filters": initial_filters or {},
         "tables": _project_tables(statement, observation),
         "affordances": affordances,
+        **(
+            {"target_evidence": target_evidence}
+            if target_evidence["status"] != "not_applicable"
+            else {}
+        ),
     }
 
 
