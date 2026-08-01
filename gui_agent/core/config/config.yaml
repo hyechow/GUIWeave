@@ -34,6 +34,10 @@ llm:
   fingerprint:
     provider: dashscope
     model: qwen3.5-flash
+  loading:
+    # 只处理平台信号和高置信启发式都无法裁决的稀疏帧。
+    provider: dashscope
+    model: qwen3.5-flash
 
 # AGENT_MODEL=<profile> 时，把对应 profile 深合并进上面的 llm（只覆盖列出的字段）。
 # qwen35 为基线（无需在此列，留空即用上面默认）。新增对比模型只在此加一项即可。

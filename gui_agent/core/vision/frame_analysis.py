@@ -6,7 +6,10 @@ Each function answers ONE narrow pixel question about screenshots:
                          picture stop moving"); NOT a judge of whether an action worked.
   - ``frame_changed``  — did the screen MEANINGFULLY change (action effect)? Structure
                          (SSIM) + color (changed-pixel ratio) + mean, any one over the bar.
-  - ``is_blank_screen`` / ``is_loading_frame`` — is this a blank / still-loading page (wait)?
+  - ``is_blank_screen`` — is this a visually blank page?
+
+Tiered runtime loading perception lives in ``core.vision.loading``; this module only
+provides low-level pixel facts.
 
 DESIGN NOTE: a grayscale mean is the wrong judge of "did the action work" or "is the task
 done" — it dilutes localized change, is blind to color (a tab going gray→blue), and is
@@ -20,9 +23,12 @@ import-time light.
 from __future__ import annotations
 
 import io
+from typing import TYPE_CHECKING
+
 from PIL import Image, ImageStat
 
-from gui_agent.core.schemas import Observation
+if TYPE_CHECKING:
+    from gui_agent.core.schemas import Observation
 
 # ── thresholds ─────────────────────────────────────────────────────────────
 # frame_changed (动作是否生效): structure + color signals, ANY one over its bar => changed.
@@ -136,16 +142,8 @@ def is_blank_screen(png_bytes: bytes) -> bool:
     return mean >= BLANK_BODY_MEAN_MIN and std <= BLANK_BODY_STD_MAX
 
 
-def is_loading_frame(observation: Observation) -> bool:
-    """Whether this frame is an unstable / still-loading page (so wait, don't act).
+def is_loading_frame(observation: "Observation") -> bool:
+    """Compatibility entry point for the tiered loading assessment."""
+    from .loading import assess_loading
 
-    Prefer the PLATFORM's structural signal when perception supplies one
-    (``observation.loading`` — e.g. browser's ``document.readyState != 'complete'``). The
-    iphone PIXEL heuristic (``is_blank_screen``: large light uniform body) is used ONLY as the
-    fallback when the platform gives no signal (``loading is None``), because on desktop web it
-    MISFIRES — a rendered-but-sparse page (an empty doc editor, a wide centered layout) is
-    mostly whitespace and reads as 'blank'.
-    """
-    if observation.loading is not None:
-        return observation.loading
-    return is_blank_screen(observation.png_bytes)
+    return assess_loading(observation).is_loading
