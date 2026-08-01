@@ -92,6 +92,7 @@ def _report_coding_payload(op: str, payload: dict[str, Any]) -> dict[str, Any]:
         return {
             "goal": payload.get("goal"),
             **(dict(payload.get("inputs") or {}) if isinstance(payload.get("inputs"), dict) else {}),
+            **({"state": _state_token(payload.get("state"))} if payload.get("state") else {}),
             "values": payload.get("values") or {},
         }
     if op == "lookup":
@@ -263,7 +264,18 @@ class _RuntimeContext:
         filters = dict(json_value(dict(filters or {})))
         filter_key = (state.token, canonical_filter_field(entity))
         desired_filters = compile_filter_predicates(filters)
-        known_filters = self._query_filters.get(filter_key)
+        state_values = {
+            key: value
+            for key, value in state.postcondition.items()
+            if canonical_filter_field(key) in desired_filters
+        }
+        state_filters = compile_filter_predicates(state_values)
+        route_satisfies_filters = bool(desired_filters) and state_filters == desired_filters
+        known_filters = (
+            desired_filters
+            if route_satisfies_filters
+            else self._query_filters.get(filter_key)
+        )
         needs_constrain = (
             bool(filters) if known_filters is None
             else desired_filters != known_filters
@@ -274,8 +286,8 @@ class _RuntimeContext:
             canonical_filter_field(field) for field in field_names
         }
         source_fields.extend(
-            field for field in compile_filter_predicates(filters)
-            if field not in source_field_keys
+            field for field in desired_filters
+            if field not in source_field_keys and field not in state_filters
         )
         scope = self._request(
             "lookup",
@@ -408,6 +420,11 @@ class _RuntimeContext:
         normalized_target = json_value(target) if target is not None else None
         normalized_values = json_value(values)
         inputs = {"target": normalized_target} if normalized_target is not None else {}
+        state = (
+            require_current_ui(self._current_ui, target=normalized_target)
+            if normalized_target is not None
+            else None
+        )
         self._request(
             "commit",
             call_id=self._call_id("commit"),
@@ -416,6 +433,7 @@ class _RuntimeContext:
             plan_steps=1,
             goal=goal,
             inputs=inputs,
+            state=state,
             values=dict(normalized_values),
         )
         self._current_ui = None
@@ -753,6 +771,12 @@ class CodingProgramRuntime:
                     raise ValueError("ctx.reach success is not a structured state")
                 success = reach_state
                 success_text = "Every declared expected-state condition is established"
+            state = None
+            target = payload.get("target") if op == "reach" else (
+                dict(payload.get("inputs") or {}).get("target")
+            )
+            if op == "commit" and target is not None:
+                state = require_current_ui(payload.get("state"), target=target)
             statement = Interact(
                 id=statement_id,
                 goal=task,
@@ -761,14 +785,20 @@ class CodingProgramRuntime:
                 required_values=values,
                 persistence="explicit_commit" if values else "immediate",
             )
+            inputs = (
+                {"target": target}
+                if op == "reach" and target is not None
+                else dict(payload.get("inputs") or {})
+            )
+            args: dict[str, Any] = {}
+            if state is not None:
+                inputs["ui_state"] = state.snapshot()
+                args["ui_state_token"] = state.token
             return StatementInvocation(
                 statement=statement,
                 task_goal=self.program.goal,
-                inputs=(
-                    {"target": payload.get("target")}
-                    if op == "reach" and payload.get("target") is not None
-                    else dict(payload.get("inputs") or {})
-                ),
+                inputs=inputs,
+                args=args,
             )
         if op == "acquire":
             scope = dict(payload.get("scope") or {})
@@ -958,6 +988,11 @@ class CodingProgramRuntime:
                 token=f"{invocation.id}:state",
                 postcondition=postcondition,
                 observed_state=dict(outcome.outputs),
+                target=(
+                    coding_payload.get("target")
+                    if coding_op == "reach"
+                    else invocation.inputs.get("target")
+                ),
             )
             coding_payload["produced_state"] = issued_ui_state.token
         self.interpreter.run_log.append(RunRecord(

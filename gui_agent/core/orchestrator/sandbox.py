@@ -148,6 +148,10 @@ def _call_argument(node: ast.Call, name: str, position: int) -> ast.AST | None:
     )
 
 
+def _same_expression(left: ast.AST | None, right: ast.AST | None) -> bool:
+    return left is not None and right is not None and ast.dump(left) == ast.dump(right)
+
+
 def _diag(node: ast.AST, code: str, message: str) -> CodeDiagnostic:
     return CodeDiagnostic(
         code=code,
@@ -620,6 +624,42 @@ def _ctx_state_contract_diagnostics(
         )
         return None if invalidated else latest
 
+    def reach_call(item: tuple[int, str | None, frozenset[str], ast.Dict]) -> ast.Call | None:
+        owner: ast.AST | None = item[3]
+        while owner is not None:
+            if isinstance(owner, ast.Call) and _ctx_method(owner) == "reach":
+                return owner
+            owner = parents.get(owner)
+        return None
+
+    def declares_target_identity(
+        reach: tuple[int, str | None, frozenset[str], ast.Dict],
+        target: ast.AST,
+    ) -> bool:
+        for key, value in zip(reach[3].keys, reach[3].values):
+            if not (
+                isinstance(key, ast.Constant)
+                and isinstance(key.value, str)
+                and key.value not in {"entity", "fields"}
+            ):
+                continue
+            if (
+                isinstance(value, ast.Subscript)
+                and _same_expression(value.value, target)
+                and isinstance(value.slice, ast.Constant)
+                and value.slice.value == key.value
+            ):
+                return True
+            if isinstance(target, ast.Dict):
+                for target_key, target_value in zip(target.keys, target.values):
+                    if (
+                        isinstance(target_key, ast.Constant)
+                        and target_key.value == key.value
+                        and _same_expression(value, target_value)
+                    ):
+                        return True
+        return False
+
     diagnostics: list[CodeDiagnostic] = []
     diagnosed_consumers: set[ast.Call] = set()
     for node in ast.walk(function):
@@ -649,6 +689,40 @@ def _ctx_state_contract_diagnostics(
         if not isinstance(node, ast.Call):
             continue
         method = _ctx_method(node)
+        if method == "commit":
+            target = _call_argument(node, "target", 1)
+            if target is None or (
+                isinstance(target, ast.Constant) and target.value is None
+            ):
+                continue
+            reach = active_reach(node)
+            active_target = (
+                _call_argument(call, "target", 2)
+                if reach is not None and (call := reach_call(reach)) is not None
+                else None
+            )
+            if not _same_expression(active_target, target):
+                diagnostics.append(_diag(
+                    node,
+                    "COMMIT_TARGET_UI_REQUIRED",
+                    (
+                        "targeted ctx.commit requires "
+                        "ctx.reach(..., target=<same target expression>, "
+                        "success={<identity field>: <same target>[<field>]}) "
+                        "after selection and inside the commit loop; do not nest "
+                        "the target under success"
+                    ),
+                ))
+            elif reach is not None and not declares_target_identity(reach, target):
+                diagnostics.append(_diag(
+                    node,
+                    "TARGET_REACH_IDENTITY_REQUIRED",
+                    (
+                        "target-bound ctx.reach success must declare at least one "
+                        "exact target identity field and value"
+                    ),
+                ))
+            continue
         if method in {"query", "read"}:
             reach = active_reach(node)
             if reach is None:
@@ -749,6 +823,11 @@ def _ctx_effect_lineage_diagnostics(
     Binding = dict[str, list[tuple[int, set[Reach] | None]]]
     reaches = _reach_calls(function)
     reach_entities = {line: entity for line, entity, _, _ in reaches}
+    reach_targets = {
+        node.lineno: _call_argument(node, "target", 2)
+        for node in ast.walk(function)
+        if isinstance(node, ast.Call) and _ctx_method(node) == "reach"
+    }
     projected: dict[Reach, set[str]] = {}
     sequences: Binding = {}
     rows: Binding = {}
@@ -887,10 +966,18 @@ def _ctx_effect_lineage_diagnostics(
         for reach in target_sources:
             commits.setdefault(reach, set()).update(fields)
         current = latest_reach(call.lineno)
+        current_owns_target = (
+            current is not None
+            and target is not None
+            and reach_targets.get(current) is not None
+            and _same_expression(reach_targets[current], target)
+        )
         inactive_sources = [
             reach
             for reach in target_sources
             if (
+                not current_owns_target
+                and
                 reach != current
                 and (
                     reach_entities.get(reach) is None
@@ -1939,13 +2026,15 @@ class _FixtureContext:
         normalized = reach_postcondition(json_value(success))
         if normalized is None:
             raise ValueError("ctx.reach success is not a structured state")
+        normalized_target = json_value(target) if target is not None else None
         state = CurrentUI(
             token=f"fixture-ui:{len(self.trace) + 1}",
             postcondition=normalized,
+            target=normalized_target,
         )
         self._world_task(
             goal,
-            target=target,
+            target=normalized_target,
             values={},
             trace_extra={"success": success},
         )
@@ -1958,7 +2047,10 @@ class _FixtureContext:
         target: Any = None,
         values: dict[str, Any],
     ) -> None:
-        self._world_task(goal, target=target, values=values)
+        normalized_target = json_value(target) if target is not None else None
+        if normalized_target is not None:
+            require_current_ui(self._current_ui, target=normalized_target)
+        self._world_task(goal, target=normalized_target, values=values)
         self._current_ui = None
 
     def _world_task(

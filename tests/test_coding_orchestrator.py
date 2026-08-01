@@ -54,6 +54,15 @@ def run(ctx):
         assert new_price < detail["Price"], "price must decrease"
         updates.append([product, new_price])
     for product, new_price in updates:
+        ctx.reach(
+            "Open the exact product",
+            target=product,
+            success={
+                "entity": "Product",
+                "id": product["id"],
+                "Name": product["Name"],
+            },
+        )
         ctx.commit(
             "Update the product price",
             target=product,
@@ -335,6 +344,16 @@ def run(ctx):
         if not row["favorited"] and not row.get("bookmarked", False)
     ]
     for row in selected:
+        ctx.reach(
+            "Open the exact record",
+            target=row,
+            success={
+                "entity": "Record",
+                "id": row["id"],
+                "favorited": row["favorited"],
+                "bookmarked": row["bookmarked"],
+            },
+        )
         ctx.commit("Update record", target=row, values={"favorited": True})
     return len(selected)
 """
@@ -393,6 +412,16 @@ def run(ctx):
         if not row["favorited"] and not row.get("bookmarked", False)
     ]
     for row in selected:
+        ctx.reach(
+            "Open the exact record",
+            target=row,
+            success={
+                "entity": "Record",
+                "id": row["id"],
+                "favorited": row["favorited"],
+                "bookmarked": row["bookmarked"],
+            },
+        )
         ctx.commit("Update record", target=row, values={"favorited": True})
     return len(selected)
 """
@@ -461,6 +490,16 @@ def run(ctx):
         if (row["author_handle"], row["content"]) not in excluded
     ]
     for row in pending:
+        ctx.reach(
+            "Open the exact tagged record",
+            target=row,
+            success={
+                "entity": "TaggedRecord",
+                "id": row["id"],
+                "author_handle": row["author_handle"],
+                "content": row["content"],
+            },
+        )
         ctx.commit("Favorite record", target=row, values={"favorited": True})
     return len(pending)
 """
@@ -496,6 +535,15 @@ def run(ctx):
     reference_content = {row["content"] for row in references}
     pending = [row for row in rows if row["content"] not in reference_content]
     for row in pending:
+        ctx.reach(
+            "Open the exact source record",
+            target=row,
+            success={
+                "entity": "SourceRecord",
+                "content": row["content"],
+                "permalink": row["permalink"],
+            },
+        )
         ctx.commit("Update record", target=row, values={"saved": True})
     return len(pending)
 """
@@ -979,6 +1027,7 @@ def test_execute_code_commit_updates_fixture_state() -> None:
         "reach",
         "query",
         "read",
+        "reach",
         "commit",
     ]
 
@@ -1046,6 +1095,11 @@ def run(ctx):
         },
     )
     product = ctx.query(entity="Products", fields=["id"])[0]
+    ctx.reach(
+        "Open the exact product",
+        target=product,
+        success={"entity": "Product", "id": product["id"]},
+    )
     ctx.commit("Update price", target=product, values={"Price": 80})
     assert product["missing"], "later check fails"
 """
@@ -1263,6 +1317,8 @@ def run(ctx):
     assert {
         record.coding_call_id for record in runtime.interpreter.run_log[1:]
     } == {query_call_id}
+
+
 def test_runtime_query_without_predicates_skips_constrain() -> None:
     source = """
 def run(ctx):
@@ -1295,6 +1351,52 @@ def run(ctx):
     ))
 
     assert runtime.finished
+    assert [record.coding_op for record in runtime.interpreter.run_log] == [
+        "reach",
+        "lookup",
+        "acquire",
+    ]
+
+
+def test_runtime_query_reuses_matching_route_filter_from_current_ui() -> None:
+    source = '''
+def run(ctx):
+    ctx.reach(
+        "Open #dogs",
+        success={"entity": "TaggedToots", "tag": "#dogs"},
+    )
+    return ctx.query(
+        entity="TaggedToots",
+        fields=["author_handle", "content"],
+        filters={"tag": "#dogs"},
+    )
+'''
+    runtime = CodingProgramRuntime.start(CodingProgram(goal="list tagged posts", source=source))
+
+    runtime.send_outcome(StatementOutcome.completed("tag route active"))
+    assert runtime.current.statement.interaction_intent.phase == "locate"
+    assert runtime.current.statement.interaction_intent.required_fields == [
+        "author_handle",
+        "content",
+    ]
+    assert runtime.current_coding_plan_steps == 2
+    runtime.send_outcome(StatementOutcome.completed(
+        "scope resolved",
+        outputs={"scope": {
+            "kind": "resolved_collection",
+            "entity": "TaggedToots",
+            "surface_fingerprint": "android-collection:feed",
+            "available_fields": [],
+            "projection": "cells",
+        }},
+    ))
+
+    assert isinstance(runtime.current.statement, Acquire)
+    assert runtime.current_coding_plan_step == 2
+    runtime.send_outcome(StatementOutcome.completed(
+        "rows acquired",
+        outputs={"rows": []},
+    ))
     assert [record.coding_op for record in runtime.interpreter.run_log] == [
         "reach",
         "lookup",
@@ -1355,17 +1457,25 @@ def run(ctx):
 def test_runtime_commit_infers_internal_statement_contract() -> None:
     source = """
 def run(ctx):
-    ctx.commit("Update order status", target={"ID": "1"}, values={"Status": "Complete"})
+    target = {"ID": "1"}
+    ctx.reach(
+        "Open the exact order",
+        target=target,
+        success={"entity": "Order", "ID": target["ID"]},
+    )
+    ctx.commit("Update order status", target=target, values={"Status": "Complete"})
     assert ctx, "runtime exists"
 """
     runtime = CodingProgramRuntime.start(CodingProgram(goal="update order", source=source))
 
+    runtime.send_outcome(StatementOutcome.completed("exact order visible"))
     statement = runtime.current.statement
     assert isinstance(statement, Interact)
     assert statement.goal == "Update order status"
     assert statement.required_values == {"Status": "Complete"}
     assert statement.persistence == "explicit_commit"
     assert runtime.current.inputs["target"] == {"ID": "1"}
+    assert runtime.current.inputs["ui_state"]["target"] == {"ID": "1"}
 
 
 def test_commit_date_time_values_match_probe_and_runtime_json_contract() -> None:
@@ -1545,6 +1655,11 @@ def run(ctx):
         filters={"Title": "Home Page"},
     )
     assert len(rows) == 1, "one page is required"
+    ctx.reach(
+        "Open the exact page",
+        target=rows[0],
+        success={"entity": "Page", "Title": rows[0]["Title"]},
+    )
     ctx.commit("Update page title", target=rows[0], values={"Page Title": "New title"})
 """
     llm = _SequenceLLM(
@@ -1569,6 +1684,15 @@ def run(ctx):
     owners = [row for row in rows if row["Type"] == "Configurable Product"]
     if len(owners) != 1:
         raise ValueError("one configurable owner is required")
+    ctx.reach(
+        "Open the exact product",
+        target=owners[0],
+        success={
+            "entity": "Product",
+            "Name": owners[0]["Name"],
+            "Type": owners[0]["Type"],
+        },
+    )
     ctx.commit("Update owner", target=owners[0], values={"Status": "Enabled"})
 """
     llm = _SequenceLLM(

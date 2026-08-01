@@ -11,7 +11,7 @@ source: manual_verified
 confidence: high
 sensitivity: internal
 ttl: session
-version: 3
+version: 5
 ---
 # Mastodon on Android
 
@@ -38,7 +38,9 @@ version: 3
 - Favorite membership cannot be inferred from the tag view. Bookmark membership
   cannot be inferred from a missing card marker.
 - Favorite mutation uses the boolean field `favorited`; this is not a field
-  displayed by `TaggedToots`.
+  displayed by `TaggedToots` and is neither a query field nor a query filter.
+  Do not prefilter `TaggedToots` by favorite state; determine exclusion only from
+  the exact memberships collected from `SavedFavorites` and `SavedBookmarks`.
 - Tapping the visible text body of a Toot opens its single-post detail view,
   titled `Post from <author>`. Do not tap the author/avatar or a media thumbnail:
   those open the author profile or media viewer instead. The detail view exposes
@@ -51,8 +53,9 @@ version: 3
   abbreviated entity names.
 - `TaggedToots` is an exact tag-scoped view, not an unfiltered collection. Opening
   it requires a concrete tag; declare that tag in `ctx.reach.success` and name it
-  in the reach goal before querying or returning to this source. Its query fields
-  are exactly `author_handle` and `content`.
+  in the reach goal before querying or returning to this source. Tag values retain
+  their leading `#`; never strip it. Submit the same exact tag through
+  `ctx.query.filters`. Its query fields are exactly `author_handle` and `content`.
 - `SavedFavorites` is established only while the `Favorites` saved view is active;
   declare this observable state as `active_view="Favorites"` in `ctx.reach.success`.
   Its query fields are exactly `author_handle` and `content`.
@@ -62,3 +65,9 @@ version: 3
 - Favoriting updates an existing `TaggedToots` record. `author_handle` and `content`
   identify that record; `favorited` is the only mutation field and is not a
   `TaggedToots` query field.
+- To mutate a `TaggedToots` row, return through its exact tag view, match its exact
+  (`author_handle`, `content`) pair, and tap its text body into `entity="TootDetail"`.
+  The target reach keeps the literal source `tag` (including `#`) and copies both row
+  identity fields into top-level `success`; a shared-list match is insufficient because
+  another Toot's action bar may be visible. The tag is route state, not `row["tag"]`,
+  and full Toot content is not a global search term.

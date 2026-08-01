@@ -80,6 +80,14 @@ def run(ctx):
         filters={"Default Label": "Size"},
     )
     assert attributes, "Size attribute was not found"
+    ctx.reach(
+        "Open the exact attribute",
+        target=attributes[0],
+        success={
+            "entity": "Product Attribute",
+            "Attribute Code": attributes[0]["Attribute Code"],
+        },
+    )
     ctx.commit(
         "Add the XXXL size option",
         target=attributes[0],
@@ -104,6 +112,15 @@ def run(ctx):
         if product["Type"] == "Configurable Product"
     ]
     assert len(owners) == 1, "Expected one configurable Minerva owner"
+    ctx.reach(
+        "Open the exact product",
+        target=owners[0],
+        success={
+            "entity": "Product",
+            "Name": owners[0]["Name"],
+            "Type": owners[0]["Type"],
+        },
+    )
     ctx.commit(
         "Add the green XXXL configuration",
         target=owners[0],
@@ -187,6 +204,14 @@ def run(ctx):
         )
     assert rows, "No pending order found"
     latest = max(rows, key=lambda row: row["Purchase Date"])
+    ctx.reach(
+        "Open the exact order",
+        target=latest,
+        success={
+            "entity": "Order",
+            "Purchase Date": latest["Purchase Date"],
+        },
+    )
     ctx.commit(
         "Notify customer",
         target=latest,

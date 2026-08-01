@@ -45,6 +45,16 @@ def run(ctx):
     for row in tagged:
         pair = (row["author_handle"], row["content"])
         if pair not in favorites and pair not in bookmarks:
+            ctx.reach(
+                "Open the exact toot",
+                target=row,
+                success={
+                    "entity": "TootDetail",
+                    "tag": "#dogs",
+                    "author_handle": row["author_handle"],
+                    "content": row["content"],
+                },
+            )
             ctx.commit("Favorite toot", target=row, values={"favorited": True})
 '''
 
@@ -52,3 +62,24 @@ def run(ctx):
         source,
         _case("MastodonConditionalFavoTask")["contract"],
     ) == []
+
+
+def test_conditional_collection_contract_rejects_unsupported_status_filter() -> None:
+    source = '''
+def run(ctx):
+    ctx.reach(
+        "Open #dogs", success={"entity": "TaggedToots", "tag": "#dogs"}
+    )
+    return ctx.query(
+        entity="TaggedToots",
+        fields=["author_handle", "content"],
+        filters={"tag": "#dogs", "favorited": False},
+    )
+'''
+
+    failures = orchestrator_eval.evaluate_source(
+        source,
+        _case("MastodonConditionalFavoTask")["contract"],
+    )
+
+    assert any("ORDERED_CALL:1" in failure for failure in failures)

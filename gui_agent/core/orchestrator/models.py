@@ -59,12 +59,14 @@ class CurrentUI:
     token: str
     postcondition: dict[str, Any] = field(default_factory=dict)
     observed_state: dict[str, Any] = field(default_factory=dict)
+    target: Any = None
 
     def snapshot(self) -> dict[str, Any]:
         return {
             "token": self.token,
             "postcondition": self.postcondition,
             "observed_state": self.observed_state,
+            "target": self.target,
         }
 
 
@@ -96,12 +98,15 @@ def require_current_ui(
     value: Any,
     *,
     entity: str = "",
+    target: Any = None,
 ) -> CurrentUI:
     if not isinstance(value, CurrentUI):
-        raise ValueError("ctx.query/ctx.read require one active UI established by ctx.reach")
+        raise ValueError("the operation requires one active UI established by ctx.reach")
     postcondition = value.postcondition
     if entity and postcondition.get("entity") != entity:
         raise ValueError("the active UI entity does not satisfy ctx.query")
+    if target is not None and value.target != target:
+        raise ValueError("the active UI is not bound to the ctx.commit target")
     return value
 
 

@@ -92,9 +92,10 @@
     "contract": {
       "method_counts": {"commit": 1},
       "ordered_calls": [
-        {"method": "query", "entity": "TaggedToots", "fields_include": ["author_handle", "content"], "filters_include": {"tag": "#dogs"}},
+        {"method": "query", "entity": "TaggedToots", "fields_include": ["author_handle", "content"], "filter_keys_exact": ["tag"], "filters_include": {"tag": "#dogs"}},
         {"method": "query", "entity": "SavedFavorites", "fields_include": ["author_handle", "content"]},
         {"method": "query", "entity": "SavedBookmarks", "fields_include": ["author_handle", "content"]},
+        {"method": "reach", "target_mode": "present", "inside_loop": true, "success_include": {"entity": "TootDetail", "tag": "#dogs"}},
         {"method": "commit", "target_mode": "present", "inside_loop": true, "values_include": {"favorited": true}}
       ],
       "literal_values": ["#dogs", "SavedFavorites", "SavedBookmarks"]

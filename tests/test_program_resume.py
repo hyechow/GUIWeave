@@ -35,6 +35,11 @@ def run(ctx):
     ctx.reach("Open Orders", success={"entity": "Orders"})
     rows = ctx.query(entity="Orders", fields=["ID"])
     if rows:
+        ctx.reach(
+            "Open the exact order",
+            target=rows[0],
+            success={"entity": "Order", "ID": rows[0]["ID"]},
+        )
         ctx.commit(goal="Update order", target=rows[0], values={"Status": "Complete"})
     return len(rows)
 """,

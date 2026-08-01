@@ -236,6 +236,11 @@ def _matches(record: dict[str, Any], spec: dict[str, Any]) -> bool:
     ):
         if spec_key in spec and not set(spec[spec_key]) <= set(record[record_key]):
             return False
+    if (
+        "filter_keys_exact" in spec
+        and set(record["filters"]) != set(spec["filter_keys_exact"])
+    ):
+        return False
     for spec_key, record_key in (
         ("field_types_include", "field_types"),
         ("filters_include", "filters"),
