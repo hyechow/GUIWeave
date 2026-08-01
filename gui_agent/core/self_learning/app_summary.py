@@ -86,12 +86,16 @@ class AppKnowledge:
 
         stems = self.orchestrator_sections(goal)
         if not stems:
-            return self.navigation
-        boundaries = [
-            boundary
-            for stem in stems
-            if (boundary := _planning_boundary(self.sections[stem]))
-        ]
+            boundary = _planning_boundary(self.navigation)
+            if not boundary:
+                return self.navigation
+            boundaries = [boundary]
+        else:
+            boundaries = [
+                boundary
+                for stem in stems
+                if (boundary := _planning_boundary(self.sections[stem]))
+            ]
         if boundaries:
             return (
                 "## Required application interface facts\n\n"
