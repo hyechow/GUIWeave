@@ -43,10 +43,12 @@ def _collect(case: dict) -> list[dict]:
         if signature != previous:
             stream.add(frame)
             previous = signature
-    return materialize_cell_records(stream.cells, case["fields"])
+    return materialize_cell_records(
+        stream.cells, case["fields"], goal=case.get("goal", ""),
+    )
 
 
-def _replay_frames(frames: list[dict], fields: list[str]) -> list[dict]:
+def _replay_frames(frames: list[dict], fields: list[str], goal: str) -> list[dict]:
     """Apply the adapter's two-no-progress-confirmations move contract."""
     stream = CellStream()
     index = 0
@@ -63,7 +65,7 @@ def _replay_frames(frames: list[dict], fields: list[str]) -> list[dict]:
             if unchanged == 2:
                 index = len(frames)
                 break
-    return materialize_cell_records(stream.cells, fields)
+    return materialize_cell_records(stream.cells, fields, goal=goal)
 
 
 def _check(label: str, actual, expected) -> bool:
@@ -96,7 +98,11 @@ def main() -> int:
         failed += not _check(
             label,
             lambda stride=stride: {
-                name: _replay_frames(frames[::stride], replay["fields"])
+                name: _replay_frames(
+                    frames[::stride],
+                    replay["fields"],
+                    f"Materialize post records from {name!r}",
+                )
                 for name, frames in replay["collections"].items()
             },
             replay["expected"],

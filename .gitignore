@@ -15,6 +15,9 @@ knowledge/android/*
 !knowledge/android/Mastodon/
 knowledge/android/Mastodon/*
 !knowledge/android/Mastodon/_app.md
+!knowledge/android/Files/
+knowledge/android/Files/*
+!knowledge/android/Files/_app.md
 # Curated shopping_admin planning contracts promoted to repository source.
 !knowledge/browser/
 knowledge/browser/*

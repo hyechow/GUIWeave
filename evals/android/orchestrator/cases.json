@@ -62,11 +62,25 @@
     "contract": {
       "method_counts": {"commit": 0},
       "required_any_calls": [[
-        {"method": "query", "entity": "Cart", "fields_include": ["price"]},
-        {"method": "query", "entity": "ShoppingCart", "fields_include": ["price"]}
+        {"method": "query", "entity": "Cart", "fields_include": ["price"], "field_types_include": {"price": "money"}, "coverage": "complete"},
+        {"method": "query", "entity": "ShoppingCart", "fields_include": ["price"], "field_types_include": {"price": "money"}, "coverage": "complete"}
       ]],
-      "features": ["returns_value", "sorts"],
+      "features": ["returns_value", "returns_integer", "sorts", "sums"],
       "slice_stops": [3]
+    }
+  },
+  {
+    "task_name": "RecentTotalExpenseTask",
+    "group": "read_compute",
+    "apps": ["Taodian"],
+    "intent": "请帮我算一下在淘店上最近1个月我总共花了多少钱。请只回答一个整数, 不要返回任何其他文本.",
+    "contract": {
+      "method_counts": {"commit": 0},
+      "required_any_calls": [[
+        {"method": "query", "entity": "Orders", "fields_include": ["amount"], "field_types_include": {"amount": "money"}, "filters_include": {"order_time": "近1个月"}, "coverage": "complete"}
+      ]],
+      "features": ["returns_value", "returns_integer", "sums"],
+      "literal_values": ["近1个月"]
     }
   },
   {
@@ -75,13 +89,17 @@
     "apps": ["Files"],
     "intent": "Check the all files inside the earliest zip file from July in the Downloads directory and count how many lines it contains in total. Respond only with an integer representing the line count, with no other text.",
     "contract": {
-      "method_counts": {"commit": 0},
-      "method_min_counts": {"query": 1, "read": 1},
-      "required_calls": [
-        {"method": "query", "fields_include": ["created_at"]},
-        {"method": "read", "target_mode": "present", "fields_include": ["content"]}
+      "method_counts": {"commit": 1},
+      "method_min_counts": {"query": 3, "read": 1},
+      "ordered_calls": [
+        {"method": "query", "entity": "DownloadFiles", "fields_include": ["name", "modified_at"], "field_types_include": {"modified_at": "datetime"}, "filter_keys_exact": [], "coverage": "complete"},
+        {"method": "query", "entity": "ArchiveEntries", "fields_include": ["name"], "coverage": "complete"},
+        {"method": "commit", "target_mode": "present", "values_include": {"selection": "all", "destination": "Downloads"}},
+        {"method": "query", "entity": "DownloadFiles", "fields_include": ["name"], "coverage": "complete"},
+        {"method": "read", "target_mode": "present", "fields_include": ["content"], "inside_loop": true}
       ],
-      "features": ["returns_value", "sorts"]
+      "features": ["returns_value", "returns_integer", "sorts", "sums"],
+      "forbidden_literals": [2026]
     }
   },
   {

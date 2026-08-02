@@ -29,5 +29,37 @@
         "(?i)turn off|关闭"
       ]
     }
+  },
+  {
+    "label": "preserve relative period",
+    "user_msg": "请帮我算一下在淘店上最近1个月我总共花了多少钱。请只回答一个整数。",
+    "session": [],
+    "expected": {
+      "required_patterns": [
+        "淘店",
+        "最近(?:1|一)个月|近(?:1|一)个月",
+        "整数"
+      ],
+      "goal_not_contains": [
+        "往前推30天",
+        "2026-"
+      ]
+    }
+  },
+  {
+    "label": "do not invent implementation alternatives",
+    "user_msg": "Check all files inside the earliest zip file from July in Downloads and count their total lines. Return only an integer.",
+    "session": [],
+    "expected": {
+      "required_patterns": [
+        "(?i)Downloads|下载(?:文件夹|目录)?",
+        "(?i)July|7月",
+        "(?i)total lines|总行数|行数"
+      ],
+      "goal_not_contains": [
+        "解压或查看",
+        "extract or view"
+      ]
+    }
   }
 ]

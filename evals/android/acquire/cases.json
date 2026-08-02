@@ -1,6 +1,7 @@
 [
   {
     "label": "terminal empty list with notice and tabs",
+    "goal": "Materialize post records from SavedFavorites",
     "group": "empty",
     "at_boundary": true,
     "fields": ["content"],
@@ -18,6 +19,7 @@
   },
   {
     "label": "one terminal record is not empty",
+    "goal": "Materialize post records from Feed",
     "group": "single_record",
     "at_boundary": true,
     "fields": ["author_handle", "content"],
@@ -34,6 +36,7 @@
   },
   {
     "label": "multi-cell feed split across scrolling windows",
+    "goal": "Materialize post records from Feed",
     "group": "feed",
     "at_boundary": true,
     "fields": ["author_handle", "content"],
@@ -65,6 +68,7 @@
   },
   {
     "label": "homogeneous list rows",
+    "goal": "Materialize item records from List",
     "group": "list",
     "at_boundary": true,
     "fields": ["name"],
@@ -80,4 +84,3 @@
     }
   }
 ]
-

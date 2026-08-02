@@ -107,6 +107,13 @@ def test_statement_transition_separates_commit_boundary_from_action_family():
     assert "不要求存在名为 Save/Submit 的独立按钮" in prompt
 
 
+def test_coding_prompt_separates_projection_fields_from_source_filters():
+    prompt = load_prompt_text("task.orchestrator.coding")
+
+    assert "projected field is not automatically source-filterable" in prompt.lower()
+    assert "completely acquired rows in Python" in prompt
+
+
 def test_prompt_eval_suites_point_to_existing_paths():
     for prompt in iter_prompt_templates():
         for suite in prompt.eval_suites:
@@ -138,6 +145,10 @@ def test_every_platform_router_includes_shared_goal_semantics():
     for platform in ("android", "browser", "iphone"):
         system, _known_apps_rule = _router_system_for(platform)
         assert shared in system
+
+    assert "不得使用 Router 所在宿主机" in shared
+    assert "固定天数" in shared
+    assert "可选实现方案" in shared
 
 
 def test_large_inline_prompt_constants_are_explicitly_allowlisted():
