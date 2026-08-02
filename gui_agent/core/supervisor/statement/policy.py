@@ -1140,6 +1140,15 @@ class StatementSupervisorPolicy(
                 )
             if (
                 not rejection
+                and target_evidence.get("collection_member") is True
+            ):
+                rejection = (
+                    "the exact target is visible only as a member of a repeated "
+                    "collection; collection membership does not establish the "
+                    "target-bound active UI"
+                )
+            if (
+                not rejection
                 and statement.persistence == "explicit_commit"
                 and has_uncommitted_write(scoped_history)
             ):

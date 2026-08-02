@@ -50,18 +50,26 @@ def _cell_observation(cells: list[dict]) -> Observation:
     })
 
 
-def _observation(content: str) -> Observation:
-    return _cell_observation([{
-                "ref": "author",
-                "structural_key": "author",
-                "content_key": "author:pupper",
-                "texts": ["now · @pupper"],
-            }, {
-                "ref": "body",
-                "structural_key": "body",
-                "content_key": "body:visible",
-                "texts": [content],
-            }])
+def _observation(content: str, *, repeated: bool = False) -> Observation:
+    cells = [{
+        "structural_key": "author",
+        "content_key": "author:pupper",
+        "texts": ["now · @pupper"],
+    }, {
+        "structural_key": "body",
+        "content_key": "body:target",
+        "texts": [content],
+    }]
+    if repeated:
+        cells[:0] = [
+            {
+                "structural_key": key,
+                "content_key": f"{key}:other",
+                "texts": [text],
+            }
+            for key, text in (("author", "@other"), ("body", "other body"))
+        ]
+    return _cell_observation(cells)
 
 
 def _complete() -> _StatementTransitionResult:
@@ -240,8 +248,14 @@ def test_mastodon_replay_distinguishes_adjacent_toot_bodies() -> None:
         )
     )
 
-    assert exact_target_evidence(statement, _cell_observation(wrong["cells"]))["status"] == "absent"
-    assert exact_target_evidence(statement, _cell_observation(matching["cells"]))["status"] == "matched"
+    assert exact_target_evidence(
+        statement, _cell_observation(wrong["cells"])
+    )["status"] == "absent"
+    matching_evidence = exact_target_evidence(
+        statement, _cell_observation(matching["cells"])
+    )
+    assert matching_evidence["status"] == "matched"
+    assert matching_evidence["collection_member"] is True
 
 
 def test_target_reach_cannot_complete_on_a_different_structured_record(
@@ -267,3 +281,34 @@ def test_target_reach_cannot_complete_on_a_different_structured_record(
     assert step.outcome is None
     assert step.retry_transition is True
     assert "content" in step.summary
+
+
+def test_target_bound_statement_cannot_complete_on_a_collection_member(
+    monkeypatch,
+) -> None:
+    statement = _statement()
+    observation = _observation(TARGET["content"], repeated=True)
+    commit = statement.model_copy(update={
+        "expected_state": {},
+        "inputs": {
+            "target": TARGET,
+            "ui_state": {"postcondition": statement.expected_state},
+        },
+    })
+    assert exact_target_evidence(commit, observation)["collection_member"] is True
+
+    policy = StatementSupervisorPolicy()
+    policy.begin_statement(statement, instance_id="i1:target")
+    monkeypatch.setattr(policy_module, "is_loading_frame", lambda _obs: False)
+    monkeypatch.setattr(
+        policy,
+        "_invoke_statement_transition",
+        lambda *_args, **_kwargs: _complete(),
+    )
+    step = policy._run_single_turn(
+        statement, observation, [], validation_retries=0,
+    )
+
+    assert step.outcome is None
+    assert step.retry_transition is True
+    assert "collection membership" in step.summary

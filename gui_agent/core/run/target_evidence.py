@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+from collections import Counter
 from collections.abc import Iterable
 from typing import Any
 
@@ -34,6 +35,39 @@ def _structured_values(observation: Observation) -> tuple[object, ...]:
     return tuple(_primitive_values(sources))
 
 
+def _is_collection_member(
+    identity: dict[str, Any], observation: Observation,
+) -> bool:
+    """Whether a cell carrying target identity has a structural peer."""
+    for region in observation.collection_regions or ():
+        cells = [
+            (
+                cell.structural_key,
+                tuple(_primitive_values((*cell.texts, *cell.controls))),
+            )
+            for cell in region.cells
+        ]
+        values = tuple(source for _, items in cells for source in items)
+        if not all(
+            any(_contains(source, value) for source in values)
+            for value in identity.values()
+        ):
+            continue
+        key_counts = Counter(key for key, _ in cells)
+        matching_keys = {
+            key
+            for key, items in cells
+            if any(
+                _contains(source, value)
+                for source in items
+                for value in identity.values()
+            )
+        }
+        if any(key_counts[key] > 1 for key in matching_keys):
+            return True
+    return False
+
+
 def _contains(source: object, expected: object) -> bool:
     if type(source) is type(expected) and source == expected:
         return True
@@ -61,29 +95,31 @@ def exact_identity_evidence(
         for field, value in identity.items()
         if not any(_contains(source, value) for source in values)
     ]
-    return {
+    result = {
         "status": "matched" if not missing else "absent",
         "fields": fields,
         "missing_fields": missing,
     }
+    if not missing and _is_collection_member(identity, observation):
+        result["collection_member"] = True
+    return result
 
 
 def exact_target_evidence(
     statement: StatementContract,
     observation: Observation,
 ) -> dict[str, Any]:
-    """Match identity values declared by a target-specific reach.
-
-    Unsupported visual-only observations return ``unknown`` so existing platform
-    paths keep using Transition's visual evidence. Structured sensors never fuzzy
-    normalize values: punctuation, sigils, and long source text remain exact.
-    """
+    """Match exact target identity from Reach or its Commit ``ui_state``."""
     target = statement.inputs.get("target")
-    if not isinstance(target, dict) or not statement.expected_state:
+    ui_state = statement.inputs.get("ui_state")
+    state = statement.expected_state or (
+        ui_state.get("postcondition") if isinstance(ui_state, dict) else None
+    )
+    if not isinstance(target, dict) or not isinstance(state, dict) or not state:
         return {"status": "not_applicable"}
     return exact_identity_evidence({
         key: value
-        for key, value in statement.expected_state.items()
+        for key, value in state.items()
         if key not in _STATE_KEYS and key in target and target[key] == value
     }, observation)
 
