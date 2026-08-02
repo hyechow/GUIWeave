@@ -93,6 +93,49 @@ def test_uiautomator_exposes_ordered_cells_without_inventing_records() -> None:
     assert "records" not in region
 
 
+def test_uiautomator_drops_only_exact_same_bounds_ghost_cells() -> None:
+    xml = """<hierarchy>
+      <node class="android.widget.GridView" resource-id="app:id/list"
+            scrollable="true" bounds="[0,0][1080,2400]">
+        <node class="android.widget.TextView" text="Same" bounds="[0,100][1080,200]"/>
+        <node class="android.widget.TextView" text="Same" bounds="[0,100][1080,200]"/>
+        <node class="android.widget.TextView" text="Same" bounds="[0,200][1080,300]"/>
+      </node>
+    </hierarchy>"""
+
+    regions = collection_regions_from_uiautomator(xml, viewport_size=(1080, 2400))
+
+    assert regions is not None
+    assert [cell["texts"] for cell in regions[0]["cells"]] == [["Same"], ["Same"]]
+    assert [round(cell["bounds"][1]) for cell in regions[0]["cells"]] == [42, 83]
+
+
+def test_uiautomator_drops_cells_without_observable_content() -> None:
+    xml = """<hierarchy>
+      <node class="android.widget.GridView" resource-id="app:id/list"
+            scrollable="true" bounds="[0,0][1080,2400]">
+        <node class="android.widget.LinearLayout" resource-id="app:id/item_root"
+              bounds="[0,0][1080,100]"/>
+        <node class="android.widget.TextView" text="Visible"
+              bounds="[0,100][1080,200]"/>
+      </node>
+    </hierarchy>"""
+
+    regions = collection_regions_from_uiautomator(xml, viewport_size=(1080, 2400))
+
+    assert regions is not None
+    assert [cell["texts"] for cell in regions[0]["cells"]] == [["Visible"]]
+
+
+def test_collection_traversal_reflects_the_adapter_scroll_capability() -> None:
+    xml = XML.replace('scrollable="true"', 'scrollable="false"')
+
+    regions = collection_regions_from_uiautomator(xml, viewport_size=(1080, 2400))
+
+    assert regions is not None
+    assert regions[0]["traversal"] == {"type": "static"}
+
+
 def test_collection_resource_identity_survives_hierarchy_path_shift() -> None:
     shifted = XML.replace(
         '<node class="androidx.recyclerview.widget.RecyclerView"',
@@ -100,13 +143,82 @@ def test_collection_resource_identity_survives_hierarchy_path_shift() -> None:
         'bounds="[0,0][1080,100]"/>'
         '<node class="androidx.recyclerview.widget.RecyclerView"',
     )
+    wrapped = XML.replace(
+        '<node class="android.widget.TextView" text="@pupper" bounds="[48,240][400,320]"/>',
+        '<node class="android.view.View" bounds="[48,240][400,320]">'
+        '<node class="android.widget.TextView" text="@pupper" bounds="[48,240][400,320]"/>'
+        '</node>',
+    )
 
     original = collection_regions_from_uiautomator(XML, viewport_size=(1080, 2400))
     moved = collection_regions_from_uiautomator(shifted, viewport_size=(1080, 2400))
+    rewrapped = collection_regions_from_uiautomator(wrapped, viewport_size=(1080, 2400))
 
-    assert original is not None and moved is not None
+    assert original is not None and moved is not None and rewrapped is not None
     assert original[0]["ref"] != moved[0]["ref"]
     assert original[0]["surface_fingerprint"] == moved[0]["surface_fingerprint"]
+    assert [cell["content_key"] for cell in original[0]["cells"]] == [
+        cell["content_key"] for cell in moved[0]["cells"]
+    ]
+    assert (
+        original[0]["cells"][0]["content_key"]
+        == rewrapped[0]["cells"][0]["content_key"]
+    )
+
+
+def _webview(records: str, route: str) -> str:
+    return f'''<node class="android.webkit.WebView" scrollable="true"
+      bounds="[0,0][1080,2400]">
+      <node class="android.view.View" content-desc="{route}">
+        <node class="android.view.View" bounds="[0,200][1080,2200]">
+          {records}
+        </node>
+      </node>
+    </node>'''
+
+
+def test_webview_exposes_topmost_heterogeneous_cell_stream() -> None:
+    hidden = _webview(
+        '<node class="android.widget.TextView" text="A"/>'
+        '<node class="android.widget.TextView" text="B"/>',
+        "pages/home[1]",
+    )
+    active = _webview('''
+      <node class="android.widget.TextView" text="Order 1"/>
+      <node class="android.widget.Button" text="Completed" clickable="true"/>
+      <node class="android.view.View">
+        <node class="android.widget.TextView" text="Total"/>
+        <node class="android.widget.TextView" text="1196"/>
+      </node>''', "pages/orders[1]")
+
+    regions = collection_regions_from_uiautomator(
+        f"<hierarchy>{hidden}{active}</hierarchy>",
+        viewport_size=(1080, 2400),
+    )
+
+    assert regions is not None and len(regions) == 1
+    assert regions[0]["caption"] == "pages/orders[1]"
+    assert [cell["texts"] for cell in regions[0]["cells"]] == [
+        ["Order 1"], ["Completed"], ["Total", "1196"],
+    ]
+
+
+def test_webview_collection_identity_ignores_filtered_record_shape() -> None:
+    def observe(records: str, route: str = "pages/orders[1]"):
+        return collection_regions_from_uiautomator(
+            f"<hierarchy>{_webview(records, route)}</hierarchy>",
+            viewport_size=(1080, 2400),
+        )
+
+    full = observe('<node text="Order A"/><node text="Order B"/>')
+    filtered = observe('<node text="Order D"/><node text="Total 367"/>')
+    other_route = observe(
+        '<node text="Order D"/><node text="Total 367"/>', "pages/cart[1]",
+    )
+
+    assert full and filtered and other_route
+    assert full[0]["surface_fingerprint"] == filtered[0]["surface_fingerprint"]
+    assert full[0]["surface_fingerprint"] != other_route[0]["surface_fingerprint"]
 
 
 def test_android_policy_taps_only_an_exact_current_structural_ref() -> None:

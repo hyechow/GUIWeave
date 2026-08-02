@@ -86,7 +86,14 @@ class AndroidSession:
         with ThreadPoolExecutor(max_workers=2) as pool:
             screenshot = pool.submit(self.client.screenshot)
             hierarchy = pool.submit(self.client.dump_ui_hierarchy)
-            return screenshot.result(), hierarchy.result()
+            png_bytes = screenshot.result()
+            xml_text = hierarchy.result()
+        # UIAutomator is optional but occasionally returns no XML while pixels are
+        # already stable. Retry only that missing channel; successful frames keep the
+        # concurrent one-shot cost and the required screenshot is never recaptured.
+        if xml_text is None:
+            xml_text = self.client.dump_ui_hierarchy()
+        return png_bytes, xml_text
 
 
 class AndroidPerception:
@@ -108,8 +115,8 @@ class AndroidPerception:
             hierarchy,
             viewport_size=client.viewport_size if client is not None else (0, 0),
         )
-        # Downscale to the configured width (default 320) — cuts LLM tokens; tap
-        # coords are unaffected (the executor denormalizes against device pixels).
+        # Downscale to the configured width; tap coordinates are unaffected because
+        # the executor denormalizes against device pixels.
         png_bytes = _downscale_width(png_bytes, SCREENSHOT_MAX_WIDTH)
         self.screenshot_path.parent.mkdir(parents=True, exist_ok=True)
         self.screenshot_path.write_bytes(png_bytes)

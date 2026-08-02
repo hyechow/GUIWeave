@@ -216,32 +216,26 @@ class AndroidDevice:
                 last_exc = exc
         raise RuntimeError(f"screenshot failed after retries: {last_exc}")
 
-    def dump_ui_hierarchy(self, timeout_s: float = 4.0) -> str | None:
+    def dump_ui_hierarchy(self, timeout_s: float = 6.0) -> str | None:
         """Return UIAutomator XML without making this optional sensor mandatory."""
         dev = self._require_dev()
-        remote = "/sdcard/_gui_agent_window.xml"
         try:
-            dev.shell(
-                f"uiautomator dump {remote}",
-                timeout=max(0.1, float(timeout_s)),
-            )
             raw = dev.shell(
-                f"cat {remote}",
-                timeout=min(max(0.1, float(timeout_s)), 1.0),
+                "uiautomator dump /dev/tty",
+                timeout=max(0.1, float(timeout_s)),
             )
             value = (
                 raw.decode("utf-8", errors="replace")
                 if isinstance(raw, bytes)
                 else str(raw or "")
             )
-            return value if "<hierarchy" in value and "<node" in value else None
+            start = value.find("<hierarchy")
+            end = value.rfind("</hierarchy>")
+            if start < 0 or end < start:
+                return None
+            return value[start:end + len("</hierarchy>")]
         except Exception:  # noqa: BLE001 - screenshots remain the required sensor
             return None
-        finally:
-            try:
-                dev.shell(f"rm -f {remote}", timeout=1.0)
-            except Exception:  # noqa: BLE001 - best-effort device cleanup
-                pass
 
     def _screencap_pull(self) -> bytes:
         """File-based capture: screencap to /sdcard then pull (robust fallback)."""

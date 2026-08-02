@@ -76,17 +76,6 @@ def _shape(node: ET.Element) -> list[Any]:
     ]
 
 
-def _content(node: ET.Element) -> list[Any]:
-    attrs = node.attrib
-    return [
-        _short_class(node), _short_resource(node),
-        str(attrs.get("text") or "").strip(),
-        str(attrs.get("content-desc") or "").strip(),
-        attrs.get("checked"), attrs.get("selected"), attrs.get("enabled"),
-        [_content(child) for child in node if child.tag == "node"],
-    ]
-
-
 def _texts(node: ET.Element) -> list[str]:
     result: list[str] = []
     for child in node.iter("node"):
@@ -146,6 +135,35 @@ def _nodes(
         if child.tag == "node":
             yield child, child_path, depth
         yield from _nodes(child, path=child_path, depth=depth + 1)
+
+
+def _webview_stream(
+    root: ET.Element,
+) -> tuple[ET.Element, tuple[int, ...], int, str] | None:
+    """Return the richest repeated child stream from the active WebView."""
+    webviews = [
+        item for item in _nodes(root)
+        if _short_class(item[0]).casefold() == "webview"
+        and item[0].attrib.get("scrollable") == "true"
+    ]
+    if not webviews:
+        return None
+    webview, path, depth = webviews[-1]
+    streams: list[tuple[int, int, int, ET.Element, tuple[int, ...], str]] = []
+    captions = {path: _label(webview)}
+    for node, node_path, node_depth in _nodes(webview, path, depth + 1):
+        caption = _label(node) or captions.get(node_path[:-1], "")
+        captions[node_path] = caption
+        children = [child for child in node if child.tag == "node"]
+        textual = sum(bool(_texts(child)) for child in children)
+        if len(children) >= 2 and textual >= 2:
+            streams.append((
+                textual, len(children), node_depth, node, node_path, caption,
+            ))
+    if not streams:
+        return None
+    _, _, depth, node, path, caption = max(streams, key=lambda item: item[:3])
+    return node, path, depth, caption
 
 
 def semantic_tree_from_uiautomator(
@@ -231,6 +249,12 @@ def collection_regions_from_uiautomator(
         if _short_class(node).casefold() in _COLLECTION_CLASSES
         and any(child.tag == "node" for child in node)
     ]
+    web_fallbacks: dict[tuple[int, ...], str] = {}
+    fallback = _webview_stream(root) if not candidates else None
+    if fallback is not None:
+        node, path, depth, caption = fallback
+        candidates.append((node, path, depth))
+        web_fallbacks[path] = caption
     # UI frameworks sometimes wrap one RecyclerView in another with identical bounds.
     # Keep the deepest/richest representative, while preserving genuinely distinct regions.
     selected: dict[object, tuple[ET.Element, tuple[int, ...], int]] = {}
@@ -245,18 +269,35 @@ def collection_regions_from_uiautomator(
     for node, path, _depth in selected.values():
         raw_region_bounds = _raw_bounds(node)
         cells: list[dict[str, Any]] = []
+        seen_cells: set[tuple[tuple[int, int, int, int], str]] = set()
         for index, child in enumerate(child for child in node if child.tag == "node"):
             raw_cell_bounds = _raw_bounds(child)
             child_path = (*path, index)
+            texts = _texts(child)
+            controls = _controls(child, child_path)
+            if not texts and not controls:
+                continue
+            content_key = _digest([
+                texts,
+                [
+                    [control.get(key) for key in ("role", "label", "value")]
+                    for control in controls
+                ],
+            ])
+            if raw_cell_bounds is not None:
+                identity = (raw_cell_bounds, content_key)
+                if identity in seen_cells:
+                    continue
+                seen_cells.add(identity)
             cells.append({
                 "ref": "android:" + ".".join(map(str, child_path)),
                 "structural_key": _digest(_shape(child)),
-                "content_key": _digest(_content(child)),
+                "content_key": content_key,
                 "class_name": _short_class(child),
                 "resource": _short_resource(child),
                 "bounds": _normalized_bounds(raw_cell_bounds, viewport_size),
-                "texts": _texts(child),
-                "controls": _controls(child, child_path),
+                "texts": texts,
+                "controls": controls,
                 "clipped_top": bool(
                     raw_cell_bounds and raw_region_bounds
                     and raw_cell_bounds[1] <= raw_region_bounds[1]
@@ -267,15 +308,21 @@ def collection_regions_from_uiautomator(
                 ),
             })
         resource = _short_resource(node)
+        page_caption = web_fallbacks.get(path, "")
         identity: list[Any] = [_short_class(node), resource]
-        if not resource:
-            identity.append(list(path))
+        if path in web_fallbacks or not resource:
+            # Surface identity never includes current records or their count.
+            identity.append(page_caption if path in web_fallbacks else list(path))
         regions.append({
             "ref": "android-collection:" + ".".join(map(str, path)),
             "surface_fingerprint": "android-collection:" + _digest(identity),
             "cells": cells,
             "bounds": _normalized_bounds(raw_region_bounds, viewport_size),
-            "traversal": {"type": "scroll"},
+            "caption": page_caption,
+            "traversal": (
+                {"type": "scroll"}
+                if node.attrib.get("scrollable") == "true" else {"type": "static"}
+            ),
         })
     return regions
 

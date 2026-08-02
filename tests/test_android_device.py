@@ -151,6 +151,28 @@ def test_screenshot_returns_png_bytes(calls):
     assert len(png) > 100
 
 
+def test_dump_ui_hierarchy_reads_direct_xml_without_a_remote_file() -> None:
+    from gui_agent.adapters.android.device import AndroidDevice
+
+    calls = []
+
+    class _HierarchyDev:
+        def shell(self, command, timeout=None):
+            calls.append((command, timeout))
+            return (
+                '<?xml version="1.0"?><hierarchy><node text="Files" />'
+                '</hierarchy>\nUI hierchary dumped to: /dev/tty'
+            )
+
+    device = AndroidDevice(serial="device")
+    device._dev = _HierarchyDev()
+
+    assert device.dump_ui_hierarchy() == (
+        '<hierarchy><node text="Files" /></hierarchy>'
+    )
+    assert calls == [("uiautomator dump /dev/tty", 6.0)]
+
+
 def test_scroll_down_swipes_finger_up_within_screen(calls):
     dev = _connected_device()
     dev.scroll("down", amount=5, x=540, y=1200)
