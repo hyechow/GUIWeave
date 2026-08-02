@@ -200,6 +200,11 @@ def _call_records(tree: ast.AST) -> list[dict[str, Any]]:
             "entity": _literal(_argument(call, "entity"), names),
             "fields": fields,
             "field_types": field_types,
+            "coverage": (
+                _literal(_argument(call, "coverage"), names)
+                if method == "query" and _argument(call, "coverage") is not None
+                else "complete" if method == "query" else None
+            ),
             "filters": _mapping_shape(_argument(call, "filters"), names),
             "values": _mapping_shape(_argument(call, "values"), names),
             "success": _mapping_shape(_argument(call, "success"), names),
@@ -225,7 +230,7 @@ def _subset(actual: Any, expected: Any) -> bool:
 def _matches(record: dict[str, Any], spec: dict[str, Any]) -> bool:
     if record["method"] != spec["method"]:
         return False
-    for key in ("entity", "inside_if", "inside_loop", "target_mode"):
+    for key in ("entity", "inside_if", "inside_loop", "target_mode", "coverage"):
         if key in spec and record[key] != spec[key]:
             return False
     for spec_key, record_key in (
@@ -383,6 +388,22 @@ def evaluate_source(source: str, contract: dict[str, Any]) -> list[str]:
         "returns_value": returns_value,
         "no_return_value": not returns_value,
         "sorts": ranks,
+        "sums": any(
+            (
+                isinstance(node, ast.Call)
+                and isinstance(node.func, ast.Name)
+                and node.func.id == "sum"
+            )
+            or isinstance(node, ast.AugAssign) and isinstance(node.op, ast.Add)
+            for node in ast.walk(tree)
+        ),
+        "returns_integer": any(
+            isinstance(node, ast.Return)
+            and isinstance(node.value, ast.Call)
+            and isinstance(node.value.func, ast.Name)
+            and node.value.func.id == "int"
+            for node in ast.walk(tree)
+        ),
     }
     for feature in contract.get("features", []):
         if not features.get(feature, False):

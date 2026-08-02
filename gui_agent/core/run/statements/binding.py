@@ -101,8 +101,13 @@ def _field_fact(
 
     semantic: list[_BoundFact] = []
     for index, item in enumerate(normalized.semantic):
-        if _key(item.get("key", "")) == target:
-            value_name = "value" if "value" in item else "key"
+        if _key(item.get("key", "")) == target and "value" in item:
+            # ``key`` identifies a semantic node; it is not the node's value.
+            # Returning it when no value exists turns a requested field such as
+            # ``content`` into the tautological string ``"content"`` and masks
+            # the visual fallback.  A role match below is different: there the
+            # key is the visible value of a semantic role (for example a heading).
+            value_name = "value"
             semantic.append(_BoundFact(
                 json_value(item[value_name]),
                 f"semantic[{index}].{value_name}",
@@ -114,6 +119,24 @@ def _field_fact(
             ))
     if semantic:
         return _one(semantic, binding)
+
+    containers = {
+        str(item.get("ref"))
+        for item in normalized.semantic
+        if _key(item.get("key", "")) == target and item.get("ref")
+    }
+    descendants = [
+        _BoundFact(json_value(item["key"]), f"semantic[{index}].key")
+        for index, item in enumerate(normalized.semantic)
+        if _key(item.get("role", "")) in {_key("text"), _key("heading")}
+        and item.get("key") not in (None, "")
+        and any(
+            str(item.get("ref", "")).startswith(f"{container}.")
+            for container in containers
+        )
+    ]
+    if len(descendants) == 1:
+        return descendants[0]
 
     records: list[_BoundFact] = []
     for dataset_index, dataset in enumerate(normalized.datasets):

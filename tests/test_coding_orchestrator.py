@@ -372,6 +372,36 @@ def run(ctx):
     )
 
 
+def test_validate_code_keeps_target_identity_out_of_row_field_leakage() -> None:
+    source = '''
+def run(ctx):
+    ctx.reach("Downloads", success={"entity": "Files", "fields": ["name"]})
+    rows = ctx.query(entity="Files", fields={"name": "text"})
+    target = rows[0]
+    ctx.reach(
+        "Open archive",
+        target=target,
+        success={"entity": "ArchiveEntries", "name": target["name"], "fields": ["name"]},
+    )
+    entries = ctx.query(entity="ArchiveEntries", fields={"name": "text"})
+    selected = [entry for entry in entries if entry["name"]]
+    ctx.commit(
+        "Extract archive",
+        target=target,
+        values={"selection": "all", "destination": "Downloads"},
+    )
+    return len(selected)
+'''
+
+    diagnostics = validate_code(source)
+
+    assert not any(
+        item.code == "ROW_FIELD_LEAKED_INTO_REACH"
+        and "name" in item.message
+        for item in diagnostics
+    )
+
+
 def test_validate_code_rejects_committed_reach_field_without_projection() -> None:
     source = """
 def run(ctx):

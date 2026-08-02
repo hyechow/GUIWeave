@@ -242,6 +242,7 @@ def collection_candidates(
                 "caption": region.caption,
                 "headers": [],
                 "record_count": None,
+                "traversal": dict(region.traversal),
             }
         )
     return candidates

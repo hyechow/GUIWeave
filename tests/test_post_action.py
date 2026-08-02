@@ -93,6 +93,18 @@ def test_no_effect_requires_cdp_and_visual_channels_to_agree(monkeypatch):
     assert no_effect is True
 
 
+def test_stable_scroll_reports_no_effect_from_pre_and_post_frames(monkeypatch):
+    monkeypatch.setattr(action_exec.time, "sleep", lambda _seconds: None)
+    monkeypatch.setattr(action_exec, "frame_diff", lambda *_args: 0.0)
+    monkeypatch.setattr(action_exec, "frame_changed", lambda *_args: False)
+
+    _, no_effect = action_exec.settle_after_action(
+        _CdpPlatform(b"same"), b"same", "scroll",
+    )
+
+    assert no_effect is True
+
+
 def test_finalize_auto_continue_turn_records_settle_and_verify(monkeypatch):
     turn = SimpleNamespace(settle_s=None, no_effect=False, target_verify=None)
     verify = TargetVerify(on_target=False, actual_element="取消按钮")

@@ -103,6 +103,7 @@ def _report_coding_payload(op: str, payload: dict[str, Any]) -> dict[str, Any]:
             "fallback": payload.get("fallback"),
             "filters": payload.get("filters") or {},
             "required_fields": payload.get("required_fields") or [],
+            "coverage": payload.get("coverage") or "complete",
         }
     if op == "constrain":
         scope = payload.get("scope") if isinstance(payload.get("scope"), dict) else {}
@@ -300,6 +301,7 @@ class _RuntimeContext:
             field="name",
             fallback="",
             required_fields=source_fields,
+            coverage=coverage,
         )
         if needs_constrain:
             scope = self._request(
@@ -624,6 +626,7 @@ class CodingProgramRuntime:
             required_fields = [
                 str(value) for value in payload.get("required_fields") or []
             ]
+            coverage = str(payload.get("coverage") or "complete")
             state = require_current_ui(
                 payload.get("state"),
                 entity=entity,
@@ -649,6 +652,7 @@ class CodingProgramRuntime:
                     field=field_name,
                     fallback=fallback,
                     required_fields=required_fields,
+                    coverage=coverage,
                 ),
                 persistence="immediate",
             )

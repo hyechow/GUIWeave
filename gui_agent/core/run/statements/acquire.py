@@ -163,6 +163,8 @@ class _CellCollectionAdapter:
         self.cursor.refresh(retry)
 
     def move_next(self) -> Literal["moved", "end"]:
+        if (self._candidate()["table"].get("traversal") or {}).get("type") == "static":
+            return "end"
         if self.bundle.move_collection is None:
             raise RuntimeError("platform does not implement structured collection movement")
         before = self._viewport_signature()
@@ -392,6 +394,8 @@ class _AcquireExecutor:
             rows = materialize_cell_records(
                 stream.cells,
                 self.statement.required_fields,
+                field_types=dict(self.invocation.args.get("field_types") or {}),
+                goal=self.statement.goal,
             )
         except (RuntimeError, TypeError, ValueError) as exc:
             return StatementOutcome.failed(
@@ -402,10 +406,17 @@ class _AcquireExecutor:
             )
 
         output, spec = next(iter(self.statement.returns.items()))
+        reports = list(self.reports)
+        if complete:
+            reports.append({
+                "kind": "collection_cursor",
+                "boundary": "end",
+                "direction": "forward",
+            })
         details = {
             "observation": self.cursor.observation,
             "observation_url": self.cursor.observation_url,
-            "context_reports": self.reports,
+            "context_reports": reports,
         }
         if not complete and spec.coverage != "best_effort":
             return StatementOutcome.exhausted(

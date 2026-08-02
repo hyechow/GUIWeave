@@ -53,7 +53,7 @@ def json_value(value: Any) -> JsonValue:
     return str(value)
 
 
-_CURRENCY_RE = re.compile(r"[$€£¥₹₩₪₫฿₽₺₦₱]")
+_CURRENCY_RE = re.compile(r"[$€£¥￥₹₩₪₫฿₽₺₦₱]")
 _NUMBER_RE = re.compile(r"[-+]?(?:\d{1,3}(?:,\d{3})+|\d+)(?:\.\d+)?%?")
 _NUMERIC_FIELD_WORDS = frozenset(
     "amount balance cost count counts percent percentage price quantity quantities "
@@ -63,6 +63,7 @@ _DATETIME_FORMATS = (
     "%b %d, %Y %I:%M:%S %p", "%B %d, %Y %I:%M:%S %p",
     "%b %d, %Y %I:%M %p", "%B %d, %Y %I:%M %p",
     "%b %d, %Y", "%B %d, %Y",
+    "%b %d", "%B %d",
     "%m/%d/%Y %I:%M:%S %p", "%m/%d/%Y %I:%M %p", "%m/%d/%Y",
     "%Y-%m-%d %H:%M:%S", "%Y-%m-%d %H:%M", "%Y-%m-%d",
 )
@@ -77,6 +78,10 @@ def _decimal(value: Any, *, money: bool = False) -> Decimal:
         text = text[1:-1]
     if money:
         text = _CURRENCY_RE.sub("", text)
+        # UI sensors may split one rendered decimal into adjacent fragments such
+        # as ``￥ 367 .00``. Whitespace before the decimal separator is visual
+        # presentation, not a field boundary.
+        text = re.sub(r"(?<=\d)\s+(?=[.,]\d)", "", text)
     text = text.replace(",", "").strip()
     if text.endswith("%"):
         text = text[:-1].strip()

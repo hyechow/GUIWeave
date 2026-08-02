@@ -44,6 +44,30 @@ def _contains(source: object, expected: object) -> bool:
     )
 
 
+def exact_identity_evidence(
+    identity: dict[str, Any], observation: Observation,
+) -> dict[str, Any]:
+    """Match one already-established target identity against structured evidence."""
+    if not identity:
+        return {"status": "not_applicable"}
+    fields = list(identity)
+    if not fields:
+        return {"status": "unknown", "fields": fields}
+    values = _structured_values(observation)
+    if not values:
+        return {"status": "unknown", "fields": fields}
+    missing = [
+        field
+        for field, value in identity.items()
+        if not any(_contains(source, value) for source in values)
+    ]
+    return {
+        "status": "matched" if not missing else "absent",
+        "fields": fields,
+        "missing_fields": missing,
+    }
+
+
 def exact_target_evidence(
     statement: StatementContract,
     observation: Observation,
@@ -57,27 +81,11 @@ def exact_target_evidence(
     target = statement.inputs.get("target")
     if not isinstance(target, dict) or not statement.expected_state:
         return {"status": "not_applicable"}
-    expected = {
+    return exact_identity_evidence({
         key: value
         for key, value in statement.expected_state.items()
         if key not in _STATE_KEYS and key in target and target[key] == value
-    }
-    fields = list(expected)
-    if not fields:
-        return {"status": "unknown", "fields": fields}
-    values = _structured_values(observation)
-    if not values:
-        return {"status": "unknown", "fields": fields}
-    missing = [
-        field
-        for field, value in expected.items()
-        if not any(_contains(source, value) for source in values)
-    ]
-    return {
-        "status": "matched" if not missing else "absent",
-        "fields": fields,
-        "missing_fields": missing,
-    }
+    }, observation)
 
 
-__all__ = ["exact_target_evidence"]
+__all__ = ["exact_identity_evidence", "exact_target_evidence"]

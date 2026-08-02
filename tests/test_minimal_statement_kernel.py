@@ -283,6 +283,56 @@ def test_new_statement_receives_only_the_closed_predecessor_handoff(monkeypatch)
     }
 
 
+def test_target_handoff_mechanically_relocates_until_exact_target_is_visible(
+    monkeypatch,
+) -> None:
+    target = {"name": "requested.zip"}
+    statement = StatementContract(
+        id="open",
+        goal="open the requested archive",
+        success="the archive is open",
+        inputs={"target": target},
+        observe_fields=["content"],
+    )
+    policy = _policy(statement)
+    monkeypatch.setattr(
+        policy,
+        "_invoke_statement_transition",
+        lambda *_args, **_kwargs: pytest.fail("relocation direction is deterministic"),
+    )
+    previous = StatementOutcomeEvent(
+        statement_instance_id="run:collect",
+        statement_id="collect",
+        outcome=StatementOutcome.completed(
+            "complete collection",
+            outputs={"rows": [{"name": target["name"]}]},
+            context_reports=[{
+                "kind": "collection_cursor",
+                "boundary": "end",
+                "direction": "forward",
+            }],
+        ),
+    )
+    observation = _observation(collection_regions=[{
+        "ref": "android-collection:files",
+        "surface_fingerprint": "android-collection:files",
+        "traversal": {"type": "scroll"},
+        "cells": [{
+            "ref": "android:files.0",
+            "structural_key": "file",
+            "content_key": "other.zip",
+            "texts": ["other.zip"],
+        }],
+    }])
+
+    step = policy._run_single_turn(statement, observation, [previous])
+
+    assert step.action_intent is not None
+    assert step.action_intent.family == "iterate"
+    assert step.action_intent.direction == "up"
+    assert "requested.zip" in step.action_intent.instruction
+
+
 def test_offscreen_action_gets_one_same_frame_transition_retry(monkeypatch) -> None:
     statement = StatementContract(
         id="s1",

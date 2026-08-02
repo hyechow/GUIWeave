@@ -95,6 +95,60 @@ def test_read_binds_declared_control_and_semantic_facts():
     assert outcome.outputs == {"filter": "Complete", "heading": "Order details"}
 
 
+def test_read_does_not_bind_semantic_identity_as_its_own_value(monkeypatch):
+    seen: list[bytes] = []
+    monkeypatch.setattr(
+        "gui_agent.core.run.structured_read.structured_read",
+        lambda png, *_args, **_kwargs: (
+            seen.append(png) or {"content": "first line\nsecond line"}
+        ),
+    )
+    outcome = execute_read(
+        _read_invocation(
+            {"content": OutputSpec(type="text")},
+            {"content": ObservationBinding(source="field", name="content")},
+        ),
+        observation=Observation(
+            png_bytes=b"png",
+            source="android",
+            semantic_tree=[{"role": "group", "key": "content"}],
+        ),
+    )
+
+    assert outcome.outputs == {"content": "first line\nsecond line"}
+    assert seen == [b"png"]
+    assert outcome.evidence == ["bind:visual.content->content"]
+    assert outcome.verification == "accepted_unverified"
+
+
+def test_read_binds_one_text_descendant_of_a_named_semantic_field(monkeypatch):
+    content = "\n".join(["File content"] * 10)
+    monkeypatch.setattr(
+        "gui_agent.core.run.structured_read.structured_read",
+        lambda *_args, **_kwargs: pytest.fail("structured text should win over vision"),
+    )
+
+    outcome = execute_read(
+        _read_invocation(
+            {"content": OutputSpec(type="text")},
+            {"content": ObservationBinding(source="field", name="content")},
+        ),
+        observation=Observation(
+            png_bytes=b"png",
+            source="android",
+            semantic_tree=[
+                {"role": "group", "key": "content", "ref": "android:0.1"},
+                {"role": "text", "key": content, "ref": "android:0.1.0"},
+                {"role": "text", "key": "screen title", "ref": "android:0.0"},
+            ],
+        ),
+    )
+
+    assert outcome.outputs == {"content": content}
+    assert outcome.evidence == ["bind:semantic[1].key->content"]
+    assert outcome.verification == "confirmed"
+
+
 def test_read_accepts_authoritative_empty_optional_control_value():
     outcome = execute_read(
         _read_invocation(

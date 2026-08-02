@@ -96,6 +96,7 @@ def _cell_observation(
     *contents: str,
     fingerprint: str = "android-collection:feed",
     y_offset: int = 0,
+    traversal: str = "scroll",
 ) -> Observation:
     return Observation(
         png_bytes=b"png",
@@ -104,7 +105,7 @@ def _cell_observation(
             "ref": "android-collection:0",
             "surface_fingerprint": fingerprint,
             "bounds": (0, 0, 1000, 1000),
-            "traversal": {"type": "scroll"},
+            "traversal": {"type": traversal},
             "cells": [
                 {
                     "ref": f"android:0.{index}",
@@ -154,7 +155,9 @@ def _run_cell_acquire(monkeypatch, tmp_path, first, observations):
     )
     monkeypatch.setattr(
         "gui_agent.core.run.statements.acquire.materialize_cell_records",
-        lambda cells, _fields: [{"value": cell["texts"][0]} for cell in cells],
+        lambda cells, _fields, **_kwargs: [
+            {"value": cell["texts"][0]} for cell in cells
+        ],
     )
     return _execute(_cell_invocation(), tmp_path, bundle, first), moves, paths
 
@@ -174,7 +177,34 @@ def test_cell_acquire_owns_stale_retry_boundary_and_returns_only_rows(
         {"value": "overlap"},
         {"value": "two"},
     ]}
+    assert {report["kind"] for report in outcome.context_reports} == {
+        "collection_cursor",
+    }
     assert moves == ["scroll_forward"] * 4
+
+
+def test_cell_acquire_completes_static_collection_without_movement(
+    monkeypatch, tmp_path,
+) -> None:
+    observation = _cell_observation("one", "two", traversal="static")
+    bundle = SimpleNamespace(make_perception=None, move_collection=None)
+    monkeypatch.setattr(
+        "gui_agent.core.run.statements.acquire.materialize_cell_records",
+        lambda cells, _fields, **_kwargs: [
+            {"value": cell["texts"][0]} for cell in cells
+        ],
+    )
+
+    outcome = _execute(_cell_invocation(), tmp_path, bundle, observation)
+
+    assert outcome.is_completed
+    assert outcome.verification == "confirmed"
+    assert outcome.outputs == {"records": [{"value": "one"}, {"value": "two"}]}
+    assert outcome.context_reports == [{
+        "kind": "collection_cursor",
+        "boundary": "end",
+        "direction": "forward",
+    }]
 
 
 def test_cell_acquire_does_not_confuse_position_only_scroll_with_end(

@@ -719,6 +719,7 @@ class CollectionIntent(BaseModel):
     required_fields: list[str] = Field(default_factory=list)
     field: str = "name"
     fallback: str = ""
+    coverage: Coverage = "current_view"
     predicates: FilterPredicateSet = Field(default_factory=FilterPredicateSet)
 
 

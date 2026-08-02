@@ -64,6 +64,27 @@ def resolve_lookup_scope(
         candidate for candidate in candidates
         if _semantic_key(candidate.get("caption")) in mentions
     ]
+    if len(eligible) != 1 and request.coverage == "complete":
+        traversable = [
+            candidate
+            for candidate in candidates
+            if candidate.get("projection") == "cells"
+            and (candidate.get("traversal") or {}).get("type") in {"scroll", "paged"}
+        ]
+        if len(traversable) == 1:
+            eligible = traversable
+    if len(eligible) != 1:
+        actionable = [
+            candidate
+            for candidate in candidates
+            if candidate.get("projection") == "cells"
+            and any(
+                cell.get("controls")
+                for cell in candidate.get("table", {}).get("_collection_cells", [])
+            )
+        ]
+        if len(actionable) == 1:
+            eligible = actionable
     if len(eligible) != 1 and len(candidates) == 1:
         # A raw-cell sensor establishes the address of the sole collection, but
         # deliberately does not invent its business schema. Acquire validates the

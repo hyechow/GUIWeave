@@ -231,6 +231,26 @@ def test_table_boundary_honors_explicit_field_types():
     assert rows[0]["Grand Total"] == 1234.5
 
 
+def test_table_boundary_joins_visual_decimal_fragments_for_money():
+    rows = normalize_table_rows(
+        [{"amount": "￥ 367 .25"}],
+        {"amount": "money"},
+    )
+
+    assert rows == [{"amount": 367.25}]
+
+
+def test_table_boundary_parses_source_native_month_day_without_host_year():
+    rows = normalize_table_rows(
+        [{"modified_at": "Jul 11"}],
+        {"modified_at": "datetime"},
+    )
+
+    assert rows[0]["modified_at"] == datetime.fromisoformat(
+        "1900-07-11 00:00:00+00:00"
+    )
+
+
 def test_pipeline_buckets_groups_and_dense_ranks_with_ties():
     rows = [
         {"date": "2023-05-02", "customer": "a"},

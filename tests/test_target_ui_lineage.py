@@ -103,6 +103,17 @@ def run(ctx):
     ctx.reach("Open an order", target=target, success={"entity": "Order"})
     ctx.commit("Update order", target=target, values={"Status": "Complete"})
 """
+    aliased = """
+def run(ctx):
+    target = {"ID": "1"}
+    target_id = target["ID"]
+    ctx.reach(
+        "Open the exact order",
+        target=target,
+        success={"entity": "Order", "ID": target_id},
+    )
+    ctx.commit("Update order", target=target, values={"Status": "Complete"})
+"""
 
     assert any(
         item.code == "COMMIT_TARGET_UI_REQUIRED"
@@ -117,7 +128,13 @@ def run(ctx):
         item.code == "TARGET_REACH_IDENTITY_REQUIRED"
         for item in validate_code(incomplete)
     )
+    assert "target['<field>']" in next(
+        item.message
+        for item in validate_code(incomplete)
+        if item.code == "TARGET_REACH_IDENTITY_REQUIRED"
+    )
     assert validate_code(valid) == []
+    assert validate_code(aliased) == []
 
 
 def test_live_collection_write_replay_requires_loop_local_target_reach() -> None:

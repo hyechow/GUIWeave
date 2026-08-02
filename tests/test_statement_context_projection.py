@@ -18,7 +18,7 @@ def _frame(
     statement: StatementContract,
     observation: Observation,
     history: list | None = None,
-    previous_statement: dict[str, str] | None = None,
+    previous_statement: dict | None = None,
 ) -> dict:
     turns = history or []
     view = build_observation_view(statement, observation, turns)

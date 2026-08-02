@@ -23,6 +23,28 @@ def _table(path, caption, headers):
     }
 
 
+def _cell_region(
+    name: str,
+    *,
+    traversal: str = "",
+    actionable: bool = False,
+) -> dict:
+    cell = {
+        "ref": f"{name}:row",
+        "structural_key": "row",
+        "content_key": name,
+        "texts": [name],
+    }
+    if actionable:
+        cell["controls"] = [{"ref": "open", "role": "button", "label": name}]
+    return {
+        "ref": name,
+        "surface_fingerprint": f"android-collection:{name}",
+        "cells": [cell],
+        "traversal": {"type": traversal} if traversal else {},
+    }
+
+
 def _filter_state(filters, *, coverage="complete"):
     return AppliedFilterState(
         predicates=compile_filter_predicates(filters or {}),
@@ -153,6 +175,29 @@ def test_lookup_addresses_one_raw_cell_collection_without_inventing_schema() -> 
         "available_fields": [],
         "projection": "cells",
     }
+
+
+@pytest.mark.parametrize("regions", [
+    [_cell_region("navigation"), _cell_region("records", traversal="scroll")],
+    [_cell_region("breadcrumbs"), _cell_region("records", actionable=True)],
+])
+def test_complete_lookup_uses_unique_business_cell_collection(regions) -> None:
+    scope = resolve_lookup_scope(
+        Observation(
+            png_bytes=b"png",
+            source="android",
+            collection_regions=regions,
+        ),
+        CollectionIntent(
+            phase="locate",
+            entity="Records",
+            required_fields=["name"],
+            coverage="complete",
+        ),
+    )
+
+    assert scope is not None
+    assert scope["surface_fingerprint"] == "android-collection:records"
 
 
 def test_lookup_does_not_resolve_single_collection_from_generic_word_only() -> None:

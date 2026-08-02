@@ -71,12 +71,19 @@ def settle_after_action(
                 return elapsed, False
             if prev is not None and frame_diff(prev, cur) < STABLE_MEAN_THR:
                 elapsed = time.perf_counter() - started
-                print(f"  [Settle] {elapsed:.1f}s ({i} 轮，停稳: {action_type})")
-                return elapsed, False
+                no_effect = pre_frame is not None and not frame_changed(pre_frame, cur)
+                tag = f"停稳: {action_type}" + ("，零效果" if no_effect else "")
+                print(f"  [Settle] {elapsed:.1f}s ({i} 轮，{tag})")
+                return elapsed, no_effect
             prev = cur
         elapsed = time.perf_counter() - started
-        print(f"  [Settle] {elapsed:.1f}s ({SETTLE_MAX_UNITS} 轮，达上限: {action_type})")
-        return elapsed, False
+        no_effect = (
+            pre_frame is not None and prev is not None
+            and not frame_changed(pre_frame, prev)
+        )
+        tag = f"达上限: {action_type}" + ("，零效果" if no_effect else "")
+        print(f"  [Settle] {elapsed:.1f}s ({SETTLE_MAX_UNITS} 轮，{tag})")
+        return elapsed, no_effect
     if pre_frame is None:
         time.sleep(SETTLE_FIRST_S)
         elapsed = time.perf_counter() - started

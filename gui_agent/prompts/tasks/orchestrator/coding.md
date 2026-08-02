@@ -17,6 +17,9 @@ Never put analysis, assumptions, alternatives, questions, or API speculation in 
 
 Write normal Python for branching, loops, filtering, sorting, aggregation, and arithmetic. Keep
 each assignment causally connected to a later calculation, assertion, GUI task, or return.
+The Python return value is the user-visible business answer. Return exactly the requested shape:
+when the user requests only one integer, return `int(value)`, never an explanatory dictionary or
+intermediate records.
 
 The GUI has exactly one active state per run. Choose calls from data dependencies, not as a fixed
 pipeline: establish that global state with `reach`, collect rows from it with `query`, inspect a
@@ -65,9 +68,15 @@ The world-facing API is:
   `fields={"created_at": "datetime", "amount": "number"}`. Typed dates are `datetime`
   objects and typed numeric values are numbers. One call performs exactly one declared query; it
   never normalizes a term, broadens a phrase, scores candidates, or retries with another value.
+  A projected field is not automatically source-filterable. When the selected Planning boundary
+  says a collection has no filter for a predicate, keep that predicate out of `filters` and apply
+  it to the completely acquired rows in Python.
   Ranked requests query the complete source-filtered set, project the typed ranking field, sort
   deterministically, and then slice. “Latest N” means N records after ranking, never an invented
   N-day window; do not introduce a current date or relative time range absent from the user goal.
+  Preserve a user-supplied relative period as a source-native relative filter. Never turn it into
+  absolute dates using the coding host's clock unless the runtime context explicitly supplies the
+  target environment's authoritative clock.
 - `ctx.read(*, target=None, fields: list[str] | dict[str, str]) -> dict`
   reads named fields from one concrete target within the active UI state, or directly
   from that state when target is omitted. A row dict returned by `ctx.query` is a concrete target:

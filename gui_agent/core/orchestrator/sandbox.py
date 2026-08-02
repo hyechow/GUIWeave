@@ -603,6 +603,26 @@ def _ctx_state_contract_diagnostics(
             for owner, branch in left_path.items()
         )
 
+    assignments: dict[str, list[tuple[ast.AST, ast.AST | None]]] = {}
+
+    def bind_assignment(target: ast.AST, owner: ast.AST, value: ast.AST | None) -> None:
+        if isinstance(target, ast.Name):
+            assignments.setdefault(target.id, []).append((owner, value))
+        elif isinstance(target, (ast.List, ast.Tuple)):
+            for item in target.elts:
+                bind_assignment(item, owner, None)
+
+    for node in ast.walk(function):
+        if isinstance(node, ast.Assign):
+            for target in node.targets:
+                bind_assignment(target, node, node.value)
+        elif isinstance(node, ast.AnnAssign):
+            bind_assignment(node.target, node, node.value)
+        elif isinstance(node, (ast.AugAssign, ast.NamedExpr)):
+            bind_assignment(node.target, node, None)
+        elif isinstance(node, (ast.For, ast.AsyncFor)):
+            bind_assignment(node.target, node, None)
+
     def active_reach(node: ast.Call):
         latest = max(
             (
@@ -636,6 +656,14 @@ def _ctx_state_contract_diagnostics(
         reach: tuple[int, str | None, frozenset[str], ast.Dict],
         target: ast.AST,
     ) -> bool:
+        def direct_field(value: ast.AST, field: str) -> bool:
+            return (
+                isinstance(value, ast.Subscript)
+                and _same_expression(value.value, target)
+                and isinstance(value.slice, ast.Constant)
+                and value.slice.value == field
+            )
+
         for key, value in zip(reach[3].keys, reach[3].values):
             if not (
                 isinstance(key, ast.Constant)
@@ -643,13 +671,21 @@ def _ctx_state_contract_diagnostics(
                 and key.value not in {"entity", "fields"}
             ):
                 continue
-            if (
-                isinstance(value, ast.Subscript)
-                and _same_expression(value.value, target)
-                and isinstance(value.slice, ast.Constant)
-                and value.slice.value == key.value
-            ):
+            if direct_field(value, key.value):
                 return True
+            if isinstance(value, ast.Name):
+                binding = max(
+                    (
+                        item for item in assignments.get(value.id, [])
+                        if item[0].lineno < reach[0]
+                        and dominates(item[0], reach[3])
+                    ),
+                    key=lambda item: item[0].lineno,
+                    default=None,
+                )
+                if binding is not None and binding[1] is not None:
+                    if direct_field(binding[1], key.value):
+                        return True
             if isinstance(target, ast.Dict):
                 for target_key, target_value in zip(target.keys, target.values):
                     if (
@@ -718,8 +754,9 @@ def _ctx_state_contract_diagnostics(
                     node,
                     "TARGET_REACH_IDENTITY_REQUIRED",
                     (
-                        "target-bound ctx.reach success must declare at least one "
-                        "exact target identity field and value"
+                        "target-bound ctx.reach success must bind at least one "
+                        "top-level identity as '<field>': target['<field>']; "
+                        "do not nest the target under success"
                     ),
                 ))
             continue
@@ -921,6 +958,7 @@ def _ctx_effect_lineage_diagnostics(
     predicates: dict[Reach, set[str]] = {}
     commits: dict[Reach, set[str]] = {}
     diagnostics: list[CodeDiagnostic] = []
+
     predicate_nodes = [
         branch
         for node in nodes
@@ -1004,6 +1042,7 @@ def _ctx_effect_lineage_diagnostics(
             ))
 
     for line, _, _, success in reaches:
+        target = reach_targets.get(line)
         for key, value in zip(success.keys, success.values):
             if not (
                 isinstance(key, ast.Constant)
@@ -1012,6 +1051,14 @@ def _ctx_effect_lineage_diagnostics(
             ):
                 continue
             field = _semantic_key(key.value)
+            if (
+                target is not None
+                and isinstance(value, ast.Subscript)
+                and _same_expression(value.value, target)
+                and isinstance(value.slice, ast.Constant)
+                and value.slice.value == key.value
+            ):
+                continue
             if field in commits.get(line, set()):
                 code = "PREMATURE_MUTATION_POSTCONDITION"
                 detail = (

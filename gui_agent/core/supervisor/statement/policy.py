@@ -11,8 +11,12 @@ from gui_agent.core.filter_contract import (
     match_filter_state,
 )
 from gui_agent.core.run.action_signals import has_uncommitted_write
+from gui_agent.core.run.collection_view import collection_candidates
 from gui_agent.core.run.statement_memory import available_event_refs, build_memory_view
-from gui_agent.core.run.target_evidence import exact_target_evidence
+from gui_agent.core.run.target_evidence import (
+    exact_identity_evidence,
+    exact_target_evidence,
+)
 from gui_agent.core.run.lookup_scope import resolve_lookup_scope
 from gui_agent.core.run.statement_runtime import StatementRuntimeState
 from gui_agent.core.run.statement_transition import validate_evidence_references
@@ -529,6 +533,78 @@ class StatementSupervisorPolicy(
             )
         return None
 
+    def _target_relocation_step(
+        self,
+        statement: StatementContract,
+        observation: Observation,
+        history: list[JournalEvent],
+        *,
+        execution_scope: str,
+    ) -> SupervisorStep | None:
+        previous = next((
+            event for event in reversed(history)
+            if isinstance(event, StatementOutcomeEvent)
+            and event.statement_instance_id != self._active_instance_id
+        ), None)
+        target = statement.inputs.get("target")
+        if previous is None or not isinstance(target, dict) or not any(
+            report.get("kind") == "collection_cursor"
+            and report.get("boundary") == "end"
+            and report.get("direction") == "forward"
+            for report in previous.outcome.context_reports
+        ):
+            return None
+        rows = [
+            row
+            for output in previous.outcome.outputs.values()
+            if isinstance(output, list)
+            for row in output if isinstance(row, dict)
+        ]
+        identity = {
+            key: value
+            for key, value in statement.expected_state.items()
+            if key not in {"entity", "fields"} and target.get(key) == value
+        } or next((
+            {key: value}
+            for key, value in target.items()
+            if sum(row.get(key) == value for row in rows) == 1
+        ), {})
+        traversable = [
+            candidate
+            for candidate in collection_candidates(observation)
+            if candidate.get("projection") == "cells"
+            and (candidate.get("traversal") or {}).get("type") in {"scroll", "paged"}
+        ]
+        if (
+            not identity
+            or not any(
+                all(row.get(key) == value for key, value in identity.items())
+                for row in rows
+            )
+            or len(traversable) != 1
+            or exact_identity_evidence(identity, observation).get("status") != "absent"
+        ):
+            return None
+        target_label = next(iter(identity.values()), "declared target")
+        return self._mechanical_step(
+            statement,
+            execution_scope=execution_scope,
+            summary="前序完整遍历留下了确定的目标重定位方向",
+            established=(
+                f"当前结构化集合尚未包含精确目标 {target_label!r}。"
+            ),
+            gap=f"需要将精确目标 {target_label!r} 带入当前视口。",
+            reason="closed collection cursor determines target relocation direction",
+            instruction=(
+                f"在当前集合中向上遍历，将精确目标 {target_label!r} 带入视口。"
+            ),
+            role="iterate",
+            family="iterate",
+            target_control="current collection",
+            expected_result=f"精确目标 {target_label!r} 出现在当前结构化观察中。",
+            direction="up",
+        )
+
     def _structured_filter_reset_step(
         self,
         statement: StatementContract,
@@ -914,6 +990,14 @@ class StatementSupervisorPolicy(
             ),
         )
         view = build_observation_view(statement, observation, scoped_history)
+        relocation = self._target_relocation_step(
+            statement,
+            observation,
+            history,
+            execution_scope=execution_scope,
+        )
+        if relocation is not None:
+            return relocation
         filter_reset = self._structured_filter_reset_step(
             statement,
             observation,
@@ -1106,6 +1190,11 @@ class StatementSupervisorPolicy(
                 **_ctx(statement),
             )
         if decision.kind == "failed":
+            declared_path = " ".join(
+                part.strip()
+                for part in (decision.assessment.summary, decision.reason)
+                if part.strip()
+            )[:600]
             return self._soft_reject_and_retry(
                 statement,
                 observation,
@@ -1114,8 +1203,10 @@ class StatementSupervisorPolicy(
                 reason="model-declared blockage is not a terminal runtime fact",
                 execution_scope=execution_scope,
                 guidance=(
-                    "failed 只是当前帧的受阻判断，不能终止 Program。"
-                    "保持当前目标，并返回一个恢复、导航或继续观察的 act。"
+                    "上一个 failed 不能终止 Program。模型自己的判断是："
+                    f"{declared_path}。如果这段判断已经指出返回、恢复、导航、"
+                    "展开入口或继续观察等具体下一步，就证明存在可执行路径；"
+                    "保持当前目标，立即把该下一步输出为 act，不要把它推给 Program。"
                 ),
                 validation_retries=validation_retries,
             )
