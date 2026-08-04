@@ -18,6 +18,15 @@ knowledge/android/Mastodon/*
 !knowledge/android/Files/
 knowledge/android/Files/*
 !knowledge/android/Files/_app.md
+!knowledge/android/Calendar/
+knowledge/android/Calendar/*
+!knowledge/android/Calendar/_app.md
+!knowledge/android/Messages/
+knowledge/android/Messages/*
+!knowledge/android/Messages/_app.md
+!knowledge/android/Taodian/
+knowledge/android/Taodian/*
+!knowledge/android/Taodian/_app.md
 # Curated shopping_admin planning contracts promoted to repository source.
 !knowledge/browser/
 knowledge/browser/*

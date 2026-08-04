@@ -410,6 +410,7 @@ def generate_code(
     goal: str,
     *,
     knowledge: str = "",
+    platform_contract: str = "",
     resolution: Any = None,
     file_section: str = "",
     current_site: str = "",
@@ -474,6 +475,19 @@ def generate_code(
     )
     blocks = [
         *common_blocks,
+        (
+            ContextBlock(
+                id="runtime.platform_contract",
+                budget="required",
+                source_type="prompt_asset",
+                source="platform_orchestrator",
+                ttl="session",
+                priority=10,
+                content=platform_contract,
+            )
+            if platform_contract
+            else None
+        ),
         knowledge_block("app_knowledge", knowledge),
         _location_block(current_site, current_title, current_url),
         observation_schema,

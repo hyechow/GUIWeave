@@ -12,12 +12,12 @@ Hierarchy failures degrade to the screenshot-only path.
 from __future__ import annotations
 
 import io
-from concurrent.futures import ThreadPoolExecutor
 from pathlib import Path
 from typing import Optional
 
 from gui_agent.adapters.android.accessibility import (
     collection_regions_from_uiautomator,
+    form_controls_from_semantic_tree,
     semantic_tree_from_uiautomator,
 )
 from gui_agent.adapters.android.constants import SCREENSHOT_MAX_WIDTH
@@ -80,20 +80,23 @@ class AndroidSession:
         return self.client.screenshot()
 
     def capture(self) -> tuple[bytes, str | None]:
-        """Capture both sensors concurrently; only screenshot failure is fatal."""
+        """Capture a hierarchy followed by pixels from the same settled UI state."""
         if self.client is None:
             raise RuntimeError("Android 设备尚未连接")
-        with ThreadPoolExecutor(max_workers=2) as pool:
-            screenshot = pool.submit(self.client.screenshot)
-            hierarchy = pool.submit(self.client.dump_ui_hierarchy)
-            png_bytes = screenshot.result()
-            xml_text = hierarchy.result()
-        # UIAutomator is optional but occasionally returns no XML while pixels are
-        # already stable. Retry only that missing channel; successful frames keep the
-        # concurrent one-shot cost and the required screenshot is never recaptured.
+        # UIAutomator is slower than screencap. Taking them concurrently can pair an
+        # old transition frame with a hierarchy from the destination screen. Finish
+        # the optional structural sensor first, then capture the authoritative pixels.
+        xml_text = self.client.dump_ui_hierarchy()
         if xml_text is None:
             xml_text = self.client.dump_ui_hierarchy()
+        png_bytes = self.client.screenshot()
         return png_bytes, xml_text
+
+    def list_apps(self) -> list[str]:
+        """Return launchable application names from the active package manager."""
+        if self.client is None:
+            raise RuntimeError("Android 设备尚未连接")
+        return self.client.list_apps()
 
 
 class AndroidPerception:
@@ -115,6 +118,7 @@ class AndroidPerception:
             hierarchy,
             viewport_size=client.viewport_size if client is not None else (0, 0),
         )
+        form_controls = form_controls_from_semantic_tree(semantic_tree)
         # Downscale to the configured width; tap coordinates are unaffected because
         # the executor denormalizes against device pixels.
         png_bytes = _downscale_width(png_bytes, SCREENSHOT_MAX_WIDTH)
@@ -128,4 +132,5 @@ class AndroidPerception:
             source="android",
             semantic_tree=semantic_tree,
             collection_regions=collection_regions,
+            form_control_state=form_controls,
         )

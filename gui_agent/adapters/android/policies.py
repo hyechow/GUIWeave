@@ -75,17 +75,35 @@ _PICKER_WORDS = (
 _PICKER_ADJUST_WORDS = ("调整", "调到", "调至", "设置为", "设为", "改为")
 _CLOCK_MINUTE_RE = re.compile(r"(?:\bminute\b|分钟|\d{1,2}\s*分(?:钟)?\b)", re.IGNORECASE)
 _CLOCK_HOUR_RE = re.compile(r"(?:\bhour\b|小时|\d{1,2}\s*点(?:钟)?\b)", re.IGNORECASE)
+_REF_IDENTITY_WORDS = {
+    "ok", "am", "pm", "save", "send", "submit", "back", "cancel",
+    "close", "done", "next", "previous", "delete", "start", "end",
+}
+_REF_IDENTITY_ALIASES = {
+    "保存": "save", "发送": "send", "返回": "back", "取消": "cancel",
+    "关闭": "close", "删除": "delete", "开始": "start", "结束": "end",
+}
 
 
-def _control_key(value: object) -> str:
-    text = re.sub(r"[(（][^()（）]*[)）]", "", str(value or "").casefold())
-    return re.sub(r"[\W_]+", "", text)
+def _target_ref_compatible(node: dict, target_control: str) -> bool:
+    """Reject a current ref only when it contradicts an explicit control identity."""
+    target = str(target_control or "").casefold()
+    expected = set(re.findall(r"[a-z0-9]+", target)) & _REF_IDENTITY_WORDS
+    expected.update(value for key, value in _REF_IDENTITY_ALIASES.items() if key in target)
+    actual_text = f"{node.get('key', '')} {node.get('resource', '')}".casefold()
+    actual = set(re.findall(r"[a-z0-9]+", actual_text))
+    if expected and not expected & actual:
+        return False
+    target_numbers = set(re.findall(r"\b\d+\b", target))
+    actual_numbers = set(re.findall(r"\b\d+\b", actual_text))
+    return not target_numbers or not actual_numbers or bool(target_numbers & actual_numbers)
 
 
 def _is_tap_only_instruction(instruction: str) -> bool:
+    text = instruction.casefold()
     return (
-        any(w in instruction for w in ("点击", "tap", "轻触"))
-        and not any(w in instruction for w in ("拖动", "拖拽", "滑动", "滚动", "调整", "调到", "调至"))
+        any(w in text for w in ("点击", "tap", "click", "轻触"))
+        and not any(w in text for w in ("拖动", "拖拽", "滑动", "滚动", "scroll", "swipe", "调整", "调到", "调至"))
     )
 
 
@@ -253,9 +271,7 @@ class AndroidActionPolicy(BaseActionPolicy):
         if action_family != "activate" or not target_ref:
             return None
         node = self._target_node(observation, target_ref)
-        if node is None:
-            return None
-        if target_control and _control_key(node.get("key")) != _control_key(target_control):
+        if node is None or not _target_ref_compatible(node, target_control):
             return None
         point = node.get("point") or {}
         x, y = point.get("x"), point.get("y")
@@ -278,6 +294,11 @@ class AndroidActionPolicy(BaseActionPolicy):
             return TargetBinding(
                 status="unresolved", source="structural",
                 reason="declared current-frame Android ref is not unique and visible",
+            )
+        if not _target_ref_compatible(node, intent.target_control):
+            return TargetBinding(
+                status="contradicted", source="structural",
+                reason="declared Android ref contradicts the requested control identity",
             )
         point = node.get("point") or {}
         action = action_decision.action

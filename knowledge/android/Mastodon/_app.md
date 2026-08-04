@@ -46,28 +46,31 @@ version: 5
   those open the author profile or media viewer instead. The detail view exposes
   the same author and content together with that Toot's own Favorite control.
 
-## Planning boundary
+## Interface contract
 
 - The exact query entity identifiers are `TaggedToots`, `SavedFavorites`, and
   `SavedBookmarks`. `Favorites` and `Bookmarks` are `active_view` values, not
   abbreviated entity names.
 - `TaggedToots` is an exact tag-scoped view, not an unfiltered collection. Opening
-  it requires a concrete tag; declare that tag in `ctx.reach.success` and name it
-  in the reach goal before querying or returning to this source. Tag values retain
-  their leading `#`; never strip it. Submit the same exact tag through
-  `ctx.query.filters`. Its query fields are exactly `author_handle` and `content`.
+  it requires a concrete `tag`, including its leading `#`. Its source filter field is
+  `tag`, and its query fields are exactly `author_handle` and `content`.
 - `SavedFavorites` is established only while the `Favorites` saved view is active;
-  declare this observable state as `active_view="Favorites"` in `ctx.reach.success`.
-  Its query fields are exactly `author_handle` and `content`.
+  its required observable state is `active_view` equal to `Favorites`. Its query
+  fields are exactly `author_handle` and `content`.
 - `SavedBookmarks` is established only while the `Bookmarks` saved view is active;
-  declare this observable state as `active_view="Bookmarks"` in `ctx.reach.success`.
-  Its query fields are exactly `author_handle` and `content`.
+  its required observable state is `active_view` equal to `Bookmarks`. Its query
+  fields are exactly `author_handle` and `content`.
 - Favoriting updates an existing `TaggedToots` record. `author_handle` and `content`
   identify that record; `favorited` is the only mutation field and is not a
   `TaggedToots` query field.
-- To mutate a `TaggedToots` row, return through its exact tag view, match its exact
-  (`author_handle`, `content`) pair, and tap its text body into `entity="TootDetail"`.
-  The target reach keeps the literal source `tag` (including `#`) and copies both row
-  identity fields into top-level `success`; a shared-list match is insufficient because
-  another Toot's action bar may be visible. The tag is route state, not `row["tag"]`,
+- `TootDetail` interface:
+  - required observable route state: `tag`, retaining its exact leading `#`
+  - row identity fields: `author_handle`, `content`
+  - mutation fields: `favorited`
+- A `TaggedToots` row reaches `TootDetail` only through its exact source tag view and
+  exact (`author_handle`, `content`) pair. A shared-list match is insufficient because
+  another Toot's action bar may be visible. The tag is route state, not a row field,
   and full Toot content is not a global search term.
+- Entering either saved collection replaces the active tag route. After inspecting
+  saved views, the exact `TaggedToots` tag route must be active again before any of its
+  rows can expose `TootDetail`.

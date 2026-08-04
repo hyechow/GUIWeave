@@ -21,42 +21,44 @@ version: 1
   document while it remains inside an archive.
 - To make every archive entry readable, open `More options`, use `Select all`, reopen
   `More options`, choose `Extract to…`, select `Downloads`, and
-  activate `EXTRACT`. This is a persistent file extraction and therefore a commit, not
-  navigation. After extraction, return from the archive to Downloads.
+  activate `EXTRACT`. This persistently extracts the files. After extraction, return
+  from the archive to Downloads.
 - In an opened archive, the top-left three-line control is the navigation-drawer
   button; it does not return to the parent directory. Use the Android system `Back`
   action to leave the archive and return to Downloads. Do not offer those two controls
   as interchangeable alternatives.
 - In the `Extract to…` destination screen, a `Downloads` title/breadcrumb means the
-  destination is already Downloads. Activate the explicit `EXTRACT` button with
-  `atomic_role=commit`. The Android accessibility node named `pick_button_overlay` is
-  only an implementation overlay beside that final action; it is not a folder picker
-  and must not be activated as a destination-selection step.
+  destination is already Downloads. The explicit `EXTRACT` button performs the final
+  persistent action. The Android accessibility node named `pick_button_overlay` is
+  only an implementation overlay beside it; it is not a folder picker.
 - Opening an extracted TXT file may show an `Open with` chooser. `HTML Viewer` followed
   by `Just once` displays the complete plain-text document; navigate up to return to
   Downloads for the next file.
 
-## Planning boundary
+## Interface contract
 
-- The Downloads collection entity is `DownloadFiles`. Its complete-list query contract is
-  `fields={"name": "text", "modified_at": "datetime"}, filters={}, coverage="complete"`.
-  It also exposes `kind` as `text`. A ZIP file has an exact visible
-  `name` ending in `.zip`; use that lossless identifier suffix together with
-  `modified_at` to select a ZIP by time, without requiring a separate derived `kind`
-  field. Query the complete collection. The file list has no
-  field-specific month/type filter: the valid `DownloadFiles` filter-key set is empty,
-  so use `filters={}` (or omit it), then select `.zip` names and month `7` in Python.
-  A request for July without a year must not invent a current year.
-- An opened ZIP exposes the complete `ArchiveEntries` collection with `name` as `text`;
-  bind that state to its source row with top-level `name` equal to the selected row's
-  exact `name`.
-- Extracting all opened entries to Downloads is represented by
-  `ctx.commit(..., values={"selection": "all", "destination": "Downloads"})`, bound
-  to the exact archive row used to reach `ArchiveEntries`. Query and retain every
-  `ArchiveEntries.name` before this commit because the commit consumes that active UI.
-- After extraction, query `DownloadFiles` again and match each original archive-entry
-  `name` to the same-named extracted row in Python. `content` is detail-only and is not
-  a `DownloadFiles` query field or list filter. Read each matched row's `content` as
-  text while `DownloadFiles` remains the active collection; do not reopen
-  `ArchiveEntries` between this query and those reads. Line counting and aggregation
-  are ordinary Python over the read results.
+- `DownloadFiles` collection:
+  - coverage: complete
+  - exact query fields: `name` (`text`), `modified_at` (`datetime`), `kind` (`text`)
+  - exact source filter fields: none
+  - row identity fields: `name`
+  - detail fields: `content`
+- A ZIP has an exact visible `name` ending in `.zip`.
+- `ArchiveEntries` collection:
+  - coverage: complete
+  - query fields: `name` (`text`)
+  - route identity fields: `name`, equal to the exact selected archive `name`
+- Archive extraction mutates the selected archive directly; there is no preparatory
+  Extraction entity. Its mutation fields and exact values for extracting every entry
+  are `selection` equal to `all` and `destination` equal to `Downloads`. Extraction
+  consumes the opened archive view and creates same-named `DownloadFiles` rows.
+- Archive entry names are visible only in `ArchiveEntries` before extraction. They are
+  the identities for matching the same-named extracted rows afterward, so they must be
+  observed before the extraction consumes that view.
+- `content` belongs to a concrete `DownloadFiles` row while that collection remains
+  active. Concrete-row detail is its only retrieval interface. There is no separate
+  FileContent entity, and `content` is never a collection query or source filter field.
+- After extraction, the complete `DownloadFiles` names provide the matching surface;
+  the collection has no name-prefix, month, type, or callable source filter. Extracted
+  rows do not exist in any pre-extraction collection snapshot, so matching requires a
+  fresh complete `DownloadFiles` snapshot after extraction.

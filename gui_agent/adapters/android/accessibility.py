@@ -19,6 +19,7 @@ _ROLES = {
     "imageview": "img",
 }
 _COLLECTION_CLASSES = {"recyclerview", "listview", "gridview"}
+_PERSISTENCE_WORDS = {"save", "send", "submit", "publish", "post"}
 
 
 def _role(class_name: str, *, clickable: bool, scrollable: bool) -> str:
@@ -202,6 +203,9 @@ def semantic_tree_from_uiautomator(
             "depth": depth,
             "scrollable": scrollable,
         }
+        resource = _short_resource(node)
+        if resource:
+            item["resource"] = resource
         if match is not None:
             x1, y1, x2, y2 = map(int, match.groups())
             if x2 > x1 and y2 > y1:
@@ -228,6 +232,57 @@ def semantic_tree_from_uiautomator(
             item["selected"] = True
         result.append(item)
     return result
+
+
+def form_controls_from_semantic_tree(
+    nodes: list[dict[str, Any]] | None,
+) -> list[dict[str, Any]] | None:
+    """Project stable Android fields without parsing the hierarchy twice."""
+    if nodes is None:
+        return None
+    controls: list[dict[str, Any]] = []
+    for node in nodes:
+        resource = str(node.get("resource") or "")
+        key = str(node.get("key") or "")
+        identity_words = set(filter(
+            None, re.split(r"[_\W]+", f"{resource} {key}".casefold()),
+        ))
+        role = str(node.get("role") or "")
+        persistence = bool(identity_words & _PERSISTENCE_WORDS)
+        kind = (
+            "text_input" if role == "textbox"
+            else "switch" if role in {"checkbox", "radio", "switch"}
+            else "select" if role == "button" and identity_words & {"date", "time"}
+            else "button" if persistence
+            else ""
+        )
+        if not kind:
+            continue
+        item: dict[str, Any] = {
+            "label": resource.replace("_", " ") or key,
+            "ref": str(node.get("ref") or ""),
+            "kind": kind,
+            "value": node.get("value", node.get("key", "")),
+            "resource": resource,
+        }
+        if persistence:
+            node["role"] = "button"
+            node["form_action"] = "commit"
+            item["form_action"] = "commit"
+        if "in_viewport" in node:
+            item["in_viewport"] = node["in_viewport"]
+        rect = node.get("rect")
+        if isinstance(rect, dict):
+            x, y = float(rect["x"]), float(rect["y"])
+            width, height = float(rect["width"]), float(rect["height"])
+            item["bounds"] = (x - width / 2, y - height / 2,
+                              x + width / 2, y + height / 2)
+            item["rect"] = {
+                "x": x - width / 2, "y": y - height / 2,
+                "w": width, "h": height,
+            }
+        controls.append(item)
+    return controls
 
 
 def collection_regions_from_uiautomator(
@@ -329,5 +384,6 @@ def collection_regions_from_uiautomator(
 
 __all__ = [
     "collection_regions_from_uiautomator",
+    "form_controls_from_semantic_tree",
     "semantic_tree_from_uiautomator",
 ]

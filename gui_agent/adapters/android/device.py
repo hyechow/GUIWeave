@@ -28,6 +28,8 @@ from __future__ import annotations
 
 import io
 import os
+import re
+from collections.abc import Mapping
 from typing import Optional
 
 from gui_agent.adapters.android.constants import (
@@ -44,6 +46,11 @@ def _clamp(v: float, lo: float, hi: float) -> int:
     return int(max(lo, min(v, hi)))
 
 
+_LAUNCHER_COMPONENT = re.compile(
+    r"(?m)^\s*([A-Za-z0-9_][A-Za-z0-9._]*/[A-Za-z0-9_.$]+)\s*$"
+)
+
+
 class AndroidDevice:
     """adb-backed phone device with pixels, input, and optional UI hierarchy."""
 
@@ -54,6 +61,7 @@ class AndroidDevice:
 
     def __init__(self, serial: Optional[str] = None):
         self.serial = serial or DEFAULT_SERIAL
+        self.package_manager: Mapping[str, str] = {}
         self._dev = None  # adbutils.AdbDevice once connected
         # Cached physical resolution (the executor denormalizes against these).
         # Defaults are overwritten by window_size() on connect().
@@ -387,6 +395,47 @@ class AndroidDevice:
     def back(self) -> str:
         """System back (KEYCODE_BACK)."""
         return self.key(KEYCODE["back"])
+
+    def _launcher_components(self) -> list[str]:
+        """Return exact launcher components reported by the connected device."""
+        listing = str(self._require_dev().shell(
+            "cmd package query-activities --brief "
+            "-a android.intent.action.MAIN "
+            "-c android.intent.category.LAUNCHER"
+        ) or "")
+        return sorted(set(_LAUNCHER_COMPONENT.findall(listing)))
+
+    def list_apps(self) -> list[str]:
+        """Return configured semantic names that are installed on the device."""
+        components = self._launcher_components()
+        if not self.package_manager:
+            return sorted(components)
+        packages = {component.split("/", 1)[0] for component in components}
+        return sorted(
+            name for name, package in self.package_manager.items()
+            if package in packages
+        )
+
+    def launch_app(self, app: str) -> str:
+        """Resolve one semantic app name and start its exact launcher component."""
+        name = str(app).strip()
+        if not name:
+            raise ValueError("launch_app requires a non-empty app")
+        dev = self._require_dev()
+        identity = self.package_manager.get(name, name)
+        matches = [
+            component for component in self._launcher_components()
+            if component == identity or component.split("/", 1)[0] == identity
+        ]
+        if len(matches) != 1:
+            raise ValueError(
+                f"Android launcher app {name!r} resolved to {len(matches)} components"
+            )
+        component = matches[0]
+        output = str(dev.shell(f"am start -W -n {component}") or "")
+        if "error:" in output.casefold() or "exception" in output.casefold():
+            raise RuntimeError(output.strip())
+        return f"OK launch_app {name}"
 
     def app_switch(self) -> str:
         """App switcher / recents / multitask view (KEYCODE_APP_SWITCH)."""

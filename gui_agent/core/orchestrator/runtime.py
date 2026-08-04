@@ -787,7 +787,7 @@ class CodingProgramRuntime:
                 success=success_text,
                 expected_state=success,
                 required_values=values,
-                persistence="explicit_commit" if values else "immediate",
+                persistence="explicit_commit" if op == "commit" else "immediate",
             )
             inputs = (
                 {"target": target}

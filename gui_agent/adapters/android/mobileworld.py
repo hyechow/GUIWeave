@@ -27,10 +27,10 @@ from this machine (a tiny adb relay + portproxy for 5556, a portproxy for 6800).
 Usage:
   AGENT_PLATFORM is forced to "android" here; ANDROID_SERIAL is set from --adb-serial.
   uv run python -m gui_agent.adapters.android.mobileworld <task_name> \
-      --base-url http://192.168.31.57:6800 --adb-serial 192.168.31.57:5556
+      --base-url http://192.168.1.101:6800 --adb-serial 192.168.1.101:5556
   # discover task names:
   uv run python -m gui_agent.adapters.android.mobileworld --list \
-      --base-url http://192.168.31.57:6800
+      --base-url http://192.168.1.101:6800
 
 Each turn observes the current frame; ordinary semantic Interact scrolling remains
 available.
@@ -54,6 +54,25 @@ from gui_agent.core.run.result import AgentResult, failed_result
 # Tags that mark non-GUI-only task subsets; excluded from the default task list (the
 # GUI-only subset is the integration target — see the MobileWorld paper).
 _NON_GUI_TAGS = ("agent-mcp", "agent-user-interaction")
+
+# MobileWorld owns a fixed emulator image, so its package names are entry-point facts.
+MOBILEWORLD_PACKAGE_MANAGER: dict[str, str] = {
+    "Calendar": "org.fossify.calendar",
+    "Camera": "com.android.camera2",
+    "Chrome": "com.android.chrome",
+    "Clock": "com.google.android.deskclock",
+    "Contacts": "com.google.android.contacts",
+    "Docreader": "at.tomtasche.reader",
+    "Files": "com.google.android.documentsui",
+    "Gallery": "gallery.photomanager.picturegalleryapp.imagegallery",
+    "Mail": "com.gmailclone",
+    "Maps": "com.google.android.apps.maps",
+    "Mastodon": "org.joinmastodon.android.mastodon",
+    "Mattermost": "com.mattermost.rnbeta",
+    "Messages": "com.google.android.apps.messaging",
+    "Settings": "com.android.settings",
+    "Taodian": "com.testmall.app",
+}
 
 
 class MobileWorldEnv:
@@ -221,6 +240,15 @@ def _route_mobileworld_goal(
     return routed_goal or goal, payload
 
 
+def _android_platform_contract(app_names: list[str]) -> str:
+    """Render Android capabilities against exact semantic application names."""
+    from gui_agent.prompts import load_prompt
+
+    return load_prompt("task.orchestrator.android").render(
+        app_list=json.dumps(app_names, ensure_ascii=False)
+    )
+
+
 def _generate_and_persist_reply(
     context_path: Path,
     goal: str,
@@ -263,16 +291,17 @@ def _write_mobileworld_context(
 def main() -> int:
     parser = argparse.ArgumentParser(description="Run a MobileWorld task on the android agent loop")
     parser.add_argument("task", nargs="?", help="MobileWorld task name (omit with --list)")
-    parser.add_argument("--base-url", default=os.environ.get("MW_BASE_URL", "http://192.168.31.57:6800"),
+    parser.add_argument("--base-url", default=os.environ.get("MW_BASE_URL", "http://192.168.1.101:6800"),
                         help="MobileWorld backend URL (env MW_BASE_URL; default :6800)")
     parser.add_argument("--adb-serial", default=os.environ.get("MW_ADB_SERIAL")
-                        or os.environ.get("ANDROID_SERIAL", "192.168.31.57:5556"),
+                        or os.environ.get("ANDROID_SERIAL", "192.168.1.101:5556"),
                         help="adb serial for the emulator (env MW_ADB_SERIAL/ANDROID_SERIAL; default :5556)")
     parser.add_argument("--device", default="emulator-5554",
                         help="in-container emulator serial the backend controls (default emulator-5554)")
     parser.add_argument("--list", action="store_true", help="list GUI-only task names and exit")
     parser.add_argument("--all-tasks", action="store_true", help="with --list, include non-GUI (mcp/user-interaction) tasks")
-    parser.add_argument("--max-turns", type=int, default=25)
+    parser.add_argument("--max-turns", type=int, default=30,
+                        help="maximum interactive turns (default 30)")
     parser.add_argument(
         "--adb-ready-timeout",
         type=float,
@@ -337,31 +366,40 @@ def main() -> int:
         # Bind app knowledge by the task's declared apps (best-effort; none → run bare).
         from gui_agent.core.self_learning.app_summary import load_knowledge_for_app
 
-        knowledge = None
+        app_knowledges = []
+        orchestrator_knowledge = ""
         knowledge_summary: Optional[dict] = None
         try:
-            apps = env.metadata(args.task).get("apps") or []
+            declared_apps = env.metadata(args.task).get("apps") or []
         except Exception as exc:  # noqa: BLE001
-            apps = []
+            declared_apps = []
             print(f"[mobileworld] metadata unavailable ({exc}); running bare")
-        for app in apps:
-            knowledge = load_knowledge_for_app(app, "android")
-            if knowledge and knowledge.navigation and hasattr(supervisor, "set_app_knowledge"):
+        for app in declared_apps:
+            candidate = load_knowledge_for_app(app, "android")
+            if candidate and candidate.navigation:
+                app_knowledges.append(candidate)
+        if app_knowledges:
+            app_names = " + ".join(item.app_name for item in app_knowledges)
+            orchestrator_knowledge = "\n\n".join(
+                item.orchestrator_context(goal) for item in app_knowledges
+            )
+            if hasattr(supervisor, "set_app_knowledge"):
                 supervisor.set_app_knowledge(
-                    knowledge.navigation,
-                    app_name=knowledge.app_name,
-                    elements=knowledge.elements,
-                    sections=knowledge.sections,
-                    check=knowledge.check,
+                    "\n\n".join(item.navigation for item in app_knowledges),
+                    app_name=app_names,
+                    elements="\n\n".join(item.elements for item in app_knowledges),
+                    sections={
+                        f"{item.app_name}:{stem}": text
+                        for item in app_knowledges
+                        for stem, text in item.sections.items()
+                    },
+                    check="\n\n".join(item.check for item in app_knowledges),
                 )
-                knowledge_summary = knowledge.summary()
-                print(f"[mobileworld] knowledge: bound app={app} "
-                      f"(nav={knowledge_summary['nav_chars']} chars, "
-                      f"sections={knowledge_summary['section_count']})")
-                break
-        else:
-            if apps:
-                print(f"[mobileworld] knowledge: none for apps={apps} — running bare")
+            summaries = [item.summary() for item in app_knowledges]
+            knowledge_summary = {"app_name": app_names, "apps": summaries}
+            print(f"[mobileworld] knowledge: bound apps={app_names}")
+        elif declared_apps:
+            print(f"[mobileworld] knowledge: none for apps={declared_apps} — running bare")
 
         result: AgentResult | None = None
         task_initialized = False
@@ -399,9 +437,14 @@ def main() -> int:
                 orchestrator_context_reports: list[dict] = []
                 hud = bundle.make_status_reporter(not args.headless)
                 with bundle.open_session() as platform:
+                    platform.client.package_manager = MOBILEWORLD_PACKAGE_MANAGER
+                    app_list = platform.list_apps()
+                    task_apps = [app for app in declared_apps if app in app_list]
+                    print(f"[mobileworld] installed apps: {len(app_list)}")
+
                     def _compile_program():
                         run_max_turns = args.max_turns
-                        cur_site = knowledge.app_name if knowledge is not None else ""
+                        cur_site = app_names if app_knowledges else ""
 
                         from gui_agent.core.orchestrator import (
                             generate_code,
@@ -410,14 +453,17 @@ def main() -> int:
                         from gui_agent.core.supervisor.statement.model_io import resolve_file_refs
                         from gui_agent.core.router import resolve_intent
 
-                        file_section = resolve_file_refs(intent)
-                        resolution = resolve_intent(intent)
+                        # The routed goal drives execution phrasing, but source queries
+                        # must retain the backend's original language and literals.
+                        file_section = resolve_file_refs(goal)
+                        resolution = resolve_intent(goal)
                         if resolution.entities:
                             print("[mobileworld] intent: " + "; ".join(
                                 f"{e.mention}→{e.type}/{e.match_mode}/key={e.search_key}" for e in resolution.entities))
                         plan = generate_code(
-                            intent,
-                            knowledge=knowledge.orchestrator_context(intent) if knowledge else "",
+                            goal,
+                            knowledge=orchestrator_knowledge,
+                            platform_contract=_android_platform_contract(task_apps),
                             file_section=file_section,
                             current_url="",
                             current_title="",

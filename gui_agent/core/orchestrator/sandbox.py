@@ -438,13 +438,12 @@ class _SafetyVisitor(ast.NodeVisitor):
         values = keywords.get("values")
         if method == "commit" and (
             values is None
-            or isinstance(values, ast.Dict) and not values.keys
             or isinstance(values, ast.Constant) and values.value is None
         ):
             self.diagnostics.append(_diag(
                 node,
                 "COMMIT_VALUES_REQUIRED",
-                "ctx.commit requires nonempty business values",
+                "ctx.commit requires a values dictionary",
             ))
 
 def _literal_value(node: ast.AST | None) -> Any:
@@ -2097,7 +2096,7 @@ class _FixtureContext:
         normalized_target = json_value(target) if target is not None else None
         if normalized_target is not None:
             require_current_ui(self._current_ui, target=normalized_target)
-        self._world_task(goal, target=normalized_target, values=values)
+        self._world_task(goal, target=normalized_target, values=values, force_commit=True)
         self._current_ui = None
 
     def _world_task(
@@ -2108,6 +2107,7 @@ class _FixtureContext:
         values: dict[str, Any],
         trace_extra: dict[str, Any] | None = None,
         result: Any = None,
+        force_commit: bool = False,
     ) -> None:
         normalized_target = json_value(target) if target is not None else None
         inputs = (
@@ -2119,7 +2119,7 @@ class _FixtureContext:
         state, key = self._statement_target(inputs)
         if state is not None:
             self.current_target = state
-        if desired_values:
+        if desired_values or force_commit:
             state = self.state.get(key) if key is not None else None
             before = copy.deepcopy(state) if state is not None else {}
             for field_name, value in desired_values.items():
@@ -2146,7 +2146,7 @@ class _FixtureContext:
                 applied=True,
             ))
         self.trace.append(TraceEvent(
-            "commit" if desired_values else "reach",
+            "commit" if desired_values or force_commit else "reach",
             (task,),
             {
                 "target": copy.deepcopy(inputs.get("target")),

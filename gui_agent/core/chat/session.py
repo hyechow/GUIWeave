@@ -21,24 +21,27 @@ class RouterResult(BaseModel):
     goal: str = Field(
         default="",
         description=(
-            "生成一个自包含、可直接执行的任务目标。"
-            "需要操控手机时填写，格式：「在[APP]中[操作]」。"
-            "若时间范围与极值或排名指标同时出现，必须把实际时间范围直接写进"
-            "指标作用域，例如把含糊的「最高值 today」明确为「今天这一天内的最高值」。"
-            "不得改变时间范围粒度或改写已经解析出的具体日期端点。"
-            "不需要操控手机或信息不足无法确定 APP 时留空。"
+            "A self-contained, directly executable task goal. Fill this when device "
+            "interaction is required, naming the application, target, and requested "
+            "operation. When a time range qualifies an extreme or ranking metric, attach "
+            "the actual range directly to that metric without changing its granularity "
+            "or rewriting resolved date endpoints. Leave this empty when no device "
+            "interaction is needed or essential routing information is genuinely missing."
         ),
     )
     needs_clarification: bool = Field(
         default=False,
         description=(
-            "用户意图需要操控手机，但缺少关键信息（未指定 APP、操作不明确），需要反问用户。"
-            "仅当 goal 留空且用户确实想操作手机时为 true。"
+            "True only when the user wants device interaction but essential routing "
+            "information is missing. It must be false whenever goal is non-empty."
         ),
     )
     clarification: str = Field(
         default="",
-        description="needs_clarification=true 时，简要说明需要用户补充什么信息。",
+        description=(
+            "When needs_clarification is true, briefly state what information the user "
+            "must provide, using the language of the current user instruction."
+        ),
     )
 
 
