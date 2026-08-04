@@ -7,7 +7,7 @@ import json
 import re
 from pathlib import Path
 
-from gui_agent.prompts import iter_prompt_templates, load_prompt_text
+from gui_agent.prompts import iter_prompt_templates, load_prompt, load_prompt_text
 
 ROOT = Path(__file__).resolve().parents[1]
 
@@ -96,6 +96,13 @@ def test_coding_contract_keeps_settings_atomic_and_visual_retrieval_on_source():
     assert "one semantic result/view `ctx.reach`" in visual_contract
     assert "same requested fields" in visual_contract
     assert "Generic whole-page fields" in visual_contract
+    assert "schema-free, source-derived creation" in prompt
+    assert "no preparatory entity/view" in prompt
+    assert "runtime source expression itself" in prompt
+    assert "only valid call shape" in prompt
+    assert "`Interface contract` is the compiler-facing resource contract" in prompt
+    assert "named month without a year remains month-only" in prompt
+    assert "do not inspect `.year`" in prompt
 
 
 def test_statement_transition_separates_commit_boundary_from_action_family():
@@ -146,9 +153,30 @@ def test_every_platform_router_includes_shared_goal_semantics():
         system, _known_apps_rule = _router_system_for(platform)
         assert shared in system
 
-    assert "不得使用 Router 所在宿主机" in shared
-    assert "固定天数" in shared
-    assert "可选实现方案" in shared
+    assert "Router host's current date" in shared
+    assert "fixed number of days" in shared
+    assert "optional implementation alternatives" in shared
+    assert "original language and spelling" in shared
+
+
+def test_android_router_preserves_input_language_and_literals():
+    prompt = load_prompt_text("task.router.android")
+    normalized = " ".join(prompt.split())
+
+    assert "same language as the current user instruction" in prompt
+    assert "Do not translate an English request into Chinese" in normalized
+    assert "quoted reply text" in load_prompt_text("context.router.shared_goal")
+
+
+def test_android_orchestrator_declares_launch_app_as_platform_capability():
+    template = load_prompt("task.orchestrator.android")
+    prompt = template.render(app_list='["Alpha", "Beta"]')
+
+    assert 'ctx.command("launch_app", app=<application name>)' in prompt
+    assert "only changes the foreground application" in prompt
+    assert '["Alpha", "Beta"]' in prompt
+    assert "never use an Android package" in prompt
+    assert "Calendar" not in prompt
 
 
 def test_large_inline_prompt_constants_are_explicitly_allowlisted():

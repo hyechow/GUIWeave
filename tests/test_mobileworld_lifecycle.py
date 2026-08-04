@@ -3,6 +3,8 @@ from __future__ import annotations
 import json
 
 from gui_agent.adapters.android.mobileworld import (
+    MOBILEWORLD_PACKAGE_MANAGER,
+    _android_platform_contract,
     _final_answer,
     _generate_and_persist_reply,
     _init_task_then_wait_for_android,
@@ -19,6 +21,21 @@ class _FakeEnv:
 
     def init_task(self, task_name: str) -> None:
         self.events.append(f"init:{task_name}")
+
+
+def test_android_platform_contract_uses_semantic_app_names():
+    app_names = ["Calendar", "Messages"]
+
+    contract = _android_platform_contract(app_names)
+
+    assert "Available application names" in contract
+    assert '["Calendar", "Messages"]' in contract
+    assert "org.fossify.calendar" not in contract
+
+
+def test_mobileworld_package_manager_uses_internal_package_names():
+    assert MOBILEWORLD_PACKAGE_MANAGER["Calendar"] == "org.fossify.calendar"
+    assert MOBILEWORLD_PACKAGE_MANAGER["Messages"] == "com.google.android.apps.messaging"
 
 
 def test_mobileworld_routes_backend_goal_as_android_and_preserves_raw_separately():

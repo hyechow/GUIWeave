@@ -187,12 +187,6 @@ def test_validate_code_rejects_removed_planning_api(method: str) -> None:
         ),
         (
             "def run(ctx):\n"
-            "    ctx.commit('save', values={})\n"
-            "    assert ctx, 'runtime exists'",
-            "COMMIT_VALUES_REQUIRED",
-        ),
-        (
-            "def run(ctx):\n"
             "    ctx.reach('open', success={'entity': 'Records'})\n"
             "    ctx.read(fields={'Options': 'list'})",
             "FIELD_PROJECTION_CONTRACT",
@@ -1506,6 +1500,26 @@ def run(ctx):
     assert statement.persistence == "explicit_commit"
     assert runtime.current.inputs["target"] == {"ID": "1"}
     assert runtime.current.inputs["ui_state"]["target"] == {"ID": "1"}
+
+
+def test_source_derived_semantic_commit_keeps_an_explicit_commit_boundary() -> None:
+    source = '''
+def run(ctx):
+    source_text = "Lunch tomorrow at 11 AM for one hour"
+    ctx.commit("Create an entry from this source: " + source_text, values={})
+'''
+
+    assert not validate_code(source)
+    probe = execute_code(source, FixtureSpec())
+    assert probe.ok, probe.error
+    assert probe.trace[-1].op == "commit"
+    assert probe.writes[-1].required_values == {}
+
+    runtime = CodingProgramRuntime.start(CodingProgram(goal="create entry", source=source))
+    statement = runtime.current.statement
+    assert isinstance(statement, Interact)
+    assert statement.required_values == {}
+    assert statement.persistence == "explicit_commit"
 
 
 def test_commit_date_time_values_match_probe_and_runtime_json_contract() -> None:

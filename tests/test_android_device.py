@@ -144,6 +144,37 @@ def test_keyevent_mappings(calls):
     assert ("key", 66) in calls   # ENTER
 
 
+def test_list_apps_and_launch_semantic_name_from_package_manager():
+    from gui_agent.adapters.android.device import AndroidDevice
+
+    commands = []
+    listing = """
+2 activities found:
+    com.example.notes/.MainActivity
+    org.example.calendar/org.example.calendar.StartActivity
+"""
+
+    class _LauncherDev:
+        def shell(self, command):
+            commands.append(command)
+            return listing if command.startswith("cmd package query-activities") else "Status: ok"
+
+    package_manager = {
+        "Calendar": "org.example.calendar",
+        "Missing": "org.example.missing",
+    }
+    device = AndroidDevice(serial="device")
+    device.package_manager = package_manager
+    device._dev = _LauncherDev()
+
+    assert device.list_apps() == ["Calendar"]
+    component = "org.example.calendar/org.example.calendar.StartActivity"
+    assert device.launch_app("Calendar") == "OK launch_app Calendar"
+    assert commands[-1] == f"am start -W -n {component}"
+    with pytest.raises(ValueError, match="Missing.*0 components"):
+        device.launch_app("Missing")
+
+
 def test_screenshot_returns_png_bytes(calls):
     dev = _connected_device()
     png = dev.screenshot()
