@@ -35,19 +35,18 @@ version: 1
     text with host code or invent a host-clock value
   - use that interval view only when a later availability query/read is required; it is not
     preparatory navigation for the schema-free New-entry contract
-- Event form time picker: when the New Event form's start or end time selector opens the
-  modal time picker, it has a separate AM/PM area with one period pre-selected (usually the
-  currently displayed time's period). Before confirming with OK, check which period is
-  active and tap the AM or PM button to match the source message's requested time; a time
-  like "11 AM" requires tapping AM even when the picker shows 11:00 PM. Confirming OK while
-  the wrong period is active leaves the wrong time in the form.
+- Event form time picker: the New Event form's start and end time selectors open a modal
+  time picker with a separate AM/PM area, one period pre-selected. The selected period must
+  be verified against the requested time and switched to the correct AM/PM button before
+  confirming with OK; confirming while the wrong period is active leaves the wrong time in
+  the form.
 - Event form date and duration: the New Event form defaults its date to the currently
-  displayed calendar day and its end time to the start time. Before saving, explicitly set
-  both fields from the source message — change the date to the requested day (a "tomorrow"
-  invitation must be set to the message's tomorrow, not left on today's default), and set
-  the end time to the requested duration (an "about an hour" event from 11 AM must end at
-  12 PM). Saving while the date or end time is left at its default produces an event on the
-  wrong day or with the wrong duration.
+  displayed calendar day and its end time to the start time. Both fields must be set
+  explicitly from the source message before saving: the date to the day the message
+  requests (a relative day such as "tomorrow" resolves to that specific date, not the
+  displayed default), and the end time to the requested duration (an event with a stated
+  length must end after that length, not equal the start time). Saving with either left at
+  its default produces an event on the wrong day or with the wrong duration.
 - New-entry contract:
   - existing target: none
   - preparatory entity or view: none
