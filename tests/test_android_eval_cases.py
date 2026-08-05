@@ -31,23 +31,28 @@ def test_android_orchestrator_eval_covers_current_gui_baseline() -> None:
         "SumFileLinesTask",
         "MastodonConditionalFavoTask",
         "ScheduleLunchViaSmsTask",
+        "ScheduleCoffeeTimeViaSmsTask",
     }
 
 
 def test_conditional_collection_contract_accepts_pair_difference_program() -> None:
     source = '''
-def run(ctx):
-    ctx.reach("Open #dogs", success={"entity": "TaggedToots", "tag": "#dogs"})
-    tagged = ctx.query(entity="TaggedToots", fields=["author_handle", "content"], filters={"tag": "#dogs"})
-    ctx.reach("Open favorites", success={"entity": "SavedFavorites", "active_view": "Favorites"})
-    favorites = {(row["author_handle"], row["content"]) for row in ctx.query(entity="SavedFavorites", fields=["author_handle", "content"])}
-    ctx.reach("Open bookmarks", success={"entity": "SavedBookmarks", "active_view": "Bookmarks"})
-    bookmarks = {(row["author_handle"], row["content"]) for row in ctx.query(entity="SavedBookmarks", fields=["author_handle", "content"])}
-    ctx.reach("Return to #dogs", success={"entity": "TaggedToots", "tag": "#dogs"})
+def run(ctx, state):
+    state = ctx.reach(state, "Open #dogs", success={"entity": "TaggedToots", "tag": "#dogs"})
+    tagged_scope = ctx.query(state, entity="TaggedToots", filters={"tag": "#dogs"})
+    tagged = ctx.acquire(tagged_scope, fields=["author_handle", "content"])
+    state = ctx.reach(state, "Open favorites", success={"entity": "SavedFavorites", "active_view": "Favorites"})
+    fav_scope = ctx.query(state, entity="SavedFavorites")
+    favorites = {(row["author_handle"], row["content"]) for row in ctx.acquire(fav_scope, fields=["author_handle", "content"])}
+    state = ctx.reach(state, "Open bookmarks", success={"entity": "SavedBookmarks", "active_view": "Bookmarks"})
+    bm_scope = ctx.query(state, entity="SavedBookmarks")
+    bookmarks = {(row["author_handle"], row["content"]) for row in ctx.acquire(bm_scope, fields=["author_handle", "content"])}
+    state = ctx.reach(state, "Return to #dogs", success={"entity": "TaggedToots", "tag": "#dogs"})
     for row in tagged:
         pair = (row["author_handle"], row["content"])
         if pair not in favorites and pair not in bookmarks:
-            ctx.reach(
+            state = ctx.reach(
+                state,
                 "Open the exact toot",
                 target=row,
                 success={
@@ -57,7 +62,7 @@ def run(ctx):
                     "content": row["content"],
                 },
             )
-            ctx.commit("Favorite toot", target=row, values={"favorited": True})
+            state = ctx.commit(state, "Favorite toot", target=row, values={"favorited": True})
 '''
 
     assert orchestrator_eval.evaluate_source(
@@ -68,15 +73,16 @@ def run(ctx):
 
 def test_conditional_collection_contract_rejects_unsupported_status_filter() -> None:
     source = '''
-def run(ctx):
-    ctx.reach(
-        "Open #dogs", success={"entity": "TaggedToots", "tag": "#dogs"}
+def run(ctx, state):
+    state = ctx.reach(
+        state, "Open #dogs", success={"entity": "TaggedToots", "tag": "#dogs"}
     )
-    return ctx.query(
+    scope = ctx.query(
+        state,
         entity="TaggedToots",
-        fields=["author_handle", "content"],
         filters={"tag": "#dogs", "favorited": False},
     )
+    return ctx.acquire(scope, fields=["author_handle", "content"])
 '''
 
     failures = orchestrator_eval.evaluate_source(
@@ -89,24 +95,27 @@ def run(ctx):
 
 def test_sum_file_lines_contract_accepts_extract_then_read_program() -> None:
     source = '''
-def run(ctx):
-    ctx.reach("Open Downloads", success={"entity": "DownloadFiles", "fields": ["name", "modified_at"]})
-    downloads = ctx.query(entity="DownloadFiles", fields={"name": "text", "modified_at": "datetime"}, coverage="complete")
+def run(ctx, state):
+    state = ctx.reach(state, "Open Downloads", success={"entity": "DownloadFiles", "fields": ["name", "modified_at"]})
+    dl_scope = ctx.query(state, entity="DownloadFiles", coverage="complete")
+    downloads = ctx.acquire(dl_scope, fields={"name": "text", "modified_at": "datetime"})
     archives = [row for row in downloads if row["name"].casefold().endswith(".zip") and row["modified_at"].month == 7]
     assert archives, "Required July archive is missing"
     archives.sort(key=lambda row: row["modified_at"])
     archive = archives[0]
-    ctx.reach("Open archive", target=archive, success={"entity": "ArchiveEntries", "name": archive["name"], "fields": ["name"]})
-    entries = ctx.query(entity="ArchiveEntries", fields={"name": "text"}, coverage="complete")
-    ctx.commit("Extract every entry", target=archive, values={"selection": "all", "destination": "Downloads"})
-    ctx.reach("Return to Downloads", success={"entity": "DownloadFiles", "fields": ["name"]})
-    extracted = ctx.query(entity="DownloadFiles", fields={"name": "text"}, coverage="complete")
+    state = ctx.reach(state, "Open archive", target=archive, success={"entity": "ArchiveEntries", "name": archive["name"], "fields": ["name"]})
+    archive_scope = ctx.query(state, entity="ArchiveEntries", coverage="complete")
+    entries = ctx.acquire(archive_scope, fields={"name": "text"})
+    state = ctx.commit(state, "Extract every entry", target=archive, values={"selection": "all", "destination": "Downloads"})
+    state = ctx.reach(state, "Return to Downloads", success={"entity": "DownloadFiles", "fields": ["name"]})
+    dl_scope2 = ctx.query(state, entity="DownloadFiles", coverage="complete")
+    extracted = ctx.acquire(dl_scope2, fields={"name": "text"})
     contents = []
     for entry in entries:
         matches = [row for row in extracted if row["name"] == entry["name"]]
         assert matches, "Extracted entry is missing"
         target = matches[0]
-        contents.append(ctx.read(target=target, fields={"content": "text"})["content"])
+        contents.append(ctx.read(state, target=target, fields={"content": "text"})["content"])
     return int(sum(len(content.splitlines()) for content in contents))
 '''
 

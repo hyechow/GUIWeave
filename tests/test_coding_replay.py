@@ -20,24 +20,22 @@ FIXTURE = (
 
 SOURCES = {
     42: """
-def run(ctx):
-    ctx.reach("Open search terms", success={"entity": "Search Terms"})
-    rows = ctx.query(entity="Search Terms",
-        fields=["Search Query", "Number of Uses"],
-        coverage="complete",
-    )
+def run(ctx, state):
+    state = ctx.reach(state, "Open search terms", success={"entity": "Search Terms"})
+    scope = ctx.query(state, entity="Search Terms", coverage="complete")
+    rows = ctx.acquire(scope, fields=["Search Query", "Number of Uses"])
     assert len(rows) >= 2, "at least two search terms are required"
     ranked = sorted(rows, key=lambda row: row["Number of Uses"], reverse=True)
     return [row["Search Query"] for row in ranked[:2]]
 """,
     63: """
-def run(ctx):
-    ctx.reach("Open orders", success={"entity": "Orders"})
-    rows = ctx.query(entity="Orders",
-        fields=["ID", "Status", "Customer Email"],
+def run(ctx, state):
+    state = ctx.reach(state, "Open orders", success={"entity": "Orders"})
+    scope = ctx.query(state, entity="Orders",
         filters={"Status": "Complete"},
         coverage="complete",
     )
+    rows = ctx.acquire(scope, fields=["ID", "Status", "Customer Email"])
     counts = {}
     for row in rows:
         email = row["Customer Email"]
@@ -49,13 +47,13 @@ def run(ctx):
     108: """
 from datetime import datetime
 
-def run(ctx):
-    ctx.reach("Open orders", success={"entity": "Orders"})
-    rows = ctx.query(entity="Orders",
-        fields=["Status", "Purchase Date"],
+def run(ctx, state):
+    state = ctx.reach(state, "Open orders", success={"entity": "Orders"})
+    scope = ctx.query(state, entity="Orders",
         filters={"Status": "Complete"},
         coverage="complete",
     )
+    rows = ctx.acquire(scope, fields=["Status", "Purchase Date"])
     counts = {month: 0 for month in range(1, 6)}
     for row in rows:
         value = datetime.fromisoformat(row["Purchase Date"])
@@ -65,34 +63,34 @@ def run(ctx):
     return [{"month": names[month], "count": counts[month]} for month in range(1, 6)]
 """,
     113: """
-def run(ctx):
-    ctx.reach("Open all reviews", success={"entity": "All Reviews"})
-    rows = ctx.query(entity="All Reviews",
-        fields=["ID", "Product", "Nickname"],
+def run(ctx, state):
+    state = ctx.reach(state, "Open all reviews", success={"entity": "All Reviews"})
+    scope = ctx.query(state, entity="All Reviews",
         filters={"Product": "Olivia zip jacket"},
         coverage="complete",
     )
+    rows = ctx.acquire(scope, fields=["ID", "Product", "Nickname"])
     if not rows:
-        rows = ctx.query(entity="All Reviews",
-            fields=["ID", "Product", "Nickname"],
+        scope = ctx.query(state, entity="All Reviews",
             filters={"Product": "Olivia"},
             coverage="complete",
         )
+        rows = ctx.acquire(scope, fields=["ID", "Product", "Nickname"])
     nicknames = []
     for row in rows:
-        detail = ctx.read(target=row, fields=["Detailed Rating"])
+        detail = ctx.read(state, target=row, fields=["Detailed Rating"])
         if detail["Detailed Rating"] <= 3:
             nicknames.append(row["Nickname"])
     return nicknames
 """,
     193: """
-def run(ctx):
-    ctx.reach("Open orders", success={"entity": "Orders"})
-    rows = ctx.query(entity="Orders",
-        fields=["Status", "Purchase Date", "Grand Total (Purchased)"],
+def run(ctx, state):
+    state = ctx.reach(state, "Open orders", success={"entity": "Orders"})
+    scope = ctx.query(state, entity="Orders",
         filters={"Status": "Complete"},
         coverage="complete",
     )
+    rows = ctx.acquire(scope, fields=["Status", "Purchase Date", "Grand Total (Purchased)"])
     assert len(rows) >= 2, "at least two completed orders are required"
     latest = sorted(rows, key=lambda row: row["Purchase Date"], reverse=True)[:2]
     return round(sum(row["Grand Total (Purchased)"] for row in latest), 2)
@@ -113,9 +111,16 @@ def test_explicit_short_phrase_branch_returns_matching_product_reviews() -> None
     case = load_recorded_cases(FIXTURE)[113]
     result = replay_program(SOURCES[113], RecordedContext.from_dict(case))
 
-    queries = [event for event in result.trace if event.op == "query"]
+    queries = [
+        event for event in result.trace
+        if event.op == "query" and "filters" in event.kwargs
+    ]
     assert [event.kwargs["filters"] for event in queries] == [
         {"Product": "Olivia zip jacket"},
         {"Product": "Olivia"},
     ]
-    assert len(queries[-1].result) == 3
+    acquires = [
+        event for event in result.trace
+        if event.op == "query" and "fields" in event.kwargs
+    ]
+    assert len(acquires[-1].result) == 3

@@ -31,16 +31,18 @@ def test_runtime_resume_rebuilds_locals_and_ignores_failed_attempt(request) -> N
     program = CodingProgram(
         goal="update one order",
         source="""
-def run(ctx):
-    ctx.reach("Open Orders", success={"entity": "Orders"})
-    rows = ctx.query(entity="Orders", fields=["ID"])
+def run(ctx, state):
+    state = ctx.reach(state, "Open Orders", success={"entity": "Orders"})
+    scope = ctx.query(state, entity="Orders")
+    rows = ctx.acquire(scope, fields=["ID"])
     if rows:
-        ctx.reach(
+        state = ctx.reach(
+            state,
             "Open the exact order",
             target=rows[0],
             success={"entity": "Order", "ID": rows[0]["ID"]},
         )
-        ctx.commit(goal="Update order", target=rows[0], values={"Status": "Complete"})
+        state = ctx.commit(state, "Update order", target=rows[0], values={"Status": "Complete"})
     return len(rows)
 """,
     )

@@ -96,55 +96,58 @@ def _complete() -> _StatementTransitionResult:
 
 def test_compiler_requires_target_reach_before_targeted_commit() -> None:
     invalid = """
-def run(ctx):
+def run(ctx, state):
     target = {"ID": "1"}
-    ctx.commit("Update order", target=target, values={"Status": "Complete"})
+    state = ctx.commit(state, "Update order", target=target, values={"Status": "Complete"})
 """
     valid = """
-def run(ctx):
+def run(ctx, state):
     target = {"ID": "1"}
-    ctx.reach(
+    state = ctx.reach(
+        state,
         "Open the exact order",
         target=target,
         success={"entity": "Order", "ID": target["ID"]},
     )
-    ctx.commit("Update order", target=target, values={"Status": "Complete"})
+    state = ctx.commit(state, "Update order", target=target, values={"Status": "Complete"})
 """
     # Structural success + same target=row is enough (identity lives on target).
     structural = """
-def run(ctx):
+def run(ctx, state):
     target = {"ID": "1"}
-    ctx.reach("Open an order", target=target, success={"entity": "Order"})
-    ctx.commit("Update order", target=target, values={"Status": "Complete"})
+    state = ctx.reach(state, "Open an order", target=target, success={"entity": "Order"})
+    state = ctx.commit(state, "Update order", target=target, values={"Status": "Complete"})
 """
     # Reach binds a *different* expression than commit's target → still reject.
     mismatched = """
-def run(ctx):
+def run(ctx, state):
     target = {"ID": "1"}
     other = {"ID": "2"}
-    ctx.reach("Open an order", target=other, success={"entity": "Order"})
-    ctx.commit("Update order", target=target, values={"Status": "Complete"})
+    state = ctx.reach(state, "Open an order", target=other, success={"entity": "Order"})
+    state = ctx.commit(state, "Update order", target=target, values={"Status": "Complete"})
 """
     aliased = """
-def run(ctx):
+def run(ctx, state):
     target = {"ID": "1"}
     target_id = target["ID"]
-    ctx.reach(
+    state = ctx.reach(
+        state,
         "Open the exact order",
         target=target,
         success={"entity": "Order", "ID": target_id},
     )
-    ctx.commit("Update order", target=target, values={"Status": "Complete"})
+    state = ctx.commit(state, "Update order", target=target, values={"Status": "Complete"})
 """
     normalized_key = """
-def run(ctx):
+def run(ctx, state):
     target = {"ID": "1"}
-    ctx.reach(
+    state = ctx.reach(
+        state,
         "Open the exact order",
         target=target,
         success={"entity": "Order", "id": target["ID"]},
     )
-    ctx.commit("Update order", target=target, values={"Status": "Complete"})
+    state = ctx.commit(state, "Update order", target=target, values={"Status": "Complete"})
 """
 
     assert any(
@@ -170,18 +173,20 @@ def run(ctx):
 
 def test_target_reach_accepts_identity_read_from_same_target() -> None:
     source = """
-def run(ctx):
-    ctx.reach("Open pages", success={"entity": "Pages"})
-    rows = ctx.query(entity="Pages", fields=["Title"])
+def run(ctx, state):
+    state = ctx.reach(state, "Open pages", success={"entity": "Pages"})
+    scope = ctx.query(state, entity="Pages")
+    rows = ctx.acquire(scope, fields=["Title"])
     target = rows[0]
-    detail = ctx.read(target=target, fields={"ID": "text"})
+    detail = ctx.read(state, target=target, fields={"ID": "text"})
     row_id = detail["ID"]
-    ctx.reach(
+    state = ctx.reach(
+        state,
         "Open the exact page",
         target=target,
         success={"entity": "Page", "id": row_id},
     )
-    ctx.commit("Update page", target=target, values={"Title": "New"})
+    state = ctx.commit(state, "Update page", target=target, values={"Title": "New"})
 """
 
     assert validate_code(source) == []
@@ -189,23 +194,21 @@ def run(ctx):
 
 def test_live_collection_write_replay_requires_loop_local_target_reach() -> None:
     source = """
-def run(ctx):
-    ctx.reach("Open tagged toots", success={"entity": "TaggedToots"})
-    tagged = ctx.query(
-        entity="TaggedToots", fields=["author_handle", "content"]
-    )
-    ctx.reach("Open bookmarks", success={"entity": "SavedBookmarks"})
-    bookmarks = ctx.query(
-        entity="SavedBookmarks", fields=["author_handle", "content"]
-    )
+def run(ctx, state):
+    state = ctx.reach(state, "Open tagged toots", success={"entity": "TaggedToots"})
+    tagged_scope = ctx.query(state, entity="TaggedToots")
+    tagged = ctx.acquire(tagged_scope, fields=["author_handle", "content"])
+    state = ctx.reach(state, "Open bookmarks", success={"entity": "SavedBookmarks"})
+    bookmark_scope = ctx.query(state, entity="SavedBookmarks")
+    bookmarks = ctx.acquire(bookmark_scope, fields=["author_handle", "content"])
     excluded = {(row["author_handle"], row["content"]) for row in bookmarks}
     pending = [
         row for row in tagged
         if (row["author_handle"], row["content"]) not in excluded
     ]
-    ctx.reach("Return to tagged toots", success={"entity": "TaggedToots"})
+    state = ctx.reach(state, "Return to tagged toots", success={"entity": "TaggedToots"})
     for row in pending:
-        ctx.commit("Favorite toot", target=row, values={"favorited": True})
+        state = ctx.commit(state, "Favorite toot", target=row, values={"favorited": True})
 """
 
     diagnostics = validate_code(source)
@@ -517,12 +520,13 @@ def test_structural_success_uses_target_row_as_identity() -> None:
 
 def test_compiler_accepts_structural_target_bound_reach() -> None:
     source = '''
-def run(ctx):
-    ctx.reach("Messages", success={"entity": "Messages"})
-    rows = ctx.query(entity="Messages", fields=["id"], filters={"body": "lunch"})
+def run(ctx, state):
+    state = ctx.reach(state, "Messages", success={"entity": "Messages"})
+    scope = ctx.query(state, entity="Messages", filters={"body": "lunch"})
+    rows = ctx.acquire(scope, fields=["id"])
     row = rows[0]
-    ctx.reach("Open message for reply", target=row, success={"entity": "Message"})
-    ctx.commit("Reply OK", target=row, values={"reply": "OK"})
+    state = ctx.reach(state, "Open message for reply", target=row, success={"entity": "Message"})
+    state = ctx.commit(state, "Reply OK", target=row, values={"reply": "OK"})
 '''
     diagnostics = validate_code(source)
     assert not any(

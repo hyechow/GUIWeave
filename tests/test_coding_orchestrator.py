@@ -37,27 +37,29 @@ from gui_agent.core.schemas import (
 
 
 GOOD_PROGRAM = """
-def run(ctx):
-    ctx.reach(
+def run(ctx, state):
+    state = ctx.reach(
+        state,
         "Open the Sahara leggings collection",
         success={
             "entity": "Sahara leggings",
             "fields": ["id", "Name"],
         },
     )
-    products = ctx.query(entity="Sahara leggings",
-        fields=["id", "Name"],
+    scope = ctx.query(state, entity="Sahara leggings",
         filters={"Name": "Sahara leggings"},
     )
+    products = ctx.acquire(scope, fields=["id", "Name"])
     assert products, "Sahara products are required"
     updates = []
     for product in products:
-        detail = ctx.read(target=product, fields=["Price"])
+        detail = ctx.read(state, target=product, fields=["Price"])
         new_price = round(detail["Price"] * 0.8, 2)
         assert new_price < detail["Price"], "price must decrease"
         updates.append([product, new_price])
     for product, new_price in updates:
-        ctx.reach(
+        state = ctx.reach(
+            state,
             "Open the exact product",
             target=product,
             success={
@@ -66,7 +68,8 @@ def run(ctx):
                 "Name": product["Name"],
             },
         )
-        ctx.commit(
+        state = ctx.commit(
+            state,
             "Update the product price",
             target=product,
             values={"Price": new_price},
@@ -119,8 +122,9 @@ def run(ctx):
 
 def test_validate_code_accepts_structured_terminal_reach() -> None:
     source = """
-def run(ctx):
-    ctx.reach(
+def run(ctx, state):
+    state = ctx.reach(
+        state,
         "Show the requested report",
         success={
             "entity": "Sales Reports",
@@ -142,7 +146,7 @@ def run(ctx):
 
 @pytest.mark.parametrize(
     "method",
-    ["gui", "write", "lookup", "acquire", "interact", "compute"],
+    ["gui", "write", "lookup", "interact", "compute"],
 )
 def test_validate_code_rejects_removed_planning_api(method: str) -> None:
     source = f"def run(ctx):\n    ctx.{method}('x')\n    assert ctx, 'runtime exists'"
@@ -150,6 +154,17 @@ def test_validate_code_rejects_removed_planning_api(method: str) -> None:
     diagnostics = validate_code(source)
 
     assert any(item.code == "UNKNOWN_CTX_API" for item in diagnostics)
+
+
+def test_validate_code_accepts_acquire_as_public_api() -> None:
+    source = """
+def run(ctx, state):
+    state = ctx.reach(state, "Open X", success={"entity": "X", "fields": ["id"]})
+    scope = ctx.query(state, entity="X")
+    return ctx.acquire(scope, fields=["id"])
+"""
+
+    assert validate_code(source) == []
 
 
 @pytest.mark.parametrize(
@@ -194,17 +209,6 @@ def test_validate_code_rejects_removed_planning_api(method: str) -> None:
             "    ctx.read(fields={'Options': 'list'})",
             "FIELD_PROJECTION_CONTRACT",
         ),
-        (
-            "def run(ctx):\n"
-            "    return ctx.commit('save', values={'Status': 'Complete'})",
-            "RETURN_COMMIT_NONE",
-        ),
-        (
-            "def run(ctx):\n"
-            "    state = ctx.reach('open', success={'entity': 'Records'})\n"
-            "    return state",
-            "REACH_RETURNS_NONE",
-        ),
         ("def run(ctx):\n    assert True, 'always'", "BUSINESS_ASSERTION_CONSTANT"),
     ],
 )
@@ -212,22 +216,51 @@ def test_validate_code_rejects_unsafe_or_invalid_source(source: str, code: str) 
     assert any(item.code == code for item in validate_code(source))
 
 
+def test_validate_code_accepts_reach_and_commit_as_value_returning() -> None:
+    direct = """
+def run(ctx, state):
+    return ctx.commit(state, "Save form", values={"Status": "Complete"})
+"""
+
+    assert validate_code(direct) == []
+
+
+def test_validate_code_requires_state_for_reach_and_commit() -> None:
+    assert any(
+        item.code == "STATE_REQUIRED"
+        for item in validate_code(
+            "def run(ctx):\n"
+            "    return ctx.commit('save', values={'Status': 'Complete'})"
+        )
+    )
+    assert any(
+        item.code == "CTX_SIGNATURE"
+        for item in validate_code(
+            "def run(ctx):\n"
+            "    state = ctx.reach('open', success={'entity': 'Records'})\n"
+            "    return state"
+        )
+    )
+
+
 def test_validate_code_accepts_local_helpers_and_safe_imports() -> None:
     source = """
 from datetime import datetime
 
-def run(ctx):
+def run(ctx, state):
     def newest(rows):
         return sorted(rows, key=lambda row: datetime.fromisoformat(row["Date"]), reverse=True)
 
-    ctx.reach(
+    state = ctx.reach(
+        state,
         "Open orders",
         success={
             "entity": "Orders",
             "fields": ["Date"],
         },
     )
-    rows = ctx.query(entity="Orders", fields=["Date"])
+    scope = ctx.query(state, entity="Orders")
+    rows = ctx.acquire(scope, fields=["Date"])
     assert rows, "orders are required"
     return newest(rows)[0]["Date"]
 """
@@ -237,9 +270,10 @@ def run(ctx):
 
 def test_validate_code_allows_runtime_values_in_literal_reach_success() -> None:
     source = """
-def run(ctx):
+def run(ctx, state):
     start = "05/01/2021"
-    ctx.reach(
+    state = ctx.reach(
+        state,
         "Show the requested report",
         success={
             "entity": "Sales Report",
@@ -253,8 +287,9 @@ def run(ctx):
 
 def test_validate_code_allows_unassigned_terminal_reach() -> None:
     source = """
-def run(ctx):
-    ctx.reach(
+def run(ctx, state):
+    state = ctx.reach(
+        state,
         "Show the requested report",
         success={"entity": "Sales Report", "rendered": True},
     )
@@ -265,13 +300,14 @@ def run(ctx):
 
 def test_validate_code_allows_filter_fields_outside_return_projection() -> None:
     source = """
-def run(ctx):
-    ctx.reach("Open records", success={
+def run(ctx, state):
+    state = ctx.reach(state, "Open records", success={
         "entity": "Records", "fields": ["Name"],
     })
-    return ctx.query(entity="Records", fields=["Name"],
+    scope = ctx.query(state, entity="Records",
         filters={"Status": "Complete"},
     )
+    return ctx.acquire(scope, fields=["Name"])
 """
 
     assert validate_code(source) == []
@@ -279,18 +315,19 @@ def run(ctx):
 
 def test_verified_reach_state_with_extra_conditions_remains_composable() -> None:
     source = """
-def run(ctx):
-    ctx.reach(
+def run(ctx, state):
+    state = ctx.reach(
+        state,
         "Open the filtered records view",
         success={
             "entity": "Records",
             "view": "Filtered records",
         },
     )
-    return ctx.query(entity="Records",
-        fields=["Name"],
+    scope = ctx.query(state, entity="Records",
         filters={"Status": "Complete"},
     )
+    return ctx.acquire(scope, fields=["Name"])
 """
 
     assert validate_code(source) == []
@@ -300,9 +337,10 @@ def run(ctx):
 
 def test_reach_state_conditions_do_not_become_compile_time_query_strategy() -> None:
     source = """
-def run(ctx):
+def run(ctx, state):
     start = "01/01/2023"
-    ctx.reach(
+    state = ctx.reach(
+        state,
         "Open Orders",
         success={
             "entity": "Orders",
@@ -310,10 +348,10 @@ def run(ctx):
             "Status": "Complete",
         },
     )
-    return ctx.query(entity="Orders",
-        fields={"Purchase Date": "datetime"},
+    scope = ctx.query(state, entity="Orders",
         filters={"Status": "Complete"},
     )
+    return ctx.acquire(scope, fields={"Purchase Date": "datetime"})
 """
 
     assert validate_code(source) == []
@@ -444,21 +482,25 @@ def run(ctx):
 
 def test_validate_code_allows_reach_scope_before_query_and_commit() -> None:
     source = """
-def run(ctx):
-    ctx.reach(
+def run(ctx, state):
+    state = ctx.reach(
+        state,
         "View matching records",
         success={"entity": "Record", "scope": "requested", "rendered": True},
     )
-    rows = ctx.query(entity="Record",
-        fields={"id": "text", "favorited": "boolean", "bookmarked": "boolean"},
+    scope = ctx.query(state, entity="Record",
         filters={"scope": "requested"},
+    )
+    rows = ctx.acquire(scope,
+        fields={"id": "text", "favorited": "boolean", "bookmarked": "boolean"},
     )
     selected = [
         row for row in rows
         if not row["favorited"] and not row.get("bookmarked", False)
     ]
     for row in selected:
-        ctx.reach(
+        state = ctx.reach(
+            state,
             "Open the exact record",
             target=row,
             success={
@@ -468,7 +510,7 @@ def run(ctx):
                 "bookmarked": row["bookmarked"],
             },
         )
-        ctx.commit("Update record", target=row, values={"favorited": True})
+        state = ctx.commit(state, "Update record", target=row, values={"favorited": True})
     return len(selected)
 """
 
@@ -514,29 +556,27 @@ def run(ctx):
 
 def test_commit_replay_keeps_target_owning_collection_active() -> None:
     source = """
-def run(ctx):
-    ctx.reach("Open saved favorites", success={"entity": "SavedFavorites"})
-    favorites = ctx.query(entity="SavedFavorites",
-        fields=["author_handle", "content"],
-    )
-    ctx.reach("Open saved bookmarks", success={"entity": "SavedBookmarks"})
-    bookmarks = ctx.query(entity="SavedBookmarks",
-        fields=["author_handle", "content"],
-    )
+def run(ctx, state):
+    state = ctx.reach(state, "Open saved favorites", success={"entity": "SavedFavorites"})
+    favorites_scope = ctx.query(state, entity="SavedFavorites")
+    favorites = ctx.acquire(favorites_scope, fields=["author_handle", "content"])
+    state = ctx.reach(state, "Open saved bookmarks", success={"entity": "SavedBookmarks"})
+    bookmarks_scope = ctx.query(state, entity="SavedBookmarks")
+    bookmarks = ctx.acquire(bookmarks_scope, fields=["author_handle", "content"])
     excluded = {
         (row["author_handle"], row["content"])
         for row in favorites + bookmarks
     }
-    ctx.reach("Open tagged records", success={"entity": "TaggedRecords"})
-    tagged = ctx.query(entity="TaggedRecords",
-        fields=["id", "author_handle", "content"],
-    )
+    state = ctx.reach(state, "Open tagged records", success={"entity": "TaggedRecords"})
+    tagged_scope = ctx.query(state, entity="TaggedRecords")
+    tagged = ctx.acquire(tagged_scope, fields=["id", "author_handle", "content"])
     pending = [
         row for row in tagged
         if (row["author_handle"], row["content"]) not in excluded
     ]
     for row in pending:
-        ctx.reach(
+        state = ctx.reach(
+            state,
             "Open the exact tagged record",
             target=row,
             success={
@@ -546,7 +586,7 @@ def run(ctx):
                 "content": row["content"],
             },
         )
-        ctx.commit("Favorite record", target=row, values={"favorited": True})
+        state = ctx.commit(state, "Favorite record", target=row, values={"favorited": True})
     return len(pending)
 """
     fixture = FixtureSpec(lookups={
@@ -571,17 +611,18 @@ def run(ctx):
 
 def test_validate_code_allows_commit_with_global_target_locator() -> None:
     source = """
-def run(ctx):
-    ctx.reach("Open source records", success={"entity": "SourceRecords"})
-    rows = ctx.query(entity="SourceRecords",
-        fields=["content", "permalink"],
-    )
-    ctx.reach("Open reference records", success={"entity": "ReferenceRecords"})
-    references = ctx.query(entity="ReferenceRecords", fields=["content"])
+def run(ctx, state):
+    state = ctx.reach(state, "Open source records", success={"entity": "SourceRecords"})
+    source_scope = ctx.query(state, entity="SourceRecords")
+    rows = ctx.acquire(source_scope, fields=["content", "permalink"])
+    state = ctx.reach(state, "Open reference records", success={"entity": "ReferenceRecords"})
+    reference_scope = ctx.query(state, entity="ReferenceRecords")
+    references = ctx.acquire(reference_scope, fields=["content"])
     reference_content = {row["content"] for row in references}
     pending = [row for row in rows if row["content"] not in reference_content]
     for row in pending:
-        ctx.reach(
+        state = ctx.reach(
+            state,
             "Open the exact source record",
             target=row,
             success={
@@ -590,7 +631,7 @@ def run(ctx):
                 "permalink": row["permalink"],
             },
         )
-        ctx.commit("Update record", target=row, values={"saved": True})
+        state = ctx.commit(state, "Update record", target=row, values={"saved": True})
     return len(pending)
 """
 
@@ -599,12 +640,14 @@ def run(ctx):
 
 def test_query_owns_fields_but_remains_bound_to_reach_entity() -> None:
     source = """
-def run(ctx):
-    ctx.reach(
+def run(ctx, state):
+    state = ctx.reach(
+        state,
         "Open records",
         success={"entity": "Records", "fields": ["ID"]},
     )
-    return ctx.query(entity="Records", fields=["ID", "Status"])
+    scope = ctx.query(state, entity="Records")
+    return ctx.acquire(scope, fields=["ID", "Status"])
 """
 
     fixture = FixtureSpec(lookups={
@@ -614,8 +657,8 @@ def run(ctx):
     assert execute_code(source, fixture).ok
     mismatched = execute_code(
         source.replace(
-            'entity="Records", fields=["ID", "Status"]',
-            'entity="Other", fields=["ID", "Status"]',
+            'ctx.query(state, entity="Records")',
+            'ctx.query(state, entity="Other")',
         ),
         fixture,
     )
@@ -729,8 +772,9 @@ def run(ctx):
 
 def test_reach_filters_signature_diagnostic_preserves_route_and_query_boundaries() -> None:
     source = """
-def run(ctx):
-    ctx.reach(
+def run(ctx, state):
+    state = ctx.reach(
+        state,
         "Open tagged records",
         success={"entity": "TaggedRecords"},
         filters={"tag": "#dogs"},
@@ -763,9 +807,9 @@ def run(ctx):
 
 def test_validate_code_requires_direct_read_fields_in_reach_contract() -> None:
     source = """
-def run(ctx):
-    ctx.reach("Show one result", success={"entity": "VisibleResult"})
-    return ctx.read(fields={"temperature": "number"})
+def run(ctx, state):
+    state = ctx.reach(state, "Show one result", success={"entity": "VisibleResult"})
+    return ctx.read(state, fields={"temperature": "number"})
 """
 
     diagnostics = validate_code(source)
@@ -783,12 +827,13 @@ def run(ctx):
 
 def test_validate_code_rejects_reading_observable_reach_dimension() -> None:
     source = """
-def run(ctx):
-    ctx.reach(
+def run(ctx, state):
+    state = ctx.reach(
+        state,
         "Configure and render report",
         success={"entity": "Report", "rendered": True},
     )
-    result = ctx.read(fields={"rendered": "boolean"})
+    result = ctx.read(state, fields={"rendered": "boolean"})
     return result["rendered"]
 """
 
@@ -801,9 +846,9 @@ def run(ctx):
 
 def test_direct_read_repair_moves_top_level_type_marker_into_fields() -> None:
     source = '''
-def run(ctx):
-    ctx.reach("Show weather", success={"entity": "Weather", "temperature": "number"})
-    return ctx.read(fields={"temperature": "number"})["temperature"]
+def run(ctx, state):
+    state = ctx.reach(state, "Show weather", success={"entity": "Weather", "temperature": "number"})
+    return ctx.read(state, fields={"temperature": "number"})["temperature"]
 '''
 
     assert [item.code for item in validate_code(source)] == [
@@ -818,13 +863,14 @@ def run(ctx):
 
 def test_repair_direct_read_fields_strengthens_literal_reach_contract() -> None:
     source = """
-def run(ctx):
-    ctx.reach(
+def run(ctx, state):
+    state = ctx.reach(
+        state,
         "Show one result",
         success={"entity": "VisibleResult", "fields": ["title"]},
     )
-    first = ctx.read(fields={"temperature": "number"})
-    second = ctx.read(fields=["title", "humidity"])
+    first = ctx.read(state, fields={"temperature": "number"})
+    second = ctx.read(state, fields=["title", "humidity"])
     return [first, second]
 """
 
@@ -837,28 +883,27 @@ def run(ctx):
 
 def test_validate_code_tracks_reassigned_state_by_call_order() -> None:
     source = """
-def run(ctx):
-    ctx.reach("Open customers", success={"entity": "Customers"})
-    customers = ctx.query(entity="Customers", fields=["Name"])
-    ctx.reach("Open orders", success={"entity": "Orders"})
-    orders = ctx.query(entity="Orders", fields=["ID"])
+def run(ctx, state):
+    state = ctx.reach(state, "Open customers", success={"entity": "Customers"})
+    customers_scope = ctx.query(state, entity="Customers")
+    customers = ctx.acquire(customers_scope, fields=["Name"])
+    state = ctx.reach(state, "Open orders", success={"entity": "Orders"})
+    orders_scope = ctx.query(state, entity="Orders")
+    orders = ctx.acquire(orders_scope, fields=["ID"])
     return [customers, orders]
 """
 
     assert validate_code(source) == []
 
 
-def test_validate_code_rejects_assigning_reach_result() -> None:
+def test_validate_code_accepts_assigning_and_returning_reach_result() -> None:
     source = """
-def run(ctx):
-    state = ctx.reach("Open form", success={"entity": "Form"})
+def run(ctx, state):
+    state = ctx.reach(state, "Open form", success={"entity": "Form"})
     return state
 """
 
-    assert any(
-        item.code == "REACH_RETURNS_NONE"
-        for item in validate_code(source)
-    )
+    assert validate_code(source) == []
 
 
 def test_coding_runtime_normalizes_executor_terminal_phase() -> None:
@@ -873,15 +918,17 @@ def test_coding_runtime_normalizes_executor_terminal_phase() -> None:
 
 def test_validate_code_does_not_require_an_unnecessary_assertion() -> None:
     source = """
-def run(ctx):
-    ctx.reach(
+def run(ctx, state):
+    state = ctx.reach(
+        state,
         "Open orders",
         success={
             "entity": "Orders",
             "fields": ["Status"],
         },
     )
-    rows = ctx.query(entity="Orders", fields=["Status"])
+    scope = ctx.query(state, entity="Orders")
+    rows = ctx.acquire(scope, fields=["Status"])
     return [row["Status"] for row in rows]
 """
 
@@ -890,13 +937,14 @@ def run(ctx):
 
 def test_validate_code_allows_exact_query_field_spelling_shared_with_filter() -> None:
     source = '''
-def run(ctx):
-    ctx.reach("Open pages", success={"entity": "Pages"})
-    return ctx.query(
+def run(ctx, state):
+    state = ctx.reach(state, "Open pages", success={"entity": "Pages"})
+    scope = ctx.query(
+        state,
         entity="Pages",
-        fields=["Title"],
         filters={"Title": "Home Page"},
     )
+    return ctx.acquire(scope, fields=["Title"])
 '''
 
     assert validate_code(source) == []
@@ -904,9 +952,9 @@ def run(ctx):
 
 def test_runtime_dataflow_treats_reach_as_an_effect() -> None:
     source = """
-def run(ctx):
-    ctx.reach("Open the editor", success={"entity": "Record"})
-    ctx.commit("Create a record", values={"Name": "Example"})
+def run(ctx, state):
+    state = ctx.reach(state, "Open the editor", success={"entity": "Record"})
+    state = ctx.commit(state, "Create a record", values={"Name": "Example"})
 """
 
     assert validate_runtime_dataflow(source) == []
@@ -928,12 +976,13 @@ def run(ctx):
 
 def test_validate_code_requires_target_when_reach_identifies_existing_record() -> None:
     source = '''
-def run(ctx):
-    ctx.reach(
+def run(ctx, state):
+    state = ctx.reach(
+        state,
         "Open existing product",
         success={"entity": "Products", "Name": "Selene Yoga Hoodie"},
     )
-    ctx.commit("Update product", values={"Short Description": "New"})
+    state = ctx.commit(state, "Update product", values={"Short Description": "New"})
 '''
 
     diagnostics = validate_code(source)
@@ -958,13 +1007,14 @@ def run(ctx):
 
 def test_validate_code_allows_source_read_before_schema_free_commit() -> None:
     source = '''
-def run(ctx):
-    ctx.reach(
+def run(ctx, state):
+    state = ctx.reach(
+        state,
         "Open source text",
         success={"entity": "Message", "fields": ["body"]},
     )
-    detail = ctx.read(fields={"body": "text"})
-    ctx.commit(f"Create from source: {detail['body']}", values={})
+    detail = ctx.read(state, fields={"body": "text"})
+    state = ctx.commit(state, f"Create from source: {detail['body']}", values={})
 '''
 
     assert validate_code(source) == []
@@ -972,12 +1022,12 @@ def run(ctx):
 
 def test_schema_free_commit_cannot_replace_source_with_host_transformation() -> None:
     source = '''
-def run(ctx):
-    ctx.reach("Open source", success={"entity": "Message", "fields": ["body"]})
-    detail = ctx.read(fields={"body": "text"})
+def run(ctx, state):
+    state = ctx.reach(state, "Open source", success={"entity": "Message", "fields": ["body"]})
+    detail = ctx.read(state, fields={"body": "text"})
     body = detail["body"]
     transformed = str(body)
-    ctx.commit(f"Create from {transformed}", values={})
+    state = ctx.commit(state, f"Create from {transformed}", values={})
 '''
 
     assert any(
@@ -987,8 +1037,9 @@ def run(ctx):
 
 def test_runtime_completes_terminal_reach_without_exposing_ui_state(request) -> None:
     source = """
-def run(ctx):
-    ctx.reach(
+def run(ctx, state):
+    state = ctx.reach(
+        state,
         "Configure and show the Orders report",
         success={
             "entity": "Sales Reports",
@@ -1015,8 +1066,10 @@ def run(ctx):
 
 def test_projection_contract_tracks_query_rows() -> None:
     source = """
-def run(ctx):
-    rows = ctx.query(entity="Orders", fields=["Status"])
+def run(ctx, state):
+    state = ctx.reach(state, "Open orders", success={"entity": "Orders"})
+    scope = ctx.query(state, entity="Orders")
+    rows = ctx.acquire(scope, fields=["Status"])
     assert rows, "orders are required"
     return [row["Total"] for row in rows]
 """
@@ -1028,8 +1081,10 @@ def run(ctx):
 
 def test_projection_contract_tracks_rank_key_lambda_fields() -> None:
     source = """
-def run(ctx):
-    rows = ctx.query(entity="Orders",
+def run(ctx, state):
+    state = ctx.reach(state, "Open orders", success={"entity": "Orders"})
+    scope = ctx.query(state, entity="Orders")
+    rows = ctx.acquire(scope,
         fields={"Grand Total": "money"},
     )
     return sorted(rows, key=lambda row: row["Purchase Date"])
@@ -1057,8 +1112,10 @@ def run(ctx):
 
 def test_fixture_contract_checks_query_fields_for_matching_source() -> None:
     source = """
-def run(ctx):
-    rows = ctx.query(entity="Orders", fields=["Missing"])
+def run(ctx, state):
+    state = ctx.reach(state, "Open orders", success={"entity": "Orders"})
+    scope = ctx.query(state, entity="Orders")
+    rows = ctx.acquire(scope, fields=["Missing"])
     assert rows, "orders are required"
     return rows
 """
@@ -1074,8 +1131,9 @@ def run(ctx):
 
 def test_fixture_contract_requires_reach_context_for_absent_query_source() -> None:
     source = """
-def run(ctx):
-    rows = ctx.query(entity="Orders", fields=["ID"])
+def run(ctx, state):
+    scope = ctx.query(state, entity="Orders")
+    rows = ctx.acquire(scope, fields=["ID"])
     assert rows, "orders are required"
     return rows
 """
@@ -1110,8 +1168,9 @@ def run(ctx):
 
 def test_execute_code_filters_normalizes_and_returns_query_rows() -> None:
     source = """
-def run(ctx):
-    ctx.reach(
+def run(ctx, state):
+    state = ctx.reach(
+        state,
         "Open orders",
         success={
             "entity": "Orders",
@@ -1122,8 +1181,10 @@ def run(ctx):
             ],
         },
     )
-    rows = ctx.query(entity="Orders",
+    scope = ctx.query(state, entity="Orders",
         filters={"Status": "Complete"},
+    )
+    rows = ctx.acquire(scope,
         fields={
             "Purchase Date": "datetime",
             "Grand Total (Purchased)": "number",
@@ -1165,12 +1226,11 @@ def run(ctx):
 
 def test_probe_fixture_supports_typed_fields_and_structured_range_filters() -> None:
     source = """
-def run(ctx):
+def run(ctx, state):
     start_date = "01/01/2023"
     end_date = "05/31/2023"
-    ctx.reach("Open orders", success={"entity": "Orders"})
-    rows = ctx.query(entity="Orders",
-        fields={"Purchase Date": "datetime"},
+    state = ctx.reach(state, "Open orders", success={"entity": "Orders"})
+    scope = ctx.query(state, entity="Orders",
         filters={
             "Status": "Complete",
             "Purchase Date": {
@@ -1179,6 +1239,7 @@ def run(ctx):
             },
         },
     )
+    rows = ctx.acquire(scope, fields={"Purchase Date": "datetime"})
     return rows[0]["Purchase Date"].year
 """
 
@@ -1190,12 +1251,12 @@ def run(ctx):
 
 def test_fixture_query_does_not_fuzz_or_correct_literal_filter_phrase() -> None:
     source = """
-def run(ctx):
-    ctx.reach("Open products", success={"entity": "Products"})
-    return ctx.query(entity="Products",
-        fields=["Name"],
+def run(ctx, state):
+    state = ctx.reach(state, "Open products", success={"entity": "Products"})
+    scope = ctx.query(state, entity="Products",
         filters={"Name": "Auroar"},
     )
+    return ctx.acquire(scope, fields=["Name"])
 """
     fixture = FixtureSpec(lookups={
         "products": [{"Name": "Aurora jacket"}],
@@ -1218,6 +1279,7 @@ def test_execute_code_commit_updates_fixture_state() -> None:
     assert [event.op for event in result.trace] == [
         "reach",
         "query",
+        "query",
         "read",
         "reach",
         "commit",
@@ -1226,17 +1288,17 @@ def test_execute_code_commit_updates_fixture_state() -> None:
 
 def test_fixture_query_normalizes_unique_phone_alias() -> None:
     source = """
-def run(ctx):
-    ctx.reach(
+def run(ctx, state):
+    state = ctx.reach(
+        state,
         "Open the customer collection",
         success={
             "entity": "+1 205 881 2302",
             "fields": ["id", "phone"],
         },
     )
-    rows = ctx.query(entity="+1 205 881 2302",
-        fields=["id", "phone"],
-    )
+    scope = ctx.query(state, entity="+1 205 881 2302")
+    rows = ctx.acquire(scope, fields=["id", "phone"])
     assert len(rows) == 1, "one customer is required"
     return rows[0]["id"]
 """
@@ -1252,17 +1314,17 @@ def run(ctx):
 
 def test_fixture_semantic_fields_ignore_case_spaces_and_underscores() -> None:
     source = """
-def run(ctx):
-    ctx.reach(
+def run(ctx, state):
+    state = ctx.reach(
+        state,
         "Open orders",
         success={
             "entity": "Orders",
             "fields": ["Grand Total (Purchased)"],
         },
     )
-    rows = ctx.query(entity="Orders",
-        fields=["Grand Total (Purchased)"],
-    )
+    scope = ctx.query(state, entity="Orders")
+    rows = ctx.acquire(scope, fields=["Grand Total (Purchased)"])
     assert rows, "orders are required"
     return rows[0]["Grand Total (Purchased)"]
 """
@@ -1278,21 +1340,24 @@ def run(ctx):
 
 def test_fixture_preserves_reach_commit_evidence_when_later_code_fails() -> None:
     source = """
-def run(ctx):
-    ctx.reach(
+def run(ctx, state):
+    state = ctx.reach(
+        state,
         "Open products",
         success={
             "entity": "Products",
             "fields": ["id"],
         },
     )
-    product = ctx.query(entity="Products", fields=["id"])[0]
-    ctx.reach(
+    scope = ctx.query(state, entity="Products")
+    product = ctx.acquire(scope, fields=["id"])[0]
+    state = ctx.reach(
+        state,
         "Open the exact product",
         target=product,
         success={"entity": "Product", "id": product["id"]},
     )
-    ctx.commit("Update price", target=product, values={"Price": 80})
+    state = ctx.commit(state, "Update price", target=product, values={"Price": 80})
     assert product["missing"], "later check fails"
 """
     fixture = FixtureSpec(
@@ -1309,18 +1374,19 @@ def run(ctx):
 
 def test_probe_fixture_supports_query_filters_and_numeric_fields() -> None:
     source = """
-def run(ctx):
-    ctx.reach(
+def run(ctx, state):
+    state = ctx.reach(
+        state,
         "Open orders",
         success={
             "entity": "Orders",
             "fields": ["Status", "Grand Total (Purchased)"],
         },
     )
-    rows = ctx.query(entity="Orders",
+    scope = ctx.query(state, entity="Orders",
         filters={"Status": "Complete"},
-        fields=["Status", "Grand Total (Purchased)"],
     )
+    rows = ctx.acquire(scope, fields=["Status", "Grand Total (Purchased)"])
     assert rows, "orders are required"
     return sum(row["Grand Total (Purchased)"] for row in rows)
 """
@@ -1334,22 +1400,18 @@ def run(ctx):
 
 def test_probe_read_target_survives_query_field_merge_and_dynamic_filter() -> None:
     source = """
-def run(ctx):
-    ctx.reach("Open reviews", success={"entity": "Reviews"})
+def run(ctx, state):
+    state = ctx.reach(state, "Open reviews", success={"entity": "Reviews"})
     product_filter = {"Product": "Olivia jacket"}
-    products = ctx.query(entity="Reviews",
-        fields=["Product"],
-        filters=product_filter,
-    )
+    scope = ctx.query(state, entity="Reviews", filters=product_filter)
+    products = ctx.acquire(scope, fields=["Product"])
     product = products[0]["Product"]
-    rows = ctx.query(entity="Reviews",
-        fields=["Nickname", "Product"],
-        filters={"Product": product},
-    )
+    scope2 = ctx.query(state, entity="Reviews", filters={"Product": product})
+    rows = ctx.acquire(scope2, fields=["Nickname", "Product"])
     return [
         row["Nickname"]
         for row in rows
-        if ctx.read(target=row, fields=["Rating"])["Rating"] <= 3
+        if ctx.read(state, target=row, fields=["Rating"])["Rating"] <= 3
     ]
 """
 
@@ -1361,10 +1423,11 @@ def run(ctx):
 
 def test_probe_target_read_survives_typed_query_normalization() -> None:
     source = """
-def run(ctx):
-    ctx.reach("Show results", success={"entity": "Results"})
-    rows = ctx.query(entity="Results", fields={"temperature": "number"})
-    return ctx.read(target=rows[0], fields={"temperature": "number"})["temperature"]
+def run(ctx, state):
+    state = ctx.reach(state, "Show results", success={"entity": "Results"})
+    scope = ctx.query(state, entity="Results")
+    rows = ctx.acquire(scope, fields={"temperature": "number"})
+    return ctx.read(state, target=rows[0], fields={"temperature": "number"})["temperature"]
 """
 
     result = execute_code(source, build_probe_fixture(source))
@@ -1375,12 +1438,13 @@ def run(ctx):
 
 def test_probe_fixture_supports_read_directly_from_reached_state() -> None:
     source = """
-def run(ctx):
-    ctx.reach(
+def run(ctx, state):
+    state = ctx.reach(
+        state,
         "Render connectivity settings",
         success={"entity": "DeviceSettings", "fields": ["flight_mode"]},
     )
-    current = ctx.read(fields=["flight_mode"])
+    current = ctx.read(state, fields=["flight_mode"])
     return current["flight_mode"]
 """
 
@@ -1394,17 +1458,17 @@ def run(ctx):
 
 def test_probe_fixture_accepts_dynamic_filter_field_not_in_projection() -> None:
     source = """
-def run(ctx):
-    ctx.reach("Open products", success={"entity": "Products"})
-    products = ctx.query(entity="Products",
-        fields=["Name"],
+def run(ctx, state):
+    state = ctx.reach(state, "Open products", success={"entity": "Products"})
+    scope = ctx.query(state, entity="Products",
         filters={"Name": "Example"},
     )
-    ctx.reach("Open reviews", success={"entity": "All Reviews"})
-    return ctx.query(entity="All Reviews",
-        fields=["Action"],
+    products = ctx.acquire(scope, fields=["Name"])
+    state = ctx.reach(state, "Open reviews", success={"entity": "All Reviews"})
+    scope2 = ctx.query(state, entity="All Reviews",
         filters={"Product": products[0]["Name"]},
     )
+    return ctx.acquire(scope2, fields=["Action"])
 """
 
     result = execute_code(source, build_probe_fixture(source))
@@ -1414,8 +1478,9 @@ def run(ctx):
 
 def test_runtime_query_yields_lookup_then_constrain_then_acquire() -> None:
     source = """
-def run(ctx):
-    ctx.reach(
+def run(ctx, state):
+    state = ctx.reach(
+        state,
         "Open orders",
         success={
             "entity": "Orders",
@@ -1426,8 +1491,10 @@ def run(ctx):
             ],
         },
     )
-    rows = ctx.query(entity="Orders",
+    scope = ctx.query(state, entity="Orders",
         filters={"Status": "Complete"},
+    )
+    rows = ctx.acquire(scope,
         fields={
             "Purchase Date": "datetime",
             "Grand Total (Purchased)": "number",
@@ -1467,15 +1534,11 @@ def run(ctx):
         runtime.interpreter.run_log[0].coding_payload["produced_state"]
         == ui_state_token
     )
-    assert lookup_intent.required_fields == [
-        "Purchase Date",
-        "Grand Total (Purchased)",
-        "status",
-    ]
+    assert lookup_intent.required_fields == ["status"]
     assert "number of records" in runtime.current.statement.goal
     assert "row count is unrestricted" in runtime.current.statement.success
     assert runtime.current_coding_plan_step == 1
-    assert runtime.current_coding_plan_steps == 3
+    assert runtime.current_coding_plan_steps == 2
     query_call_id = runtime.current_coding_call_id
     assert query_call_id
     assert query_call_id != runtime.interpreter.run_log[0].coding_call_id
@@ -1502,7 +1565,7 @@ def run(ctx):
     assert runtime.interpreter.run_log[-1].coding_payload["state"] == ui_state_token
     assert constrain_intent.predicates["status"].values == ["complete"]
     assert runtime.current_coding_plan_step == 2
-    assert runtime.current_coding_plan_steps == 3
+    assert runtime.current_coding_plan_steps == 2
     assert runtime.current_coding_call_id == query_call_id
     filtered_scope = {
         "kind": "resolved_collection",
@@ -1515,15 +1578,19 @@ def run(ctx):
         outputs={"scope": filtered_scope},
     ))
 
-    # 3. acquire — materialize the now-constrained collection.
+    # 3. acquire — materialize the now-constrained collection as its own call.
     assert isinstance(runtime.current.statement, Acquire)
-    assert runtime.current.args["ui_state_token"] == ui_state_token
+    assert runtime.current.args["ui_state_token"] == (
+        f"scope:{filtered_scope['surface_fingerprint']}"
+    )
     assert runtime.current.args["lookup_scope"] == filtered_scope
     assert runtime.current.args["field_types"] == {
         "Purchase Date": "datetime",
         "Grand Total (Purchased)": "number",
     }
-    assert runtime.current_coding_call_id == query_call_id
+    assert runtime.current_coding_plan_step == 1
+    assert runtime.current_coding_plan_steps == 1
+    assert runtime.current_coding_call_id != query_call_id
     runtime.send_outcome(StatementOutcome.completed(
         "rows acquired",
         outputs={"rows": [{
@@ -1534,23 +1601,27 @@ def run(ctx):
 
     assert runtime.finished
     assert runtime.reply == "100"
-    assert {
-        record.coding_call_id for record in runtime.interpreter.run_log[1:]
-    } == {query_call_id}
+    assert [record.coding_op for record in runtime.interpreter.run_log] == [
+        "reach",
+        "lookup",
+        "constrain",
+        "acquire",
+    ]
 
 
 def test_runtime_query_without_predicates_skips_constrain() -> None:
     source = """
-def run(ctx):
-    ctx.reach("Open terms", success={"entity": "Terms"})
-    return ctx.query(entity="Terms", fields=["Term", "Uses"])
+def run(ctx, state):
+    state = ctx.reach(state, "Open terms", success={"entity": "Terms"})
+    scope = ctx.query(state, entity="Terms")
+    return ctx.acquire(scope, fields=["Term", "Uses"])
 """
     runtime = CodingProgramRuntime.start(CodingProgram(goal="list terms", source=source))
 
     runtime.send_outcome(StatementOutcome.completed("terms available"))
     assert runtime.current.statement.interaction_intent.phase == "locate"
     query_call_id = runtime.current_coding_call_id
-    assert runtime.current_coding_plan_steps == 2
+    assert runtime.current_coding_plan_steps == 1
     runtime.send_outcome(StatementOutcome.completed(
         "scope resolved",
         outputs={"scope": {
@@ -1562,9 +1633,9 @@ def run(ctx):
     ))
 
     assert isinstance(runtime.current.statement, Acquire)
-    assert runtime.current_coding_plan_step == 2
-    assert runtime.current_coding_plan_steps == 2
-    assert runtime.current_coding_call_id == query_call_id
+    assert runtime.current_coding_plan_step == 1
+    assert runtime.current_coding_plan_steps == 1
+    assert runtime.current_coding_call_id != query_call_id
     runtime.send_outcome(StatementOutcome.completed(
         "rows acquired",
         outputs={"rows": [{"Term": "bag", "Uses": 10}]},
@@ -1580,26 +1651,27 @@ def run(ctx):
 
 def test_runtime_query_reuses_matching_route_filter_from_current_ui() -> None:
     source = '''
-def run(ctx):
-    ctx.reach(
+def run(ctx, state):
+    state = ctx.reach(
+        state,
         "Open #dogs",
         success={"entity": "TaggedToots", "tag": "#dogs"},
     )
-    return ctx.query(
+    scope = ctx.query(
+        state,
         entity="TaggedToots",
-        fields=["author_handle", "content"],
         filters={"tag": "#dogs"},
     )
+    return ctx.acquire(scope, fields=["author_handle", "content"])
 '''
     runtime = CodingProgramRuntime.start(CodingProgram(goal="list tagged posts", source=source))
 
     runtime.send_outcome(StatementOutcome.completed("tag route active"))
     assert runtime.current.statement.interaction_intent.phase == "locate"
-    assert runtime.current.statement.interaction_intent.required_fields == [
-        "author_handle",
-        "content",
-    ]
-    assert runtime.current_coding_plan_steps == 2
+    # The reach already established the tag route, so the lookup has no extra
+    # required fields and no constrain phase is needed.
+    assert runtime.current.statement.interaction_intent.required_fields == []
+    assert runtime.current_coding_plan_steps == 1
     runtime.send_outcome(StatementOutcome.completed(
         "scope resolved",
         outputs={"scope": {
@@ -1612,7 +1684,8 @@ def run(ctx):
     ))
 
     assert isinstance(runtime.current.statement, Acquire)
-    assert runtime.current_coding_plan_step == 2
+    assert runtime.current_coding_plan_step == 1
+    assert runtime.current_coding_plan_steps == 1
     runtime.send_outcome(StatementOutcome.completed(
         "rows acquired",
         outputs={"rows": []},
@@ -1626,15 +1699,17 @@ def run(ctx):
 
 def test_runtime_program_explicitly_branches_from_full_to_short_phrase() -> None:
     source = """
-def run(ctx):
-    ctx.reach("Open products", success={"entity": "Products"})
-    rows = ctx.query(entity="Products", fields=["Name"],
+def run(ctx, state):
+    state = ctx.reach(state, "Open products", success={"entity": "Products"})
+    scope = ctx.query(state, entity="Products",
         filters={"Name": "Aurora jacket"},
     )
+    rows = ctx.acquire(scope, fields=["Name"])
     if not rows:
-        rows = ctx.query(entity="Products", fields=["Name"],
+        scope = ctx.query(state, entity="Products",
             filters={"Name": "Aurora"},
         )
+        rows = ctx.acquire(scope, fields=["Name"])
     return rows
 """
     runtime = CodingProgramRuntime.start(CodingProgram(goal="find product", source=source))
@@ -1680,14 +1755,15 @@ def run(ctx):
 
 def test_runtime_commit_infers_internal_statement_contract() -> None:
     source = """
-def run(ctx):
+def run(ctx, state):
     target = {"ID": "1"}
-    ctx.reach(
+    state = ctx.reach(
+        state,
         "Open the exact order",
         target=target,
         success={"entity": "Order", "ID": target["ID"]},
     )
-    ctx.commit("Update order status", target=target, values={"Status": "Complete"})
+    state = ctx.commit(state, "Update order status", target=target, values={"Status": "Complete"})
     assert ctx, "runtime exists"
 """
     runtime = CodingProgramRuntime.start(CodingProgram(goal="update order", source=source))
@@ -1704,9 +1780,9 @@ def run(ctx):
 
 def test_source_derived_semantic_commit_keeps_an_explicit_commit_boundary() -> None:
     source = '''
-def run(ctx):
+def run(ctx, state):
     source_text = "Lunch tomorrow at 11 AM for one hour"
-    ctx.commit("Create an entry from this source: " + source_text, values={})
+    state = ctx.commit(state, "Create an entry from this source: " + source_text, values={})
 '''
 
     assert not validate_code(source)
@@ -1726,8 +1802,9 @@ def test_commit_date_time_values_match_probe_and_runtime_json_contract() -> None
     source = """
 from datetime import date, datetime, time
 
-def run(ctx):
-    ctx.commit(
+def run(ctx, state):
+    state = ctx.commit(
+        state,
         "Set a weekend alarm",
         values={
             "time": time(8, 25),
@@ -1761,17 +1838,18 @@ def run(ctx):
 
 def test_runtime_read_target_remains_one_public_call_with_internal_focus() -> None:
     source = """
-def run(ctx):
-    ctx.reach(
+def run(ctx, state):
+    state = ctx.reach(
+        state,
         "Open orders",
         success={
             "entity": "Orders",
             "fields": ["ID"],
         },
     )
-    state = ctx.read(target={"ID": "1"}, fields=["Status"])
-    assert state["Status"], "status is required"
-    return state["Status"]
+    detail = ctx.read(state, target={"ID": "1"}, fields=["Status"])
+    assert detail["Status"], "status is required"
+    return detail["Status"]
 """
     runtime = CodingProgramRuntime.start(CodingProgram(goal="read order", source=source))
 
@@ -1820,9 +1898,9 @@ def run(ctx):
 
 def test_runtime_read_uses_unique_row_url_as_deterministic_transport() -> None:
     source = """
-def run(ctx):
-    ctx.reach("Open reviews", success={"entity": "Reviews"})
-    return ctx.read(target={"ID": "351", "Action_url": "https://example.test/reviews/351"},
+def run(ctx, state):
+    state = ctx.reach(state, "Open reviews", success={"entity": "Reviews"})
+    return ctx.read(state, target={"ID": "351", "Action_url": "https://example.test/reviews/351"},
         fields={"Rating": "number"},
     )
 """
@@ -1892,19 +1970,20 @@ def test_generate_code_accepts_validated_program() -> None:
 
 def test_synthetic_cardinality_assertion_does_not_trigger_regeneration() -> None:
     source = """
-def run(ctx):
-    ctx.reach("Open pages", success={"entity": "Pages"})
-    rows = ctx.query(entity="Pages",
-        fields=["Title"],
+def run(ctx, state):
+    state = ctx.reach(state, "Open pages", success={"entity": "Pages"})
+    scope = ctx.query(state, entity="Pages",
         filters={"Title": "Home Page"},
     )
+    rows = ctx.acquire(scope, fields=["Title"])
     assert len(rows) == 1, "one page is required"
-    ctx.reach(
+    state = ctx.reach(
+        state,
         "Open the exact page",
         target=rows[0],
         success={"entity": "Page", "Title": rows[0]["Title"]},
     )
-    ctx.commit("Update page title", target=rows[0], values={"Page Title": "New title"})
+    state = ctx.commit(state, "Update page title", target=rows[0], values={"Page Title": "New title"})
 """
     llm = _SequenceLLM(
         f"```python\n{source}\n```",
@@ -1923,16 +2002,17 @@ def run(ctx):
 
 def test_synthetic_business_value_error_does_not_trigger_regeneration() -> None:
     source = """
-def run(ctx):
-    ctx.reach("Open products", success={"entity": "Products"})
-    rows = ctx.query(entity="Products",
-        fields=["Name", "Type"],
+def run(ctx, state):
+    state = ctx.reach(state, "Open products", success={"entity": "Products"})
+    scope = ctx.query(state, entity="Products",
         filters={"Name": "Example"},
     )
+    rows = ctx.acquire(scope, fields=["Name", "Type"])
     owners = [row for row in rows if row["Type"] == "Configurable Product"]
     if len(owners) != 1:
         raise ValueError("one configurable owner is required")
-    ctx.reach(
+    state = ctx.reach(
+        state,
         "Open the exact product",
         target=owners[0],
         success={
@@ -1941,7 +2021,7 @@ def run(ctx):
             "Type": owners[0]["Type"],
         },
     )
-    ctx.commit("Update owner", target=owners[0], values={"Status": "Enabled"})
+    state = ctx.commit(state, "Update owner", target=owners[0], values={"Status": "Enabled"})
 """
     llm = _SequenceLLM(
         f"```python\n{source}\n```",
@@ -1982,12 +2062,13 @@ def test_generate_code_regenerates_whole_program() -> None:
 
 def test_generate_code_deterministically_repairs_direct_read_fields() -> None:
     source = """
-def run(ctx):
-    ctx.reach(
+def run(ctx, state):
+    state = ctx.reach(
+        state,
         "Search for the requested weather",
         success={"entity": "SearchResults"},
     )
-    result = ctx.read(fields={"temperature": "number"})
+    result = ctx.read(state, fields={"temperature": "number"})
     return int(result["temperature"])
 """
     llm = _SequenceLLM(f"```python\n{source}\n```")
@@ -2006,14 +2087,15 @@ def run(ctx):
 
 def test_generate_code_repairs_direct_read_fields_after_regeneration() -> None:
     invalid = """
-def run(ctx):
-    ctx.reach("Open results", success={"entity": "Results"})
-    return ctx.query(entity="Other", fields=["value"])
+def run(ctx, state):
+    state = ctx.reach(state, "Open results", success={"entity": "Results"})
+    scope = ctx.query(state, entity="Other")
+    return ctx.acquire(scope, fields=["value"])
 """
     repairable = """
-def run(ctx):
-    ctx.reach("Show the result", success={"entity": "VisibleResult"})
-    result = ctx.read(fields={"value": "number"})
+def run(ctx, state):
+    state = ctx.reach(state, "Show the result", success={"entity": "VisibleResult"})
+    result = ctx.read(state, fields={"value": "number"})
     return result["value"]
 """
     llm = _SequenceLLM(
@@ -2032,20 +2114,22 @@ def run(ctx):
 
 def test_static_diagnostics_trigger_one_regeneration() -> None:
     source = """
-def run(ctx):
-    ctx.reach(
+def run(ctx, state):
+    state = ctx.reach(
+        state,
         "Open orders",
         success={
             "entity": "Orders",
             "fields": ["ID"],
         },
     )
-    rows = ctx.query(entity="Orders")
+    scope = ctx.query(state, entity="Orders")
+    rows = ctx.acquire(scope)
     return len(rows)
 """
     repaired = source.replace(
-        '    rows = ctx.query(entity="Orders")',
-        '    rows = ctx.query(entity="Orders", fields=["ID"])',
+        '    rows = ctx.acquire(scope)',
+        '    rows = ctx.acquire(scope, fields=["ID"])',
     )
     llm = _SequenceLLM(
         f"```python\n{source}\n```",
@@ -2095,12 +2179,13 @@ def run(ctx):
     return re.search("value", "value").group(0)
 """
     valid = """
-def run(ctx):
-    ctx.reach(
+def run(ctx, state):
+    state = ctx.reach(
+        state,
         "Show the visible result",
         success={"entity": "VisibleResult", "fields": ["value"]},
     )
-    result = ctx.read(fields={"value": "number"})
+    result = ctx.read(state, fields={"value": "number"})
     return int(result["value"])
 """
     wrong_read_shape = valid.replace('result["value"]', "result")
@@ -2124,18 +2209,21 @@ def run(ctx):
 
 def test_regeneration_prompt_retains_prior_diagnostics() -> None:
     missing_reach = '''
-def run(ctx):
-    return ctx.query(entity="Orders", fields=["ID"])
+def run(ctx, state):
+    scope = ctx.query(state, entity="Orders")
+    return ctx.acquire(scope, fields=["ID"])
 '''
     wrong_state = '''
-def run(ctx):
-    ctx.reach("Other", success={"entity": "Other"})
-    return ctx.query(entity="Orders", fields=["ID"])
+def run(ctx, state):
+    state = ctx.reach(state, "Other", success={"entity": "Other"})
+    scope = ctx.query(state, entity="Orders")
+    return ctx.acquire(scope, fields=["ID"])
 '''
     valid = '''
-def run(ctx):
-    ctx.reach("Orders", success={"entity": "Orders"})
-    return ctx.query(entity="Orders", fields=["ID"])
+def run(ctx, state):
+    state = ctx.reach(state, "Orders", success={"entity": "Orders"})
+    scope = ctx.query(state, entity="Orders")
+    return ctx.acquire(scope, fields=["ID"])
 '''
     llm = _SequenceLLM(
         f"```python\n{missing_reach}\n```",
@@ -2233,17 +2321,19 @@ def test_router_semantic_supplement_preserves_raw_goal_in_generator_context() ->
 
 def test_program_owns_full_then_short_phrase_query_branch() -> None:
     source = """
-def run(ctx):
-    ctx.reach("Open products", success={
+def run(ctx, state):
+    state = ctx.reach(state, "Open products", success={
         "entity": "Products", "fields": ["Name"],
     })
-    rows = ctx.query(entity="Products", fields=["Name"],
+    scope = ctx.query(state, entity="Products",
         filters={"Name": "Aurora trail jacket"},
     )
+    rows = ctx.acquire(scope, fields=["Name"])
     if not rows:
-        rows = ctx.query(entity="Products", fields=["Name"],
+        scope = ctx.query(state, entity="Products",
             filters={"Name": "Aurora"},
         )
+        rows = ctx.acquire(scope, fields=["Name"])
     return rows
 """
     result = execute_code(
@@ -2257,7 +2347,11 @@ def run(ctx):
 
     assert result.ok
     assert len(result.return_value) == 3
-    queries = [event for event in result.trace if event.op == "query"]
+    # ctx.acquire also traces as op="query"; filters identify the ctx.query calls.
+    queries = [
+        event for event in result.trace
+        if event.op == "query" and "filters" in event.kwargs
+    ]
     assert [event.kwargs["filters"] for event in queries] == [
         {"Name": "Aurora trail jacket"},
         {"Name": "Aurora"},

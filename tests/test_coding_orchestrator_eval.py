@@ -46,12 +46,11 @@ def test_whitebox_sample_uses_fixture_during_generation(
 def test_blind_sample_hides_fixture_until_final_evaluation(monkeypatch) -> None:
     captured = {}
     source = (
-        "def run(ctx):\n"
-        "    ctx.reach('Open products', success={"
-        "'entity': 'sahara', "
-        "'fields': ['id', 'name']})\n"
-        "    rows = ctx.query(entity='sahara', "
-        "fields=['id', 'name'], coverage='complete')\n"
+        "def run(ctx, state):\n"
+        "    state = ctx.reach(state, 'Open products', success={"
+        "'entity': 'sahara'})\n"
+        "    scope = ctx.query(state, entity='sahara', coverage='complete')\n"
+        "    rows = ctx.acquire(scope, fields=['id', 'name'])\n"
         "    assert rows, 'matching products are required'\n"
         "    return len(rows)"
     )
@@ -89,14 +88,14 @@ def test_blind_sample_hides_fixture_until_final_evaluation(monkeypatch) -> None:
 
 def test_task_193_hidden_fixture_checks_the_numeric_result() -> None:
     source = (
-        "def run(ctx):\n"
-        "    ctx.reach('Open orders', success={"
-        "'entity': 'orders', "
-        "'fields': ['Status', 'Purchase Date', 'Grand Total (Purchased)']})\n"
-        "    rows = ctx.query(entity='orders', "
+        "def run(ctx, state):\n"
+        "    state = ctx.reach(state, 'Open orders', success={"
+        "'entity': 'orders'})\n"
+        "    scope = ctx.query(state, entity='orders', "
         "filters={'Status': 'Complete'}, "
-        "fields=['Status', 'Purchase Date', 'Grand Total (Purchased)'], "
         "coverage='complete')\n"
+        "    rows = ctx.acquire(scope, "
+        "fields=['Status', 'Purchase Date', 'Grand Total (Purchased)'])\n"
         "    assert all(row['Status'] == 'Complete' for row in rows), "
         "'status filter must hold'\n"
         "    assert len(rows) >= 2, 'at least two completed orders are required'\n"
@@ -116,6 +115,7 @@ def test_task_193_hidden_fixture_checks_the_numeric_result() -> None:
     filter_events = [
         event for event in result["trace"]
         if event["op"] == "query"
+        and "filters" in event["kwargs"]
         and event["kwargs"]["filters"] == {"Status": "Complete"}
     ]
     assert filter_events

@@ -72,7 +72,7 @@ def test_coding_contract_exposes_only_public_ctx_api():
         "ctx.gui",
         "ctx.write",
         "ctx.lookup",
-        "ctx.acquire",
+        "ctx.constrain",
         "ctx.interact",
         "redecompose",
     ):
@@ -99,6 +99,10 @@ def test_coding_contract_keeps_settings_atomic_and_visual_retrieval_on_source():
     assert "schema-free creation interpreted from an earlier `read`" in prompt
     assert "embed the exact observed source" in prompt
     assert "Do not parse it with host code" in prompt
+    assert 'fields={"<content_field>": "text", "<semantic_field>": "boolean"}' in prompt
+    assert 'if detail["<semantic_field>"]:' in prompt
+    assert "replace every angle-bracket placeholder" in prompt
+    assert "The two commit branches are alternatives" in prompt
     assert "Every selected application fact is an authoritative interface constraint" in prompt
     assert "named month without a year remains month-only" in prompt
     assert "do not inspect `.year`" in prompt
@@ -118,6 +122,25 @@ def test_coding_prompt_separates_projection_fields_from_source_filters():
 
     assert "projected field is not automatically source-filterable" in prompt.lower()
     assert "completely acquired rows in Python" in prompt
+
+
+def test_coding_prompt_is_principle_led_with_boundary_cases() -> None:
+    prompt = load_prompt_text("task.orchestrator.coding")
+
+    for heading in (
+        "## Principle 1: Preserve the requested business outcome",
+        "## Principle 2: Treat the supplied interface as an exact contract",
+        "## Principle 3: Thread UI state explicitly",
+        "## Principle 4: Acquire authoritative data before deciding",
+        "## Principle 5: Use typed evidence for selection and computation",
+        "## Principle 6: Separate semantic interpretation from data identity",
+        "## Principle 7: Preserve source data across operations and applications",
+        "## Principle 8: Make durable changes only at the correct target boundary",
+        "## Principle 9: Defer to application facts and user method constraints",
+        "## Final emission checklist",
+    ):
+        assert heading in prompt
+    assert prompt.count("Case:") >= 8
 
 
 def test_prompt_eval_suites_point_to_existing_paths():

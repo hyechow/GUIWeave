@@ -18,16 +18,16 @@ _FIXTURE = (
 def test_opening_target_url_does_not_claim_requested_fields_are_available() -> None:
     request = json.loads(_FIXTURE.read_text(encoding="utf-8"))
     source = f"""
-def run(ctx):
-    ctx.reach("Open products", success={{"entity": "Products"}})
-    detail = ctx.read(target={request["target"]!r},
+def run(ctx, state):
+    state = ctx.reach(state, "Open products", success={{"entity": "Products"}})
+    detail = ctx.read(state, target={request["target"]!r},
         fields={request["fields"]!r},
     )
     if not detail["Material"]:
-        return ctx.query(entity="Products",
-            fields={{"Name": "text", "Type": "text", "SKU": "text"}},
+        scope = ctx.query(state, entity="Products",
             filters={{"SKU": "WH11", "Type": "Configurable Product"}},
         )
+        return ctx.acquire(scope, fields={{"Name": "text", "Type": "text", "SKU": "text"}})
     return []
 """
     runtime = CodingProgramRuntime.start(

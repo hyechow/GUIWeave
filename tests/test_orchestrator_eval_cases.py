@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import ast
 import importlib.util
 import json
 from pathlib import Path
@@ -21,6 +22,133 @@ def _case(task_id: int) -> dict[str, Any]:
         case for case in orchestrator_eval.load_cases()
         if case["task_id"] == task_id
     )
+
+
+def _is_ctx(node: ast.AST, method: str | None = None) -> bool:
+    return (
+        isinstance(node, ast.Call)
+        and isinstance(node.func, ast.Attribute)
+        and isinstance(node.func.value, ast.Name)
+        and node.func.value.id == "ctx"
+        and (method is None or node.func.attr == method)
+    )
+
+
+def _insert_state(call: ast.Call) -> None:
+    call.args.insert(0, ast.Name(id="state", ctx=ast.Load()))
+
+
+class _OldSourceMigrator(ast.NodeTransformer):
+    """Mechanically migrate old-style ctx programs to the explicit-state API.
+
+    The historical baselines in ``logs/orchestrator_eval/.../report.json`` were
+    generated before ``ctx`` grew the explicit ``state`` argument and the
+    ``query``/``acquire`` split. This transform re-expresses them so the
+    migrated programs exercise the same contract the live planner now emits:
+    ``def run(ctx, state)``, every reach/commit/command returns and threads the
+    next state, and every query is split into ``ctx.query(state, ...)``
+    (scope) + ``ctx.acquire(scope, fields=...)``.
+    """
+
+    def __init__(self, function: ast.FunctionDef) -> None:
+        self.function = function
+        self.used_names = {
+            node.id for node in ast.walk(function) if isinstance(node, ast.Name)
+        }
+        self.scope_seq = 0
+
+    def _fresh_scope(self) -> str:
+        while True:
+            self.scope_seq += 1
+            name = f"_scope{self.scope_seq}"
+            if name not in self.used_names:
+                self.used_names.add(name)
+                return name
+
+    def _split_query(self, assign: ast.Assign, call: ast.Call) -> list[ast.AST]:
+        target = assign.targets[0]
+        fields_node = None
+        coverage_node = None
+        kept: list[ast.keyword] = []
+        for kw in call.keywords:
+            if kw.arg == "fields":
+                fields_node = kw.value
+            elif kw.arg == "coverage":
+                coverage_node = kw.value
+            else:
+                kept.append(kw)
+        call.keywords = kept
+        _insert_state(call)
+        scope_name = self._fresh_scope()
+        scope_assign = ast.Assign(
+            targets=[ast.Name(id=scope_name, ctx=ast.Store())], value=call
+        )
+        ast.copy_location(scope_assign, assign)
+        acquire_kwargs = [ast.keyword(arg="fields", value=fields_node)]
+        if coverage_node is not None:
+            acquire_kwargs.append(ast.keyword(arg="coverage", value=coverage_node))
+        acquire_call = ast.Call(
+            func=ast.Attribute(
+                value=ast.Name(id="ctx", ctx=ast.Load()), attr="acquire"
+            ),
+            args=[ast.Name(id=scope_name, ctx=ast.Load())],
+            keywords=acquire_kwargs,
+        )
+        ast.copy_location(acquire_call, call)
+        rows_assign = ast.Assign(targets=[target], value=acquire_call)
+        ast.copy_location(rows_assign, assign)
+        return [scope_assign, rows_assign]
+
+    def visit_Assign(self, node: ast.Assign) -> Any:  # noqa: N802
+        if (
+            len(node.targets) == 1
+            and isinstance(node.targets[0], ast.Name)
+            and isinstance(node.value, ast.Call)
+            and _is_ctx(node.value, "query")
+        ):
+            return self._split_query(node, node.value)
+        self.generic_visit(node)
+        return node
+
+    def visit_Expr(self, node: ast.Expr) -> Any:  # noqa: N802
+        if (
+            isinstance(node.value, ast.Call)
+            and _is_ctx(node.value)
+            and node.value.func.attr in {"reach", "commit", "command"}
+        ):
+            call = node.value
+            _insert_state(call)
+            self.generic_visit(call)
+            assign = ast.Assign(
+                targets=[ast.Name(id="state", ctx=ast.Store())], value=call
+            )
+            ast.copy_location(assign, node)
+            return assign
+        self.generic_visit(node)
+        return node
+
+    def visit_Call(self, node: ast.Call) -> Any:  # noqa: N802
+        if _is_ctx(node) and node.func.attr in {"read", "command", "query"}:
+            _insert_state(node)
+        elif _is_ctx(node) and node.func.attr in {"reach", "commit"}:
+            _insert_state(node)
+        self.generic_visit(node)
+        return node
+
+
+def _migrate_old_source(source: str) -> str:
+    """Convert one legacy ``def run(ctx)`` program to the explicit-state API."""
+    tree = ast.parse(source)
+    new_body: list[ast.AST] = []
+    for stmt in tree.body:
+        if isinstance(stmt, ast.FunctionDef) and stmt.name == "run":
+            stmt.args.args.append(ast.arg(arg="state", annotation=None))
+            new_body.append(_OldSourceMigrator(stmt).visit(stmt))
+        else:
+            new_body.append(stmt)
+    tree.body = new_body
+    ast.fix_missing_locations(tree)
+    return ast.unparse(tree).strip()
 
 
 def test_eval_covers_hard_single_site_shopping_tasks() -> None:
@@ -96,37 +224,63 @@ def test_grade_sample_scores_only_executable_and_curated() -> None:
 
 
 def test_baseline_index_matches_case_annotations() -> None:
+    """Baseline annotations embedded in cases.json satisfy the frozen index bars."""
     cases = orchestrator_eval.load_cases()
-    index = json.loads(
-        (
-            PROJECT_ROOT
-            / "evals/browser/orchestrator/baseline_qwen37_tokenplan_20260805.json"
-        ).read_text(encoding="utf-8")
-    )
-    assert index["totals"]["cases"] == 111
-    assert index["totals"]["ok"] == 89
-    assert index["totals"]["executable"] == 91
-    assert index["totals"]["curated"] == {"cases": 14, "ok": 12}
-    assert index["totals"]["by_grade"] == {
+    by_grade: dict[str, int] = {}
+    by_origin: dict[str, int] = {}
+    curated = {"cases": 0, "ok": 0}
+    ok = 0
+    executable = 0
+    for case in cases:
+        baseline = case["baseline"]
+        grade = baseline["grade"]
+        by_grade[grade] = by_grade.get(grade, 0) + 1
+        origin = str(case.get("contract_origin") or "empty")
+        by_origin[origin] = by_origin.get(origin, 0) + 1
+        if baseline["ok"]:
+            ok += 1
+        if baseline["executable"]:
+            executable += 1
+        if case.get("curated"):
+            curated["cases"] += 1
+            if baseline["ok"]:
+                curated["ok"] += 1
+
+    assert len(cases) == 111
+    assert ok == 89
+    assert executable == 91
+    assert curated == {"cases": 14, "ok": 12}
+    assert by_grade == {
         "executable_pass": 77,
         "executable_fail": 20,
         "contract_pass": 12,
         "contract_fail": 2,
     }
-    assert index["totals"]["by_contract_origin"]["baseline_inferred"] == 97
-    assert index["totals"]["by_contract_origin"]["curated"] == 14
-    assert index["run"]["scoring"]["non_curated_contract"]
+    assert by_origin["baseline_inferred"] == 97
+    assert by_origin["curated"] == 14
     for case in cases:
-        entry = index["tasks"][str(case["task_id"])]
         baseline = case["baseline"]
-        assert entry["grade"] == baseline["grade"]
-        assert entry["ok"] == baseline["ok"]
-        assert entry["executable"] == baseline["executable"]
-        assert entry["contract_origin"] == case.get("contract_origin")
+        assert baseline.get("run") == "20260805_hard_single_site_merged"
+        assert baseline["grade"] in {
+            "executable_pass",
+            "executable_fail",
+            "contract_pass",
+            "contract_fail",
+        }
+        assert baseline["ok"] == (baseline["grade"] in {"executable_pass", "contract_pass"})
+        if case.get("curated"):
+            assert baseline["ok"] == (baseline["grade"] == "contract_pass")
+        else:
+            assert baseline["ok"] == (baseline["grade"] == "executable_pass")
+            assert baseline["ok"] == baseline["executable"]
 
 
 def test_inferred_contract_accepts_its_baseline_source() -> None:
-    """Non-curated inferred contracts are frozen shapes of the baseline program."""
+    """Non-curated inferred contracts are frozen shapes of the baseline program.
+
+    The recorded baselines predate the explicit-state ctx API, so each legacy
+    source is mechanically migrated before it is checked against its contract.
+    """
     report = json.loads(
         (
             PROJECT_ROOT
@@ -143,7 +297,7 @@ def test_inferred_contract_accepts_its_baseline_source() -> None:
             continue
         if not case["baseline"].get("executable"):
             continue
-        source = source_by_id[case["task_id"]]
+        source = _migrate_old_source(source_by_id[case["task_id"]])
         assert source
         assert orchestrator_eval.evaluate_source(source, case["contract"]) == []
         checked += 1
@@ -154,20 +308,21 @@ def test_query_contract_accepts_typed_monthly_aggregation_plan() -> None:
     source = '''
 from datetime import datetime
 
-def run(ctx):
+def run(ctx, state):
     start_date = "01/01/2023"
     end_date = "05/31/2023"
-    ctx.reach(
+    state = ctx.reach(
+        state,
         "Go to Sales > Orders",
         success={"entity": "Orders"},
     )
-    rows = ctx.query(entity="Orders",
-        fields={"Purchase Date": "datetime"},
+    scope = ctx.query(state, entity="Orders",
         filters={
             "Status": "Complete",
             "Purchase Date": {"from": start_date, "to": end_date},
         },
     )
+    rows = ctx.acquire(scope, fields={"Purchase Date": "datetime"})
     names = ["January", "February", "March", "April", "May"]
     counts = {name: 0 for name in names}
     for row in rows:
@@ -185,17 +340,19 @@ def run(ctx):
 
 def test_form_contract_accepts_attribute_then_product_fallback_plan() -> None:
     source = '''
-def run(ctx):
-    ctx.reach(
+def run(ctx, state):
+    state = ctx.reach(
+        state,
         "Go to Product Attributes",
         success={"entity": "Product Attributes"},
     )
-    attributes = ctx.query(entity="Product Attributes",
-        fields=["Attribute Code"],
+    attr_scope = ctx.query(state, entity="Product Attributes",
         filters={"Default Label": "Size"},
     )
+    attributes = ctx.acquire(attr_scope, fields=["Attribute Code"])
     assert attributes, "Size attribute was not found"
-    ctx.reach(
+    state = ctx.reach(
+        state,
         "Open the exact attribute",
         target=attributes[0],
         success={
@@ -203,31 +360,34 @@ def run(ctx):
             "Attribute Code": attributes[0]["Attribute Code"],
         },
     )
-    ctx.commit(
+    state = ctx.commit(
+        state,
         "Add the XXXL size option",
         target=attributes[0],
         values={"Admin Description": "XXXL", "Admin Swatch": "XXXL"},
     )
-    ctx.reach(
+    state = ctx.reach(
+        state,
         "Go to Products",
         success={"entity": "Products"},
     )
-    products = ctx.query(entity="Products",
-        fields=["Name", "Type"],
+    prod_scope = ctx.query(state, entity="Products",
         filters={"Name": "Minerva LumaTech V-Tee"},
     )
+    products = ctx.acquire(prod_scope, fields=["Name", "Type"])
     if not products:
-        products = ctx.query(entity="Products",
-            fields=["Name", "Type"],
+        prod_scope = ctx.query(state, entity="Products",
             filters={"Name": "Minerva"},
         )
+        products = ctx.acquire(prod_scope, fields=["Name", "Type"])
     owners = [
         product
         for product in products
         if product["Type"] == "Configurable Product"
     ]
     assert len(owners) == 1, "Expected one configurable Minerva owner"
-    ctx.reach(
+    state = ctx.reach(
+        state,
         "Open the exact product",
         target=owners[0],
         success={
@@ -236,7 +396,8 @@ def run(ctx):
             "Type": owners[0]["Type"],
         },
     )
-    ctx.commit(
+    state = ctx.commit(
+        state,
         "Add the green XXXL configuration",
         target=owners[0],
         values={"Configurations": [{"Color": "green", "Size": "XXXL"}]},
@@ -251,12 +412,14 @@ def run(ctx):
 
 def test_form_contract_rejects_extra_navigation_for_direct_creation() -> None:
     source = '''
-def run(ctx):
-    ctx.reach(
+def run(ctx, state):
+    state = ctx.reach(
+        state,
         "Go to Catalog > Products",
         success={"entity": "Products"},
     )
-    ctx.commit(
+    state = ctx.commit(
+        state,
         "Create the simple product",
         target=None,
         values={
@@ -281,12 +444,13 @@ def run(ctx):
 
 def test_contract_accepts_required_literal_inside_instruction_text() -> None:
     source = '''
-def run(ctx):
-    ctx.reach(
+def run(ctx, state):
+    state = ctx.reach(
+        state,
         "Search for Beijing highest temperature today",
         success={"entity": "SearchResult", "fields": ["temperature"]},
     )
-    value = ctx.read(fields={"temperature": "number"})
+    value = ctx.read(state, fields={"temperature": "number"})
     return int(value["temperature"])
 '''
 
@@ -316,26 +480,30 @@ def test_ordered_call_alternatives_accept_only_causally_restored_target_source()
         ],
     }
     saved_first = '''
-def run(ctx):
-    ctx.reach("Saved", success={"entity": "Saved"})
-    saved = ctx.query(entity="Saved", fields=["id"])
-    ctx.reach("Targets", success={"entity": "Targets"})
-    rows = ctx.query(entity="Targets", fields=["id"])
-    ctx.reach("Open target", target=rows[0], success={"entity": "Target", "id": rows[0]["id"]})
-    ctx.commit("Change target", target=rows[0], values={"enabled": True})
+def run(ctx, state):
+    state = ctx.reach(state, "Saved", success={"entity": "Saved"})
+    saved_scope = ctx.query(state, entity="Saved")
+    saved = ctx.acquire(saved_scope, fields=["id"])
+    state = ctx.reach(state, "Targets", success={"entity": "Targets"})
+    target_scope = ctx.query(state, entity="Targets")
+    rows = ctx.acquire(target_scope, fields=["id"])
+    state = ctx.reach(state, "Open target", target=rows[0], success={"entity": "Target", "id": rows[0]["id"]})
+    state = ctx.commit(state, "Change target", target=rows[0], values={"enabled": True})
 '''
     target_first_with_restore = '''
-def run(ctx):
-    ctx.reach("Targets", success={"entity": "Targets"})
-    rows = ctx.query(entity="Targets", fields=["id"])
-    ctx.reach("Saved", success={"entity": "Saved"})
-    saved = ctx.query(entity="Saved", fields=["id"])
-    ctx.reach("Restore targets", success={"entity": "Targets"})
-    ctx.reach("Open target", target=rows[0], success={"entity": "Target", "id": rows[0]["id"]})
-    ctx.commit("Change target", target=rows[0], values={"enabled": True})
+def run(ctx, state):
+    state = ctx.reach(state, "Targets", success={"entity": "Targets"})
+    target_scope = ctx.query(state, entity="Targets")
+    rows = ctx.acquire(target_scope, fields=["id"])
+    state = ctx.reach(state, "Saved", success={"entity": "Saved"})
+    saved_scope = ctx.query(state, entity="Saved")
+    saved = ctx.acquire(saved_scope, fields=["id"])
+    state = ctx.reach(state, "Restore targets", success={"entity": "Targets"})
+    state = ctx.reach(state, "Open target", target=rows[0], success={"entity": "Target", "id": rows[0]["id"]})
+    state = ctx.commit(state, "Change target", target=rows[0], values={"enabled": True})
 '''
     target_first_without_restore = target_first_with_restore.replace(
-        '    ctx.reach("Restore targets", success={"entity": "Targets"})\n',
+        '    state = ctx.reach(state, "Restore targets", success={"entity": "Targets"})\n',
         "",
     )
 
@@ -350,10 +518,11 @@ def test_report_contract_accepts_runtime_formatted_dates() -> None:
     source = '''
 from datetime import date
 
-def run(ctx):
+def run(ctx, state):
     start = date(2021, 5, 1).strftime("%m/%d/%Y")
     end = date(2022, 3, 31).strftime("%m/%d/%Y")
-    ctx.reach(
+    state = ctx.reach(
+        state,
         "Show Orders report",
         success={
             "entity": "Sales Reports",
@@ -373,20 +542,21 @@ def run(ctx):
 
 def test_ranked_contract_accepts_max_with_typed_key() -> None:
     source = '''
-def run(ctx):
-    ctx.reach("View Orders", success={"entity": "Orders"})
-    rows = ctx.query(entity="Orders",
-        fields={"Purchase Date": "datetime"},
+def run(ctx, state):
+    state = ctx.reach(state, "View Orders", success={"entity": "Orders"})
+    order_scope = ctx.query(state, entity="Orders",
         filters={"Bill-to Name": "Sarah Miller", "Status": "Pending"},
     )
+    rows = ctx.acquire(order_scope, fields={"Purchase Date": "datetime"})
     if not rows:
-        rows = ctx.query(entity="Orders",
-            fields={"Purchase Date": "datetime"},
+        order_scope = ctx.query(state, entity="Orders",
             filters={"Bill-to Name": "Sarah", "Status": "Pending"},
         )
+        rows = ctx.acquire(order_scope, fields={"Purchase Date": "datetime"})
     assert rows, "No pending order found"
     latest = max(rows, key=lambda row: row["Purchase Date"])
-    ctx.reach(
+    state = ctx.reach(
+        state,
         "Open the exact order",
         target=latest,
         success={
@@ -394,7 +564,8 @@ def run(ctx):
             "Purchase Date": latest["Purchase Date"],
         },
     )
-    ctx.commit(
+    state = ctx.commit(
+        state,
         "Notify customer",
         target=latest,
         values={

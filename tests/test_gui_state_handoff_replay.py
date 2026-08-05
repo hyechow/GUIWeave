@@ -74,17 +74,17 @@ def test_100005_hands_verified_gui_state_to_strict_query_lookup(
         lambda _observation: False,
     )
     source = """
-def run(ctx):
-    ctx.reach(
+def run(ctx, state):
+    state = ctx.reach(
+        state,
         "Open the Orders list under Sales",
         success={
             "entity": "Orders",
             "fields": ["Status", "Purchase Date"],
         },
     )
-    return ctx.query(entity="Orders",
-        fields=["Status", "Purchase Date"],
-    )
+    scope = ctx.query(state, entity="Orders")
+    return ctx.acquire(scope, fields=["Status", "Purchase Date"])
 """
     runtime = CodingProgramRuntime.start(
         CodingProgram(
