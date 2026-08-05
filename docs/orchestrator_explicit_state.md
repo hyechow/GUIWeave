@@ -42,8 +42,8 @@ def run(ctx, state):          # state = 初始屏幕
   在函数内先读后写触发 UnboundLocalError），改为运行时把初始屏幕作为参数传入。
 - **fields 只在 acquire**：query 只建会话(entity+filters)，投影和类型映射归 acquire。
 - **commit/command 返回 post 状态**：使“导航后落到什么 UI”成为可观察值，而不是让 LLM 猜着 re-reach。
-- **reach 不带状态输入**：它是纯生产者，从当前屏幕导航（若所有函数都要输入 state，首个 reach
-  无从传递）。
+- **reach 接收 state 并返回新 state**：它是导航生产者，`state` 是“从当前屏幕导航”的输入，
+  首个 reach 的输入是 `run(ctx, state)` 传入的初始屏幕。
 
 ## 3. 静态分析重写
 

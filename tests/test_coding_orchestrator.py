@@ -667,9 +667,9 @@ def run(ctx, state):
 
 def test_validate_code_rejects_literal_state_entity_mismatch() -> None:
     source = """
-def run(ctx):
-    ctx.reach("Open orders", success={"entity": "Orders"})
-    return ctx.query(entity="Shipments", fields=["ID"])
+def run(ctx, state):
+    state = ctx.reach(state, "Open orders", success={"entity": "Orders"})
+    return ctx.query(state, entity="Shipments")
 """
 
     assert any(
@@ -680,42 +680,42 @@ def run(ctx):
 
 def test_validate_code_requires_current_ui_before_query() -> None:
     source = """
-def run(ctx):
-    return ctx.query(entity="Orders", fields=["ID"])
+def run(ctx, state):
+    return ctx.query(state, entity="Orders")
 """
 
     assert any(
-        item.code == "ACTIVE_UI_REQUIRED"
+        item.code == "STATE_REQUIRED"
         for item in validate_code(source)
     )
 
 
 def test_validate_code_requires_current_ui_on_every_control_flow_path() -> None:
     source = """
-def run(ctx):
+def run(ctx, state):
     rows = []
     if rows:
-        ctx.reach("Open orders", success={"entity": "Orders"})
-    return ctx.query(entity="Orders", fields=["ID"])
+        state = ctx.reach(state, "Open orders", success={"entity": "Orders"})
+    return ctx.query(state, entity="Orders")
 """
 
     assert any(
-        item.code == "ACTIVE_UI_REQUIRED"
+        item.code == "STATE_REQUIRED"
         for item in validate_code(source)
     )
 
 
 def test_validate_code_uses_only_the_latest_reach_as_current_ui() -> None:
     source = """
-def run(ctx):
-    ctx.reach("Open orders", success={"entity": "Orders"})
-    ctx.reach("Open shipments", success={"entity": "Shipments"})
-    return ctx.query(entity="Orders", fields=["ID"])
+def run(ctx, state):
+    state = ctx.reach(state, "Open orders", success={"entity": "Orders"})
+    state = ctx.reach(state, "Open shipments", success={"entity": "Shipments"})
+    return ctx.query(state, entity="Orders")
 """
 
     assert any(
         item.code == "STATE_ENTITY_MISMATCH"
-        and "active ctx.reach entity 'Shipments'" in item.message
+        and "active reach entity 'Shipments'" in item.message
         for item in validate_code(source)
     )
 
@@ -723,41 +723,48 @@ def run(ctx):
 @pytest.mark.parametrize(
     "invalidator",
     [
-        'ctx.commit("Save", values={"Status": "Complete"})',
-        'ctx.command("back")',
+        'state = ctx.commit(state, "Save", values={"Status": "Complete"})',
+        'state = ctx.command(state, "back")',
     ],
 )
-def test_validate_code_requires_new_reach_after_ui_invalidation(
+def test_validate_code_rejects_state_consumed_by_commit_or_command(
     invalidator: str,
 ) -> None:
+    # A state captured before a consuming commit/command is invalid afterwards.
     source = f"""
-def run(ctx):
-    ctx.reach("Open orders", success={{"entity": "Orders"}})
+def run(ctx, state):
+    state = ctx.reach(state, "Open orders", success={{"entity": "Orders"}})
+    before = state
     {invalidator}
-    return ctx.query(entity="Orders", fields=["ID"])
+    return ctx.query(before, entity="Orders")
 """
 
     assert any(
-        item.code == "ACTIVE_UI_REQUIRED"
+        item.code == "STATE_CONSUMED"
         for item in validate_code(source)
     )
 
 
-def test_validate_code_rejects_current_ui_use_across_mutating_loop_iterations() -> None:
+def test_validate_code_allows_read_through_post_commit_state_in_loop() -> None:
+    # Under explicit state, the post-commit state is a usable handle; the old
+    # implicit-global "commit invalidates, must re-reach" rule no longer applies.
+    # The loop re-establishes its target before each commit, then reads the
+    # returned state — structurally valid.
     source = """
-def run(ctx):
-    ctx.reach("Open products", success={"entity": "Products"})
-    rows = ctx.query(entity="Products", fields=["ID"])
+def run(ctx, state):
+    state = ctx.reach(state, "Open products", success={"entity": "Products"})
+    scope = ctx.query(state, entity="Products")
+    rows = ctx.acquire(scope, fields=["ID"])
     for row in rows:
-        detail = ctx.read(target=row, fields=["Price"])
-        ctx.commit("Update product", target=row, values={"Price": detail["Price"]})
+        state = ctx.reach(state, "Open detail", target=row,
+                          success={"entity": "Product"})
+        state = ctx.commit(state, "Update product", target=row,
+                           values={"Price": 1})
+        detail = ctx.read(state, target=row, fields=["Price"])
+    return rows
 """
 
-    assert any(
-        item.code == "ACTIVE_UI_REQUIRED"
-        and "may run again" in item.message
-        for item in validate_code(source)
-    )
+    assert validate_code(source) == []
 
 
 def test_validate_code_rejects_legacy_ui_argument() -> None:
@@ -2241,7 +2248,7 @@ def run(ctx, state):
     second_regeneration = "\n".join(
         str(message.content) for message in llm.messages[2]
     )
-    assert "ACTIVE_UI_REQUIRED" in second_regeneration
+    assert "STATE_REQUIRED" in second_regeneration
     assert "STATE_ENTITY_MISMATCH" in second_regeneration
 
 
