@@ -579,3 +579,20 @@ def run(ctx, state):
         orchestrator_eval.evaluate_source(source, _case(491)["contract"])
         == []
     )
+
+
+def test_eval_ctx_positions_match_sandbox_signatures() -> None:
+    """The eval checker's ctx position table must mirror the sandbox's signature.
+
+    The sandbox's CTX_SIGNATURES is authoritative for the ctx API; if the eval's
+    CTX_POSITIONS drifts (e.g. after a signature change), the eval would grade
+    against a stale shape. Keep them consistent by construction.
+    """
+    from gui_agent.core.orchestrator.sandbox import CTX_SIGNATURES
+
+    for method, (positional, _required) in CTX_SIGNATURES.items():
+        expected = {name: index for index, name in enumerate(positional)}
+        assert orchestrator_eval.CTX_POSITIONS.get(method) == expected, (
+            f"eval CTX_POSITIONS[{method!r}] drifted from sandbox CTX_SIGNATURES: "
+            f"expected {expected}, got {orchestrator_eval.CTX_POSITIONS.get(method)}"
+        )
