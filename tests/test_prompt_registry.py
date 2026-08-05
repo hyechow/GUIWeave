@@ -96,9 +96,12 @@ def test_coding_contract_keeps_settings_atomic_and_visual_retrieval_on_source():
     assert "one semantic result/view `ctx.reach`" in visual_contract
     assert "same requested fields" in visual_contract
     assert "Generic whole-page fields" in visual_contract
-    assert "schema-free creation interpreted from an earlier `read`" in prompt
+    assert "schema-free" in prompt
     assert "embed the exact observed source" in prompt
     assert "Do not parse it with host code" in prompt
+    assert "declares structured mutation fields" in prompt
+    assert '"<start_field>": detail["<start_field>"]' in prompt
+    assert '"<end_field>": detail["<end_field>"]' in prompt
     assert 'fields={"<content_field>": "text", "<semantic_field>": "boolean"}' in prompt
     assert 'if detail["<semantic_field>"]:' in prompt
     assert "replace every angle-bracket placeholder" in prompt

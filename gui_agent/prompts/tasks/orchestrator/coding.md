@@ -232,9 +232,43 @@ program.
 Any later schema-free creation, reply that quotes the source, or cross-application operation that
 depends on selected content must embed the exact observed source field in `commit.goal` or the
 returned data. Do not invent a stand-in label. Do not parse it with host code, substitute host-clock
-values, or add a preparatory reach. For a schema-free creation interpreted from an earlier `read`,
-the commit goal must directly include the retained `selected_detail[...]` expression and use
-`values={}`. This is the schema-free creation interpreted from an earlier `read` case:
+values, or add a preparatory reach.
+
+When the destination application declares structured mutation fields, do NOT embed the raw
+source prose in the goal and leave the executor to guess the values. Instead read the source's
+semantic values as typed `read` fields (`datetime` for a time, `boolean` for a decision) and
+pass them as `values`, so the executor fills the declared fields deterministically:
+
+```python
+detail = ctx.read(
+    state,
+    target=row,
+    fields={
+        "<content_field>": "text",
+        "<decision_field>": "boolean",
+        "<start_field>": "datetime",
+        "<end_field>": "datetime",
+    },
+)
+if detail["<decision_field>"]:
+    state = ctx.command(state, "launch_app", app="<destination>")
+    state = ctx.commit(
+        state,
+        "<creation instruction>",
+        values={
+            "<title_field>": <content>,
+            "<start_field>": detail["<start_field>"],
+            "<end_field>": detail["<end_field>"],
+        },
+    )
+```
+
+Replace each angle-bracket placeholder with the destination contract's real field name; the
+destination's declared mutation fields come from the supplied application knowledge, not from
+this rule.
+
+Only the truly schema-free case — a destination with no declared mutation fields, no existing
+target, and no visible values — uses the prose-goal shape:
 
 ```python
 state = ctx.commit(

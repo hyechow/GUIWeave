@@ -50,7 +50,10 @@ version: 1
 - New-entry contract:
   - existing target: none
   - preparatory entity or view: none
-  - planner-visible mutation fields: none
-  - business description: the exact source text observed in the originating application
-- A generic summary or implicit active context cannot replace the business description
-  because the Calendar UI resolves the source's date, time, duration, and title.
+  - mutation fields: `title` (text), `start_ts` (`datetime`), `end_ts` (`datetime`),
+    and `description` (text)
+  - when creating an event from a source message, the program reads the event's start and
+    end as semantic `datetime` fields off that source (end derived from the message's stated
+    duration), then passes those structured values in the commit. It does not embed the raw
+    source prose in the commit goal and leave the executor to guess the time; the executor
+    fills the declared fields from the supplied values.

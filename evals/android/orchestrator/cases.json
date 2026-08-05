@@ -516,7 +516,10 @@
         {
           "method": "commit",
           "target_mode": "none",
-          "value_keys_exact": []
+          "value_keys_include": [
+            "start_ts",
+            "end_ts"
+          ]
         }
       ],
       "features": [
@@ -626,7 +629,10 @@
         {
           "method": "commit",
           "target_mode": "none",
-          "value_keys_exact": []
+          "value_keys_include": [
+            "start_ts",
+            "end_ts"
+          ]
         }
       ],
       "ordered_calls": [
