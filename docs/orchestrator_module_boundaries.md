@@ -174,13 +174,17 @@ Program 不能包含设备坐标、直接驱动浏览器或 ADB、导入任意�
 
 ### 6.3 `ctx` API
 
+> 2026-08-05 起 ctx API 改为显式 state 线程化 + acquire 独立，公共签名已变。
+> 完整契约见 [编排器显式 state 架构](orchestrator_explicit_state.md)；下表仅保留职责概览。
+
 | API | 语义 | 关键约束 |
 |---|---|---|
-| `ctx.reach(...)` | 到达一个业务资源、记录或创建入口 | 公共返回值为 `None`；只更新运行时内部 `CurrentUI` |
-| `ctx.query(...)` | 在当前集合上下文中筛选并返回候选 | 需要可用的当前上下文；文本命中只证明候选关系 |
-| `ctx.read(...)` | 从当前目标读取详情或结构化值 | 读取结果可进入 Program 数据流并供后续调用直接消费 |
-| `ctx.commit(...)` | 对当前目标或新目标执行持久化变更 | 现有目标变更需要已绑定目标；新建或来源驱动操作允许直接提交 |
-| `ctx.command(...)` | 执行平台能力，例如启动应用 | 能力必须来自平台契约，不能在核心 Prompt 写死具体应用 |
+| `ctx.reach(state, ...)` | 到达一个业务资源、记录或创建入口 | 消费 state、返回新 state；`success` 描述可观察 UI 状态 |
+| `ctx.query(state, ...)` | 定位集合并施加过滤 | 返回可复用 `scope`，不返回行 |
+| `ctx.acquire(scope, ...)` | 从会话材料化行 | `fields` 是唯一投影与类型声明处；scope 可复用 |
+| `ctx.read(state, ...)` | 从当前目标读取详情或结构化值 | 借用 state；读取结果可进入 Program 数据流 |
+| `ctx.commit(state, ...)` | 对当前目标或新目标执行持久化变更 | 消费 state、返回 post-commit 观测；现有目标变更需 target 绑定 |
+| `ctx.command(state, ...)` | 执行平台能力，例如启动应用 | 消费 state、返回 post-command 状态 |
 
 `ctx` 调用表达的是业务意图。字段如何映射到控件、当前该点哪个按钮，由 Statement 和 Adapter 决定。
 
