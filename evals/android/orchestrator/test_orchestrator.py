@@ -63,6 +63,7 @@ def _run_sample(
     sample_index: int,
     knowledge: str,
     app: str,
+    temperature: float = 0.0,
 ) -> dict[str, Any]:
     """Generate + grade one sample. Safe for thread-pool workers."""
     if case.get("use_raw_intent"):
@@ -77,6 +78,7 @@ def _run_sample(
         platform_contract=_android_platform_contract(case.get("apps", [])),
         resolution=resolution,
         current_site=app,
+        temperature=temperature,
     )
     failures = evaluate_source(plan.source, case["contract"])
     if not plan.executable:
@@ -137,6 +139,12 @@ def main() -> int:
         default=5,
         help="max concurrent case workers (default 5, capped at 5)",
     )
+    parser.add_argument(
+        "--temp",
+        type=float,
+        default=0.0,
+        help="LLM sampling temperature for code generation (default 0)",
+    )
     parser.add_argument("--list", action="store_true")
     args = parser.parse_args()
     jobs = max(1, min(5, args.jobs))
@@ -178,6 +186,7 @@ def main() -> int:
                         sample_index=sample_index,
                         knowledge=knowledge,
                         app=app,
+                        temperature=args.temp,
                     )
                 )
             except Exception as exc:  # noqa: BLE001 — isolate worker crashes

@@ -670,25 +670,51 @@ def _run_sample(
     sample_index: int,
     knowledge: Any,
     site: str,
+    best_of: int = 1,
+    temperature: float = 0.0,
 ) -> dict[str, Any]:
-    """Generate + grade one sample. Safe for thread-pool workers."""
-    resolution = resolve_intent(case["intent"])
-    plan = generate_code(
-        case["intent"],
-        knowledge=(
-            knowledge.orchestrator_context(case["intent"])
-            if knowledge else ""
-        ),
-        resolution=resolution,
-        current_site=site,
-    )
+    """Generate + grade one sample. Safe for thread-pool workers.
+
+    With ``best_of`` > 1, generate that many independent plans and keep the one
+    with the fewest contract failures (preferring an executable program), which
+    absorbs per-generation variance.
+    """
     # Score contract only for curated cases. Inferred contracts stay on the case
     # for reuse but do not affect pass/fail.
     score_contract = bool(case.get("curated"))
     contract = case.get("contract") or {} if score_contract else {}
-    failures = evaluate_source(plan.source, contract)
-    if not plan.executable:
-        failures.insert(0, "PLAN_NOT_EXECUTABLE")
+
+    def _score(case_intent: str, knowledge_text: Any, site_text: str) -> dict[str, Any]:
+        resolution = resolve_intent(case_intent)
+        plan = generate_code(
+            case_intent,
+            knowledge=(
+                knowledge_text.orchestrator_context(case_intent)
+                if knowledge_text else ""
+            ),
+            resolution=resolution,
+            current_site=site_text,
+            temperature=temperature,
+        )
+        failures = evaluate_source(plan.source, contract)
+        if not plan.executable:
+            failures.insert(0, "PLAN_NOT_EXECUTABLE")
+        return {"plan": plan, "resolution": resolution, "failures": failures}
+
+    candidates = [
+        _score(case["intent"], knowledge, site)
+        for _ in range(max(1, best_of))
+    ]
+    # Prefer zero failures, then executable, then fewest failure codes.
+    candidates.sort(key=lambda c: (
+        bool(c["failures"]),
+        not c["plan"].executable,
+        len(c["failures"]),
+    ))
+    scored = candidates[0]
+    plan = scored["plan"]
+    resolution = scored["resolution"]
+    failures = scored["failures"]
     # Optional annotation check (not scored): does the program still match the
     # inferred/baseline contract?
     annotation_failures: list[str] = []
@@ -854,6 +880,18 @@ def main() -> int:
     parser.add_argument("--task", nargs="*", type=int, default=[])
     parser.add_argument("--k", type=int, default=1)
     parser.add_argument(
+        "--best-of",
+        type=int,
+        default=1,
+        help="generate N plans per sample and keep the best-scoring one (default 1)",
+    )
+    parser.add_argument(
+        "--temp",
+        type=float,
+        default=0.0,
+        help="LLM sampling temperature for code generation (default 0)",
+    )
+    parser.add_argument(
         "-j",
         "--jobs",
         type=int,
@@ -917,6 +955,8 @@ def main() -> int:
                         sample_index=sample_index,
                         knowledge=knowledge,
                         site=site,
+                        best_of=args.best_of,
+                        temperature=args.temp,
                     )
                 )
             except Exception as exc:  # noqa: BLE001 — isolate worker crashes

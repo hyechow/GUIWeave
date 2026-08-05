@@ -430,6 +430,7 @@ def generate_code(
     current_observation: Any = None,
     fixture: FixtureSpec | None = None,
     llm: Any = None,
+    temperature: float = 0.0,
     on_event: Callable[[CodingEvent], None] | None = None,
 ) -> CodingPlan:
     """Generate and review a program, with bounded whole-program regeneration."""
@@ -465,7 +466,10 @@ def generate_code(
     if llm is None:
         llm = _default_llm()
     generator = (
-        llm.bind(max_tokens=_GENERATION_MAX_OUTPUT_TOKENS, temperature=0)
+        llm.bind(
+            max_tokens=_GENERATION_MAX_OUTPUT_TOKENS,
+            temperature=temperature,
+        )
         if callable(getattr(llm, "bind", None))
         else llm
     )
