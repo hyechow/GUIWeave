@@ -1,62 +1,68 @@
-# LLM settings for gui_agent.
-# AGENT_MODEL 选 profile（默认 qwen35=下方基线，不覆盖）。对比测试 qwen3.6：AGENT_MODEL=qwen36，
-# 只深合并覆盖核心推理模型（见文件末 profiles），外围模型共用——无需复制整个配置文件。
+# LLM settings for gui_agent（默认 = qwen3.7 + token-plan 端点）。
+# AGENT_MODEL 选 profile（默认 qwen37=下方基线，不覆盖）。对比回退可加 profiles。
+#
+# Provider：全部走阿里云 MaaS token-plan（OpenAI 兼容），不是 dashscope 公网。
+# api_key / base_url 不入库——设 TOKENPLAN_API_KEY（及可选 TOKENPLAN_BASE_URL）。
+# 核心推理用 qwen3.7-plus：token-plan 端点实测 qwen3.7-max 是纯文本
+#（拒收 image_url），进不了 action_policy/navigator/supervisor 等截图槽位；
+# plus 支持视觉 + enable_thinking=false（见 tmp_scripts/test_qwen_models_think_vision.py）。
+# 外围 flash 槽位用 qwen3.6-flash（token-plan 无 qwen3.5-flash）。
+
+_token_plan: &token_plan
+  provider: tokenplan
+
 llm:
-  # 默认 qwen3.5-35b-a3b（≤128K 档便宜：输入 0.4 / 输出 3.2 元每百万 token）。
+  # 默认 qwen3.7-plus（视觉 + 非 thinking；≤256K 档：输入 2.0 / 输出 8.0 元每百万 token）。
   action_policy:
-    provider: dashscope
-    model: qwen3.5-35b-a3b
+    <<: *token_plan
+    model: qwen3.7-plus
   recon:
     navigator:
-      provider: dashscope
-      model: qwen3.5-35b-a3b
+      <<: *token_plan
+      model: qwen3.7-plus
   supervisor:
-    provider: dashscope
-    model: qwen3.5-35b-a3b
+    <<: *token_plan
+    model: qwen3.7-plus
     intent:
       # 意图解析——规划前一次性判实体的精确/近似 + 检索关键词（纯文本，无截图）
-      provider: dashscope
-      model: qwen3.5-35b-a3b
+      <<: *token_plan
+      model: qwen3.7-plus
   orchestrator:
     # reviewed-Python 任务规划与 review，只在开始时调用
-    provider: dashscope
-    model: qwen3.5-35b-a3b
+    <<: *token_plan
+    model: qwen3.7-plus
   observation:
     # Data Statement runtime plan.
-    provider: dashscope
-    model: qwen3.5-35b-a3b
+    <<: *token_plan
+    model: qwen3.7-plus
   output:
-    provider: dashscope
-    model: qwen3.5-flash
+    <<: *token_plan
+    model: qwen3.6-flash
   router:
-    provider: dashscope
-    model: qwen3.5-flash
+    <<: *token_plan
+    model: qwen3.6-flash
   fingerprint:
-    provider: dashscope
-    model: qwen3.5-flash
+    <<: *token_plan
+    model: qwen3.6-flash
   loading:
     # 只处理平台信号和高置信启发式都无法裁决的稀疏帧。
-    provider: dashscope
-    model: qwen3.5-flash
+    <<: *token_plan
+    model: qwen3.6-flash
 
 # AGENT_MODEL=<profile> 时，把对应 profile 深合并进上面的 llm（只覆盖列出的字段）。
-# qwen35 为基线（无需在此列，留空即用上面默认）。新增对比模型只在此加一项即可。
-profiles:
-  qwen36:   # 更快但 token 成本 ~3-4.5×，仅用于 3.5 vs 3.6 对比跑
-    action_policy: {model: qwen3.6-35b-a3b}
-    recon:
-      navigator: {model: qwen3.6-35b-a3b}
-    supervisor:
-      model: qwen3.6-35b-a3b
-    orchestrator: {model: qwen3.6-35b-a3b}
+# qwen37 为基线（无需在此列，留空即用上面默认）。新增对比模型只在此加一项即可。
+profiles: {}
 
 # 各模型单价（元/百万 token），用于报告成本估算。key 为模型名，需与上面 llm.*.model 对应；
 # 报告按「模块→该模块所用模型→单价」逐模块计费再汇总，故不同模块用不同模型也能算准。
-# 未列出的模型回退 default。按你实际计费档调整（注意输入有 ≤128K / >128K 等分档）。
+# 未列出的模型回退 default。
 pricing:
   currency: "¥"
   default: {input: 1.0, output: 4.0}
   models:
     qwen3.5-35b-a3b: {input: 0.4, output: 3.2}    # ≤128K 档
-    qwen3.5-flash:   {input: 0.2, output: 2.0}
+    qwen3.5-flash:   {input: 0.2, output: 2.0}    # dashscope 公网；token-plan 无此 id
     qwen3.6-35b-a3b: {input: 1.6, output: 12.8}   # ~3.5 的 4×（估算）
+    qwen3.6-flash:   {input: 0.5, output: 4.0}    # token-plan 轻量槽位
+    qwen3.7-plus:    {input: 2.0, output: 8.0}    # ≤256K 档（256K-1M 档为 6/24，北京区官网价）
+    qwen3.7-max:     {input: 12.0, output: 36.0}  # 纯文本旗舰，截图槽位不可用，仅备查

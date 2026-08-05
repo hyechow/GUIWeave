@@ -78,9 +78,10 @@ def invoke_structured(
 ) -> ModelT:
     """Invoke a chat model and parse a Pydantic object.
 
-    Uses DashScope json_object constrained decoding. Thinking is off by default for
-    latency, but models that require enable_thinking=True (e.g. qwen3.7-*) keep it on.
-    Falls back to plain JSON text parsing if the constrained mode fails.
+    Uses DashScope json_object constrained decoding. Thinking is off for every model
+    (latency/cost); enable_thinking_for_model is the hook for endpoints that provably
+    reject enable_thinking=false. Falls back to plain JSON text parsing if the
+    constrained mode fails.
     """
     instruction = _json_schema_instruction(schema)
     msgs = _with_json_instruction(messages, schema, instruction=instruction)
@@ -120,7 +121,7 @@ def invoke_structured(
         print(f"  [{label}] json_object 校验失败，改用纯文本 JSON：{_concise_error(exc)}")
 
     # Fallback: plain text, let model output JSON freely (retry once on parse failure).
-    # Re-bind enable_thinking so a constructor default of False cannot 400 on forced-thinking models.
+    # Re-bind enable_thinking so the fallback carries the same thinking flag as the primary.
     fallback_llm = llm.bind(extra_body=thinking_body)
     fallback_msgs = _with_repair_instruction(msgs, schema, primary_error)
     for fallback_attempt in range(2):
@@ -151,6 +152,7 @@ def invoke_structured(
                 f"结构化输出解析失败（primary + fallback 均失败）: {exc}\n"
                 f"模型原始输出: {content[:500]}"
             ) from exc
+    raise AssertionError("unreachable: the fallback loop always returns or raises")
 
 
 def _append_trace(

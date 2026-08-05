@@ -10,11 +10,11 @@ import yaml
 
 from llm.provider_config import ChatProviderConfig, resolve_chat_provider_config
 
-# Single config file. AGENT_MODEL selects a *profile* (default 'qwen35' = base, no
+# Single config file. AGENT_MODEL selects a *profile* (default 'qwen37' = base, no
 # override); a profile under `profiles:` deep-merges into `llm` to swap the core model,
 # so adding a comparison model is one small block, not a whole duplicated file.
 CONFIG_PATH = Path(__file__).with_name("config.yaml")
-_DEFAULT_PROFILE = "qwen35"
+_DEFAULT_PROFILE = "qwen37"
 _active_profile: str = os.environ.get("AGENT_MODEL", _DEFAULT_PROFILE)
 _LLM_CONFIG_ALIASES = {
     "recon.navigator": ("back_nav",),
@@ -55,7 +55,7 @@ def active_config_name() -> str:
 
 
 def switch_config(profile: str) -> str:
-    """Switch the active profile (e.g. 'qwen35'/'qwen36'); clears the merged-config cache."""
+    """Switch the active profile (e.g. 'qwen37'/'qwen36'); clears the merged-config cache."""
     global _active_profile
     _active_profile = profile
     load_config.cache_clear()
@@ -91,6 +91,8 @@ def resolve_llm_config(name: str) -> ChatProviderConfig:
     return resolve_chat_provider_config(
         provider=_optional_str(section.get("provider")),
         model=_optional_str(section.get("model")),
+        api_key=_optional_str(section.get("api_key")),
+        base_url=_optional_str(section.get("base_url")),
     )
 
 
