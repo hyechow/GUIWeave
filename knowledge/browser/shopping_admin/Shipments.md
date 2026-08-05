@@ -5,7 +5,6 @@ platform: browser
 app: shopping_admin
 scope:
   - decompose
-  - orchestrator
   - planner
   - replanner
 selector_when: 当需要创建订单发货、添加 USPS/UPS/FedEx/DHL tracking/物流追踪号，或管理 Shipment 时查阅本节
@@ -28,16 +27,6 @@ order detail's **Ship** capability opens the New Shipment resource; once a shipm
 its tracking is edited from **Sales > Shipments**. Carrier values use the full select labels shown
 by the form, such as `United States Postal Service`, `United Parcel Service`, and
 `Federal Express`.
-
-## Planning boundary
-
-Shipment tracking is attached to an owning **Orders** row and uses mutation fields
-**Carrier** and **Tracking Number**. Carrier values use full form labels:
-`USPS` = `United States Postal Service`, `UPS` = `United Parcel Service`, and
-`FedEx` = `Federal Express`.
-A displayed order reference `#N` selects its **Orders** owner with numeric
-**ID** filter value `N`.
-<!-- /planning-boundary -->
 
 ## Column descriptions
 

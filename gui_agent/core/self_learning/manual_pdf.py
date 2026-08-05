@@ -32,6 +32,7 @@ from langchain_openai import ChatOpenAI
 
 from gui_agent.core.config import resolve_llm_config
 from gui_agent.prompts import load_prompt_text
+from llm.provider_config import dashscope_extra_body
 
 # 形如 "1.1"/"2.3"/"1.6"(后跟空格再接文字);顶层 "2. 订单" 不算叶子小节,不匹配。
 _HEAD = re.compile(r"^\s*(\d+(?:\.\d+){1,2})\s+(\S.*)$")
@@ -112,7 +113,13 @@ def render_bands(doc, s: Section, zoom: float = 2.0, max_pages: Optional[int] = 
 def _vision_llm() -> ChatOpenAI:
     # Reuse the action_policy vision model (already proven on screenshots).
     cfg = resolve_llm_config("action_policy")
-    return ChatOpenAI(model=cfg.model, api_key=cfg.api_key, base_url=cfg.base_url, temperature=0)
+    return ChatOpenAI(
+        model=cfg.model,
+        api_key=cfg.api_key,
+        base_url=cfg.base_url,
+        temperature=0,
+        extra_body=dashscope_extra_body(cfg.model),
+    )
 
 
 def parse_section(llm: ChatOpenAI, s: Section, bands: list[bytes]) -> str:

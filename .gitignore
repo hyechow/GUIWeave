@@ -27,11 +27,13 @@ knowledge/android/Messages/*
 !knowledge/android/Taodian/
 knowledge/android/Taodian/*
 !knowledge/android/Taodian/_app.md
+!knowledge/android/*/*_interface.md
 # Curated shopping_admin planning contracts promoted to repository source.
 !knowledge/browser/
 knowledge/browser/*
 !knowledge/browser/shopping_admin/
 knowledge/browser/shopping_admin/*
+!knowledge/browser/shopping_admin/*_interface.md
 !knowledge/browser/shopping_admin/Admin_dashboard.md
 !knowledge/browser/shopping_admin/Pages.md
 !knowledge/browser/shopping_admin/Price_rules.md

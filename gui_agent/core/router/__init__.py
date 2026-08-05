@@ -1,16 +1,13 @@
 """Router layer — the semantic understanding pass that runs BEFORE orchestration.
 
-The router owns WHAT the user means (intent): it classifies the goal's lookup entities
-(precise vs approximate + search key) and bakes that decision into the goal the orchestrator
-reads. The orchestrator (gui_agent.core.orchestrator) then owns only HOW to achieve it
-(the retrieval strategy, navigation, program shape). Keeping these separate means the
-orchestrator never re-guesses semantics the router already settled.
+The router owns one semantic delta: it supplements implicit or ambiguous meaning without rewriting
+the original task. The orchestrator then owns HOW to achieve the unchanged task.
 
 Boundaries:
-  Intent Resolver  user goal -> IntentResolution + annotated goal (intent.py)
+  Intent Resolver  original goal -> optional semantic supplement (intent.py)
   (future)         chat router (route_message) may consolidate here
 """
 
-from .intent import EntityRef, IntentResolution, resolve_intent
+from .intent import IntentResolution, resolve_intent
 
-__all__ = ["EntityRef", "IntentResolution", "resolve_intent"]
+__all__ = ["IntentResolution", "resolve_intent"]

@@ -5,7 +5,6 @@ platform: browser
 app: shopping_admin
 scope:
   - decompose
-  - orchestrator
   - planner
   - replanner
 selector_when: 当需要创建 catalog item、给 configurable 添加 new size/color/XXXL/XXS 变体组合，或理解 simple/configurable/virtual/bundle 类型时查阅本节
@@ -17,36 +16,6 @@ ttl: session
 version: 14
 ---
 # Create a product
-
-## Planning boundary
-
-|Resource|Identity / type|Owned fields|
-|---|---|---|
-|New Simple Product|`Simple Product`|**Name**, **Price**, **Quantity**, **Stock Status**, **Size**, **Color**|
-|Existing configurable parent|**Products** row with **Type** = `Configurable Product`|**Configurations**|
-|Configuration member|member of **Configurations**|**Color**, **Size**|
-
-A new Simple Product is one independent durable record; its **Stock Status** uses `In Stock` or
-`Out of Stock`. Creating it does not create, locate, or attach a configurable parent.
-A direct new-product path and an existing-parent configuration path are mutually exclusive unless
-the user explicitly requests both. Creating a Simple Product ends after its one record commit.
-Adding a Size/Color combination to an already named configurable product does not directly create
-a Simple Product record; the single parent **Configurations** commit owns variation generation.
-A new global attribute option is an independent **Product Attributes** resource.
-Configurations can reference it only after that option is durable. Product state
-acquired before the option is saved can be stale.
-A configurable parent is therefore located only after the option commit, from **Products** by exact
-**Name** filtering with query fields **Name** and **Type**. Apply **Type** = `Configurable Product`
-to the returned candidates before selecting the unique owner. **Configurations** is a mutable
-parent field, not a query projection.
-Adding one requested configuration passes only that requested member in
-`values={"Configurations": [{"Color": ..., "Size": ...}]}`; `commit` owns the editor operation
-and preserves unrelated existing members, so no Configurations pre-read or Python merge is needed.
-The persisted parent field has the shape
-`Configurations: [{"Color": <color>, "Size": <size>}]`; **Color** and **Size** are
-member fields inside that collection, not top-level configurable-parent fields.
-
-<!-- /planning-boundary -->
 
 Choosing a product type is one of the first things that you must do to create a product. If you are just beginning to construct your product catalog, you can create a few sample products to experiment with each product type. In addition to the basic product types, the term _complex product_ is sometimes used to refer to products with multiple options, such as a configurable product that is available in various colors and sizes.
 

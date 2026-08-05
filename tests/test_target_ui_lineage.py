@@ -5,7 +5,12 @@ from pathlib import Path
 
 from gui_agent.core.orchestrator.models import CurrentUI, require_current_ui
 from gui_agent.core.orchestrator.sandbox import validate_code
-from gui_agent.core.run.target_evidence import exact_target_evidence
+from gui_agent.core.run.target_evidence import (
+    _contains,
+    exact_identity_evidence,
+    exact_target_evidence,
+)
+from gui_agent.core.supervisor.statement.policy import _IDENTITY_ABSENT_SOFT_BUDGET
 from gui_agent.core.schemas import Observation, StatementContract
 from gui_agent.core.supervisor.statement import policy as policy_module
 from gui_agent.core.supervisor.statement.context_projection import (
@@ -105,10 +110,19 @@ def run(ctx):
     )
     ctx.commit("Update order", target=target, values={"Status": "Complete"})
 """
-    incomplete = """
+    # Structural success + same target=row is enough (identity lives on target).
+    structural = """
 def run(ctx):
     target = {"ID": "1"}
     ctx.reach("Open an order", target=target, success={"entity": "Order"})
+    ctx.commit("Update order", target=target, values={"Status": "Complete"})
+"""
+    # Reach binds a *different* expression than commit's target → still reject.
+    mismatched = """
+def run(ctx):
+    target = {"ID": "1"}
+    other = {"ID": "2"}
+    ctx.reach("Open an order", target=other, success={"entity": "Order"})
     ctx.commit("Update order", target=target, values={"Status": "Complete"})
 """
     aliased = """
@@ -122,27 +136,55 @@ def run(ctx):
     )
     ctx.commit("Update order", target=target, values={"Status": "Complete"})
 """
+    normalized_key = """
+def run(ctx):
+    target = {"ID": "1"}
+    ctx.reach(
+        "Open the exact order",
+        target=target,
+        success={"entity": "Order", "id": target["ID"]},
+    )
+    ctx.commit("Update order", target=target, values={"Status": "Complete"})
+"""
 
     assert any(
         item.code == "COMMIT_TARGET_UI_REQUIRED"
         for item in validate_code(invalid)
     )
-    assert "do not nest" in next(
+    invalid_message = next(
         item.message
         for item in validate_code(invalid)
         if item.code == "COMMIT_TARGET_UI_REQUIRED"
     )
+    assert "target=target" in invalid_message
+    assert "do not nest" in invalid_message
+    assert validate_code(structural) == []
     assert any(
-        item.code == "TARGET_REACH_IDENTITY_REQUIRED"
-        for item in validate_code(incomplete)
-    )
-    assert "target['<field>']" in next(
-        item.message
-        for item in validate_code(incomplete)
-        if item.code == "TARGET_REACH_IDENTITY_REQUIRED"
+        item.code == "COMMIT_TARGET_UI_REQUIRED"
+        for item in validate_code(mismatched)
     )
     assert validate_code(valid) == []
     assert validate_code(aliased) == []
+    assert validate_code(normalized_key) == []
+
+
+def test_target_reach_accepts_identity_read_from_same_target() -> None:
+    source = """
+def run(ctx):
+    ctx.reach("Open pages", success={"entity": "Pages"})
+    rows = ctx.query(entity="Pages", fields=["Title"])
+    target = rows[0]
+    detail = ctx.read(target=target, fields={"ID": "text"})
+    row_id = detail["ID"]
+    ctx.reach(
+        "Open the exact page",
+        target=target,
+        success={"entity": "Page", "id": row_id},
+    )
+    ctx.commit("Update page", target=target, values={"Title": "New"})
+"""
+
+    assert validate_code(source) == []
 
 
 def test_live_collection_write_replay_requires_loop_local_target_reach() -> None:
@@ -203,6 +245,55 @@ def test_exact_target_evidence_preserves_source_text_and_sigils() -> None:
         "missing_fields": [],
     }
     assert projected["target_evidence"] == evidence
+
+
+def test_identity_matches_phone_across_header_tokens() -> None:
+    """Lunch FN: list id '(505) 123-4567' vs detail header with the same number."""
+    phone = "(505) 123-4567"
+    header = f"Texting with {phone} (SMS/MMS)"
+    bubble = (
+        f"{phone} said Hi! Would you like to join me for lunch tomorrow at 11 AM?"
+    )
+
+    assert _contains(header, phone)
+    assert _contains(bubble, phone)
+    assert not _contains("Texting with (505) 999-0000 (SMS/MMS)", phone)
+    # Short digit runs must not loose-match.
+    assert not _contains("order 11 items", "11")
+
+    observation = Observation.model_validate({
+        "png_bytes": b"frame",
+        "source": "android",
+        "form_controls": [
+            {"label": header, "role": "header"},
+            {"label": bubble, "role": "text"},
+            {"label": "Text message", "role": "textfield"},
+        ],
+    })
+    evidence = exact_identity_evidence({"id": phone}, observation)
+    assert evidence["status"] == "matched"
+    assert evidence["missing_fields"] == []
+    assert "collection_member" not in evidence
+
+
+def test_identity_phone_still_collection_member_in_repeated_list() -> None:
+    phone = "(505) 123-4567"
+    cells = [
+        {
+            "structural_key": "row",
+            "content_key": "row:a",
+            "texts": [f"{phone} …lunch tomorrow…"],
+        },
+        {
+            "structural_key": "row",
+            "content_key": "row:b",
+            "texts": ["(505) 999-0000 other"],
+        },
+    ]
+    observation = _cell_observation(cells)
+    evidence = exact_identity_evidence({"id": phone}, observation)
+    assert evidence["status"] == "matched"
+    assert evidence.get("collection_member") is True
 
 
 def test_mastodon_replay_distinguishes_adjacent_toot_bodies() -> None:
@@ -312,3 +403,132 @@ def test_target_bound_statement_cannot_complete_on_a_collection_member(
     assert step.outcome is None
     assert step.retry_transition is True
     assert "collection membership" in step.summary
+
+
+def test_identity_absent_complete_exhausts_after_soft_budget(monkeypatch) -> None:
+    """Step B: same-statement identity-absent completes do not loop forever."""
+    phone = "(505) 999-0000"  # not on the frame
+    statement = StatementContract(
+        id="open-msg",
+        goal="Open message for reply",
+        success="Message detail is open",
+        expected_state={"entity": "Message", "id": phone},
+        inputs={"target": {"id": phone}},
+    )
+    observation = Observation.model_validate({
+        "png_bytes": b"frame",
+        "source": "android",
+        "form_controls": [
+            {"label": "Texting with (505) 123-4567 (SMS/MMS)", "role": "header"},
+            {"label": "Text message", "role": "textfield"},
+        ],
+    })
+    assert exact_identity_evidence({"id": phone}, observation)["status"] == "absent"
+
+    policy = StatementSupervisorPolicy()
+    policy.begin_statement(statement, instance_id="i1:open")
+    monkeypatch.setattr(policy_module, "is_loading_frame", lambda _obs: False)
+    monkeypatch.setattr(
+        policy,
+        "_invoke_statement_transition",
+        lambda *_args, **_kwargs: _complete(),
+    )
+
+    # Within budget: soft reject / retry_transition
+    for _ in range(_IDENTITY_ABSENT_SOFT_BUDGET):
+        step = policy._run_single_turn(
+            statement, observation, [], validation_retries=0,
+        )
+        assert step.outcome is None
+        assert step.retry_transition is True
+        assert "identity fields" in step.summary
+
+    # Over budget: exhaust instead of another act loop
+    step = policy._run_single_turn(
+        statement, observation, [], validation_retries=0,
+    )
+    assert step.outcome is not None
+    assert step.outcome.phase == "exhausted"
+    assert "identity evidence stayed absent" in step.summary
+
+
+def test_lunch_detail_frame_matches_list_row_id_identity() -> None:
+    """Replay-shaped: list row id equals phone; detail header carries it."""
+    phone = "(505) 123-4567"
+    statement = StatementContract(
+        id="open-msg",
+        goal="Open message for reply",
+        success="Message detail is open",
+        expected_state={"entity": "Message", "id": phone},
+        inputs={"target": {"id": phone}},
+    )
+    observation = Observation.model_validate({
+        "png_bytes": b"frame",
+        "source": "android",
+        "form_controls": [
+            {"label": f"Texting with {phone} (SMS/MMS)", "role": "header"},
+            {
+                "label": (
+                    f"{phone} said Hi! Would you like to join me for lunch "
+                    "tomorrow at 11 AM?"
+                ),
+                "role": "text",
+            },
+            {"label": "Text message", "role": "textfield"},
+        ],
+    })
+    evidence = exact_target_evidence(statement, observation)
+    assert evidence["status"] == "matched"
+    assert evidence.get("collection_member") is not True
+
+
+def test_structural_success_uses_target_row_as_identity() -> None:
+    """Root fix: success may be entity-only; identity is the target row."""
+    from gui_agent.core.orchestrator.models import structural_reach_state
+
+    phone = "(505) 123-4567"
+    row = {"id": phone, "body": "lunch tomorrow"}
+    success = {"entity": "Message", "id": phone}  # legacy copy
+    assert structural_reach_state(success, target=row) == {"entity": "Message"}
+    assert structural_reach_state(
+        {"entity": "Message"}, target=row,
+    ) == {"entity": "Message"}
+
+    # Statement after structural strip: identity falls back to target primitives.
+    statement = StatementContract(
+        id="open-msg",
+        goal="Open message for reply",
+        success="Message detail is open",
+        expected_state={"entity": "Message"},
+        inputs={"target": row},
+    )
+    observation = Observation.model_validate({
+        "png_bytes": b"frame",
+        "source": "android",
+        "form_controls": [
+            {"label": f"Texting with {phone} (SMS/MMS)", "role": "header"},
+            {"label": "Text message", "role": "textfield"},
+        ],
+    })
+    evidence = exact_target_evidence(statement, observation)
+    assert evidence["status"] == "matched"
+    assert set(evidence["fields"]) >= {"id"}
+
+
+def test_compiler_accepts_structural_target_bound_reach() -> None:
+    source = '''
+def run(ctx):
+    ctx.reach("Messages", success={"entity": "Messages"})
+    rows = ctx.query(entity="Messages", fields=["id"], filters={"body": "lunch"})
+    row = rows[0]
+    ctx.reach("Open message for reply", target=row, success={"entity": "Message"})
+    ctx.commit("Reply OK", target=row, values={"reply": "OK"})
+'''
+    diagnostics = validate_code(source)
+    assert not any(
+        item.code in {
+            "TARGET_REACH_IDENTITY_REQUIRED",
+            "COMMIT_TARGET_UI_REQUIRED",
+        }
+        for item in diagnostics
+    ), diagnostics

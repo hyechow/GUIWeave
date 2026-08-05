@@ -96,11 +96,10 @@ def test_coding_contract_keeps_settings_atomic_and_visual_retrieval_on_source():
     assert "one semantic result/view `ctx.reach`" in visual_contract
     assert "same requested fields" in visual_contract
     assert "Generic whole-page fields" in visual_contract
-    assert "schema-free, source-derived creation" in prompt
-    assert "no preparatory entity/view" in prompt
-    assert "runtime source expression itself" in prompt
-    assert "only valid call shape" in prompt
-    assert "`Interface contract` is the compiler-facing resource contract" in prompt
+    assert "schema-free creation interpreted from an earlier `read`" in prompt
+    assert "embed the exact observed source" in prompt
+    assert "Do not parse it with host code" in prompt
+    assert "Every selected application fact is an authoritative interface constraint" in prompt
     assert "named month without a year remains month-only" in prompt
     assert "do not inspect `.year`" in prompt
 

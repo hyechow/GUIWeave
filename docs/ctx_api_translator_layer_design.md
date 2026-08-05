@@ -1,5 +1,8 @@
 # ctx.API 状态依赖与查询降解
 
+> 本文记录旧的显式状态句柄方案。当前公共 `ctx` API、内部 `CurrentUI` 和模块职责以
+> [GUI Agent 当前架构与模块边界](orchestrator_module_boundaries.md)为准。
+
 ## 问题
 
 task-108 的旧程序把筛选、分页和采集都压进一个 GUI Statement。旧导航 API 没有返回值，

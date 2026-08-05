@@ -453,13 +453,15 @@ def main() -> int:
                         from gui_agent.core.supervisor.statement.model_io import resolve_file_refs
                         from gui_agent.core.router import resolve_intent
 
-                        # The routed goal drives execution phrasing, but source queries
-                        # must retain the backend's original language and literals.
+                        # File references and orchestration stay anchored to the source task;
+                        # the Router may add one semantic clarification.
                         file_section = resolve_file_refs(goal)
                         resolution = resolve_intent(goal)
-                        if resolution.entities:
-                            print("[mobileworld] intent: " + "; ".join(
-                                f"{e.mention}→{e.type}/{e.match_mode}/key={e.search_key}" for e in resolution.entities))
+                        if resolution.semantic_supplement:
+                            print(
+                                "[mobileworld] semantic supplement: "
+                                f"{resolution.semantic_supplement}"
+                            )
                         plan = generate_code(
                             goal,
                             knowledge=orchestrator_knowledge,

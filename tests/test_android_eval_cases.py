@@ -30,6 +30,7 @@ def test_android_orchestrator_eval_covers_current_gui_baseline() -> None:
         "RecentTotalExpenseTask",
         "SumFileLinesTask",
         "MastodonConditionalFavoTask",
+        "ScheduleLunchViaSmsTask",
     }
 
 
@@ -83,7 +84,7 @@ def run(ctx):
         _case("MastodonConditionalFavoTask")["contract"],
     )
 
-    assert any("ORDERED_CALL:1" in failure for failure in failures)
+    assert "ORDERED_CALL_ALTERNATIVES" in failures
 
 
 def test_sum_file_lines_contract_accepts_extract_then_read_program() -> None:

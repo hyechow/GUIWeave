@@ -47,8 +47,8 @@ class AppKnowledge:
     navigation: str  # _app.md content → Supervisor
     elements: str    # _elements.md content → statement execution and fallback
     app_name: str
-    # Complete per-feature facts and procedures. Initial orchestration receives their
-    # compiler-facing Planning boundary; statement execution retains the full source.
+    # Complete per-feature facts and procedures. Frontmatter controls whether a section
+    # participates in orchestration; Markdown headings inside the body have no runtime meaning.
     sections: dict[str, str] = field(default_factory=dict)
     check: str = ""  # _check.md content → Checker-only observable completion rules
     metadata: dict[str, dict[str, Any]] = field(default_factory=dict)  # channel/stem -> frontmatter
@@ -81,34 +81,29 @@ class AppKnowledge:
         )
 
     def orchestrator_context(self, goal: str) -> str:
-        """Project goal-matched knowledge into its compiler-facing interface facts."""
+        """Return goal-matched sections without interpreting their Markdown structure."""
+        from gui_agent.context import render_context_blocks
         from gui_agent.core.self_learning.progressive import ProgressiveKnowledge
 
         stems = self.orchestrator_sections(goal)
         if not stems:
-            boundary = _planning_boundary(self.navigation)
-            if not boundary:
-                return self.navigation
-            boundaries = [boundary]
-        else:
-            boundaries = [
-                boundary
-                for stem in stems
-                if (boundary := _planning_boundary(self.sections[stem]))
-            ]
-        if boundaries:
-            return (
-                "## Required application interface facts\n\n"
-                "These are authoritative interface facts, not a task checklist. Select only the "
-                "resources causally required by the user goal; alternatives listed in the same "
-                "table are not additional steps. For each resource the program does use, preserve "
-                "its exact fields, types, ownership discriminators, and state dimensions.\n\n"
-                + "\n\n".join(boundaries)
-            )
-        return ProgressiveKnowledge({
+            nav_scope = self.metadata.get("_app", {}).get("scope") or []
+            if isinstance(nav_scope, str):
+                nav_scope = [nav_scope]
+            if self.metadata and "orchestrator" not in {
+                str(item).strip() for item in nav_scope
+            }:
+                return ""
+            return self.navigation
+        selected = ProgressiveKnowledge({
             stem: self.sections[stem]
             for stem in stems
-        }).bodies(stems)
+        })
+        # The selected documents become the body of one outer app-knowledge block in
+        # ``assemble_messages``.  Keep per-document provenance in the selector/report layer;
+        # rendering it here would nest ``[context: ...]`` trace headers inside model-visible
+        # content, bypassing the message assembler's headerless prompt boundary.
+        return render_context_blocks(selected.body_blocks(stems), include_headers=False)
 
     def summary(self) -> dict[str, object]:
         """Compact, log-friendly description of what got injected (→ context.json knowledge)."""
@@ -133,19 +128,6 @@ def _split_knowledge_frontmatter(text: str) -> tuple[dict[str, Any], str]:
     from gui_agent.core.self_learning.progressive import split_frontmatter
 
     return split_frontmatter(text)
-
-
-def _planning_boundary(text: str) -> str:
-    """Extract the initial compiler contract while retaining the complete knowledge source."""
-    _, body = _split_knowledge_frontmatter(text)
-    match = re.search(
-        (
-            r"(?ms)^##[ \t]+Planning boundary[^\n]*\n.*?"
-            r"(?=^<!-- /planning-boundary -->|^#{1,6}[ \t]|\Z)"
-        ),
-        body,
-    )
-    return match.group(0).strip() if match is not None else ""
 
 
 def _read_knowledge_markdown(path: Path) -> tuple[dict[str, Any], str]:

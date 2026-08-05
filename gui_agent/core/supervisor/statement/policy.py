@@ -51,15 +51,29 @@ from .schemas import (
     _TransitionAction,
 )
 
-def _resolved_lookup(
+# Same-statement budget for complete→absent identity soft-rejects. After this many
+# frame-level retries the statement exhausts instead of looping forever (lunch FN
+# path: already on the right conversation, identity match still failing).
+_IDENTITY_ABSENT_SOFT_BUDGET = 3
+
+
+def _resolved_query_collection(
     statement: StatementContract,
     observation: Observation,
 ) -> dict[str, JsonValue] | None:
     intent = statement.interaction_intent
-    return (
-        resolve_lookup_scope(observation, intent)
-        if intent is not None and intent.phase == "locate"
-        else None
+    if intent is None or intent.phase not in {"locate", "constrain"}:
+        return None
+    return resolve_lookup_scope(
+        observation,
+        CollectionIntent(
+            phase="locate",
+            entity=intent.entity,
+            field=intent.field,
+            fallback=intent.fallback,
+            required_fields=intent.required_fields,
+            coverage=intent.coverage,
+        ),
     )
 
 
@@ -207,6 +221,9 @@ class StatementSupervisorPolicy(
         self._timings_order: list[str] = []
         self._token_usage: dict[str, dict[str, int]] = {}
         self._terminal_only = False
+        # Soft-rejects on target-identity absence for the active statement. Prevents
+        # infinite act loops when the model keeps "complete" while evidence stays absent.
+        self._identity_absent_streak = 0
 
     @property
     def _rt(self) -> StatementRuntimeState:
@@ -255,6 +272,7 @@ class StatementSupervisorPolicy(
             raise RuntimeError("end the active statement before beginning another")
         self._initial_filters = None
         self._pending_transition_correction = ""
+        self._identity_absent_streak = 0
         self._statement_rt = StatementRuntimeState(
             contract=contract,
             instance_id=instance_id,
@@ -935,8 +953,11 @@ class StatementSupervisorPolicy(
                 summary=summary,
                 **_ctx(statement),
             )
-        lookup_scope = _resolved_lookup(statement, observation)
-        if lookup_scope is not None:
+        lookup_scope = _resolved_query_collection(statement, observation)
+        if (
+            lookup_scope is not None
+            and _collection_intent(statement, "locate") is not None
+        ):
             summary = f"子目标「{statement.goal}」已由当前结构化观察满足。"
             return SupervisorStep(
                 outcome=StatementOutcome.completed(
@@ -951,6 +972,9 @@ class StatementSupervisorPolicy(
                 **_ctx(statement),
             )
         constrain_intent = _collection_intent(statement, "constrain")
+        constrain_scope = (
+            lookup_scope if constrain_intent is not None else None
+        )
         filter_match = (
             match_filter_state(
                 constrain_intent.predicates,
@@ -959,12 +983,17 @@ class StatementSupervisorPolicy(
             if constrain_intent is not None
             else None
         )
-        if filter_match is not None and filter_match.status == "met":
+        if (
+            filter_match is not None
+            and filter_match.status == "met"
+            and constrain_scope is not None
+        ):
             summary = f"子目标「{statement.goal}」已由当前视图筛选状态满足。"
             return SupervisorStep(
                 outcome=StatementOutcome.completed(
                     summary,
                     verification="confirmed",
+                    outputs={"scope": constrain_scope},
                     observation=observation,
                     observation_url=observation.url,
                 ),
@@ -1100,7 +1129,7 @@ class StatementSupervisorPolicy(
                     "requested structural collection is not established for "
                     "the reach_collection postcondition"
                 )
-            lookup_scope = _resolved_lookup(statement, observation)
+            lookup_scope = _resolved_query_collection(statement, observation)
             if (
                 not rejection
                 and _collection_intent(statement, "locate") is not None
@@ -1111,6 +1140,9 @@ class StatementSupervisorPolicy(
                     "collection for the lookup request"
                 )
             constrain_intent = _collection_intent(statement, "constrain")
+            constrain_scope = (
+                lookup_scope if constrain_intent is not None else None
+            )
             filter_match = (
                 match_filter_state(
                     constrain_intent.predicates,
@@ -1128,11 +1160,22 @@ class StatementSupervisorPolicy(
                     "requested exact filter predicate set is not established: "
                     "mismatched"
                 )
+            if (
+                not rejection
+                and constrain_intent is not None
+                and constrain_scope is None
+            ):
+                rejection = (
+                    "the filtered collection is not structurally bound on the "
+                    "current observation"
+                )
             target_evidence = exact_target_evidence(statement, observation)
+            identity_absent = False
             if (
                 not rejection
                 and target_evidence["status"] == "absent"
             ):
+                identity_absent = True
                 rejection = (
                     "current structured observation does not contain the exact "
                     "target identity fields: "
@@ -1157,6 +1200,26 @@ class StatementSupervisorPolicy(
                     "write receipt"
                 )
             if rejection:
+                if identity_absent:
+                    self._identity_absent_streak += 1
+                    if self._identity_absent_streak > _IDENTITY_ABSENT_SOFT_BUDGET:
+                        if decision is not None:
+                            self._record_transition(decision, rejection)
+                        message = (
+                            "target identity evidence stayed absent after "
+                            f"{self._identity_absent_streak} complete attempts: "
+                            f"{rejection}. Stop acting on this statement; the "
+                            "declared identity is not observable on the current UI "
+                            "or the program demanded a non-exposed identity key."
+                        )
+                        return SupervisorStep(
+                            outcome=StatementOutcome.exhausted(message),
+                            summary=message,
+                            execution_scope=execution_scope,
+                            **_ctx(statement),
+                        )
+                else:
+                    self._identity_absent_streak = 0
                 # A typed structural miss demotes complete → continue acting.
                 return self._soft_reject_and_retry(
                     statement,
@@ -1169,9 +1232,17 @@ class StatementSupervisorPolicy(
                         "上一个 complete 候选未通过结构化合同校验："
                         f"{rejection}。不要结束 statement；继续 act 完成缺失的"
                         "合同条件，获得相应的结构化证据后再 complete。"
+                        + (
+                            f"（identity absent streak "
+                            f"{self._identity_absent_streak}/"
+                            f"{_IDENTITY_ABSENT_SOFT_BUDGET}）"
+                            if identity_absent
+                            else ""
+                        )
                     ),
                     validation_retries=validation_retries,
                 )
+            self._identity_absent_streak = 0
             self._record_transition(decision)
             executed = any(
                 turn.executed

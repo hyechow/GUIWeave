@@ -5,7 +5,6 @@ platform: browser
 app: shopping_admin
 scope:
   - decompose
-  - orchestrator
   - planner
   - replanner
 selector_when: 当需要使用 Orders collection 进行 completed/pending order status、purchase date、customer email、total amount、order ID 的筛选、统计或修改时查阅本节
@@ -17,20 +16,6 @@ ttl: session
 version: 13
 ---
 # Orders
-
-## Planning boundary
-
-**Orders** is the exact collection literal; “Orders List” is only a navigation label.
-Its source-native filters include **ID**, **Status**, **Bill-to Name**, **Ship-to Name**,
-**Customer Email**, and **Purchase Date**. A displayed order number `#N` maps to numeric
-**ID** value `N`; completed status is `Complete`; date ranges use slash-form UI values
-with `{"from": "MM/DD/YYYY", "to": "MM/DD/YYYY"}`.
-
-Relevant query fields are **ID**, **Customer Email** (`text`), **Purchase Date**
-(`datetime`), and **Grand Total (Purchased)** (`money`). **Purchase Date** is the
-chronological ordering field. The grid exposes raw order rows rather than grouped
-aggregates. A queried row is the owning target for order mutations.
-<!-- /planning-boundary -->
 
 The _Orders_ grid lists all current orders and tracks their progress and order status through the workflow. An easy way to understand the basic process is that an order becomes an invoice, and an invoice becomes a shipment. The grid represents the first stage of the process, and is where you can update existing orders and create orders.
 

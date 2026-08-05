@@ -8,7 +8,7 @@ owner: gui_agent.adapters.android.mobileworld
 schema: restricted_python
 eval_suites:
 rendered: true
-version: 2
+version: 3
 ---
 ## Android platform capabilities
 
@@ -23,3 +23,5 @@ Available application names:
   or launcher component in the program.
 - `launch_app` only changes the foreground application. It does not create a durable
   business record or establish a queryable UI state.
+- A direct Android setting whose desired value is supplied uses one untargeted `commit` after any
+  needed `launch_app`; do not insert a `reach` for a settings page because that commit owns it.

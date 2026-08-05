@@ -5,7 +5,6 @@ platform: browser
 app: shopping_admin
 scope:
   - decompose
-  - orchestrator
   - planner
   - replanner
 selector_when: 当需要查看订单 Items Ordered 商品/价格、在 pending order 发送 Comment/Notify message、处理订单状态或待处理订单时查阅本节
@@ -57,13 +56,6 @@ The customer's email may be edited at any point in the order workflow by editing
 The left panel for an open order provides access to different types of information that is related to the order.
 
 ## Process an order
-
-## Planning boundary
-
-An **Orders** row owns its order-detail mutations. Pending status is `Pending`.
-Customer notification is a saved order mutation with fields **Comment** (`text`) and
-**Notify Customer by Email** (`boolean`).
-<!-- /planning-boundary -->
 
 When a customer places an order, a sales order is created as a temporary record of the transaction. The sales order has a status of `Pending` until payment is received. While in `Pending` status, orders can be edited or canceled up until the time that payment is received and an invoice is generated. An easy way to think of it is that orders become invoices, and invoices become shipments. The Orders grid lists all orders, regardless of where they are in the workflow. To learn how to help customers with an order, see Update an order.
 

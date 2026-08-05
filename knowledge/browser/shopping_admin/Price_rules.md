@@ -5,7 +5,6 @@ platform: browser
 app: shopping_admin
 scope:
   - decompose
-  - orchestrator
   - planner
   - replanner
 selector_when: 当需要创建或编辑 Cart Price Rule、Catalog Price Rule、折扣规则及客户组适用范围时查阅本节
@@ -34,20 +33,6 @@ General, Wholesale, and Retailer, excluding NOT LOGGED IN.
 The expandable **Actions** section owns Apply and Discount Amount. Percentage discounts use
 `Percent of product price discount`; fixed discounts use the corresponding fixed-amount option.
 Discount Amount receives the numeric value without `%` or currency symbols.
-
-## Planning boundary
-
-**Cart Price Rules** is a new-record resource with fields **Rule Name**, **Active**,
-**Websites**, **Customer Groups**, **Coupon**, **Apply**, and **Discount Amount**.
-It has no owning target. **Websites** and **Customer Groups** are multi-value lists.
-
-- Website value: `Main Website`
-- Registered customer groups: [`General`, `Wholesale`, `Retailer`]
-- Guest group: `NOT LOGGED IN`
-- No-coupon value: `No Coupon`
-- Percentage action: `Percent of product price discount`
-- **Discount Amount** is numeric
-<!-- /planning-boundary -->
 
 ## Catalog Price Rule form
 

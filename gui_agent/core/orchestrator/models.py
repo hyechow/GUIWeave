@@ -54,12 +54,17 @@ class CurrentUI:
 
     This is transported between the coding child and runtime only.  It is not a
     public ``ctx`` value: user programs cannot retain or select among UI states.
+
+    ``surface`` distinguishes an entity/collection frame from a target-bound
+    detail established by ``ctx.reach(..., target=row)``. Commit checks the
+    bound target object; complete gates use target values + structured evidence.
     """
 
     token: str
     postcondition: dict[str, Any] = field(default_factory=dict)
     observed_state: dict[str, Any] = field(default_factory=dict)
     target: Any = None
+    surface: str = "entity"  # "entity" | "target_detail"
 
     def snapshot(self) -> dict[str, Any]:
         return {
@@ -67,7 +72,31 @@ class CurrentUI:
             "postcondition": self.postcondition,
             "observed_state": self.observed_state,
             "target": self.target,
+            "surface": self.surface,
         }
+
+
+def structural_reach_state(
+    success: dict[str, Any],
+    *,
+    target: Any = None,
+) -> dict[str, Any]:
+    """Statement expected_state for a reach: keep structure, drop row-copied identity.
+
+    Target-bound programs pass identity on ``target=row``. Duplicating those same
+    key/value pairs into ``success`` made complete gates demand list projection
+    keys as if they were detail form fields (lunch false negative). Structural
+    state keeps ``entity`` / ``fields`` and any success keys that are *not* an
+    identical copy of the target row.
+    """
+    if not isinstance(target, dict) or not target:
+        return dict(success)
+    return {
+        key: value
+        for key, value in success.items()
+        if key in {"entity", "fields"}
+        or not (key in target and target[key] == value)
+    }
 
 
 def reach_postcondition(value: Any) -> dict[str, Any] | None:

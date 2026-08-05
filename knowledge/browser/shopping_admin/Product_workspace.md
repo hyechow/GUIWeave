@@ -5,7 +5,6 @@ platform: browser
 app: shopping_admin
 scope:
   - decompose
-  - orchestrator
   - planner
   - replanner
 selector_when: 当需要 update/edit existing catalog 的 Configurations、Price、Quantity、Stock、Material、Short Description/Description 时查阅本节
@@ -17,23 +16,6 @@ ttl: session
 version: 8
 ---
 # Product workspace
-
-## Planning boundary
-
-|Resource|Filter / discriminator|Query fields|Owned mutable fields|
-|---|---|---|---|
-|Products collection|**Name**|**Name** (`text`), **Type** (`text`)|—|
-|Configurable parent|**Type** = `Configurable Product`|**Name**, **Type**|**Short Description**, **Configurations**|
-|Simple variation|**Type** = `Simple Product`|**Name**, **Type**|**Price**, **Quantity**, **Stock Status**|
-
-A Name lookup can contain both the configurable parent and its simple variations, so **Type** is
-an owner filter rather than optional display data. To mutate **Short Description** or
-**Configurations**, every full-name and fallback query retains `Type = Configurable Product`;
-assert that this filtered result has one owner, then issue one parent commit. Do not branch into a
-Simple Product commit. The owner identity for either field is the pair (**Name**, **Type** =
-`Configurable Product`); **Name** alone does not identify that mutable resource.
-
-<!-- /planning-boundary -->
 
 The product workspace is basically the same for all product types, although the selection of fields changes depending on the attribute set that is used. The product attributes are at the top of the form, followed by expandable sections of product information. When a new product is saved for the first time, the _Store View_ chooser appears at the upper left of the form.
 

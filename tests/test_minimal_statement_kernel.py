@@ -539,12 +539,96 @@ def test_canonical_filter_acceptance_completes_without_transition(monkeypatch) -
                 coverage="complete",
                 source="chips",
             ),
+            collection_regions=[{
+                "ref": "filtered-records",
+                "surface_fingerprint": "android-collection:filtered-records",
+                "cells": [],
+            }],
         ),
         [],
     )
 
     assert step.outcome is not None and step.outcome.phase == "completed"
     assert step.outcome.verification == "confirmed"
+    assert step.outcome.outputs["scope"]["surface_fingerprint"] == (
+        "android-collection:filtered-records"
+    )
+
+
+def test_constrain_complete_rebinds_current_collection_for_acquire(monkeypatch) -> None:
+    statement = StatementContract(
+        id="s1",
+        goal="filter messages",
+        success="only matching messages remain",
+        interaction_intent=CollectionIntent(
+            phase="constrain",
+            entity="Messages",
+            predicates=compile_filter_predicates({"Body": "lunch"}),
+        ),
+    )
+    policy = _policy(statement)
+    monkeypatch.setattr(
+        policy,
+        "_invoke_statement_transition",
+        lambda *_args, **_kwargs: _complete("matching messages are visible"),
+    )
+
+    step = policy._run_single_turn(
+        statement,
+        _observation(
+            source="android",
+            collection_regions=[{
+                "ref": "search-results",
+                "surface_fingerprint": "android-collection:search-results",
+                "cells": [{
+                    "ref": "message-1",
+                    "structural_key": "message",
+                    "content_key": "lunch-message",
+                    "texts": ["Lunch tomorrow at 11 AM?"],
+                }],
+            }],
+        ),
+        [],
+    )
+
+    assert step.outcome is not None and step.outcome.is_completed
+    assert step.outcome.outputs["scope"] == {
+        "kind": "resolved_collection",
+        "entity": "Messages",
+        "surface_fingerprint": "android-collection:search-results",
+        "available_fields": [],
+        "projection": "cells",
+    }
+
+
+def test_constrain_complete_without_current_collection_keeps_statement_open(
+    monkeypatch,
+) -> None:
+    statement = StatementContract(
+        id="s1",
+        goal="filter messages",
+        success="only matching messages remain",
+        interaction_intent=CollectionIntent(
+            phase="constrain",
+            entity="Messages",
+            predicates=compile_filter_predicates({"Body": "lunch"}),
+        ),
+    )
+    policy = _policy(statement)
+    calls = 0
+
+    def complete(*_args, **_kwargs):
+        nonlocal calls
+        calls += 1
+        return _complete("matching messages are visible")
+
+    monkeypatch.setattr(policy, "_invoke_statement_transition", complete)
+
+    step = policy._run_single_turn(statement, _observation(source="android"), [])
+
+    assert calls == 2
+    assert step.outcome is None
+    assert step.retry_transition is True
 
 
 def test_filter_acceptance_mismatch_keeps_statement_running(monkeypatch) -> None:

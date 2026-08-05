@@ -5,6 +5,7 @@ platform: android
 app: Messages
 scope:
   - decompose
+  - orchestrator
   - planner
   - replanner
 source: mobileworld_app_contract

@@ -5,6 +5,7 @@ platform: android
 app: Calendar
 scope:
   - decompose
+  - orchestrator
   - planner
   - replanner
 source: mobileworld_app_contract

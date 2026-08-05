@@ -1,5 +1,8 @@
 # Coding Orchestrator 编排实验记录
 
+> 当前生产架构和模块职责以
+> [GUI Agent 当前架构与模块边界](orchestrator_module_boundaries.md)为准。本文仅保留实验过程与历史结论。
+>
 > 实验时间：2026-07-22 至 2026-07-23
 >
 > 当前状态：reviewed-Python orchestrator 已成为唯一生产编排路径。下文涉及旧 DSL 的内容仅作为

@@ -119,14 +119,35 @@ def test_orchestrator_context_selects_only_goal_matched_functional_sections(tmp_
     assert "不应进入初始编排" not in context
     assert "联调实验" not in context
     assert "左侧菜单" not in context
+    assert "[context:" not in context
 
 
-def test_orchestrator_context_projects_planning_boundary(tmp_path, monkeypatch):
+def test_orchestrator_context_selects_application_interface_by_goal(tmp_path, monkeypatch):
+    app_dir = _make_app(tmp_path, with_skill=False)
+    (app_dir / "应用接口.md").write_text(
+        "---\nsource_type: knowledge_interface\nscope:\n  - orchestrator\n"
+        "selector_when: order tracking\n---\n"
+        "Orders owns the stable ID field.",
+        encoding="utf-8",
+    )
+    monkeypatch.setattr(app_summary, "KNOWLEDGE_DIR", tmp_path)
+
+    knowledge = app_summary.auto_discover_knowledge(
+        "在 testapp update order tracking",
+        "browser",
+    )
+
+    assert knowledge is not None
+    assert knowledge.orchestrator_sections("update order tracking") == ["应用接口"]
+    assert "Orders owns the stable ID field" in knowledge.orchestrator_context("update order tracking")
+
+
+def test_orchestrator_context_does_not_interpret_markdown_headings(tmp_path, monkeypatch):
     app_dir = _make_app(tmp_path, with_skill=False)
     (app_dir / "订单.md").write_text(
         "---\nscope:\n  - orchestrator\nselector_when: order tracking\n---\n"
         "# Orders\n"
-        "## Planning boundary\n"
+        "## Interface facts\n"
         "Orders 行拥有 Tracking Number 字段。\n"
         "## UI manual\n"
         "点击很多按钮的执行期细节。\n",
@@ -143,18 +164,17 @@ def test_orchestrator_context_projects_planning_boundary(tmp_path, monkeypatch):
 
     assert "点击很多按钮的执行期细节" in knowledge.sections["订单"]
     assert "Orders 行拥有 Tracking Number 字段" in context
-    assert "点击很多按钮的执行期细节" not in context
-    assert "Required application interface facts" in context
+    assert "点击很多按钮的执行期细节" in context
     assert context.count("Orders 行拥有 Tracking Number 字段") == 1
     assert "左侧菜单" not in context
 
 
-def test_orchestrator_context_projects_navigation_planning_boundary_without_sections() -> None:
+def test_orchestrator_context_returns_navigation_unchanged_without_sections() -> None:
     knowledge = app_summary.AppKnowledge(
         navigation=(
             "# App\n"
             "Execution navigation details.\n"
-            "## Planning boundary\n"
+            "## Interface facts\n"
             "Records owns the name field.\n"
         ),
         elements="",
@@ -164,11 +184,22 @@ def test_orchestrator_context_projects_navigation_planning_boundary_without_sect
     context = knowledge.orchestrator_context("read records")
 
     assert "Records owns the name field" in context
-    assert "Execution navigation details" not in context
-    assert "Required application interface facts" in context
+    assert "Execution navigation details" in context
+    assert "Required application interface facts" not in context
 
 
-def test_shopping_admin_material_query_receives_product_field_contract() -> None:
+def test_orchestrator_context_does_not_fallback_to_unscoped_navigation() -> None:
+    knowledge = app_summary.AppKnowledge(
+        navigation="# App\nLong execution manual.",
+        elements="",
+        app_name="App",
+        metadata={"_app": {"scope": ["planner"]}},
+    )
+
+    assert knowledge.orchestrator_context("unknown operation") == ""
+
+
+def test_shopping_admin_material_query_receives_goal_matched_product_facts() -> None:
     knowledge = app_summary.load_knowledge_for_app("shopping_admin", "browser")
     assert knowledge is not None
 
@@ -176,10 +207,10 @@ def test_shopping_admin_material_query_receives_product_field_contract() -> None
     sections = knowledge.orchestrator_sections(goal)
     context = knowledge.orchestrator_context(goal)
 
-    assert "Products_list" in sections
-    assert "**Quantity**" in context
-    assert "**Material** and **Size** are detail-only fields" in context
-    assert "`ctx.read`" in context
+    assert sections == ["Products_query_interface"]
+    assert "**Quantity** (`number`)" in context
+    assert "**Material** and **Size** are not collection fields" in context
+    assert "nonempty resolved Material values" in context
 
 
 def test_app_knowledge_block_marks_facts_as_authoritative() -> None:

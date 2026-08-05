@@ -4,7 +4,6 @@ source_type: knowledge_section
 platform: browser
 app: shopping_admin
 scope:
-  - orchestrator
   - planner
   - replanner
 selector_when: 当需要 show/generate sales reports、tax report、按 from/to date 生成报表或点击 Show Report 时查阅本节
@@ -34,14 +33,6 @@ To filter a sales report, set the following options:
 |Empty Rows|Indicates whether to add blank rows to the report.|
 
 ## Orders Report
-
-## Planning boundary
-
-**Sales Reports** is a transient rendered-state resource, not a durable record.
-Its terminal state uses **Report Subtype** for the selected report, plus **From** and **To** in
-`MM/DD/YYYY` format, and `rendered=true`. Report subtype values include `Orders`,
-`Tax`, `Invoiced`, `Shipping`, `Refunds`, `Coupons`, and `PayPal Settlement`.
-<!-- /planning-boundary -->
 
 The Orders Report includes the number of orders placed and canceled, with totals for sales, amounts invoiced, refunded, tax collected, shipping charged, and discounts.
 

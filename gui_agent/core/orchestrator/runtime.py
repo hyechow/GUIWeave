@@ -39,6 +39,7 @@ from .models import (
     field_projection,
     reach_postcondition,
     require_current_ui,
+    structural_reach_state,
 )
 
 
@@ -679,6 +680,10 @@ class CodingProgramRuntime:
                 interaction_intent=CollectionIntent(
                     phase="constrain",
                     entity=entity,
+                    required_fields=[
+                        str(value)
+                        for value in scope.get("available_fields") or []
+                    ],
                     predicates=compile_filter_predicates(filters),
                 ),
                 persistence="immediate",
@@ -773,7 +778,12 @@ class CodingProgramRuntime:
                 reach_state = reach_postcondition(payload.get("success"))
                 if reach_state is None:
                     raise ValueError("ctx.reach success is not a structured state")
-                success = reach_state
+                # Target-bound reach: identity lives on target=row. Keep only
+                # structural success (entity/fields + non-row-copied keys) so
+                # complete gates do not demand list projection keys as detail fields.
+                success = structural_reach_state(
+                    reach_state, target=payload.get("target"),
+                )
                 success_text = "Every declared expected-state condition is established"
             state = None
             target = payload.get("target") if op == "reach" else (
@@ -975,30 +985,45 @@ class CodingProgramRuntime:
             outcome.is_completed
             and coding_op in {"reach", "open_target", "focus"}
         ):
+            bound_target = (
+                coding_payload.get("target")
+                if coding_op == "reach"
+                else invocation.inputs.get("target")
+            )
             if coding_op == "focus":
                 postcondition = {
                     "kind": "target_fields_available",
                     "target": invocation.inputs.get("target"),
                     "fields": list(coding_payload.get("fields") or []),
                 }
+                surface = "target_detail"
             elif coding_op == "open_target":
                 postcondition = {
                     "kind": "target_open",
                     "target": invocation.inputs.get("target"),
                 }
+                surface = "target_detail"
             else:
-                postcondition = dict(coding_payload.get("success") or {})
+                # reach: store structural postcondition (entity/fields); row
+                # identity remains on CurrentUI.target for commit binding.
+                raw_success = dict(coding_payload.get("success") or {})
+                postcondition = structural_reach_state(
+                    raw_success, target=bound_target,
+                )
+                surface = (
+                    "target_detail" if bound_target is not None else "entity"
+                )
             issued_ui_state = CurrentUI(
                 token=f"{invocation.id}:state",
                 postcondition=postcondition,
                 observed_state=dict(outcome.outputs),
-                target=(
-                    coding_payload.get("target")
-                    if coding_op == "reach"
-                    else invocation.inputs.get("target")
-                ),
+                target=bound_target,
+                surface=surface,
             )
             coding_payload["produced_state"] = issued_ui_state.token
+            if surface == "target_detail" and bound_target is not None:
+                coding_payload["bound_target"] = bound_target
+                coding_payload["surface"] = surface
         self.interpreter.run_log.append(RunRecord(
             node_id=invocation.id,
             executor=invocation.executor,
@@ -1040,11 +1065,16 @@ class CodingProgramRuntime:
             and invocation.statement.interaction_intent is not None
             and invocation.statement.interaction_intent.phase == "constrain"
         ):
-            scope = dict(invocation.args.get("lookup_scope") or {})
-            if not is_lookup_scope(scope):
-                self._fail("constrain completed without its collection scope")
+            value = outcome.outputs.get("scope")
+            if (
+                not is_lookup_scope(value)
+                or str(value.get("entity") or "")
+                != invocation.statement.interaction_intent.entity
+            ):
+                self._fail(
+                    "constrain completed without a rebound collection scope"
+                )
                 return None
-            value = scope
         elif issued_ui_state is not None:
             value = issued_ui_state
         elif isinstance(invocation.statement, Acquire):

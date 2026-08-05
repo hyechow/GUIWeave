@@ -5,7 +5,6 @@ platform: browser
 app: shopping_admin
 scope:
   - decompose
-  - orchestrator
   - planner
   - replanner
 selector_when: 在 Stores > Attributes 中查找或编辑既有 catalog attribute、添加 new option、XXXL/XXS/swatch value 时查阅本节
@@ -32,20 +31,6 @@ to the next grid page.
 3. In that attribute's Options/Values or swatch-options area, ensure an option labeled `XXXL`
    exists; add it only when absent.
 4. Save the existing attribute and verify that its option collection contains `XXXL`.
-
-## Planning boundary
-
-|Resource|Identity / filter|Owned fields|
-|---|---|---|
-|Product Attributes collection|**Attribute Code**, **Default Label**|**Attribute Code**|
-|Existing Size attribute row|**Attribute Code** = `size`|new option member|
-|New text-swatch option on that row|requested option label|**Admin Description**, **Admin Swatch**|
-
-Both text-swatch fields store the requested option label. Neither is a placeholder.
-The new option is a child mutation of the queried existing attribute row: target that row in
-`commit`; do not create a new attribute definition or put **Attribute Code** in mutation values.
-
-<!-- /planning-boundary -->
 
 For an attribute whose input type is **Text Swatch**, one option row contains multiple related
 fields. The swatch value and the displayed option/store-view label are not interchangeable. A new

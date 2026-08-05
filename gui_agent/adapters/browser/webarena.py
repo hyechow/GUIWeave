@@ -1236,12 +1236,13 @@ def main() -> int:
                         from gui_agent.core.router import resolve_intent
 
                         file_section = resolve_file_refs(intent)
-                        # Resolve values/ranges/search hints before semantic compilation.
-                        # The resolver does not prescribe UI routes or query branches.
+                        # Preserve the source task and add only genuinely implicit meaning.
                         resolution = resolve_intent(intent)
-                        if resolution.entities:
-                            print(f"[webarena] intent: " + "; ".join(
-                                f"{e.mention}→{e.type}/{e.match_mode}/key={e.search_key}" for e in resolution.entities))
+                        if resolution.semantic_supplement:
+                            print(
+                                "[webarena] semantic supplement: "
+                                f"{resolution.semantic_supplement}"
+                            )
                         orch_started = time.perf_counter()
                         orch_calls_before = get_llm_call_count()
                         orch_tokens_before = get_llm_token_usage()

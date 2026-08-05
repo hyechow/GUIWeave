@@ -4,7 +4,6 @@ source_type: knowledge_section
 platform: browser
 app: shopping_admin
 scope:
-  - orchestrator
   - planner
   - replanner
 selector_when: 当需要查找或编辑 CMS Page/Pages、页面标题/Page Title、Home Page 或 Privacy Policy 时查阅本节
@@ -17,17 +16,11 @@ version: 4
 ---
 # Pages
 
-## Planning boundary
-
-**Pages** is the CMS page collection. It supports exact **Title** filtering and exposes
-**Title** as a query field. The owning page row has the distinct mutable editor field
-**Page Title**.
-<!-- /planning-boundary -->
-
 ## Pages workspace
 
 The CMS page collection is under **Content > Elements > Pages**. Each grid row is one
-page record. The grid's **Title** column is the stable lookup field used to distinguish
+page record. The grid supports exact **Title** filtering, and its **Title** column is the stable
+lookup field used to distinguish
 records such as `Home Page`, `Privacy Policy`, and other content pages.
 
 The collection also exposes page status, identifier, store view, layout, and update-time

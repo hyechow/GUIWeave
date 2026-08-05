@@ -676,6 +676,19 @@ def _ctx_state_contract_diagnostics(
         reach: tuple[int, str | None, frozenset[str], ast.Dict],
         target: ast.AST,
     ) -> bool:
+        """True when this target-bound reach is identity-bound to ``target``.
+
+        Identity may be established either by:
+        - ``ctx.reach(..., target=row, success={...})`` where the reach target
+          expression is the same row (preferred; success stays structural), or
+        - legacy programs that still copy ``row[field]`` into ``success``.
+        """
+        call = reach_call(reach)
+        if call is not None:
+            reach_target = _call_argument(call, "target", 2)
+            if reach_target is not None and _same_expression(reach_target, target):
+                return True
+
         def direct_field(value: ast.AST, field: str) -> bool:
             return (
                 isinstance(value, ast.Subscript)
@@ -846,10 +859,10 @@ def _ctx_state_contract_diagnostics(
                         f"the current code has no target-bound reach for {target_source!r}. "
                         "Immediately before this commit, insert "
                         f"ctx.reach(..., target={target_source}, "
-                        f"success={{<identity field>: {target_source}[<field>]}}) "
+                        f"success={{\"entity\": \"...\"}}) "
                         "after that target is selected; for a multi-record mutation, "
-                        "put the reach inside the same loop; do not nest the target "
-                        "under success"
+                        "put the reach inside the same loop. Identity lives on "
+                        "target=row — do not nest the target under success"
                     ),
                 ))
             elif reach is not None and not declares_target_identity(reach, target):
@@ -857,10 +870,10 @@ def _ctx_state_contract_diagnostics(
                     node,
                     "TARGET_REACH_IDENTITY_REQUIRED",
                     (
-                        "target-bound ctx.reach success must bind at least one "
-                        "projected identity with the same key and subscript spelling, for example "
-                        "'name': target['name']; 'id': target['name'] is not an identity binding. "
-                        "Do not nest the target under success"
+                        "target-bound ctx.reach must pass the same row as target= "
+                        "(preferred) or, for legacy programs, bind at least one "
+                        "projected identity in success with the same key and "
+                        "subscript spelling. Do not nest the target under success"
                     ),
                 ))
             continue

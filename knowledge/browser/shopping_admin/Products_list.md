@@ -5,7 +5,6 @@ platform: browser
 app: shopping_admin
 scope:
   - decompose
-  - orchestrator
   - planner
   - replanner
 selector_when: 当需要 query/read/filter products 商品的 Name/SKU/Type/Quantity 或 Material/Size/Color 详情字段时查阅
@@ -17,32 +16,6 @@ ttl: session
 version: 7
 ---
 # Products list
-
-## Planning boundary
-
-**Products** is the target-selection collection. Its source-native filters include **Name**,
-**Type**, **SKU**, and **Quantity**. Collection fields include **Name** (`text`), **Type** (`text`),
-**SKU** (`text`), and **Quantity** (`number`). The entity and field labels retain this exact
-capitalization.
-
-The collection can contain both `Configurable Product` parents and `Simple Product` variations
-with related names. Configurations and aggregate product state belong to the configurable parent;
-variation Price, Quantity, Size, and Color belong to the simple child.
-
-**Material** and **Size** are detail-only fields in this environment: they are not Products
-collection fields and must be obtained with `ctx.read` from each concrete Products row selected by
-the query, using the typed projection `fields={"Material": "text"}`.
-
-A Simple Product's Material may be empty because the value is inherited from its Configurable
-Product parent. Read the selected member first. Only when that Material is empty and its Type is
-`Simple Product`, derive the base parent SKU with `row["SKU"].rsplit("-", 2)[0]`, then query
-Products with the complete interface
-`fields={"Name": "text", "Type": "text", "SKU": "text"}` and
-`filters={"SKU": parent_sku, "Type": "Configurable Product"}`. Exactly one such owner is required;
-read its Material with the same typed detail projection. Material results contain the distinct
-nonempty values after this member-then-parent ownership rule; a first-seen list plus membership
-check provides a deterministic result without changing the source order.
-<!-- /planning-boundary -->
 
 All products in the catalog are accessible from the _Products_ page in the Admin, where you can create products and edit existing ones. For a multi-site installation, each website can offer a different selection of products for sale from the same catalog.
 
