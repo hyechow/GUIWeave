@@ -219,7 +219,6 @@ class _RuntimeContext:
         self._connection = connection
         self._call_seq = 0
         self._query_filters: dict[tuple[str, str], dict[str, Any]] = {}
-        self._current_ui: CurrentUI | None = None
 
     def _call_id(self, op: str) -> str:
         self._call_seq += 1
@@ -433,7 +432,6 @@ class _RuntimeContext:
             success=dict(normalized_success),
             target=normalized_target,
         ))
-        self._current_ui = issued  # legacy fallback for reporting
         return issued
 
     def commit(
@@ -461,7 +459,6 @@ class _RuntimeContext:
             state=state,
             values=dict(normalized_values),
         )
-        self._current_ui = None
         return issued
 
     def command(self, state: CurrentUI, capability: str, **arguments: Any) -> CurrentUI:
@@ -476,7 +473,6 @@ class _RuntimeContext:
             capability=capability,
             arguments=dict(normalized_arguments),
         )
-        self._current_ui = None
         return issued
 
 def _runtime_worker(source: str, connection: Any) -> None:
@@ -488,9 +484,14 @@ def _runtime_worker(source: str, connection: Any) -> None:
         exec(compile(source, "<coding-plan>", "exec"), namespace, namespace)
         # The run starts on the observed current screen; generated code threads
         # this initial state into its first ctx.reach and every later UI op.
-        result = namespace["run"](
-            _RuntimeContext(connection),
-            CurrentUI(token="initial", postcondition={}, surface="entity"),
+        run_fn = namespace["run"]
+        context = _RuntimeContext(connection)
+        initial = CurrentUI(token="initial", postcondition={}, surface="entity")
+        # Legacy programs may still declare run(ctx); pass state only when accepted.
+        result = (
+            run_fn(context, initial)
+            if run_fn.__code__.co_argcount >= 2
+            else run_fn(context)
         )
         connection.send({"kind": "return", "value": result})
     except (EOFError, BrokenPipeError):

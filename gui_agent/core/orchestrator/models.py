@@ -64,7 +64,12 @@ class CurrentUI:
     postcondition: dict[str, Any] = field(default_factory=dict)
     observed_state: dict[str, Any] = field(default_factory=dict)
     target: Any = None
-    surface: str = "entity"  # "entity" | "target_detail"
+    # "entity" | "target_detail" | "post_commit" | "post_command".
+    # entity/target_detail: a collection or target-bound surface, queryable/readable.
+    # post_commit/post_command: the state after a durable change or platform capability;
+    # they carry no declared entity, so a later query/read through them is a runtime error —
+    # re-establish with reach before further data operations.
+    surface: str = "entity"
 
     def snapshot(self) -> dict[str, Any]:
         return {

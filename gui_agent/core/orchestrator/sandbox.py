@@ -655,6 +655,16 @@ def _ctx_state_flow_diagnostics(
                     "later state producer"
                 ),
             ))
+        elif value.kind == "initial" and method in {"query", "read"}:
+            # The initial screen is not a data source; a reach must establish one.
+            diagnostics.append(_diag(
+                node,
+                "STATE_REQUIRED",
+                (
+                    f"ctx.{method} requires a ctx.reach to establish the "
+                    f"{value.name!r} screen as a data source first"
+                ),
+            ))
         return value
 
     def check_scope(node: ast.Call, env: dict[str, Value]) -> Value | None:
@@ -699,7 +709,18 @@ def _ctx_state_flow_diagnostics(
             if target:
                 env[target] = Value(name=target, kind="commit", entity=None, node=node, gen=gen)
         elif method == "query":
-            check_state(node, env, "query")
+            state = check_state(node, env, "query")
+            if state is not None and state.entity:
+                entity = _literal_value(_call_argument(node, "entity", 1))
+                if isinstance(entity, str) and entity != state.entity:
+                    diagnostics.append(_diag(
+                        node,
+                        "STATE_ENTITY_MISMATCH",
+                        (
+                            f"ctx.query entity {entity!r} does not match "
+                            f"the active reach entity {state.entity!r}"
+                        ),
+                    ))
             if target:
                 entity = _literal_value(_call_argument(node, "entity", 1))
                 env[target] = Value(
@@ -729,6 +750,17 @@ def _ctx_state_flow_diagnostics(
                 and (m := _ctx_method(statement.value)) is not None
             ):
                 handle_call(m, statement.value, env, statement.targets[0].id)
+                continue
+            if (
+                isinstance(statement, ast.Assign)
+                and len(statement.targets) == 1
+                and isinstance(statement.targets[0], ast.Name)
+                and isinstance(statement.value, ast.Name)
+                and statement.value.id in env
+            ):
+                # Alias: x = state. Track the shared Value so a later consuming
+                # call invalidates every alias, making STATE_CONSUMED reachable.
+                env[statement.targets[0].id] = env[statement.value.id]
                 continue
             if isinstance(statement, ast.If):
                 saved = gen
@@ -944,7 +976,6 @@ def _ctx_state_contract_diagnostics(
         return False
 
     diagnostics: list[CodeDiagnostic] = []
-    diagnosed_consumers: set[ast.Call] = set()
     for node in ast.walk(function):
         if isinstance(node, (ast.Assign, ast.AnnAssign)):
             # reach/command/commit now return a state value; the caller must
@@ -1044,16 +1075,9 @@ def _ctx_state_contract_diagnostics(
                 ))
             continue
         if method in {"query", "read", "acquire"}:
-            reach = active_reach(node)
-            if reach is None:
-                diagnostics.append(_diag(
-                    node,
-                    "ACTIVE_UI_REQUIRED",
-                    f"ctx.{method} requires a preceding active ctx.reach",
-                ))
-                diagnosed_consumers.add(node)
-                continue
             if method == "acquire":
+                # Acquire needs a query scope; the active-UI requirement is owned
+                # by the dataflow analyzer.
                 scope_node = _call_argument(node, "scope", 0)
                 if scope_node is None or (
                     isinstance(scope_node, ast.Constant)
@@ -1065,21 +1089,13 @@ def _ctx_state_contract_diagnostics(
                         "ctx.acquire requires a scope returned by ctx.query",
                     ))
                 continue
-            entity = _literal_value(_call_argument(node, "entity", 1))
-            if (
-                method == "query"
-                and reach[1] is not None
-                and isinstance(entity, str)
-                and reach[1] != entity
-            ):
-                diagnostics.append(_diag(
-                    node,
-                    "STATE_ENTITY_MISMATCH",
-                    (
-                        f"ctx.query entity {entity!r} does not match "
-                        f"the active ctx.reach entity {reach[1]!r}"
-                    ),
-                ))
+            # query/read: the active-UI requirement and entity match are owned by
+            # the dataflow analyzer (_ctx_state_flow_diagnostics). This analyzer
+            # keeps the reach-success filters and direct-read declaration checks,
+            # which need the active reach.
+            reach = active_reach(node)
+            if reach is None:
+                continue
             if method == "query" and any(
                 isinstance(key, ast.Constant) and key.value == "filters"
                 for key in reach[3].keys
@@ -1157,42 +1173,9 @@ def _ctx_state_contract_diagnostics(
     # A commit or command can invalidate CurrentUI before the next iteration.
     # A consumer earlier in that loop therefore needs a loop-local reach, even
     # when a reach before the loop makes the first iteration valid.
-    for loop in (
-        node for node in ast.walk(function)
-        if isinstance(node, (ast.For, ast.AsyncFor))
-    ):
-        body_calls = [
-            call
-            for statement in loop.body
-            for call in ast.walk(statement)
-            if isinstance(call, ast.Call)
-        ]
-        if not any(_ctx_method(call) in {"commit", "command"} for call in body_calls):
-            continue
-        loop_reaches = [
-            item
-            for item in reaches
-            if control_path(item[3]).get(loop) == "body"
-        ]
-        for call in body_calls:
-            if (
-                call in diagnosed_consumers
-                or _ctx_method(call) not in {"query", "acquire", "read"}
-                or any(
-                    reach[0] < call.lineno and dominates(reach[3], call)
-                    for reach in loop_reaches
-                )
-            ):
-                continue
-            diagnostics.append(_diag(
-                call,
-                "ACTIVE_UI_REQUIRED",
-                (
-                    f"ctx.{_ctx_method(call)} may run again after the loop invalidates "
-                    "CurrentUI; collect reads before commits or reach again inside the loop"
-                ),
-            ))
-            diagnosed_consumers.add(call)
+    # Loop-body invalidation (a commit/command consuming state across iterations)
+    # is owned by the dataflow analyzer's STATE_CONSUMED; it is no longer inferred
+    # here from control-path dominance.
     return diagnostics
 
 
@@ -2474,7 +2457,6 @@ class _FixtureContext:
         self.fixture = fixture
         self.trace: list[TraceEvent] = []
         self.writes: list[WriteEvent] = []
-        self._current_ui: CurrentUI | None = None
         self.current_target: Any = None
         self.read_aliases: dict[str, str] = {}
         self.state: dict[str, dict[str, Any]] = {}
@@ -2704,7 +2686,6 @@ class _FixtureContext:
             values={},
             trace_extra={"success": success},
         )
-        self._current_ui = issued
         return issued
 
     def commit(
@@ -2720,7 +2701,6 @@ class _FixtureContext:
         if normalized_target is not None:
             state = require_current_ui(state, target=normalized_target)
         self._world_task(goal, target=normalized_target, values=values, force_commit=True)
-        self._current_ui = None
         return CurrentUI(
             token=f"fixture-ui:{len(self.trace) + 1}",
             postcondition={"kind": "post_commit", "target": normalized_target},
@@ -2789,7 +2769,6 @@ class _FixtureContext:
         self.trace.append(
             TraceEvent("command", (capability,), dict(json_value(kwargs)), result)
         )
-        self._current_ui = None
         return CurrentUI(
             token=f"fixture-ui:{len(self.trace) + 1}",
             postcondition={"kind": "post_command"},
@@ -2805,11 +2784,14 @@ def _worker(source: str, fixture: FixtureSpec, output: Any) -> None:
     payload = {"trace": ctx.trace, "writes": ctx.writes, "final_state": ctx.state}
     try:
         exec(compile(source, "<coding-plan>", "exec"), namespace, namespace)
+        run_fn = namespace["run"]
+        initial = CurrentUI(token="initial", postcondition={}, surface="entity")
         payload.update(
             ok=True,
-            return_value=namespace["run"](
-                ctx,
-                CurrentUI(token="initial", postcondition={}, surface="entity"),
+            return_value=(
+                run_fn(ctx, initial)
+                if run_fn.__code__.co_argcount >= 2
+                else run_fn(ctx)
             ),
         )
     except BaseException:  # noqa: BLE001 - child must serialize any plan failure
