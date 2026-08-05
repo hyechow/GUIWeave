@@ -41,6 +41,13 @@ version: 1
   active and tap the AM or PM button to match the source message's requested time; a time
   like "11 AM" requires tapping AM even when the picker shows 11:00 PM. Confirming OK while
   the wrong period is active leaves the wrong time in the form.
+- Event form date and duration: the New Event form defaults its date to the currently
+  displayed calendar day and its end time to the start time. Before saving, explicitly set
+  both fields from the source message — change the date to the requested day (a "tomorrow"
+  invitation must be set to the message's tomorrow, not left on today's default), and set
+  the end time to the requested duration (an "about an hour" event from 11 AM must end at
+  12 PM). Saving while the date or end time is left at its default produces an event on the
+  wrong day or with the wrong duration.
 - New-entry contract:
   - existing target: none
   - preparatory entity or view: none
