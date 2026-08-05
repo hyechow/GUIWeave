@@ -203,6 +203,15 @@ def _control_affordance(control: dict) -> dict | None:
     return result
 
 
+def _role_specificity(role: str) -> int:
+    # Form-control roles carry the semantic kind (input/select/textarea); the raw
+    # accessibility-tree roles (textbox/button) are generic. Prefer the specific one.
+    return 1 if role in {
+        "input", "select", "textarea", "number", "search", "checkbox", "radio",
+        "switch", "link", "section_toggle",
+    } else 0
+
+
 def build_observation_view(
     statement: StatementContract,
     observation: Observation,
@@ -211,28 +220,37 @@ def build_observation_view(
     """Expose optional semantic targets without judging visual or Statement state."""
     del statement, history
 
-    affordances: list[dict] = []
-    seen: set[tuple[str, str, str]] = set()
+    raw_affordances: list[dict] = []
     for raw in observation.semantic_tree or []:
         item = _semantic_affordance(raw, str(observation.url or "")) if isinstance(raw, dict) else None
-        if item is None:
-            continue
-        key = (item["label"].casefold(), item["ref"], item["role"])
-        if key not in seen:
-            seen.add(key)
-            affordances.append(item)
+        if item is not None:
+            raw_affordances.append(item)
     controls = [
         *(observation.form_control_state or []),
         *(observation.form_controls or []),
     ]
     for raw in controls:
         item = _control_affordance(raw) if isinstance(raw, dict) else None
-        if item is None:
-            continue
-        key = (item["label"].casefold(), item["ref"], item["role"])
-        if key not in seen:
-            seen.add(key)
+        if item is not None:
+            raw_affordances.append(item)
+
+    # Dedupe by node identity (ref): the same UIAutomator node is surfaced by both the
+    # semantic tree and the form-control index with different labels/roles, which would
+    # otherwise make target_ref resolution ambiguous. Keep the more specific role at the
+    # first-seen position, preserving the original ordering.
+    affordances: list[dict] = []
+    ref_index: dict[str, int] = {}
+    for item in raw_affordances:
+        ref = str(item.get("ref") or "")
+        if not ref:
             affordances.append(item)
+            continue
+        existing_index = ref_index.get(ref)
+        if existing_index is None:
+            ref_index[ref] = len(affordances)
+            affordances.append(item)
+        elif _role_specificity(str(item.get("role") or "")) > _role_specificity(str(affordances[existing_index].get("role") or "")):
+            affordances[existing_index] = item
 
     return StatementObservationView(
         affordance_coverage=_affordance_coverage(observation),
