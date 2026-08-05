@@ -2429,12 +2429,6 @@
           "entity": "Product Attributes"
         },
         {
-          "method": "acquire",
-          "fields_include": [
-            "Attribute Code"
-          ]
-        },
-        {
           "method": "commit",
           "values_include": {
             "Admin Description": "XXXL",
@@ -2466,7 +2460,6 @@
       ],
       "literal_values": [
         "Configurable Product",
-        "green",
         "XXXL"
       ]
     },
