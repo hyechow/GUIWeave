@@ -1,10 +1,12 @@
 from __future__ import annotations
 
+import inspect
 import json
 from types import SimpleNamespace
 
 import pytest
 
+import gui_agent.core.orchestrator.sandbox as coding_sandbox
 from gui_agent.core.orchestrator import (
     CodingCompileError,
     CodingProgram,
@@ -13,8 +15,9 @@ from gui_agent.core.orchestrator import (
     generate_code,
     program_from_plan,
 )
+from gui_agent.core.orchestrator import planner as coding_planner
 from gui_agent.core.orchestrator.planner import (
-    _resolution_block,
+    _unstructured_visual_diagnostics,
 )
 from gui_agent.core.orchestrator.sandbox import (
     build_probe_fixture,
@@ -26,7 +29,7 @@ from gui_agent.core.orchestrator.sandbox import (
     validate_runtime_dataflow,
 )
 from gui_agent.core.run.contracts import Acquire, Command, Interact, Read
-from gui_agent.core.router.intent import EntityRef, IntentResolution
+from gui_agent.core.router.intent import IntentResolution
 from gui_agent.core.schemas import (
     CollectionIntent,
     StatementOutcome,
@@ -314,6 +317,25 @@ def run(ctx):
 """
 
     assert validate_code(source) == []
+
+
+def test_validate_code_rejects_nested_reach_filters_before_query() -> None:
+    source = """
+def run(ctx):
+    ctx.reach("Open filtered orders", success={
+        "entity": "Orders",
+        "filters": {"Purchase Date": {"from": "01/01/2023", "to": "05/31/2023"}},
+    })
+    return ctx.query(
+        entity="Orders",
+        fields={"Purchase Date": "datetime"},
+        filters={"Status": "Complete"},
+    )
+"""
+
+    diagnostics = validate_code(source)
+
+    assert any(item.code == "QUERY_FILTERS_IN_REACH" for item in diagnostics)
 
 
 def test_validate_code_rejects_query_row_effects_in_reach_success() -> None:
@@ -705,6 +727,40 @@ def run(ctx):
     assert any(item.code == "CTX_SIGNATURE" for item in validate_code(source))
 
 
+def test_reach_filters_signature_diagnostic_preserves_route_and_query_boundaries() -> None:
+    source = """
+def run(ctx):
+    ctx.reach(
+        "Open tagged records",
+        success={"entity": "TaggedRecords"},
+        filters={"tag": "#dogs"},
+    )
+"""
+
+    diagnostics = validate_code(source)
+
+    assert [item.code for item in diagnostics] == ["CTX_SIGNATURE"]
+    assert "following ctx.query(filters=...)" in diagnostics[0].message
+    assert "top-level key in reach.success" in diagnostics[0].message
+
+
+def test_target_reach_restores_route_after_another_source() -> None:
+    source = '''
+def run(ctx):
+    ctx.reach("Tagged", success={"entity": "Tagged", "tag": "#dogs"})
+    rows = ctx.query(entity="Tagged", fields=["id"], filters={"tag": "#dogs"})
+    ctx.reach("Saved", success={"entity": "Saved"})
+    saved = ctx.query(entity="Saved", fields=["id"])
+    for row in rows:
+        ctx.reach("Open", target=row, success={"entity": "Detail", "id": row["id"]})
+        ctx.commit("Change", target=row, values={"enabled": True})
+'''
+
+    assert any(
+        item.code == "TARGET_REACH_ROUTE_REQUIRED" for item in validate_code(source)
+    )
+
+
 def test_validate_code_requires_direct_read_fields_in_reach_contract() -> None:
     source = """
 def run(ctx):
@@ -723,6 +779,41 @@ def run(ctx):
         '{"entity": "VisibleResult"}',
         '{"entity": "VisibleResult", "fields": ["temperature"]}',
     )) == []
+
+
+def test_validate_code_rejects_reading_observable_reach_dimension() -> None:
+    source = """
+def run(ctx):
+    ctx.reach(
+        "Configure and render report",
+        success={"entity": "Report", "rendered": True},
+    )
+    result = ctx.read(fields={"rendered": "boolean"})
+    return result["rendered"]
+"""
+
+    diagnostics = validate_code(source)
+
+    assert [item.code for item in diagnostics] == ["DIRECT_READ_SUCCESS_DIMENSION"]
+    assert "Remove the redundant read" in diagnostics[0].message
+    assert repair_direct_read_fields(source) is None
+
+
+def test_direct_read_repair_moves_top_level_type_marker_into_fields() -> None:
+    source = '''
+def run(ctx):
+    ctx.reach("Show weather", success={"entity": "Weather", "temperature": "number"})
+    return ctx.read(fields={"temperature": "number"})["temperature"]
+'''
+
+    assert [item.code for item in validate_code(source)] == [
+        "DIRECT_READ_FIELDS_UNDECLARED"
+    ]
+    repaired = repair_direct_read_fields(source)
+    assert repaired is not None
+    assert validate_code(repaired) == []
+    assert "success={'entity': 'Weather', 'fields': ['temperature']}" in repaired
+    assert execute_code(repaired, build_probe_fixture(repaired)).ok
 
 
 def test_repair_direct_read_fields_strengthens_literal_reach_contract() -> None:
@@ -797,6 +888,20 @@ def run(ctx):
     assert validate_code(source) == []
 
 
+def test_validate_code_allows_exact_query_field_spelling_shared_with_filter() -> None:
+    source = '''
+def run(ctx):
+    ctx.reach("Open pages", success={"entity": "Pages"})
+    return ctx.query(
+        entity="Pages",
+        fields=["Title"],
+        filters={"Title": "Home Page"},
+    )
+'''
+
+    assert validate_code(source) == []
+
+
 def test_runtime_dataflow_treats_reach_as_an_effect() -> None:
     source = """
 def run(ctx):
@@ -807,14 +912,77 @@ def run(ctx):
     assert validate_runtime_dataflow(source) == []
 
 
-def test_validate_code_allows_sequential_unassigned_reach() -> None:
+def test_validate_code_rejects_reach_before_direct_creation_commit() -> None:
     source = """
 def run(ctx):
+    name = "Example"
     ctx.reach("Open form", success={"entity": "Records"})
-    ctx.commit("Create record", target=None, values={"Name": "Example"})
+    ctx.commit("Create record", target=None, values={"Name": name})
 """
 
+    assert any(
+        item.code == "DIRECT_COMMIT_REQUIRED"
+        for item in validate_code(source)
+    )
+
+
+def test_validate_code_requires_target_when_reach_identifies_existing_record() -> None:
+    source = '''
+def run(ctx):
+    ctx.reach(
+        "Open existing product",
+        success={"entity": "Products", "Name": "Selene Yoga Hoodie"},
+    )
+    ctx.commit("Update product", values={"Short Description": "New"})
+'''
+
+    diagnostics = validate_code(source)
+
+    assert [item.code for item in diagnostics] == ["COMMIT_TARGET_REQUIRED"]
+    assert "Query and project that record identity" in diagnostics[0].message
+
+
+def test_validate_code_rejects_empty_target_commit_values() -> None:
+    source = """
+def run(ctx):
+    target = {"ID": "1"}
+    ctx.reach("Open record", target=target, success={"entity": "Record", "ID": target["ID"]})
+    ctx.commit("Update record", target=target, values={})
+"""
+
+    assert any(
+        item.code == "TARGET_COMMIT_VALUES_REQUIRED"
+        for item in validate_code(source)
+    )
+
+
+def test_validate_code_allows_source_read_before_schema_free_commit() -> None:
+    source = '''
+def run(ctx):
+    ctx.reach(
+        "Open source text",
+        success={"entity": "Message", "fields": ["body"]},
+    )
+    detail = ctx.read(fields={"body": "text"})
+    ctx.commit(f"Create from source: {detail['body']}", values={})
+'''
+
     assert validate_code(source) == []
+
+
+def test_schema_free_commit_cannot_replace_source_with_host_transformation() -> None:
+    source = '''
+def run(ctx):
+    ctx.reach("Open source", success={"entity": "Message", "fields": ["body"]})
+    detail = ctx.read(fields={"body": "text"})
+    body = detail["body"]
+    transformed = str(body)
+    ctx.commit(f"Create from {transformed}", values={})
+'''
+
+    assert any(
+        item.code == "SCHEMA_FREE_SOURCE_REQUIRED" for item in validate_code(source)
+    )
 
 
 def test_runtime_completes_terminal_reach_without_exposing_ui_state(request) -> None:
@@ -1191,6 +1359,20 @@ def run(ctx):
     assert len(result.return_value) == 3
 
 
+def test_probe_target_read_survives_typed_query_normalization() -> None:
+    source = """
+def run(ctx):
+    ctx.reach("Show results", success={"entity": "Results"})
+    rows = ctx.query(entity="Results", fields={"temperature": "number"})
+    return ctx.read(target=rows[0], fields={"temperature": "number"})["temperature"]
+"""
+
+    result = execute_code(source, build_probe_fixture(source))
+
+    assert result.ok, result.error
+    assert isinstance(result.return_value, (int, float))
+
+
 def test_probe_fixture_supports_read_directly_from_reached_state() -> None:
     source = """
 def run(ctx):
@@ -1312,17 +1494,31 @@ def run(ctx):
     constrain_intent = runtime.current.statement.interaction_intent
     assert isinstance(constrain_intent, CollectionIntent)
     assert constrain_intent.phase == "constrain"
+    assert constrain_intent.required_fields == [
+        "Purchase Date",
+        "Grand Total (Purchased)",
+    ]
     assert runtime.current.args["ui_state_token"] == ui_state_token
     assert runtime.interpreter.run_log[-1].coding_payload["state"] == ui_state_token
     assert constrain_intent.predicates["status"].values == ["complete"]
     assert runtime.current_coding_plan_step == 2
     assert runtime.current_coding_plan_steps == 3
     assert runtime.current_coding_call_id == query_call_id
-    runtime.send_outcome(StatementOutcome.completed("filter active"))
+    filtered_scope = {
+        "kind": "resolved_collection",
+        "entity": "Orders",
+        "surface_fingerprint": "table:#filtered-orders",
+        "available_fields": ["Purchase Date", "Grand Total (Purchased)"],
+    }
+    runtime.send_outcome(StatementOutcome.completed(
+        "filter active",
+        outputs={"scope": filtered_scope},
+    ))
 
     # 3. acquire — materialize the now-constrained collection.
     assert isinstance(runtime.current.statement, Acquire)
     assert runtime.current.args["ui_state_token"] == ui_state_token
+    assert runtime.current.args["lookup_scope"] == filtered_scope
     assert runtime.current.args["field_types"] == {
         "Purchase Date": "datetime",
         "Grand Total (Purchased)": "number",
@@ -1453,7 +1649,9 @@ def run(ctx):
     runtime.send_outcome(StatementOutcome.completed(
         "scope resolved", outputs={"scope": scope},
     ))
-    runtime.send_outcome(StatementOutcome.completed("exact filter active"))
+    runtime.send_outcome(StatementOutcome.completed(
+        "exact filter active", outputs={"scope": scope},
+    ))
     runtime.send_outcome(StatementOutcome.completed(
         "no exact rows", outputs={"rows": []},
     ))
@@ -1468,7 +1666,9 @@ def run(ctx):
         == ["aurora"]
     )
 
-    runtime.send_outcome(StatementOutcome.completed("short-phrase filter active"))
+    runtime.send_outcome(StatementOutcome.completed(
+        "short-phrase filter active", outputs={"scope": scope},
+    ))
     runtime.send_outcome(StatementOutcome.completed(
         "short-phrase rows acquired",
         outputs={"rows": [{"Name": "Aurora jacket waterproof"}]},
@@ -1710,7 +1910,11 @@ def run(ctx):
         f"```python\n{source}\n```",
     )
 
-    plan = generate_code("update one page", llm=llm)
+    plan = generate_code(
+        "update one page",
+        knowledge="Pages exposes Title and supports an existing targeted Page mutation.",
+        llm=llm,
+    )
 
     assert plan.requirements_satisfied
     assert len(plan.attempts) == 1
@@ -1743,7 +1947,11 @@ def run(ctx):
         f"```python\n{source}\n```",
     )
 
-    plan = generate_code("update one configurable product", llm=llm)
+    plan = generate_code(
+        "update one configurable product",
+        knowledge="Products exposes Name and Type for an existing targeted Product mutation.",
+        llm=llm,
+    )
 
     assert plan.requirements_satisfied
     assert len(plan.attempts) == 1
@@ -1914,6 +2122,41 @@ def run(ctx):
     ] == ["initial", "regenerated", "regenerated_2"]
 
 
+def test_regeneration_prompt_retains_prior_diagnostics() -> None:
+    missing_reach = '''
+def run(ctx):
+    return ctx.query(entity="Orders", fields=["ID"])
+'''
+    wrong_state = '''
+def run(ctx):
+    ctx.reach("Other", success={"entity": "Other"})
+    return ctx.query(entity="Orders", fields=["ID"])
+'''
+    valid = '''
+def run(ctx):
+    ctx.reach("Orders", success={"entity": "Orders"})
+    return ctx.query(entity="Orders", fields=["ID"])
+'''
+    llm = _SequenceLLM(
+        f"```python\n{missing_reach}\n```",
+        f"```python\n{wrong_state}\n```",
+        f"```python\n{valid}\n```",
+    )
+
+    plan = generate_code(
+        "list orders",
+        fixture=FixtureSpec(lookups={"orders": [{"ID": "1"}]}),
+        llm=llm,
+    )
+
+    assert plan.requirements_satisfied
+    second_regeneration = "\n".join(
+        str(message.content) for message in llm.messages[2]
+    )
+    assert "ACTIVE_UI_REQUIRED" in second_regeneration
+    assert "STATE_ENTITY_MISMATCH" in second_regeneration
+
+
 def test_generator_receives_knowledge_and_api_schema() -> None:
     llm = _SequenceLLM(
         f"```python\n{GOOD_PROGRAM}\n```",
@@ -1934,23 +2177,58 @@ def test_generator_receives_knowledge_and_api_schema() -> None:
     assert "collection sources" in generation_text
 
 
-def test_router_search_key_is_an_explicit_literal_query_branch() -> None:
-    block = _resolution_block(IntentResolution(entities=[EntityRef(
-        mention="Aurora jacket",
-        search_key="Aurora",
-    )]))
+def test_unstructured_visual_contract_rejects_invented_collection() -> None:
+    source = '''
+def run(ctx):
+    ctx.reach("Show result", success={"entity": "Result"})
+    rows = ctx.query(entity="Result", fields={"value": "number"})
+    return int(rows[0]["value"])
+'''
 
-    assert block is not None
-    assert "not a source entity" in block.content
-    assert "REQUIRED PROGRAM BRANCH" in block.content
-    assert "full mention 'Aurora jacket'" in block.content
-    assert "only if that result is empty" in block.content
-    assert "strictly query 'Aurora'" in block.content
-    assert "cardinality" not in block.content
-    assert "singular mention never implies" in block.content
-    assert "match_mode" not in block.content
-    assert "'type'" not in block.content
-    assert "'reason'" not in block.content
+    diagnostics = _unstructured_visual_diagnostics(source)
+
+    assert [item.code for item in diagnostics] == ["UNSTRUCTURED_QUERY_FORBIDDEN"]
+    assert "one typed direct ctx.read" in diagnostics[0].message
+
+
+def test_planner_has_no_goal_knowledge_semantic_diagnostics() -> None:
+    # Compile must stay structural: no goal/knowledge text matching, no task-semantic
+    # diagnostic symbols. New-case business shape belongs in eval contracts / prompts.
+    assert not hasattr(coding_planner, "_semantic_contract_diagnostics")
+    for name in (
+        "SEMANTIC_CANDIDATE_FILTER_REQUIRED",
+        "USER_VALUE_CASE_CHANGED",
+        "OWNED_MEMBER_MUST_BE_NESTED",
+        "EXPLICIT_INTERFACE_TERM_REQUIRED",
+    ):
+        assert name not in coding_planner.__dict__.get("__doc__", "")
+        assert not hasattr(coding_planner, name)
+
+    evaluate_params = inspect.signature(coding_planner._evaluate_source).parameters
+    assert "goal" not in evaluate_params
+    assert "knowledge" not in evaluate_params
+
+    validate_params = inspect.signature(coding_sandbox.validate_code).parameters
+    assert list(validate_params) == ["source"]
+
+
+def test_router_semantic_supplement_preserves_raw_goal_in_generator_context() -> None:
+    llm = _SequenceLLM(f"```python\n{GOOD_PROGRAM}\n```")
+
+    generate_code(
+        "ambiguous source wording",
+        resolution=IntentResolution(semantic_supplement="missing semantic relationship"),
+        fixture=_fixture(),
+        llm=llm,
+    )
+
+    generation_text = "\n".join(
+        str(message.content)
+        for message in llm.messages[0]
+    )
+    assert "ambiguous source wording" in generation_text
+    assert "missing semantic relationship" in generation_text
+    assert "original user task remains authoritative" in generation_text
 
 
 def test_program_owns_full_then_short_phrase_query_branch() -> None:
@@ -1984,8 +2262,6 @@ def run(ctx):
         {"Name": "Aurora trail jacket"},
         {"Name": "Aurora"},
     ]
-
-
 def test_query_rejects_invented_match_mode_argument() -> None:
     source = """
 def run(ctx):

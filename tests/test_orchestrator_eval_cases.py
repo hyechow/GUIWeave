@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import importlib.util
+import json
 from pathlib import Path
 from typing import Any
 
@@ -22,17 +23,131 @@ def _case(task_id: int) -> dict[str, Any]:
     )
 
 
-def test_eval_groups_cover_query_and_form_regression_tasks() -> None:
+def test_eval_covers_hard_single_site_shopping_tasks() -> None:
     cases = orchestrator_eval.load_cases()
     by_group = {
         group: {case["task_id"] for case in cases if case["group"] == group}
-        for group in {"query_20260726", "form_submission"}
+        for group in {"hard_shopping_admin", "hard_shopping"}
     }
+    curated = {case["task_id"] for case in cases if case.get("curated")}
 
-    assert by_group == {
-        "query_20260726": {42, 63, 108, 113, 185, 193},
-        "form_submission": {488, 491, 499, 544, 549, 694, 701, 709},
+    assert len(by_group["hard_shopping_admin"]) == 55
+    assert len(by_group["hard_shopping"]) == 56
+    assert len(cases) == 111
+    assert curated == {
+        42, 63, 108, 113, 185, 193, 488, 491, 499, 544, 549, 694, 701, 709,
     }
+    assert curated <= by_group["hard_shopping_admin"]
+    assert all(case.get("site") in {"shopping_admin", "shopping"} for case in cases)
+
+    origins = {case.get("contract_origin") for case in cases}
+    assert origins <= {"curated", "baseline_inferred", "empty"}
+    assert sum(1 for case in cases if case.get("contract_origin") == "curated") == 14
+    assert sum(1 for case in cases if case.get("contract_origin") == "baseline_inferred") == 97
+
+    for case in cases:
+        assert case.get("contract") is not None
+        if case.get("curated"):
+            assert case.get("contract")
+            assert case.get("contract_origin") == "curated"
+        baseline = case.get("baseline") or {}
+        assert baseline.get("run") == "20260805_hard_single_site_merged"
+        assert baseline.get("grade") in {
+            "executable_pass",
+            "executable_fail",
+            "contract_pass",
+            "contract_fail",
+        }
+        if case.get("curated"):
+            assert baseline["ok"] == (baseline["grade"] == "contract_pass")
+        else:
+            assert baseline["ok"] == (baseline["grade"] == "executable_pass")
+            assert baseline["ok"] == baseline.get("executable")
+
+
+def test_grade_sample_scores_only_executable_and_curated() -> None:
+    non = {"curated": False, "contract": {"method_counts": {"commit": 0}}}
+    curated = {"curated": True, "contract": {"method_counts": {"commit": 0}}}
+    # non-curated: contract content ignored for scoring
+    assert (
+        orchestrator_eval.grade_sample(non, {"ok": True, "executable": True})
+        == "executable_pass"
+    )
+    assert (
+        orchestrator_eval.grade_sample(non, {"ok": False, "executable": True})
+        == "executable_pass"
+    )
+    assert (
+        orchestrator_eval.grade_sample(non, {"ok": False, "executable": False})
+        == "executable_fail"
+    )
+    assert (
+        orchestrator_eval.grade_sample(curated, {"ok": True, "executable": True})
+        == "contract_pass"
+    )
+    assert (
+        orchestrator_eval.grade_sample(curated, {"ok": False, "executable": True})
+        == "contract_fail"
+    )
+    assert (
+        orchestrator_eval.grade_sample(curated, {"ok": False, "executable": False})
+        == "executable_fail"
+    )
+
+
+def test_baseline_index_matches_case_annotations() -> None:
+    cases = orchestrator_eval.load_cases()
+    index = json.loads(
+        (
+            PROJECT_ROOT
+            / "evals/browser/orchestrator/baseline_qwen37_tokenplan_20260805.json"
+        ).read_text(encoding="utf-8")
+    )
+    assert index["totals"]["cases"] == 111
+    assert index["totals"]["ok"] == 89
+    assert index["totals"]["executable"] == 91
+    assert index["totals"]["curated"] == {"cases": 14, "ok": 12}
+    assert index["totals"]["by_grade"] == {
+        "executable_pass": 77,
+        "executable_fail": 20,
+        "contract_pass": 12,
+        "contract_fail": 2,
+    }
+    assert index["totals"]["by_contract_origin"]["baseline_inferred"] == 97
+    assert index["totals"]["by_contract_origin"]["curated"] == 14
+    assert index["run"]["scoring"]["non_curated_contract"]
+    for case in cases:
+        entry = index["tasks"][str(case["task_id"])]
+        baseline = case["baseline"]
+        assert entry["grade"] == baseline["grade"]
+        assert entry["ok"] == baseline["ok"]
+        assert entry["executable"] == baseline["executable"]
+        assert entry["contract_origin"] == case.get("contract_origin")
+
+
+def test_inferred_contract_accepts_its_baseline_source() -> None:
+    """Non-curated inferred contracts are frozen shapes of the baseline program."""
+    report = json.loads(
+        (
+            PROJECT_ROOT
+            / "logs/orchestrator_eval/20260805_hard_single_site_merged/report.json"
+        ).read_text(encoding="utf-8")
+    )
+    source_by_id = {
+        case["task_id"]: (case.get("samples") or [{}])[0].get("source") or ""
+        for case in report["cases"]
+    }
+    checked = 0
+    for case in orchestrator_eval.load_cases():
+        if case.get("curated") or case.get("contract_origin") != "baseline_inferred":
+            continue
+        if not case["baseline"].get("executable"):
+            continue
+        source = source_by_id[case["task_id"]]
+        assert source
+        assert orchestrator_eval.evaluate_source(source, case["contract"]) == []
+        checked += 1
+    assert checked >= 70
 
 
 def test_query_contract_accepts_typed_monthly_aggregation_plan() -> None:
@@ -161,7 +276,74 @@ def run(ctx):
     )
 
     assert failures
-    assert any("METHOD_COUNT:reach" in item for item in failures)
+    assert any("DIRECT_COMMIT_REQUIRED" in item for item in failures)
+
+
+def test_contract_accepts_required_literal_inside_instruction_text() -> None:
+    source = '''
+def run(ctx):
+    ctx.reach(
+        "Search for Beijing highest temperature today",
+        success={"entity": "SearchResult", "fields": ["temperature"]},
+    )
+    value = ctx.read(fields={"temperature": "number"})
+    return int(value["temperature"])
+'''
+
+    assert orchestrator_eval.evaluate_source(
+        source,
+        {
+            "method_counts": {"commit": 0},
+            "literal_substrings": ["today"],
+        },
+    ) == []
+
+
+def test_ordered_call_alternatives_accept_only_causally_restored_target_source() -> None:
+    contract = {
+        "ordered_call_alternatives": [
+            [
+                {"method": "query", "entity": "Saved"},
+                {"method": "query", "entity": "Targets"},
+                {"method": "commit", "target_mode": "present"},
+            ],
+            [
+                {"method": "query", "entity": "Targets"},
+                {"method": "query", "entity": "Saved"},
+                {"method": "reach", "success_include": {"entity": "Targets"}},
+                {"method": "commit", "target_mode": "present"},
+            ],
+        ],
+    }
+    saved_first = '''
+def run(ctx):
+    ctx.reach("Saved", success={"entity": "Saved"})
+    saved = ctx.query(entity="Saved", fields=["id"])
+    ctx.reach("Targets", success={"entity": "Targets"})
+    rows = ctx.query(entity="Targets", fields=["id"])
+    ctx.reach("Open target", target=rows[0], success={"entity": "Target", "id": rows[0]["id"]})
+    ctx.commit("Change target", target=rows[0], values={"enabled": True})
+'''
+    target_first_with_restore = '''
+def run(ctx):
+    ctx.reach("Targets", success={"entity": "Targets"})
+    rows = ctx.query(entity="Targets", fields=["id"])
+    ctx.reach("Saved", success={"entity": "Saved"})
+    saved = ctx.query(entity="Saved", fields=["id"])
+    ctx.reach("Restore targets", success={"entity": "Targets"})
+    ctx.reach("Open target", target=rows[0], success={"entity": "Target", "id": rows[0]["id"]})
+    ctx.commit("Change target", target=rows[0], values={"enabled": True})
+'''
+    target_first_without_restore = target_first_with_restore.replace(
+        '    ctx.reach("Restore targets", success={"entity": "Targets"})\n',
+        "",
+    )
+
+    assert orchestrator_eval.evaluate_source(saved_first, contract) == []
+    assert orchestrator_eval.evaluate_source(target_first_with_restore, contract) == []
+    assert orchestrator_eval.evaluate_source(target_first_without_restore, contract) == [
+        "ORDERED_CALL_ALTERNATIVES"
+    ]
 
 
 def test_report_contract_accepts_runtime_formatted_dates() -> None:
