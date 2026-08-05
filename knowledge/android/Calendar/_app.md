@@ -35,6 +35,12 @@ version: 1
     text with host code or invent a host-clock value
   - use that interval view only when a later availability query/read is required; it is not
     preparatory navigation for the schema-free New-entry contract
+- Event form time picker: when the New Event form's start or end time selector opens the
+  modal time picker, it has a separate AM/PM area with one period pre-selected (usually the
+  currently displayed time's period). Before confirming with OK, check which period is
+  active and tap the AM or PM button to match the source message's requested time; a time
+  like "11 AM" requires tapping AM even when the picker shows 11:00 PM. Confirming OK while
+  the wrong period is active leaves the wrong time in the form.
 - New-entry contract:
   - existing target: none
   - preparatory entity or view: none
