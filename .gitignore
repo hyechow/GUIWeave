@@ -27,6 +27,15 @@ knowledge/android/Messages/*
 !knowledge/android/Taodian/
 knowledge/android/Taodian/*
 !knowledge/android/Taodian/_app.md
+!knowledge/android/Settings/
+knowledge/android/Settings/*
+!knowledge/android/Settings/_app.md
+!knowledge/android/Clock/
+knowledge/android/Clock/*
+!knowledge/android/Clock/_app.md
+!knowledge/android/Chrome/
+knowledge/android/Chrome/*
+!knowledge/android/Chrome/_app.md
 !knowledge/android/*/*_interface.md
 # Curated shopping_admin planning contracts promoted to repository source.
 !knowledge/browser/

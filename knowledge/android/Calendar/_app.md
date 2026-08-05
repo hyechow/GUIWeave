@@ -19,10 +19,26 @@ version: 1
 ## Interface contract
 
 - Calendar is a separate application.
+- Existing event collection:
+  - resource name: `Event`
+  - query fields: `start_ts` (`datetime`), `end_ts` (`datetime`), `title` (`text`),
+    and `description` (`text`)
+  - `start_ts` and `end_ts` are the authoritative interval boundaries; retrieve the
+    complete event set before deciding whether a proposed interval overlaps an existing event
+  - an overlap requires `existing.start_ts < proposed_end` and
+    `existing.end_ts > proposed_start`; touching endpoints are not an overlap
+  - an interval-scoped `Event` view can be opened for the exact date/time described by
+    an observed source record; after that reach, a complete `Event` query returns the
+    events in the requested interval
+  - pass the observed source text as the `source_text` runtime value in the interval-view
+    reach so Calendar resolves its date and time; do not parse natural-language date/time
+    text with host code or invent a host-clock value
+  - use that interval view only when a later availability query/read is required; it is not
+    preparatory navigation for the schema-free New-entry contract
 - New-entry contract:
   - existing target: none
   - preparatory entity or view: none
-  - planner-visible query or mutation fields: none
+  - planner-visible mutation fields: none
   - business description: the exact source text observed in the originating application
 - A generic summary or implicit active context cannot replace the business description
   because the Calendar UI resolves the source's date, time, duration, and title.
