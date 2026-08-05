@@ -29,6 +29,7 @@ from __future__ import annotations
 import io
 import os
 import re
+from datetime import datetime
 from collections.abc import Mapping
 from typing import Optional
 
@@ -140,6 +141,21 @@ class AndroidDevice:
             pass
         self._detect_ime()
         return self
+
+    def device_date(self) -> Optional[datetime]:
+        """The Android device's current date (``adb shell date +%F``).
+
+        The MobileWorld scenario sets the emulator clock to its own "today", so this
+        is the authoritative reference for relative dates like "tomorrow". Returns
+        None when the query fails (falls back to the host clock).
+        """
+        if self._dev is None:
+            return None
+        try:
+            raw = self._dev.shell("date +%F").strip()
+            return datetime.strptime(raw, "%Y-%m-%d")
+        except Exception:  # noqa: BLE001 — device clock is best-effort
+            return None
 
     def _detect_ime(self) -> None:
         """Per-connect path — READ-ONLY: record whether the device's current IME is

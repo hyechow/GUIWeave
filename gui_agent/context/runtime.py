@@ -14,9 +14,25 @@ from gui_agent.context.blocks import ContextBlock, ContextCompressor
 # portion well inside the model window. Lower it once real-run peaks are observed.
 DEFAULT_CONTEXT_BLOCKS_MAX_CHARS = int(os.environ.get("CONTEXT_BLOCKS_MAX_CHARS") or 80_000)
 
+# Platform-provided authoritative clock (e.g. the Android device's date, which a
+# scenario sets to its own "today"). When present it wins over the host clock so
+# relative dates like "tomorrow" resolve against the environment, not the machine.
+_PROVIDED_CURRENT_DATE: datetime | None = None
+
+
+def set_provided_current_date(now: datetime | None) -> None:
+    """Register a platform clock (device date) used by ``current_date_block``."""
+    global _PROVIDED_CURRENT_DATE
+    _PROVIDED_CURRENT_DATE = now
+
+
+def clear_provided_current_date() -> None:
+    global _PROVIDED_CURRENT_DATE
+    _PROVIDED_CURRENT_DATE = None
+
 
 def current_date_block(now: datetime | None = None) -> ContextBlock:
-    now = now or datetime.now()
+    now = now or _PROVIDED_CURRENT_DATE or datetime.now()
     return ContextBlock(
         id="runtime.current_date",
         budget="low",

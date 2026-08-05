@@ -67,6 +67,11 @@ class AndroidSession:
         self.client = AndroidDevice(serial=self._serial)
         self.client.connect()
         print(f"设备连接成功 ({self.client.serial or 'auto'}), 分辨率 {self.client.win_w}x{self.client.win_h}")
+        # The scenario sets the emulator clock; use it as the authoritative date for
+        # relative-date reasoning ("tomorrow") instead of the host clock.
+        from gui_agent.context.runtime import set_provided_current_date
+
+        set_provided_current_date(self.client.device_date())
         return self
 
     def __exit__(self, *_):
