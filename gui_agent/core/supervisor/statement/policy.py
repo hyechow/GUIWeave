@@ -1169,27 +1169,33 @@ class StatementSupervisorPolicy(
                     "the filtered collection is not structurally bound on the "
                     "current observation"
                 )
-            target_evidence = exact_target_evidence(statement, observation)
+            # A commit's completion is verified by the durable receipt and the
+            # observed values; the target-bound active-UI check belongs to
+            # reach/focus (establishing the UI), not to the statement that
+            # performs the durable change — after a commit the UI may
+            # legitimately move on (e.g. back to a collection list).
             identity_absent = False
-            if (
-                not rejection
-                and target_evidence["status"] == "absent"
-            ):
-                identity_absent = True
-                rejection = (
-                    "current structured observation does not contain the exact "
-                    "target identity fields: "
-                    f"{target_evidence['missing_fields']!r}"
-                )
-            if (
-                not rejection
-                and target_evidence.get("collection_member") is True
-            ):
-                rejection = (
-                    "the exact target is visible only as a member of a repeated "
-                    "collection; collection membership does not establish the "
-                    "target-bound active UI"
-                )
+            if statement.persistence != "explicit_commit":
+                target_evidence = exact_target_evidence(statement, observation)
+                if (
+                    not rejection
+                    and target_evidence["status"] == "absent"
+                ):
+                    identity_absent = True
+                    rejection = (
+                        "current structured observation does not contain the exact "
+                        "target identity fields: "
+                        f"{target_evidence['missing_fields']!r}"
+                    )
+                if (
+                    not rejection
+                    and target_evidence.get("collection_member") is True
+                ):
+                    rejection = (
+                        "the exact target is visible only as a member of a repeated "
+                        "collection; collection membership does not establish the "
+                        "target-bound active UI"
+                    )
             if (
                 not rejection
                 and statement.persistence == "explicit_commit"
