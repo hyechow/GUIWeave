@@ -252,14 +252,17 @@ class _RuntimeContext:
 
     def query(
         self,
+        state: CurrentUI,
         *,
         entity: str,
-        fields: list[str] | dict[str, str],
         filters: dict[str, Any] | None = None,
         coverage: str = "complete",
-    ) -> list[dict[str, Any]]:
-        field_names, field_types = field_projection(fields)
-        state = require_current_ui(self._current_ui, entity=entity)
+    ) -> dict[str, Any]:
+        """Establish a reusable collection session (lookup + optional constrain).
+
+        Returns a ``scope`` handle, not rows. Materialize rows with ``ctx.acquire``.
+        """
+        state = require_current_ui(state, entity=entity)
         call_id = self._call_id("query")
         # Private source session: locate, optionally constrain, then materialize.
         # The caller sees one ctx.query contract rather than executor phases.
@@ -282,15 +285,11 @@ class _RuntimeContext:
             bool(filters) if known_filters is None
             else desired_filters != known_filters
         )
-        plan_steps = 3 if needs_constrain else 2
-        source_fields = list(field_names)
-        source_field_keys = {
-            canonical_filter_field(field) for field in field_names
-        }
-        source_fields.extend(
+        plan_steps = 2 if needs_constrain else 1
+        source_fields = [
             field for field in desired_filters
-            if field not in source_field_keys and field not in state_filters
-        )
+            if field not in state_filters
+        ]
         scope = self._request(
             "lookup",
             call_id=call_id,
@@ -317,27 +316,47 @@ class _RuntimeContext:
                 filters=filters,
             )
             self._query_filters[filter_key] = desired_filters
+        return scope
+
+    def acquire(
+        self,
+        scope: dict[str, Any],
+        *,
+        fields: list[str] | dict[str, str],
+        coverage: str = "complete",
+    ) -> list[dict[str, Any]]:
+        """Materialize rows from an established collection session.
+
+        ``scope`` comes from a preceding ``ctx.query``; it is borrowed and reusable,
+        so the same session may be acquired multiple times with different projections.
+        """
+        if not is_lookup_scope(scope):
+            raise ValueError(
+                "ctx.acquire requires a scope returned by ctx.query"
+            )
+        field_names, field_types = field_projection(fields)
+        call_id = self._call_id("acquire")
         return self._request(
             "acquire",
             call_id=call_id,
-            plan="query",
-            plan_step=plan_steps,
-            plan_steps=plan_steps,
-            state=state,
+            plan="acquire",
+            plan_step=1,
+            plan_steps=1,
             scope=scope,
             fields=field_names,
             field_types=field_types,
             coverage=coverage,
-            requested_filters=filters,
+            requested_filters={},
         )
 
     def read(
         self,
+        state: CurrentUI,
         *,
         target: Any = None,
         fields: list[str] | dict[str, str] | None = None,
     ) -> dict[str, Any]:
-        state = require_current_ui(self._current_ui)
+        state = require_current_ui(state)
         if fields is None:
             raise TypeError("ctx.read requires fields")
         field_names, field_types = field_projection(fields)
@@ -395,40 +414,43 @@ class _RuntimeContext:
 
     def reach(
         self,
+        state: CurrentUI,
         goal: str,
         *,
         success: dict[str, Any],
         target: Any = None,
-    ) -> None:
+    ) -> CurrentUI:
         normalized_success = json_value(success)
         normalized_target = json_value(target) if target is not None else None
-        self._current_ui = require_current_ui(self._request(
+        issued = require_current_ui(self._request(
             "reach",
             call_id=self._call_id("reach"),
             plan="reach",
             plan_step=1,
             plan_steps=1,
+            state=state,
             goal=goal,
             success=dict(normalized_success),
             target=normalized_target,
         ))
+        self._current_ui = issued  # legacy fallback for reporting
+        return issued
 
     def commit(
         self,
+        state: CurrentUI,
         goal: str,
         *,
         target: Any = None,
         values: dict[str, Any],
-    ) -> None:
+    ) -> CurrentUI:
         normalized_target = json_value(target) if target is not None else None
         normalized_values = json_value(values)
         inputs = {"target": normalized_target} if normalized_target is not None else {}
-        state = (
-            require_current_ui(self._current_ui, target=normalized_target)
-            if normalized_target is not None
-            else None
-        )
-        self._request(
+        state = require_current_ui(state)
+        if normalized_target is not None:
+            state = require_current_ui(state, target=normalized_target)
+        issued = self._request(
             "commit",
             call_id=self._call_id("commit"),
             plan="commit",
@@ -440,20 +462,22 @@ class _RuntimeContext:
             values=dict(normalized_values),
         )
         self._current_ui = None
+        return issued
 
-    def command(self, capability: str, **arguments: Any) -> Any:
+    def command(self, state: CurrentUI, capability: str, **arguments: Any) -> CurrentUI:
         normalized_arguments = json_value(arguments)
-        result = self._request(
+        issued = self._request(
             "command",
             call_id=self._call_id("command"),
             plan="command",
             plan_step=1,
             plan_steps=1,
+            state=state,
             capability=capability,
             arguments=dict(normalized_arguments),
         )
         self._current_ui = None
-        return result
+        return issued
 
 def _runtime_worker(source: str, connection: Any) -> None:
     namespace: dict[str, Any] = {
@@ -462,7 +486,12 @@ def _runtime_worker(source: str, connection: Any) -> None:
     }
     try:
         exec(compile(source, "<coding-plan>", "exec"), namespace, namespace)
-        result = namespace["run"](_RuntimeContext(connection))
+        # The run starts on the observed current screen; generated code threads
+        # this initial state into its first ctx.reach and every later UI op.
+        result = namespace["run"](
+            _RuntimeContext(connection),
+            CurrentUI(token="initial", postcondition={}, surface="entity"),
+        )
         connection.send({"kind": "return", "value": result})
     except (EOFError, BrokenPipeError):
         pass
@@ -818,9 +847,15 @@ class CodingProgramRuntime:
             scope = dict(payload.get("scope") or {})
             if not is_lookup_scope(scope):
                 raise ValueError(
-                    "internal query scope was not produced by the lookup statement"
+                    "ctx.acquire requires a scope returned by ctx.query"
                 )
-            state = require_current_ui(payload.get("state"))
+            # The scope is the collection handle; synthesize a report-only state
+            # from it (the executor consumes only the lookup scope).
+            state = CurrentUI(
+                token=f"scope:{scope.get('surface_fingerprint')}",
+                postcondition={"entity": scope.get("entity") or ""},
+                surface="entity",
+            )
             fields = [str(item) for item in payload.get("fields") or []]
             coverage = str(payload.get("coverage") or "complete")
             statement = Acquire(
@@ -983,36 +1018,48 @@ class CodingProgramRuntime:
         issued_ui_state: CurrentUI | None = None
         if (
             outcome.is_completed
-            and coding_op in {"reach", "open_target", "focus"}
+            and coding_op in {"reach", "open_target", "focus", "commit", "command"}
         ):
-            bound_target = (
-                coding_payload.get("target")
-                if coding_op == "reach"
-                else invocation.inputs.get("target")
-            )
-            if coding_op == "focus":
+            if coding_op == "commit":
                 postcondition = {
-                    "kind": "target_fields_available",
-                    "target": invocation.inputs.get("target"),
-                    "fields": list(coding_payload.get("fields") or []),
+                    "kind": "post_commit",
+                    "target": coding_payload.get("target"),
                 }
-                surface = "target_detail"
-            elif coding_op == "open_target":
-                postcondition = {
-                    "kind": "target_open",
-                    "target": invocation.inputs.get("target"),
-                }
-                surface = "target_detail"
+                surface = "post_commit"
+                bound_target = None
+            elif coding_op == "command":
+                postcondition = {"kind": "post_command"}
+                surface = "post_command"
+                bound_target = None
             else:
-                # reach: store structural postcondition (entity/fields); row
-                # identity remains on CurrentUI.target for commit binding.
-                raw_success = dict(coding_payload.get("success") or {})
-                postcondition = structural_reach_state(
-                    raw_success, target=bound_target,
+                bound_target = (
+                    coding_payload.get("target")
+                    if coding_op == "reach"
+                    else invocation.inputs.get("target")
                 )
-                surface = (
-                    "target_detail" if bound_target is not None else "entity"
-                )
+                if coding_op == "focus":
+                    postcondition = {
+                        "kind": "target_fields_available",
+                        "target": invocation.inputs.get("target"),
+                        "fields": list(coding_payload.get("fields") or []),
+                    }
+                    surface = "target_detail"
+                elif coding_op == "open_target":
+                    postcondition = {
+                        "kind": "target_open",
+                        "target": invocation.inputs.get("target"),
+                    }
+                    surface = "target_detail"
+                else:
+                    # reach: store structural postcondition (entity/fields); row
+                    # identity remains on CurrentUI.target for commit binding.
+                    raw_success = dict(coding_payload.get("success") or {})
+                    postcondition = structural_reach_state(
+                        raw_success, target=bound_target,
+                    )
+                    surface = (
+                        "target_detail" if bound_target is not None else "entity"
+                    )
             issued_ui_state = CurrentUI(
                 token=f"{invocation.id}:state",
                 postcondition=postcondition,

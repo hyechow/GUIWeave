@@ -23,6 +23,7 @@ from dataclasses import dataclass, field
 from typing import Any
 
 from gui_agent.core.run.statements.compute_kernel import json_value, normalize_table_rows
+from gui_agent.core.run.lookup_scope import is_lookup_scope
 from gui_agent.core.filter_contract import canonical_filter_value
 
 from .models import (
@@ -37,16 +38,14 @@ from .models import (
 )
 
 
-CTX_METHODS = frozenset({"reach", "query", "read", "commit", "command"})
+CTX_METHODS = frozenset({"reach", "query", "acquire", "read", "commit", "command"})
 CTX_SIGNATURES = {
-    "query": (
-        ("entity", "fields", "filters", "coverage"),
-        {"entity", "fields"},
-    ),
-    "read": (("target", "fields"), {"fields"}),
-    "reach": (("goal", "success", "target"), {"goal", "success"}),
-    "commit": (("goal", "target", "values"), {"goal", "values"}),
-    "command": (("capability",), {"capability"}),
+    "query": (("state", "entity", "filters", "coverage"), {"state", "entity"}),
+    "acquire": (("scope", "fields", "coverage"), {"scope", "fields"}),
+    "read": (("state", "target", "fields"), {"state", "fields"}),
+    "reach": (("state", "goal", "success", "target"), {"state", "goal", "success"}),
+    "commit": (("state", "goal", "target", "values"), {"state", "goal", "values"}),
+    "command": (("state", "capability"), {"state", "capability"}),
 }
 SAFE_MODULES = {
     "__future__": __future__, "datetime": datetime, "math": math, "typing": typing,
@@ -320,7 +319,7 @@ class _SafetyVisitor(ast.NodeVisitor):
                 "CTX_SIGNATURE",
                 f"ctx.{method} is missing required arguments {missing}",
             ))
-        max_positional = 0 if method in {"query", "read"} else 1
+        max_positional = 1 if method in {"query", "acquire", "read"} else 2
         if len(node.args) > max_positional:
             self.diagnostics.append(_diag(
                 node,
@@ -345,8 +344,8 @@ class _SafetyVisitor(ast.NodeVisitor):
                 ))
         if method in {"reach", "commit"}:
             self._check_world_contract(node, method)
-        if method in {"query", "read"}:
-            fields = _call_argument(node, "fields", 1)
+        if method in {"acquire", "read"}:
+            fields = _call_argument(node, "fields", 1 if method == "acquire" else 2)
             if isinstance(fields, (ast.Constant, ast.Dict, ast.List, ast.Tuple)):
                 try:
                     field_projection(_literal_value(fields))
@@ -367,7 +366,7 @@ class _SafetyVisitor(ast.NodeVisitor):
             if keyword.arg is not None
         }
         text_argument_name = "goal"
-        task = _call_argument(node, text_argument_name, 0)
+        task = _call_argument(node, text_argument_name, 1)
         if (
             isinstance(task, ast.Constant) and not isinstance(task.value, str)
             or isinstance(task, (ast.Dict, ast.List, ast.Set, ast.Tuple))
@@ -555,7 +554,7 @@ def _reach_calls(
     for node in ast.walk(function):
         if not isinstance(node, ast.Call) or _ctx_method(node) != "reach":
             continue
-        success_node = _call_argument(node, "success", 1)
+        success_node = _call_argument(node, "success", 2)
         if not isinstance(success_node, ast.Dict):
             continue
         success_items = {
@@ -573,6 +572,188 @@ def _reach_calls(
         ) if isinstance(declared_fields, list) else frozenset()
         calls.append((node.lineno, entity, field_keys, success_node))
     return sorted(calls, key=lambda item: item[0])
+
+
+def _ctx_state_flow_diagnostics(
+    function: ast.FunctionDef,
+) -> list[CodeDiagnostic]:
+    """Explicit state/scope dataflow analysis.
+
+    State is a value threaded by the program: ``ctx.reach``/``ctx.command``/
+    ``ctx.commit`` consume the current state and produce a new one; ``ctx.query``
+    and ``ctx.read`` borrow it; ``ctx.query`` produces a reusable scope that
+    ``ctx.acquire`` borrows. This walker tracks variable bindings and reports:
+
+    - ``STATE_REQUIRED``: a UI operation has no state/scope argument at all;
+    - ``STATE_CONSUMED``: a state consumed by a later commit/command is reused;
+    - ``STATE_STALE``: a state produced before a later state producer is reused;
+    - ``SCOPE_REQUIRED``: acquire receives a non-query scope;
+    - ``STATE_ENTITY_MISMATCH``: query entity differs from its reach's entity.
+    """
+
+    @dataclass
+    class Value:
+        name: str
+        kind: str                    # "initial"|"reach"|"command"|"commit"|"query"
+        entity: str | None
+        node: ast.AST
+        gen: int = 0
+        consumed: bool = False
+
+    diagnostics: list[CodeDiagnostic] = []
+    gen = 0
+
+    def reach_entity(success: ast.AST | None) -> str | None:
+        if not isinstance(success, ast.Dict):
+            return None
+        for key, value in zip(success.keys, success.values):
+            if (
+                isinstance(key, ast.Constant)
+                and key.value == "entity"
+                and isinstance(value, ast.Constant)
+                and isinstance(value.value, str)
+            ):
+                return value.value
+        return None
+
+    def resolve(node: ast.AST | None, env: dict[str, Value]) -> Value | None:
+        if isinstance(node, ast.Name):
+            return env.get(node.id)
+        return None
+
+    def check_state(node: ast.Call, env: dict[str, Value], method: str) -> Value | None:
+        nonlocal gen
+        arg = _call_argument(node, "state", 0)
+        value = resolve(arg, env)
+        if value is None:
+            if isinstance(arg, ast.Constant) and arg.value is None:
+                return None
+            diagnostics.append(_diag(
+                node,
+                "STATE_REQUIRED",
+                (
+                    f"ctx.{method} requires a state produced by ctx.reach, "
+                    "ctx.command, or ctx.commit"
+                ),
+            ))
+            return None
+        if value.consumed:
+            diagnostics.append(_diag(
+                node,
+                "STATE_CONSUMED",
+                (
+                    f"ctx.{method} uses state {value.name!r} after a ctx.commit/"
+                    "ctx.command consumed it; use the returned state"
+                ),
+            ))
+        elif value.kind in {"reach", "command", "commit"} and value.gen < gen:
+            diagnostics.append(_diag(
+                node,
+                "STATE_STALE",
+                (
+                    f"ctx.{method} uses state {value.name!r} superseded by a "
+                    "later state producer"
+                ),
+            ))
+        return value
+
+    def check_scope(node: ast.Call, env: dict[str, Value]) -> Value | None:
+        arg = _call_argument(node, "scope", 0)
+        value = resolve(arg, env)
+        if value is None or value.kind != "query":
+            diagnostics.append(_diag(
+                node,
+                "SCOPE_REQUIRED",
+                "ctx.acquire requires a scope returned by ctx.query",
+            ))
+            return None
+        return value
+
+    def handle_call(method: str, node: ast.Call, env: dict[str, Value], target: str | None) -> None:
+        nonlocal gen
+        if method == "reach":
+            state = resolve(_call_argument(node, "state", 0), env)
+            if state is not None:
+                state.consumed = True
+            gen += 1
+            if target:
+                env[target] = Value(
+                    name=target,
+                    kind="reach",
+                    entity=reach_entity(_call_argument(node, "success", 2)),
+                    node=node,
+                    gen=gen,
+                )
+        elif method == "command":
+            state = check_state(node, env, "command")
+            if state is not None:
+                state.consumed = True
+            gen += 1
+            if target:
+                env[target] = Value(name=target, kind="command", entity=None, node=node, gen=gen)
+        elif method == "commit":
+            state = check_state(node, env, "commit")
+            if state is not None:
+                state.consumed = True
+            gen += 1
+            if target:
+                env[target] = Value(name=target, kind="commit", entity=None, node=node, gen=gen)
+        elif method == "query":
+            check_state(node, env, "query")
+            if target:
+                entity = _literal_value(_call_argument(node, "entity", 1))
+                env[target] = Value(
+                    name=target,
+                    kind="query",
+                    entity=entity if isinstance(entity, str) else None,
+                    node=node,
+                )
+        elif method == "acquire":
+            check_scope(node, env)
+        elif method == "read":
+            check_state(node, env, "read")
+
+    def branch_env(env: dict[str, Value]) -> dict[str, Value]:
+        # Branch/loop analysis must not mutate shared Value objects (consumption
+        # inside one path must not leak into a sibling or later path).
+        return {name: copy.copy(value) for name, value in env.items()}
+
+    def walk(statements: list[ast.AST], env: dict[str, Value]) -> None:
+        nonlocal gen
+        for statement in statements:
+            if (
+                isinstance(statement, ast.Assign)
+                and len(statement.targets) == 1
+                and isinstance(statement.targets[0], ast.Name)
+                and isinstance(statement.value, ast.Call)
+                and (m := _ctx_method(statement.value)) is not None
+            ):
+                handle_call(m, statement.value, env, statement.targets[0].id)
+                continue
+            if isinstance(statement, ast.If):
+                saved = gen
+                walk(statement.body, branch_env(env))
+                gen = saved
+                walk(statement.orelse, branch_env(env))
+                gen = saved
+                # Branch-local state rebinding does not leak out; the pre-branch
+                # env remains authoritative after the conditional.
+                continue
+            if isinstance(statement, ast.For):
+                saved = gen
+                walk(statement.body, branch_env(env))
+                gen = saved
+                continue
+            # Non-compound statement: collect bare ctx calls (no nested bodies).
+            for node in ast.walk(statement):
+                if isinstance(node, ast.Call) and (m := _ctx_method(node)) is not None:
+                    handle_call(m, node, env, None)
+
+    env: dict[str, Value] = {
+        "state": Value(name="state", kind="initial", entity=None, node=function),
+    }
+    walk(function.body, env)
+    return diagnostics
 
 
 def _ctx_state_contract_diagnostics(
@@ -685,7 +866,7 @@ def _ctx_state_contract_diagnostics(
         """
         call = reach_call(reach)
         if call is not None:
-            reach_target = _call_argument(call, "target", 2)
+            reach_target = _call_argument(call, "target", 3)
             if reach_target is not None and _same_expression(reach_target, target):
                 return True
 
@@ -720,7 +901,7 @@ def _ctx_state_contract_diagnostics(
             return (
                 isinstance(read, ast.Call)
                 and _ctx_method(read) == "read"
-                and _same_expression(_call_argument(read, "target", 0), target)
+                and _same_expression(_call_argument(read, "target", 1), target)
                 and _semantic_key(field) in {
                     _semantic_key(item) for item in (_literal_fields(read) or [])
                 }
@@ -766,33 +947,18 @@ def _ctx_state_contract_diagnostics(
     diagnosed_consumers: set[ast.Call] = set()
     for node in ast.walk(function):
         if isinstance(node, (ast.Assign, ast.AnnAssign)):
-            value = node.value
-            if isinstance(value, ast.Call) and _ctx_method(value) == "reach":
-                diagnostics.append(_diag(
-                    node,
-                    "REACH_RETURNS_NONE",
-                    "ctx.reach updates the one active UI and cannot be assigned",
-                ))
+            # reach/command/commit now return a state value; the caller must
+            # capture it to thread through later UI operations.
             continue
-        if isinstance(node, ast.Return) and _ctx_method(node.value) == "commit":
-            diagnostics.append(_diag(
-                node,
-                "RETURN_COMMIT_NONE",
-                "ctx.commit returns None; call it as a statement instead of returning it",
-            ))
-            continue
-        if isinstance(node, ast.Return) and _ctx_method(node.value) == "reach":
-            diagnostics.append(_diag(
-                node,
-                "RETURN_REACH_NONE",
-                "ctx.reach updates the active UI and returns None; call it as a statement",
-            ))
+        if isinstance(node, ast.Return) and _ctx_method(node.value) in {
+            "commit", "reach",
+        }:
             continue
         if not isinstance(node, ast.Call):
             continue
         method = _ctx_method(node)
         if method == "commit":
-            target = _call_argument(node, "target", 1)
+            target = _call_argument(node, "target", 2)
             if target is None or (
                 isinstance(target, ast.Constant) and target.value is None
             ):
@@ -802,7 +968,7 @@ def _ctx_state_contract_diagnostics(
                         call
                         for call in ast.walk(function)
                         if isinstance(call, ast.Call)
-                        and _ctx_method(call) in {"query", "read"}
+                        and _ctx_method(call) in {"query", "acquire", "read"}
                         and call.lineno < node.lineno
                         and dominates(call, node)
                     ),
@@ -846,7 +1012,7 @@ def _ctx_state_contract_diagnostics(
                 continue
             reach = active_reach(node)
             active_target = (
-                _call_argument(call, "target", 2)
+                _call_argument(call, "target", 3)
                 if reach is not None and (call := reach_call(reach)) is not None
                 else None
             )
@@ -877,7 +1043,7 @@ def _ctx_state_contract_diagnostics(
                     ),
                 ))
             continue
-        if method in {"query", "read"}:
+        if method in {"query", "read", "acquire"}:
             reach = active_reach(node)
             if reach is None:
                 diagnostics.append(_diag(
@@ -887,7 +1053,19 @@ def _ctx_state_contract_diagnostics(
                 ))
                 diagnosed_consumers.add(node)
                 continue
-            entity = _literal_value(_call_argument(node, "entity", 0))
+            if method == "acquire":
+                scope_node = _call_argument(node, "scope", 0)
+                if scope_node is None or (
+                    isinstance(scope_node, ast.Constant)
+                    and scope_node.value is None
+                ):
+                    diagnostics.append(_diag(
+                        node,
+                        "SCOPE_REQUIRED",
+                        "ctx.acquire requires a scope returned by ctx.query",
+                    ))
+                continue
+            entity = _literal_value(_call_argument(node, "entity", 1))
             if (
                 method == "query"
                 and reach[1] is not None
@@ -916,7 +1094,7 @@ def _ctx_state_contract_diagnostics(
                     ),
                 ))
             if method == "read":
-                target = _call_argument(node, "target", 0)
+                target = _call_argument(node, "target", 1)
                 direct_read = target is None or (
                     isinstance(target, ast.Constant) and target.value is None
                 )
@@ -999,7 +1177,7 @@ def _ctx_state_contract_diagnostics(
         for call in body_calls:
             if (
                 call in diagnosed_consumers
-                or _ctx_method(call) not in {"query", "read"}
+                or _ctx_method(call) not in {"query", "acquire", "read"}
                 or any(
                     reach[0] < call.lineno and dominates(reach[3], call)
                     for reach in loop_reaches
@@ -1027,7 +1205,7 @@ def _ctx_effect_lineage_diagnostics(
     reaches = _reach_calls(function)
     reach_entities = {line: entity for line, entity, _, _ in reaches}
     reach_targets = {
-        node.lineno: _call_argument(node, "target", 2)
+        node.lineno: _call_argument(node, "target", 3)
         for node in ast.walk(function)
         if isinstance(node, ast.Call) and _ctx_method(node) == "reach"
     }
@@ -1158,9 +1336,9 @@ def _ctx_effect_lineage_diagnostics(
     for call in (node for node in nodes if isinstance(node, ast.Call)):
         if _ctx_method(call) != "commit":
             continue
-        target = _call_argument(call, "target", 1)
+        target = _call_argument(call, "target", 2)
         target_sources = row_lineage(target) or set()
-        values = _call_argument(call, "values", 2)
+        values = _call_argument(call, "values", 3)
         fields = {
             _semantic_key(key.value)
             for key in values.keys
@@ -1276,8 +1454,8 @@ def _schema_free_source_diagnostics(function: ast.FunctionDef) -> list[CodeDiagn
     for call in ast.walk(function):
         if not isinstance(call, ast.Call) or _ctx_method(call) != "commit":
             continue
-        target = _call_argument(call, "target", 1)
-        values = _call_argument(call, "values", 2)
+        target = _call_argument(call, "target", 2)
+        values = _call_argument(call, "values", 3)
         if not (
             (target is None or isinstance(target, ast.Constant) and target.value is None)
             and isinstance(values, ast.Dict)
@@ -1285,7 +1463,7 @@ def _schema_free_source_diagnostics(function: ast.FunctionDef) -> list[CodeDiagn
             and derived
         ):
             continue
-        goal = _call_argument(call, "goal", 0)
+        goal = _call_argument(call, "goal", 1)
         if not any(
             isinstance(item, ast.Name) and item.id in derived
             for item in ast.walk(goal) if goal is not None
@@ -1334,7 +1512,7 @@ def _target_route_lineage_diagnostics(function: ast.FunctionDef) -> list[CodeDia
             continue
         query_line, route = query_routes[loop.iter.id]
         for call in ast.walk(loop):
-            target = _call_argument(call, "target", 2) if isinstance(call, ast.Call) else None
+            target = _call_argument(call, "target", 3) if isinstance(call, ast.Call) else None
             if not (
                 isinstance(call, ast.Call)
                 and _ctx_method(call) == "reach"
@@ -1343,7 +1521,7 @@ def _target_route_lineage_diagnostics(function: ast.FunctionDef) -> list[CodeDia
                 and any(query_line < reach[0] < call.lineno for reach in reaches)
             ):
                 continue
-            success_node = _call_argument(call, "success", 1)
+            success_node = _call_argument(call, "success", 2)
             success = {
                 key.value: _literal_value(value)
                 for key, value in zip(success_node.keys, success_node.values)
@@ -1391,7 +1569,7 @@ def repair_direct_read_fields(source: str) -> str | None:
         key=lambda node: node.lineno,
     )
     for call in calls:
-        target = _call_argument(call, "target", 0)
+        target = _call_argument(call, "target", 1)
         direct_read = target is None or (
             isinstance(target, ast.Constant) and target.value is None
         )
@@ -1489,16 +1667,21 @@ def validate_code(source: str) -> list[CodeDiagnostic]:
     args = function.args
     if (
         function.name != "run"
-        or [argument.arg for argument in args.args] != ["ctx"]
+        or [argument.arg for argument in args.args] not in (["ctx"], ["ctx", "state"])
         or args.posonlyargs or args.kwonlyargs or args.vararg or args.kwarg
         or function.decorator_list
     ):
-        return [_diag(function, "ENTRYPOINT", "entrypoint must be exactly def run(ctx)")]
+        return [_diag(
+            function,
+            "ENTRYPOINT",
+            "entrypoint must be exactly def run(ctx) or def run(ctx, state)",
+        )]
     visitor = _SafetyVisitor(function)
     for node in tree.body:
         visitor.visit(node)
     visitor.diagnostics.extend(_date_constructor_diagnostics(function))
     visitor.diagnostics.extend(_undefined_name_diagnostics(source, function))
+    visitor.diagnostics.extend(_ctx_state_flow_diagnostics(function))
     visitor.diagnostics.extend(_ctx_state_contract_diagnostics(function))
     visitor.diagnostics.extend(_schema_free_source_diagnostics(function))
     visitor.diagnostics.extend(_target_route_lineage_diagnostics(function))
@@ -1716,13 +1899,21 @@ def build_probe_fixture(source: str) -> FixtureSpec:
             next(iter(lowered.values()), value),
         )
 
-    lookups: dict[str, list[dict[str, Any]]] = {}
-    for call in (node for node in ast.walk(tree) if _ctx_method(node) == "query"):
-        fields = _literal_fields(call)
-        names = set(_literal_strings(_call_argument(call, "entity", 0)))
-        if fields is None or not names:
+    # ctx.query establishes a scope (entity + filters); ctx.acquire materializes
+    # its rows (fields). Bind each scope variable to its query, then build rows
+    # from the acquire projections so the probe exercises the program's dataflow.
+    query_bindings: dict[str, tuple[set[str], dict[str, Any]]] = {}
+    for assignment in ast.walk(tree):
+        if not (
+            isinstance(assignment, ast.Assign)
+            and len(assignment.targets) == 1
+            and isinstance(assignment.targets[0], ast.Name)
+            and isinstance(assignment.value, ast.Call)
+            and _ctx_method(assignment.value) == "query"
+        ):
             continue
-        filter_node = _call_argument(call, "filters", 2)
+        names = set(_literal_strings(_call_argument(assignment.value, "entity", 1)))
+        filter_node = _call_argument(assignment.value, "filters", 2)
         filters = _literal_mapping(filter_node, constant_values)
         if filters is None and isinstance(filter_node, ast.Name):
             filters = constant_mappings.get(filter_node.id)
@@ -1733,7 +1924,20 @@ def build_probe_fixture(source: str) -> FixtureSpec:
                 if isinstance(key, ast.Constant)
                 and isinstance(key.value, str)
             }
-        filters = filters or {}
+        query_bindings[assignment.targets[0].id] = (names, filters or {})
+
+    lookups: dict[str, list[dict[str, Any]]] = {}
+    for call in (node for node in ast.walk(tree) if _ctx_method(node) == "acquire"):
+        fields = _literal_fields(call)
+        if fields is None:
+            continue
+        scope_node = _call_argument(call, "scope", 0)
+        names: set[str] = set()
+        filters: dict[str, Any] = {}
+        if isinstance(scope_node, ast.Name) and scope_node.id in query_bindings:
+            names, filters = query_bindings[scope_node.id]
+        if not names:
+            continue
         rows = [
             {
                 **{field: probe_value(field, index) for field in fields},
@@ -1783,7 +1987,7 @@ def build_probe_fixture(source: str) -> FixtureSpec:
         field
         for call in read_calls
         if (
-            (target := _call_argument(call, "target", 0)) is None
+            (target := _call_argument(call, "target", 1)) is None
             or isinstance(target, ast.Constant) and target.value is None
         )
         for field in (_literal_fields(call) or [])
@@ -1799,7 +2003,7 @@ def build_probe_fixture(source: str) -> FixtureSpec:
         value: True
         for call in ast.walk(tree)
         if isinstance(call, ast.Call) and _ctx_method(call) == "command"
-        for value in _literal_strings(_call_argument(call, "capability", 0))
+        for value in _literal_strings(_call_argument(call, "capability", 1))
     }
     return FixtureSpec(
         lookups=lookups,
@@ -1830,19 +2034,33 @@ def validate_fixture_contract(
         for node in ast.walk(tree)
         if isinstance(node, ast.Call) and _ctx_method(node) == "reach"
     ]
+    # Bind each scope variable to the entity its ctx.query establishes.
+    query_entities: dict[str, str] = {}
+    for assignment in ast.walk(tree):
+        if not (
+            isinstance(assignment, ast.Assign)
+            and len(assignment.targets) == 1
+            and isinstance(assignment.targets[0], ast.Name)
+            and isinstance(assignment.value, ast.Call)
+            and _ctx_method(assignment.value) == "query"
+        ):
+            continue
+        entity = next(
+            iter(_literal_strings(_call_argument(assignment.value, "entity", 1))),
+            "",
+        )
+        query_entities[assignment.targets[0].id] = entity
+
     diagnostics: list[CodeDiagnostic] = []
     for node in ast.walk(tree):
         method = _ctx_method(node)
-        if method not in {"query", "read"}:
-            continue
-        requested = _literal_fields(node)
-        if requested is None:
-            continue
-        available = collection_fields if method == "query" else detail_fields
-        if match_lookup_sources and method == "query":
+        if method == "query":
+            # Query establishes entity presence in the observation (context gate).
+            if not match_lookup_sources:
+                continue
             aliases = {
                 _semantic_key(value)
-                for value in _literal_strings(_call_argument(node, "entity", 0))
+                for value in _literal_strings(_call_argument(node, "entity", 1))
             }
             matching_rows = [
                 row
@@ -1850,36 +2068,82 @@ def validate_fixture_contract(
                 if _semantic_key(alias) in aliases
                 for row in rows
             ]
-            if not matching_rows:
-                if not any(line < node.lineno for line in reach_lines):
-                    diagnostics.append(_diag(
-                        node,
-                        "QUERY_CONTEXT_REQUIRED",
-                        (
-                            "query source is absent from the current observation; "
-                            "establish its application context with ctx.reach first"
-                        ),
-                    ))
+            if not matching_rows and not any(
+                line < node.lineno for line in reach_lines
+            ):
+                diagnostics.append(_diag(
+                    node,
+                    "QUERY_CONTEXT_REQUIRED",
+                    (
+                        "query source is absent from the current observation; "
+                        "establish its application context with ctx.reach first"
+                    ),
+                ))
+            continue
+        if method == "acquire":
+            requested = _literal_fields(node)
+            if requested is None:
                 continue
-            available = {
-                _semantic_key(field_name)
-                for row in matching_rows
-                for field_name in row
-            }
-        if not available:
+            available = collection_fields
+            if match_lookup_sources:
+                scope_node = _call_argument(node, "scope", 0)
+                entity = (
+                    query_entities.get(scope_node.id)
+                    if isinstance(scope_node, ast.Name)
+                    else ""
+                )
+                matching_rows = (
+                    [
+                        row
+                        for alias, rows in fixture.lookups.items()
+                        if entity and _semantic_key(alias) == _semantic_key(entity)
+                        for row in rows
+                    ]
+                    if entity
+                    else []
+                )
+                if matching_rows:
+                    available = {
+                        _semantic_key(field_name)
+                        for row in matching_rows
+                        for field_name in row
+                    }
+            if not available:
+                continue
+            missing = [
+                field_name
+                for field_name in requested
+                if _semantic_key(field_name) not in available
+            ]
+            if missing:
+                diagnostics.append(_diag(
+                    node,
+                    "MOCK_FIELD_UNAVAILABLE",
+                    (
+                        f"ctx.acquire fields {missing!r} are unavailable from every "
+                        f"supplied mock source"
+                    ),
+                ))
+            continue
+        if method != "read":
+            continue
+        requested = _literal_fields(node)
+        if requested is None:
+            continue
+        if not detail_fields:
             continue
         missing = [
             field_name
             for field_name in requested
-            if _semantic_key(field_name) not in available
+            if _semantic_key(field_name) not in detail_fields
         ]
         if missing:
             diagnostics.append(_diag(
                 node,
                 "MOCK_FIELD_UNAVAILABLE",
                 (
-                    f"ctx.{method} fields {missing!r} are unavailable from every "
-                    f"supplied mock {method} source"
+                    f"ctx.read fields {missing!r} are unavailable from every "
+                    f"supplied mock detail source"
                 ),
             ))
     return diagnostics
@@ -1915,9 +2179,10 @@ class _ProjectionVisitor(ast.NodeVisitor):
         return None
 
     def _infer_sequence(self, node: ast.AST) -> set[str] | None:
-        query_fields = self._ctx_fields(node, "query")
-        if query_fields is not None:
-            return query_fields
+        # Rows are materialized by ctx.acquire; ctx.query establishes a scope.
+        acquire_fields = self._ctx_fields(node, "acquire")
+        if acquire_fields is not None:
+            return acquire_fields
         if isinstance(node, ast.Name):
             return self.sequence_fields.get(node.id)
         if (
@@ -2233,14 +2498,13 @@ class _FixtureContext:
 
     def query(
         self,
+        state: CurrentUI,
         *,
         entity: str,
-        fields: list[str] | dict[str, str],
         filters: dict[str, Any] | None = None,
         coverage: str = "complete",
-    ) -> list[dict[str, Any]]:
-        field_names, field_types = field_projection(fields)
-        state = require_current_ui(self._current_ui, entity=entity)
+    ) -> dict[str, Any]:
+        state = require_current_ui(state, entity=entity)
         requested_filters = dict(json_value(dict(filters or {})))
         rows = _lookup_rows(self.fixture.lookups, entity) or []
         missing_filters = [
@@ -2252,7 +2516,7 @@ class _FixtureContext:
                 f"collection filter fields {missing_filters!r} are unavailable "
                 f"for query {entity!r}"
             )
-        rows = [
+        filtered = [
             row for row in rows
             if all(
                 _field_value(row, field_name)[0]
@@ -2263,6 +2527,42 @@ class _FixtureContext:
                 for field_name, expected in requested_filters.items()
             )
         ]
+        self.trace.append(TraceEvent(
+            "query",
+            (entity,),
+            {
+                "ui_state": state.token,
+                "filters": copy.deepcopy(requested_filters),
+                "coverage": coverage,
+            },
+            None,
+        ))
+        # A reusable session handle; acquire materializes rows from it.
+        return {
+            "kind": "resolved_collection",
+            "entity": entity,
+            "surface_fingerprint": f"fixture:{entity.strip().casefold()}",
+            "available_fields": sorted({
+                str(field_name)
+                for row in filtered
+                for field_name in row
+            }),
+            "projection": "rows",
+            "_fixture_rows": filtered,
+        }
+
+    def acquire(
+        self,
+        scope: dict[str, Any],
+        *,
+        fields: list[str] | dict[str, str],
+        coverage: str = "complete",
+    ) -> list[dict[str, Any]]:
+        if not is_lookup_scope(scope):
+            raise ValueError("ctx.acquire requires a scope returned by ctx.query")
+        field_names, field_types = field_projection(fields)
+        rows = list(scope.get("_fixture_rows") or [])
+        entity = str(scope.get("entity") or "")
         missing = [
             name for name in field_names
             if rows and not any(_field_value(row, name)[0] for row in rows)
@@ -2274,7 +2574,7 @@ class _FixtureContext:
                 for field_name in row
             })
             raise KeyError(
-                f"collection fields {missing!r} are unavailable for query {entity!r}; "
+                f"collection fields {missing!r} are unavailable for acquire {entity!r}; "
                 f"available_fields={available_fields!r}"
             )
         projected = normalize_table_rows(
@@ -2298,8 +2598,6 @@ class _FixtureContext:
             {
                 "fields": field_names,
                 "field_types": field_types,
-                "ui_state": state.token,
-                "filters": copy.deepcopy(requested_filters),
                 "coverage": coverage,
             },
             projected,
@@ -2308,11 +2606,12 @@ class _FixtureContext:
 
     def read(
         self,
+        state: CurrentUI,
         *,
         target: Any = None,
         fields: list[str] | dict[str, str] | None = None,
     ) -> dict[str, Any]:
-        state = require_current_ui(self._current_ui)
+        state = require_current_ui(state)
         if fields is None:
             raise TypeError("ctx.read requires fields")
         field_names, field_types = field_projection(fields)
@@ -2384,16 +2683,17 @@ class _FixtureContext:
 
     def reach(
         self,
+        state: CurrentUI,
         goal: str,
         *,
         success: dict[str, Any],
         target: Any = None,
-    ) -> None:
+    ) -> CurrentUI:
         normalized = reach_postcondition(json_value(success))
         if normalized is None:
             raise ValueError("ctx.reach success is not a structured state")
         normalized_target = json_value(target) if target is not None else None
-        state = CurrentUI(
+        issued = CurrentUI(
             token=f"fixture-ui:{len(self.trace) + 1}",
             postcondition=normalized,
             target=normalized_target,
@@ -2404,20 +2704,28 @@ class _FixtureContext:
             values={},
             trace_extra={"success": success},
         )
-        self._current_ui = state
+        self._current_ui = issued
+        return issued
 
     def commit(
         self,
+        state: CurrentUI,
         goal: str,
         *,
         target: Any = None,
         values: dict[str, Any],
-    ) -> None:
+    ) -> CurrentUI:
         normalized_target = json_value(target) if target is not None else None
+        state = require_current_ui(state)
         if normalized_target is not None:
-            require_current_ui(self._current_ui, target=normalized_target)
+            state = require_current_ui(state, target=normalized_target)
         self._world_task(goal, target=normalized_target, values=values, force_commit=True)
         self._current_ui = None
+        return CurrentUI(
+            token=f"fixture-ui:{len(self.trace) + 1}",
+            postcondition={"kind": "post_commit", "target": normalized_target},
+            surface="post_commit",
+        )
 
     def _world_task(
         self,
@@ -2476,13 +2784,17 @@ class _FixtureContext:
             result,
         ))
 
-    def command(self, capability: str, **kwargs: Any) -> Any:
+    def command(self, state: CurrentUI, capability: str, **kwargs: Any) -> CurrentUI:
         result = self.fixture.command_results.get(capability)
         self.trace.append(
             TraceEvent("command", (capability,), dict(json_value(kwargs)), result)
         )
         self._current_ui = None
-        return result
+        return CurrentUI(
+            token=f"fixture-ui:{len(self.trace) + 1}",
+            postcondition={"kind": "post_command"},
+            surface="post_command",
+        )
 
 def _worker(source: str, fixture: FixtureSpec, output: Any) -> None:
     ctx = _FixtureContext(fixture)
@@ -2493,7 +2805,13 @@ def _worker(source: str, fixture: FixtureSpec, output: Any) -> None:
     payload = {"trace": ctx.trace, "writes": ctx.writes, "final_state": ctx.state}
     try:
         exec(compile(source, "<coding-plan>", "exec"), namespace, namespace)
-        payload.update(ok=True, return_value=namespace["run"](ctx))
+        payload.update(
+            ok=True,
+            return_value=namespace["run"](
+                ctx,
+                CurrentUI(token="initial", postcondition={}, surface="entity"),
+            ),
+        )
     except BaseException:  # noqa: BLE001 - child must serialize any plan failure
         payload.update(ok=False, error=traceback.format_exc(limit=8))
     output.put(payload)

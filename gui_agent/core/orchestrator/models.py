@@ -76,6 +76,11 @@ class CurrentUI:
         }
 
 
+# Public alias for the explicit state value threaded through generated programs.
+# User code may assign, pass, and compare states but must not inspect internals.
+UIState = CurrentUI
+
+
 def structural_reach_state(
     success: dict[str, Any],
     *,
