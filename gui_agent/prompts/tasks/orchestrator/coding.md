@@ -331,3 +331,58 @@ Before emitting code, verify:
 Do not add preflight reads, duplicate checks, or post-commit verification unless the task or
 supplied facts require them. Every assertion needs a nonempty diagnostic message. Do not assert
 fixture IDs, fixture row counts, or facts not supplied by the user, knowledge, or runtime data.
+
+## Example program
+
+A complete program that mutates the most recent record for a named owner. It shows the shape
+to imitate: full-phrase query, a conditional shorter-literal fallback, a typed ranking field,
+a target-bound reach, and state threading through every call. Replace every angle-bracket
+placeholder with a literal name from the current interface contract.
+
+```python
+def run(ctx, state):
+    # 1. Establish the collection and materialize its rows with typed ranking field.
+    state = ctx.reach(state, "Open <collection>", success={"entity": "<collection>"})
+    scope = ctx.query(
+        state,
+        entity="<collection>",
+        filters={"<owner_field>": "<full name>", "<status_field>": "<status>"},
+    )
+    rows = ctx.acquire(
+        scope,
+        fields={"<id_field>": "text", "<ranking_date>": "datetime"},
+    )
+
+    # 2. Fall back to a shorter distinctive literal only when the full query is empty.
+    if not rows:
+        scope = ctx.query(
+            state,
+            entity="<collection>",
+            filters={"<owner_field>": "<shorter name>", "<status_field>": "<status>"},
+        )
+        rows = ctx.acquire(
+            scope,
+            fields={"<id_field>": "text", "<ranking_date>": "datetime"},
+        )
+
+    # 3. Rank by the typed field, then mutate the selected target.
+    assert rows, "no record matched the owner"
+    rows.sort(key=lambda row: row["<ranking_date>"], reverse=True)
+    target = rows[0]
+    state = ctx.reach(
+        state,
+        "Open the exact record",
+        target=target,
+        success={"entity": "<detail>"},
+    )
+    state = ctx.commit(
+        state,
+        "<mutation>",
+        target=target,
+        values={"<mutable_field>": <new_value>},
+    )
+```
+
+The two queries are both emitted unconditionally: the full-mention query first, then the
+shorter-literal fallback under `if not rows:`. Do not omit the fallback because you expect the
+full mention to match. Ranking uses the typed field, never the source's current order.
