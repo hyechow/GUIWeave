@@ -117,7 +117,10 @@
         },
         {
           "method": "query",
-          "entity": "Top Search Terms",
+          "entity": "Top Search Terms"
+        },
+        {
+          "method": "acquire",
           "fields_include": [
             "Search Term",
             "Uses"
@@ -167,12 +170,15 @@
         {
           "method": "query",
           "entity": "Orders",
-          "fields_include": [
-            "Customer Email"
-          ],
           "filters_include": {
             "Status": "Complete"
           }
+        },
+        {
+          "method": "acquire",
+          "fields_include": [
+            "Customer Email"
+          ]
         }
       ],
       "features": [
@@ -207,7 +213,8 @@
       },
       "method_min_counts": {
         "reach": 1,
-        "query": 1
+        "query": 1,
+        "acquire": 1
       },
       "required_calls": [
         {
@@ -218,13 +225,16 @@
         },
         {
           "method": "query",
-          "entity": "Orders",
-          "fields_include": [
-            "Customer Email"
-          ],
+          "entity": "Orders"
+        },
+        {
+          "method": "acquire",
           "field_types_include": {
             "Customer Email": "text"
-          }
+          },
+          "fields_include": [
+            "Customer Email"
+          ]
         }
       ],
       "features": [
@@ -257,7 +267,8 @@
       },
       "method_min_counts": {
         "reach": 1,
-        "query": 1
+        "query": 1,
+        "acquire": 1
       },
       "required_calls": [
         {
@@ -269,15 +280,18 @@
         {
           "method": "query",
           "entity": "Orders",
-          "fields_include": [
-            "Customer Email"
-          ],
-          "field_types_include": {
-            "Customer Email": "text"
-          },
           "filters_include": {
             "Status": "Complete"
           }
+        },
+        {
+          "method": "acquire",
+          "field_types_include": {
+            "Customer Email": "text"
+          },
+          "fields_include": [
+            "Customer Email"
+          ]
         }
       ],
       "features": [
@@ -322,12 +336,6 @@
         {
           "method": "query",
           "entity": "Orders",
-          "fields_include": [
-            "Purchase Date"
-          ],
-          "field_types_include": {
-            "Purchase Date": "datetime"
-          },
           "filters_include": {
             "Status": "Complete",
             "Purchase Date": {
@@ -335,6 +343,15 @@
               "to": "05/31/2023"
             }
           }
+        },
+        {
+          "method": "acquire",
+          "field_types_include": {
+            "Purchase Date": "datetime"
+          },
+          "fields_include": [
+            "Purchase Date"
+          ]
         }
       ],
       "features": [
@@ -373,7 +390,8 @@
       },
       "method_min_counts": {
         "reach": 1,
-        "query": 1
+        "query": 1,
+        "acquire": 1
       },
       "required_calls": [
         {
@@ -385,15 +403,18 @@
         {
           "method": "query",
           "entity": "Orders",
-          "fields_include": [
-            "Purchase Date"
-          ],
-          "field_types_include": {
-            "Purchase Date": "datetime"
-          },
           "filters_include": {
             "Status": "Complete"
           }
+        },
+        {
+          "method": "acquire",
+          "field_types_include": {
+            "Purchase Date": "datetime"
+          },
+          "fields_include": [
+            "Purchase Date"
+          ]
         }
       ],
       "features": [
@@ -432,7 +453,8 @@
       },
       "method_min_counts": {
         "reach": 1,
-        "query": 1
+        "query": 1,
+        "acquire": 1
       },
       "required_calls": [
         {
@@ -444,15 +466,18 @@
         {
           "method": "query",
           "entity": "Orders",
-          "fields_include": [
-            "Purchase Date"
-          ],
-          "field_types_include": {
-            "Purchase Date": "datetime"
-          },
           "filters_include": {
             "Status": "Complete"
           }
+        },
+        {
+          "method": "acquire",
+          "field_types_include": {
+            "Purchase Date": "datetime"
+          },
+          "fields_include": [
+            "Purchase Date"
+          ]
         }
       ],
       "features": [
@@ -498,12 +523,15 @@
         {
           "method": "query",
           "entity": "All Reviews",
-          "fields_include": [
-            "Action"
-          ],
           "filters_include": {
             "Product": "Olivia zip jacket"
           }
+        },
+        {
+          "method": "acquire",
+          "fields_include": [
+            "Action"
+          ]
         },
         {
           "method": "query",
@@ -527,13 +555,18 @@
         [
           {
             "method": "query",
-            "entity": "All Reviews",
-            "fields_include": [
-              "Nickname"
-            ]
+            "entity": "All Reviews"
           },
           {
             "method": "read",
+            "fields_include": [
+              "Nickname"
+            ]
+          }
+        ],
+        [
+          {
+            "method": "acquire",
             "fields_include": [
               "Nickname"
             ]
@@ -573,7 +606,8 @@
       "method_min_counts": {
         "reach": 1,
         "query": 2,
-        "read": 1
+        "read": 1,
+        "acquire": 2
       },
       "required_calls": [
         {
@@ -585,33 +619,39 @@
         {
           "method": "query",
           "entity": "All Reviews",
-          "fields_include": [
-            "Nickname",
-            "Action"
-          ],
-          "field_types_include": {
-            "Nickname": "text",
-            "Action": "text"
-          },
           "filters_include": {
             "Product": "tanks"
           }
         },
         {
-          "method": "query",
-          "entity": "All Reviews",
-          "fields_include": [
-            "Nickname",
-            "Action"
-          ],
+          "method": "acquire",
           "field_types_include": {
             "Nickname": "text",
             "Action": "text"
           },
+          "fields_include": [
+            "Nickname",
+            "Action"
+          ]
+        },
+        {
+          "method": "query",
+          "entity": "All Reviews",
           "filters_include": {
             "Product": "tank"
           },
           "inside_if": true
+        },
+        {
+          "method": "acquire",
+          "field_types_include": {
+            "Nickname": "text",
+            "Action": "text"
+          },
+          "fields_include": [
+            "Nickname",
+            "Action"
+          ]
         },
         {
           "method": "read",
@@ -659,7 +699,8 @@
       },
       "method_min_counts": {
         "reach": 1,
-        "query": 1
+        "query": 1,
+        "acquire": 1
       },
       "required_calls": [
         {
@@ -670,15 +711,18 @@
         },
         {
           "method": "query",
-          "entity": "Top Search Terms",
-          "fields_include": [
-            "Search Term",
-            "Uses"
-          ],
+          "entity": "Top Search Terms"
+        },
+        {
+          "method": "acquire",
           "field_types_include": {
             "Search Term": "text",
             "Uses": "number"
-          }
+          },
+          "fields_include": [
+            "Search Term",
+            "Uses"
+          ]
         }
       ],
       "features": [
@@ -772,7 +816,8 @@
       "method_min_counts": {
         "reach": 1,
         "query": 1,
-        "read": 1
+        "read": 1,
+        "acquire": 1
       },
       "required_calls": [
         {
@@ -784,12 +829,15 @@
         {
           "method": "query",
           "entity": "Products",
-          "fields_include": [
-            "Name"
-          ],
           "filters_include": {
             "Quantity": 0
           }
+        },
+        {
+          "method": "acquire",
+          "fields_include": [
+            "Name"
+          ]
         },
         {
           "method": "read",
@@ -845,14 +893,17 @@
         {
           "method": "query",
           "entity": "Products",
+          "filters_include": {
+            "Quantity": 3
+          }
+        },
+        {
+          "method": "acquire",
           "fields_include": [
             "Name",
             "Type",
             "SKU"
-          ],
-          "filters_include": {
-            "Quantity": 3
-          }
+          ]
         },
         {
           "method": "read",
@@ -896,7 +947,8 @@
       "method_min_counts": {
         "reach": 1,
         "query": 1,
-        "read": 1
+        "read": 1,
+        "acquire": 1
       },
       "required_calls": [
         {
@@ -908,11 +960,14 @@
         {
           "method": "query",
           "entity": "Products",
-          "fields_include": [
-            "Name"
-          ],
           "filter_keys": [
             "Quantity"
+          ]
+        },
+        {
+          "method": "acquire",
+          "fields_include": [
+            "Name"
           ]
         },
         {
@@ -968,17 +1023,20 @@
         {
           "method": "query",
           "entity": "Orders",
-          "fields_include": [
-            "Purchase Date",
-            "Grand Total (Purchased)"
-          ],
+          "filters_include": {
+            "Status": "Complete"
+          }
+        },
+        {
+          "method": "acquire",
           "field_types_include": {
             "Purchase Date": "datetime",
             "Grand Total (Purchased)": "money"
           },
-          "filters_include": {
-            "Status": "Complete"
-          }
+          "fields_include": [
+            "Purchase Date",
+            "Grand Total (Purchased)"
+          ]
         }
       ],
       "features": [
@@ -1012,7 +1070,8 @@
       },
       "method_min_counts": {
         "reach": 1,
-        "query": 2
+        "query": 2,
+        "acquire": 2
       },
       "required_calls": [
         {
@@ -1024,32 +1083,38 @@
         {
           "method": "query",
           "entity": "Orders",
-          "fields_include": [
-            "Purchase Date",
-            "Grand Total (Purchased)"
-          ],
-          "field_types_include": {
-            "Purchase Date": "datetime",
-            "Grand Total (Purchased)": "money"
-          },
           "filters_include": {
             "Status": "Cancelled"
           }
         },
         {
-          "method": "query",
-          "entity": "Orders",
-          "fields_include": [
-            "Purchase Date",
-            "Grand Total (Purchased)"
-          ],
+          "method": "acquire",
           "field_types_include": {
             "Purchase Date": "datetime",
             "Grand Total (Purchased)": "money"
           },
+          "fields_include": [
+            "Purchase Date",
+            "Grand Total (Purchased)"
+          ]
+        },
+        {
+          "method": "query",
+          "entity": "Orders",
           "filters_include": {
             "Status": "Complete"
           }
+        },
+        {
+          "method": "acquire",
+          "field_types_include": {
+            "Purchase Date": "datetime",
+            "Grand Total (Purchased)": "money"
+          },
+          "fields_include": [
+            "Purchase Date",
+            "Grand Total (Purchased)"
+          ]
         }
       ],
       "features": [
@@ -1188,7 +1253,8 @@
       "method_min_counts": {
         "reach": 2,
         "query": 1,
-        "read": 1
+        "read": 1,
+        "acquire": 1
       },
       "required_calls": [
         {
@@ -1200,17 +1266,20 @@
         {
           "method": "query",
           "entity": "Orders",
-          "fields_include": [
-            "ID",
-            "Purchase Date"
-          ],
+          "filters_include": {
+            "Status": "Complete"
+          }
+        },
+        {
+          "method": "acquire",
           "field_types_include": {
             "ID": "number",
             "Purchase Date": "datetime"
           },
-          "filters_include": {
-            "Status": "Complete"
-          }
+          "fields_include": [
+            "ID",
+            "Purchase Date"
+          ]
         },
         {
           "method": "reach",
@@ -1269,7 +1338,8 @@
       "method_min_counts": {
         "reach": 1,
         "query": 1,
-        "read": 1
+        "read": 1,
+        "acquire": 1
       },
       "required_calls": [
         {
@@ -1280,15 +1350,18 @@
         },
         {
           "method": "query",
-          "entity": "Orders",
-          "fields_include": [
-            "Bill-to Name",
-            "Customer Email"
-          ],
+          "entity": "Orders"
+        },
+        {
+          "method": "acquire",
           "field_types_include": {
             "Bill-to Name": "text",
             "Customer Email": "text"
-          }
+          },
+          "fields_include": [
+            "Bill-to Name",
+            "Customer Email"
+          ]
         },
         {
           "method": "read",
@@ -1335,7 +1408,8 @@
       "method_min_counts": {
         "reach": 1,
         "query": 1,
-        "read": 1
+        "read": 1,
+        "acquire": 1
       },
       "required_calls": [
         {
@@ -1347,13 +1421,16 @@
         {
           "method": "query",
           "entity": "All Reviews",
-          "fields_include": [
-            "Action",
-            "Title"
-          ],
           "filters_include": {
             "Product": "Erica Sports Bra"
           }
+        },
+        {
+          "method": "acquire",
+          "fields_include": [
+            "Action",
+            "Title"
+          ]
         },
         {
           "method": "read",
@@ -1490,12 +1567,15 @@
         {
           "method": "query",
           "entity": "Pages",
-          "fields_include": [
-            "Title"
-          ],
           "filters_include": {
             "Title": "Home Page"
           }
+        },
+        {
+          "method": "acquire",
+          "fields_include": [
+            "Title"
+          ]
         },
         {
           "method": "query",
@@ -1537,7 +1617,8 @@
       },
       "method_min_counts": {
         "reach": 2,
-        "query": 2
+        "query": 2,
+        "acquire": 2
       },
       "required_calls": [
         {
@@ -1549,23 +1630,29 @@
         {
           "method": "query",
           "entity": "Pages",
-          "fields_include": [
-            "Title"
-          ],
           "filters_include": {
             "Title": "Privacy"
           }
         },
         {
-          "method": "query",
-          "entity": "Pages",
+          "method": "acquire",
           "fields_include": [
             "Title"
-          ],
+          ]
+        },
+        {
+          "method": "query",
+          "entity": "Pages",
           "filters_include": {
             "Title": "Privacy Policy"
           },
           "inside_if": true
+        },
+        {
+          "method": "acquire",
+          "fields_include": [
+            "Title"
+          ]
         },
         {
           "method": "reach",
@@ -1616,20 +1703,24 @@
         "commit": 1
       },
       "method_min_counts": {
-        "query": 2
+        "query": 2,
+        "acquire": 2
       },
       "required_calls": [
         {
           "method": "query",
           "entity": "Orders",
-          "fields_include": [
-            "Purchase Date"
-          ],
+          "filter_keys": [
+            "Status"
+          ]
+        },
+        {
+          "method": "acquire",
           "field_types_include": {
             "Purchase Date": "datetime"
           },
-          "filter_keys": [
-            "Status"
+          "fields_include": [
+            "Purchase Date"
           ]
         },
         {
@@ -1699,7 +1790,8 @@
       },
       "method_min_counts": {
         "reach": 2,
-        "query": 2
+        "query": 2,
+        "acquire": 2
       },
       "required_calls": [
         {
@@ -1711,35 +1803,41 @@
         {
           "method": "query",
           "entity": "Orders",
-          "fields_include": [
-            "ID",
-            "Purchase Date"
-          ],
-          "field_types_include": {
-            "ID": "number",
-            "Purchase Date": "datetime"
-          },
           "filters_include": {
             "Status": "Pending",
             "Bill-to Name": "Grace Nguyen"
           }
         },
         {
-          "method": "query",
-          "entity": "Orders",
-          "fields_include": [
-            "ID",
-            "Purchase Date"
-          ],
+          "method": "acquire",
           "field_types_include": {
             "ID": "number",
             "Purchase Date": "datetime"
           },
+          "fields_include": [
+            "ID",
+            "Purchase Date"
+          ]
+        },
+        {
+          "method": "query",
+          "entity": "Orders",
           "filters_include": {
             "Status": "Pending",
             "Bill-to Name": "Grace"
           },
           "inside_if": true
+        },
+        {
+          "method": "acquire",
+          "field_types_include": {
+            "ID": "number",
+            "Purchase Date": "datetime"
+          },
+          "fields_include": [
+            "ID",
+            "Purchase Date"
+          ]
         },
         {
           "method": "reach",
@@ -1798,10 +1896,13 @@
         {
           "method": "query",
           "entity": "Orders",
-          "fields_include": [
-            "ID"
-          ],
           "filter_keys": [
+            "ID"
+          ]
+        },
+        {
+          "method": "acquire",
+          "fields_include": [
             "ID"
           ]
         },
@@ -1969,17 +2070,21 @@
         "commit": 1
       },
       "method_min_counts": {
-        "query": 3
+        "query": 3,
+        "acquire": 3
       },
       "required_calls": [
         {
           "method": "query",
           "entity": "All Reviews",
-          "fields_include": [
-            "Action"
-          ],
           "filter_keys": [
             "Product"
+          ]
+        },
+        {
+          "method": "acquire",
+          "fields_include": [
+            "Action"
           ]
         },
         {
@@ -1994,9 +2099,6 @@
         {
           "method": "query",
           "entity": "Products",
-          "fields_include": [
-            "Name"
-          ],
           "filter_keys": [
             "Name"
           ],
@@ -2046,7 +2148,8 @@
       "method_min_counts": {
         "reach": 3,
         "query": 4,
-        "read": 1
+        "read": 1,
+        "acquire": 4
       },
       "required_calls": [
         {
@@ -2058,23 +2161,29 @@
         {
           "method": "query",
           "entity": "All Reviews",
-          "fields_include": [
-            "Action"
-          ],
           "filters_include": {
             "Product": "Radiant Tee"
           }
         },
         {
-          "method": "query",
-          "entity": "All Reviews",
+          "method": "acquire",
           "fields_include": [
             "Action"
-          ],
+          ]
+        },
+        {
+          "method": "query",
+          "entity": "All Reviews",
           "filters_include": {
             "Product": "Radiant"
           },
           "inside_if": true
+        },
+        {
+          "method": "acquire",
+          "fields_include": [
+            "Action"
+          ]
         },
         {
           "method": "read",
@@ -2096,27 +2205,33 @@
         {
           "method": "query",
           "entity": "Products",
-          "fields_include": [
-            "Name",
-            "Type"
-          ],
           "filters_include": {
             "Name": "Radiant Tee",
             "Type": "Configurable Product"
           }
         },
         {
-          "method": "query",
-          "entity": "Products",
+          "method": "acquire",
           "fields_include": [
             "Name",
             "Type"
-          ],
+          ]
+        },
+        {
+          "method": "query",
+          "entity": "Products",
           "filters_include": {
             "Name": "Radiant",
             "Type": "Configurable Product"
           },
           "inside_if": true
+        },
+        {
+          "method": "acquire",
+          "fields_include": [
+            "Name",
+            "Type"
+          ]
         },
         {
           "method": "reach",
@@ -2171,7 +2286,8 @@
       "method_min_counts": {
         "reach": 3,
         "query": 4,
-        "read": 1
+        "read": 1,
+        "acquire": 4
       },
       "required_calls": [
         {
@@ -2183,23 +2299,29 @@
         {
           "method": "query",
           "entity": "All Reviews",
-          "fields_include": [
-            "Action"
-          ],
           "filters_include": {
             "Product": "Lucia Cross-Fit Bra"
           }
         },
         {
-          "method": "query",
-          "entity": "All Reviews",
+          "method": "acquire",
           "fields_include": [
             "Action"
-          ],
+          ]
+        },
+        {
+          "method": "query",
+          "entity": "All Reviews",
           "filters_include": {
             "Product": "Lucia"
           },
           "inside_if": true
+        },
+        {
+          "method": "acquire",
+          "fields_include": [
+            "Action"
+          ]
         },
         {
           "method": "read",
@@ -2221,27 +2343,33 @@
         {
           "method": "query",
           "entity": "Products",
-          "fields_include": [
-            "Name",
-            "Type"
-          ],
           "filters_include": {
             "Name": "Lucia Cross-Fit Bra",
             "Type": "Configurable Product"
           }
         },
         {
-          "method": "query",
-          "entity": "Products",
+          "method": "acquire",
           "fields_include": [
             "Name",
             "Type"
-          ],
+          ]
+        },
+        {
+          "method": "query",
+          "entity": "Products",
           "filters_include": {
             "Name": "Lucia",
             "Type": "Configurable Product"
           },
           "inside_if": true
+        },
+        {
+          "method": "acquire",
+          "fields_include": [
+            "Name",
+            "Type"
+          ]
         },
         {
           "method": "reach",
@@ -2298,7 +2426,10 @@
       "ordered_calls": [
         {
           "method": "query",
-          "entity": "Product Attributes",
+          "entity": "Product Attributes"
+        },
+        {
+          "method": "acquire",
           "fields_include": [
             "Attribute Code"
           ]
@@ -2365,7 +2496,8 @@
       },
       "method_min_counts": {
         "reach": 2,
-        "query": 1
+        "query": 1,
+        "acquire": 1
       },
       "required_calls": [
         {
@@ -2377,12 +2509,15 @@
         {
           "method": "query",
           "entity": "Product Admin List",
-          "fields_include": [
-            "Name"
-          ],
           "filters_include": {
             "Name": "Nona Fitness Tank"
           }
+        },
+        {
+          "method": "acquire",
+          "fields_include": [
+            "Name"
+          ]
         },
         {
           "method": "reach",
@@ -2433,7 +2568,8 @@
       "method_min_counts": {
         "reach": 2,
         "query": 2,
-        "read": 1
+        "read": 1,
+        "acquire": 2
       },
       "required_calls": [
         {
@@ -2445,23 +2581,29 @@
         {
           "method": "query",
           "entity": "Product Search Results",
-          "fields_include": [
-            "Name"
-          ],
           "filters_include": {
             "Name": "Diana Tights"
           }
         },
         {
-          "method": "query",
-          "entity": "Product Search Results",
+          "method": "acquire",
           "fields_include": [
             "Name"
-          ],
+          ]
+        },
+        {
+          "method": "query",
+          "entity": "Product Search Results",
           "filters_include": {
             "Name": "Diana"
           },
           "inside_if": true
+        },
+        {
+          "method": "acquire",
+          "fields_include": [
+            "Name"
+          ]
         },
         {
           "method": "reach",
@@ -2558,7 +2700,6 @@
     "contract": {
       "method_counts": {
         "reach": 0,
-        "query": 0,
         "read": 0,
         "commit": 1
       },
@@ -2578,7 +2719,11 @@
       ],
       "features": [
         "no_return_value"
-      ]
+      ],
+      "method_min_counts": {
+        "query": 0,
+        "acquire": 0
+      }
     },
     "contract_origin": "curated",
     "baseline": {
@@ -2696,7 +2841,6 @@
     "contract": {
       "method_counts": {
         "reach": 0,
-        "query": 0,
         "read": 0,
         "commit": 1
       },
@@ -2725,7 +2869,11 @@
       ],
       "forbidden_literals": [
         "NOT LOGGED IN"
-      ]
+      ],
+      "method_min_counts": {
+        "query": 0,
+        "acquire": 0
+      }
     },
     "contract_origin": "curated",
     "baseline": {
@@ -2931,8 +3079,6 @@
     "curated_group": "form_submission",
     "contract": {
       "method_counts": {
-        "reach": 1,
-        "query": 0,
         "read": 0,
         "commit": 0
       },
@@ -2952,13 +3098,16 @@
       "features": [
         "no_return_value"
       ],
-      "literal_values": [
-        "Orders"
-      ],
+      "literal_values": [],
       "date_values": [
         "2021-05-01",
         "2022-03-31"
-      ]
+      ],
+      "method_min_counts": {
+        "reach": 1,
+        "query": 0,
+        "acquire": 0
+      }
     },
     "contract_origin": "curated",
     "baseline": {
@@ -2984,7 +3133,8 @@
       "method_min_counts": {
         "reach": 6,
         "query": 4,
-        "read": 1
+        "read": 1,
+        "acquire": 4
       },
       "required_calls": [
         {
@@ -2996,25 +3146,31 @@
         {
           "method": "query",
           "entity": "Products",
-          "fields_include": [
-            "Name",
-            "SKU"
-          ],
           "filters_include": {
             "Name": "Aero daily fitness tee"
           }
         },
         {
-          "method": "query",
-          "entity": "Products",
+          "method": "acquire",
           "fields_include": [
             "Name",
             "SKU"
-          ],
+          ]
+        },
+        {
+          "method": "query",
+          "entity": "Products",
           "filters_include": {
             "Name": "Aero"
           },
           "inside_if": true
+        },
+        {
+          "method": "acquire",
+          "fields_include": [
+            "Name",
+            "SKU"
+          ]
         },
         {
           "method": "read",
@@ -3035,13 +3191,16 @@
         {
           "method": "query",
           "entity": "Product Attributes",
-          "fields_include": [
-            "Attribute Code",
-            "ID"
-          ],
           "filters_include": {
             "Attribute Code": "size"
           }
+        },
+        {
+          "method": "acquire",
+          "fields_include": [
+            "Attribute Code",
+            "ID"
+          ]
         },
         {
           "method": "reach",
@@ -3074,14 +3233,17 @@
         {
           "method": "query",
           "entity": "Products",
+          "filters_include": {
+            "Name": "Aero daily fitness tee"
+          }
+        },
+        {
+          "method": "acquire",
           "fields_include": [
             "SKU",
             "Qty",
             "Name"
-          ],
-          "filters_include": {
-            "Name": "Aero daily fitness tee"
-          }
+          ]
         },
         {
           "method": "reach",
@@ -3142,7 +3304,8 @@
       "method_min_counts": {
         "reach": 2,
         "query": 1,
-        "read": 1
+        "read": 1,
+        "acquire": 1
       },
       "required_calls": [
         {
@@ -3153,7 +3316,10 @@
         },
         {
           "method": "query",
-          "entity": "All Reviews",
+          "entity": "All Reviews"
+        },
+        {
+          "method": "acquire",
           "fields_include": [
             "Action"
           ]
@@ -3220,7 +3386,8 @@
       "method_min_counts": {
         "reach": 2,
         "query": 1,
-        "read": 1
+        "read": 1,
+        "acquire": 1
       },
       "required_calls": [
         {
@@ -3232,12 +3399,15 @@
         {
           "method": "query",
           "entity": "All Reviews",
-          "fields_include": [
-            "Action"
-          ],
           "filters_include": {
             "Status": "Pending"
           }
+        },
+        {
+          "method": "acquire",
+          "fields_include": [
+            "Action"
+          ]
         },
         {
           "method": "read",
@@ -3299,7 +3469,8 @@
       "method_min_counts": {
         "reach": 2,
         "query": 1,
-        "read": 1
+        "read": 1,
+        "acquire": 1
       },
       "required_calls": [
         {
@@ -3310,7 +3481,10 @@
         },
         {
           "method": "query",
-          "entity": "Reviews",
+          "entity": "Reviews"
+        },
+        {
+          "method": "acquire",
           "fields_include": [
             "id"
           ]
@@ -3377,7 +3551,8 @@
       "method_min_counts": {
         "reach": 2,
         "query": 2,
-        "read": 1
+        "read": 1,
+        "acquire": 2
       },
       "required_calls": [
         {
@@ -3389,27 +3564,33 @@
         {
           "method": "query",
           "entity": "Product Search Results",
-          "fields_include": [
-            "Name",
-            "Size"
-          ],
           "filters_include": {
             "Name": "Sahara",
             "Size": "28"
           }
         },
         {
-          "method": "query",
-          "entity": "Product Search Results",
+          "method": "acquire",
           "fields_include": [
             "Name",
             "Size"
-          ],
+          ]
+        },
+        {
+          "method": "query",
+          "entity": "Product Search Results",
           "filters_include": {
             "Name": "Sahara leggings",
             "Size": "28"
           },
           "inside_if": true
+        },
+        {
+          "method": "acquire",
+          "fields_include": [
+            "Name",
+            "Size"
+          ]
         },
         {
           "method": "reach",
@@ -3530,7 +3711,8 @@
       "method_min_counts": {
         "reach": 2,
         "query": 1,
-        "read": 1
+        "read": 1,
+        "acquire": 1
       },
       "required_calls": [
         {
@@ -3541,7 +3723,10 @@
         },
         {
           "method": "query",
-          "entity": "Products",
+          "entity": "Products"
+        },
+        {
+          "method": "acquire",
           "fields_include": [
             "name",
             "color",
@@ -6126,7 +6311,8 @@
       "method_min_counts": {
         "reach": 1,
         "query": 1,
-        "read": 2
+        "read": 2,
+        "acquire": 1
       },
       "required_calls": [
         {
@@ -6138,17 +6324,20 @@
         {
           "method": "query",
           "entity": "OrderHistory",
-          "fields_include": [
-            "order_id",
-            "amount"
-          ],
+          "filters_include": {
+            "product_name": "Stereo"
+          }
+        },
+        {
+          "method": "acquire",
           "field_types_include": {
             "order_id": "text",
             "amount": "money"
           },
-          "filters_include": {
-            "product_name": "Stereo"
-          }
+          "fields_include": [
+            "order_id",
+            "amount"
+          ]
         },
         {
           "method": "read",

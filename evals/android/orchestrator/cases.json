@@ -2,160 +2,683 @@
   {
     "task_name": "CloseFlightModeTask",
     "group": "direct_setting",
-    "apps": ["Settings"],
+    "apps": [
+      "Settings"
+    ],
     "intent": "Turn off device flight mode",
     "contract": {
-      "method_counts": {"commit": 1},
-      "required_any_calls": [[
-        {"method": "commit", "values_include": {"Flight Mode": false}},
-        {"method": "commit", "values_include": {"flight_mode": false}}
-      ]],
-      "features": ["no_return_value"]
+      "method_counts": {
+        "commit": 1
+      },
+      "required_any_calls": [
+        [
+          {
+            "method": "commit",
+            "values_include": {
+              "Flight Mode": false
+            }
+          },
+          {
+            "method": "commit",
+            "values_include": {
+              "flight_mode": false
+            }
+          }
+        ]
+      ],
+      "features": [
+        "no_return_value"
+      ]
     }
   },
   {
     "task_name": "AdjustBrightnessMaximumTask",
     "group": "direct_setting",
-    "apps": ["Settings"],
+    "apps": [
+      "Settings"
+    ],
     "intent": "Set the brightness to the maximum level.",
     "contract": {
-      "method_counts": {"commit": 1},
-      "required_any_calls": [[
-        {"method": "commit", "values_include": {"brightness": 100}},
-        {"method": "commit", "values_include": {"brightness_level": 100}},
-        {"method": "commit", "values_include": {"screen_brightness": 100}}
-      ]],
-      "features": ["no_return_value"]
+      "method_counts": {
+        "commit": 1
+      },
+      "required_any_calls": [
+        [
+          {
+            "method": "commit",
+            "values_include": {
+              "brightness": 100
+            }
+          },
+          {
+            "method": "commit",
+            "values_include": {
+              "brightness_level": 100
+            }
+          },
+          {
+            "method": "commit",
+            "values_include": {
+              "screen_brightness": 100
+            }
+          }
+        ]
+      ],
+      "features": [
+        "no_return_value"
+      ]
     }
   },
   {
     "task_name": "SetAlarmTask",
     "group": "structured_write",
-    "apps": ["Clock"],
+    "apps": [
+      "Clock"
+    ],
     "intent": "Set a weekend alarm for 8:25 a.m. with the ringtone \"beebeep\" and vibration off.",
     "contract": {
-      "method_counts": {"reach": 0, "commit": 1},
+      "method_counts": {
+        "reach": 0,
+        "commit": 1
+      },
       "required_calls": [
-        {"method": "commit", "value_keys": ["time", "ringtone", "vibration", "days"]}
+        {
+          "method": "commit",
+          "value_keys": [
+            "time",
+            "ringtone",
+            "vibration",
+            "days"
+          ]
+        }
       ],
-      "literal_values": ["beebeep", "Saturday", "Sunday"]
+      "literal_values": [
+        "beebeep",
+        "Saturday",
+        "Sunday"
+      ]
     }
   },
   {
     "task_name": "ChromeSearchBeijingWeatherTask",
     "group": "read_compute",
-    "apps": ["Chrome"],
+    "apps": [
+      "Chrome"
+    ],
     "intent": "Use Chrome to search for Beijing highest temperature today. ONLY give a integer number denoted Celsius degree.",
     "contract": {
-      "method_counts": {"commit": 0},
-      "method_min_counts": {"reach": 1, "read": 1},
-      "features": ["returns_value"],
-      "literal_substrings": ["today"]
+      "method_counts": {
+        "commit": 0
+      },
+      "method_min_counts": {
+        "reach": 1,
+        "read": 1
+      },
+      "features": [
+        "returns_value"
+      ],
+      "literal_substrings": [
+        "today"
+      ]
     }
   },
   {
     "task_name": "CheckCartPriceTask",
     "group": "read_compute",
-    "apps": ["Taodian"],
+    "apps": [
+      "Taodian"
+    ],
     "intent": "Find the three most expensive items in the TaoDian app shopping cart and calculate their total price. Respond only with an integer representing the total price, with no other text.",
     "contract": {
-      "method_counts": {"commit": 0},
-      "required_any_calls": [[
-        {"method": "query", "entity": "Cart", "fields_include": ["price"], "field_types_include": {"price": "money"}, "coverage": "complete"},
-        {"method": "query", "entity": "ShoppingCart", "fields_include": ["price"], "field_types_include": {"price": "money"}, "coverage": "complete"}
-      ]],
-      "features": ["returns_value", "returns_integer", "sorts", "sums"],
-      "slice_stops": [3]
+      "method_counts": {
+        "commit": 0
+      },
+      "required_any_calls": [
+        [
+          {
+            "method": "query",
+            "entity": "Cart",
+            "coverage": "complete"
+          },
+          {
+            "method": "query",
+            "entity": "ShoppingCart",
+            "coverage": "complete"
+          }
+        ],
+        [
+          {
+            "method": "acquire",
+            "fields_include": [
+              "price"
+            ],
+            "field_types_include": {
+              "price": "money"
+            },
+            "coverage": "complete"
+          },
+          {
+            "method": "acquire",
+            "fields_include": [
+              "price"
+            ],
+            "field_types_include": {
+              "price": "money"
+            },
+            "coverage": "complete"
+          }
+        ]
+      ],
+      "features": [
+        "returns_value",
+        "returns_integer",
+        "sorts",
+        "sums"
+      ],
+      "slice_stops": [
+        3
+      ]
     }
   },
   {
     "task_name": "RecentTotalExpenseTask",
     "group": "read_compute",
-    "apps": ["Taodian"],
+    "apps": [
+      "Taodian"
+    ],
     "intent": "请帮我算一下在淘店上最近1个月我总共花了多少钱。请只回答一个整数, 不要返回任何其他文本.",
     "contract": {
-      "method_counts": {"commit": 0},
-      "required_any_calls": [[
-        {"method": "query", "entity": "Orders", "fields_include": ["amount"], "field_types_include": {"amount": "money"}, "filters_include": {"order_time": "近1个月"}, "coverage": "complete"}
-      ]],
-      "features": ["returns_value", "returns_integer", "sums"],
-      "literal_values": ["近1个月"]
+      "method_counts": {
+        "commit": 0
+      },
+      "required_any_calls": [
+        [
+          {
+            "method": "query",
+            "entity": "Orders",
+            "filters_include": {
+              "order_time": "近1个月"
+            },
+            "coverage": "complete"
+          }
+        ],
+        [
+          {
+            "method": "acquire",
+            "fields_include": [
+              "amount"
+            ],
+            "field_types_include": {
+              "amount": "money"
+            },
+            "coverage": "complete"
+          }
+        ]
+      ],
+      "features": [
+        "returns_value",
+        "returns_integer",
+        "sums"
+      ],
+      "literal_values": [
+        "近1个月"
+      ]
     }
   },
   {
     "task_name": "SumFileLinesTask",
     "group": "read_compute",
-    "apps": ["Files"],
+    "apps": [
+      "Files"
+    ],
     "intent": "Check the all files inside the earliest zip file from July in the Downloads directory and count how many lines it contains in total. Respond only with an integer representing the line count, with no other text.",
     "contract": {
-      "method_counts": {"commit": 1},
-      "method_min_counts": {"query": 3, "read": 1},
+      "method_counts": {
+        "commit": 1
+      },
+      "method_min_counts": {
+        "query": 3,
+        "read": 1,
+        "acquire": 3
+      },
       "ordered_calls": [
-        {"method": "query", "entity": "DownloadFiles", "fields_include": ["name", "modified_at"], "field_types_include": {"modified_at": "datetime"}, "filter_keys_exact": [], "coverage": "complete"},
-        {"method": "query", "entity": "ArchiveEntries", "fields_include": ["name"], "coverage": "complete"},
-        {"method": "commit", "target_mode": "present", "values_include": {"selection": "all", "destination": "Downloads"}},
-        {"method": "query", "entity": "DownloadFiles", "fields_include": ["name"], "coverage": "complete"},
-        {"method": "read", "target_mode": "present", "fields_include": ["content"], "inside_loop": true}
+        {
+          "method": "query",
+          "entity": "DownloadFiles",
+          "filter_keys_exact": [],
+          "coverage": "complete"
+        },
+        {
+          "method": "acquire",
+          "fields_include": [
+            "name",
+            "modified_at"
+          ],
+          "field_types_include": {
+            "modified_at": "datetime"
+          },
+          "coverage": "complete"
+        },
+        {
+          "method": "query",
+          "entity": "ArchiveEntries",
+          "coverage": "complete"
+        },
+        {
+          "method": "acquire",
+          "fields_include": [
+            "name"
+          ],
+          "coverage": "complete"
+        },
+        {
+          "method": "commit",
+          "target_mode": "present",
+          "values_include": {
+            "selection": "all",
+            "destination": "Downloads"
+          }
+        },
+        {
+          "method": "query",
+          "entity": "DownloadFiles",
+          "coverage": "complete"
+        },
+        {
+          "method": "acquire",
+          "fields_include": [
+            "name"
+          ],
+          "coverage": "complete"
+        },
+        {
+          "method": "read",
+          "target_mode": "present",
+          "fields_include": [
+            "content"
+          ],
+          "inside_loop": true
+        }
       ],
-      "features": ["returns_value", "returns_integer", "sorts", "sums"],
-      "forbidden_literals": [2026]
+      "features": [
+        "returns_value",
+        "returns_integer",
+        "sorts",
+        "sums"
+      ],
+      "forbidden_literals": [
+        2026
+      ]
     }
   },
   {
     "task_name": "MastodonConditionalFavoTask",
     "group": "conditional_collection_write",
-    "apps": ["Mastodon"],
+    "apps": [
+      "Mastodon"
+    ],
     "intent": "favorite all toots tagged “#dogs” on Mastodon, but do not add them to my favorite list if they are already in my favorite list or bookmark list.",
     "contract": {
-      "method_counts": {"commit": 1},
+      "method_counts": {
+        "commit": 1
+      },
       "required_calls": [
-        {"method": "commit", "target_mode": "present", "inside_loop": true, "values_include": {"favorited": true}}
+        {
+          "method": "commit",
+          "target_mode": "present",
+          "inside_loop": true,
+          "values_include": {
+            "favorited": true
+          }
+        }
       ],
       "ordered_call_alternatives": [
         [
-          {"method": "query", "entity": "SavedFavorites", "fields_include": ["author_handle", "content"]},
-          {"method": "query", "entity": "SavedBookmarks", "fields_include": ["author_handle", "content"]},
-          {"method": "query", "entity": "TaggedToots", "fields_include": ["author_handle", "content"], "filter_keys_exact": ["tag"], "filters_include": {"tag": "#dogs"}},
-          {"method": "reach", "target_mode": "present", "inside_loop": true, "success_include": {"entity": "TootDetail"}},
-          {"method": "commit", "target_mode": "present", "inside_loop": true}
+          {
+            "method": "query",
+            "entity": "SavedFavorites"
+          },
+          {
+            "method": "acquire",
+            "fields_include": [
+              "author_handle",
+              "content"
+            ]
+          },
+          {
+            "method": "query",
+            "entity": "SavedBookmarks"
+          },
+          {
+            "method": "acquire",
+            "fields_include": [
+              "author_handle",
+              "content"
+            ]
+          },
+          {
+            "method": "query",
+            "entity": "TaggedToots",
+            "filter_keys_exact": [
+              "tag"
+            ],
+            "filters_include": {
+              "tag": "#dogs"
+            }
+          },
+          {
+            "method": "acquire",
+            "fields_include": [
+              "author_handle",
+              "content"
+            ]
+          },
+          {
+            "method": "reach",
+            "target_mode": "present",
+            "inside_loop": true,
+            "success_include": {
+              "entity": "TootDetail"
+            }
+          },
+          {
+            "method": "commit",
+            "target_mode": "present",
+            "inside_loop": true
+          }
         ],
         [
-          {"method": "query", "entity": "TaggedToots", "fields_include": ["author_handle", "content"], "filter_keys_exact": ["tag"], "filters_include": {"tag": "#dogs"}},
-          {"method": "query", "entity": "SavedFavorites", "fields_include": ["author_handle", "content"]},
-          {"method": "query", "entity": "SavedBookmarks", "fields_include": ["author_handle", "content"]},
-          {"method": "reach", "target_mode": "present", "inside_loop": true, "success_include": {"entity": "TootDetail", "tag": "#dogs"}},
-          {"method": "commit", "target_mode": "present", "inside_loop": true}
+          {
+            "method": "query",
+            "entity": "TaggedToots",
+            "filter_keys_exact": [
+              "tag"
+            ],
+            "filters_include": {
+              "tag": "#dogs"
+            }
+          },
+          {
+            "method": "acquire",
+            "fields_include": [
+              "author_handle",
+              "content"
+            ]
+          },
+          {
+            "method": "query",
+            "entity": "SavedFavorites"
+          },
+          {
+            "method": "acquire",
+            "fields_include": [
+              "author_handle",
+              "content"
+            ]
+          },
+          {
+            "method": "query",
+            "entity": "SavedBookmarks"
+          },
+          {
+            "method": "acquire",
+            "fields_include": [
+              "author_handle",
+              "content"
+            ]
+          },
+          {
+            "method": "reach",
+            "target_mode": "present",
+            "inside_loop": true,
+            "success_include": {
+              "entity": "TootDetail",
+              "tag": "#dogs"
+            }
+          },
+          {
+            "method": "commit",
+            "target_mode": "present",
+            "inside_loop": true
+          }
         ]
       ],
-      "literal_values": ["#dogs", "SavedFavorites", "SavedBookmarks"]
+      "literal_values": [
+        "#dogs",
+        "SavedFavorites",
+        "SavedBookmarks"
+      ]
     }
   },
   {
     "task_name": "ScheduleLunchViaSmsTask",
     "group": "cross_app_source_write",
-    "apps": ["Calendar", "Messages"],
+    "apps": [
+      "Calendar",
+      "Messages"
+    ],
     "use_raw_intent": true,
     "intent": "I've received a lunch invitation via text message; please reply \"OK\" and schedule a corresponding event on my calendar.",
     "contract": {
-      "method_counts": {"commit": 2},
-      "method_min_counts": {"command": 1, "reach": 2, "query": 1, "read": 1},
+      "method_counts": {
+        "commit": 2
+      },
+      "method_min_counts": {
+        "command": 1,
+        "reach": 2,
+        "query": 1,
+        "read": 1,
+        "acquire": 1
+      },
       "required_calls": [
-        {"method": "reach", "success_include": {"entity": "Messages"}},
-        {"method": "read", "target_mode": "present", "fields_include": ["body"]},
-        {"method": "reach", "target_mode": "present", "success_include": {"entity": "Message"}}
+        {
+          "method": "reach",
+          "success_include": {
+            "entity": "Messages"
+          }
+        },
+        {
+          "method": "read",
+          "target_mode": "present",
+          "fields_include": [
+            "body"
+          ]
+        },
+        {
+          "method": "reach",
+          "target_mode": "present",
+          "success_include": {
+            "entity": "Message"
+          }
+        }
       ],
       "ordered_calls": [
-        {"method": "query", "entity": "Messages", "fields_include": ["id"], "filter_keys_exact": ["body"]},
-        {"method": "commit", "target_mode": "present", "values_include": {"reply": "OK"}},
-        {"method": "commit", "target_mode": "none", "value_keys_exact": []}
+        {
+          "method": "query",
+          "entity": "Messages",
+          "filter_keys_exact": [
+            "body"
+          ]
+        },
+        {
+          "method": "acquire",
+          "fields_include": [
+            "id"
+          ]
+        },
+        {
+          "method": "commit",
+          "target_mode": "present",
+          "values_include": {
+            "reply": "OK"
+          }
+        },
+        {
+          "method": "commit",
+          "target_mode": "none",
+          "value_keys_exact": []
+        }
       ],
       "features": [
         "no_return_value",
         "verifies_semantic_match",
         "read_data_flows_to_commit_goal"
       ],
-      "forbidden_features": ["asserts_exactly_one"],
-      "literal_values": ["Calendar", "Messages", "OK"]
+      "forbidden_features": [
+        "asserts_exactly_one"
+      ],
+      "literal_values": [
+        "Calendar",
+        "Messages",
+        "OK"
+      ]
+    }
+  },
+  {
+    "task_name": "ScheduleCoffeeTimeViaSmsTask",
+    "group": "cross_app_conditional_source_write",
+    "apps": [
+      "Calendar",
+      "Messages"
+    ],
+    "use_raw_intent": true,
+    "intent": "I've received a coffee time invitation via text message; please check the calendar.If I am available in this time slot, reply \"OK\" and schedule a corresponding event on my calendar.Otherwise reply \"Not available in this time slot\".",
+    "contract": {
+      "method_min_counts": {
+        "command": 2,
+        "commit": 2,
+        "reach": 3,
+        "query": 2,
+        "read": 1,
+        "acquire": 2
+      },
+      "required_calls": [
+        {
+          "method": "reach",
+          "success_include": {
+            "entity": "Messages"
+          }
+        },
+        {
+          "method": "query",
+          "entity": "Messages",
+          "filter_keys_exact": [
+            "body"
+          ]
+        },
+        {
+          "method": "acquire",
+          "fields_include": [
+            "id"
+          ]
+        },
+        {
+          "method": "read",
+          "target_mode": "present",
+          "fields_include": [
+            "body"
+          ],
+          "inside_loop": true
+        },
+        {
+          "method": "reach",
+          "success_include": {
+            "entity": "Event"
+          },
+          "success_keys": [
+            "source_text"
+          ]
+        },
+        {
+          "method": "query",
+          "entity": "Event",
+          "coverage": "complete"
+        },
+        {
+          "method": "acquire",
+          "fields_include": [
+            "start_ts",
+            "end_ts"
+          ],
+          "coverage": "complete"
+        },
+        {
+          "method": "reach",
+          "target_mode": "present",
+          "success_include": {
+            "entity": "Message"
+          }
+        },
+        {
+          "method": "commit",
+          "target_mode": "present",
+          "values_include": {
+            "reply": "OK"
+          }
+        },
+        {
+          "method": "commit",
+          "target_mode": "present",
+          "values_include": {
+            "reply": "Not available in this time slot"
+          }
+        },
+        {
+          "method": "commit",
+          "target_mode": "none",
+          "value_keys_exact": []
+        }
+      ],
+      "ordered_calls": [
+        {
+          "method": "query",
+          "entity": "Messages",
+          "filter_keys_exact": [
+            "body"
+          ]
+        },
+        {
+          "method": "acquire",
+          "fields_include": [
+            "id"
+          ]
+        },
+        {
+          "method": "read",
+          "target_mode": "present",
+          "fields_include": [
+            "body"
+          ],
+          "inside_loop": true
+        },
+        {
+          "method": "query",
+          "entity": "Event",
+          "coverage": "complete"
+        },
+        {
+          "method": "acquire",
+          "fields_include": [
+            "start_ts",
+            "end_ts"
+          ],
+          "coverage": "complete"
+        }
+      ],
+      "features": [
+        "no_return_value",
+        "verifies_semantic_match",
+        "read_data_flows_to_commit_goal"
+      ],
+      "forbidden_features": [
+        "asserts_exactly_one"
+      ],
+      "literal_values": [
+        "Calendar",
+        "Messages",
+        "OK",
+        "Not available in this time slot"
+      ]
     }
   }
 ]

@@ -67,10 +67,12 @@ GROUP_ALIASES = {
 DEFAULT_SITE = "shopping_admin"
 BASELINE_FILE = Path(__file__).with_name("baseline_qwen37_tokenplan_20260805.json")
 CTX_POSITIONS = {
-    "reach": {"success": 1, "target": 2},
-    "query": {"entity": 1, "fields": 2, "filters": 3},
-    "read": {"target": 1, "fields": 2},
-    "commit": {"target": 1, "values": 2},
+    "reach": {"state": 0, "goal": 1, "success": 2, "target": 3},
+    "query": {"state": 0, "entity": 1, "filters": 2, "coverage": 3},
+    "acquire": {"scope": 0, "fields": 1, "coverage": 2},
+    "read": {"state": 0, "target": 1, "fields": 2},
+    "commit": {"state": 0, "goal": 1, "target": 2, "values": 3},
+    "command": {"state": 0, "capability": 1},
 }
 _UNRESOLVED = object()
 
@@ -247,8 +249,9 @@ def _call_records(tree: ast.AST) -> list[dict[str, Any]]:
             "field_types": field_types,
             "coverage": (
                 _literal(_argument(call, "coverage"), names)
-                if method == "query" and _argument(call, "coverage") is not None
-                else "complete" if method == "query" else None
+                if method in {"query", "acquire"}
+                and _argument(call, "coverage") is not None
+                else "complete" if method in {"query", "acquire"} else None
             ),
             "filters": _mapping_shape(_argument(call, "filters"), names),
             "values": _mapping_shape(_argument(call, "values"), names),
