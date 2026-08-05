@@ -330,10 +330,18 @@ class _SafetyVisitor(ast.NodeVisitor):
         if method != "command":
             unexpected = sorted(keyword_names - set(positional_names))
             if unexpected:
+                message = f"ctx.{method} has unexpected arguments {unexpected}"
+                if method == "reach" and "filters" in unexpected:
+                    message += (
+                        "; ctx.reach has no filters parameter. Delete it and put every row "
+                        "membership condition in the following ctx.query(filters=...). If the "
+                        "same literal is also a required observable route state, copy it as a "
+                        "top-level key in reach.success"
+                    )
                 self.diagnostics.append(_diag(
                     node,
                     "CTX_SIGNATURE",
-                    f"ctx.{method} has unexpected arguments {unexpected}",
+                    message,
                 ))
         if method in {"reach", "commit"}:
             self._check_world_contract(node, method)
@@ -444,6 +452,19 @@ class _SafetyVisitor(ast.NodeVisitor):
                 node,
                 "COMMIT_VALUES_REQUIRED",
                 "ctx.commit requires a values dictionary",
+            ))
+        target = keywords.get("target")
+        if (
+            method == "commit"
+            and isinstance(values, ast.Dict)
+            and not values.keys
+            and target is not None
+            and not isinstance(target, ast.Constant)
+        ):
+            self.diagnostics.append(_diag(
+                values,
+                "TARGET_COMMIT_VALUES_REQUIRED",
+                "a target-bound commit must declare at least one business value to change",
             ))
 
 def _literal_value(node: ast.AST | None) -> Any:
@@ -660,7 +681,36 @@ def _ctx_state_contract_diagnostics(
                 isinstance(value, ast.Subscript)
                 and _same_expression(value.value, target)
                 and isinstance(value.slice, ast.Constant)
-                and value.slice.value == field
+                and isinstance(value.slice.value, str)
+                and _semantic_key(value.slice.value) == _semantic_key(field)
+            )
+
+        def read_detail_field(value: ast.AST, field: str) -> bool:
+            if not (
+                isinstance(value, ast.Subscript)
+                and isinstance(value.value, ast.Name)
+                and isinstance(value.slice, ast.Constant)
+                and isinstance(value.slice.value, str)
+                and _semantic_key(value.slice.value) == _semantic_key(field)
+            ):
+                return False
+            binding = max(
+                (
+                    item for item in assignments.get(value.value.id, [])
+                    if item[0].lineno < reach[0]
+                    and dominates(item[0], reach[3])
+                ),
+                key=lambda item: item[0].lineno,
+                default=None,
+            )
+            read = binding[1] if binding is not None else None
+            return (
+                isinstance(read, ast.Call)
+                and _ctx_method(read) == "read"
+                and _same_expression(_call_argument(read, "target", 0), target)
+                and _semantic_key(field) in {
+                    _semantic_key(item) for item in (_literal_fields(read) or [])
+                }
             )
 
         for key, value in zip(reach[3].keys, reach[3].values):
@@ -671,6 +721,8 @@ def _ctx_state_contract_diagnostics(
             ):
                 continue
             if direct_field(value, key.value):
+                return True
+            if read_detail_field(value, key.value):
                 return True
             if isinstance(value, ast.Name):
                 binding = max(
@@ -683,7 +735,9 @@ def _ctx_state_contract_diagnostics(
                     default=None,
                 )
                 if binding is not None and binding[1] is not None:
-                    if direct_field(binding[1], key.value):
+                    if direct_field(binding[1], key.value) or read_detail_field(
+                        binding[1], key.value
+                    ):
                         return True
             if isinstance(target, ast.Dict):
                 for target_key, target_value in zip(target.keys, target.values):
@@ -729,6 +783,53 @@ def _ctx_state_contract_diagnostics(
             if target is None or (
                 isinstance(target, ast.Constant) and target.value is None
             ):
+                reach = active_reach(node)
+                latest_data = max(
+                    (
+                        call
+                        for call in ast.walk(function)
+                        if isinstance(call, ast.Call)
+                        and _ctx_method(call) in {"query", "read"}
+                        and call.lineno < node.lineno
+                        and dominates(call, node)
+                    ),
+                    key=lambda call: call.lineno,
+                    default=None,
+                )
+                if reach is not None and (
+                    latest_data is None or reach[0] > latest_data.lineno
+                ):
+                    success_keys = {
+                        _semantic_key(key.value)
+                        for key in reach[3].keys
+                        if isinstance(key, ast.Constant)
+                        and isinstance(key.value, str)
+                        and key.value not in {"entity", "fields"}
+                    }
+                    identity_keys = {
+                        _semantic_key(field_name) for field_name in IDENTITY_FIELDS
+                    }
+                    if success_keys & identity_keys:
+                        diagnostics.append(_diag(
+                            node,
+                            "COMMIT_TARGET_REQUIRED",
+                            (
+                                "the preceding reach identifies an existing record, but this "
+                                "commit omits its target. Query and project that record identity, "
+                                "pass the row to a target-bound reach, then pass the same row to "
+                                "ctx.commit(target=...)"
+                            ),
+                        ))
+                    else:
+                        diagnostics.append(_diag(
+                            node,
+                            "DIRECT_COMMIT_REQUIRED",
+                            (
+                                "an untargeted commit owns its destination UI; emit the commit "
+                                "directly and remove every preparatory reach for its creation "
+                                "form, new record, or setting"
+                            ),
+                        ))
                 continue
             reach = active_reach(node)
             active_target = (
@@ -737,15 +838,18 @@ def _ctx_state_contract_diagnostics(
                 else None
             )
             if not _same_expression(active_target, target):
+                target_source = ast.unparse(target)
                 diagnostics.append(_diag(
                     node,
                     "COMMIT_TARGET_UI_REQUIRED",
                     (
-                        "targeted ctx.commit requires "
-                        "ctx.reach(..., target=<same target expression>, "
-                        "success={<identity field>: <same target>[<field>]}) "
-                        "after selection and inside the commit loop; do not nest "
-                        "the target under success"
+                        f"the current code has no target-bound reach for {target_source!r}. "
+                        "Immediately before this commit, insert "
+                        f"ctx.reach(..., target={target_source}, "
+                        f"success={{<identity field>: {target_source}[<field>]}}) "
+                        "after that target is selected; for a multi-record mutation, "
+                        "put the reach inside the same loop; do not nest the target "
+                        "under success"
                     ),
                 ))
             elif reach is not None and not declares_target_identity(reach, target):
@@ -754,8 +858,9 @@ def _ctx_state_contract_diagnostics(
                     "TARGET_REACH_IDENTITY_REQUIRED",
                     (
                         "target-bound ctx.reach success must bind at least one "
-                        "top-level identity as '<field>': target['<field>']; "
-                        "do not nest the target under success"
+                        "projected identity with the same key and subscript spelling, for example "
+                        "'name': target['name']; 'id': target['name'] is not an identity binding. "
+                        "Do not nest the target under success"
                     ),
                 ))
             continue
@@ -784,17 +889,66 @@ def _ctx_state_contract_diagnostics(
                         f"the active ctx.reach entity {reach[1]!r}"
                     ),
                 ))
+            if method == "query" and any(
+                isinstance(key, ast.Constant) and key.value == "filters"
+                for key in reach[3].keys
+            ):
+                diagnostics.append(_diag(
+                    node,
+                    "QUERY_FILTERS_IN_REACH",
+                    (
+                        "ctx.reach success.filters cannot scope query rows; remove that nested "
+                        "mapping and put every source-supported row condition in this "
+                        "ctx.query filters mapping"
+                    ),
+                ))
             if method == "read":
                 target = _call_argument(node, "target", 0)
                 direct_read = target is None or (
                     isinstance(target, ast.Constant) and target.value is None
                 )
                 read_fields = _literal_fields(node)
+                success_dimensions = {
+                    _semantic_key(key.value)
+                    for key, value in zip(reach[3].keys, reach[3].values)
+                    if isinstance(key, ast.Constant)
+                    and isinstance(key.value, str)
+                    and key.value not in {"entity", "fields"}
+                    # Value may be a non-hashable literal (list/dict); only string
+                    # type-tags are projection annotations, not success dimensions.
+                    and not (
+                        isinstance(_literal_value(value), str)
+                        and _literal_value(value) in {
+                            "text", "number", "money", "datetime", "boolean",
+                        }
+                    )
+                }
+                redundant_dimensions = (
+                    [
+                        field_name
+                        for field_name in read_fields
+                        if _semantic_key(field_name) in success_dimensions
+                    ]
+                    if direct_read and read_fields is not None
+                    else []
+                )
+                if redundant_dimensions:
+                    diagnostics.append(_diag(
+                        node,
+                        "DIRECT_READ_SUCCESS_DIMENSION",
+                        (
+                            f"direct ctx.read fields {redundant_dimensions!r} are already "
+                            "top-level observable dimensions of the active ctx.reach success; "
+                            "they are not readable result fields. Remove the redundant read and "
+                            "do not return its value"
+                        ),
+                    ))
                 missing_fields = (
                     [
                         field_name
                         for field_name in read_fields
                         if _semantic_key(field_name) not in reach[2]
+                        and field_name not in redundant_dimensions
                     ]
                     if direct_read and read_fields is not None
                     else []
@@ -1083,6 +1237,118 @@ def _ctx_effect_lineage_diagnostics(
     return diagnostics
 
 
+def _schema_free_source_diagnostics(function: ast.FunctionDef) -> list[CodeDiagnostic]:
+    """Keep free-form source interpretation inside a schema-free destination commit."""
+    derived: set[str] = set()
+    for assignment in sorted(
+        (node for node in ast.walk(function) if isinstance(node, ast.Assign)),
+        key=lambda node: node.lineno,
+    ):
+        targets = assignment.targets[0]
+        pairs = zip(targets.elts, assignment.value.elts) if (
+            len(assignment.targets) == 1
+            and isinstance(targets, (ast.Tuple, ast.List))
+            and isinstance(assignment.value, (ast.Tuple, ast.List))
+        ) else ((targets, assignment.value),)
+        for target, value in pairs:
+            if not isinstance(target, ast.Name):
+                continue
+            direct_read = isinstance(value, ast.Call) and _ctx_method(value) == "read"
+            direct_alias = isinstance(value, (ast.Name, ast.Subscript)) and any(
+                isinstance(item, ast.Name) and item.id in derived for item in ast.walk(value)
+            )
+            if direct_read or direct_alias:
+                derived.add(target.id)
+
+    for call in ast.walk(function):
+        if not isinstance(call, ast.Call) or _ctx_method(call) != "commit":
+            continue
+        target = _call_argument(call, "target", 1)
+        values = _call_argument(call, "values", 2)
+        if not (
+            (target is None or isinstance(target, ast.Constant) and target.value is None)
+            and isinstance(values, ast.Dict)
+            and not values.keys
+            and derived
+        ):
+            continue
+        goal = _call_argument(call, "goal", 0)
+        if not any(
+            isinstance(item, ast.Name) and item.id in derived
+            for item in ast.walk(goal) if goal is not None
+        ):
+            return [_diag(
+                call,
+                "SCHEMA_FREE_SOURCE_REQUIRED",
+                "schema-free commit goal must directly consume the read-derived source value",
+            )]
+    return []
+
+
+def _target_route_lineage_diagnostics(function: ast.FunctionDef) -> list[CodeDiagnostic]:
+    """Keep literal source routes when query rows become targets after another reach."""
+    reaches = _reach_calls(function)
+    query_routes: dict[str, tuple[int, dict[str, Any]]] = {}
+    for assignment in ast.walk(function):
+        if not (
+            isinstance(assignment, ast.Assign)
+            and len(assignment.targets) == 1
+            and isinstance(assignment.targets[0], ast.Name)
+            and isinstance(assignment.value, ast.Call)
+            and _ctx_method(assignment.value) == "query"
+        ):
+            continue
+        source = max(
+            (reach for reach in reaches if reach[0] < assignment.lineno),
+            key=lambda reach: reach[0],
+            default=None,
+        )
+        filters = _literal_value(_call_argument(assignment.value, "filters", 2))
+        success = _literal_value(source[3]) if source is not None else None
+        if isinstance(filters, dict) and isinstance(success, dict):
+            route = {key: value for key, value in filters.items() if success.get(key) == value}
+            if route:
+                query_routes[assignment.targets[0].id] = (assignment.lineno, route)
+
+    diagnostics: list[CodeDiagnostic] = []
+    for loop in ast.walk(function):
+        if not (
+            isinstance(loop, (ast.For, ast.AsyncFor))
+            and isinstance(loop.target, ast.Name)
+            and isinstance(loop.iter, ast.Name)
+            and loop.iter.id in query_routes
+        ):
+            continue
+        query_line, route = query_routes[loop.iter.id]
+        for call in ast.walk(loop):
+            target = _call_argument(call, "target", 2) if isinstance(call, ast.Call) else None
+            if not (
+                isinstance(call, ast.Call)
+                and _ctx_method(call) == "reach"
+                and isinstance(target, ast.Name)
+                and target.id == loop.target.id
+                and any(query_line < reach[0] < call.lineno for reach in reaches)
+            ):
+                continue
+            success_node = _call_argument(call, "success", 1)
+            success = {
+                key.value: _literal_value(value)
+                for key, value in zip(success_node.keys, success_node.values)
+                if isinstance(key, ast.Constant) and isinstance(key.value, str)
+            } if isinstance(success_node, ast.Dict) else {}
+            missing = {
+                key: value for key, value in route.items()
+                if success.get(key) != value
+            }
+            if missing:
+                diagnostics.append(_diag(
+                    call,
+                    "TARGET_REACH_ROUTE_REQUIRED",
+                    f"target reach must restore source route identities {missing!r}",
+                ))
+    return diagnostics
+
+
 def repair_direct_read_fields(source: str) -> str | None:
     """Complete literal reach field contracts from dependent direct reads.
 
@@ -1148,9 +1414,33 @@ def repair_direct_read_fields(source: str) -> str | None:
             for item in fields_node.elts
             if isinstance(item, ast.Constant) and isinstance(item.value, str)
         }
+        success_dimensions = {
+            _semantic_key(key.value)
+            for key, value in zip(success.keys, success.values)
+            if isinstance(key, ast.Constant)
+            and isinstance(key.value, str)
+            and key.value not in {"entity", "fields"}
+            and _literal_value(value) not in {
+                "text", "number", "money", "datetime", "boolean",
+            }
+        }
         for field_name in fields:
             key = _semantic_key(field_name)
-            if key in existing:
+            for index in reversed(range(len(success.keys))):
+                success_key = success.keys[index]
+                success_value = success.values[index]
+                if (
+                    isinstance(success_key, ast.Constant)
+                    and isinstance(success_key.value, str)
+                    and _semantic_key(success_key.value) == key
+                    and _literal_value(success_value) in {
+                        "text", "number", "money", "datetime", "boolean",
+                    }
+                ):
+                    del success.keys[index]
+                    del success.values[index]
+                    changed = True
+            if key in existing or key in success_dimensions:
                 continue
             fields_node.elts.append(ast.Constant(value=field_name))
             existing.add(key)
@@ -1179,7 +1469,8 @@ def validate_code(source: str) -> list[CodeDiagnostic]:
     ):
         return [CodeDiagnostic(
             "ENTRYPOINT",
-            "source must contain only safe imports followed by exactly one def run(ctx)",
+            "source must contain safe imports and exactly one def run(ctx); delete every helper "
+            "function and keep source-derived interpretation inside the destination commit",
         )]
     function = functions[0]
     args = function.args
@@ -1196,6 +1487,8 @@ def validate_code(source: str) -> list[CodeDiagnostic]:
     visitor.diagnostics.extend(_date_constructor_diagnostics(function))
     visitor.diagnostics.extend(_undefined_name_diagnostics(source, function))
     visitor.diagnostics.extend(_ctx_state_contract_diagnostics(function))
+    visitor.diagnostics.extend(_schema_free_source_diagnostics(function))
+    visitor.diagnostics.extend(_target_route_lineage_diagnostics(function))
     visitor.diagnostics.extend(_ctx_effect_lineage_diagnostics(function))
     visitor.diagnostics.extend(validate_projection_contract(source))
     return visitor.diagnostics
@@ -1476,7 +1769,10 @@ def build_probe_fixture(source: str) -> FixtureSpec:
     direct_read_fields = {
         field
         for call in read_calls
-        if _call_argument(call, "target", 0) is None
+        if (
+            (target := _call_argument(call, "target", 0)) is None
+            or isinstance(target, ast.Constant) and target.value is None
+        )
         for field in (_literal_fields(call) or [])
     }
     if direct_read_fields:
@@ -1661,7 +1957,9 @@ class _ProjectionVisitor(ast.NodeVisitor):
             "PROJECTED_FIELD_UNAVAILABLE",
             (
                 f"{variable!r} accesses field {field_name!r}, but its projected fields are "
-                f"{sorted(available)!r}"
+                f"{sorted(available)!r}. If the selected interface declares {field_name!r} as a "
+                "query field, add it to the originating ctx.query fields; if ctx.read produced "
+                "this detail field, preserve and access the read result instead of the query row"
             ),
         ))
 
@@ -1765,7 +2063,8 @@ class _ProjectionVisitor(ast.NodeVisitor):
                     (
                         f"record from {node.value.value.id!r} accesses field "
                         f"{node.slice.value!r}, but its projected fields are "
-                        f"{sorted(available)!r}"
+                        f"{sorted(available)!r}; add the field to the originating query projection "
+                        "when the selected interface declares it"
                     ),
                 ))
         self.generic_visit(node)
@@ -1972,6 +2271,14 @@ class _FixtureContext:
             ],
             field_types,
         )
+        # Typed normalization can change the complete dictionary-based target key (for
+        # example ``"probe-1"`` to ``-1`` for a numeric value). Preserve its alias to the
+        # raw fixture row so a subsequent target-bound read exercises program dataflow instead
+        # of failing because the synthetic fixture changed representation.
+        for raw_row, projected_row in zip(rows, projected):
+            raw_key = _target_key(raw_row)
+            projected_key = _target_key(projected_row)
+            self.read_aliases[projected_key] = self.read_aliases.get(raw_key, raw_key)
         self.trace.append(TraceEvent(
             "query",
             (entity,),

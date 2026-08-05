@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import ast
 import json
 import re
 import time
@@ -16,6 +17,7 @@ from gui_agent.core.llm.messages import assemble_messages
 from gui_agent.prompts import load_prompt_text
 
 from .models import (
+    CodeDiagnostic,
     CodingAttempt,
     CodingEvent,
     CodingPlan,
@@ -53,58 +55,6 @@ def _extract_source(content: Any) -> str:
     return (match.group(1) if match else text).strip()
 
 
-def _resolution_block(resolution: Any) -> ContextBlock | None:
-    entities = getattr(resolution, "entities", None)
-    if not entities:
-        return None
-    lines = []
-    for entity in entities:
-        raw = entity.model_dump() if hasattr(entity, "model_dump") else vars(entity)
-        role = raw.get("role")
-        mention = str(raw.get("mention") or "")
-        search_key = str(raw.get("search_key") or "")
-        if role == "lookup":
-            if search_key and search_key != mention:
-                instruction = (
-                    f"REQUIRED PROGRAM BRANCH: strictly query the full mention {mention!r}; "
-                    f"only if that result is "
-                    f"empty, strictly query {search_key!r} on the same source field"
-                )
-            else:
-                instruction = f"strictly query {mention!r} once"
-            cardinality = str(raw.get("cardinality") or "single")
-            selector = str(raw.get("selector") or "")
-            suffix = ""
-            if cardinality == "set":
-                suffix = "; the mention denotes a set—preserve every qualifying member"
-                if selector:
-                    suffix += f" selected by {selector!r}"
-            lines.append(f"- LOOKUP: {instruction}{suffix}")
-        elif role in {"target_value", "qualifier_value", "collection_scope"}:
-            members = raw.get("value_members") or []
-            value = members if members else mention
-            lines.append(f"- {str(role).upper()}: {value!r}")
-    return ContextBlock(
-        id="runtime.intent_facts",
-        budget="required",
-        source_type="runtime_state",
-        source="router",
-        ttl="turn",
-        priority=20,
-        content=(
-            "## Required user facts\n"
-            + "\n".join(lines)
-            + "\nImplement every listed fact in executable code. A LOOKUP is a literal and "
-            "control-flow requirement, not a source entity; application knowledge determines its "
-            "authoritative source and field. A singular mention never implies that the source "
-            "query returns one row; ranking, aggregation, and collection coverage still come from "
-            "the raw goal. These facts supplement rather than replace the goal's operations and "
-            "qualifiers. TARGET_VALUE and QUALIFIER_VALUE go into the requested operation. When "
-            "there is no LOOKUP, do not invent a preflight query."
-        ),
-    )
-
-
 def _location_block(site: str, title: str, url: str) -> ContextBlock | None:
     if not any((site, title, url)):
         return None
@@ -116,6 +66,25 @@ def _location_block(site: str, title: str, url: str) -> ContextBlock | None:
         ttl="turn",
         priority=30,
         content=f"## Current location\nsite={site!r}\ntitle={title!r}\nurl={url!r}",
+    )
+
+
+def _semantic_supplement_block(supplement: str) -> ContextBlock | None:
+    if not supplement:
+        return None
+    return ContextBlock(
+        id="runtime.task.semantic_supplement",
+        budget="required",
+        source_type="runtime_state",
+        source="router",
+        ttl="task",
+        priority=21,
+        content=(
+            "## Semantic supplement\n"
+            f"{supplement}\n"
+            "This adds only implicit meaning. The original user task remains authoritative for "
+            "all explicit names, values, qualifiers, operations, and output requirements."
+        ),
     )
 
 
@@ -332,16 +301,56 @@ def _unstructured_visual_block() -> ContextBlock:
     )
 
 
+def _unstructured_visual_diagnostics(source: str) -> list[CodeDiagnostic]:
+    """Reject invented collections when the planner has no structured source schema."""
+    try:
+        tree = ast.parse(source)
+    except SyntaxError:
+        return []
+    query = next(
+        (
+            node
+            for node in ast.walk(tree)
+            if isinstance(node, ast.Call)
+            and isinstance(node.func, ast.Attribute)
+            and isinstance(node.func.value, ast.Name)
+            and node.func.value.id == "ctx"
+            and node.func.attr == "query"
+        ),
+        None,
+    )
+    if query is None:
+        return []
+    return [CodeDiagnostic(
+        "UNSTRUCTURED_QUERY_FORBIDDEN",
+        (
+            "no structured collection schema was supplied, so ctx.query would invent an entity "
+            "or fields. Replace the query with one result/view ctx.reach whose success.fields "
+            "declares the requested visible fields, then one typed direct ctx.read"
+        ),
+        query.lineno,
+        query.col_offset + 1,
+    )]
+
+
 def _evaluate_source(
     source: str,
     fixture: FixtureSpec | None,
     contract_fixture: FixtureSpec | None = None,
+    unstructured_visual: bool = False,
 ) -> CodingAttempt:
+    """Structural compile only: AST safety, contracts, dataflow, optional visual mode.
+
+    Task meaning (goal text / knowledge markdown) is never matched here. Business
+    shape belongs in eval contracts; generation guidance belongs in prompts.
+    """
     diagnostics = _diagnostics(
         source,
         fixture or contract_fixture,
         match_lookup_sources=fixture is None and contract_fixture is not None,
     )
+    if unstructured_visual:
+        diagnostics.extend(_unstructured_visual_diagnostics(source))
     run = execute_code(source, fixture or build_probe_fixture(source)) if not diagnostics else None
     if fixture is None and run is not None and not run.ok:
         final_error = run.error.strip().splitlines()[-1] if run.error.strip() else ""
@@ -375,8 +384,9 @@ def _attempt_executable(attempt: CodingAttempt) -> bool:
 def _regeneration_block(
     source: str,
     attempt: CodingAttempt,
+    known_issues: list[str] | None = None,
 ) -> ContextBlock:
-    issues = [
+    current_issues = [
         *(item.render() for item in attempt.diagnostics),
         *(
             [attempt.run.error]
@@ -384,6 +394,7 @@ def _regeneration_block(
             else []
         ),
     ]
+    issues = list(dict.fromkeys([*(known_issues or []), *current_issues]))
     if not issues:
         issues.append("The candidate failed deterministic validation.")
     return ContextBlock(
@@ -458,6 +469,9 @@ def generate_code(
         if callable(getattr(llm, "bind", None))
         else llm
     )
+    semantic_supplement = str(
+        getattr(resolution, "semantic_supplement", "") or ""
+    ).strip()
     common_blocks: list[ContextBlock | None] = [
         task_goal_block(goal),
         file_reference_block(file_section),
@@ -469,10 +483,15 @@ def generate_code(
         if (
             fixture is None
             and observation_schema is None
-            and "## Required application interface facts" not in knowledge
+            and not knowledge.strip()
         )
         else None
     )
+    app_knowledge = knowledge_block("app_knowledge", knowledge)
+    system_blocks = [
+        app_knowledge,
+        _semantic_supplement_block(semantic_supplement),
+    ]
     blocks = [
         *common_blocks,
         (
@@ -488,11 +507,9 @@ def generate_code(
             if platform_contract
             else None
         ),
-        knowledge_block("app_knowledge", knowledge),
         _location_block(current_site, current_title, current_url),
         observation_schema,
         _fixture_schema_block(fixture),
-        _resolution_block(resolution),
         unstructured_visual,
     ]
 
@@ -506,6 +523,7 @@ def generate_code(
         response = generator.invoke(assemble_messages(
             _SYSTEM,
             None,
+            system_blocks=system_blocks,
             human_blocks=[*blocks, *(extra_blocks or [])],
             image_resize="none",
             label="orchestrator.coding.generate",
@@ -517,6 +535,7 @@ def generate_code(
             generated,
             fixture,
             contract_fixture,
+            unstructured_visual is not None,
         )
         attempt.input_tokens = input_tokens
         attempt.output_tokens = output_tokens
@@ -555,6 +574,7 @@ def generate_code(
             repaired_source,
             fixture,
             contract_fixture,
+            unstructured_visual is not None,
         )
         attempts.append(repaired)
         emit(
@@ -568,16 +588,26 @@ def generate_code(
     current = apply_direct_read_repair(initial) or initial
     if current is not initial:
         repair_status = "deterministic"
+    known_issues: list[str] = []
     for regeneration in range(1, _MAX_REGENERATIONS + 1):
         if _attempt_executable(current):
             break
+        current_issues = [
+            *(item.render() for item in current.diagnostics),
+            *(
+                [current.run.error]
+                if current.run is not None and not current.run.ok and current.run.error
+                else []
+            ),
+        ]
+        known_issues = list(dict.fromkeys([*known_issues, *current_issues]))
         current = generate(
             phase=(
                 "regenerated"
                 if regeneration == 1
                 else f"regenerated_{regeneration}"
             ),
-            extra_blocks=[_regeneration_block(current.source, current)],
+            extra_blocks=[_regeneration_block(current.source, current, known_issues)],
         )
         attempts.append(current)
         repair_status = "completed"
