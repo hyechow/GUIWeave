@@ -2478,6 +2478,23 @@ class _FixtureContext:
                 {value: canonical for value in _identity_values(state)}
             )
 
+    def _entity_rows(self, entity: str) -> list[dict[str, Any]]:
+        """Current rows for an entity, reflecting fixture mutations.
+
+        ``self.state`` is the mutable canonical store (commits write through it);
+        materialize each entity record's current values from it so a re-acquire
+        after a durable change sees the updated collection, not a frozen snapshot.
+        """
+        rows = _lookup_rows(self.fixture.lookups, entity) or []
+        materialized: list[dict[str, Any]] = []
+        for row in rows:
+            canonical = str(row.get("id") or row.get("ID") or "")
+            if canonical and canonical in self.state:
+                materialized.append(self.state[canonical])
+            else:
+                materialized.append(copy.deepcopy(row))
+        return materialized
+
     def query(
         self,
         state: CurrentUI,
@@ -2488,7 +2505,7 @@ class _FixtureContext:
     ) -> dict[str, Any]:
         state = require_current_ui(state, entity=entity)
         requested_filters = dict(json_value(dict(filters or {})))
-        rows = _lookup_rows(self.fixture.lookups, entity) or []
+        rows = self._entity_rows(entity)
         missing_filters = [
             name for name in requested_filters
             if rows and not any(_field_value(row, name)[0] for row in rows)
@@ -2519,7 +2536,8 @@ class _FixtureContext:
             },
             None,
         ))
-        # A reusable session handle; acquire materializes rows from it.
+        # A reusable session handle carrying its applied filters; acquire
+        # re-materializes rows from the live fixture state on each call.
         return {
             "kind": "resolved_collection",
             "entity": entity,
@@ -2530,7 +2548,7 @@ class _FixtureContext:
                 for field_name in row
             }),
             "projection": "rows",
-            "_fixture_rows": filtered,
+            "_fixture_filters": requested_filters,
         }
 
     def acquire(
@@ -2543,8 +2561,21 @@ class _FixtureContext:
         if not is_lookup_scope(scope):
             raise ValueError("ctx.acquire requires a scope returned by ctx.query")
         field_names, field_types = field_projection(fields)
-        rows = list(scope.get("_fixture_rows") or [])
         entity = str(scope.get("entity") or "")
+        # Re-materialize from the live fixture state and re-apply the scope's
+        # filters, so a durable change between acquires is reflected.
+        requested_filters = dict(scope.get("_fixture_filters") or {})
+        rows = [
+            row for row in self._entity_rows(entity)
+            if all(
+                _field_value(row, field_name)[0]
+                and _literal_filter_matches(
+                    _field_value(row, field_name)[1],
+                    expected,
+                )
+                for field_name, expected in requested_filters.items()
+            )
+        ]
         missing = [
             name for name in field_names
             if rows and not any(_field_value(row, name)[0] for row in rows)
