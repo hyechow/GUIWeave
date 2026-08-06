@@ -20,6 +20,7 @@ uv run python evals/android/<module>/test_<module>.py
 | target_verify | 1 | 动作后落点校验：截图+归一化落点+指令→on_target/actual_element。覆盖底部 tab 误判——回归点：红叉实际落在『闹钟』tab，却被 target_verify 幻觉成『世界时钟 tab』，触发 OffTarget replan（见 logs/.../android/20260611_085000 T2） |
 | loading | 4 | 分级加载感知：显式平台信号与高置信视觉端点直接裁决，稀疏非空帧和视觉/结构时序冲突才调用轻量 VLM。当前覆盖 Mastodon 中央 Logo splash（含 UIAutomator 已提前暴露后台内容的变体）、Android launcher 和已渲染 alarm picker，并输出准确率、VLM 路由率与平均兜底耗时。 |
 | acquire | 5 | 共享 cells→records 采集：空集合、单条记录、跨窗口 multi-cell feed、同构列表，以及 Mastodon 真机多窗口回放。LLM 只选记录锚点和字段 source refs，Runtime 负责原文复制、对齐、去重与机械验收。 |
+| action_feedback | 1 | 动作反馈链收敛：同一控件反复 off_target 必须改用 target_ref 而非无限视觉估点。固化 Mattermost 频道列表 '+' 连续 ~24 turn 点错 case（无语义 icon glyph → 视觉估错 → off_target 不纠）。三层锁：icon label 用 resource id 兜底(plus)、off_target 累计注 ref 约束、bind 把 ref 估点 snap 到权威中心；含错误图标不被误救、单次 miss 不触发两个对照。 |
 | orchestrator | 7 | MobileWorld 静态 coding 编排：基础设置、闹钟、浏览器读取、购物车/文件计算和条件集合写入；不启动模拟器，使用确定性 AST 合同验收生成程序。 |
 
 `agent-user-interaction` 任务不进入当前 orchestrator baseline；例如
