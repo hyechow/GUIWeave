@@ -80,6 +80,29 @@ def test_uiautomator_projects_clickable_text_selection_state() -> None:
     assert states == {"Favorites": False, "Bookmarks": True}
 
 
+def test_semantic_textbox_supports_activate() -> None:
+    """A semantic_tree textbox (no form_control_state entry) must also offer
+    activate, not only input — the supervisor taps a text field to focus it."""
+    observation = Observation(
+        png_bytes=b"frame",
+        source="android",
+        semantic_tree=[
+            {"role": "textbox", "key": "Search", "ref": "s1",
+             "in_viewport": True},
+        ],
+    )
+    statement = StatementContract(id="c", goal="g", success="s")
+    view = build_observation_view(statement, observation, [])
+    affordances = [
+        item for item in view.affordances
+        if item.get("label") == "Search"
+    ]
+    assert affordances
+    assert {"input", "activate"} <= set(
+        affordances[0]["supported_operations"]
+    )
+
+
 def test_text_input_control_supports_activate() -> None:
     """A text field is focused by tapping it (activate) then typed into (input);
     its affordance must offer both (run-5 form loop on the description field)."""

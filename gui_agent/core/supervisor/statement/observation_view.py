@@ -123,6 +123,10 @@ def _semantic_affordance(node: dict, current_url: str) -> dict | None:
             operations.append("input")
         if role in _SELECT_ROLES:
             operations.append("select")
+        # A text/combobox field is focused or opened by tapping it (activate),
+        # then its value is set — same rule as _control_affordance.
+        if role in _INPUT_ROLES | _SELECT_ROLES:
+            operations.append("activate")
     if not operations:
         return None
     result = {
