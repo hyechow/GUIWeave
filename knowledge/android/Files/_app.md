@@ -34,6 +34,12 @@ version: 1
 - Opening an extracted TXT file may show an `Open with` chooser. `HTML Viewer` followed
   by `Just once` displays the complete plain-text document; navigate up to return to
   Downloads for the next file.
+- The launcher's `Downloads` home is one directory; `Documents` is a separate directory
+  reachable from the same navigation. Rows there show the file name and type, and a
+  `.pdf` file is identified by its `name` ending in `.pdf`.
+- A file is moved by targeting the row and choosing its move action with a destination
+  folder. Moving consumes the source row: after the move the file appears only under
+  the destination.
 
 ## Interface contract
 

@@ -12,7 +12,8 @@ def test_android_app_knowledge_is_complete_and_declarative() -> None:
     files = {path.parent.name: path for path in ANDROID_KNOWLEDGE.glob("*/_app.md")}
 
     assert set(files) == {
-        "Calendar", "Chrome", "Clock", "Files", "Mastodon", "Messages", "Settings", "Taodian",
+        "Calendar", "Chrome", "Clock", "Files", "Mail", "Mastodon", "Mattermost",
+        "Messages", "Settings", "Taodian",
     }
     forbidden = (
         "ctx.", "success=", "values=", "fields=", "filters=", "coverage=",
@@ -56,3 +57,20 @@ def test_calendar_knowledge_declares_typed_interval_fields() -> None:
     assert "end_ts" in context
     assert "complete event set" in context
     assert "overlap" in context
+
+
+def test_calendar_knowledge_locks_month_grid_not_readable_fact() -> None:
+    """The coffee availability fix: the month grid renders a compact display range
+    that is not extractable, so availability reads must come from the DAY/interval
+    view. If this knowledge line is ever reverted, the regression gate catches it."""
+    knowledge = load_knowledge_for_app("Calendar", "android")
+    assert knowledge is not None
+    context = knowledge.orchestrator_context(
+        "check whether I am available for a coffee meeting this week"
+    )
+
+    assert "DAY view" in context
+    assert "month grid" in context
+    assert "availability" in context
+    assert "not from the month grid" in context
+
