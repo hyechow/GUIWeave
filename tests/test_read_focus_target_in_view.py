@@ -58,6 +58,15 @@ def _obs_with_form_value(target_value: str) -> Observation:
 TARGET = {"id": "(505) 123-4567"}
 
 
+def test_does_not_short_circuit_on_truncated_preview() -> None:
+    # A list preview abbreviates the body with "…"; the read of derived fields
+    # would fail to bind from it, so the focus must navigate to the full detail.
+    obs = _obs_with_cells([
+        ["(505) 123-4567", "…lunch tomorrow at 11 AM? It will be a…", "2 min"],
+    ])
+    assert not _read_focus_target_in_view(_focus(TARGET), obs)
+
+
 def test_short_circuits_when_target_is_a_visible_source_record() -> None:
     obs = _obs_with_cells([
         ["(505) 123-4567 said Hi! Would you like to join me for lunch"],

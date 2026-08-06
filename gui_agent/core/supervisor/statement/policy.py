@@ -213,6 +213,11 @@ def _read_focus_target_in_view(
         text
         for region in observation.collection_regions or []
         for cell in region.cells or []
+        # Skip cells whose content is truncated (list previews abbreviate long
+        # text with "…"): a preview is not the full source record, so a read of
+        # derived fields would fail to bind from it. Short-circuiting here would
+        # prevent the focus from navigating to the full detail.
+        if not any("…" in (item or "") for item in cell.texts or [])
         for text in cell.texts or []
     ]
     if not cell_texts:
