@@ -187,11 +187,64 @@ def _structural_fact(
     return _field_fact(normalized, binding)
 
 
+def _generate_read_spec(
+    fields: list[str],
+    field_types: dict[str, str],
+    goal: str,
+    check_knowledge: str = "",
+) -> str:
+    """One model inference: turn the program's bare read field list into per-field
+    extraction guidance for the visual read.
+
+    The read operation derives its own read_spec at execution time — from the field
+    names/types, the task goal and the app knowledge — instead of the planner embedding
+    it into the program (which hardcoded the host clock). Relative dates are left to
+    resolve against the current-date context seen by the extraction step; this spec
+    never hardcodes a date.
+    """
+    if not fields:
+        return ""
+    from langchain_core.messages import HumanMessage, SystemMessage
+    from langchain_openai import ChatOpenAI
+
+    from gui_agent.core.config import resolve_llm_config
+    from llm.provider_config import dashscope_extra_body
+
+    cfg = resolve_llm_config("observation")
+    llm = ChatOpenAI(
+        model=cfg.model, api_key=cfg.api_key, base_url=cfg.base_url,
+        extra_body=dashscope_extra_body(cfg.model),
+    )
+    field_lines = "\n".join(
+        f"- {name}（{field_types.get(name, 'text')}）" for name in fields
+    )
+    knowledge = f"界面信号参考（图标/颜色/位置约定）：\n{check_knowledge}" if check_knowledge else ""
+    system = (
+        "为视觉界面读取生成字段提取说明。为每个字段写一行，格式："
+        "'字段: 语义含义 + 如何从可见内容得到该值'。相对日期/时间只写"
+        "'按当前日期解析'，不要硬编码具体日期。只输出说明行。"
+    )
+    text = f"任务目标：{goal}\n\n从当前可见界面读取以下字段的值：\n{field_lines}\n\n{knowledge}"
+    try:
+        result = llm.invoke([
+            SystemMessage(content=system),
+            HumanMessage(content=text),
+        ])
+        content = str(result.content or "")
+        return "\n".join(
+            line.strip() for line in content.splitlines() if line.strip()
+        )
+    except Exception:
+        return ""
+
+
 def _visual_facts(
     unresolved: dict[str, ObservationBinding],
     returns: dict[str, OutputSpec],
     observation: Observation,
     *,
+    field_types: dict[str, str],
+    goal: str,
     check_knowledge: str,
     prepare_vision_prompt_png,
 ) -> dict[str, _BoundFact]:
@@ -201,10 +254,7 @@ def _visual_facts(
     values = structured_read(
         observation.png_bytes,
         fields,
-        read_spec="\n".join(
-            f"{output}: {binding.name}; {returns[output].description}".rstrip("; ")
-            for output, binding in unresolved.items()
-        ),
+        read_spec=_generate_read_spec(fields, field_types, goal, check_knowledge),
         check_knowledge=check_knowledge,
         prepare_vision_prompt_png=prepare_vision_prompt_png,
     )
@@ -261,6 +311,8 @@ def execute_read(
                 visual,
                 statement.returns,
                 observation,
+                field_types=dict(invocation.args.get("field_types") or {}),
+                goal=invocation.task_goal or "",
                 check_knowledge=check_knowledge,
                 prepare_vision_prompt_png=prepare_vision_prompt_png,
             ))

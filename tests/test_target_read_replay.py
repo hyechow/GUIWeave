@@ -40,7 +40,9 @@ def run(ctx, state):
 
     runtime.send_outcome(StatementOutcome.completed("product page opened"))
     assert isinstance(runtime.current.statement, Interact)
-    assert runtime.current.statement.observe_fields == ["Material"]
+    # focus is a bounded target-navigation statement; the read fields belong to
+    # the one-shot Read binding, not to this navigation.
+    assert runtime.current.statement.observe_fields == []
     assert runtime.current.inputs["ui_state"]["postcondition"]["kind"] == "target_open"
     assert (
         runtime.current.inputs["ui_state"]["postcondition"]["kind"]

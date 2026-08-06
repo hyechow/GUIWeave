@@ -1923,7 +1923,9 @@ def run(ctx, state):
 
     runtime.send_outcome(StatementOutcome.completed("detail opened"))
     assert isinstance(runtime.current.statement, Interact)
-    assert runtime.current.statement.observe_fields == ["Rating"]
+    # focus is a bounded target-navigation statement; the read fields belong to
+    # the one-shot Read binding (step 3), not to this navigation.
+    assert runtime.current.statement.observe_fields == []
     assert runtime.current_coding_op == "focus"
     assert runtime.current_coding_plan_step == 2
     assert runtime.current.inputs["ui_state"]["postcondition"] == {

@@ -101,6 +101,39 @@ class Command(StatementNode):
 ExecutableStatement: TypeAlias = Interact | Acquire | Read | Command
 
 
+def build_read_statement(
+    fields: list[str],
+    field_types: dict[str, str] | None = None,
+    *,
+    statement_id: str = "",
+) -> Read:
+    """Shared constructor for a single-frame Read statement.
+
+    Both the production runtime read op and the replay tool build the Read through
+    this so the statement shape (returns descriptions carrying the field types) can
+    never drift between execution and replay.
+    """
+    field_types = dict(field_types or {})
+    return Read(
+        id=statement_id,
+        reads={
+            field: ObservationBinding(source="field", name=field)
+            for field in fields
+        },
+        returns={
+            field: OutputSpec(
+                type="json",
+                description=(
+                    f"字段类型 {field_types[field]}"
+                    if field in field_types
+                    else ""
+                ),
+            )
+            for field in fields
+        },
+    )
+
+
 class InputDescriptor(BaseModel):
     model_config = {"frozen": True, "extra": "forbid"}
 

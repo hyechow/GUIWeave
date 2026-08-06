@@ -21,7 +21,7 @@ from langchain_openai import ChatOpenAI
 from pydantic import BaseModel, Field
 
 from gui_agent.context import ContextBlock
-from gui_agent.context.runtime import render_prompt_context
+from gui_agent.context.runtime import current_date_block, render_prompt_context
 from gui_agent.core.config import resolve_llm_config
 from gui_agent.prompts import load_prompt_text
 from llm.structured import invoke_structured
@@ -180,6 +180,7 @@ def structured_read(
         extra_body=dashscope_extra_body(cfg.model),
     )
     text = render_prompt_context([
+        current_date_block(),
         ContextBlock(
             id="runtime.data.requested_fields",
             source_type="runtime_state",
@@ -296,6 +297,7 @@ def structured_read_rows(
         extra_body=dashscope_extra_body(cfg.model),
     )
     text = render_prompt_context([
+        current_date_block(),
         ContextBlock(
             id="runtime.data.requested_fields",
             source_type="runtime_state",

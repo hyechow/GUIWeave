@@ -180,6 +180,47 @@ def _reach_is_structurally_complete(statement: StatementContract) -> bool:
     return set(statement.expected_state) <= {"entity", "fields"}
 
 
+def _read_focus_target_in_view(
+    statement: StatementContract,
+    observation: Observation,
+) -> bool:
+    """Deterministic short-circuit for a read's navigation (focus) statement.
+
+    ``ctx.read(target, ...)`` emits an Interact whose only job is to bring the
+    target's source record into view before the one-shot Read binding. If that
+    record is already a visible data cell, the navigation is satisfied without any
+    action — completing here keeps the read one-shot instead of letting the LLM
+    wander to a different surface.
+
+    Detected structurally (no interaction intent, no expected state, immediate
+    persistence, only ``inputs.target``), never by goal text. The target is matched
+    against the observation's data cells (``collection_regions``), NOT form-control
+    values: a form field that merely echoes the target string (e.g. a Title box
+    pre-filled with a phone number) must not short-circuit the read into binding
+    from the wrong frame.
+    """
+    if statement.interaction_intent is not None or statement.expected_state:
+        return False
+    if statement.persistence != "immediate":
+        return False
+    target = statement.inputs.get("target")
+    if not isinstance(target, dict) or not target:
+        return False
+    values = [str(v).strip() for v in target.values() if v not in (None, "")]
+    if not values:
+        return False
+    cell_texts = [
+        text
+        for region in observation.collection_regions or []
+        for cell in region.cells or []
+        for text in cell.texts or []
+    ]
+    if not cell_texts:
+        return False
+    joined = "\n".join(cell_texts)
+    return all(value in joined for value in values)
+
+
 class StatementSupervisorPolicy(
     StatementLLMRuntimeMixin,
     StatementActionNormalizationMixin,
@@ -994,6 +1035,22 @@ class StatementSupervisorPolicy(
                     summary,
                     verification="confirmed",
                     outputs={"scope": constrain_scope},
+                    observation=observation,
+                    observation_url=observation.url,
+                ),
+                pre_existing=True,
+                summary=summary,
+                **_ctx(statement),
+            )
+        if _read_focus_target_in_view(statement, observation):
+            summary = (
+                f"子目标「{statement.goal}」已由当前源记录满足"
+                "（target 已在视口），read 可直接绑定。"
+            )
+            return SupervisorStep(
+                outcome=StatementOutcome.completed(
+                    summary,
+                    verification="confirmed",
                     observation=observation,
                     observation_url=observation.url,
                 ),

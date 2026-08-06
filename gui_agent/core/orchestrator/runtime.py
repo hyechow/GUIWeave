@@ -14,11 +14,11 @@ from gui_agent.core.run.contracts import (
     Acquire,
     Command,
     Interact,
-    ObservationBinding,
     OutputSpec,
     Read,
     RunRecord,
     StatementInvocation,
+    build_read_statement,
 )
 from gui_agent.core.run.lookup_scope import is_lookup_scope
 from gui_agent.core.run.statements.compute_kernel import json_value, normalize_table_rows
@@ -748,13 +748,11 @@ class CodingProgramRuntime:
             )
         if op == "focus":
             state = require_current_ui(payload.get("state"))
-            fields = [str(item) for item in payload.get("fields") or []]
             target = payload.get("target")
             statement = Interact(
                 id=statement_id,
-                goal=f"Expose fields {fields} for business target {target!r}",
-                success=f"The target detail state exposes these fields: {fields}",
-                observe_fields=fields,
+                goal=f"Open target {target!r}'s detail view",
+                success=f"Target {target!r}'s detail is in view",
                 persistence="immediate",
             )
             return StatementInvocation(
@@ -888,16 +886,9 @@ class CodingProgramRuntime:
         if op == "read":
             state = require_current_ui(payload.get("state"))
             fields = [str(item) for item in payload.get("fields") or []]
-            statement = Read(
-                id=statement_id,
-                reads={
-                    field_name: ObservationBinding(source="field", name=field_name)
-                    for field_name in fields
-                },
-                returns={
-                    field_name: OutputSpec(type="json")
-                    for field_name in fields
-                },
+            field_types = dict(payload.get("field_types") or {})
+            statement = build_read_statement(
+                fields, field_types, statement_id=statement_id
             )
             return StatementInvocation(
                 statement=statement,
