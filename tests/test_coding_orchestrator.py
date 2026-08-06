@@ -1955,6 +1955,40 @@ def run(ctx, state):
     assert runtime.reply == '{"Rating": 3}'
 
 
+def test_read_after_commit_skips_restore_source() -> None:
+    """A read whose source is a post-commit state (no entity) must not emit a
+    restore_source step — there is no navigable source to restore, and the
+    restore_source op rejects a missing entity."""
+    source = """
+def run(ctx, state):
+    state = ctx.reach(state, "Open Messages", success={"entity": "Messages"})
+    state = ctx.reach(state, "Open the exact message", target={"ID": "1"}, success={"entity": "Message"})
+    state = ctx.commit(state, "Reply OK", target={"ID": "1"}, values={"reply": "OK"})
+    return ctx.read(state, target={"ID": "1"}, fields={"start_ts": "datetime"})
+"""
+    runtime = CodingProgramRuntime.start(CodingProgram(goal="read after commit", source=source))
+
+    for _ in range(2):  # two reaches
+        assert isinstance(runtime.current.statement, Interact)
+        assert runtime.current_coding_op == "reach"
+        runtime.send_outcome(StatementOutcome.completed("reached"))
+    assert runtime.current_coding_op == "commit"
+    runtime.send_outcome(StatementOutcome.completed("committed"))
+
+    # read: focus then read bind; NO restore_source step may follow.
+    assert runtime.current_coding_op == "focus"
+    runtime.send_outcome(StatementOutcome.completed("target in view"))
+    assert isinstance(runtime.current.statement, Read)
+    assert runtime.current_coding_op == "read"
+    runtime.send_outcome(StatementOutcome.completed(
+        "read", outputs={"start_ts": "2025-10-17 11:00"},
+    ))
+
+    # The program terminates here — no restore_source statement is emitted.
+    assert runtime.current is None
+    assert runtime.reply == '{"start_ts": "2025-10-17 11:00:00+00:00"}'
+
+
 def test_generate_code_accepts_validated_program() -> None:
     llm = _SequenceLLM(
         f"```python\n{GOOD_PROGRAM}\n```",

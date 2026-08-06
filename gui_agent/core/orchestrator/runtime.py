@@ -398,17 +398,22 @@ class _RuntimeContext:
             field_types=field_types,
         )
         if target is not None:
-            self._request(
-                "restore_source",
-                call_id=call_id,
-                plan="read",
-                plan_step=steps,
-                plan_steps=steps,
-                state=source_state,
-                current_state=state,
-                target=target,
-                fields=field_names,
-            )
+            # Only restore the source UI when it is a navigable entity.  After a
+            # commit the source state is post_commit (no entity) and the read is a
+            # no-op navigation, so there is nothing to restore to — emitting
+            # restore_source would raise on the missing entity.
+            if dict(source_state.postcondition or {}).get("entity"):
+                self._request(
+                    "restore_source",
+                    call_id=call_id,
+                    plan="read",
+                    plan_step=steps,
+                    plan_steps=steps,
+                    state=source_state,
+                    current_state=state,
+                    target=target,
+                    fields=field_names,
+                )
         return result
 
     def reach(
