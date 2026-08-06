@@ -91,14 +91,15 @@ def _statement_for_terminal_observation(
     blocks = [program_raw.get("statements") or []]
     if match := next(filter(None, (find(block) for block in blocks)), None):
         statement = Interact.model_validate(match)
-        return StatementContract(
-            id=statement.id,
-            goal=statement.goal,
-            success=statement.success,
-            inputs={},
-            required_values=dict(statement.required_values),
-            observe_fields=list(statement.observe_fields),
-            persistence=statement.persistence,
+        # Reuse the production Interact -> StatementContract mapping so the replay
+        # contract cannot drift from what the runtime executes (a manual copy here
+        # would silently drop expected_state / interaction_intent).
+        from gui_agent.core.run.contracts import StatementInvocation
+        from gui_agent.core.run.interactive import contract_for_interact
+
+        return contract_for_interact(
+            StatementInvocation(statement=statement, inputs={}),
+            0,
         )
     raise ValueError(f"statement {statement_id!r} is absent from orchestrator.program")
 

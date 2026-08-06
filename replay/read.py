@@ -18,15 +18,14 @@ load_dotenv(PROJECT_ROOT / ".env")
 from gui_agent.core.orchestrator.models import field_projection
 from gui_agent.core.run.context import load_observation_snapshot
 from gui_agent.core.run.contracts import (
-    ObservationBinding,
-    OutputSpec,
-    Read,
     StatementInvocation,
+    build_read_statement,
 )
 from gui_agent.core.run.statements.binding import execute_read
 from gui_agent.core.run.statements.compute_kernel import normalize_table_rows
 from gui_agent.core.runtime.factory import build_platform
 from gui_agent.core.self_learning.app_summary import load_knowledge_for_app
+from gui_agent.context.runtime import set_provided_current_date
 
 
 def _check_knowledge(run_dir: Path, platform: str) -> str:
@@ -46,6 +45,14 @@ def _check_knowledge(run_dir: Path, platform: str) -> str:
     return knowledge.check if knowledge else ""
 
 
+def _task_goal(run_dir: Path) -> str:
+    context_path = run_dir / "context.json"
+    if not context_path.is_file():
+        return ""
+    raw = json.loads(context_path.read_text(encoding="utf-8"))
+    return str(raw.get("goal") or raw.get("raw_input") or "")
+
+
 def run_read_replay(
     run_dir: Path,
     *,
@@ -57,15 +64,10 @@ def run_read_replay(
         run_dir / f"observation_turn_{turn}.json"
     )
     fields, field_types = field_projection(request["fields"])
+    goal = _task_goal(run_dir)
     invocation = StatementInvocation(
-        statement=Read(
-            id="read-replay",
-            reads={
-                field: ObservationBinding(source="field", name=field)
-                for field in fields
-            },
-            returns={field: OutputSpec(type="json") for field in fields},
-        ),
+        statement=build_read_statement(fields, field_types),
+        task_goal=goal,
         inputs={"ui_state": {"token": "replay:state"}},
         args={"field_types": field_types},
     )
@@ -101,15 +103,27 @@ def main() -> int:
     parser.add_argument("--turn", type=int, required=True)
     parser.add_argument("--request-json", required=True)
     parser.add_argument("--expect-json", default="{}")
+    parser.add_argument(
+        "--date",
+        default="",
+        help="Seed the provided current date (YYYY-MM-DD) so relative dates resolve "
+        "like production (the Android session seeds the device clock).",
+    )
     args = parser.parse_args()
 
+    if args.date:
+        from datetime import date, datetime
+
+        set_provided_current_date(
+            datetime.combine(date.fromisoformat(args.date), datetime.min.time())
+        )
     result, failures = run_read_replay(
         args.run_dir.resolve(),
         turn=args.turn,
         request=json.loads(args.request_json),
         expectation=json.loads(args.expect_json),
     )
-    print(json.dumps(result, ensure_ascii=False, indent=2))
+    print(json.dumps(result, ensure_ascii=False, indent=2, default=str))
     for failure in failures:
         print(f"[FAIL] {failure}", file=sys.stderr)
     return 1 if failures else 0
