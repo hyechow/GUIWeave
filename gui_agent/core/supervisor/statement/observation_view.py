@@ -158,7 +158,9 @@ def _control_affordance(control: dict) -> dict | None:
     if visibility == "offscreen":
         operations: list[TransitionOperation] = ["iterate"]
     elif kind in _SELECT_CONTROL_KINDS:
-        operations = ["select"]
+        # A select/combobox/date-field opens by tapping it, then an option is
+        # chosen; both operations are legitimate on the same control.
+        operations = ["select", "activate"]
     elif kind in {
         "input",
         "text_input",

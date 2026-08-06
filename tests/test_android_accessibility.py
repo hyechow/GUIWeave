@@ -80,6 +80,29 @@ def test_uiautomator_projects_clickable_text_selection_state() -> None:
     assert states == {"Favorites": False, "Bookmarks": True}
 
 
+def test_select_control_supports_activate() -> None:
+    """A date/time select field is a button that opens a picker by tapping; its
+    affordance must offer activate, not only select (run-3 form loop)."""
+    observation = Observation(
+        png_bytes=b"frame",
+        source="android",
+        form_control_state=[
+            {"kind": "select", "label": "event start date",
+             "ref": "date1", "value": "October 16"},
+        ],
+    )
+    statement = StatementContract(id="c", goal="g", success="s")
+    view = build_observation_view(statement, observation, [])
+    date_affordances = [
+        item for item in view.affordances
+        if item.get("label") == "event start date"
+    ]
+    assert date_affordances
+    assert {"select", "activate"} <= set(
+        date_affordances[0]["supported_operations"]
+    )
+
+
 def test_uiautomator_exposes_ordered_cells_without_inventing_records() -> None:
     regions = collection_regions_from_uiautomator(XML, viewport_size=(1080, 2400))
 
