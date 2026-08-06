@@ -86,6 +86,16 @@ The public API is:
   mutation schema. Existing-record changes require a target-bound reach on the same row
   immediately before commit. New records and direct settings omit `target` and call commit
   directly; do not reach a creation form or setting first.
+
+Case — create-then-mutate: a record created by an untargeted commit is an *existing record*
+for every later step that changes it. Bind it once with a target-bound reach (target carries the
+record's declared identity), then all mutations of that same record in the same UI context combine
+into ONE `ctx.commit(target=<the same row>, values={...})` carrying every value — never split them
+into consecutive target-commits (a commit invalidates the reach for the next) and never an
+untargeted or empty `values={}` commit for a change that has schema fields. Example: create a
+record by its declared name field, bind it with a target-bound reach whose target carries that
+identity, then one target-bound commit carrying every mutation value for that record.
+
 - `ctx.command(state, capability, **arguments) -> state` invokes a documented deterministic
   platform capability and returns the post-command UI state.
 
