@@ -73,4 +73,3 @@ def test_calendar_knowledge_locks_month_grid_not_readable_fact() -> None:
     assert "month grid" in context
     assert "availability" in context
     assert "not from the month grid" in context
-
