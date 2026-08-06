@@ -2399,6 +2399,55 @@ def validate_runtime_dataflow(source: str) -> list[CodeDiagnostic]:
     return diagnostics
 
 
+def validate_commit_reference_dataflow(source: str) -> list[CodeDiagnostic]:
+    """A commit's values may only reference fields an earlier read/acquire produced.
+
+    This is a field-flow check across the whole program (not variable-tracing, which
+    misses tuple/loop indirection like ``selected_row, selected_detail = row, detail``):
+    every ``X["field"]`` access inside a commit's values must name a field requested by
+    an earlier ``read``/``acquire``, else the program raises KeyError at runtime.
+    """
+    try:
+        tree = ast.parse(source)
+    except SyntaxError:
+        return []
+    calls = sorted(
+        (node for node in ast.walk(tree) if isinstance(node, ast.Call)),
+        key=lambda node: node.lineno,
+    )
+    produced: set[str] = set()
+    diagnostics: list[CodeDiagnostic] = []
+    for call in calls:
+        method = _ctx_method(call)
+        if method in {"read", "acquire"}:
+            fields = _call_argument(call, "fields", 0)
+            if isinstance(fields, ast.Dict):
+                produced.update(
+                    key.value for key in fields.keys
+                    if isinstance(key, ast.Constant) and isinstance(key.value, str)
+                )
+            elif isinstance(fields, (ast.List, ast.Tuple)):
+                produced.update(
+                    item.value for item in fields.elts
+                    if isinstance(item, ast.Constant) and isinstance(item.value, str)
+                )
+        elif method == "commit":
+            for child in ast.walk(_call_argument(call, "values", 0) or call):
+                if (
+                    isinstance(child, ast.Subscript)
+                    and isinstance(child.slice, ast.Constant)
+                    and isinstance(child.slice.value, str)
+                    and child.slice.value not in produced
+                ):
+                    diagnostics.append(_diag(
+                        call,
+                        "COMMIT_REFERENCE_UNAVAILABLE",
+                        f"commit references field {child.slice.value!r} that no "
+                        "earlier read/acquire produced",
+                    ))
+    return diagnostics
+
+
 def _field_value(mapping: dict[str, Any], field_name: str) -> tuple[bool, Any]:
     key = (
         field_name

@@ -31,6 +31,7 @@ from .sandbox import (
     validate_code,
     validate_fixture_contract,
     validate_runtime_dataflow,
+    validate_commit_reference_dataflow,
 )
 
 
@@ -177,6 +178,7 @@ def _diagnostics(
 ) -> list[Any]:
     diagnostics = validate_code(source)
     diagnostics.extend(validate_runtime_dataflow(source))
+    diagnostics.extend(validate_commit_reference_dataflow(source))
     if fixture is not None:
         diagnostics.extend(validate_fixture_contract(
             source,

@@ -109,6 +109,36 @@ def test_validate_code_accepts_normal_python_client_program() -> None:
     assert validate_code(GOOD_PROGRAM) == []
 
 
+def test_validate_commit_reference_dataflow_catches_loop_indirection() -> None:
+    """A commit referencing a field a read never produced (through a tuple/loop
+    assignment) must be rejected; the projection checker misses this case."""
+    bad = """
+def run(ctx, state):
+    state = ctx.reach(state, "Open Messages", success={"entity": "Messages"})
+    scope = ctx.query(state, entity="Messages", filters={"body": "lunch"})
+    rows = ctx.acquire(scope, fields=["id"])
+    selected_row = selected_detail = None
+    for row in rows:
+        detail = ctx.read(state, target=row, fields={"body": "text", "is_lunch_invitation": "boolean"})
+        if detail["is_lunch_invitation"]:
+            selected_row, selected_detail = row, detail
+            break
+    state = ctx.reach(state, "Open exact", target=selected_row, success={"entity": "Message"})
+    state = ctx.commit(state, "Reply", target=selected_row, values={"reply": "OK"})
+    state = ctx.command(state, "launch_app", app="Calendar")
+    state = ctx.commit(state, "Create", values={"start_ts": selected_detail["start_ts"], "end_ts": selected_detail["end_ts"]})
+"""
+    from gui_agent.core.orchestrator.sandbox import validate_commit_reference_dataflow
+
+    codes = {item.code for item in validate_commit_reference_dataflow(bad)}
+    assert "COMMIT_REFERENCE_UNAVAILABLE" in codes
+    good = bad.replace(
+        'fields={"body": "text", "is_lunch_invitation": "boolean"}',
+        'fields={"body": "text", "is_lunch_invitation": "boolean", "start_ts": "datetime", "end_ts": "datetime"}',
+    )
+    assert validate_commit_reference_dataflow(good) == []
+
+
 def test_validate_code_accepts_deterministic_set_deduplication() -> None:
     source = """
 def run(ctx):
