@@ -210,11 +210,6 @@ def _generate_read_spec(
     from gui_agent.core.config import resolve_llm_config
     from llm.provider_config import dashscope_extra_body
 
-    cfg = resolve_llm_config("observation")
-    llm = ChatOpenAI(
-        model=cfg.model, api_key=cfg.api_key, base_url=cfg.base_url,
-        extra_body=dashscope_extra_body(cfg.model),
-    )
     field_lines = "\n".join(
         f"- {name}（{field_types.get(name, 'text')}）" for name in fields
     )
@@ -226,6 +221,11 @@ def _generate_read_spec(
     )
     text = f"任务目标：{goal}\n\n从当前可见界面读取以下字段的值：\n{field_lines}\n\n{knowledge}"
     try:
+        cfg = resolve_llm_config("observation")
+        llm = ChatOpenAI(
+            model=cfg.model, api_key=cfg.api_key, base_url=cfg.base_url,
+            extra_body=dashscope_extra_body(cfg.model),
+        )
         result = llm.invoke([
             SystemMessage(content=system),
             HumanMessage(content=text),
@@ -235,6 +235,8 @@ def _generate_read_spec(
             line.strip() for line in content.splitlines() if line.strip()
         )
     except Exception:
+        # A read_spec is best-effort guidance; an unavailable model must degrade to
+        # an empty spec (visual extraction proceeds) instead of aborting the read.
         return ""
 
 
