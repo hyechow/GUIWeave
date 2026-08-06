@@ -287,13 +287,21 @@ class _AcquireExecutor:
         observation = self.cursor.observation
         if observation is None or not observation.png_bytes:
             return None
+        from gui_agent.core.run.statements.binding import _generate_read_spec
         from gui_agent.core.run.structured_read import structured_read_rows
 
+        fields = list(self.statement.required_fields)
+        read_spec = _generate_read_spec(
+            fields,
+            dict(self.invocation.args.get("field_types") or {}),
+            self.statement.goal,
+            self.check_knowledge,
+        )
         try:
             records = structured_read_rows(
                 observation.png_bytes,
-                list(self.statement.required_fields),
-                read_spec=self.statement.goal,
+                fields,
+                read_spec=read_spec,
                 check_knowledge=self.check_knowledge,
                 prepare_vision_prompt_png=self.bundle.prepare_vision_prompt_png,
                 context_reports=self.reports,
