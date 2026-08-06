@@ -226,6 +226,67 @@ def _read_focus_target_in_view(
     return all(value in joined for value in values)
 
 
+# Runtime contract: commit value keys that mean "select every row of this
+# (scrollable) list". The app's interface contract declares such fields; the
+# runtime maps them to complete-coverage of the list.
+_SELECT_ALL_VALUE_KEYS = frozenset({"add_all_members"})
+
+
+def _is_select_all_commit(statement: StatementContract) -> bool:
+    """A durable commit whose required_values carry a boolean 'select all rows'
+    directive — complete coverage of a scrollable list, so the list must be
+    traversed to its end before the commit may complete."""
+    if statement.persistence != "explicit_commit":
+        return False
+    values = statement.required_values or {}
+    return any(
+        key in _SELECT_ALL_VALUE_KEYS and value is True
+        for key, value in values.items()
+    )
+
+
+def _scrollable_list_row_ids(observation: Observation) -> tuple[str, ...]:
+    """Stable row identifiers in the scrollable list region(s).
+
+    Perception provides the scrollable signal (a list region reports
+    ``scrollable=True`` and its rect). The rows are the multi-char text labels
+    whose point falls inside that region's y-span — this excludes single-char
+    section headers, pure-icon glyphs, and chrome/chips outside the list body.
+    The ids are stable per row (a member name), so a scroll that reveals new rows
+    grows the set; a scroll that reveals nothing new means the boundary.
+    """
+    tree = observation.semantic_tree or []
+    spans: list[tuple[float, float]] = []
+    for node in tree:
+        if not isinstance(node, dict) or node.get("scrollable") is not True:
+            continue
+        rect = node.get("rect")
+        if not isinstance(rect, dict):
+            continue
+        y, height = rect.get("y"), rect.get("height")
+        if not isinstance(y, (int, float)) or not isinstance(height, (int, float)):
+            continue
+        spans.append((y - height / 2.0, y + height / 2.0))
+    if not spans:
+        return ()
+    rows: set[str] = set()
+    for node in tree:
+        if not isinstance(node, dict) or node.get("role") != "text":
+            continue
+        key = str(node.get("key") or "").strip()
+        if len(key) <= 1 or not any(char.isalnum() for char in key):
+            continue
+        point = node.get("point")
+        if not isinstance(point, dict):
+            continue
+        y = point.get("y")
+        if not isinstance(y, (int, float)):
+            continue
+        if any(lo <= y <= hi for lo, hi in spans):
+            rows.add(key)
+    return tuple(sorted(rows))
+
+
 class StatementSupervisorPolicy(
     StatementLLMRuntimeMixin,
     StatementActionNormalizationMixin,
@@ -263,6 +324,11 @@ class StatementSupervisorPolicy(
         self._last_sections_loaded: list[str] = []
         self._context_reports: list[dict] = []
         self._goal = ""
+        # Per-statement-instance cumulative member-row ids seen while traversing a
+        # scrollable "select all" list. A new statement instance starts empty; the
+        # set grows across forced scrolls until the current slice is a subset
+        # (boundary reached), then the add-all commit may complete.
+        self._select_all_seen_ids: dict[str, set[str]] = {}
         self._timings: dict[str, float] = {}
         self._timings_order: list[str] = []
         self._token_usage: dict[str, dict[str, int]] = {}
@@ -976,6 +1042,50 @@ class StatementSupervisorPolicy(
             f"{names}。若目标不在这批 affordance 里,才允许照旧视觉估点。"
         )
 
+    def _select_all_scroll_step(
+        self,
+        statement: StatementContract,
+        observation: Observation,
+        *,
+        execution_scope: str,
+    ) -> SupervisorStep | None:
+        """Goal-driven scroll gate for a 'select all rows' commit.
+
+        ``add_all_members: True`` (the runtime contract for complete coverage of a
+        scrollable list) must not complete while the list may still have members
+        below the fold. Perception marks the list scrollable; boundary is decided
+        by comparing the member-row set across scrolls: keep forcing a scroll while
+        new rows keep appearing, allow completion once the current slice is entirely
+        within the rows already seen (a scroll revealed nothing new).
+        """
+        if not _is_select_all_commit(statement):
+            return None
+        rows = _scrollable_list_row_ids(observation)
+        if not rows:
+            return None  # no scrollable list rows on this frame — nothing to traverse
+        seen = self._select_all_seen_ids.setdefault(self._active_instance_id, set())
+        if not (set(rows) - seen):
+            # Every currently visible row was seen on a prior scroll → boundary.
+            return None
+        seen.update(rows)
+        return self._mechanical_step(
+            statement,
+            execution_scope=execution_scope,
+            summary="add-all 列表尚未遍历到边界",
+            established=f"当前列表可见 {len(rows)} 行;累计已看到 {len(seen)} 行。",
+            gap="目标要求全部成员;列表可能还有折叠区成员未显示。",
+            reason="add-all commit 需要完整遍历可滚动列表",
+            instruction=(
+                "向下滚动成员列表,继续选中新出现的成员,"
+                "直到滚动不再出现新成员(已到列表末尾)。"
+            ),
+            role="iterate",
+            family="iterate",
+            target_control="current collection",
+            expected_result="列表滚动后出现新的成员行;或确认已到列表末尾(无新成员)。",
+            direction="down",
+        )
+
     @staticmethod
     def _verification(
         decision: _StatementTransitionResult,
@@ -1227,6 +1337,24 @@ class StatementSupervisorPolicy(
                     ),
                     validation_retries=validation_retries,
                 )
+        # A "select all rows" commit must not be dispatched while the scrollable
+        # list may still have members below the fold. Fire the gate on the commit
+        # DECISION (the Add Members button click is atomic_role=commit; a direct
+        # statement completion also commits), not after the dialog is already gone.
+        commits_select_all = (
+            decision.kind == "complete"
+            or (
+                decision.kind == "act"
+                and decision.action is not None
+                and decision.action.atomic_role == "commit"
+            )
+        )
+        if commits_select_all:
+            scroll_step = self._select_all_scroll_step(
+                statement, observation, execution_scope=execution_scope
+            )
+            if scroll_step is not None:
+                return scroll_step
         if decision.kind == "complete":
             rejection = ""
             if (
