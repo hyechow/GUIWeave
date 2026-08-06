@@ -70,7 +70,7 @@ CTX_POSITIONS = {
     "reach": {"state": 0, "goal": 1, "success": 2, "target": 3},
     "query": {"state": 0, "entity": 1, "filters": 2, "coverage": 3},
     "acquire": {"scope": 0, "fields": 1, "coverage": 2},
-    "read": {"state": 0, "target": 1, "fields": 2},
+    "read": {"state": 0, "target": 1, "fields": 2, "restore": 3},
     "commit": {"state": 0, "goal": 1, "target": 2, "values": 3},
     "command": {"state": 0, "capability": 1},
 }
@@ -191,6 +191,25 @@ def _fields(
     return list(shape), shape
 
 
+def _referenced_fields(node: ast.AST | None) -> set[str]:
+    """Field names accessed as ``X[\"field\"]`` inside a node subtree.
+
+    Used to check that every field a commit's values reference was produced by an
+    earlier read/acquire — otherwise the program raises KeyError at runtime.
+    """
+    if node is None:
+        return set()
+    found: set[str] = set()
+    for child in ast.walk(node):
+        if (
+            isinstance(child, ast.Subscript)
+            and isinstance(child.slice, ast.Constant)
+            and isinstance(child.slice.value, str)
+        ):
+            found.add(child.slice.value)
+    return found
+
+
 def _call_records(tree: ast.AST) -> list[dict[str, Any]]:
     names: dict[str, Any] = {}
     for node in sorted(
@@ -256,6 +275,9 @@ def _call_records(tree: ast.AST) -> list[dict[str, Any]]:
             "filters": _mapping_shape(_argument(call, "filters"), names),
             "values": _mapping_shape(_argument(call, "values"), names),
             "success": _mapping_shape(_argument(call, "success"), names),
+            "referenced_fields": sorted(
+                _referenced_fields(_argument(call, "values"))
+            ),
             "target_mode": (
                 "none"
                 if target is None
@@ -306,6 +328,14 @@ def _matches(record: dict[str, Any], spec: dict[str, Any]) -> bool:
         ("success_include", "success"),
     ):
         if spec_key in spec and not _subset(record[record_key], spec[spec_key]):
+            return False
+    if "field_type_any" in spec:
+        types = (
+            set(record["field_types"].values())
+            if isinstance(record["field_types"], dict)
+            else set()
+        )
+        if spec["field_type_any"] not in types:
             return False
     return True
 
@@ -485,6 +515,20 @@ def evaluate_source(source: str, contract: dict[str, Any]) -> list[str]:
 
         if not any(matches_sequence(sequence) for sequence in alternatives):
             failures.append("ORDERED_CALL_ALTERNATIVES")
+
+    # Data-flow: every field a commit's values reference must have been produced
+    # by an earlier read/acquire, otherwise the program raises KeyError at runtime.
+    produced: set[str] = set()
+    for record in records:
+        if record["method"] in {"read", "acquire"}:
+            produced.update(record["fields"])
+        elif record["method"] == "commit":
+            for field in record["referenced_fields"]:
+                if field not in produced:
+                    failures.append(
+                        f"DATA_FLOW: commit references {field!r} that no "
+                        "earlier read/acquire produced"
+                    )
 
     returns_value = any(
         isinstance(node, ast.Return)

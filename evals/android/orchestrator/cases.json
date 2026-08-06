@@ -507,6 +507,10 @@
           ]
         },
         {
+          "method": "read",
+          "field_type_any": "datetime"
+        },
+        {
           "method": "commit",
           "target_mode": "present",
           "values_include": {
