@@ -10,7 +10,7 @@ from gui_agent.core.run.statements.binding import execute_read
 from gui_agent.core.schemas import Observation
 
 
-def _read_invocation(returns, reads, *, inputs=None):
+def _read_invocation(returns, reads, *, inputs=None, args=None):
     return StatementInvocation(
         statement=Read(
             id="read",
@@ -18,6 +18,7 @@ def _read_invocation(returns, reads, *, inputs=None):
             returns=returns,
         ),
         inputs=inputs or {},
+        args=args or {},
     )
 
 
@@ -304,3 +305,86 @@ def test_read_rejects_conflicting_values_for_one_declared_field():
     )
 
     assert outcome.phase == "failed"
+
+
+def test_read_generates_runtime_read_spec_and_passes_to_extraction(monkeypatch):
+    """Lock the lunch read-pipeline fix: the read operation derives its own
+    read_spec at execution time (one inference over fields/types/goal) and hands it
+    to the visual extraction — the planner must not embed read_spec in the program."""
+    captured: dict = {}
+    spec = "body: 消息正文\nstart_ts: 按当前日期解析\nend_ts: 按当前日期解析"
+    monkeypatch.setattr(
+        "gui_agent.core.run.statements.binding._generate_read_spec",
+        lambda fields, field_types, goal, check_knowledge: (
+            captured.update(fields=list(fields), field_types=dict(field_types), goal=goal)
+            or spec
+        ),
+    )
+    monkeypatch.setattr(
+        "gui_agent.core.run.structured_read.structured_read",
+        lambda png, *args, **kwargs: (
+            captured.update(read_spec=kwargs.get("read_spec"))
+            or {"body": "hello", "start_ts": "2025-10-17 11:00"}
+        ),
+    )
+    outcome = execute_read(
+        _read_invocation(
+            {"body": OutputSpec(type="text"), "start_ts": OutputSpec(type="text")},
+            {
+                "body": ObservationBinding(source="field", name="body"),
+                "start_ts": ObservationBinding(source="field", name="start_ts"),
+            },
+            args={"field_types": {"body": "text", "start_ts": "datetime"}},
+        ),
+        observation=Observation(png_bytes=b"png", source="android"),
+    )
+
+    assert outcome.is_completed
+    assert captured["fields"] == ["body", "start_ts"]
+    assert captured["field_types"] == {"body": "text", "start_ts": "datetime"}
+    assert captured["read_spec"] == spec
+
+
+def test_generate_read_spec_empty_fields_returns_empty():
+    from gui_agent.core.run.statements.binding import _generate_read_spec
+
+    assert _generate_read_spec([], {}, "some goal") == ""
+
+
+def test_generate_read_spec_prompt_forbids_hardcoded_dates(monkeypatch):
+    """The read_spec generation must instruct the extractor to resolve relative
+    dates against the current date, never hardcode a date into the spec — the
+    planner that hardcoded the host clock was the original bug."""
+    import gui_agent.core.run.statements.binding as binding
+
+    seen: dict = {}
+
+    class _FakeLLM:
+        def __init__(self, **kwargs):
+            pass
+
+        def invoke(self, messages):
+            seen["system"] = messages[0].content
+            seen["human"] = messages[1].content
+            return type("R", (), {"content": "start_ts: 按当前日期解析"})()
+
+    monkeypatch.setattr("langchain_openai.ChatOpenAI", _FakeLLM)
+    monkeypatch.setattr(
+        "gui_agent.core.config.resolve_llm_config",
+        lambda _name: type("C", (), {"model": "m", "api_key": "k", "base_url": "b"})(),
+    )
+    monkeypatch.setattr(
+        "llm.provider_config.dashscope_extra_body", lambda _model: {}
+    )
+
+    spec = binding._generate_read_spec(
+        ["body", "start_ts"],
+        {"body": "text", "start_ts": "datetime"},
+        "schedule lunch from the message",
+        check_knowledge="calendar signal hints",
+    )
+
+    assert "不要硬编码具体日期" in seen["system"]
+    assert "按当前日期解析" in spec
+    assert "lunch from the message" in seen["human"]
+    assert "calendar signal hints" in seen["human"]

@@ -2,8 +2,14 @@ from gui_agent.adapters.android.accessibility import (
     collection_regions_from_uiautomator,
     semantic_tree_from_uiautomator,
 )
+from gui_agent.adapters.android.actions import AndroidAction, AndroidActionDecision
 from gui_agent.adapters.android.policies import AndroidActionPolicy
-from gui_agent.core.schemas import Observation, StatementContract
+from gui_agent.core.schemas import (
+    ActionIntent,
+    Observation,
+    StatementContract,
+    SupervisorStep,
+)
 from gui_agent.core.supervisor.statement.context_projection import (
     project_transition_observation,
 )
@@ -316,3 +322,50 @@ def test_android_policy_taps_only_an_exact_current_structural_ref() -> None:
         "tap", favorite["point"]["x"], favorite["point"]["y"],
     )
     assert stale is None
+
+
+def test_android_policy_snaps_off_target_point_to_declared_ref() -> None:
+    """A correctly-declared ref must not die on a few dozen px of point-estimate
+    error: snap the action to the ref's authoritative center instead of rejecting.
+    A gross mismatch (clearly a different control) still stays contradicted."""
+    tree = semantic_tree_from_uiautomator(XML, viewport_size=(1080, 2400))
+    assert tree is not None
+    favorite = next(node for node in tree if node["key"] == "Favorite")
+    observation = Observation(png_bytes=b"frame", source="android", semantic_tree=tree)
+    policy = AndroidActionPolicy()
+    fx, fy = favorite["point"]["x"], favorite["point"]["y"]
+
+    def _decision(x: float, y: float) -> AndroidActionDecision:
+        return AndroidActionDecision(action=AndroidAction(
+            action_type="tap", x=x, y=y, description="tap the target"))
+
+    def _step() -> SupervisorStep:
+        return SupervisorStep(
+            summary="target frame",
+            action_intent=ActionIntent(
+                instruction="tap the target",
+                role="write",
+                family="input",
+                target_control="Favorite",
+                target_ref=favorite["ref"],
+            ),
+        )
+
+    # A few dozen units off the ref center: snapped to the authoritative point.
+    decision = _decision(fx + 20, fy - 15)
+    binding = policy.bind(_step(), observation, decision)
+    assert binding is not None and binding.status == "bound"
+    assert binding.source == "structural"
+    assert (decision.action.x, decision.action.y) == (fx, fy)
+
+    # Exact point: bound, coordinates unchanged.
+    decision = _decision(fx, fy)
+    binding = policy.bind(_step(), observation, decision)
+    assert binding is not None and binding.status == "bound"
+    assert (decision.action.x, decision.action.y) == (fx, fy)
+
+    # Grossly off (different control clearly intended): contradicted, no snap.
+    decision = _decision(fx + 300, fy + 250)
+    binding = policy.bind(_step(), observation, decision)
+    assert binding is not None and binding.status == "contradicted"
+    assert (decision.action.x, decision.action.y) == (fx + 300, fy + 250)
