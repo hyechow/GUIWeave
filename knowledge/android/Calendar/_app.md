@@ -27,6 +27,14 @@ version: 1
     complete event set before deciding whether a proposed interval overlaps an existing event
   - an overlap requires `existing.start_ts < proposed_end` and
     `existing.end_ts > proposed_start`; touching endpoints are not an overlap
+- Event display by view:
+  - the MONTH grid renders each event as a compact cell carrying its title plus a single
+    display range string (e.g. `08:00 AM - 09:00 AM`); that range is not structured into
+    `start_ts`/`end_ts` fields and is not reliably machine-extractable from the grid.
+  - tapping a day opens the DAY view, where events are listed as rows with readable start
+    and end times.
+  - availability/overlap checks must acquire events from the DAY view (or an interval view),
+    not from the month grid.
   - an interval-scoped `Event` view can be opened for the exact date/time described by
     an observed source record; after that reach, a complete `Event` query returns the
     events in the requested interval
