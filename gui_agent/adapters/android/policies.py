@@ -43,6 +43,12 @@ SYSTEM_PROMPT = load_prompt_text("task.action_policy.android")
 # a fixed 2x retina, so we do NOT halve unconditionally — only cap huge captures.
 _MAX_EDGE = 1600
 
+# Action points are normalized 0-1000 in both the semantic-tree node point and the
+# LLM's decision, but the LLM estimates its point from a downscaled screenshot and
+# can be off by a few dozen units. When a declared ref resolves, snap to its
+# authoritative center within this tolerance instead of rejecting the action.
+_SNAP_TOLERANCE_UNITS = 120
+
 # Normalized anchors for the common Android time/date wheel layout. The y anchor
 # sits inside the selected wheel band; it must not drift down into the settings
 # list below the picker.
@@ -309,7 +315,23 @@ class AndroidActionPolicy(BaseActionPolicy):
                 status="unresolved", source="structural",
                 reason="declared current-frame Android ref has no actionable point",
             )
-        if any(abs(left - right) > 12 for left, right in zip(actual, expected)):
+        ax, ay = float(actual[0]), float(actual[1])  # type: ignore[arg-type]
+        ex, ey = float(expected[0]), float(expected[1])  # type: ignore[arg-type]
+        off = max(abs(ax - ex), abs(ay - ey))
+        if off > 12:
+            # The LLM estimates the point from the (downscaled) screenshot, so it
+            # can land a few dozen normalized units off even when it declared the
+            # correct current-frame ref. The declared ref is the authoritative
+            # target: snap to its center instead of rejecting, so a correctly
+            # declared type/tap never dies on a few px of estimate error. A gross
+            # mismatch (clearly a different control) still stays contradicted.
+            if off <= _SNAP_TOLERANCE_UNITS:
+                setattr(action, "x", ex)
+                setattr(action, "y", ey)
+                return TargetBinding(
+                    status="bound", source="structural", unit_id=f"ref:{intent.target_ref}",
+                    reason=f"snapped to the declared ref center (estimate off by {int(round(off))} units)",
+                )
             return TargetBinding(
                 status="contradicted", source="structural",
                 reason="action point is outside the declared current-frame Android ref",

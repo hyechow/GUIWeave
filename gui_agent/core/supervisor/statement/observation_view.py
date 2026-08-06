@@ -22,6 +22,30 @@ TransitionOperation = Literal[
 ]
 AffordanceCoverage = Literal["unavailable", "unknown", "partial", "complete"]
 
+
+def _semantic_label(node: dict) -> str:
+    """Readable affordance label, falling back to the structural resource id.
+
+    Icon controls carry a private-use glyph (e.g. a Material Design Icon char) or an
+    empty key, which is meaningless to the Transition LLM — it cannot tell the
+    channel-list "+" from the server icon, so it estimates a point blindly. The
+    resource id (`channel_list_header.plus.button`) is the one place that semantic
+    lives; surface its trailing meaningful segment as the label so the supervisor can
+    bind the exact ref instead of guessing. A readable key/label always wins.
+    """
+    key = str(node.get("key") or node.get("label") or "").strip()
+    if key and any(char.isalnum() or "一" <= char <= "鿿" for char in key):
+        return key
+    resource = str(node.get("resource") or "").strip()
+    if resource:
+        segments = [seg for seg in resource.split(".") if seg and not seg.isdigit()]
+        for seg in reversed(segments):
+            if seg not in {"button", "icon", "image", "text", "input", "view"}:
+                return seg
+        if segments:
+            return segments[-1]
+    return key
+
 _ACTIVATABLE_ROLES = frozenset({
     "button",
     "checkbox",
@@ -101,7 +125,7 @@ def _visibility(item: dict) -> str:
 
 def _semantic_affordance(node: dict, current_url: str) -> dict | None:
     role = str(node.get("role") or "").strip().casefold()
-    label = str(node.get("key") or node.get("label") or "").strip()
+    label = _semantic_label(node)
     if not role or not label:
         return None
     visibility = _visibility(node)

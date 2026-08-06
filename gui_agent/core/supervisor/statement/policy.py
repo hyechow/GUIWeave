@@ -934,6 +934,49 @@ class StatementSupervisorPolicy(
             self._static_constraints.pop()
 
     @staticmethod
+    def _grounding_ref_feedback(memory, view: StatementObservationView) -> str:
+        """Turn a repeated off_target into a use-the-exact-ref corrective.
+
+        A single mis-estimated point is acceptable and must NOT trigger this; the
+        failure the feedback chain must close is *repeated* off_target on the same
+        control, where the LLM keeps blind-estimating the same icon and dying. When
+        ≥2 consecutive off_target facts name the same control that also matches a
+        visible ref-carrying affordance, return a constraint that binds the target
+        via target_ref (structural snap handles the few-px estimate error) instead
+        of a fresh visual guess.
+        """
+        off_targets = [fact for fact in memory.durable_facts if fact.kind == "off_target"]
+        if len(off_targets) < 2:
+            return ""
+        # The instruction text carries the named control (落点偏离目标：<instruction>).
+        targets = [
+            str(fact.text).split("：", 1)[-1].strip().split(" → ")[0].strip()
+            for fact in off_targets[-4:]
+        ]
+        from collections import Counter
+
+        control, count = Counter(t for t in targets if t).most_common(1)[0]
+        if not control or count < 2:
+            return ""
+        visible = [
+            item
+            for item in view.affordances
+            if item.get("visibility") == "visible" and str(item.get("ref") or "").strip()
+        ]
+        if not visible:
+            return ""
+        names = ", ".join(
+            f"「{item.get('label')}」 ref={item.get('ref')}" for item in visible[:8]
+        )
+        return (
+            f"目标「{control}」已连续 {count} 次 off_target：说明对它反复做纯视觉估点"
+            "无法落地。本帧必须改用结构身份精确绑定：从 affordance 里为该目标选择匹配"
+            "的一个,原样填写它的 `target_ref`(目标名可写语义 label);填写 target_ref "
+            "后不要再自行估点,结构 snap 会处理几 px 误差。当前可见 ref:"
+            f"{names}。若目标不在这批 affordance 里,才允许照旧视觉估点。"
+        )
+
+    @staticmethod
     def _verification(
         decision: _StatementTransitionResult,
         memory,
@@ -1113,6 +1156,11 @@ class StatementSupervisorPolicy(
         )
         if submission is not None:
             return submission
+        grounding_feedback = self._grounding_ref_feedback(memory, view)
+        if grounding_feedback:
+            # off_target was recorded but never turned into a corrective: re-ground
+            # the repeated control via its exact ref instead of blind visual estimates.
+            self._pending_transition_correction = grounding_feedback
         with _Timer(
             self._timings,
             self._timings_order,
