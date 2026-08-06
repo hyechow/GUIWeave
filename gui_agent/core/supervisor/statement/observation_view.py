@@ -170,7 +170,8 @@ def _control_affordance(control: dict) -> dict | None:
         "textbox",
         "number",
     }:
-        operations = ["input"]
+        # A text field is focused by tapping it (activate), then typed into (input).
+        operations = ["input", "activate"]
     elif kind in {
         "button", "checkbox", "checkbox_input", "radio", "radio_input",
         "switch", "switch_input", "link", "section_toggle",

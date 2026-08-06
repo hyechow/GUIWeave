@@ -80,6 +80,29 @@ def test_uiautomator_projects_clickable_text_selection_state() -> None:
     assert states == {"Favorites": False, "Bookmarks": True}
 
 
+def test_text_input_control_supports_activate() -> None:
+    """A text field is focused by tapping it (activate) then typed into (input);
+    its affordance must offer both (run-5 form loop on the description field)."""
+    observation = Observation(
+        png_bytes=b"frame",
+        source="android",
+        form_control_state=[
+            {"kind": "text_input", "label": "Description",
+             "ref": "desc1", "value": ""},
+        ],
+    )
+    statement = StatementContract(id="c", goal="g", success="s")
+    view = build_observation_view(statement, observation, [])
+    affordances = [
+        item for item in view.affordances
+        if item.get("label") == "Description"
+    ]
+    assert affordances
+    assert {"input", "activate"} <= set(
+        affordances[0]["supported_operations"]
+    )
+
+
 def test_select_control_supports_activate() -> None:
     """A date/time select field is a button that opens a picker by tapping; its
     affordance must offer activate, not only select (run-3 form loop)."""
