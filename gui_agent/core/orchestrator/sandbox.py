@@ -42,7 +42,7 @@ CTX_METHODS = frozenset({"reach", "query", "acquire", "read", "commit", "command
 CTX_SIGNATURES = {
     "query": (("state", "entity", "filters", "coverage"), {"state", "entity"}),
     "acquire": (("scope", "fields", "coverage"), {"scope", "fields"}),
-    "read": (("state", "target", "fields"), {"state", "fields"}),
+    "read": (("state", "target", "fields", "restore"), {"state", "fields"}),
     "reach": (("state", "goal", "success", "target"), {"state", "goal", "success"}),
     "commit": (("state", "goal", "target", "values"), {"state", "goal", "values"}),
     "command": (("state", "capability"), {"state", "capability"}),

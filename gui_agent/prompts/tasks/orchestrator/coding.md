@@ -73,11 +73,14 @@ The public API is:
   filter-only fields do not belong there. `scope` is reusable: acquire it multiple times with
   different projections without re-querying. Use `text`, `number`, `money`, `datetime`, or
   `boolean` mappings when Python consumes the corresponding typed value.
-- `ctx.read(state, *, target=None, fields: list[str] | dict[str, str]) -> dict` reads named
-  fields from one concrete target or the active state. A query row is a concrete target: pass
+- `ctx.read(state, *, target=None, fields: list[str] | dict[str, str], restore=True) -> dict` reads
+  named fields from one concrete target or the active state. A query row is a concrete target: pass
   that row directly. For a direct read, every requested field must already be declared in the
   active reach's literal `success["fields"]` list. `read` always returns a field-name dictionary;
-  extract the exact field before returning, calculating, or coercing it.
+  extract the exact field before returning, calculating, or coercing it. By default the read
+  restores the source UI after inspecting the target (for a peek read that continues elsewhere).
+  When the very next statement acts on the same target (e.g. a reply commit on the message just
+  read), pass `restore=False` so the read leaves the UI on the target and you do not reach it again.
 - `ctx.commit(state, goal: str, *, target=None, values: dict) -> state` performs one durable
   business operation and returns the post-commit UI state. `values` is the exact application
   mutation schema. Existing-record changes require a target-bound reach on the same row
@@ -105,6 +108,15 @@ After `commit` or `command` returns, the previous state is consumed: use the ret
 later operation, never a state captured before that call. A later `reach` supersedes all earlier
 states; do not query or read through an old state after a newer reach.
 
+Because `commit`/`command` consume the current UI state and return a new one, a source record's
+values are only readable from the state in which that source is visible. Read every value the
+later steps need — including typed/derived fields such as datetimes — in the same read that runs
+while the source is on screen, before any commit that changes that source's screen (a reply, send,
+save, or navigation away). After that commit the source record may no longer be visible, and a
+later read of it reads the wrong screen or fails. Do not defer a source read until after the
+commit, and do not hand the source text to a destination reach to resolve derived values: derive
+them from the source while it is in view.
+
 When rows from one source become later mutation targets and another reach replaces that source,
 collect the rows first or make the later target-bound reach re-establish every application-declared
 route identity. A row in a shared collection is not an active target UI unless its mutation
@@ -127,6 +139,13 @@ rows = ctx.acquire(scope, fields=["id"])
 state = ctx.command(state, "launch_app", app="<destination>")
 state = ctx.reach(state, "Open <destination>", success={"entity": "<entity>"})
 ```
+
+Case: a cross-application reply-then-schedule flow must read EVERY value the later commit needs from
+the source message while that message is still on screen, BEFORE the reply commit. The reply changes
+the source's screen, so reading the message after it fails. Read the derived datetime fields in the
+same `ctx.read` that identifies the invitation, then reply, then navigate to the destination. The
+reply `commit` is the LAST read of the source message; never place a `ctx.read` of the source after
+it.
 
 ## Principle 4: Acquire authoritative data before deciding
 

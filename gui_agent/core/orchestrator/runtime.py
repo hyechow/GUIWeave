@@ -354,7 +354,15 @@ class _RuntimeContext:
         *,
         target: Any = None,
         fields: list[str] | dict[str, str] | None = None,
+        restore: bool = True,
     ) -> dict[str, Any]:
+        """Read fields off a target or the active state.
+
+        ``restore=True`` (default) returns the UI to the source after reading — for
+        a peek read that continues elsewhere. Pass ``restore=False`` when the next
+        statement acts on the same target (e.g. a reply commit), so the read leaves
+        the UI on the target and the program need not re-reach it.
+        """
         state = require_current_ui(state)
         if fields is None:
             raise TypeError("ctx.read requires fields")
@@ -364,6 +372,8 @@ class _RuntimeContext:
         target = json_value(target) if target is not None else None
         target_url = _unique_target_url(target)
         steps = 4 if target_url else 3 if target is not None else 1
+        if not restore and target is not None:
+            steps -= 1
         if target is not None:
             if target_url:
                 state = self._request(
@@ -397,7 +407,7 @@ class _RuntimeContext:
             fields=field_names,
             field_types=field_types,
         )
-        if target is not None:
+        if target is not None and restore:
             # Only restore the source UI when it is a navigable entity.  After a
             # commit the source state is post_commit (no entity) and the read is a
             # no-op navigation, so there is nothing to restore to — emitting

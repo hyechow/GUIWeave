@@ -1989,6 +1989,30 @@ def run(ctx, state):
     assert runtime.reply == '{"start_ts": "2025-10-17 11:00:00+00:00"}'
 
 
+def test_read_restore_false_leaves_ui_on_target() -> None:
+    """``ctx.read(..., restore=False)`` emits focus + read but no restore_source,
+    so a following statement can act on the same target without re-reaching it."""
+    source = """
+def run(ctx, state):
+    state = ctx.reach(state, "Open Messages", success={"entity": "Messages"})
+    return ctx.read(state, target={"id": "1"}, fields={"body": "text"}, restore=False)
+"""
+    runtime = CodingProgramRuntime.start(CodingProgram(goal="read", source=source))
+
+    runtime.send_outcome(StatementOutcome.completed("messages open"))
+    assert runtime.current_coding_op == "focus"
+    assert runtime.current_coding_plan_steps == 2
+    runtime.send_outcome(StatementOutcome.completed("target in view"))
+    assert isinstance(runtime.current.statement, Read)
+    assert runtime.current_coding_op == "read"
+    runtime.send_outcome(StatementOutcome.completed(
+        "read", outputs={"body": "hi"},
+    ))
+    # No restore_source follows; the program terminates on the target.
+    assert runtime.current is None
+    assert runtime.reply == '{"body": "hi"}'
+
+
 def test_generate_code_accepts_validated_program() -> None:
     llm = _SequenceLLM(
         f"```python\n{GOOD_PROGRAM}\n```",
