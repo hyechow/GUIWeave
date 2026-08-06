@@ -16,6 +16,7 @@ version: 1
 ---
 # Mattermost on Android
 
+- 本环境 Mattermost 实例的内容团队为 `neuralforge`;频道创建与成员操作均作用于该团队。
 - Mattermost is a team-messaging application. The main screen lists channels in a
   sidebar; the opened channel shows its message stream with a message input at the
   bottom.
@@ -29,10 +30,8 @@ version: 1
 
 ## Interface contract
 
-- Creating a channel is an untargeted commit that owns the creation form; the
-  mutation field is `name` (`text`), the exact requested channel name. No preparatory
-  reach is needed before it.
-- Adding members to the created channel and posting the welcome message are both
-  mutations of the already-created channel: `add_all_members` (`boolean`) adds every
-  member, and the posted message is supplied as `message` (`text`). The created
-  channel must be the active screen before either takes effect.
+- A channel is created by its `name` (text field) in a single form flow; no
+  preparatory channel-creation step exists.
+- Adding every member to a created channel is one operation, and posting the
+  welcome message is another; both act on the already-created channel (not the
+  creation form), so creation always comes first.
