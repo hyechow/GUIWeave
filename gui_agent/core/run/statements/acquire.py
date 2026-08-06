@@ -280,6 +280,28 @@ class _AcquireExecutor:
         dataset = visual_dataset(observation, fields=fields, records=records)
         return collection_candidates(observation, extra_datasets=[dataset])
 
+    def _visual_records(self) -> list[dict[str, Any]] | None:
+        """Semantic fallback for a cell collection whose structured projection can't
+        bind the requested fields (e.g. Calendar events present time as a display
+        range \"08:00 AM - 09:00 AM\" that can't normalize to a datetime)."""
+        observation = self.cursor.observation
+        if observation is None or not observation.png_bytes:
+            return None
+        from gui_agent.core.run.structured_read import structured_read_rows
+
+        try:
+            records = structured_read_rows(
+                observation.png_bytes,
+                list(self.statement.required_fields),
+                read_spec=self.statement.goal,
+                check_knowledge=self.check_knowledge,
+                prepare_vision_prompt_png=self.bundle.prepare_vision_prompt_png,
+                context_reports=self.reports,
+            )
+        except Exception:
+            return None
+        return records or None
+
     def receipt(
         self,
         strategy: str,
@@ -391,12 +413,6 @@ class _AcquireExecutor:
                     complete = True
                     break
                 stream.add(source.observe_cells())
-            rows = materialize_cell_records(
-                stream.cells,
-                self.statement.required_fields,
-                field_types=dict(self.invocation.args.get("field_types") or {}),
-                goal=self.statement.goal,
-            )
         except (RuntimeError, TypeError, ValueError) as exc:
             return StatementOutcome.failed(
                 f"结构化 cells 采集失败：{exc}",
@@ -404,6 +420,26 @@ class _AcquireExecutor:
                 observation_url=self.cursor.observation_url,
                 context_reports=self.reports,
             )
+        try:
+            rows = materialize_cell_records(
+                stream.cells,
+                self.statement.required_fields,
+                field_types=dict(self.invocation.args.get("field_types") or {}),
+                goal=self.statement.goal,
+            )
+        except (RuntimeError, TypeError, ValueError) as exc:
+            # Structured projection can't bind the requested fields (e.g. Calendar
+            # events present time as a display range "08:00 AM - 09:00 AM" that
+            # can't normalize to a datetime). Fall back to semantic (visual)
+            # extraction, mirroring the read statement's structural -> visual path.
+            rows = self._visual_records()
+            if rows is None:
+                return StatementOutcome.failed(
+                    f"结构化 cells 采集失败：{exc}",
+                    observation=self.cursor.observation,
+                    observation_url=self.cursor.observation_url,
+                    context_reports=self.reports,
+                )
 
         output, spec = next(iter(self.statement.returns.items()))
         reports = list(self.reports)
