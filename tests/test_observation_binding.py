@@ -329,7 +329,7 @@ def test_read_generates_runtime_read_spec_and_passes_to_extraction(monkeypatch):
     )
     outcome = execute_read(
         _read_invocation(
-            {"body": OutputSpec(type="text"), "start_ts": OutputSpec(type="text")},
+            {"body": OutputSpec(type="json"), "start_ts": OutputSpec(type="json")},
             {
                 "body": ObservationBinding(source="field", name="body"),
                 "start_ts": ObservationBinding(source="field", name="start_ts"),
