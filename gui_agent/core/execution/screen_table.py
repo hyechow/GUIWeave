@@ -25,6 +25,7 @@ from typing import Any
 
 from pydantic import BaseModel, Field
 
+from gui_agent.context.blocks import ContextBlock
 from gui_agent.core.llm.messages import assemble_messages
 from gui_agent.core.run.collection_view import collection_candidates
 from gui_agent.core.schemas import Observation, StatementContract
@@ -68,6 +69,19 @@ class ScreenActionPlan(BaseModel):
     )
     mode_required: str = Field(
         default="", description="e.g. '管理勾选模式' if the interface needs a mode switch"
+    )
+
+
+def _screen_block(block_id: str, content: str, *, source: str = "screen_table") -> ContextBlock:
+    """Build a screen-level context block (unified prompt assembly)."""
+    return ContextBlock(
+        id=f"screen_table.{block_id}",
+        budget="required",
+        source_type="decision_frame",
+        source=source,
+        ttl="turn",
+        priority=20,
+        content=content,
     )
 
 
@@ -229,14 +243,8 @@ class ScreenTableProcessor:
             "定位界面按钮",
             obs,
             system_blocks=[],
-            human_blocks=[],
+            human_blocks=[_screen_block("locate", prompt)],
             label="screen_table_locate",
-        )
-        messages[-1] = type(messages[-1])(
-            content=[
-                {"type": "text", "text": prompt},
-                *(c for c in messages[-1].content if isinstance(c, dict) and c.get("type") == "image_url"),
-            ]
         )
         try:
             point = invoke_structured(_make_llm(), messages, _Point, trace_label="locate")
@@ -252,13 +260,29 @@ class ScreenTableProcessor:
         return self._perception.observe()
 
     def _rows(self, obs: Observation) -> list[dict]:
-        """Rows visible in the current screen: name + action button coordinates.
+        """Rows available as decision context for the current screen.
 
-        Reuses collection_candidates to find the cell region, then reads each
-        cell's identity text and its button coordinates from the semantic tree.
+        Both the structured projection (collection_candidates) and the visual
+        card recognition (LLM on the screenshot) are produced — they are CONTEXT
+        candidates, not ground truth. The LLM decides which are target rows using
+        the screenshot (visual) as authoritative; structured rows supplement it.
         """
+        structured = self._rows_structured(obs)
+        visual = self._rows_visual(obs)
+        merged: dict[str, dict] = {}
+        for row in structured:
+            merged[row["name"]] = row
+        for row in visual:
+            existing = merged.get(row["name"])
+            if existing is None:
+                merged[row["name"]] = row
+            elif existing.get("buttons", {}).get("open") is None:
+                # Visual gives an open coordinate; structured may not (feed).
+                existing["buttons"]["open"] = row["buttons"].get("open")
+        return list(merged.values())
+
+    def _rows_structured(self, obs: Observation) -> list[dict]:
         candidates = collection_candidates(obs)
-        # Prefer the cell-projection region (Android has no DOM tables).
         region = next(
             (c for c in candidates if c.get("projection") == "cells"),
             candidates[0] if candidates else None,
@@ -276,6 +300,53 @@ class ScreenTableProcessor:
                 "buttons": self._cell_buttons(cell, obs),
             })
         return rows
+
+    def _rows_visual(self, obs: Observation) -> list[dict]:
+        """Recognize the screen's tappable cards via the LLM on the screenshot.
+
+        Returns rows with a name and a center coordinate (normalized 0-1000), so
+        the executor can open each card's detail. Used when structured perception
+        yields nothing (feed/grid without uiautomator coordinates).
+        """
+        from llm.structured import invoke_structured
+
+        from gui_agent.core.supervisor.statement.model_io import _make_llm
+
+        class _Card(BaseModel):
+            name: str = Field(description="card title / product name")
+            x: float = Field(description="normalized x 0-1000 of the card center")
+            y: float = Field(description="normalized y 0-1000 of the card center")
+
+        class _Cards(BaseModel):
+            cards: list[_Card] = Field(default_factory=list, description="visible cards")
+
+        prompt = (
+            "看截图，识别当前屏幕上的所有商品/内容卡片。每个卡片输出："
+            "name（卡片标题文本）、x/y（卡片中心的归一化坐标0-1000）。"
+            "忽略顶部导航、搜索框、底部 tab。只输出可见的卡片。"
+        )
+        messages = assemble_messages(
+            "识别屏幕卡片",
+            obs,
+            system_blocks=[],
+            human_blocks=[_screen_block("visual_rows", prompt)],
+            label="screen_table_visual_rows",
+        )
+        try:
+            result = invoke_structured(
+                _make_llm(), messages, _Cards, trace_label="screen_table_visual_rows",
+            )
+            return [
+                {
+                    "name": card.name,
+                    "cell": None,
+                    "buttons": {"open": (card.x, card.y)},
+                }
+                for card in result.cards
+                if card.name.strip()
+            ]
+        except Exception:
+            return []
 
     def _cell_name(self, cell: dict) -> str:
         texts = cell.get("texts") or []
@@ -342,29 +413,20 @@ class ScreenTableProcessor:
             for r in visible
         )
         prompt = load_prompt_text("task.execution.screen_table_plan")
+        task_text = (
+            f"目标行动：对匹配 {target!r} 的行执行 {action!r}\n\n"
+            f"请**看截图**判断这个界面如何完成目标行动。注意："
+            f"UIAutomator 可能报告界面上实际看不到的按钮（如滑动删除层），"
+            f"请以截图上真实可见的交互为准。\n\n"
+            f"当前可见行（结构化参考，坐标由执行器确定）：\n{rows_text}\n\n"
+            f"请分析该界面完成目标行动的真实步骤（含是否需要进入管理模式/勾选模式）："
+        )
         messages = assemble_messages(
             prompt,
             obs,
             system_blocks=[],
-            human_blocks=[],
+            human_blocks=[_screen_block("plan", task_text)],
             label="screen_table_plan",
-        )
-        # Append the concrete task as the human message; assemble_messages attaches
-        # the screenshot image. Emphasize VISUAL judgment: UIAutomator may report
-        # hidden buttons (e.g. swipe-to-delete layers) that are not actually on
-        # screen — the LLM must look at the screenshot to decide the real path.
-        messages[-1] = type(messages[-1])(
-            content=[
-                {"type": "text", "text": (
-                    f"目标行动：对匹配 {target!r} 的行执行 {action!r}\n\n"
-                    f"请**看截图**判断这个界面如何完成目标行动。注意："
-                    f"UIAutomator 可能报告界面上实际看不到的按钮（如滑动删除层），"
-                    f"请以截图上真实可见的交互为准。\n\n"
-                    f"当前可见行（结构化参考，坐标由执行器确定）：\n{rows_text}\n\n"
-                    f"请分析该界面完成目标行动的真实步骤（含是否需要进入管理模式/勾选模式）："
-                )},
-                *(c for c in messages[-1].content if isinstance(c, dict) and c.get("type") == "image_url"),
-            ]
         )
         return invoke_structured(
             _make_llm(), messages, ScreenActionPlan, trace_label="screen_table_plan",
@@ -558,14 +620,8 @@ class ScreenTableProcessor:
             "详情页操作",
             detail_obs,
             system_blocks=[],
-            human_blocks=[],
+            human_blocks=[_screen_block("detail", prompt_text)],
             label="screen_table_detail",
-        )
-        messages[-1] = type(messages[-1])(
-            content=[
-                {"type": "text", "text": prompt_text},
-                *(c for c in messages[-1].content if isinstance(c, dict) and c.get("type") == "image_url"),
-            ]
         )
         try:
             decision = invoke_structured(
