@@ -41,6 +41,16 @@ class ScreenRowAction(BaseModel):
 
     row: str = Field(description="the row's name / identity matching the target")
     reason: str = Field(default="", description="why this row matches the target")
+    x: float | None = Field(
+        default=None,
+        description="normalized x 0-1000 of the row/card (required when the "
+                    "structured list has no coordinate, e.g. a feed card)",
+    )
+    y: float | None = Field(
+        default=None,
+        description="normalized y 0-1000 of the row/card (required when the "
+                    "structured list has no coordinate, e.g. a feed card)",
+    )
 
 
 class ScreenDecision(BaseModel):
@@ -260,26 +270,14 @@ class ScreenTableProcessor:
         return self._perception.observe()
 
     def _rows(self, obs: Observation) -> list[dict]:
-        """Rows available as decision context for the current screen.
+        """Rows visible in the current screen: name + action button coordinates.
 
-        Both the structured projection (collection_candidates) and the visual
-        card recognition (LLM on the screenshot) are produced — they are CONTEXT
-        candidates, not ground truth. The LLM decides which are target rows using
-        the screenshot (visual) as authoritative; structured rows supplement it.
+        Uses the structured projection (collection_candidates) only. When the
+        structured path finds nothing (feed/grid without uiautomator coords),
+        the LLM decides target cards directly from the screenshot — the decision
+        already carries the image, so a separate visual row pass is redundant.
         """
-        structured = self._rows_structured(obs)
-        visual = self._rows_visual(obs)
-        merged: dict[str, dict] = {}
-        for row in structured:
-            merged[row["name"]] = row
-        for row in visual:
-            existing = merged.get(row["name"])
-            if existing is None:
-                merged[row["name"]] = row
-            elif existing.get("buttons", {}).get("open") is None:
-                # Visual gives an open coordinate; structured may not (feed).
-                existing["buttons"]["open"] = row["buttons"].get("open")
-        return list(merged.values())
+        return self._rows_structured(obs)
 
     def _rows_structured(self, obs: Observation) -> list[dict]:
         candidates = collection_candidates(obs)
@@ -300,53 +298,6 @@ class ScreenTableProcessor:
                 "buttons": self._cell_buttons(cell, obs),
             })
         return rows
-
-    def _rows_visual(self, obs: Observation) -> list[dict]:
-        """Recognize the screen's tappable cards via the LLM on the screenshot.
-
-        Returns rows with a name and a center coordinate (normalized 0-1000), so
-        the executor can open each card's detail. Used when structured perception
-        yields nothing (feed/grid without uiautomator coordinates).
-        """
-        from llm.structured import invoke_structured
-
-        from gui_agent.core.supervisor.statement.model_io import _make_llm
-
-        class _Card(BaseModel):
-            name: str = Field(description="card title / product name")
-            x: float = Field(description="normalized x 0-1000 of the card center")
-            y: float = Field(description="normalized y 0-1000 of the card center")
-
-        class _Cards(BaseModel):
-            cards: list[_Card] = Field(default_factory=list, description="visible cards")
-
-        prompt = (
-            "看截图，识别当前屏幕上的所有商品/内容卡片。每个卡片输出："
-            "name（卡片标题文本）、x/y（卡片中心的归一化坐标0-1000）。"
-            "忽略顶部导航、搜索框、底部 tab。只输出可见的卡片。"
-        )
-        messages = assemble_messages(
-            "识别屏幕卡片",
-            obs,
-            system_blocks=[],
-            human_blocks=[_screen_block("visual_rows", prompt)],
-            label="screen_table_visual_rows",
-        )
-        try:
-            result = invoke_structured(
-                _make_llm(), messages, _Cards, trace_label="screen_table_visual_rows",
-            )
-            return [
-                {
-                    "name": card.name,
-                    "cell": None,
-                    "buttons": {"open": (card.x, card.y)},
-                }
-                for card in result.cards
-                if card.name.strip()
-            ]
-        except Exception:
-            return []
 
     def _cell_name(self, cell: dict) -> str:
         texts = cell.get("texts") or []
@@ -459,6 +410,10 @@ class ScreenTableProcessor:
             f"- {row['name']} [actions: {', '.join(row['buttons'].keys()) or 'none'}]"
             for row in rows
         )
+        # When the structured list is empty (feed/grid without uiautomator
+        # coordinates), the LLM decides target cards directly from the screenshot
+        # and must supply each matched card's center in x/y.
+        structured_missing = not rows
         # A compact human block describing the target + action + current screen
         # rows; the observation image is attached by assemble_messages.
         processed = self.processed_rows
@@ -467,6 +422,7 @@ class ScreenTableProcessor:
             "action": self.action,
             "rows": rows_text,
             "already_processed": sorted(processed),
+            "structured_missing": structured_missing,
             # NOTE: the pre-traversal plan is deliberately NOT injected into the
             # per-screen matching decision — it distracts the LLM from row
             # matching. The plan is used only at EXECUTION time (which button to
@@ -500,7 +456,16 @@ class ScreenTableProcessor:
             (r for r in self._rows(obs) if r["name"] == matched.row), None
         )
         if row is None:
-            return f"row {matched.row!r} not in current screen"
+            # Structured list has no coordinate for this row (feed/grid): the LLM
+            # decision carries the visual center, so use it as an open point.
+            if matched.x is not None and matched.y is not None:
+                row = {
+                    "name": matched.row,
+                    "cell": None,
+                    "buttons": {"open": (matched.x, matched.y)},
+                }
+            else:
+                return f"row {matched.row!r} not in current screen"
         # Detail actions take precedence over read actions: "打开详情，读取价格"
         # opens the detail page and reads there, not the list row.
         if self._is_detail_action(self.action):

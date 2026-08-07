@@ -24,6 +24,8 @@ schema: ScreenDecision
 规则：
 - matched_rows 只列本屏中命中目标的行；未命中的行不要列
 - already_processed 中的行已经处理过，不要重复列出
+- **如果 structured_missing 为 true（结构化拿不到行坐标）**：请直接看截图识别目标卡片，
+  并在 matched_rows 中为每个命中项输出 x/y（该卡片中心的归一化坐标 0-1000）
 - 如果本屏的行都已处理且没有新目标，滚动到下一屏
 - 只有当你完成整个表格的处理（所有屏都遍历过、目标行都处理完、滚动不再带来新目标行）才 done=true
 - 输出结构化决策（ScreenDecision），不要输出额外文本
