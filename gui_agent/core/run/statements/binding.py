@@ -330,10 +330,19 @@ def execute_read(
             failure_evidence=", ".join(missing),
         )
 
+    # The Read statement's returns carry type "json" (the real field type lives in
+    # the invocation args). Only force "text" so a text value containing a currency
+    # symbol is not re-parsed as money by auto-detection; number/datetime/boolean
+    # keep auto behavior (extract a number from "5 stars", keep datetimes as text).
+    arg_types = dict(invocation.args.get("field_types") or {})
+    declared_types = {
+        output: "text" if arg_types.get(output) == "text" else "auto"
+        for output in statement.returns
+    }
     outputs = normalize_table_rows([{
         output: _coerce(fact.value, statement.returns[output])
         for output, fact in facts.items()
-    }])[0]
+    }], field_types=declared_types)[0]
     invalid = [
         output
         for output, spec in statement.returns.items()
