@@ -8,6 +8,7 @@ paths stay consistent without making loop.py carry every field detail.
 from __future__ import annotations
 
 import json
+import re
 import time
 from typing import Any, Callable
 
@@ -93,6 +94,7 @@ def make_interactive_turn(
     statement: Any = None,
     statement_instance_id: str = "",
     runtime_state: StatementRuntimeSnapshot | None = None,
+    read_code: str = "",
 ) -> PolicyTurn:
     """Build a normal UI turn."""
     intent = supervisor_step.action_intent
@@ -127,7 +129,61 @@ def make_interactive_turn(
         statement=statement,
         statement_instance_id=statement_instance_id,
         runtime_state=runtime_state,
+        read_code=read_code,
     )
+
+
+# A verification code as it appears in a semantic text node. Handles Chinese
+# ("验证码是299603" / "验证码：888888") and English ("Your verification code is
+# 299603" / "verification code: ABC123"), and alphanumeric values (4-8 chars).
+#
+# The bare English word "code" is deliberately NOT a keyword: a Messages inbox may
+# hold unrelated text like "Code review meeting at 3 PM", where "code" + a 4-8 char
+# word ("review") would be a false positive. Only "verification code" / "验证码"
+# (a verification-code context) is matched. Guards also reject lookalikes such as
+# "验证码已通过短信发送到您的手机1380..." (no value adjacent to the keyword) and
+# button labels like "获取验证码"/"请输入验证码" (no code value).
+_CODE_KEYWORDS = r"(?:验证码|verification\s*code)"
+_EXTERNAL_READ_PATTERN = re.compile(
+    rf"{_CODE_KEYWORDS}\s*(?:是|为|：|:|\bis\b)?\s*([A-Za-z0-9]{{4,8}})\b",
+    re.IGNORECASE,
+)
+
+
+def extract_code_from_text(text: str) -> str:
+    """Return the first verification code found in arbitrary text (e.g. the
+    supervisor's summary), or "" if none.
+
+    The bare English word "code" is deliberately NOT a keyword (see
+    ``_EXTERNAL_READ_PATTERN``), so unrelated text such as "Code review meeting
+    at 3 PM" is not mistaken for a verification code.
+    """
+    if not text:
+        return ""
+    match = _EXTERNAL_READ_PATTERN.search(text)
+    return match.group(1) if match else ""
+
+
+def extract_read_code(observation: Observation | None) -> str:
+    """Extract the verification code observed in this frame's semantic tree.
+
+    The code is a perception-layer fact: it deterministically lives in the
+    semantic tree ("您的验证码是299603，有效期10分钟"). Recording it at turn time
+    (rather than re-reading the LLM's summary later) keeps the value available to
+    the memory layer across frames — the fill step after returning from the
+    external app has a concrete value to anchor on.
+    """
+    if observation is None:
+        return ""
+    for node in getattr(observation, "semantic_tree", None) or []:
+        if not isinstance(node, dict):
+            continue
+        if node.get("role") not in ("text", "button"):
+            continue
+        code = extract_code_from_text(str(node.get("key") or ""))
+        if code:
+            return code
+    return ""
 
 
 def make_statement_outcome_event(
@@ -253,6 +309,7 @@ def record_interactive_turn(
     on_turn: Any = None,
     statement: Any = None,
     statement_instance_id: str = "",
+    read_code: str = "",
 ) -> PolicyTurn:
     """Append the UI turn, sync persisted state, and notify the optional callback."""
     tokens_after = get_llm_token_usage()
@@ -279,6 +336,7 @@ def record_interactive_turn(
         statement=statement,
         statement_instance_id=statement_instance_id,
         runtime_state=snapshot_statement_runtime(supervisor),
+        read_code=read_code,
     )
     print_timings(supervisor)
     context.journal.append_turn(turn)

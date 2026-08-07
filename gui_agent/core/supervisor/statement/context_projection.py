@@ -496,6 +496,8 @@ def project_transition_frame(
             ],
             "compressed_history": list(memory.compressed_history),
             "last_action_delivery": _last_action_delivery(memory),
+            "pending_result": memory.pending_result,
+            "pending_gap": memory.pending_gap,
         },
         "observation": project_transition_observation(
             statement,

@@ -63,6 +63,15 @@ class StatementMemoryView:
     recent_steps: tuple[RecentStep, ...]
     compressed_history: tuple[str, ...]
     previous_statement: dict[str, str] | None = None
+    # The most recent dispatched action's stated expected result: the in-flight
+    # sub-goal the agent is mid-way through. Rendered above the contract so the
+    # decision continues a multi-step flow instead of reverting to the top-level
+    # goal after an intermediate action (e.g. pressing Home to read an SMS code).
+    pending_result: str = ""
+    # The supervisor's most recent declared open gap — the pending fill/return
+    # step (narrative memory, not completion evidence). Keeps a read value's
+    # destination anchored after an external read.
+    pending_gap: str = ""
 
     def render_prompt_section(self) -> str:
         """Render the bounded Journal projection consumed by the unified Transition."""
@@ -72,8 +81,17 @@ class StatementMemoryView:
             "以下内容来自 EventJournal 投影，不是模型推断。"
             "LLM 推断不得升级为事实；完成与否须有合同与证据。",
             "",
-            "### 合同",
         ]
+        pending_lines: list[str] = []
+        if self.pending_result:
+            pending_lines.append(f"- 最近动作预期结果：{self.pending_result}")
+        if self.pending_gap:
+            pending_lines.append(f"- 待完成子步骤：{self.pending_gap}")
+        if pending_lines:
+            lines.append("### 当前进行中的子目标")
+            lines.extend(pending_lines)
+            lines.append("")
+        lines.append("### 合同")
         lines.extend(f"- {line}" for line in self.contract_lines)
         if self.contract_requirements:
             lines.append("### 合同要求")
@@ -105,6 +123,49 @@ def _instruction(turn: PolicyTurn) -> str:
         return ""
     intent = turn.supervisor.action_intent
     return intent.instruction.strip() if intent is not None else ""
+
+
+def _expected_result(turn: PolicyTurn) -> str:
+    if turn.supervisor is None:
+        return ""
+    intent = turn.supervisor.action_intent
+    return (intent.expected_result or "").strip() if intent is not None else ""
+
+
+def _pending_gap(turn: PolicyTurn) -> str:
+    """The last declared open gap (the LLM's own next-step directive).
+
+    The assessment's ``open_gaps`` are the supervisor's declared unfinished
+    steps — e.g. "尚未将验证码 910988 填入淘店登录表单". Carrying the most recent
+    one forward (as narrative memory, not completion evidence) keeps a
+    multi-step flow's fill/return step anchored after an external read.
+    """
+    transition = turn.transition or {}
+    proposal = transition.get("proposal") or {}
+    assessment = proposal.get("assessment") or {}
+    gaps = assessment.get("open_gaps") or []
+    for gap in gaps:
+        text = str(gap or "").strip()
+        if text:
+            return text
+    return ""
+
+
+def _read_code(turn: PolicyTurn) -> str:
+    """Return the verification code observed this turn, if any.
+
+    Two sources, both perception/anchor facts (neither invents a code):
+    1. ``turn.read_code`` — extracted from the observation semantic tree at
+       turn-recording time (deterministic; the code lives in the SMS text node).
+    2. ``turn.supervisor.summary`` — the supervisor's narrative. Zero extra cost
+       (the summary is already produced), so it acts as a fallback when the code
+       was seen but the semantic tree did not carry it.
+    """
+    if turn.read_code:
+        return turn.read_code
+    from gui_agent.core.run.turns import extract_code_from_text
+
+    return extract_code_from_text(turn.supervisor.summary or "")
 
 
 def _role(turn: PolicyTurn) -> str:
@@ -214,6 +275,7 @@ def _durable_from_turn(turn: PolicyTurn, statement_id: str) -> list[DurableFact]
                     "surface_id": signal.surface_id,
                     "target_control": signal.target_control,
                     "response": signal.response,
+                    "expected_result": _expected_result(turn),
                 },
             ))
             if signal.mutation_receipt is not None:
@@ -253,6 +315,21 @@ def _durable_from_turn(turn: PolicyTurn, statement_id: str) -> list[DurableFact]
                 ).strip(),
                 event_ref=ref,
             ))
+
+    # An externally-read value (e.g. an SMS verification code the agent read while
+    # visiting Messages) is a perception-layer fact extracted from the observation
+    # semantic tree at turn-recording time (turn.read_code), not an LLM belief.
+    # Without it the value only lives in the transition narrative and evaporates once
+    # the agent leaves the external app — so the fill step after returning has nothing
+    # to anchor on.
+    code = _read_code(turn)
+    if code:
+        facts.append(DurableFact(
+            kind="external_read",
+            text=f"已读取验证码 {code}，待填入目标表单",
+            event_ref=ref,
+            metadata={"code": code},
+        ))
 
     return facts
 
@@ -359,6 +436,39 @@ def build_memory_view(
         for turn in recent
     )
 
+    # The in-flight sub-goal: the most recent dispatched action's expected result
+    # plus the most recent declared open gap (pending fill/return step).
+    pending_result = ""
+    pending_gap = ""
+    for turn in reversed(scoped):
+        if pending_result and pending_gap:
+            break
+        if not pending_result:
+            expected = _expected_result(turn)
+            if expected:
+                pending_result = expected
+        if not pending_gap:
+            gap = _pending_gap(turn)
+            if gap:
+                pending_gap = gap
+
+    # Advance a stale "read" gap. The assessment re-frames the empty code field as
+    # "尚未读取验证码" each time the agent returns to the form, so the pending gap
+    # never converges to the fill step on its own. When an external_read fact already
+    # holds the code, the read step is done — the pending gap becomes the fill step.
+    read_code = ""
+    for fact in durable:
+        if fact.kind == "external_read" and fact.metadata.get("code"):
+            read_code = str(fact.metadata["code"])
+    if (
+        read_code
+        and pending_gap
+        and "读取" in pending_gap
+        and "填入" not in pending_gap
+        and read_code not in pending_gap
+    ):
+        pending_gap = f"将已读取的验证码 {read_code} 填入登录表单并提交"
+
     return StatementMemoryView(
         instance_id=instance_id,
         statement_id=contract.id,
@@ -368,6 +478,8 @@ def build_memory_view(
         recent_steps=recent_steps,
         compressed_history=tuple(compressed),
         previous_statement=previous_statement,
+        pending_result=pending_result,
+        pending_gap=pending_gap,
     )
 
 

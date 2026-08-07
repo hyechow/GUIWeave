@@ -898,6 +898,13 @@ class PolicyTurn(BaseModel):
             "统一 Statement Transition 的 assessment、最终提议及机械校验结果。"
         ),
     )
+    read_code: str = Field(
+        default="",
+        description=(
+            "本轮从外部来源（短信/通知）观察到的验证码。turn 记录时从 observation "
+            "语义树提取，供 memory 层跨帧引用，不依赖 LLM 叙事。"
+        ),
+    )
     executed: bool = False
     action_signal: Optional[ActionSignal] = Field(
         default=None,

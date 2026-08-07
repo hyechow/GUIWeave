@@ -49,6 +49,7 @@ from gui_agent.core.run.interactive import (
 )
 from gui_agent.core.run.turns import (
     emit_statement_fields,
+    extract_read_code,
     interactive_turn_count as _interactive_turn_count,
     make_statement_outcome_event,
     record_interactive_turn,
@@ -771,6 +772,7 @@ def run_agent_loop(
                 on_turn=on_turn,
                 statement=_stmt_info,
                 statement_instance_id=_stmt_iid,
+                read_code=extract_read_code(observation),
             )
 
             if not (executed and auto_continue):
