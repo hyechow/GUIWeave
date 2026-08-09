@@ -1,0 +1,52 @@
+{
+  "name": "gui_action_protocol_ablation",
+  "version": 1,
+  "sources": [
+    {
+      "platform": "iphone",
+      "cases": "evals/iphone/action_policy/cases.json",
+      "screenshots": "evals/iphone/action_policy/screenshots"
+    },
+    {
+      "platform": "android",
+      "cases": "evals/android/action_policy/cases.json",
+      "screenshots": "evals/android/action_policy/screenshots"
+    },
+    {
+      "platform": "browser",
+      "cases": "evals/browser/action_policy/cases.json",
+      "screenshots": "evals/browser/action_policy/screenshots"
+    }
+  ],
+  "variants": [
+    {
+      "id": "structured_off",
+      "protocol": "structured",
+      "thinking": false
+    },
+    {
+      "id": "structured_on",
+      "protocol": "structured",
+      "thinking": true
+    },
+    {
+      "id": "tool_call_off",
+      "protocol": "tool_call",
+      "thinking": false,
+      "tool_choice": "required",
+      "parallel_tool_calls": false
+    },
+    {
+      "id": "tool_call_on",
+      "protocol": "tool_call",
+      "thinking": true,
+      "tool_choice": "auto",
+      "parallel_tool_calls": false
+    }
+  ],
+  "sampling": {
+    "temperature": 0.0,
+    "samples_per_case": 3
+  },
+  "output_root": "logs/manager_protocol"
+}

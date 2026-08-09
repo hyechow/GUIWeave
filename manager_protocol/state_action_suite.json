@@ -1,0 +1,159 @@
+{
+  "name": "webarena_state_action_ablation",
+  "version": 1,
+  "source_run": "logs/gui_agent/webarena/browser/20260724_172555",
+  "require_official_score": 1.0,
+  "cases": [
+    {
+      "id": "dashboard_open_sales",
+      "label": "Dashboard 上展开 SALES 菜单",
+      "event_index": 1,
+      "decision_goal": "进入 Sales > Orders",
+      "decision_success": "Sales 菜单已展开并显示 Orders 入口",
+      "expected_state": {
+        "status": "in_progress",
+        "keywords": ["Dashboard", "SALES"]
+      },
+      "expected_action": {
+        "action_type": "tap",
+        "point": [32.0, 175.0],
+        "target_box": [0.0, 75.0, 135.0, 215.0]
+      }
+    },
+    {
+      "id": "orders_enable_customer_email",
+      "label": "Columns 面板中启用 Customer Email",
+      "event_index": 4,
+      "decision_goal": "让 Sales > Orders 网格显示 Customer Email 列",
+      "decision_success": "Columns 面板中的 Customer Email 已勾选，订单网格显示该列",
+      "expected_state": {
+        "status": "in_progress",
+        "keywords": ["Columns", "Customer Email"]
+      },
+      "expected_action": {
+        "action_type": "tap",
+        "point": [720.108695652174, 490.67043094496364],
+        "target_box": [695.0, 840.0, 465.0, 520.0]
+      }
+    },
+    {
+      "id": "orders_report_type_from_date",
+      "label": "Orders Report 填写 From 日期",
+      "source_run": "logs/gui_agent/webarena/browser/20260727_212305",
+      "event_index": 3,
+      "decision_goal": "配置订单报表日期范围 05/01/2021 到 03/31/2022",
+      "decision_success": "From 字段显示 05/01/2021，随后可以继续填写 To 字段",
+      "expected_state": {
+        "status": "in_progress",
+        "keywords": ["Orders Report", "From"]
+      },
+      "expected_action": {
+        "action_type": "type",
+        "tool_name": "type_text",
+        "fields": {"text": "05/01/2021"},
+        "point": [375.0, 628.0],
+        "target_box": [310.0, 440.0, 600.0, 655.0]
+      }
+    },
+    {
+      "id": "cms_type_page_title",
+      "label": "CMS Page 替换长标题",
+      "source_run": "logs/gui_agent/webarena/browser/20260727_213638",
+      "event_index": 10,
+      "decision_goal": "把 Home Page 的 Page Title 改为 This is the home page!! Leave here!!",
+      "decision_success": "Page Title 输入框显示目标标题，等待保存",
+      "expected_state": {
+        "status": "in_progress",
+        "keywords": ["Home Page", "Page Title"]
+      },
+      "expected_action": {
+        "action_type": "type",
+        "tool_name": "type_text",
+        "fields": {"text": "This is the home page!! Leave here!!"},
+        "point": [534.0, 388.0],
+        "target_box": [310.0, 760.0, 360.0, 420.0]
+      }
+    },
+    {
+      "id": "orders_select_complete_status",
+      "label": "Orders Filters 选择 Complete 状态",
+      "source_run": "logs/gui_agent/webarena/browser/20260726_135645",
+      "event_index": 4,
+      "decision_goal": "把 Orders 的 Status 筛选字段设置为 Complete",
+      "decision_success": "Status 下拉框显示 Complete，等待 Apply Filters",
+      "expected_state": {
+        "status": "in_progress",
+        "keywords": ["Filters", "Status"]
+      },
+      "expected_action": {
+        "action_type": "select_option",
+        "fields_casefold": {"text": "Complete"},
+        "point": [854.0, 506.0],
+        "target_box": [750.0, 960.0, 475.0, 545.0]
+      }
+    },
+    {
+      "id": "products_select_configurable_type",
+      "label": "Products Filters 选择 Configurable Product 类型",
+      "source_run": "logs/gui_agent/webarena/browser/20260728_105904",
+      "event_index": 12,
+      "decision_goal": "把 Products 的 Type 筛选字段设置为 configurable product",
+      "decision_success": "Type 下拉框显示 configurable product，等待 Apply Filters",
+      "expected_state": {
+        "status": "in_progress",
+        "keywords": ["Products", "Type"]
+      },
+      "expected_action": {
+        "action_type": "select_option",
+        "fields_casefold": {"text": "configurable product"},
+        "point": [853.0, 510.0],
+        "target_box": [750.0, 960.0, 445.0, 525.0]
+      }
+    },
+    {
+      "id": "dashboard_scroll_to_top_search_terms",
+      "label": "Dashboard 向下寻找 Top Search Terms",
+      "source_run": "logs/gui_agent/webarena/browser/20260724_120302",
+      "event_index": 4,
+      "decision_goal": "让 Dashboard 的 Top Search Terms 表格进入视口",
+      "decision_success": "Top Search Terms 标题和数据行可见",
+      "expected_state": {
+        "status": "in_progress",
+        "keywords": ["Dashboard", "Top Search Terms"]
+      },
+      "expected_action": {
+        "action_type": "scroll",
+        "fields": {"direction": "down", "target_area": "main_content"}
+      }
+    },
+    {
+      "id": "product_scroll_to_material",
+      "label": "Product Detail 继续向下寻找 Material",
+      "source_run": "logs/gui_agent/webarena/browser/20260728_105904",
+      "event_index": 17,
+      "decision_goal": "让产品详情页的 Material 字段进入视口",
+      "decision_success": "Material 字段可见并可以读取当前值",
+      "expected_state": {
+        "status": "in_progress",
+        "keywords": ["Material", "Style General"]
+      },
+      "expected_action": {
+        "action_type": "scroll",
+        "fields": {"direction": "down", "target_area": "main_content"}
+      }
+    }
+  ],
+  "variants": [
+    "action_only",
+    "joint_content_tool",
+    "separate_two_call",
+    "recorded_intent_policy"
+  ],
+  "sampling": {
+    "temperature": 0.0,
+    "thinking": true,
+    "tool_choice": "auto",
+    "samples_per_case": 1
+  },
+  "output_root": "logs/manager_protocol"
+}
