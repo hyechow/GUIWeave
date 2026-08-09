@@ -15,6 +15,7 @@ from gui_agent.prompts import load_prompt_text
 from gui_agent.core.run.action_exec import settle_after_action
 from gui_agent.core.schemas import BaseAction, BaseActionDecision
 from gui_agent.core.tool_agent.contracts import (
+    DynamicActionSpec,
     MaterializedFrame,
     ToolAgentRun,
     WorkerOutcome,
@@ -30,18 +31,23 @@ from gui_agent.core.tool_agent.protocol import (
     FailWorkerArgs,
     FinishTaskArgs,
     ProtocolError,
+    RequestActionPatchArgs,
     RunWorkerArgs,
     dynamic_worker_tools,
     dynamic_action_tool,
     exactly_one_tool_call,
     image_message,
+    materialize_action_patch,
     master_tools,
     parse_json_object,
+    worker_action_floor,
 )
 from gui_agent.core.tool_agent.sandbox import execute_transform, validate_transform_source
 
 _MASTER_SYSTEM = load_prompt_text("task.tool_agent.master")
 _WORKER_SYSTEM = load_prompt_text("task.tool_agent.worker")
+_MAX_ACTION_PATCHES_PER_FRAME = 3
+_RUNTIME_WORKER_TOOL_NAMES = {"request_action_patch", "complete", "fail"}
 
 
 def _llm(config_name: str, *, temperature: float = 0) -> tuple[ChatOpenAI, Any]:
@@ -178,8 +184,12 @@ class ToolAgentRuntime:
 
     def _run_worker(self, spec: WorkerSpec) -> WorkerOutcome:
         self._validate_worker_spec(spec)
-        worker_tools = dynamic_worker_tools(spec)
+        active_actions = self._initial_worker_actions(spec)
+        worker_tools = dynamic_worker_tools(active_actions)
         spec_for_prompt = spec.model_dump(mode="json")
+        spec_for_prompt["actions"] = [
+            action.model_dump(mode="json") for action in active_actions
+        ]
         for action in spec_for_prompt["actions"]:
             if action["capability"] == "python_transform":
                 source = str(action["fixed_args"].pop("source", ""))
@@ -201,46 +211,119 @@ class ToolAgentRuntime:
             prompt = self._worker_frame_prompt(spec, frame)
             frame_message = image_message(prompt, png)
             messages.append(frame_message)
-            response = None
-            state = None
-            call = None
-            for attempt in range(2):
-                response = self.worker.bind_tools(
-                    worker_tools,
-                    tool_choice="auto",
-                    parallel_tool_calls=False,
-                    extra_body={"enable_thinking": True},
-                ).invoke(messages)
-                try:
-                    state = WorkerState.model_validate(parse_json_object(response.content))
-                    call = exactly_one_tool_call(response)
+            patch_turn = 0
+            while True:
+                response = None
+                state = None
+                call = None
+                for attempt in range(2):
+                    response = self.worker.bind_tools(
+                        worker_tools,
+                        tool_choice="auto",
+                        parallel_tool_calls=False,
+                        extra_body={"enable_thinking": True},
+                    ).invoke(messages)
+                    try:
+                        state = WorkerState.model_validate(parse_json_object(response.content))
+                        call = exactly_one_tool_call(response)
+                        break
+                    except Exception as exc:  # noqa: BLE001 - one same-frame protocol repair
+                        self._trace(
+                            "worker_protocol_error",
+                            step=step,
+                            attempt=attempt + 1,
+                            error=str(exc),
+                        )
+                        if attempt:
+                            raise
+                        messages.append(response)
+                        messages.append(HumanMessage(content=(
+                            "Protocol repair: the previous response was invalid. On this SAME frame, "
+                            "emit WorkerState JSON in content and exactly one tool call. No action was executed."
+                        )))
+                assert response is not None and state is not None and call is not None
+                messages.append(response)
+                self._trace(
+                    "worker_decision",
+                    step=step,
+                    patch_turn=patch_turn,
+                    frame_id=frame.frame_id,
+                    state=state.model_dump(mode="json"),
+                    tool=call["name"],
+                    args=call["args"],
+                )
+                if call["name"] != "request_action_patch":
                     break
-                except Exception as exc:  # noqa: BLE001 - one same-frame protocol repair
-                    self._trace(
-                        "worker_protocol_error",
-                        step=step,
-                        attempt=attempt + 1,
-                        error=str(exc),
+                patch_turn += 1
+                try:
+                    if patch_turn > _MAX_ACTION_PATCHES_PER_FRAME:
+                        raise ProtocolError("same-frame action patch limit exceeded")
+                    parsed_patch = RequestActionPatchArgs.model_validate(call["args"])
+                    added_action = materialize_action_patch(parsed_patch)
+                    self._validate_action_spec(added_action)
+                    existing = next(
+                        (item for item in active_actions if item.name == added_action.name),
+                        None,
                     )
-                    if attempt:
-                        raise
-                    messages.append(response)
-                    messages.append(HumanMessage(content=(
-                        "Protocol repair: the previous response was invalid. On this SAME frame, "
-                        "emit WorkerState JSON in content and exactly one tool call. No action was executed."
-                    )))
-            assert response is not None and state is not None and call is not None
-            messages.append(response)
-            self._trace(
-                "worker_decision",
-                step=step,
-                frame_id=frame.frame_id,
-                state=state.model_dump(mode="json"),
-                tool=call["name"],
-                args=call["args"],
-            )
+                    if existing is not None:
+                        if existing != added_action:
+                            raise ProtocolError(
+                                f"action name {added_action.name!r} already has a different contract"
+                            )
+                        patch_payload = {
+                            "status": "already_available",
+                            "action": existing.model_dump(mode="json"),
+                        }
+                    else:
+                        active_actions.append(added_action)
+                        worker_tools = dynamic_worker_tools(active_actions)
+                        patch_payload = {
+                            "status": "added",
+                            "action": added_action.model_dump(mode="json"),
+                            "instruction": (
+                                "The action is now available. Reason again and choose exactly one "
+                                "action on the same screenshot."
+                            ),
+                        }
+                        self._trace(
+                            "worker_action_patch",
+                            step=step,
+                            frame_id=frame.frame_id,
+                            reason=parsed_patch.reason,
+                            action=added_action.model_dump(mode="json"),
+                        )
+                except Exception as exc:  # noqa: BLE001 - Worker may repair its patch request
+                    patch_payload = {
+                        "status": "error",
+                        "error": f"{type(exc).__name__}: {exc}",
+                        "instruction": (
+                            "Request a valid registered GUI capability or use an already available "
+                            "action on this same screenshot."
+                        ),
+                    }
+                    self._trace(
+                        "worker_action_patch_error",
+                        step=step,
+                        frame_id=frame.frame_id,
+                        error=patch_payload["error"],
+                    )
+                messages.append(ToolMessage(
+                    content=json.dumps(patch_payload, ensure_ascii=False),
+                    tool_call_id=call["id"],
+                ))
+                if patch_turn > _MAX_ACTION_PATCHES_PER_FRAME:
+                    return WorkerOutcome(
+                        phase="failed",
+                        summary="Worker exceeded the same-frame action patch limit.",
+                        steps=step - 1,
+                    )
             try:
-                result_payload, terminal = self._execute_worker_tool(spec, call, png)
+                result_payload, terminal = self._execute_worker_tool(
+                    spec,
+                    active_actions,
+                    call,
+                    png,
+                )
             except Exception as exc:  # noqa: BLE001 - feed capability failure back into ReAct
                 result_payload = {
                     "status": "error",
@@ -312,6 +395,7 @@ class ToolAgentRuntime:
     def _execute_worker_tool(
         self,
         spec: WorkerSpec,
+        actions: list[DynamicActionSpec],
         call: dict[str, Any],
         png: bytes,
     ) -> tuple[dict[str, Any], str | None]:
@@ -322,14 +406,14 @@ class ToolAgentRuntime:
         if call["name"] == "fail":
             parsed = FailWorkerArgs.model_validate(call["args"])
             return {"status": "failed", "reason": parsed.reason}, "fail"
-        actions = {item.name: item for item in spec.actions}
-        action_spec = actions.get(call["name"])
+        action_by_name = {item.name: item for item in actions}
+        action_spec = action_by_name.get(call["name"])
         if action_spec is None:
             raise ProtocolError(f"unknown Worker tool {call['name']!r}")
         full_args = {**action_spec.fixed_args, **call["args"]}
         parameters = dynamic_action_tool(action_spec)["function"]["parameters"]
         validate(instance=call["args"], schema=parameters)
-        if action_spec.capability in {"tap", "scroll"}:
+        if action_spec.capability in {"tap", "scroll", "select_option"}:
             for coordinate in ("x", "y"):
                 value = full_args.get(coordinate)
                 if value is not None and not 0 <= float(value) < 1000:
@@ -376,25 +460,49 @@ class ToolAgentRuntime:
         Draft202012Validator.check_schema(spec.result_schema)
         for requirement in spec.data_requirements:
             Draft202012Validator.check_schema(requirement.row_schema)
-        transforms = [item for item in spec.actions if item.capability == "python_transform"]
         for action in spec.actions:
-            parameters = capability_parameters(action.capability)
-            properties = parameters.get("properties") or {}
-            allowed_extra = {"source"} if action.capability == "python_transform" else set()
-            unknown_fixed = set(action.fixed_args).difference(properties).difference(allowed_extra)
-            if unknown_fixed:
-                raise ValueError(f"{action.name}: unknown fixed args {sorted(unknown_fixed)}")
-            for name, value in action.fixed_args.items():
-                if name in properties:
-                    validate(instance=value, schema=properties[name])
-            dynamic_action_tool(action)
-        for action in transforms:
+            ToolAgentRuntime._validate_action_spec(action)
+        for action in spec.actions:
+            if action.capability != "python_transform":
+                continue
             source = str(action.fixed_args.get("source") or "")
             if not source.strip():
                 raise ValueError(f"{action.name}: python_transform requires fixed_args.source")
             if "data_ref" not in action.exposed_args:
                 raise ValueError(f"{action.name}: python_transform must expose data_ref")
             validate_transform_source(source)
+
+    @staticmethod
+    def _validate_action_spec(action: DynamicActionSpec) -> None:
+        parameters = capability_parameters(action.capability)
+        properties = parameters.get("properties") or {}
+        allowed_extra = {"source"} if action.capability == "python_transform" else set()
+        unknown_fixed = set(action.fixed_args).difference(properties).difference(allowed_extra)
+        if unknown_fixed:
+            raise ValueError(f"{action.name}: unknown fixed args {sorted(unknown_fixed)}")
+        for name, value in action.fixed_args.items():
+            if name in properties:
+                validate(instance=value, schema=properties[name])
+        missing_required = (
+            set(parameters.get("required") or [])
+            .difference(action.fixed_args)
+            .difference(action.exposed_args)
+        )
+        if missing_required:
+            raise ValueError(
+                f"{action.name}: required args are neither fixed nor exposed: "
+                f"{sorted(missing_required)}"
+            )
+        dynamic_action_tool(action)
+
+    @staticmethod
+    def _initial_worker_actions(spec: WorkerSpec) -> list[DynamicActionSpec]:
+        floor = worker_action_floor()
+        reserved = _RUNTIME_WORKER_TOOL_NAMES.union(item.name for item in floor)
+        collisions = reserved.intersection(item.name for item in spec.actions)
+        if collisions:
+            raise ValueError(f"WorkerSpec uses reserved runtime action names: {sorted(collisions)}")
+        return [*spec.actions, *floor]
 
     def _trace(self, event: str, **payload: Any) -> None:
         self.trace.append({"index": len(self.trace) + 1, "event": event, **payload})

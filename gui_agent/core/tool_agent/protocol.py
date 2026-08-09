@@ -6,7 +6,7 @@ import base64
 import json
 import re
 from copy import deepcopy
-from typing import Any
+from typing import Any, Literal
 
 from langchain_core.messages import HumanMessage
 from pydantic import BaseModel, ConfigDict, Field
@@ -44,6 +44,23 @@ class FailWorkerArgs(BaseModel):
     reason: str
 
 
+class RequestActionPatchArgs(BaseModel):
+    """One frame-driven addition selected from the runtime capability registry."""
+
+    model_config = ConfigDict(extra="forbid")
+    name: str = Field(pattern=r"^[a-z][a-z0-9_]{0,63}$")
+    capability: Literal["tap", "scroll", "select_option"]
+    description: str
+    option_text: str = Field(
+        default="",
+        description=(
+            "Exact visible option label for select_option when the subgoal determines it; "
+            "leave empty for tap/scroll or when the Worker must choose the label later."
+        ),
+    )
+    reason: str
+
+
 _CAPABILITY_SCHEMAS: dict[str, dict[str, Any]] = {
     "tap": {
         "type": "object",
@@ -70,6 +87,21 @@ _CAPABILITY_SCHEMAS: dict[str, dict[str, Any]] = {
             "description": {"type": "string"},
         },
         "required": ["direction"],
+        "additionalProperties": False,
+    },
+    "select_option": {
+        "type": "object",
+        "properties": {
+            "x": {"type": "number", "minimum": 0, "maximum": 999},
+            "y": {"type": "number", "minimum": 0, "maximum": 999},
+            "text": {
+                "type": "string",
+                "minLength": 1,
+                "description": "Visible option label to select.",
+            },
+            "description": {"type": "string"},
+        },
+        "required": ["x", "y", "text"],
         "additionalProperties": False,
     },
     "python_transform": {
@@ -110,10 +142,36 @@ def master_tools() -> list[dict[str, Any]]:
     ]
 
 
-def dynamic_worker_tools(spec: WorkerSpec) -> list[dict[str, Any]]:
-    tools = [dynamic_action_tool(item) for item in spec.actions]
+def worker_action_floor() -> list[DynamicActionSpec]:
+    """GUI affordances that remain available when the Master missed a frame detail."""
+    return [
+        DynamicActionSpec(
+            name="runtime_tap_visible",
+            capability="tap",
+            description="Tap one visible control that advances the current Worker goal.",
+            exposed_args=["description"],
+        ),
+        DynamicActionSpec(
+            name="runtime_scroll_visible",
+            capability="scroll",
+            description="Scroll a visible region to reveal content needed by the current Worker goal.",
+            exposed_args=["direction", "amount", "target_area", "description"],
+        ),
+    ]
+
+
+def dynamic_worker_tools(actions: list[DynamicActionSpec]) -> list[dict[str, Any]]:
+    tools = [dynamic_action_tool(item) for item in actions]
     tools.extend(
         [
+            model_tool(
+                "request_action_patch",
+                (
+                    "Add one missing frame-driven GUI action from the registered capability set, "
+                    "then reason again on the same screenshot. This does not execute a GUI action."
+                ),
+                RequestActionPatchArgs,
+            ),
             model_tool(
                 "complete",
                 "Complete this worker using a ResultRef produced by a runtime action.",
@@ -123,6 +181,26 @@ def dynamic_worker_tools(spec: WorkerSpec) -> list[dict[str, Any]]:
         ]
     )
     return tools
+
+
+def materialize_action_patch(args: RequestActionPatchArgs) -> DynamicActionSpec:
+    """Materialize semantics through registry-owned capability parameter contracts."""
+    fixed_args: dict[str, Any] = {}
+    exposed_args: list[str] = []
+    if args.capability == "scroll":
+        exposed_args = ["direction", "amount", "target_area", "description"]
+    elif args.capability == "select_option":
+        if args.option_text.strip():
+            fixed_args["text"] = args.option_text.strip()
+        else:
+            exposed_args.append("text")
+    return DynamicActionSpec(
+        name=args.name,
+        capability=args.capability,
+        description=args.description,
+        fixed_args=fixed_args,
+        exposed_args=exposed_args,
+    )
 
 
 def dynamic_action_tool(action: DynamicActionSpec) -> dict[str, Any]:

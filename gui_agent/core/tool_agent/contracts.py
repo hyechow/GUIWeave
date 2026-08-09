@@ -56,10 +56,44 @@ class DynamicActionSpec(StrictModel):
     """One business-named action bound to a small runtime capability."""
 
     name: str = Field(pattern=r"^[a-z][a-z0-9_]{0,63}$")
-    capability: Literal["tap", "scroll", "python_transform"]
+    capability: Literal["tap", "scroll", "select_option", "python_transform"]
     description: str
     fixed_args: dict[str, Any] = Field(default_factory=dict)
     exposed_args: list[str] = Field(default_factory=list)
+
+    @model_validator(mode="before")
+    @classmethod
+    def _assign_spatial_args_to_worker(cls, data: object) -> object:
+        """Keep screenshot-dependent coordinates out of the text-only Master.
+
+        The Master defines the business action vocabulary but never sees Worker
+        frames.  Treat any spatial values it emits as untrusted placeholders and
+        canonicalize the action so the visual Worker must choose them instead.
+        Tap coordinates remain required by the capability schema; scroll
+        coordinates are optional anchors.
+        """
+        if not isinstance(data, dict) or data.get("capability") not in {
+            "tap",
+            "scroll",
+            "select_option",
+        }:
+            return data
+        normalized = dict(data)
+        fixed_args = dict(normalized.get("fixed_args") or {})
+        exposed_args = list(normalized.get("exposed_args") or [])
+        for name in ("x", "y"):
+            fixed_args.pop(name, None)
+            if name not in exposed_args:
+                exposed_args.append(name)
+        if (
+            normalized.get("capability") == "select_option"
+            and "text" not in fixed_args
+            and "text" not in exposed_args
+        ):
+            exposed_args.append("text")
+        normalized["fixed_args"] = fixed_args
+        normalized["exposed_args"] = exposed_args
+        return normalized
 
     @model_validator(mode="after")
     def _no_duplicate_exposed_args(self) -> "DynamicActionSpec":
@@ -100,6 +134,8 @@ class WorkerState(StrictModel):
     established_facts: list[str] = Field(default_factory=list)
     open_gaps: list[str] = Field(default_factory=list)
     coverage: dict[str, str] = Field(default_factory=dict)
+    action_space_status: Literal["sufficient", "missing_action"] = "sufficient"
+    missing_action: str = ""
     next_instruction: str
 
 
