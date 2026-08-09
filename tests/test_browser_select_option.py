@@ -5,6 +5,7 @@ import types
 from gui_agent.adapters.browser.actions import BrowserAction, BrowserActionDecision
 from gui_agent.adapters.browser.executor import BrowserExecutor
 from gui_agent.adapters.browser.policies import BrowserActionPolicy
+from gui_agent.core.schemas import BaseAction, BaseActionDecision
 
 
 class _Client:
@@ -45,6 +46,23 @@ def test_select_option_action_dispatches_client():
             y=500,
             text="Complete",
             description="在 Status 下拉框选择 Complete",
+        )
+    )
+
+    assert _exec(client).execute(decision) is True
+    assert client.selected == (600.0, 500.0, "Complete")
+    assert client.clicked is None
+
+
+def test_tool_agent_base_action_dispatches_browser_select_option():
+    client = _Client()
+    decision = BaseActionDecision(
+        action=BaseAction(
+            action_type="select_option",
+            x=600,
+            y=500,
+            text="Complete",
+            description="Choose the required status",
         )
     )
 
