@@ -286,6 +286,22 @@ def test_completed_coding_retrieve_accepts_unverified_read_evidence():
     assert resp.retrieved_data == ["Emma", "seam miller"]
 
 
+def test_completed_tool_agent_retrieve_uses_result_ref_json_without_output_llm():
+    resp = _synthesize_response(
+        "Return the requested labels",
+        _result(
+            task_type="RETRIEVE",
+            phase="completed",
+            verification="confirmed",
+            output='["alpha", "beta"]',
+            orchestrator={"kind": "tool_agent", "effect": "data"},
+        ),
+    )
+
+    assert resp.status == "SUCCESS"
+    assert resp.retrieved_data == ["alpha", "beta"]
+
+
 def test_completed_coding_retrieve_wraps_scalar_for_webarena_protocol():
     resp = _synthesize_response(
         "Return the total as a number only",

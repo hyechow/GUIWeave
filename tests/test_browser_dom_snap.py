@@ -59,6 +59,16 @@ def test_tap_snap_failure_falls_back_to_original():
     assert c.clicked == (342, 616)
 
 
+def test_vision_only_tool_agent_can_disable_dom_snap():
+    c = _FakeClient((635.0, 620.0, "div 666x28"))
+    executor = _exec(c)
+    executor.disable_dom_snap = True
+
+    assert executor._tap(342, 616) is True
+    assert c.seen_target is None
+    assert c.clicked == (342, 616)
+
+
 def test_unresolved_typed_target_does_not_create_an_executor_protocol():
     c = _FakeClient((342.0, 616.0, None))
     dec = BrowserActionDecision(action=BrowserAction(
