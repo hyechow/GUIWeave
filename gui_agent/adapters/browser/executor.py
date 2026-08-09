@@ -164,6 +164,8 @@ class BrowserExecutor(VisionExecutor):
         Records ``action.snap`` (normalized 0-1000, method 'dom') when it moves the point, so the
         HTML report / runtime visualizer draw the original→snapped correction like YOLO/OCR."""
         sx, sy = px, py
+        if getattr(self, "disable_dom_snap", False):
+            return super()._tap(sx, sy)
         try:
             action = getattr(self, "_cur_action", None)
             at = getattr(action, "action_type", "")

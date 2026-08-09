@@ -93,7 +93,27 @@ PY
 )"
 fi
 
-out_dir="${output_root}/${run_dir_name}/${task_id}"
+runtime_name="reviewed-python"
+perception_name="enhanced"
+scan_args=("$@")
+for ((i=0; i<${#scan_args[@]}; i++)); do
+  case "${scan_args[$i]}" in
+    --runtime)
+      if (( i + 1 < ${#scan_args[@]} )); then runtime_name="${scan_args[$((i + 1))]}"; fi
+      ;;
+    --runtime=*) runtime_name="${scan_args[$i]#--runtime=}" ;;
+    --perception)
+      if (( i + 1 < ${#scan_args[@]} )); then perception_name="${scan_args[$((i + 1))]}"; fi
+      ;;
+    --perception=*) perception_name="${scan_args[$i]#--perception=}" ;;
+  esac
+done
+
+if [[ "$runtime_name" == "tool-agent" ]]; then
+  out_dir="${output_root}/tool_agent/${perception_name}/${run_dir_name}/${task_id}"
+else
+  out_dir="${output_root}/${run_dir_name}/${task_id}"
+fi
 
 if [[ "$headless" == "1" ]]; then
   headless_arg=(--headless)

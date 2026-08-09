@@ -12,6 +12,7 @@ dependencies = [
     "huggingface-hub>=1.11.0",
     "langchain-anthropic>=1.4.0",
     "langchain-openai>=1.1.13",
+    "jsonschema>=4.26.0",
     "langgraph>=1.1.6",
     "mcp>=1.27.0",
     "ocrmac>=1.0.1; sys_platform == 'darwin'",  # Apple Vision OCR — iPhone adapter only; unavailable on Linux

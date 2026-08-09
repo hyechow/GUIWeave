@@ -303,6 +303,61 @@ def _write_compile_failure_context(
     context_path.write_text(context.model_dump_json(indent=2), encoding="utf-8")
 
 
+def _tool_agent_result_and_context(
+    *,
+    intent: str,
+    run: object,
+    log_dir: Path,
+    knowledge_summary: dict | None,
+) -> AgentResult:
+    """Project the experimental runtime onto stable AgentResult/PolicyContext contracts."""
+    from gui_agent.core.schemas import PolicyContext
+
+    phase = str(getattr(run, "phase", "failed"))
+    output_value = getattr(run, "output", None)
+    result = AgentResult(
+        goal=intent,
+        output=json.dumps(output_value, ensure_ascii=False),
+        summary=str(getattr(run, "summary", "tool-agent ended")),
+        phase="completed" if phase == "completed" else "failed",
+        verification="confirmed" if phase == "completed" else None,
+        task_type="RETRIEVE",
+        orchestrator={
+            "kind": "tool_agent",
+            "effect": "data",
+            "perception_mode": getattr(run, "perception_mode", ""),
+            "result_ref": (
+                getattr(run, "result_ref").model_dump(mode="json")
+                if getattr(run, "result_ref", None) is not None
+                else None
+            ),
+            "models": {
+                "master": getattr(run, "master_model", ""),
+                "worker": getattr(run, "worker_model", ""),
+                "perception": getattr(run, "perception_model", ""),
+            },
+            "trace_path": str(log_dir / "tool_agent_trace.json"),
+        },
+    )
+    context = PolicyContext(
+        goal=intent,
+        supervisor_policy_name="tool_agent.master",
+        action_policy_name="tool_agent.worker",
+        platform="browser",
+        raw_input=intent,
+    )
+    context.knowledge = knowledge_summary
+    context.outcome = result.to_program_outcome()
+    context.models = {
+        "tool_agent.master": getattr(run, "master_model", ""),
+        "tool_agent.worker": getattr(run, "worker_model", ""),
+        "tool_agent.perception": getattr(run, "perception_model", ""),
+    }
+    context.orchestrator = dict(result.orchestrator or {})
+    (log_dir / "context.json").write_text(context.model_dump_json(indent=2), encoding="utf-8")
+    return result
+
+
 def _rewrite_url_host(url: str, host_override: str) -> str:
     """Replace a start_url's netloc with host_override.
 
@@ -669,7 +724,7 @@ def _synthesize_response(
         )
     if (
         result.phase == "completed"
-        and (result.orchestrator or {}).get("kind") == "coding"
+        and (result.orchestrator or {}).get("kind") in {"coding", "tool_agent"}
         and _webarena_task_type_from_result(intent, result) == "RETRIEVE"
     ):
         try:
@@ -687,7 +742,7 @@ def _synthesize_response(
             task_type="RETRIEVE",
             status="SUCCESS" if payload is not None else "NOT_FOUND_ERROR",
             retrieved_data=payload,
-            error_details=None if payload is not None else "Coding program returned no JSON value.",
+            error_details=None if payload is not None else "Runtime returned no JSON value.",
         )
 
     from langchain_core.messages import HumanMessage, SystemMessage
@@ -959,6 +1014,18 @@ def main() -> int:
     )
     parser.add_argument("--max-turns", type=int, default=25)
     parser.add_argument(
+        "--runtime",
+        choices=("reviewed-python", "tool-agent"),
+        default="reviewed-python",
+        help="execution runtime; default keeps the existing reviewed-Python path",
+    )
+    parser.add_argument(
+        "--perception",
+        choices=("vision-only", "enhanced"),
+        default="enhanced",
+        help="tool-agent perception provider (the WorkerSpec and actions remain identical)",
+    )
+    parser.add_argument(
         "--include-skills",
         action="store_true",
         help="explicitly include optional _skill.md orchestration hints; default: functional docs only",
@@ -982,6 +1049,8 @@ def main() -> int:
     )
     args = parser.parse_args()
     is_resume = args.resume_log_dir is not None
+    if is_resume and args.runtime == "tool-agent":
+        parser.error("--resume-log-dir is not supported by the tool-agent experiment")
     if is_resume and args.headless:
         parser.error("--resume-log-dir requires the retained headed browser session")
     if not is_resume and None in (
@@ -1037,8 +1106,12 @@ def main() -> int:
         task = _load_task(args.tasks_file, args.task_id)
         out_dir = args.task_output_dir
     log_dir = create_run_dir(
-        "webarena",
-        "browser/resume" if is_resume else "browser",
+        "tool_agent" if args.runtime == "tool-agent" else "webarena",
+        (
+            f"webarena/browser/{args.perception}"
+            if args.runtime == "tool-agent"
+            else "browser/resume" if is_resume else "browser"
+        ),
     )
     if is_resume:
         assert resume_source_dir is not None
@@ -1080,12 +1153,20 @@ def main() -> int:
         os.environ["BROWSER_USER_DATA_DIR"] = str(profile_dir)
         print(f"[webarena] headless profile: {profile_dir}")
 
-    action_policy = build_policy("browser_vision")
-    supervisor = build_supervisor("statement")
+    action_policy = (
+        None if args.runtime == "tool-agent" else build_policy("browser_vision")
+    )
+    supervisor = (
+        None if args.runtime == "tool-agent" else build_supervisor("statement")
+    )
     # Translucent status HUD over the Chrome window — on in headed mode, off when headless
     # (the unified visibility switch). The agent loop repositions it onto the exact CDP
     # window rect once connected.
-    hud = build_platform().make_status_reporter(not args.headless)
+    hud = (
+        None
+        if args.runtime == "tool-agent"
+        else build_platform().make_status_reporter(not args.headless)
+    )
     print(f"[webarena] agent logs: {log_dir}")
 
     from gui_agent.core.run.io import tee_stdio
@@ -1119,14 +1200,15 @@ def main() -> int:
                         "[webarena] knowledge: deployment origin rebased to "
                         f"{urlsplit(start_url).scheme}://{urlsplit(start_url).netloc}"
                     )
-            if knowledge and knowledge.navigation and hasattr(supervisor, "set_app_knowledge"):
-                supervisor.set_app_knowledge(
-                    knowledge.navigation,
-                    app_name=knowledge.app_name,
-                    elements=knowledge.elements,
-                    sections=knowledge.sections,
-                    check=knowledge.check,
-                )
+            if knowledge and knowledge.navigation:
+                if supervisor is not None and hasattr(supervisor, "set_app_knowledge"):
+                    supervisor.set_app_knowledge(
+                        knowledge.navigation,
+                        app_name=knowledge.app_name,
+                        elements=knowledge.elements,
+                        sections=knowledge.sections,
+                        check=knowledge.check,
+                    )
                 knowledge_summary = knowledge.summary()
                 print(f"[webarena] knowledge: bound site={site} "
                       f"(nav={knowledge_summary['nav_chars']} chars, "
@@ -1159,6 +1241,12 @@ def main() -> int:
             # 3) land on the task start_url (raw-CDP fallback handles the flaky binding).
             if start_url:
                 print("[webarena]", device.navigate(start_url))
+                if args.runtime == "tool-agent" and hasattr(device, "eval_js"):
+                    try:
+                        device.eval_js("window.scrollTo(0, 0); true")
+                        print("[webarena][tool-agent] reset initial viewport to page top")
+                    except Exception as exc:  # noqa: BLE001 - visual worker can still recover
+                        print(f"[webarena][tool-agent] initial viewport reset skipped ({exc})")
 
         try:
             result: AgentResult | None = None
@@ -1186,6 +1274,48 @@ def main() -> int:
                             print(f"[webarena] start_url settle skipped ({exc})")
 
                     def _compile_program():
+                        if args.runtime == "tool-agent":
+                            from gui_agent.core.tool_agent import ToolAgentRuntime
+
+                            page_url = page_title = ""
+                            if device is not None and hasattr(device, "page_info"):
+                                page_url, page_title = device.page_info()
+                            print(
+                                "[webarena][tool-agent] "
+                                f"master=qwen3.7-max worker=qwen3.7-plus "
+                                f"perception={args.perception}"
+                            )
+                            runtime = ToolAgentRuntime(
+                                bundle=bundle,
+                                platform=platform,
+                                log_dir=log_dir,
+                                perception_mode=args.perception,
+                            )
+                            tool_run = runtime.run(
+                                intent,
+                                knowledge=(
+                                    knowledge.orchestrator_context(intent)
+                                    if knowledge is not None
+                                    else ""
+                                ),
+                                page_url=page_url,
+                                page_title=page_title,
+                            )
+                            tool_result = _tool_agent_result_and_context(
+                                intent=intent,
+                                run=tool_run,
+                                log_dir=log_dir,
+                                knowledge_summary=knowledge_summary,
+                            )
+                            return (
+                                None,
+                                {},
+                                args.max_turns,
+                                True,
+                                page_url,
+                                page_title,
+                                tool_result,
+                            )
                         orchestrator_metrics: dict = {}
                         run_max_turns = args.max_turns
                         compile_blocked = False
@@ -1415,14 +1545,15 @@ def main() -> int:
             # ----- post-run artifacts -----
             if result is None:
                 raise RuntimeError("WebArena run ended without AgentResult")
-            try:
-                from gui_agent.core.llm.output import generate_reply
-                from gui_agent.core.run.state import write_final_reply
+            if args.runtime != "tool-agent":
+                try:
+                    from gui_agent.core.llm.output import generate_reply
+                    from gui_agent.core.run.state import write_final_reply
 
-                reply = generate_reply(intent, result.model_dump(mode="json"))
-                write_final_reply(log_dir / "context.json", reply)
-            except Exception as exc:  # noqa: BLE001 - reply is report-facing, not evaluator input
-                print(f"[webarena] reply generation failed ({exc})")
+                    reply = generate_reply(intent, result.model_dump(mode="json"))
+                    write_final_reply(log_dir / "context.json", reply)
+                except Exception as exc:  # noqa: BLE001 - reply is report-facing, not evaluator input
+                    print(f"[webarena] reply generation failed ({exc})")
             rec = recorder_holder.get("rec")
             if rec is not None:
                 capture_path = (
