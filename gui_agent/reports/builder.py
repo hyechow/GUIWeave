@@ -29,6 +29,192 @@ from .models import (
 
 _REPO_ROOT = Path(__file__).resolve().parents[2]
 
+
+def _tool_agent_report_steps(
+    run_dir: Path,
+    orchestrator: dict,
+) -> tuple[list[ReportPage], list[dict], dict]:
+    """Project ``tool_agent_trace.json`` into the existing report timeline model."""
+    trace_path = run_dir / "tool_agent_trace.json"
+    if not trace_path.is_file():
+        configured = Path(str(orchestrator.get("trace_path") or ""))
+        if configured.is_file():
+            trace_path = configured
+        else:
+            return [], [], {"turns": 0, "executed": 0}
+    raw = json.loads(trace_path.read_text(encoding="utf-8"))
+    events = [item for item in (raw.get("trace") or []) if isinstance(item, dict)]
+    screenshots = sorted(
+        run_dir.glob("screenshot_tool_agent_*.png"),
+        key=lambda path: int(path.stem.rsplit("_", 1)[-1]),
+    )
+    first_screenshot = screenshots[0].name if screenshots else ""
+    frame_screenshots = {
+        f"frame:{index}": path.name for index, path in enumerate(screenshots, 1)
+    }
+    runtime_actions = {
+        str(event.get("tool") or ""): str(event.get("action_type") or "")
+        for event in events
+        if event.get("event") == "runtime_action"
+    }
+    steps: list[ReportStep] = []
+    current_screenshot = first_screenshot
+    executed = 0
+    error_events = {
+        "runtime_error",
+        "worker_protocol_error",
+        "worker_spec_error",
+        "worker_tool_error",
+    }
+    labels = {
+        "master_tool": "Master tool",
+        "worker_spec_error": "WorkerSpec validation",
+        "observe": "Observe + materialize refs",
+        "worker_protocol_error": "Worker protocol repair",
+        "worker_decision": "Worker state + action",
+        "runtime_action": "Runtime GUI action",
+        "python_transform": "Python transform",
+        "worker_tool_error": "Worker tool error",
+        "worker_complete": "Worker complete",
+        "runtime_error": "Runtime error",
+    }
+    for ordinal, event in enumerate(events, 1):
+        event_name = str(event.get("event") or "event")
+        frame_id = str(event.get("frame_id") or "")
+        if frame_id and frame_id in frame_screenshots:
+            current_screenshot = frame_screenshots[frame_id]
+        tool_name = str(event.get("tool") or "")
+        action_type = "command"
+        operation_mode = "non_interactive"
+        executor = "command"
+        if event_name == "observe":
+            action_type = executor = "acquire"
+        elif event_name == "worker_decision":
+            action_type = runtime_actions.get(tool_name) or "command"
+            if action_type in {"tap", "scroll", "drag", "type"}:
+                operation_mode = "interactive"
+        elif event_name == "runtime_action":
+            action_type = str(event.get("action_type") or "command")
+            operation_mode = "interactive"
+        state = event.get("state") if isinstance(event.get("state"), dict) else {}
+        description = labels.get(event_name, event_name.replace("_", " ").title())
+        if tool_name:
+            description += f" · {tool_name}"
+        summary = str(
+            state.get("summary")
+            or event.get("error")
+            or event.get("summary")
+            or ""
+        )
+        is_error = event_name in error_events
+        if not is_error:
+            executed += 1
+        evidence_payload = {
+            key: value
+            for key, value in event.items()
+            if key not in {"index", "event"}
+        }
+        steps.append(ReportStep(
+            label=f"Turn {ordinal}",
+            action_type=action_type,
+            x=None,
+            y=None,
+            description=description,
+            annotated_before_url=current_screenshot,
+            annotated_full_url=current_screenshot,
+            raw_screenshot_url=current_screenshot,
+            status="✗" if is_error else "✓",
+            index=ordinal,
+            statement_id="TA1",
+            instance_id="tool-agent-run",
+            statement_executor="interact",
+            instruction=str(state.get("next_instruction") or ""),
+            summary=summary,
+            operation_mode=operation_mode,
+            non_ui={
+                "executor": executor,
+                "goal": description,
+                "summary": summary,
+                "outputs": {
+                    "event": event_name,
+                    "frame": frame_id,
+                    "tool": tool_name,
+                },
+                "evidence": [
+                    json.dumps(evidence_payload, ensure_ascii=False, indent=2)
+                ],
+            },
+            no_effect=bool(event.get("no_effect")),
+        ))
+    page = ReportPage(
+        title="Tool Agent · Master → Worker → Runtime",
+        steps=steps,
+        statement_id="TA1",
+        instance_id="tool-agent-run",
+        statement_executor="interact",
+        statement_name="Dynamic agentic execution unit",
+        statement_description=(
+            "Master defines the WorkerSpec and action space; the Worker loops over screenshots "
+            "and refs; runtime executes GUI actions and deterministic transforms."
+        ),
+        statement_success="Finish with a schema-validated ResultRef.",
+        checklist=[
+            {
+                "text": "Master dispatched a dynamic Worker",
+                "status": "done" if any(
+                    e.get("event") == "master_tool" and e.get("tool") == "run_worker"
+                    for e in events
+                ) else "pending",
+            },
+            {
+                "text": "Worker executed a GUI action",
+                "status": "done" if any(
+                    e.get("event") == "runtime_action" for e in events
+                ) else "pending",
+            },
+            {
+                "text": "Perception produced DataChunkRef metadata",
+                "status": "done" if any(
+                    (e.get("chunks") or [])
+                    for e in events if e.get("event") == "observe"
+                ) else "pending",
+            },
+            {
+                "text": "Python produced a ResultRef",
+                "status": "done" if any(
+                    e.get("event") == "python_transform" for e in events
+                ) else "pending",
+            },
+            {
+                "text": "Master accepted the ResultRef",
+                "status": "done" if any(
+                    e.get("event") == "master_tool" and e.get("tool") == "finish_task"
+                    for e in events
+                ) else "pending",
+            },
+        ],
+    )
+    statements = [{
+        "id": "TA1",
+        "instance_id": "tool-agent-run",
+        "name": page.statement_name,
+        "executor": "interact",
+        "description": page.statement_description,
+        "success": page.statement_success,
+        "status": str(raw.get("phase") or ""),
+        "checklist": page.checklist,
+        "turns": f"1-{len(steps)}" if steps else "—",
+        "total_time": 0.0,
+        "timings": {},
+        "input_tokens": 0,
+        "output_tokens": 0,
+        "cost": 0.0,
+    }]
+    return ([page] if steps else []), statements, {
+        "turns": len(steps),
+        "executed": executed,
+    }
+
 def _normalize_error(raw: str | dict | None) -> dict | None:
     """Normalize error to {message, failed_tap?, failed_element?, back_attempts?} or None."""
     if not raw:
@@ -467,6 +653,19 @@ class RunnerReportBuilder:
         data.models = ctx.get("models", {}) or {}
         _MODELS_MAP.clear()
         _MODELS_MAP.update(data.models)
+
+        if data.orchestrator.get("kind") == "tool_agent":
+            data.pages, data.statements, data.stats = _tool_agent_report_steps(
+                run_dir,
+                data.orchestrator,
+            )
+            data.orchestration_summary = (
+                "Master → Dynamic Worker → Active Perception → DataRefs → "
+                "Python Transform → ResultRef"
+            )
+            if not data.reply:
+                data.reply = data.program_output
+            return data
 
         data.settle_s_total = sum((t.get("settle_s") or 0) for t in turns)
 
