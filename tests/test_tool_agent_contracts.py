@@ -1,17 +1,50 @@
 from __future__ import annotations
 
+from types import SimpleNamespace
+
 import pytest
 from jsonschema import ValidationError, validate
+from langchain_core.messages import HumanMessage, SystemMessage
 from pydantic import ValidationError as PydanticValidationError
 
-from gui_agent.core.tool_agent.contracts import DataRequirement, DynamicActionSpec, WorkerState
+from gui_agent.core.tool_agent.contracts import (
+    DataRequirement,
+    DynamicActionSpec,
+    WorkerSpec,
+    WorkerState,
+)
 from gui_agent.core.tool_agent.protocol import (
     RequestActionPatchArgs,
+    diagnostic_prompt_reports,
     dynamic_action_tool,
     dynamic_worker_tools,
     materialize_action_patch,
     worker_action_floor,
 )
+
+
+def test_diagnostic_prompt_reports_omit_image_payloads() -> None:
+    reports = diagnostic_prompt_reports(
+        "tool_agent.worker",
+        [
+            SystemMessage(content="policy"),
+            HumanMessage(content=[
+                {"type": "text", "text": "frame metadata"},
+                {"type": "image_url", "image_url": {"url": "data:image/png;base64,SECRET"}},
+            ]),
+        ],
+        SimpleNamespace(
+            content='{"status":"exploring"}',
+            tool_calls=[{"name": "tap", "args": {"x": 1, "y": 2}}],
+        ),
+        parsed={"status": "exploring"},
+    )
+
+    rendered = str(reports)
+    assert "SECRET" not in rendered
+    assert "image_url omitted" in rendered
+    assert reports[0]["kind"] == "prompt_snapshot"
+    assert reports[1]["kind"] == "llm_output"
 
 
 def test_dynamic_action_exposes_only_worker_decisions() -> None:
@@ -155,6 +188,23 @@ def test_worker_action_patch_cannot_expand_into_python_execution() -> None:
         )
 
 
+def test_python_transform_ref_is_always_owned_by_worker_runtime() -> None:
+    action = DynamicActionSpec(
+        name="shape_private_rows",
+        capability="python_transform",
+        description="Shape collected rows",
+        fixed_args={
+            "data_ref": "master-cannot-bind-this",
+            "source": "def transform(rows):\n    return rows",
+        },
+    )
+
+    assert action.fixed_args == {"source": "def transform(rows):\n    return rows"}
+    assert action.exposed_args == ["data_ref"]
+    parameters = dynamic_action_tool(action)["function"]["parameters"]
+    assert parameters["required"] == ["data_ref"]
+
+
 def test_worker_state_can_report_missing_action_without_abandoning_subgoal() -> None:
     state = WorkerState.model_validate(
         {
@@ -198,3 +248,39 @@ def test_data_requirement_expands_model_schema_shorthand() -> None:
         "required": ["label", "count"],
         "additionalProperties": False,
     }
+
+
+def test_worker_profile_is_inferred_without_creating_distinct_worker_types() -> None:
+    common = {
+        "goal": "Reach the requested outcome",
+        "success_criteria": ["The outcome is reached"],
+        "actions": [DynamicActionSpec(
+            name="advance",
+            capability="tap",
+            description="Advance the current goal",
+        )],
+        "result_schema": {"type": "boolean"},
+    }
+
+    operator = WorkerSpec.model_validate(common)
+    collector = WorkerSpec.model_validate({
+        **common,
+        "data_requirements": [{
+            "id": "records",
+            "description": "Collect the requested records",
+            "row_schema": {"value": "string"},
+        }],
+    })
+
+    assert operator.profile == "operator"
+    assert collector.profile == "collector"
+
+
+def test_data_requirement_filter_must_be_observable_in_row_schema() -> None:
+    with pytest.raises(ValueError, match="filter fields must be present"):
+        DataRequirement(
+            id="records",
+            description="Filtered records",
+            row_schema={"record_id": "string"},
+            filters={"status": "Complete"},
+        )
