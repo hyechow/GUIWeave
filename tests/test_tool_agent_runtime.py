@@ -31,6 +31,47 @@ def _state(*, missing: bool) -> str:
     )
 
 
+def test_private_access_context_reaches_worker_but_is_redacted_from_trace() -> None:
+    from gui_agent.core.tool_agent.runtime import _access_log_redactions
+
+    access_context = (
+        "# Deployment\n"
+        "Account `runtime-user-73` / password `runtime-secret-73`"
+    )
+    runtime = object.__new__(ToolAgentRuntime)
+    runtime._worker_access_context = access_context
+    runtime._access_log_redactions = _access_log_redactions(access_context)
+    runtime.trace = []
+    spec = WorkerSpec(
+        goal="Reach the authenticated page",
+        success_criteria=["The authenticated page is visible"],
+        actions=[DynamicActionSpec(
+            name="submit_login",
+            capability="tap",
+            description="Submit the visible login form",
+        )],
+    )
+
+    prompt = runtime._worker_system_prompt(spec, spec.actions)
+
+    assert "Session access context" in prompt
+    assert "runtime-user-73" in prompt
+    assert "runtime-secret-73" in prompt
+
+    runtime._trace(
+        "worker_decision",
+        state={"status": "exploring", "summary": "Using runtime-secret-73"},
+        tool="runtime_type_visible",
+        args={"text": "runtime-secret-73"},
+        context_reports=[{"system_prompt": prompt}],
+    )
+
+    rendered_trace = json.dumps(runtime.trace, ensure_ascii=False)
+    assert "runtime-user-73" not in rendered_trace
+    assert "runtime-secret-73" not in rendered_trace
+    assert "session access value redacted" in rendered_trace
+
+
 class _Worker:
     def __init__(self) -> None:
         self.responses = [
@@ -572,7 +613,7 @@ def test_vision_only_execution_does_not_use_enhanced_control_geometry(
     assert executed.snap is None
 
 
-def test_collector_cannot_complete_until_collection_coverage_is_complete() -> None:
+def test_collector_completion_is_unavailable_until_collection_is_ready() -> None:
     runtime = object.__new__(ToolAgentRuntime)
     runtime.data_store = RuntimeDataStore()
     _, collection, _ = runtime.data_store.put_chunk(
@@ -618,16 +659,87 @@ def test_collector_cannot_complete_until_collection_coverage_is_complete() -> No
         )],
     )
 
-    with pytest.raises(ValueError, match="coverage is not complete"):
+    frame = MaterializedFrame(
+        frame_id="frame:1",
+        screenshot_path="frame.png",
+        collections=[collection],
+        requirement_scopes={"records": {"status": "met"}},
+    )
+    tools = runtime._worker_tools_for_frame(spec, spec.actions, frame)
+    assert "complete" not in {tool["function"]["name"] for tool in tools}
+
+    with pytest.raises(ValueError, match="complete is unavailable"):
         runtime._execute_worker_tool(
             spec,
             spec.actions,
             {
                 "name": "complete",
-                "args": {"collection_ref": collection.ref},
+                "args": {},
             },
             b"png",
+            frame,
         )
+
+
+def test_ready_collector_completion_uses_runtime_bound_collection_ref() -> None:
+    runtime = object.__new__(ToolAgentRuntime)
+    runtime.data_store = RuntimeDataStore()
+    _, collection, _ = runtime.data_store.put_chunk(
+        requirement_id="records",
+        frame_id="frame:1",
+        provider="structured",
+        rows=[{"value": "ready"}],
+        row_schema={
+            "type": "object",
+            "properties": {"value": {"type": "string"}},
+            "required": ["value"],
+        },
+        coverage={
+            "scope_status": "met",
+            "source_scope": "structured_surface",
+            "total_records": 1,
+            "page_index": 1,
+            "page_count": 1,
+            "has_next_page": False,
+            "at_end": True,
+        },
+    )
+    spec = WorkerSpec(
+        profile="collector",
+        goal="Collect all records",
+        success_criteria=["Collection coverage is complete"],
+        data_requirements=[{
+            "id": "records",
+            "description": "Collect all records",
+            "row_schema": collection.row_schema,
+        }],
+        actions=[DynamicActionSpec(
+            name="reveal_more",
+            capability="scroll",
+            description="Reveal more collected records",
+            fixed_args={"direction": "down"},
+        )],
+    )
+    frame = MaterializedFrame(
+        frame_id="frame:1",
+        screenshot_path="frame.png",
+        collections=[collection],
+        requirement_scopes={"records": {"status": "met"}},
+    )
+
+    tools = runtime._worker_tools_for_frame(spec, spec.actions, frame)
+    complete = next(tool for tool in tools if tool["function"]["name"] == "complete")
+    assert "collection_ref" not in complete["function"]["parameters"]["properties"]
+    payload, terminal = runtime._execute_worker_tool(
+        spec,
+        spec.actions,
+        {"name": "complete", "args": {"evidence": ["coverage complete"]}},
+        b"png",
+        frame,
+    )
+
+    assert terminal == "complete"
+    assert payload["ref"] == collection.ref
 
 
 def test_runtime_streams_live_logs_and_observation_artifacts(tmp_path) -> None:

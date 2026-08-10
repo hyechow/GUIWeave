@@ -299,6 +299,35 @@ def test_deploy_frontmatter_aliases_discover_app(tmp_path, monkeypatch):
     assert "aliases:" not in k.navigation
 
 
+def test_deployment_access_is_separate_from_orchestrator_context(tmp_path, monkeypatch):
+    app_dir = _make_app(tmp_path, with_skill=False)
+    (app_dir / "_deploy.md").write_text(
+        "---\n"
+        "source_type: deployment_context\n"
+        "sensitivity: secret\n"
+        "---\n"
+        "# Deployment\n"
+        "Entry: http://example.test/admin/\n"
+        "Account `runtime-user-73` / password `runtime-secret-73`",
+        encoding="utf-8",
+    )
+    monkeypatch.setattr(app_summary, "KNOWLEDGE_DIR", tmp_path)
+
+    knowledge = app_summary.auto_discover_knowledge(
+        "在 testapp 查询订单",
+        "browser",
+    )
+
+    assert knowledge is not None
+    assert "runtime-secret-73" in knowledge.deployment
+    # Legacy Statement execution still receives the deployment overlay in navigation.
+    assert "runtime-secret-73" in knowledge.navigation
+    # Task planning does not need or receive session credentials.
+    assert "runtime-user-73" not in knowledge.orchestrator_context("查询订单")
+    assert "runtime-secret-73" not in knowledge.orchestrator_context("查询订单")
+    assert knowledge.summary()["deployment_chars"] == len(knowledge.deployment)
+
+
 def test_set_app_knowledge_stores_check():
     from gui_agent.adapters.browser.supervisor.statement.prompts import BROWSER_STATEMENT_PROMPTS
     from gui_agent.core.supervisor.statement import StatementSupervisorPolicy

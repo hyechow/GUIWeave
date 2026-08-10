@@ -1,0 +1,57 @@
+{
+  "source_run": "logs/gui_agent/tool_agent/webarena/browser/enhanced/20260810_165638",
+  "source_frame": "frame:3",
+  "goal": "Collect all completed orders without an unintended date restriction.",
+  "required_filters": {
+    "Status": "Complete"
+  },
+  "applied_filters": {
+    "Purchase Date": "1/01/2023 - 5/31/2023",
+    "Status": "Complete"
+  },
+  "controls": [
+    {
+      "kind": "button",
+      "label": "Filters",
+      "value": "Filters",
+      "rect": {"x": 597, "y": 277, "w": 101, "h": 33}
+    },
+    {
+      "kind": "button",
+      "label": "Remove",
+      "value": "Remove",
+      "rect": {"x": 365, "y": 326, "w": 18, "h": 17}
+    },
+    {
+      "kind": "button",
+      "label": "Remove",
+      "value": "Remove",
+      "rect": {"x": 485, "y": 326, "w": 18, "h": 17}
+    },
+    {
+      "kind": "button",
+      "label": "Clear all",
+      "value": "Clear all",
+      "query_action": "reset",
+      "rect": {"x": 932, "y": 326, "w": 83, "h": 19}
+    }
+  ],
+  "expected_recovery": {
+    "forbidden_tool": "complete",
+    "allowed_capability": "tap",
+    "valid_targets": ["Purchase Date Remove", "Clear all"],
+    "clear_all_follow_up": "Reapply Status Complete after all filters are cleared."
+  },
+  "observed_policy_replay": {
+    "model": "qwen3.7-plus",
+    "complete_available": false,
+    "tool_call": {
+      "name": "runtime_tap_visible",
+      "args": {
+        "x": 365,
+        "y": 326,
+        "description": "Tap the Remove button next to the Purchase Date filter in the Active filters row to remove the extra date range filter"
+      }
+    }
+  }
+}

@@ -155,6 +155,21 @@ def test_runtime_action_floor_and_patch_tool_are_always_available() -> None:
     assert "description" in runtime_tap["function"]["parameters"]["required"]
 
 
+def test_collector_completion_tool_is_frame_gated_and_runtime_bound() -> None:
+    floor = worker_action_floor()
+
+    waiting = dynamic_worker_tools(floor, completion_mode="unavailable")
+    assert "complete" not in {tool["function"]["name"] for tool in waiting}
+
+    ready = dynamic_worker_tools(floor, completion_mode="collector")
+    complete = next(
+        tool for tool in ready if tool["function"]["name"] == "complete"
+    )
+    properties = complete["function"]["parameters"]["properties"]
+    assert "collection_ref" not in properties
+    assert set(properties) == {"state", "evidence"}
+
+
 def test_provider_coordinate_variants_are_normalized_before_strict_validation() -> None:
     assert normalize_action_arguments({"x": [36, 181], "y": [36, 181]}) == {
         "x": 36,

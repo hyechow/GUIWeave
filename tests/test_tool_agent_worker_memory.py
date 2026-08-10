@@ -99,6 +99,38 @@ def test_worker_context_uses_semantic_frame_variant_before_exceeding_budget() ->
     assert "x" * 100 not in projection.text
 
 
+def test_worker_context_projects_extra_filter_as_authoritative_scope_blocker() -> None:
+    frame = MaterializedFrame(
+        frame_id="frame:3",
+        screenshot_path="frame.png",
+        controls=[{"kind": "button", "label": "Clear all"}],
+        applied_filters={
+            "Status": "Complete",
+            "Purchase Date": "1/01/2023 - 5/31/2023",
+        },
+        requirement_scopes={
+            "completed_orders": {
+                "status": "unmet",
+                "requested_filters": {"Status": "Complete"},
+                "applied_filters": {
+                    "Status": "Complete",
+                    "Purchase Date": "1/01/2023 - 5/31/2023",
+                },
+            },
+        },
+        missing_requirements=["completed_orders"],
+    )
+
+    projection = project_worker_context(
+        memory=build_worker_memory_view(WorkerJournal(worker_id="collector")),
+        frame=frame,
+    )
+
+    assert '"status": "unmet"' in projection.text
+    assert '"extra_applied_filters": ["Purchase Date"]' in projection.text
+    assert "before collecting or completing" in projection.text
+
+
 class _RecordingWorker:
     def __init__(self) -> None:
         self.calls: list[list[object]] = []
