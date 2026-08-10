@@ -200,6 +200,7 @@ def build_android_bundle(
     back to env ``ANDROID_SERIAL``, else auto-selects the sole adb device).
     """
     from gui_agent.adapters.android.acquisition import move_collection
+    from gui_agent.adapters.android.actions import AndroidAction
     from gui_agent.adapters.android.executor import AndroidExecutor
     from gui_agent.adapters.android.perception import AndroidPerception, AndroidSession
 
@@ -208,6 +209,7 @@ def build_android_bundle(
         open_session=lambda: AndroidSession(serial=serial),
         setup_check=lambda: _setup_check(serial),
         make_executor=lambda session: AndroidExecutor(session),
+        make_action=lambda payload: AndroidAction.model_validate(payload),
         make_perception=lambda session, png_path: AndroidPerception(session, png_path),
         make_action_policy=_build_action_policy,
         make_supervisor=_build_supervisor,

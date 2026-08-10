@@ -3,7 +3,7 @@
 from __future__ import annotations
 
 from copy import deepcopy
-from typing import Any, Literal
+from typing import Any, Literal, TypeAlias
 
 from pydantic import BaseModel, ConfigDict, Field, model_validator
 
@@ -41,8 +41,9 @@ class DataRequirement(StrictModel):
     filters: dict[str, Any] = Field(
         default_factory=dict,
         description=(
-            "Required data-scope predicates keyed by normalized row field. The GUI "
-            "Worker must establish this scope before collection begins."
+            "Immutable logical data restrictions keyed by normalized row field. "
+            "They define the requested business scope independently of a physical "
+            "attempt's broader or narrower UI acquisition literal."
         ),
     )
     coverage: Literal["complete"] = "complete"
@@ -76,7 +77,7 @@ class DataRequirement(StrictModel):
         unknown_filters = set(self.filters).difference(properties)
         if unknown_filters:
             raise ValueError(
-                "filter fields must be present in row_schema so collection scope can "
+                "filter fields must be present in row_schema so logical row scope can "
                 f"be verified: {sorted(unknown_filters)}"
             )
         unknown_sources = set(self.field_sources).difference(properties)
@@ -112,11 +113,23 @@ class DataRequirement(StrictModel):
         return self
 
 
+ToolActionCapability: TypeAlias = Literal[
+    "tap",
+    "type",
+    "clear_text",
+    "press_enter",
+    "scroll",
+    "select_option",
+    "open_url",
+    "back",
+]
+
+
 class DynamicActionSpec(StrictModel):
     """One business-named action bound to a small runtime capability."""
 
     name: str = Field(pattern=r"^[a-z][a-z0-9_]{0,63}$")
-    capability: Literal["tap", "type", "scroll", "select_option"]
+    capability: ToolActionCapability
     description: str
     fixed_args: dict[str, Any] = Field(default_factory=dict)
     exposed_args: list[str] = Field(default_factory=list)
@@ -132,31 +145,34 @@ class DynamicActionSpec(StrictModel):
         Tap coordinates remain required by the capability schema; scroll
         coordinates are optional anchors.
         """
-        if not isinstance(data, dict) or data.get("capability") not in {
-            "tap",
-            "type",
-            "scroll",
-            "select_option",
-        }:
+        if not isinstance(data, dict):
             return data
         normalized = dict(data)
         fixed_args = dict(normalized.get("fixed_args") or {})
         exposed_args = list(normalized.get("exposed_args") or [])
-        for name in ("x", "y"):
-            fixed_args.pop(name, None)
-            if name not in exposed_args:
-                exposed_args.append(name)
-        # DOM identity is deliberately not part of the Worker action protocol.
-        # Enhanced adapters may ground the visual point after the Worker decides
-        # an action; vision-only execution uses the point unchanged.
-        fixed_args.pop("target_ref", None)
-        exposed_args = [name for name in exposed_args if name != "target_ref"]
+        capability = normalized.get("capability")
+        if capability in {"tap", "type", "scroll", "select_option"}:
+            for name in ("x", "y"):
+                fixed_args.pop(name, None)
+                if name not in exposed_args:
+                    exposed_args.append(name)
+            # DOM identity is deliberately not part of the Worker action protocol.
+            # Enhanced adapters may ground the visual point after the Worker decides
+            # an action; vision-only execution uses the point unchanged.
+            fixed_args.pop("target_ref", None)
+            exposed_args = [name for name in exposed_args if name != "target_ref"]
         if (
-            normalized.get("capability") == "select_option"
+            capability == "select_option"
             and "text" not in fixed_args
             and "text" not in exposed_args
         ):
             exposed_args.append("text")
+        if (
+            capability == "open_url"
+            and "url" not in fixed_args
+            and "url" not in exposed_args
+        ):
+            exposed_args.append("url")
         normalized["fixed_args"] = fixed_args
         normalized["exposed_args"] = exposed_args
         return normalized
@@ -184,6 +200,13 @@ class WorkerSpec(StrictModel):
     goal: str
     success_criteria: list[str] = Field(min_length=1)
     data_requirements: list[DataRequirement] = Field(default_factory=list)
+    acquisition_filters: dict[str, Any] | None = Field(
+        default=None,
+        description=(
+            "Mutable UI scope used by this physical Worker attempt. Collector "
+            "attempts default to the immutable logical DataRequirement.filters."
+        ),
+    )
     actions: list[DynamicActionSpec] = Field(min_length=1)
     max_steps: int = Field(default=8, ge=1, le=20)
 
@@ -201,6 +224,21 @@ class WorkerSpec(StrictModel):
             raise ValueError("collector profile requires exactly one logical data requirement")
         if self.profile == "operator" and self.data_requirements:
             raise ValueError("operator profile cannot declare data requirements")
+        if self.profile == "operator":
+            if self.acquisition_filters:
+                raise ValueError("operator profile cannot declare acquisition_filters")
+            self.acquisition_filters = {}
+        else:
+            requirement = self.data_requirements[0]
+            if self.acquisition_filters is None:
+                self.acquisition_filters = deepcopy(requirement.filters)
+            properties = set((requirement.row_schema.get("properties") or {}).keys())
+            unknown_filters = set(self.acquisition_filters).difference(properties)
+            if unknown_filters:
+                raise ValueError(
+                    "acquisition filter fields must be present in row_schema: "
+                    f"{sorted(unknown_filters)}"
+                )
         return self
 
 

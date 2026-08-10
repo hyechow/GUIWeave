@@ -19,7 +19,12 @@ from typing import Any, Callable, Literal
 from jsonschema import Draft202012Validator
 from langchain_core.messages import HumanMessage, SystemMessage
 
-from gui_agent.core.tool_agent.contracts import ResultRef, WorkerOutcome, WorkerSpec
+from gui_agent.core.tool_agent.contracts import (
+    DataRequirement,
+    ResultRef,
+    WorkerOutcome,
+    WorkerSpec,
+)
 from gui_agent.core.tool_agent.data_store import RuntimeDataStore
 from gui_agent.core.tool_agent.protocol import (
     diagnostic_prompt_reports,
@@ -225,8 +230,16 @@ def _validate_gui_worker_call(call: ast.Call) -> list[MasterDiagnostic]:
         profile = None
         if any(item.arg == "profile" for item in call.keywords):
             profile = _literal_keyword(call, "profile")
+        acquisition_filters = None
+        if any(item.arg == "acquisition_filters" for item in call.keywords):
+            acquisition_filters = _literal_keyword(call, "acquisition_filters")
         spec = WorkerSpec.model_validate(
-            {**values, "profile": profile, "max_steps": max_steps}
+            {
+                **values,
+                "profile": profile,
+                "acquisition_filters": acquisition_filters,
+                "max_steps": max_steps,
+            }
         )
         for requirement in spec.data_requirements:
             Draft202012Validator.check_schema(requirement.row_schema)
@@ -274,6 +287,106 @@ def _subscript_key(node: ast.AST) -> str:
     if isinstance(slice_node, ast.Constant) and isinstance(slice_node.value, str):
         return slice_node.value
     return ""
+
+
+def _base_name(node: ast.AST) -> str:
+    while isinstance(node, ast.Subscript):
+        node = node.value
+    return node.id if isinstance(node, ast.Name) else ""
+
+
+def _ctx_call(node: ast.AST, method: str) -> ast.Call | None:
+    if not isinstance(node, ast.Call) or not isinstance(node.func, ast.Attribute):
+        return None
+    if not (
+        isinstance(node.func.value, ast.Name)
+        and node.func.value.id == "ctx"
+        and node.func.attr == method
+    ):
+        return None
+    return node
+
+
+def _static_transform_input_diagnostics(tree: ast.AST) -> list[MasterDiagnostic]:
+    """Review transform row fields against statically routed Worker schemas."""
+
+    row_schemas: dict[str, dict[str, Any]] = {}
+    transform_calls: list[ast.Call] = []
+    assignments = sorted(
+        (node for node in ast.walk(tree) if isinstance(node, ast.Assign)),
+        key=lambda node: getattr(node, "lineno", 0),
+    )
+    for assignment in assignments:
+        if len(assignment.targets) != 1 or not isinstance(assignment.targets[0], ast.Name):
+            continue
+        name = assignment.targets[0].id
+        worker_call = _ctx_call(assignment.value, "gui_worker")
+        if worker_call is not None:
+            try:
+                requirements = _literal_keyword(worker_call, "data_requirements")
+                profile = (
+                    _literal_keyword(worker_call, "profile")
+                    if any(item.arg == "profile" for item in worker_call.keywords)
+                    else None
+                )
+                if profile == "operator" or not requirements:
+                    continue
+                requirement = requirements[0]
+                if isinstance(requirement, dict) and isinstance(
+                    requirement.get("row_schema"), dict
+                ):
+                    row_schemas[name] = DataRequirement.model_validate(
+                        requirement
+                    ).row_schema
+            except Exception:
+                # The ordinary WorkerSpec review reports malformed requirements.
+                continue
+            continue
+        transform_call = _ctx_call(assignment.value, "transform")
+        if transform_call is None:
+            continue
+        transform_calls.append(transform_call)
+        try:
+            result_schema = _literal_keyword(transform_call, "result_schema")
+        except ValueError:
+            continue
+        if not isinstance(result_schema, dict):
+            continue
+        items = result_schema.get("items")
+        if result_schema.get("type") == "array" and isinstance(items, dict):
+            row_schemas[name] = items
+
+    diagnostics: list[MasterDiagnostic] = []
+    for call in transform_calls:
+        inputs_node = next(
+            (item.value for item in call.keywords if item.arg == "inputs"),
+            None,
+        )
+        if not isinstance(inputs_node, (ast.List, ast.Tuple)):
+            continue
+        schemas = [
+            row_schemas[name]
+            for item in inputs_node.elts
+            if (name := _base_name(item)) in row_schemas
+        ]
+        if not schemas:
+            continue
+        combined = {
+            "type": "object",
+            "properties": {
+                key: value
+                for schema in schemas
+                for key, value in (schema.get("properties") or {}).items()
+            },
+        }
+        try:
+            source = _literal_keyword(call, "source")
+            validate_transform_row_fields(source, combined)
+        except Exception as exc:  # noqa: BLE001 - one static diagnostic channel
+            diagnostics.append(
+                _diagnostic("TRANSFORM_INPUT_SCHEMA", str(exc), call)
+            )
+    return diagnostics
 
 
 def _validate_finish_call(call: ast.Call) -> list[MasterDiagnostic]:
@@ -365,7 +478,8 @@ def validate_master_source(source: str) -> list[MasterDiagnostic]:
             diagnostics.append(_diagnostic("UNSAFE_METHOD", f"method {node.func.attr!r} is disallowed", node))
 
     if terminal_calls == 0:
-        diagnostics.append(_diagnostic("TERMINAL_REQUIRED", "program must call ctx.finish, ctx.replan, or ctx.fail"))
+        diagnostics.append(_diagnostic("TERMINAL_REQUIRED", "program must call ctx.finish or ctx.fail"))
+    diagnostics.extend(_static_transform_input_diagnostics(tree))
     unique: list[MasterDiagnostic] = []
     seen: set[tuple[str, str, int]] = set()
     for item in diagnostics:
@@ -502,6 +616,7 @@ class WorkerOrchestrationContext:
         success_criteria: list[str],
         data_requirements: list[dict[str, Any]],
         actions: list[dict[str, Any]],
+        acquisition_filters: dict[str, Any] | None = None,
         max_steps: int = 8,
     ) -> dict[str, Any]:
         if _WORKER_ID_PATTERN.fullmatch(worker_id) is None:
@@ -512,6 +627,7 @@ class WorkerOrchestrationContext:
                 "goal": goal,
                 "success_criteria": success_criteria,
                 "data_requirements": data_requirements,
+                "acquisition_filters": acquisition_filters,
                 "actions": actions,
                 "max_steps": max_steps,
             }
@@ -634,7 +750,10 @@ class WorkerOrchestrationContext:
     def replan(self, reason: str) -> None:
         if not isinstance(reason, str) or not reason.strip():
             raise ValueError("replan requires a concrete reason")
-        self._terminal = MasterTerminal(phase="replan", summary=reason.strip())
+        # Backward-compatible seal for already-recorded programs. Local strategy
+        # revision now happens inside gui_worker before its outcome returns, so a
+        # frozen program must never replay itself to retry the same logical Worker.
+        self._terminal = MasterTerminal(phase="failed", summary=reason.strip())
         raise _ProgramHalt
 
     def fail(self, reason: str) -> None:
@@ -681,7 +800,9 @@ def execute_master_program(
         finally:
             sys.settrace(previous_trace)
         if ctx.terminal is None:
-            return MasterExecution(error="Master program returned without ctx.finish, ctx.replan, or ctx.fail")
+            return MasterExecution(
+                error="Master program returned without a terminal ctx call"
+            )
         return MasterExecution(terminal=ctx.terminal)
     except BaseException as exc:  # noqa: BLE001 - sandbox boundary reports errors as data
         if isinstance(exc, (KeyboardInterrupt, SystemExit)):

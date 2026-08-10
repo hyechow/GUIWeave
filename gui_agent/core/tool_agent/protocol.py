@@ -11,7 +11,10 @@ from typing import Any, Literal
 from langchain_core.messages import HumanMessage
 from pydantic import BaseModel, ConfigDict, Field
 
-from gui_agent.core.tool_agent.contracts import DynamicActionSpec
+from gui_agent.core.tool_agent.contracts import (
+    DynamicActionSpec,
+    ToolActionCapability,
+)
 
 
 class ProtocolError(RuntimeError):
@@ -47,7 +50,7 @@ class RequestActionPatchArgs(BaseModel):
 
     model_config = ConfigDict(extra="forbid")
     name: str = Field(pattern=r"^[a-z][a-z0-9_]{0,63}$")
-    capability: Literal["tap", "type", "scroll", "select_option"]
+    capability: ToolActionCapability
     description: str
     input_text: str = Field(
         default="",
@@ -61,6 +64,13 @@ class RequestActionPatchArgs(BaseModel):
         description=(
             "Exact visible option label for select_option when the subgoal determines it; "
             "leave empty for tap/scroll or when the Worker must choose the label later."
+        ),
+    )
+    url: str = Field(
+        default="",
+        description=(
+            "Exact task- or knowledge-provided URL for open_url when known; leave "
+            "empty when the Worker must choose it from its current context."
         ),
     )
     reason: str
@@ -108,6 +118,18 @@ _CAPABILITY_SCHEMAS: dict[str, dict[str, Any]] = {
         "required": ["x", "y", "text"],
         "additionalProperties": False,
     },
+    "clear_text": {
+        "type": "object",
+        "properties": {},
+        "required": [],
+        "additionalProperties": False,
+    },
+    "press_enter": {
+        "type": "object",
+        "properties": {},
+        "required": [],
+        "additionalProperties": False,
+    },
     "scroll": {
         "type": "object",
         "properties": {
@@ -150,6 +172,25 @@ _CAPABILITY_SCHEMAS: dict[str, dict[str, Any]] = {
         "required": ["x", "y", "text"],
         "additionalProperties": False,
     },
+    "open_url": {
+        "type": "object",
+        "properties": {
+            "url": {
+                "type": "string",
+                "minLength": 1,
+                "maxLength": 2048,
+                "description": "Task- or knowledge-provided URL to open in the current tab.",
+            },
+        },
+        "required": ["url"],
+        "additionalProperties": False,
+    },
+    "back": {
+        "type": "object",
+        "properties": {},
+        "required": [],
+        "additionalProperties": False,
+    },
 }
 
 
@@ -184,6 +225,32 @@ def worker_action_floor() -> list[DynamicActionSpec]:
             capability="type",
             description="Enter task-determined text into one visible input control.",
             exposed_args=["text", "description"],
+        ),
+        DynamicActionSpec(
+            name="runtime_clear_focused",
+            capability="clear_text",
+            description="Clear the currently focused visible text input.",
+        ),
+        DynamicActionSpec(
+            name="runtime_press_enter",
+            capability="press_enter",
+            description="Press Enter to submit or confirm the currently focused control.",
+        ),
+        DynamicActionSpec(
+            name="runtime_select_visible",
+            capability="select_option",
+            description="Choose one named option from a visible choice control.",
+            exposed_args=["text", "description"],
+        ),
+        DynamicActionSpec(
+            name="runtime_open_url",
+            capability="open_url",
+            description="Open a task- or knowledge-provided URL in the current browser tab.",
+        ),
+        DynamicActionSpec(
+            name="runtime_browser_back",
+            capability="back",
+            description="Go back once in the current browser tab's history.",
         ),
     ]
 
@@ -279,6 +346,11 @@ def materialize_action_patch(args: RequestActionPatchArgs) -> DynamicActionSpec:
             fixed_args["text"] = args.option_text.strip()
         else:
             exposed_args.append("text")
+    elif args.capability == "open_url":
+        if args.url.strip():
+            fixed_args["url"] = args.url.strip()
+        else:
+            exposed_args.append("url")
     return DynamicActionSpec(
         name=args.name,
         capability=args.capability,

@@ -10,9 +10,19 @@ from typing import Any
 from gui_agent.core.tool_agent.contracts import MaterializedFrame
 
 
-_GUARDED_CAPABILITIES = {"tap", "type", "select_option", "scroll"}
+_GUARDED_CAPABILITIES = {
+    "tap",
+    "type",
+    "clear_text",
+    "press_enter",
+    "select_option",
+    "scroll",
+    "open_url",
+    "back",
+}
 _SIGNATURE_FIELDS = (
     "text",
+    "url",
     "direction",
     "amount",
     "target_area",

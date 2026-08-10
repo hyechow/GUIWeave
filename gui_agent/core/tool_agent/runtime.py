@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import hashlib
 import json
 import re
 import time
@@ -60,10 +61,20 @@ from gui_agent.core.tool_agent.worker_memory import (
 )
 
 _MASTER_SYSTEM = load_prompt_text("task.tool_agent.master")
+_MASTER_REDELEGATE_SYSTEM = load_prompt_text("task.tool_agent.master_redelegate")
 _WORKER_SYSTEM = load_prompt_text("task.tool_agent.worker")
 _MAX_ACTION_PATCHES_PER_FRAME = 3
 _MAX_ACTION_GUARD_REPAIRS_PER_FRAME = 1
 _RUNTIME_WORKER_TOOL_NAMES = {"request_action_patch", "complete", "fail"}
+_SPATIAL_CAPABILITIES = {"tap", "type", "scroll", "select_option"}
+_EXECUTABLE_CAPABILITIES = {
+    *_SPATIAL_CAPABILITIES,
+    "clear_text",
+    "press_enter",
+    "open_url",
+    "back",
+}
+_ACTION_TYPES = {"open_url": "navigate"}
 _REDACTED_ACCESS_VALUE = "[session access value redacted]"
 
 
@@ -163,6 +174,8 @@ class ToolAgentRuntime:
         self._worker_access_context = ""
         self._access_log_redactions: tuple[str, ...] = ()
         self._worker_journals: dict[str, WorkerJournal] = {}
+        self._worker_last_frames: dict[str, MaterializedFrame] = {}
+        self._master_knowledge = ""
         self._executor = bundle.make_executor(platform)
         try:
             self._visualizer = bundle.make_action_visualizer(platform)
@@ -181,6 +194,7 @@ class ToolAgentRuntime:
         page_title: str = "",
     ) -> ToolAgentRun:
         self._worker_access_context = access_context.strip()
+        self._master_knowledge = knowledge
         self._access_log_redactions = _access_log_redactions(access_context)
         executor = getattr(self, "_executor", None)
         if executor is not None:
@@ -199,12 +213,16 @@ class ToolAgentRuntime:
         finally:
             self._clear_action_visualizer()
             self._worker_access_context = ""
+            self._master_knowledge = ""
             self._access_log_redactions = ()
             if executor is not None:
                 setattr(executor, "sensitive_text_values", ())
             journals = getattr(self, "_worker_journals", None)
             if journals is not None:
                 journals.clear()
+            last_frames = getattr(self, "_worker_last_frames", None)
+            if last_frames is not None:
+                last_frames.clear()
 
     def _run(self, goal: str, *, knowledge: str = "", page_url: str = "", page_title: str = "") -> ToolAgentRun:
         self._trace(
@@ -224,7 +242,7 @@ class ToolAgentRuntime:
         phase: Literal["completed", "failed"] = "failed"
         orchestration = WorkerOrchestrationContext(
             data_store=self.data_store,
-            run_gui_worker=self._run_worker,
+            run_gui_worker=self._run_worker_with_local_replanning,
             trace=self._trace,
         )
         try:
@@ -240,24 +258,24 @@ class ToolAgentRuntime:
                 compile_attempts=program.attempts,
                 source=program.source,
             )
-            for execution_no in range(1, self.max_subgoal_replans + 2):
+            execution_no = 1
+            self._trace(
+                "master_program_execution_started",
+                execution=execution_no,
+                source=program.source,
+            )
+            execution = execute_master_program(program.source, orchestration)
+            if execution.error:
                 self._trace(
-                    "master_program_execution_started",
+                    "master_program_error",
                     execution=execution_no,
-                    source=program.source,
+                    error=execution.error,
                 )
-                execution = execute_master_program(program.source, orchestration)
-                if execution.error:
-                    self._trace(
-                        "master_program_error",
-                        execution=execution_no,
-                        error=execution.error,
-                    )
-                    final_summary = (
-                        "Reviewed Master program failed during deterministic execution: "
-                        f"{execution.error}"
-                    )
-                    break
+                final_summary = (
+                    "Reviewed Master program failed during deterministic execution: "
+                    f"{execution.error}"
+                )
+            else:
                 assert execution.terminal is not None
                 terminal = execution.terminal
                 self._trace(
@@ -267,21 +285,10 @@ class ToolAgentRuntime:
                     summary=terminal.summary,
                     result_ref=terminal.result_ref,
                 )
+                final_summary = terminal.summary
                 if terminal.phase == "completed":
                     final_ref = self.data_store.result_descriptor(terminal.result_ref)
                     phase = "completed"
-                    final_summary = terminal.summary
-                    break
-                if terminal.phase == "failed":
-                    final_summary = terminal.summary
-                    break
-                self._trace(
-                    "subgoal_replan",
-                    execution=execution_no,
-                    reason=terminal.summary,
-                )
-            else:
-                final_summary = "GUI subgoal exceeded its local replan limit."
         except KeyboardInterrupt:
             final_summary = "Tool Agent interrupted before reaching a terminal result."
             self._trace(
@@ -320,6 +327,326 @@ class ToolAgentRuntime:
                 f"\n[Replay] {replay.status.upper()} · {replay.summary}\n"
             )
         return run
+
+    @staticmethod
+    def _is_verified_empty(outcome: WorkerOutcome) -> bool:
+        collection = outcome.collection_ref
+        return bool(
+            outcome.phase == "completed"
+            and collection is not None
+            and collection.row_count == 0
+            and collection.coverage.get("scope_status") == "met"
+            and collection.coverage.get("status") == "complete"
+        )
+
+    @staticmethod
+    def _worker_replan_reason(outcome: WorkerOutcome) -> str:
+        if ToolAgentRuntime._is_verified_empty(outcome):
+            return "The prior Worker established the requested scope but produced no result."
+        if outcome.phase == "failed":
+            return f"The prior Worker failed to satisfy the subgoal: {outcome.summary}"
+        return ""
+
+    @staticmethod
+    def _replanned_worker_id(worker_id: str, replan_no: int) -> str:
+        suffix = f"_replan_{replan_no}"
+        if len(worker_id) + len(suffix) <= 64:
+            return worker_id + suffix
+        digest = hashlib.sha256(worker_id.encode()).hexdigest()[:8]
+        prefix_size = 64 - len(suffix) - len(digest) - 1
+        return f"{worker_id[:prefix_size]}_{digest}{suffix}"
+
+    @staticmethod
+    def _worker_revision_issues(
+        original: WorkerSpec,
+        revised: WorkerSpec,
+        *,
+        prior_outcome: WorkerOutcome | None = None,
+        attempted_specs: list[WorkerSpec] | None = None,
+    ) -> list[str]:
+        issues: list[str] = []
+        if revised == original:
+            issues.append("replacement WorkerSpec is identical to the prior WorkerSpec")
+        elif revised in (attempted_specs or []):
+            issues.append("replacement WorkerSpec has already been attempted")
+        if revised.profile != original.profile:
+            issues.append("profile is immutable across runtime redelegation")
+        if revised.goal != original.goal:
+            issues.append("goal is immutable across runtime redelegation")
+        if revised.success_criteria != original.success_criteria:
+            issues.append("success_criteria are immutable across runtime redelegation")
+        if len(revised.data_requirements) != len(original.data_requirements):
+            issues.append("data requirement count is immutable across runtime redelegation")
+            return issues
+        immutable_fields = (
+            "id",
+            "description",
+            "target_label",
+            "scope",
+            "row_schema",
+            "field_sources",
+            "field_types",
+            "filters",
+            "coverage",
+        )
+        for index, (before, after) in enumerate(
+            zip(original.data_requirements, revised.data_requirements, strict=True)
+        ):
+            for field_name in immutable_fields:
+                if getattr(before, field_name) != getattr(after, field_name):
+                    issues.append(
+                        f"data_requirements[{index}].{field_name} is immutable"
+                    )
+        if (
+            prior_outcome is not None
+            and ToolAgentRuntime._is_verified_empty(prior_outcome)
+            and revised.acquisition_filters == original.acquisition_filters
+        ):
+            issues.append(
+                "acquisition_filters must change after an authoritative empty result"
+            )
+        try:
+            ToolAgentRuntime._validate_worker_spec(revised)
+        except Exception as exc:  # noqa: BLE001 - one revision diagnostic channel
+            issues.append(f"replacement WorkerSpec is not executable: {exc}")
+        return issues
+
+    def _worker_recovery_experience(
+        self,
+        worker_id: str,
+        *,
+        logical_worker_id: str = "",
+    ) -> dict[str, Any]:
+        """Project bounded semantic experience without screenshots or coordinates."""
+
+        events: list[dict[str, Any]] = []
+        for entry in self.trace:
+            entry_worker_id = str(entry.get("worker_id") or "")
+            in_logical_chain = bool(
+                logical_worker_id
+                and (
+                    entry_worker_id == logical_worker_id
+                    or entry_worker_id.startswith(f"{logical_worker_id}_replan_")
+                )
+            )
+            if entry_worker_id != worker_id and not in_logical_chain:
+                continue
+            event = str(entry.get("event") or "")
+            if event == "worker_decision":
+                args = {
+                    key: value
+                    for key, value in dict(entry.get("args") or {}).items()
+                    if key not in {"x", "y", "state"}
+                }
+                events.append({
+                    "event": event,
+                    "step": entry.get("step"),
+                    "state": entry.get("state"),
+                    "tool": entry.get("tool"),
+                    "args": args,
+                })
+            elif event == "runtime_action":
+                events.append({
+                    "event": event,
+                    "tool": entry.get("tool"),
+                    "action_type": entry.get("action_type"),
+                    "status": entry.get("status"),
+                    "no_effect": entry.get("no_effect"),
+                })
+            elif event == "observe":
+                events.append({
+                    "event": event,
+                    "frame_id": entry.get("frame_id"),
+                    "url": entry.get("url"),
+                    "requirement_scopes": entry.get("requirement_scopes"),
+                    "collections": entry.get("collections"),
+                    "missing_requirements": entry.get("missing_requirements"),
+                })
+        frame = getattr(self, "_worker_last_frames", {}).get(worker_id)
+        current = {}
+        if frame is not None:
+            current = {
+                "frame_id": frame.frame_id,
+                "url": frame.url,
+                "title": frame.title,
+                "applied_filters": frame.applied_filters,
+                "requirement_scopes": frame.requirement_scopes,
+                "collections": [
+                    item.model_dump(mode="json") for item in frame.collections
+                ],
+                "missing_requirements": frame.missing_requirements,
+            }
+        return {"events": events[-18:], "current_observation": current}
+
+    def _revise_worker_spec(
+        self,
+        *,
+        logical_worker_id: str,
+        prior_worker_id: str,
+        original_spec: WorkerSpec,
+        prior_outcome: WorkerOutcome,
+        replan_reason: str,
+        replan_no: int,
+        prior_revisions: list[WorkerSpec],
+    ) -> WorkerSpec:
+        generator = self.master.bind(
+            response_format={"type": "json_object"},
+            max_tokens=6_000,
+            extra_body={"enable_thinking": False},
+        )
+        rejected: dict[str, Any] | None = None
+        validation_issues: list[str] = []
+        for attempt in range(1, 3):
+            payload: dict[str, Any] = {
+                "logical_worker_id": logical_worker_id,
+                "prior_worker_id": prior_worker_id,
+                "replan_no": replan_no,
+                "replan_reason": replan_reason,
+                "prior_worker_spec": original_spec.model_dump(mode="json"),
+                "prior_outcome": prior_outcome.model_dump(mode="json"),
+                "immutable_contract": {
+                    "profile": original_spec.profile,
+                    "goal": original_spec.goal,
+                    "success_criteria": original_spec.success_criteria,
+                    "data_requirements": [
+                        {
+                            "id": item.id,
+                            "description": item.description,
+                            "target_label": item.target_label,
+                            "scope": item.scope,
+                            "row_schema": item.row_schema,
+                            "field_sources": item.field_sources,
+                            "field_types": item.field_types,
+                            "filters": item.filters,
+                            "coverage": item.coverage,
+                        }
+                        for item in original_spec.data_requirements
+                    ],
+                },
+                "application_knowledge": getattr(self, "_master_knowledge", "") or "(none)",
+                "execution_experience": self._worker_recovery_experience(
+                    prior_worker_id,
+                    logical_worker_id=logical_worker_id,
+                ),
+                "attempted_worker_specs": [
+                    item.model_dump(mode="json") for item in prior_revisions
+                ],
+            }
+            if rejected is not None:
+                payload["rejected_worker_spec"] = rejected
+                payload["validation_issues"] = validation_issues
+            messages = [
+                SystemMessage(content=_MASTER_REDELEGATE_SYSTEM),
+                HumanMessage(content=json.dumps(payload, ensure_ascii=False)),
+            ]
+            started_at = time.perf_counter()
+            response = generator.invoke(messages)
+            elapsed = time.perf_counter() - started_at
+            candidate_payload: dict[str, Any] = {}
+            try:
+                decoded = parse_json_object(response.content)
+                candidate_payload = decoded.get("worker_spec", decoded)
+                candidate = WorkerSpec.model_validate(candidate_payload)
+                validation_issues = self._worker_revision_issues(
+                    original_spec,
+                    candidate,
+                    prior_outcome=prior_outcome,
+                    attempted_specs=prior_revisions,
+                )
+            except Exception as exc:  # noqa: BLE001 - reviewed recovery protocol
+                candidate = None
+                validation_issues = [f"{type(exc).__name__}: {exc}"]
+            self._trace(
+                "master_worker_revision_attempt",
+                logical_worker_id=logical_worker_id,
+                prior_worker_id=prior_worker_id,
+                replan_no=replan_no,
+                attempt=attempt,
+                candidate=candidate_payload,
+                diagnostics=validation_issues,
+                llm_elapsed_s=round(elapsed, 3),
+                token_usage=response_usage(response),
+                context_reports=diagnostic_prompt_reports(
+                    "tool_agent.master_redelegate",
+                    messages,
+                    response,
+                    parsed={
+                        "worker_spec": candidate_payload,
+                        "diagnostics": validation_issues,
+                    },
+                    schema="Replacement WorkerSpec",
+                ),
+            )
+            if candidate is not None and not validation_issues:
+                return candidate
+            rejected = candidate_payload
+        raise ValueError(
+            "Master could not produce a valid replacement WorkerSpec: "
+            + "; ".join(validation_issues)
+        )
+
+    def _run_worker_with_local_replanning(
+        self,
+        worker_id: str,
+        spec: WorkerSpec,
+    ) -> WorkerOutcome:
+        current_id = worker_id
+        current_spec = spec
+        prior_revisions: list[WorkerSpec] = [spec]
+        max_replans = max(0, int(getattr(self, "max_subgoal_replans", 0)))
+        for replan_no in range(max_replans + 1):
+            outcome = self._run_worker(current_id, current_spec)
+            replan_reason = self._worker_replan_reason(outcome)
+            if not replan_reason:
+                return outcome
+            self._trace(
+                "master_worker_replan_requested",
+                logical_worker_id=worker_id,
+                worker_id=current_id,
+                replan_no=replan_no,
+                reason=replan_reason,
+                spec=current_spec.model_dump(mode="json"),
+                outcome=outcome.model_dump(mode="json"),
+            )
+            if replan_no >= max_replans:
+                return WorkerOutcome(
+                    phase="failed",
+                    summary=(
+                        "The Worker subgoal remained unsatisfied after the Master "
+                        f"exhausted its local strategy budget. Last outcome: {outcome.summary}"
+                    ),
+                    steps=outcome.steps,
+                )
+            try:
+                revised = self._revise_worker_spec(
+                    logical_worker_id=worker_id,
+                    prior_worker_id=current_id,
+                    original_spec=current_spec,
+                    prior_outcome=outcome,
+                    replan_reason=replan_reason,
+                    replan_no=replan_no + 1,
+                    prior_revisions=prior_revisions,
+                )
+            except Exception as exc:  # noqa: BLE001 - becomes typed Worker failure
+                return WorkerOutcome(
+                    phase="failed",
+                    summary=f"Master worker redelegation failed: {type(exc).__name__}: {exc}",
+                    steps=outcome.steps,
+                )
+            prior_revisions.append(revised)
+            next_id = self._replanned_worker_id(worker_id, replan_no + 1)
+            self._trace(
+                "master_worker_redelegated",
+                logical_worker_id=worker_id,
+                prior_worker_id=current_id,
+                worker_id=next_id,
+                replan_no=replan_no + 1,
+                prior_outcome=outcome.model_dump(mode="json"),
+                spec=revised.model_dump(mode="json"),
+            )
+            current_id = next_id
+            current_spec = revised
+        raise AssertionError("unreachable worker replanning loop")
 
     def _show_action(self, action: Any) -> None:
         """Best-effort live cursor update through the platform visualizer."""
@@ -373,6 +700,28 @@ class ToolAgentRuntime:
         circuit_breaker = WorkerActionCircuitBreaker()
         for step in range(1, spec.max_steps + 1):
             frame, png = self._observe(spec)
+            last_frames = getattr(self, "_worker_last_frames", None)
+            if last_frames is None:
+                self._worker_last_frames = {}
+                last_frames = self._worker_last_frames
+            last_frames[worker_id] = frame
+            ready_collection = self._ready_collection(spec, frame)
+            if ready_collection is not None and ready_collection.row_count == 0:
+                self._trace(
+                    "worker_empty_collection",
+                    step=step,
+                    profile=spec.profile,
+                    collection_ref=ready_collection.model_dump(mode="json"),
+                )
+                return WorkerOutcome(
+                    phase="completed",
+                    summary=(
+                        "The requested collection scope completed with an authoritative "
+                        "empty result."
+                    ),
+                    collection_ref=ready_collection,
+                    steps=step - 1,
+                )
             worker_tools = self._worker_tools_for_frame(spec, active_actions, frame)
             patch_turn = 0
             guard_repair_turn = 0
@@ -753,6 +1102,7 @@ class ToolAgentRuntime:
             bundle=self.bundle,
             platform=self.platform,
             requirements=spec.data_requirements,
+            acquisition_filters=spec.acquisition_filters,
             frame_no=self._frame_no,
         )
         self._trace(
@@ -789,6 +1139,15 @@ class ToolAgentRuntime:
             + "\n\nWorkerSpec:\n"
             + json.dumps(spec_for_prompt, ensure_ascii=False)
         )
+        application_knowledge = getattr(self, "_master_knowledge", "").strip()
+        if application_knowledge:
+            prompt += (
+                "\n\n## Application knowledge (read-only execution context)\n"
+                "Use relevant application facts to choose efficient navigation and "
+                "interaction strategies. Treat the current screenshot and Observer "
+                "state as authoritative for what is presently visible.\n"
+                + application_knowledge
+            )
         access_context = getattr(self, "_worker_access_context", "")
         if access_context:
             prompt += (
@@ -903,17 +1262,26 @@ class ToolAgentRuntime:
         full_args = {**action_spec.fixed_args, **call["args"]}
         parameters = dynamic_action_tool(action_spec)["function"]["parameters"]
         validate(instance=call["args"], schema=parameters)
-        if action_spec.capability in {"tap", "type", "scroll", "select_option"}:
+        if action_spec.capability in _EXECUTABLE_CAPABILITIES:
+            spatial = action_spec.capability in _SPATIAL_CAPABILITIES
             for coordinate in ("x", "y"):
                 value = full_args.get(coordinate)
-                if value is not None and not 0 <= float(value) < 1000:
+                if spatial and value is not None and not 0 <= float(value) < 1000:
                     raise ValueError(f"{action_spec.name}: {coordinate} must be in [0, 1000)")
-            action = BaseAction.model_validate(
-                {
-                    "action_type": action_spec.capability,
-                    "description": full_args.pop("description", action_spec.description),
-                    **full_args,
-                }
+            action_payload = {
+                "action_type": _ACTION_TYPES.get(
+                    action_spec.capability,
+                    action_spec.capability,
+                ),
+                "description": full_args.pop("description", action_spec.description),
+                **full_args,
+            }
+            bundle = getattr(self, "bundle", None)
+            make_action = getattr(bundle, "make_action", None)
+            action = (
+                make_action(action_payload)
+                if callable(make_action)
+                else BaseAction.model_validate(action_payload)
             )
             decision = BaseActionDecision(action=action)
             # Enhanced adapters may invisibly correct a visual near-miss using
@@ -923,6 +1291,7 @@ class ToolAgentRuntime:
             ground = getattr(self._executor, "ground_coordinates", None)
             if (
                 getattr(self, "perception_mode", "enhanced") == "enhanced"
+                and spatial
                 and frame is not None
                 and frame.controls
                 and callable(ground)
@@ -1030,6 +1399,22 @@ class ToolAgentRuntime:
                 f"Dispatch {profile} GUI Worker {payload.get('worker_id', '?')}: "
                 f"{payload.get('goal', '')}"
             ).strip()
+        if event == "master_worker_replan_requested":
+            return (
+                f"Worker {payload.get('worker_id', '?')} did not satisfy its subgoal; "
+                "request a different local strategy"
+            )
+        if event == "master_worker_revision_attempt":
+            issues = list(payload.get("diagnostics") or [])
+            return (
+                f"Review replacement WorkerSpec attempt {payload.get('attempt', '?')}: "
+                + (f"{len(issues)} issue(s)" if issues else "passed")
+            )
+        if event == "master_worker_redelegated":
+            return (
+                f"Redelegate {payload.get('logical_worker_id', '?')} to new GUI Worker "
+                f"{payload.get('worker_id', '?')}"
+            )
         if event == "worker_started":
             return (
                 f"Start {payload.get('profile', 'operator')} Worker "
@@ -1091,6 +1476,8 @@ class ToolAgentRuntime:
             )
             suffix = f" with {collection.get('ref')}" if collection.get("ref") else ""
             return f"Worker completed{suffix}"
+        if event == "worker_empty_collection":
+            return "Worker completed the requested collection scope with zero rows"
         if event == "master_worker_result":
             outcome = payload.get("outcome") if isinstance(payload.get("outcome"), dict) else {}
             return f"Worker {payload.get('worker_id', '?')} returned {outcome.get('phase', '?')}"
@@ -1154,6 +1541,35 @@ class ToolAgentRuntime:
                 f"[{spec.get('profile', 'operator')}] ---\n"
                 f"Goal    : {entry.get('goal', '')}"
                 + (f"\nSuccess :\n{criteria_text}" if criteria_text else "")
+            )
+        if event == "master_worker_replan_requested":
+            return (
+                f"Worker result: subgoal unsatisfied · {entry.get('worker_id', '?')}\n"
+                f"Reason       : {entry.get('reason', '')}\n"
+                "Master       : revise only this Worker's execution strategy"
+            )
+        if event == "master_worker_revision_attempt":
+            issues = list(entry.get("diagnostics") or [])
+            usage = entry.get("token_usage") if isinstance(entry.get("token_usage"), dict) else {}
+            verdict = f"failed · {issues[0]}" if issues else "passed"
+            metrics = []
+            if entry.get("llm_elapsed_s"):
+                metrics.append(f"{float(entry['llm_elapsed_s']):.1f}s")
+            if usage:
+                metrics.append(
+                    f"{int(usage.get('input') or 0)}/{int(usage.get('output') or 0)} tok"
+                )
+            suffix = f" ({' · '.join(metrics)})" if metrics else ""
+            return (
+                f"  [Redelegate] attempt {entry.get('attempt', '?')} "
+                f"{verdict}{suffix}"
+            )
+        if event == "master_worker_redelegated":
+            spec = entry.get("spec") if isinstance(entry.get("spec"), dict) else {}
+            return (
+                f"\n--- GUI Worker {entry.get('worker_id', '?')} "
+                f"[{spec.get('profile', 'operator')}] · Master redelegation ---\n"
+                f"Goal    : {spec.get('goal', '')}"
             )
         if event == "observe":
             scopes = []
@@ -1271,6 +1687,16 @@ class ToolAgentRuntime:
             )
             suffix = f" · {collection.get('ref')}" if collection.get("ref") else ""
             return f"Verification: completed{suffix}"
+        if event == "worker_empty_collection":
+            collection = (
+                entry.get("collection_ref")
+                if isinstance(entry.get("collection_ref"), dict)
+                else {}
+            )
+            return (
+                "Verification: exact scope complete · 0 rows · "
+                f"{collection.get('ref', '?')}"
+            )
         if event == "master_worker_result":
             outcome = entry.get("outcome") if isinstance(entry.get("outcome"), dict) else {}
             return f"Worker outcome: {entry.get('worker_id', '?')} · {outcome.get('phase', '?')}"

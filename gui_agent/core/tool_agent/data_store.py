@@ -128,7 +128,11 @@ class RuntimeDataStore:
             or static_complete
         ):
             coverage_status = "complete"
-        elif not structured and any(item.get("end_visible") for item in chunk_coverage):
+        elif (
+            not structured
+            and any(item.get("end_visible") for item in chunk_coverage)
+            and (known_total is None or row_count >= known_total)
+        ):
             coverage_status = "complete"
         elif (
             last_coverage.get("has_next_page") is True
@@ -191,6 +195,13 @@ class RuntimeDataStore:
             return self._collections[ref]
         except KeyError as exc:
             raise KeyError(f"unknown CollectionRef {ref!r}") from exc
+
+    def collection_for_requirement(self, requirement_id: str) -> CollectionRef | None:
+        """Return the latest accumulated collection for one logical requirement."""
+        collection = self._collections.get(f"collection:{requirement_id}")
+        if collection is None or collection.requirement_id != requirement_id:
+            return None
+        return collection
 
     def restore_collection(self, descriptor: CollectionRef, rows: list[dict[str, Any]]) -> None:
         """Restore one recorded GUI artifact without replaying browser observations."""

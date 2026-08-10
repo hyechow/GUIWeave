@@ -186,6 +186,7 @@ def build_browser_bundle(
     launches Chromium directly and can keep login state in ``user_data_dir``.
     """
     from gui_agent.adapters.browser.acquisition import move_collection, validate_collection_action
+    from gui_agent.adapters.browser.actions import BrowserAction
     from gui_agent.adapters.browser.executor import BrowserExecutor
     from gui_agent.adapters.browser.perception import BrowserPerception, BrowserSession
 
@@ -199,6 +200,7 @@ def build_browser_bundle(
         ),
         setup_check=lambda: _setup_check(cdp_url, headless=headless),
         make_executor=lambda session: BrowserExecutor(session),
+        make_action=lambda payload: BrowserAction.model_validate(payload),
         make_perception=lambda session, png_path: BrowserPerception(session, png_path),
         make_action_policy=_build_action_policy,
         make_supervisor=_build_supervisor,

@@ -84,7 +84,8 @@ def validate_transform_row_fields(source: str, row_schema: dict[str, Any]) -> No
     validate_transform_source(source)
     tree = ast.parse(source, mode="exec")
     function = next(node for node in tree.body if isinstance(node, ast.FunctionDef))
-    rows_name = function.args.args[0].arg
+    inputs_name = function.args.args[0].arg
+    row_collection_names: set[str] = {inputs_name}
     row_names: set[str] = set()
 
     def add_targets(target: ast.AST) -> None:
@@ -94,17 +95,36 @@ def validate_transform_row_fields(source: str, row_schema: dict[str, Any]) -> No
             for item in target.elts:
                 add_targets(item)
 
-    def iterates_rows(node: ast.AST) -> bool:
+    def collection_expression(node: ast.AST) -> bool:
         if isinstance(node, ast.Name):
-            return node.id == rows_name
+            return node.id in row_collection_names
         if isinstance(node, ast.Subscript):
-            return isinstance(node.value, ast.Name) and node.value.id == rows_name
+            return (
+                isinstance(node.value, ast.Name)
+                and node.value.id == inputs_name
+            )
         return False
 
+    # Transforms conventionally bind one runtime input before iterating it, e.g.
+    # ``reviews = inputs[0]``. Track those aliases so row-field review cannot be
+    # bypassed by an intermediate variable.
+    changed = True
+    while changed:
+        changed = False
+        for node in ast.walk(function):
+            if not isinstance(node, ast.Assign) or len(node.targets) != 1:
+                continue
+            target = node.targets[0]
+            if not isinstance(target, ast.Name) or not collection_expression(node.value):
+                continue
+            if target.id not in row_collection_names:
+                row_collection_names.add(target.id)
+                changed = True
+
     for node in ast.walk(function):
-        if isinstance(node, ast.For) and iterates_rows(node.iter):
+        if isinstance(node, ast.For) and collection_expression(node.iter):
             add_targets(node.target)
-        if isinstance(node, ast.comprehension) and iterates_rows(node.iter):
+        if isinstance(node, ast.comprehension) and collection_expression(node.iter):
             add_targets(node.target)
 
     used_fields: set[str] = set()

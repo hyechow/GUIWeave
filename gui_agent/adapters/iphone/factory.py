@@ -88,11 +88,14 @@ def _prepare_vision_prompt_png(png_bytes: bytes) -> bytes:
 def build_iphone_bundle(*, backend: Optional[str] = None, **_ignored: object) -> PlatformBundle:
     """Construct the iPhone PlatformBundle. ``backend`` is the daemon/mirroir knob
     (passed through to LivePhoneSession; None lets it fall back to AGENT_MODE)."""
+    from gui_agent.adapters.iphone.actions import IPhoneAction
+
     return PlatformBundle(
         platform="iphone",
         open_session=lambda: LivePhoneSession(backend=backend),
         setup_check=_setup_check,
         make_executor=lambda phone: ActionExecutor(phone),
+        make_action=lambda payload: IPhoneAction.model_validate(payload),
         make_perception=lambda phone, png_path: LivePerception(phone, png_path),
         make_action_policy=_build_action_policy,
         make_supervisor=_build_supervisor,

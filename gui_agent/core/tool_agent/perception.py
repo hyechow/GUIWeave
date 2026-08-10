@@ -82,6 +82,28 @@ def _table_supports_requirement(
     return bool(required_sources) and required_sources.issubset(_table_fields(table))
 
 
+def _authoritative_empty_table(table: dict[str, Any]) -> bool:
+    """Whether a structured surface proves that its current query returned zero rows.
+
+    An empty surface can satisfy any row schema vacuously, even when the surface
+    does not expose fields that would only exist on linked detail pages.  It is
+    authoritative only when the adapter reports a complete, non-partial end state.
+    """
+
+    if list(table.get("rows") or []) or table.get("total_records") != 0:
+        return False
+    if bool(table.get("partial")):
+        return False
+    traversal = table.get("traversal") if isinstance(table.get("traversal"), dict) else {}
+    return bool(
+        traversal.get("type") == "static"
+        or traversal.get("has_next_page") is False
+        or traversal.get("page_index") not in (None, "")
+        and traversal.get("page_count") not in (None, "")
+        and traversal.get("page_index") == traversal.get("page_count")
+    )
+
+
 def _match_table(requirement: DataRequirement, tables: list[dict[str, Any]]) -> dict[str, Any] | None:
     wanted = _normalize(requirement.target_label or requirement.description)
     ranked: list[tuple[int, dict[str, Any]]] = []
@@ -101,7 +123,11 @@ def _match_table(requirement: DataRequirement, tables: list[dict[str, Any]]) -> 
         if required_sources and field_matches == len(required_sources):
             score += 50 + field_matches
         elif required_sources:
-            score -= 50
+            # A collection/list surface can be the correct acquisition surface
+            # even when some required fields live only on linked detail pages.
+            # Keep it eligible as a cardinality and navigation hint; the separate
+            # support check still prevents incomplete rows entering DataStore.
+            score += field_matches
         ranked.append((score, table))
     if not ranked:
         return None
@@ -147,11 +173,10 @@ def _structured_rows(
             output[field] = value
         try:
             validate(instance=output, schema=requirement.row_schema)
-        except ValidationError as exc:
-            if requirement.field_types:
-                raise DataNormalizationError(
-                    f"row {row_index} does not satisfy the normalized row schema"
-                ) from exc
+        except ValidationError:
+            # A list surface may expose only candidate fields while required values
+            # live on a linked detail surface. Incomplete rows are not data yet;
+            # leave the requirement open so the GUI Worker can navigate for them.
             continue
         rows.append(output)
     return rows
@@ -187,11 +212,9 @@ def _normalize_visual_rows(
                 ) from exc
         try:
             validate(instance=normalized, schema=requirement.row_schema)
-        except ValidationError as exc:
-            if requirement.field_types:
-                raise DataNormalizationError(
-                    f"visual row {row_index} does not satisfy the normalized row schema"
-                ) from exc
+        except ValidationError:
+            # Missing/detail-only fields mean collection is incomplete, not that a
+            # declared source value failed normalization.
             continue
         normalized_rows.append(normalized)
     return normalized_rows
@@ -226,12 +249,15 @@ def _compare_values(
 def _rows_satisfy_filters(
     requirement: DataRequirement,
     rows: list[dict[str, Any]],
+    *,
+    filters: dict[str, Any] | None = None,
 ) -> bool | None:
-    if not requirement.filters:
+    active_filters = requirement.filters if filters is None else filters
+    if not active_filters:
         return True
     if not rows:
         return None
-    predicates = compile_filter_predicates(requirement.filters)
+    predicates = compile_filter_predicates(active_filters)
     for row in rows:
         for field, predicate in predicates.items():
             # Requirement filter keys are normalized row-schema fields. The filter
@@ -239,7 +265,7 @@ def _rows_satisfy_filters(
             row_field = next(
                 (
                     key
-                    for key in requirement.filters
+                    for key in active_filters
                     if key.replace("_", " ").casefold() == field
                 ),
                 field.replace(" ", "_"),
@@ -293,6 +319,7 @@ def _rows_satisfy_filters(
 def _scope_descriptor(
     requirement: DataRequirement,
     *,
+    acquisition_filters: dict[str, Any],
     applied_filter_state: Any,
     applied_filters: dict[str, Any],
     rows: list[dict[str, Any]],
@@ -300,14 +327,19 @@ def _scope_descriptor(
 ) -> dict[str, Any]:
     requested_ui_filters = {
         requirement.field_sources.get(field, field): value
-        for field, value in requirement.filters.items()
+        for field, value in acquisition_filters.items()
     }
     if not requested_ui_filters:
+        has_applied_filters = bool(applied_filters)
         return {
-            "status": "met",
+            "status": "unmet" if has_applied_filters else "met",
             "requested_filters": {},
             "applied_filters": dict(applied_filters),
-            "evidence": "no_filter_required",
+            "evidence": (
+                "unexpected_applied_filters"
+                if has_applied_filters
+                else "no_filter_required"
+            ),
         }
     requested = compile_filter_predicates(requested_ui_filters)
     if applied_filter_state is not None:
@@ -326,7 +358,11 @@ def _scope_descriptor(
             "applied_filters": dict(applied_filters),
             "evidence": "visual_filter_state",
         }
-    row_match = _rows_satisfy_filters(requirement, rows)
+    row_match = _rows_satisfy_filters(
+        requirement,
+        rows,
+        filters=acquisition_filters,
+    )
     return {
         "status": "met" if row_match is True else "unmet" if row_match is False else "unknown",
         "requested_filters": requested_ui_filters,
@@ -422,6 +458,7 @@ class PerceptionMaterializer:
         self.data_store = data_store
         self.log_dir = log_dir
         self._on_event = on_event
+        self._expected_totals: dict[tuple[str, str], int] = {}
         cfg = resolve_llm_config("tool_agent.perception")
         self.model = cfg.model
         self._vision = ChatOpenAI(
@@ -439,6 +476,7 @@ class PerceptionMaterializer:
         bundle: Any,
         platform: Any,
         requirements: list[DataRequirement],
+        acquisition_filters: dict[str, Any] | None = None,
         frame_no: int,
     ) -> tuple[MaterializedFrame, bytes]:
         frame_id = f"frame:{frame_no}"
@@ -479,17 +517,35 @@ class PerceptionMaterializer:
         chunks = []
         collections = []
         missing = []
+        expected_totals = getattr(self, "_expected_totals", None)
+        if expected_totals is None:
+            expected_totals = {}
+            self._expected_totals = expected_totals
         requirement_scopes: dict[str, dict[str, Any]] = {}
         for requirement in requirements:
+            attempt_filters = (
+                dict(acquisition_filters)
+                if acquisition_filters is not None and len(requirements) == 1
+                else dict(requirement.filters)
+            )
             rows: list[dict[str, Any]] = []
             provider: Literal["vision", "structured"] = "vision"
             table = _match_table(requirement, tables) if tables else None
             coverage: dict[str, Any] = {}
             collection_found = False
+            if table is None:
+                empty_tables = [
+                    candidate
+                    for candidate in tables
+                    if _authoritative_empty_table(candidate)
+                ]
+                if len(empty_tables) == 1:
+                    table = empty_tables[0]
             if table is not None and _table_supports_requirement(requirement, table):
                 rows = _structured_rows(requirement, table)
                 scope = _scope_descriptor(
                     requirement,
+                    acquisition_filters=attempt_filters,
                     applied_filter_state=applied_filter_state,
                     applied_filters=applied_filters,
                     rows=rows,
@@ -504,13 +560,38 @@ class PerceptionMaterializer:
                         url=url,
                     )
                     collection_found = True
-            if table is None or not _table_supports_requirement(requirement, table):
-                extracted = self._vision_extract(requirement, png)
+            elif table is not None and _authoritative_empty_table(table):
+                scope = _scope_descriptor(
+                    requirement,
+                    acquisition_filters=attempt_filters,
+                    applied_filter_state=applied_filter_state,
+                    applied_filters=applied_filters,
+                    rows=[],
+                )
+                requirement_scopes[requirement.id] = scope
+                if scope["status"] == "met":
+                    provider = "structured"
+                    coverage = _structured_coverage(
+                        table,
+                        requirement,
+                        scope=scope,
+                        url=url,
+                    )
+                    collection_found = True
+            if not collection_found and (
+                table is None or not _table_supports_requirement(requirement, table)
+            ):
+                extracted = self._vision_extract(
+                    requirement,
+                    png,
+                    acquisition_filters=attempt_filters,
+                )
                 visually_found = bool(extracted.get("found"))
                 end_visible = bool(extracted.get("end_visible"))
                 visual_scope = extracted.get("scope_satisfied")
                 scope = _scope_descriptor(
                     requirement,
+                    acquisition_filters=attempt_filters,
                     applied_filter_state=applied_filter_state,
                     applied_filters=applied_filters,
                     rows=list(extracted.get("rows") or []),
@@ -520,9 +601,10 @@ class PerceptionMaterializer:
                 )
                 requirement_scopes[requirement.id] = scope
                 if visually_found:
+                    raw_visual_rows = list(extracted.get("rows") or [])
                     rows = _normalize_visual_rows(
                         requirement,
-                        list(extracted.get("rows") or []),
+                        raw_visual_rows,
                     )
                     coverage = {
                         "scope": requirement.scope,
@@ -547,17 +629,69 @@ class PerceptionMaterializer:
                         "at_end": end_visible,
                         "partial": not end_visible,
                     }
-                    collection_found = bool(rows) and scope["status"] == "met"
+                    collection_found = bool(
+                        scope["status"] == "met"
+                        and (
+                            rows
+                            or visually_found
+                            and end_visible
+                            and not raw_visual_rows
+                        )
+                    )
             requirement_scopes.setdefault(
                 requirement.id,
                 _scope_descriptor(
                     requirement,
+                    acquisition_filters=attempt_filters,
                     applied_filter_state=applied_filter_state,
                     applied_filters=applied_filters,
                     rows=[],
                 ),
             )
+            scope = requirement_scopes[requirement.id]
+            scope_key = (
+                requirement.id,
+                json.dumps(
+                    scope.get("requested_filters") or {},
+                    ensure_ascii=False,
+                    sort_keys=True,
+                    default=str,
+                ),
+            )
+            table_total = table.get("total_records") if table is not None else None
+            if scope["status"] == "met" and table_total not in (None, ""):
+                try:
+                    expected_totals[scope_key] = max(0, int(table_total))
+                except (TypeError, ValueError):
+                    pass
+            expected_total = expected_totals.get(scope_key)
+            if provider == "vision" and coverage and expected_total is not None:
+                # A list surface may reveal the candidate cardinality while the
+                # required fields live on linked detail surfaces. Carry that
+                # cardinality across navigation so each detail is a chunk of one
+                # collection, rather than a falsely complete one-row collection.
+                coverage["total_records"] = expected_total
             if not collection_found:
+                accumulated = self.data_store.collection_for_requirement(
+                    requirement.id
+                )
+                if (
+                    accumulated is not None
+                    and scope["status"] == "met"
+                    and accumulated.row_schema == requirement.row_schema
+                    and json.dumps(
+                        accumulated.coverage.get("requested_filters") or {},
+                        ensure_ascii=False,
+                        sort_keys=True,
+                        default=str,
+                    )
+                    == scope_key[1]
+                ):
+                    # Collection state belongs to the Worker, not to one page.
+                    # Keep accumulated descriptors visible while the Worker moves
+                    # between a candidate list and linked detail surfaces.
+                    collections.append(accumulated)
+                    continue
                 missing.append(requirement.id)
                 continue
             if requirement.field_types:
@@ -589,11 +723,19 @@ class PerceptionMaterializer:
         )
         return materialized, png
 
-    def _vision_extract(self, requirement: DataRequirement, png: bytes) -> dict[str, Any]:
+    def _vision_extract(
+        self,
+        requirement: DataRequirement,
+        png: bytes,
+        *,
+        acquisition_filters: dict[str, Any],
+    ) -> dict[str, Any]:
         prompt = (
             f"Data requirement: {requirement.description}\n"
             f"Visible target label: {requirement.target_label or '(not specified)'}\n"
-            f"Required UI filter scope: {json.dumps(requirement.filters, ensure_ascii=False)}\n"
+            f"Logical row filters: {json.dumps(requirement.filters, ensure_ascii=False)}\n"
+            f"Current UI acquisition filters: "
+            f"{json.dumps(acquisition_filters, ensure_ascii=False)}\n"
             f"Required row JSON Schema: {json.dumps(requirement.row_schema, ensure_ascii=False)}"
         )
         started_at = time.perf_counter()

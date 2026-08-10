@@ -63,6 +63,10 @@ class PlatformBundle:
     #            the per-connect path).
     setup_check: Callable[[], "SetupCheckResult"]
     make_executor: Callable[["PerceptionSession"], object]
+    # Parse one runtime-owned action payload through the selected adapter's
+    # concrete action contract. This keeps platform fields such as browser URL
+    # and tab selectors out of the neutral BaseAction boundary.
+    make_action: Callable[[dict[str, object]], object]
     make_perception: Callable[["PerceptionSession", "Path"], "Perception"]
     make_action_policy: Callable[[str], "ActionPolicy"]
     make_supervisor: Callable[[str], "SupervisorPolicy"]
