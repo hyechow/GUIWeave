@@ -1,9 +1,4 @@
-"""Experimental dynamic tool-call runtime.
-
-The package intentionally sits beside the existing reviewed-Python runtime.  Its
-public surface is small so experiments do not leak tool-agent concepts into the
-stable statement/action-policy implementation.
-"""
+"""Experimental Coding-Master and autonomous-Worker runtime."""
 
 from gui_agent.core.tool_agent.contracts import (
     CollectionRef,
@@ -15,15 +10,25 @@ from gui_agent.core.tool_agent.contracts import (
     WorkerState,
 )
 from gui_agent.core.tool_agent.runtime import ToolAgentRuntime, ToolAgentRun
+from gui_agent.core.tool_agent.orchestrator import (
+    MasterProgram,
+    WorkerOrchestrationContext,
+    execute_master_program,
+    validate_master_source,
+)
 
 __all__ = [
     "CollectionRef",
     "DataChunkRef",
     "DataRequirement",
     "DynamicActionSpec",
+    "MasterProgram",
     "ResultRef",
     "ToolAgentRun",
     "ToolAgentRuntime",
     "WorkerSpec",
     "WorkerState",
+    "WorkerOrchestrationContext",
+    "execute_master_program",
+    "validate_master_source",
 ]

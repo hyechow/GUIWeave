@@ -1162,11 +1162,7 @@ def main() -> int:
     # Translucent status HUD over the Chrome window — on in headed mode, off when headless
     # (the unified visibility switch). The agent loop repositions it onto the exact CDP
     # window rect once connected.
-    hud = (
-        None
-        if args.runtime == "tool-agent"
-        else build_platform().make_status_reporter(not args.headless)
-    )
+    hud = build_platform().make_status_reporter(not args.headless)
     print(f"[webarena] agent logs: {log_dir}")
 
     from gui_agent.core.run.io import tee_stdio
@@ -1272,6 +1268,16 @@ def main() -> int:
                             device.wait_settled("navigate")
                         except Exception as exc:  # noqa: BLE001 - best-effort start-url settle
                             print(f"[webarena] start_url settle skipped ({exc})")
+                    if hud is not None and hasattr(hud, "reposition"):
+                        bounds = (
+                            device.window_bounds()
+                            if device is not None and hasattr(device, "window_bounds")
+                            else None
+                        )
+                        if bounds:
+                            from gui_agent.core.ui.hud import dock_rect
+
+                            hud.reposition(*dock_rect(*bounds))
 
                     def _compile_program():
                         if args.runtime == "tool-agent":
@@ -1290,7 +1296,11 @@ def main() -> int:
                                 platform=platform,
                                 log_dir=log_dir,
                                 perception_mode=args.perception,
+                                status_cb=hud.update if hud else None,
                             )
+                            if hud:
+                                hud.set_goal(intent)
+                                hud.update("Tool Agent · preparing Master program")
                             tool_run = runtime.run(
                                 intent,
                                 knowledge=(

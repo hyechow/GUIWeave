@@ -78,6 +78,65 @@ def validate_transform_source(source: str) -> None:
             raise TransformValidationError("private/dunder attribute access is disallowed")
 
 
+def validate_transform_row_fields(source: str, row_schema: dict[str, Any]) -> None:
+    """Require transforms to read normalized schema keys, not display labels."""
+    validate_transform_source(source)
+    tree = ast.parse(source, mode="exec")
+    function = next(node for node in tree.body if isinstance(node, ast.FunctionDef))
+    rows_name = function.args.args[0].arg
+    row_names: set[str] = set()
+
+    def add_targets(target: ast.AST) -> None:
+        if isinstance(target, ast.Name):
+            row_names.add(target.id)
+        elif isinstance(target, (ast.Tuple, ast.List)):
+            for item in target.elts:
+                add_targets(item)
+
+    def iterates_rows(node: ast.AST) -> bool:
+        if isinstance(node, ast.Name):
+            return node.id == rows_name
+        if isinstance(node, ast.Subscript):
+            return isinstance(node.value, ast.Name) and node.value.id == rows_name
+        return False
+
+    for node in ast.walk(function):
+        if isinstance(node, ast.For) and iterates_rows(node.iter):
+            add_targets(node.target)
+        if isinstance(node, ast.comprehension) and iterates_rows(node.iter):
+            add_targets(node.target)
+
+    used_fields: set[str] = set()
+    for node in ast.walk(function):
+        if (
+            isinstance(node, ast.Call)
+            and isinstance(node.func, ast.Attribute)
+            and node.func.attr == "get"
+            and isinstance(node.func.value, ast.Name)
+            and node.func.value.id in row_names
+            and node.args
+            and isinstance(node.args[0], ast.Constant)
+            and isinstance(node.args[0].value, str)
+        ):
+            used_fields.add(node.args[0].value)
+        if (
+            isinstance(node, ast.Subscript)
+            and isinstance(node.value, ast.Name)
+            and node.value.id in row_names
+            and isinstance(node.slice, ast.Constant)
+            and isinstance(node.slice.value, str)
+        ):
+            used_fields.add(node.slice.value)
+
+    properties = set((row_schema.get("properties") or {}).keys())
+    unknown = used_fields.difference(properties)
+    if unknown:
+        raise TransformValidationError(
+            "transform reads fields outside normalized row_schema: "
+            f"{sorted(unknown)}; available fields are {sorted(properties)}"
+        )
+
+
 def _sandbox_child(connection: Any, source: str, rows: Any) -> None:
     try:
         namespace: dict[str, Any] = {"__builtins__": _SAFE_BUILTINS}
@@ -96,7 +155,7 @@ def execute_transform(
     rows: list[dict[str, Any]],
     output_schema: dict[str, Any],
     *,
-    timeout_s: float = 2.0,
+    timeout_s: float = 10.0,
     max_input_bytes: int = 2_000_000,
     max_output_bytes: int = 1_000_000,
 ) -> Any:

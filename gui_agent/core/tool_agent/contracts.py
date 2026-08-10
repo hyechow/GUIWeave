@@ -12,7 +12,7 @@ class StrictModel(BaseModel):
 
 
 class DataRequirement(StrictModel):
-    """A semantic, provider-independent request for data in observed frames."""
+    """A semantic, provider-independent request for a logical collection."""
 
     id: str = Field(pattern=r"^[a-z][a-z0-9_]{0,63}$")
     description: str
@@ -20,11 +20,18 @@ class DataRequirement(StrictModel):
         default="",
         description="Visible label/caption that identifies the data surface, when known.",
     )
-    scope: Literal["current_view"] = "current_view"
+    scope: Literal["collection"] = "collection"
     row_schema: dict[str, Any]
     field_sources: dict[str, str] = Field(
         default_factory=dict,
         description="Normalized output field to platform-visible source header.",
+    )
+    filters: dict[str, Any] = Field(
+        default_factory=dict,
+        description=(
+            "Required data-scope predicates keyed by normalized row field. The GUI "
+            "Worker must establish this scope before collection begins."
+        ),
     )
     coverage: Literal["complete"] = "complete"
 
@@ -50,6 +57,22 @@ class DataRequirement(StrictModel):
                 "additionalProperties": False,
             }
         return data
+
+    @model_validator(mode="after")
+    def _filters_are_collectable_fields(self) -> "DataRequirement":
+        properties = set((self.row_schema.get("properties") or {}).keys())
+        unknown_filters = set(self.filters).difference(properties)
+        if unknown_filters:
+            raise ValueError(
+                "filter fields must be present in row_schema so collection scope can "
+                f"be verified: {sorted(unknown_filters)}"
+            )
+        unknown_sources = set(self.field_sources).difference(properties)
+        if unknown_sources:
+            raise ValueError(
+                f"field_sources keys are absent from row_schema: {sorted(unknown_sources)}"
+            )
+        return self
 
 
 class DynamicActionSpec(StrictModel):
@@ -95,6 +118,28 @@ class DynamicActionSpec(StrictModel):
         normalized["exposed_args"] = exposed_args
         return normalized
 
+    @model_validator(mode="before")
+    @classmethod
+    def _assign_runtime_ref_to_worker(cls, data: object) -> object:
+        """Make runtime-created CollectionRefs a Worker-owned argument.
+
+        A text-only Master cannot know which frame-bound collection the visual
+        Worker will transform.  This mirrors the coordinate canonicalization
+        above: the capability registry, rather than generated orchestration
+        code, owns the required runtime argument.
+        """
+        if not isinstance(data, dict) or data.get("capability") != "python_transform":
+            return data
+        normalized = dict(data)
+        fixed_args = dict(normalized.get("fixed_args") or {})
+        exposed_args = list(normalized.get("exposed_args") or [])
+        fixed_args.pop("data_ref", None)
+        if "data_ref" not in exposed_args:
+            exposed_args.append("data_ref")
+        normalized["fixed_args"] = fixed_args
+        normalized["exposed_args"] = exposed_args
+        return normalized
+
     @model_validator(mode="after")
     def _no_duplicate_exposed_args(self) -> "DynamicActionSpec":
         if len(set(self.exposed_args)) != len(self.exposed_args):
@@ -108,6 +153,13 @@ class DynamicActionSpec(StrictModel):
 class WorkerSpec(StrictModel):
     """A dynamic agentic execution unit created by the Master."""
 
+    profile: Literal["operator", "collector"] | None = Field(
+        default=None,
+        description=(
+            "General GUI decision strategy. When omitted, data requirements select "
+            "collector and all other goals select operator."
+        ),
+    )
     goal: str
     success_criteria: list[str] = Field(min_length=1)
     data_requirements: list[DataRequirement] = Field(default_factory=list)
@@ -117,6 +169,8 @@ class WorkerSpec(StrictModel):
 
     @model_validator(mode="after")
     def _unique_ids(self) -> "WorkerSpec":
+        if self.profile is None:
+            self.profile = "collector" if self.data_requirements else "operator"
         action_names = [item.name for item in self.actions]
         requirement_ids = [item.id for item in self.data_requirements]
         if len(set(action_names)) != len(action_names):
@@ -172,6 +226,9 @@ class MaterializedFrame(StrictModel):
     screenshot_path: str
     url: str = ""
     title: str = ""
+    controls: list[dict[str, Any]] = Field(default_factory=list)
+    applied_filters: dict[str, Any] = Field(default_factory=dict)
+    requirement_scopes: dict[str, dict[str, Any]] = Field(default_factory=dict)
     chunks: list[DataChunkRef] = Field(default_factory=list)
     collections: list[CollectionRef] = Field(default_factory=list)
     missing_requirements: list[str] = Field(default_factory=list)
