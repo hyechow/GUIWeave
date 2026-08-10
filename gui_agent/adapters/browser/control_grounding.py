@@ -2,6 +2,9 @@
 
 from __future__ import annotations
 
+import math
+import re
+
 from gui_agent.adapters.browser.actions import BrowserAction, BrowserActionDecision
 
 
@@ -375,6 +378,163 @@ def ground_rendered_action(
             "original": [action.x, action.y],
             "snapped": [x, y],
             "info": f"{group} {label}".strip(),
+        },
+    })
+    return decision.model_copy(update={"action": grounded})
+
+
+def _compatible_with_action(control: dict, action_type: str) -> bool:
+    kind = str(control.get("kind") or "").casefold()
+    if action_type == "type":
+        return any(token in kind for token in ("input", "textarea", "textbox", "editor"))
+    if action_type == "select_option":
+        return kind in {"native_select", "select", "selectmenu", "listbox", "combobox"}
+    return action_type in {"tap", "click"}
+
+
+def _contains_visible_name(description: str, visible_name: object) -> bool:
+    """Return whether prose names one visible label as a complete phrase."""
+    name = str(visible_name or "").strip()
+    normalized_name = _norm(name)
+    if (
+        not description
+        or not name
+        or len(normalized_name) < 2
+        or (name.isascii() and len(normalized_name) < 3)
+    ):
+        return False
+    if name.isascii():
+        name_tokens = re.findall(r"[a-z0-9]+", name.casefold())
+        description_tokens = re.findall(r"[a-z0-9]+", description.casefold())
+        width = len(name_tokens)
+        return bool(
+            name_tokens
+            and any(
+                description_tokens[index:index + width] == name_tokens
+                for index in range(len(description_tokens) - width + 1)
+            )
+        )
+    return _norm(name) in _norm(description)
+
+
+def _description_names_control(description: str, control: dict) -> bool:
+    """Match only rendered names, never DOM ids, refs, or selectors."""
+    names = {
+        str(control.get("label") or "").strip(),
+        str(control.get("group_field") or "").strip(),
+    }
+    kind = str(control.get("kind") or "").casefold()
+    if kind in {"a", "button", "link", "section_toggle"}:
+        names.add(str(control.get("value") or "").strip())
+    return any(_contains_visible_name(description, name) for name in names if name)
+
+
+def ground_action_to_nearest_control(
+    decision: BrowserActionDecision,
+    controls: list[dict] | None,
+    *,
+    viewport_size: tuple[int, int] | None = None,
+) -> BrowserActionDecision:
+    """Snap an enhanced-mode visual point to one nearby compatible control.
+
+    The Worker owns only an approximate screenshot coordinate. DOM identity is
+    never part of its protocol. The adapter uses current rendered geometry as a
+    bounded execution aid and fails open to the original point when the nearest
+    target is absent, far away, or ambiguous.
+    """
+    action = decision.action
+    action_type = str(action.action_type or "")
+    if (
+        action_type not in {"tap", "click", "type", "select_option"}
+        or action.x is None
+        or action.y is None
+    ):
+        return decision
+    viewport_width, viewport_height = viewport_size or (1000, 1000)
+    if viewport_width <= 0 or viewport_height <= 0:
+        viewport_width, viewport_height = 1000, 1000
+
+    nearby: list[tuple[int, float, float, float, dict, float, float]] = []
+    candidates: list[tuple[int, float, float, float, dict, float, float]] = []
+    for control in controls or []:
+        if not isinstance(control, dict) or not _compatible_with_action(control, action_type):
+            continue
+        if control.get("in_viewport") is False:
+            continue
+        rect = control.get("rect") or {}
+        if not all(isinstance(rect.get(axis), (int, float)) for axis in ("x", "y")):
+            continue
+        cx, cy = float(rect["x"]), float(rect["y"])
+        if not (0 <= cx < 1000 and 0 <= cy < 1000):
+            continue
+        width_px = max(0.0, float(rect.get("w") or 0.0))
+        height_px = max(0.0, float(rect.get("h") or 0.0))
+        if width_px > viewport_width * 0.9 or height_px > viewport_height * 0.6:
+            continue
+        half_width = width_px / viewport_width * 500.0
+        half_height = height_px / viewport_height * 500.0
+        dx = max(abs(float(action.x) - cx) - half_width, 0.0)
+        dy = max(abs(float(action.y) - cy) - half_height, 0.0)
+        axis_misses = int(dx > 0) + int(dy > 0)
+        edge_distance = math.hypot(dx, dy)
+        center_distance = math.hypot(float(action.x) - cx, float(action.y) - cy)
+        if edge_distance > 35.0 or center_distance > 180.0:
+            continue
+        area = max(1.0, half_width * half_height * 4.0)
+        candidate = (axis_misses, edge_distance, area, center_distance, control, cx, cy)
+        nearby.append(candidate)
+        if center_distance <= 100.0:
+            candidates.append(candidate)
+
+    semantic = [
+        candidate
+        for candidate in nearby
+        if _description_names_control(action.description, candidate[4])
+    ]
+    geometric_best = None
+    if candidates:
+        candidates.sort(key=lambda item: item[:4])
+        geometric_best = candidates[0]
+        if len(candidates) > 1:
+            second = candidates[1]
+            competing_centers = math.hypot(
+                geometric_best[5] - second[5], geometric_best[6] - second[6]
+            ) > 4.0
+            if (
+                geometric_best[0] == second[0]
+                and abs(geometric_best[1] - second[1]) <= 4.0
+                and competing_centers
+            ):
+                geometric_best = None
+
+    if len(semantic) == 1 and (
+        geometric_best is None or semantic[0][4] is not geometric_best[4]
+    ):
+        best = semantic[0]
+        method = "control_semantic_geometry"
+    elif geometric_best is not None:
+        best = geometric_best
+        method = "control_geometry"
+    else:
+        return decision
+    control, x, y = best[4], best[5], best[6]
+    if abs(float(action.x) - x) <= 1 and abs(float(action.y) - y) <= 1:
+        return decision
+    label = str(
+        control.get("group_field")
+        or control.get("label")
+        or control.get("name")
+        or control.get("kind")
+        or "control"
+    ).strip()
+    grounded = action.model_copy(update={
+        "x": x,
+        "y": y,
+        "snap": {
+            "method": method,
+            "original": [action.x, action.y],
+            "snapped": [x, y],
+            "info": label,
         },
     })
     return decision.model_copy(update={"action": grounded})

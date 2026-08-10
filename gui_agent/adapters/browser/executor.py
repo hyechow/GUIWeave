@@ -17,6 +17,7 @@ import re
 from typing import Optional
 
 from gui_agent.adapters.browser.actions import BrowserAction
+from gui_agent.adapters.browser.control_grounding import ground_action_to_nearest_control
 from gui_agent.core.runtime.executor import VisionExecutor
 
 # jQuery UI datepicker capability. A non-bubbling ``change`` reaches the
@@ -114,6 +115,17 @@ class BrowserExecutor(VisionExecutor):
         """Resolve omitted browser wheel coordinates before dispatch."""
         self._prepare_scroll_anchor(action)
         return super().execute_scroll(action, ticks=ticks, delta_px=delta_px)
+
+    def ground_coordinates(self, decision, controls):
+        """Ground one enhanced-mode visual point without exposing DOM identity."""
+        try:
+            return ground_action_to_nearest_control(
+                decision,
+                controls,
+                viewport_size=self._client().viewport_size,
+            )
+        except Exception:  # noqa: BLE001 - grounding must fail open to visual coordinates
+            return decision
 
     def _prepare_scroll_anchor(self, action) -> None:
         """Put coordinate-free region/page scrolling on a non-control DOM surface.
