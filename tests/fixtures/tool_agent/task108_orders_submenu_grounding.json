@@ -1,0 +1,33 @@
+{
+  "source_run": "logs/gui_agent/tool_agent/webarena/browser/enhanced/20260810_154421",
+  "frame_id": "frame:2",
+  "attempt": {
+    "tool": "runtime_tap_visible",
+    "capability": "tap",
+    "args": {
+      "x": 292,
+      "y": 140,
+      "description": "Tap the Orders link in the SALES submenu dropdown to navigate to the orders listing page"
+    }
+  },
+  "viewport_size": [1280, 963],
+  "controls": [
+    {
+      "kind": "a",
+      "label": "Orders",
+      "value": "Orders",
+      "rect": {"x": 173, "y": 118, "w": 238, "h": 44}
+    },
+    {
+      "kind": "a",
+      "label": "Invoices",
+      "value": "Invoices",
+      "rect": {"x": 173, "y": 164, "w": 238, "h": 44}
+    }
+  ],
+  "expected_action": {
+    "action_type": "tap",
+    "point": [173, 118],
+    "target_box": [80, 266, 95, 141]
+  }
+}

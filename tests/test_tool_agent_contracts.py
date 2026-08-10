@@ -18,7 +18,9 @@ from gui_agent.core.tool_agent.protocol import (
     diagnostic_prompt_reports,
     dynamic_action_tool,
     dynamic_worker_tools,
+    exactly_one_tool_call,
     materialize_action_patch,
+    normalize_action_arguments,
     worker_action_floor,
 )
 
@@ -136,8 +138,74 @@ def test_runtime_action_floor_and_patch_tool_are_always_available() -> None:
     tools = dynamic_worker_tools(floor)
     names = {tool["function"]["name"] for tool in tools}
 
-    assert {"runtime_tap_visible", "runtime_scroll_visible"}.issubset(names)
+    assert {
+        "runtime_tap_visible",
+        "runtime_type_visible",
+        "runtime_scroll_visible",
+    }.issubset(names)
     assert {"request_action_patch", "complete", "fail"}.issubset(names)
+    for tool in tools:
+        parameters = tool["function"]["parameters"]
+        assert "state" in parameters["properties"]
+        assert "state" in parameters["required"]
+    runtime_tap = next(
+        tool for tool in tools
+        if tool["function"]["name"] == "runtime_tap_visible"
+    )
+    assert "description" in runtime_tap["function"]["parameters"]["required"]
+
+
+def test_provider_coordinate_variants_are_normalized_before_strict_validation() -> None:
+    assert normalize_action_arguments({"x": [36, 181], "y": [36, 181]}) == {
+        "x": 36,
+        "y": 181,
+    }
+    assert normalize_action_arguments({"point": [125, 750], "text": "value"}) == {
+        "x": 125,
+        "y": 750,
+        "text": "value",
+    }
+    assert normalize_action_arguments({"x": "[36, 181]", "y": "[36, 181]"}) == {
+        "x": 36,
+        "y": 181,
+    }
+    assert normalize_action_arguments({"x": "125", "y": "750.5"}) == {
+        "x": 125,
+        "y": 750.5,
+    }
+
+
+def test_tool_call_accepts_json_encoded_argument_object() -> None:
+    call = exactly_one_tool_call(SimpleNamespace(tool_calls=[{
+        "id": "call-1",
+        "name": "runtime_tap_visible",
+        "args": '{"x": 125, "y": 750}',
+    }]))
+
+    assert call["args"] == {"x": 125, "y": 750}
+
+
+def test_runtime_type_action_keeps_text_dynamic_and_coordinates_visual() -> None:
+    action = next(
+        item for item in worker_action_floor()
+        if item.name == "runtime_type_visible"
+    )
+
+    assert action.capability == "type"
+    assert action.fixed_args == {}
+    assert set(action.exposed_args) == {
+        "x", "y", "text", "description"
+    }
+    parameters = dynamic_action_tool(action)["function"]["parameters"]
+    validate(
+        instance={
+            "x": 200,
+            "y": 380,
+            "text": "01/01/2023",
+            "description": "Enter the date into the visible start-date input",
+        },
+        schema=parameters,
+    )
 
 
 def test_worker_can_materialize_registered_frame_driven_action() -> None:
@@ -188,21 +256,13 @@ def test_worker_action_patch_cannot_expand_into_python_execution() -> None:
         )
 
 
-def test_python_transform_ref_is_always_owned_by_worker_runtime() -> None:
-    action = DynamicActionSpec(
-        name="shape_private_rows",
-        capability="python_transform",
-        description="Shape collected rows",
-        fixed_args={
-            "data_ref": "master-cannot-bind-this",
-            "source": "def transform(rows):\n    return rows",
-        },
-    )
-
-    assert action.fixed_args == {"source": "def transform(rows):\n    return rows"}
-    assert action.exposed_args == ["data_ref"]
-    parameters = dynamic_action_tool(action)["function"]["parameters"]
-    assert parameters["required"] == ["data_ref"]
+def test_gui_action_contract_rejects_python_transform() -> None:
+    with pytest.raises(PydanticValidationError):
+        DynamicActionSpec(
+            name="shape_private_rows",
+            capability="python_transform",
+            description="Shape collected rows",
+        )
 
 
 def test_worker_state_can_report_missing_action_without_abandoning_subgoal() -> None:
@@ -250,6 +310,30 @@ def test_data_requirement_expands_model_schema_shorthand() -> None:
     }
 
 
+def test_data_requirement_records_canonical_datetime_contract() -> None:
+    requirement = DataRequirement(
+        id="records",
+        description="dated records",
+        row_schema={"recorded_at": "string"},
+        field_types={"recorded_at": "datetime"},
+    )
+
+    assert requirement.row_schema["properties"]["recorded_at"] == {
+        "type": "string",
+        "format": "date-time",
+    }
+
+
+def test_data_requirement_rejects_incompatible_runtime_type() -> None:
+    with pytest.raises(ValueError, match="is incompatible"):
+        DataRequirement(
+            id="records",
+            description="dated records",
+            row_schema={"recorded_at": "number"},
+            field_types={"recorded_at": "datetime"},
+        )
+
+
 def test_worker_profile_is_inferred_without_creating_distinct_worker_types() -> None:
     common = {
         "goal": "Reach the requested outcome",
@@ -259,7 +343,6 @@ def test_worker_profile_is_inferred_without_creating_distinct_worker_types() -> 
             capability="tap",
             description="Advance the current goal",
         )],
-        "result_schema": {"type": "boolean"},
     }
 
     operator = WorkerSpec.model_validate(common)

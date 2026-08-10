@@ -69,6 +69,24 @@ def test_vision_only_tool_agent_can_disable_dom_snap():
     assert c.clicked == (342, 616)
 
 
+def test_enhanced_coordinate_grounding_failure_keeps_visual_decision():
+    executor = BrowserExecutor(types.SimpleNamespace(client=None))
+    decision = BrowserActionDecision(action=BrowserAction(
+        action_type="tap",
+        x=342,
+        y=616,
+        description="Tap the visible control in the center content area",
+    ))
+
+    grounded = executor.ground_coordinates(
+        decision,
+        [{"kind": "button", "rect": {"x": 350, "y": 620, "w": 80, "h": 30}}],
+    )
+
+    assert grounded is decision
+    assert (grounded.action.x, grounded.action.y) == (342, 616)
+
+
 def test_unresolved_typed_target_does_not_create_an_executor_protocol():
     c = _FakeClient((342.0, 616.0, None))
     dec = BrowserActionDecision(action=BrowserAction(

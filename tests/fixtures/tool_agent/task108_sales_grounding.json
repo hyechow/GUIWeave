@@ -1,0 +1,39 @@
+{
+  "source_run": "logs/gui_agent/tool_agent/webarena/browser/enhanced/20260810_143729",
+  "frame_id": "frame:1",
+  "attempt": {
+    "tool": "runtime_tap_visible",
+    "capability": "tap",
+    "args": {
+      "x": 78,
+      "y": 205,
+      "description": "Tap the SALES top-level menu item in the upper left sidebar"
+    }
+  },
+  "viewport_size": [1281, 963],
+  "controls": [
+    {
+      "kind": "a",
+      "label": "DASHBOARD",
+      "value": "Dashboard",
+      "rect": {"x": 34, "y": 110, "w": 88, "h": 62}
+    },
+    {
+      "kind": "a",
+      "label": "SALES",
+      "value": "Sales",
+      "rect": {"x": 34, "y": 174, "w": 88, "h": 62}
+    },
+    {
+      "kind": "a",
+      "label": "CATALOG",
+      "value": "Catalog",
+      "rect": {"x": 34, "y": 239, "w": 88, "h": 62}
+    }
+  ],
+  "expected_action": {
+    "action_type": "tap",
+    "point": [34, 174],
+    "target_box": [0, 68, 142, 206]
+  }
+}

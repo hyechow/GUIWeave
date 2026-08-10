@@ -1,11 +1,160 @@
 from gui_agent.adapters.browser.actions import BrowserAction, BrowserActionDecision
 from gui_agent.adapters.browser.control_grounding import (
+    ground_action_to_nearest_control,
     ground_rendered_action,
     rendered_target_evidence,
     resolve_native_control_action,
     resolve_semantic_action,
     semantic_target_evidence,
 )
+
+
+def test_coordinate_grounding_fails_open_when_nearby_controls_are_ambiguous() -> None:
+    visual = BrowserActionDecision(action=BrowserAction(
+        action_type="tap",
+        x=500,
+        y=500,
+        description="Tap one visible action in the center content area",
+    ))
+    controls = [
+        {
+            "kind": "button",
+            "label": "Left action",
+            "rect": {"x": 480, "y": 500, "w": 30, "h": 30},
+        },
+        {
+            "kind": "button",
+            "label": "Right action",
+            "rect": {"x": 520, "y": 500, "w": 30, "h": 30},
+        },
+    ]
+
+    decision = ground_action_to_nearest_control(
+        visual,
+        controls,
+        viewport_size=(1000, 1000),
+    )
+
+    assert decision is visual
+    assert decision.action.snap is None
+
+
+def test_coordinate_grounding_uses_unique_visible_name_to_resolve_nearby_rows() -> None:
+    visual = BrowserActionDecision(action=BrowserAction(
+        action_type="tap",
+        x=292,
+        y=140,
+        description="Tap the Orders link in the SALES submenu dropdown",
+    ))
+    controls = [
+        {
+            "kind": "a",
+            "label": "Orders",
+            "rect": {"x": 173, "y": 118, "w": 238, "h": 44},
+        },
+        {
+            "kind": "a",
+            "label": "Invoices",
+            "rect": {"x": 173, "y": 164, "w": 238, "h": 44},
+        },
+    ]
+
+    decision = ground_action_to_nearest_control(
+        visual,
+        controls,
+        viewport_size=(1280, 963),
+    )
+
+    assert (decision.action.x, decision.action.y) == (173.0, 118.0)
+    assert decision.action.snap == {
+        "method": "control_semantic_geometry",
+        "original": [292.0, 140.0],
+        "snapped": [173.0, 118.0],
+        "info": "Orders",
+    }
+
+
+def test_coordinate_grounding_does_not_use_partial_visible_name_match() -> None:
+    visual = BrowserActionDecision(action=BrowserAction(
+        action_type="tap",
+        x=500,
+        y=500,
+        description="Tap the Orders action",
+    ))
+    controls = [
+        {
+            "kind": "button",
+            "label": "Order",
+            "rect": {"x": 480, "y": 500, "w": 30, "h": 30},
+        },
+        {
+            "kind": "button",
+            "label": "Invoices",
+            "rect": {"x": 520, "y": 500, "w": 30, "h": 30},
+        },
+    ]
+
+    decision = ground_action_to_nearest_control(
+        visual,
+        controls,
+        viewport_size=(1000, 1000),
+    )
+
+    assert decision is visual
+    assert decision.action.snap is None
+
+
+def test_coordinate_grounding_fails_open_when_visible_name_is_duplicated() -> None:
+    visual = BrowserActionDecision(action=BrowserAction(
+        action_type="tap",
+        x=500,
+        y=500,
+        description="Tap the Orders link",
+    ))
+    controls = [
+        {
+            "kind": "a",
+            "label": "Orders",
+            "rect": {"x": 480, "y": 500, "w": 30, "h": 30},
+        },
+        {
+            "kind": "a",
+            "label": "Orders",
+            "rect": {"x": 520, "y": 500, "w": 30, "h": 30},
+        },
+    ]
+
+    decision = ground_action_to_nearest_control(
+        visual,
+        controls,
+        viewport_size=(1000, 1000),
+    )
+
+    assert decision is visual
+    assert decision.action.snap is None
+
+
+def test_coordinate_grounding_does_not_cross_large_control_to_distant_center() -> None:
+    visual = BrowserActionDecision(action=BrowserAction(
+        action_type="tap",
+        x=850,
+        y=500,
+        description="Tap the Orders surface",
+    ))
+    controls = [{
+        "kind": "a",
+        "label": "Orders",
+        "rect": {"x": 500, "y": 500, "w": 800, "h": 40},
+    }]
+
+    decision = ground_action_to_nearest_control(
+        visual,
+        controls,
+        viewport_size=(1000, 1000),
+    )
+
+    assert decision is visual
+    assert decision.action.snap is None
 
 
 def _description_controls() -> list[dict]:

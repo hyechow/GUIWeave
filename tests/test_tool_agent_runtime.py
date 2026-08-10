@@ -13,6 +13,7 @@ from gui_agent.core.tool_agent.contracts import (
 )
 from gui_agent.core.tool_agent.data_store import RuntimeDataStore
 from gui_agent.core.tool_agent.runtime import ToolAgentRuntime
+from gui_agent.adapters.browser.control_grounding import ground_action_to_nearest_control
 
 
 def _state(*, missing: bool) -> str:
@@ -81,6 +82,29 @@ class _Executor:
         return True
 
 
+class _GroundingExecutor(_Executor):
+    def ground_coordinates(self, decision, controls):
+        return ground_action_to_nearest_control(
+            decision,
+            controls,
+            viewport_size=(1281, 963),
+        )
+
+
+class _Visualizer:
+    def __init__(self) -> None:
+        self.points = []
+        self.clear_calls = 0
+
+    def show_action(self, action) -> None:
+        snap = action.snap if isinstance(action.snap, dict) else {}
+        point = snap.get("snapped") or [action.x, action.y]
+        self.points.append(tuple(point))
+
+    def clear(self) -> None:
+        self.clear_calls += 1
+
+
 class _EmptyContentWorker:
     def __init__(self) -> None:
         self.mode = ""
@@ -107,6 +131,96 @@ class _EmptyContentWorker:
                 }],
             )
         return SimpleNamespace(content=_state(missing=False), tool_calls=[])
+
+
+class _ArrayCoordinateWorker:
+    def bind_tools(self, tools, **kwargs):
+        del tools, kwargs
+        return self
+
+    def invoke(self, messages):
+        del messages
+        return SimpleNamespace(
+            content="",
+            tool_calls=[{
+                "id": "type-1",
+                "name": "runtime_type_visible",
+                "args": {
+                    "state": {
+                        "status": "exploring",
+                        "summary": "The date input is visible.",
+                        "next_instruction": "Enter the required date.",
+                    },
+                    "x": [200, 380],
+                    "y": [200, 380],
+                    "text": "01/01/2023",
+                    "description": "Enter the start date",
+                },
+            }],
+        )
+
+
+class _RepeatedThenGroundedWorker:
+    def __init__(self) -> None:
+        self.calls = 0
+
+    def bind_tools(self, tools, **kwargs):
+        del tools, kwargs
+        return self
+
+    def invoke(self, messages):
+        del messages
+        self.calls += 1
+        args = {
+            "state": {
+                "status": "exploring",
+                "summary": "The Purchase Date to field is empty.",
+                "next_instruction": "Enter the end date.",
+            },
+            "x": 207,
+            "y": 550,
+            "text": "05/31/2023",
+            "description": "Enter the end date into the Purchase Date to input",
+        }
+        if self.calls == 4:
+            args["x"] = 207
+            args["y"] = 448
+        return SimpleNamespace(
+            content="",
+            tool_calls=[{
+                "id": f"type-{self.calls}",
+                "name": "runtime_type_visible",
+                "args": args,
+            }],
+        )
+
+
+class _RepeatedEffectiveScrollWorker:
+    def __init__(self) -> None:
+        self.calls = 0
+
+    def bind_tools(self, tools, **kwargs):
+        del tools, kwargs
+        return self
+
+    def invoke(self, messages):
+        del messages
+        self.calls += 1
+        return SimpleNamespace(
+            content="",
+            tool_calls=[{
+                "id": f"scroll-{self.calls}",
+                "name": "reveal_more",
+                "args": {
+                    "state": {
+                        "status": "collecting",
+                        "summary": "More visual content remains below.",
+                        "next_instruction": "Continue scrolling to collect it.",
+                    },
+                    "amount": "medium",
+                },
+            }],
+        )
 
 
 def test_worker_patches_action_space_and_acts_on_same_frame(monkeypatch) -> None:
@@ -143,7 +257,6 @@ def test_worker_patches_action_space_and_acts_on_same_frame(monkeypatch) -> None
                 fixed_args={"direction": "down"},
             )
         ],
-        result_schema={"type": "number"},
         max_steps=1,
     )
 
@@ -162,7 +275,7 @@ def test_worker_patches_action_space_and_acts_on_same_frame(monkeypatch) -> None
     assert patches[0]["frame_id"] == "frame:1"
 
 
-def test_worker_recovers_missing_state_content_without_changing_action(monkeypatch) -> None:
+def test_worker_compatibly_accepts_missing_content_without_another_llm_call(monkeypatch) -> None:
     runtime = object.__new__(ToolAgentRuntime)
     runtime.trace = []
     runtime.worker = _EmptyContentWorker()
@@ -185,7 +298,6 @@ def test_worker_recovers_missing_state_content_without_changing_action(monkeypat
             description="Reveal more content",
             fixed_args={"direction": "down"},
         )],
-        result_schema={"type": "number"},
         max_steps=1,
     )
 
@@ -195,11 +307,272 @@ def test_worker_recovers_missing_state_content_without_changing_action(monkeypat
     assert len(runtime._executor.actions) == 1
     assert runtime._executor.actions[0].x == 400
     recovered = [event for event in runtime.trace if event["event"] == "worker_state_recovered"]
-    assert len(recovered) == 1
-    assert recovered[0]["tool"] == "runtime_tap_visible"
+    assert recovered == []
+    decisions = [event for event in runtime.trace if event["event"] == "worker_decision"]
+    assert decisions[0]["state_source"] == "runtime_compat"
+    assert "assistant content state unavailable" in " ".join(
+        decisions[0]["state_compatibility"]
+    )
 
 
-def test_python_transform_is_blocked_until_collection_coverage_is_complete() -> None:
+def test_retried_gui_worker_retains_bounded_journal_experience(monkeypatch) -> None:
+    runtime = object.__new__(ToolAgentRuntime)
+    runtime.trace = []
+    runtime.worker = _EmptyContentWorker()
+    runtime._executor = _Executor()
+    runtime.platform = object()
+    runtime._observe = lambda spec: (
+        MaterializedFrame(frame_id="frame:1", screenshot_path="frame.png"),
+        b"png",
+    )
+    monkeypatch.setattr(
+        "gui_agent.core.tool_agent.runtime.settle_after_action",
+        lambda platform, png, *, action_type: (0.0, False),
+    )
+    spec = WorkerSpec(
+        goal="Advance one cohesive subgoal",
+        success_criteria=["The visible control is activated"],
+        actions=[DynamicActionSpec(
+            name="reveal_more",
+            capability="scroll",
+            description="Reveal more content",
+            fixed_args={"direction": "down"},
+        )],
+        max_steps=1,
+    )
+
+    first = runtime._run_worker("advance_subgoal", spec)
+    second = runtime._run_worker("advance_subgoal", spec)
+
+    assert first.phase == second.phase == "failed"
+    starts = [event for event in runtime.trace if event["event"] == "worker_started"]
+    assert [(event["attempt"], event["retained_memory_events"]) for event in starts] == [
+        (1, 0),
+        (2, 1),
+    ]
+    decisions = [event for event in runtime.trace if event["event"] == "worker_decision"]
+    assert [event["memory_event_count"] for event in decisions] == [0, 2]
+
+
+def test_worker_normalizes_provider_point_schema_and_executes_type(monkeypatch) -> None:
+    runtime = object.__new__(ToolAgentRuntime)
+    runtime.trace = []
+    runtime.worker = _ArrayCoordinateWorker()
+    runtime._executor = _Executor()
+    runtime.platform = object()
+    runtime._observe = lambda spec: (
+        MaterializedFrame(frame_id="frame:1", screenshot_path="frame.png"),
+        b"png",
+    )
+    monkeypatch.setattr(
+        "gui_agent.core.tool_agent.runtime.settle_after_action",
+        lambda platform, png, *, action_type: (0.0, False),
+    )
+    spec = WorkerSpec(
+        goal="Enter a required value",
+        success_criteria=["The value is entered"],
+        actions=[DynamicActionSpec(
+            name="reveal_more",
+            capability="scroll",
+            description="Reveal more content",
+            fixed_args={"direction": "down"},
+        )],
+        max_steps=1,
+    )
+
+    runtime._run_worker("type_value", spec)
+
+    assert len(runtime._executor.actions) == 1
+    action = runtime._executor.actions[0]
+    assert action.action_type == "type"
+    assert action.x == 200
+    assert action.y == 380
+    assert action.text == "01/01/2023"
+    decision = next(
+        event for event in runtime.trace if event["event"] == "worker_decision"
+    )
+    assert decision["state_source"] == "tool_args"
+    assert decision["args"]["x"] == 200
+    assert decision["args"]["y"] == 380
+
+
+def test_worker_fuses_third_repeated_action_and_accepts_same_frame_ref_repair(
+    monkeypatch,
+) -> None:
+    runtime = object.__new__(ToolAgentRuntime)
+    runtime.trace = []
+    runtime.worker = _RepeatedThenGroundedWorker()
+    runtime._executor = _GroundingExecutor()
+    runtime._visualizer = _Visualizer()
+    runtime.platform = object()
+    observed = []
+
+    def observe(spec):
+        del spec
+        observed.append(True)
+        return (
+            MaterializedFrame(
+                frame_id=f"frame:{len(observed)}",
+                screenshot_path="frame.png",
+                url="http://example.test/orders",
+                title="Orders",
+                controls=[{
+                    "kind": "text_input",
+                    "label": "to",
+                    "id": "E1WHE5T",
+                    "rect": {"x": 212, "y": 428, "w": 184, "h": 32},
+                }],
+                requirement_scopes={
+                    "orders": {"status": "unmet", "applied_filters": {}},
+                },
+            ),
+            b"png",
+        )
+
+    runtime._observe = observe
+    monkeypatch.setattr(
+        "gui_agent.core.tool_agent.runtime.settle_after_action",
+        lambda platform, png, *, action_type: (0.0, False),
+    )
+    spec = WorkerSpec(
+        goal="Set the order end date",
+        success_criteria=["The end date is set"],
+        actions=[DynamicActionSpec(
+            name="reveal_more",
+            capability="scroll",
+            description="Reveal more content",
+            fixed_args={"direction": "down"},
+        )],
+        max_steps=3,
+    )
+
+    outcome = runtime._run_worker("ground_date", spec)
+
+    assert outcome.phase == "failed"
+    assert len(observed) == 3
+    assert runtime.worker.calls == 4
+    assert len(runtime._executor.actions) == 3
+    assert (runtime._executor.actions[-1].x, runtime._executor.actions[-1].y) == (
+        212,
+        428,
+    )
+    assert runtime._executor.actions[-1].snap["method"] == "control_geometry"
+    assert runtime._visualizer.points[-2:] == [
+        (212.0, 428.0),
+        (212.0, 428.0),
+    ]
+    blocked = [event for event in runtime.trace if event["event"] == "worker_action_blocked"]
+    assert len(blocked) == 1
+    assert blocked[0]["prior_attempts"] == 2
+
+
+def test_worker_does_not_fuse_repeated_scrolls_that_change_visual_frame(
+    monkeypatch,
+) -> None:
+    runtime = object.__new__(ToolAgentRuntime)
+    runtime.trace = []
+    runtime.worker = _RepeatedEffectiveScrollWorker()
+    runtime._executor = _Executor()
+    runtime.platform = object()
+    observe_calls = []
+
+    def observe(spec):
+        del spec
+        observe_calls.append(True)
+        return (
+            MaterializedFrame(
+                frame_id=f"frame:{len(observe_calls)}",
+                screenshot_path="frame.png",
+            ),
+            b"png",
+        )
+
+    runtime._observe = observe
+    monkeypatch.setattr(
+        "gui_agent.core.tool_agent.runtime.settle_after_action",
+        lambda platform, png, *, action_type: (0.0, False),
+    )
+    spec = WorkerSpec(
+        goal="Collect a long visual surface",
+        success_criteria=["All relevant visible records are collected"],
+        actions=[DynamicActionSpec(
+            name="reveal_more",
+            capability="scroll",
+            description="Reveal more content",
+            fixed_args={"direction": "down"},
+            exposed_args=["amount"],
+        )],
+        max_steps=3,
+    )
+
+    outcome = runtime._run_worker("visual_collection", spec)
+
+    assert outcome.phase == "failed"
+    assert len(observe_calls) == 3
+    assert runtime.worker.calls == 3
+    assert len(runtime._executor.actions) == 3
+    assert not any(
+        event["event"] == "worker_action_blocked"
+        for event in runtime.trace
+    )
+
+
+def test_vision_only_execution_does_not_use_enhanced_control_geometry(
+    monkeypatch,
+) -> None:
+    runtime = object.__new__(ToolAgentRuntime)
+    runtime.perception_mode = "vision-only"
+    runtime._executor = _GroundingExecutor()
+    runtime._visualizer = None
+    runtime.platform = object()
+    runtime._trace = lambda *_args, **_kwargs: None
+    monkeypatch.setattr(
+        "gui_agent.core.tool_agent.runtime.settle_after_action",
+        lambda platform, png, *, action_type: (0.0, False),
+    )
+    action = DynamicActionSpec(
+        name="enter_visible_value",
+        capability="type",
+        description="Enter the value into the visible input",
+        exposed_args=["text", "description"],
+    )
+    spec = WorkerSpec(
+        goal="Enter a visible value",
+        success_criteria=["The value is entered"],
+        actions=[action],
+    )
+    frame = MaterializedFrame(
+        frame_id="frame:1",
+        screenshot_path="frame.png",
+        controls=[{
+            "kind": "text_input",
+            "label": "to",
+            "rect": {"x": 212, "y": 428, "w": 184, "h": 32},
+        }],
+    )
+
+    runtime._execute_worker_tool(
+        spec,
+        [action],
+        {
+            "name": "enter_visible_value",
+            "args": {
+                "x": 207,
+                "y": 448,
+                "text": "05/31/2023",
+                "description": "Enter the end date into the visible to input",
+            },
+        },
+        b"png",
+        frame,
+    )
+
+    executed = runtime._executor.actions[-1]
+    assert (executed.x, executed.y) == (207, 448)
+    assert executed.snap is None
+
+
+def test_collector_cannot_complete_until_collection_coverage_is_complete() -> None:
     runtime = object.__new__(ToolAgentRuntime)
     runtime.data_store = RuntimeDataStore()
     _, collection, _ = runtime.data_store.put_chunk(
@@ -223,12 +596,6 @@ def test_python_transform_is_blocked_until_collection_coverage_is_complete() -> 
             "partial": True,
         },
     )
-    transform = DynamicActionSpec(
-        name="materialize_records",
-        capability="python_transform",
-        description="Materialize the collected records",
-        fixed_args={"source": "def transform(rows):\n    return rows"},
-    )
     spec = WorkerSpec(
         profile="collector",
         goal="Collect all records",
@@ -243,20 +610,21 @@ def test_python_transform_is_blocked_until_collection_coverage_is_complete() -> 
                 "additionalProperties": False,
             },
         }],
-        actions=[transform],
-        result_schema={
-            "type": "array",
-            "items": {"type": "object"},
-        },
+        actions=[DynamicActionSpec(
+            name="reveal_more",
+            capability="scroll",
+            description="Reveal more collected records",
+            fixed_args={"direction": "down"},
+        )],
     )
 
-    with pytest.raises(ValueError, match="coverage is 'incomplete'"):
+    with pytest.raises(ValueError, match="coverage is not complete"):
         runtime._execute_worker_tool(
             spec,
-            [transform],
+            spec.actions,
             {
-                "name": "materialize_records",
-                "args": {"data_ref": collection.ref},
+                "name": "complete",
+                "args": {"collection_ref": collection.ref},
             },
             b"png",
         )
@@ -292,7 +660,6 @@ def test_runtime_streams_live_logs_and_observation_artifacts(tmp_path) -> None:
             capability="tap",
             description="Advance the goal",
         )],
-        result_schema={"type": "boolean"},
     )
 
     runtime._observe(spec)
@@ -343,37 +710,51 @@ class _InterruptingMaster:
         raise KeyboardInterrupt
 
 
-def _coding_program(terminal: str) -> str:
-    return f'''def run(ctx):
+def _coding_program() -> str:
+    return '''def run(ctx):
     result = ctx.gui_worker(
         worker_id="collect_records",
+        profile="collector",
         goal="Collect the requested records",
         success_criteria=["The requested records are collected"],
-        data_requirements=[],
-        actions=[{{
+        data_requirements=[{
+            "id": "records",
+            "description": "Requested records",
+            "row_schema": {
+                "type": "object",
+                "properties": {"value": {"type": "integer"}},
+                "required": ["value"],
+                "additionalProperties": False,
+            },
+        }],
+        actions=[{
             "name": "reveal_more",
             "capability": "scroll",
             "description": "Reveal more records",
-            "fixed_args": {{"direction": "down"}},
+            "fixed_args": {"direction": "down"},
             "exposed_args": ["amount"],
-        }}],
-        result_schema={{"type": "array"}},
+        }],
         max_steps=4,
     )
-    {terminal}
+    if result["phase"] != "completed":
+        ctx.replan(result["summary"])
+    computed = ctx.transform(
+        transform_id="count_records",
+        inputs=[result["collection_ref"]["ref"]],
+        source="def transform(inputs):\\n    return len(inputs[0])",
+        result_schema={"type": "integer"},
+    )
+    ctx.finish(computed["ref"])
 '''
 
 
-def test_runtime_replans_program_without_repeating_completed_gui_worker(tmp_path) -> None:
+def test_runtime_replans_failed_subgoal_without_recompiling_master(tmp_path) -> None:
     runtime = object.__new__(ToolAgentRuntime)
-    runtime.max_master_programs = 2
+    runtime.max_subgoal_replans = 1
     runtime.max_compile_attempts = 1
     runtime.data_store = RuntimeDataStore()
     runtime.trace = []
-    runtime.master = _CodingMaster(
-        _coding_program('ctx.replan("Use the completed result")'),
-        _coding_program('ctx.finish(result["result_ref"]["ref"])'),
-    )
+    runtime.master = _CodingMaster(_coding_program())
     runtime.master_cfg = SimpleNamespace(model="coding-master")
     runtime.worker_cfg = SimpleNamespace(model="visual-worker")
     runtime.materializer = SimpleNamespace(model="perception")
@@ -384,15 +765,30 @@ def test_runtime_replans_program_without_repeating_completed_gui_worker(tmp_path
     def run_worker(worker_id, spec):
         assert worker_id == "collect_records"
         worker_calls.append(spec)
-        descriptor = runtime.data_store.put_result(
-            [],
-            spec.result_schema,
-            summary="Collected once",
+        if len(worker_calls) == 1:
+            return WorkerOutcome(
+                phase="failed",
+                summary="Need another GUI attempt",
+                steps=4,
+            )
+        _, descriptor, _ = runtime.data_store.put_chunk(
+            requirement_id="records",
+            frame_id="frame:2",
+            provider="structured",
+            rows=[{"value": 1}],
+            row_schema=spec.data_requirements[0].row_schema,
+            coverage={
+                "source_scope": "structured_surface",
+                "scope_status": "met",
+                "traversal_type": "static",
+                "partial": False,
+                "total_records": 1,
+            },
         )
         return WorkerOutcome(
             phase="completed",
-            summary="Collected once",
-            result_ref=descriptor,
+            summary="Collected after local replan",
+            collection_ref=descriptor,
             steps=2,
         )
 
@@ -401,16 +797,25 @@ def test_runtime_replans_program_without_repeating_completed_gui_worker(tmp_path
     run = runtime.run("Collect the requested records")
 
     assert run.phase == "completed"
-    assert run.output == []
-    assert len(worker_calls) == 1
-    assert any(event["event"] == "master_replan" for event in run.trace)
-    assert any(event["event"] == "master_worker_reuse" for event in run.trace)
+    assert run.output == 1
+    assert len(worker_calls) == 2
+    assert runtime.master.sources == []
+    assert any(event["event"] == "subgoal_replan" for event in run.trace)
+    assert any(event["event"] == "master_worker_retry" for event in run.trace)
     assert (tmp_path / "tool_agent_trace.json").is_file()
+    replay = json.loads(
+        (tmp_path / "tool_agent_replay.json").read_text(encoding="utf-8")
+    )
+    assert replay["status"] == "passed"
+    assert replay["program_count"] == 2
+    assert replay["gui_worker_count"] == 1
+    assert replay["uses_browser"] is False
+    assert replay["uses_llm"] is False
 
 
 def test_runtime_interruption_is_sealed_as_a_reportable_failed_run(tmp_path) -> None:
     runtime = object.__new__(ToolAgentRuntime)
-    runtime.max_master_programs = 1
+    runtime.max_subgoal_replans = 0
     runtime.max_compile_attempts = 1
     runtime.data_store = RuntimeDataStore()
     runtime.trace = []
@@ -421,6 +826,7 @@ def test_runtime_interruption_is_sealed_as_a_reportable_failed_run(tmp_path) -> 
     runtime.perception_mode = "enhanced"
     runtime.log_dir = tmp_path
     runtime._status_cb = None
+    runtime._visualizer = _Visualizer()
 
     run = runtime.run("Collect the requested records")
 
@@ -435,3 +841,8 @@ def test_runtime_interruption_is_sealed_as_a_reportable_failed_run(tmp_path) -> 
         (tmp_path / "tool_agent_trace.json").read_text(encoding="utf-8")
     )
     assert persisted["phase"] == "failed"
+    replay = json.loads(
+        (tmp_path / "tool_agent_replay.json").read_text(encoding="utf-8")
+    )
+    assert replay["status"] == "unavailable"
+    assert runtime._visualizer.clear_calls == 1

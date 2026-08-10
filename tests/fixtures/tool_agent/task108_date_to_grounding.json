@@ -1,0 +1,40 @@
+{
+  "source_run": "logs/gui_agent/tool_agent/webarena/browser/enhanced/20260810_140453",
+  "frame_id": "frame:8",
+  "attempt": {
+    "tool": "runtime_type_visible",
+    "capability": "type",
+    "args": {
+      "x": 207,
+      "y": 448,
+      "text": "05/31/2023",
+      "description": "Enter end date into Purchase Date to field"
+    }
+  },
+  "viewport_size": [1281, 963],
+  "controls": [
+    {
+      "kind": "text_input",
+      "label": "search-global",
+      "id": "search-global",
+      "value": "31/202331/202331/2023",
+      "focused": true,
+      "rect": {"x": 736, "y": 98, "w": 250, "h": 35}
+    },
+    {
+      "kind": "text_input",
+      "label": "to",
+      "name": "created_at[to]",
+      "id": "E1WHE5T",
+      "is_filter": true,
+      "is_datepicker": true,
+      "rect": {"x": 212, "y": 428, "w": 184, "h": 32}
+    }
+  ],
+  "expected_action": {
+    "action_type": "type",
+    "fields": {"text": "05/31/2023"},
+    "point": [212, 428],
+    "target_box": [200, 224, 416, 440]
+  }
+}

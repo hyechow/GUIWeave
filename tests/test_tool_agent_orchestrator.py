@@ -12,29 +12,31 @@ from gui_agent.core.tool_agent.orchestrator import (
 )
 
 
-GUI_CALL = """
+ROW_SCHEMA = {
+    "type": "object",
+    "properties": {"amount": {"type": "number"}},
+    "required": ["amount"],
+    "additionalProperties": False,
+}
+
+GUI_CALL = f"""
 ctx.gui_worker(
     worker_id="collect_records",
     profile="collector",
     goal="Collect the records needed by the task",
     success_criteria=["The requested records have complete coverage"],
-    data_requirements=[],
-    actions=[{
+    data_requirements=[{{
+        "id": "records",
+        "description": "Requested records",
+        "row_schema": {ROW_SCHEMA!r},
+    }}],
+    actions=[{{
         "name": "reveal_more",
         "capability": "scroll",
         "description": "Reveal more records when needed",
-        "fixed_args": {"direction": "down", "target_area": "main_content"},
+        "fixed_args": {{"direction": "down", "target_area": "main_content"}},
         "exposed_args": ["amount"],
-    }],
-    result_schema={
-        "type": "array",
-        "items": {
-            "type": "object",
-            "properties": {"amount": {"type": "number"}},
-            "required": ["amount"],
-            "additionalProperties": False,
-        },
-    },
+    }}],
     max_steps=8,
 )
 """.strip()
@@ -59,6 +61,24 @@ class _SequenceLLM:
         return SimpleNamespace(content=self.responses.pop(0))
 
 
+def _put_complete_collection(store: RuntimeDataStore, rows: list[dict]):
+    _, descriptor, _ = store.put_chunk(
+        requirement_id="records",
+        frame_id="frame:1",
+        provider="structured",
+        rows=rows,
+        row_schema=ROW_SCHEMA,
+        coverage={
+            "source_scope": "structured_surface",
+            "scope_status": "met",
+            "traversal_type": "static",
+            "partial": False,
+            "total_records": len(rows),
+        },
+    )
+    return descriptor
+
+
 def test_master_review_rejects_gui_micro_actions() -> None:
     diagnostics = validate_master_source(
         "def run(ctx):\n    ctx.tap(100, 200)\n    ctx.fail('invalid program')"
@@ -67,23 +87,23 @@ def test_master_review_rejects_gui_micro_actions() -> None:
     assert any(item.code == "UNKNOWN_CTX_API" for item in diagnostics)
 
 
-def test_master_review_requires_ref_strings_from_outcome_dicts() -> None:
+def test_master_review_requires_ref_strings_from_descriptors() -> None:
     descriptor_access = validate_master_source(
         "def run(ctx):\n"
         "    outcome = ctx.worker_result('collect')\n"
-        "    ctx.finish(outcome['result_ref'])"
+        "    ctx.finish(outcome['collection_ref'])"
     )
     attribute_access = validate_master_source(
         "def run(ctx):\n"
         "    outcome = ctx.worker_result('collect')\n"
-        "    ctx.finish(outcome['result_ref'].ref)"
+        "    ctx.finish(outcome['collection_ref'].ref)"
     )
 
     assert any(item.code == "REF_VALUE_REQUIRED" for item in descriptor_access)
     assert any(item.code == "ATTRIBUTE_ACCESS" for item in attribute_access)
 
 
-def test_master_compiler_regenerates_the_whole_reviewed_program() -> None:
+def test_master_compiler_regenerates_only_during_static_review() -> None:
     invalid = "def run(ctx):\n    ctx.tap(1, 2)\n    ctx.fail('bad')"
     valid = "def run(ctx):\n    ctx.fail('No safe execution path')"
     llm = _SequenceLLM(invalid, valid)
@@ -93,7 +113,6 @@ def test_master_compiler_regenerates_the_whole_reviewed_program() -> None:
         llm=llm,
         system_prompt="Compile a program.",
         task_context={"goal": "test"},
-        execution_history=[],
         on_event=lambda event, payload: events.append((event, payload)),
     )
 
@@ -105,7 +124,7 @@ def test_master_compiler_regenerates_the_whole_reviewed_program() -> None:
     assert events[1][1]["diagnostics"] == []
 
 
-def test_coding_master_orchestrates_gui_then_data_worker() -> None:
+def test_coding_master_orchestrates_gui_then_runtime_transform() -> None:
     store = RuntimeDataStore()
     gui_calls = []
     trace = []
@@ -113,15 +132,11 @@ def test_coding_master_orchestrates_gui_then_data_worker() -> None:
     def run_gui_worker(worker_id, spec):
         assert worker_id == "collect_records"
         gui_calls.append(spec)
-        descriptor = store.put_result(
-            [{"amount": 2}, {"amount": 3}],
-            spec.result_schema,
-            summary="Collected records",
-        )
+        descriptor = _put_complete_collection(store, [{"amount": 2}, {"amount": 3}])
         return WorkerOutcome(
             phase="completed",
             summary="Collected records",
-            result_ref=descriptor,
+            collection_ref=descriptor,
             steps=3,
         )
 
@@ -135,16 +150,13 @@ def test_coding_master_orchestrates_gui_then_data_worker() -> None:
 records = {GUI_CALL}
 if records["phase"] != "completed":
     ctx.replan(records["summary"])
-total = ctx.data_worker(
-    worker_id="sum_amounts",
-    goal="Sum the collected amounts deterministically",
-    inputs=[records["result_ref"]["ref"]],
+total = ctx.transform(
+    transform_id="sum_amounts",
+    inputs=[records["collection_ref"]["ref"]],
     source="def transform(inputs):\\n    return sum(row['amount'] for row in inputs[0])",
     result_schema={{"type": "number"}},
 )
-if total["phase"] != "completed":
-    ctx.replan(total["summary"])
-ctx.finish(total["result_ref"]["ref"])
+ctx.finish(total["ref"])
 """.strip()
     )
 
@@ -160,24 +172,22 @@ ctx.finish(total["result_ref"]["ref"])
     assert [item["event"] for item in trace] == [
         "master_worker_dispatch",
         "master_worker_result",
-        "data_worker_start",
-        "data_worker_complete",
+        "transform_started",
+        "transform_completed",
     ]
 
 
-def test_recompiled_program_reuses_completed_gui_worker_by_stable_id() -> None:
+def test_reexecuted_frozen_program_reuses_completed_gui_worker_and_transform() -> None:
     store = RuntimeDataStore()
     gui_calls = []
     trace = []
 
     def run_gui_worker(worker_id, spec):
-        assert worker_id == "collect_records"
-        gui_calls.append(spec)
-        descriptor = store.put_result([], spec.result_schema, summary="Collected once")
+        gui_calls.append((worker_id, spec))
         return WorkerOutcome(
             phase="completed",
             summary="Collected once",
-            result_ref=descriptor,
+            collection_ref=_put_complete_collection(store, []),
             steps=1,
         )
 
@@ -186,23 +196,29 @@ def test_recompiled_program_reuses_completed_gui_worker_by_stable_id() -> None:
         run_gui_worker=run_gui_worker,
         trace=lambda event, **payload: trace.append({"event": event, **payload}),
     )
-    first = _program(f'records = {GUI_CALL}\nctx.finish("result:missing")')
-    second = _program(
-        f'records = {GUI_CALL}\nctx.finish(records["result_ref"]["ref"])'
-    )
+    body = f"""
+records = {GUI_CALL}
+result = ctx.transform(
+    transform_id="count_records",
+    inputs=[records["collection_ref"]["ref"]],
+    source="def transform(inputs):\\n    return len(inputs[0])",
+    result_schema={{"type": "integer"}},
+)
+ctx.finish(result["ref"])
+""".strip()
+    source = _program(body)
 
-    failed = execute_master_program(first, ctx)
-    completed = execute_master_program(second, ctx)
+    first = execute_master_program(source, ctx)
+    second = execute_master_program(source, ctx)
 
-    assert not failed.ok
-    assert "unknown ResultRef" in failed.error
-    assert completed.ok
+    assert first.ok and second.ok
     assert len(gui_calls) == 1
     assert any(item["event"] == "master_worker_reuse" for item in trace)
-    assert ctx.history_for_model()[0]["worker_id"] == "collect_records"
+    assert any(item["event"] == "transform_reused" for item in trace)
+    assert ctx.worker_result("collect_records")["phase"] == "completed"
 
 
-def test_program_can_request_model_replanning_from_typed_worker_failure() -> None:
+def test_program_can_request_local_replan_from_typed_worker_failure() -> None:
     store = RuntimeDataStore()
 
     def fail_gui_worker(worker_id, spec):
@@ -220,7 +236,7 @@ def test_program_can_request_model_replanning_from_typed_worker_failure() -> Non
 records = {GUI_CALL}
 if records["phase"] != "completed":
     ctx.replan(records["summary"])
-ctx.finish(records["result_ref"]["ref"])
+ctx.fail("unreachable")
 """.strip()
     )
 
@@ -230,3 +246,49 @@ ctx.finish(records["result_ref"]["ref"])
     assert execution.terminal is not None
     assert execution.terminal.phase == "replan"
     assert execution.terminal.summary == "Unexpected access gate"
+
+
+def test_operator_can_materialize_a_control_flow_result_without_fake_data() -> None:
+    store = RuntimeDataStore()
+
+    def run_gui_worker(worker_id, spec):
+        assert worker_id == "update_setting"
+        assert spec.profile == "operator"
+        return WorkerOutcome(phase="completed", summary="Setting visibly updated", steps=2)
+
+    ctx = WorkerOrchestrationContext(
+        data_store=store,
+        run_gui_worker=run_gui_worker,
+        trace=lambda *args, **kwargs: None,
+    )
+    source = _program(
+        """
+updated = ctx.gui_worker(
+    worker_id="update_setting",
+    profile="operator",
+    goal="Update the requested setting",
+    success_criteria=["The requested state is visibly confirmed"],
+    data_requirements=[],
+    actions=[{
+        "name": "activate_setting",
+        "capability": "tap",
+        "description": "Activate the visible requested setting",
+    }],
+)
+if updated["phase"] != "completed":
+    ctx.replan(updated["summary"])
+result = ctx.transform(
+    transform_id="operator_success",
+    inputs=[],
+    source="def transform(inputs):\\n    return True",
+    result_schema={"type": "boolean"},
+)
+ctx.finish(result["ref"])
+""".strip()
+    )
+
+    execution = execute_master_program(source, ctx)
+
+    assert execution.ok
+    assert execution.terminal is not None
+    assert store.result_value(execution.terminal.result_ref) is True

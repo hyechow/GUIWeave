@@ -44,11 +44,13 @@ class FakePerception:
         tables: list[dict],
         *,
         controls: list[dict] | None = None,
+        control_state: list[dict] | None = None,
         applied_filters: dict[str, str] | None = None,
         applied_filter_state: AppliedFilterState | None = None,
     ) -> None:
         self.tables = tables
         self.controls = controls or []
+        self.control_state = control_state
         self.applied_filters = applied_filters or {}
         self.applied_filter_state = applied_filter_state
 
@@ -57,6 +59,7 @@ class FakePerception:
             png_bytes=b"png",
             tables=self.tables,
             form_controls=self.controls,
+            form_control_state=self.control_state,
             applied_filters=self.applied_filters,
             applied_filter_state=self.applied_filter_state,
             url="https://example.test",
@@ -70,11 +73,13 @@ class FakeBundle:
         tables: list[dict],
         *,
         controls: list[dict] | None = None,
+        control_state: list[dict] | None = None,
         applied_filters: dict[str, str] | None = None,
         applied_filter_state: AppliedFilterState | None = None,
     ) -> None:
         self.tables = tables
         self.controls = controls or []
+        self.control_state = control_state
         self.applied_filters = applied_filters or {}
         self.applied_filter_state = applied_filter_state
         self.make_perception_calls = 0
@@ -84,6 +89,7 @@ class FakeBundle:
         return FakePerception(
             self.tables,
             controls=self.controls,
+            control_state=self.control_state,
             applied_filters=self.applied_filters,
             applied_filter_state=self.applied_filter_state,
         )
@@ -135,6 +141,44 @@ def test_enhanced_materializes_matching_structured_surface_outside_viewport(tmp_
         [{"term": "offscreen", "uses": 99}]
     ]
     assert frame.chunks[0].coverage["source_scope"] == "structured_surface"
+
+
+def test_enhanced_prefers_complete_control_state_for_exact_grounding(tmp_path: Path) -> None:
+    truncated = [{
+        "kind": "text_input",
+        "label": "search-global",
+        "id": "search-global",
+        "rect": {"x": 736, "y": 98, "w": 250, "h": 35},
+    }]
+    complete = [
+        *truncated,
+        {
+            "kind": "text_input",
+            "label": "to",
+            "name": "created_at[to]",
+            "id": "E1WHE5T",
+            "rect": {"x": 212, "y": 428, "w": 184, "h": 32},
+        },
+    ]
+    materializer = _materializer(tmp_path, "enhanced")
+
+    frame, _ = materializer.observe(
+        bundle=FakeBundle([], controls=truncated, control_state=complete),
+        platform=FakePlatform(),
+        requirements=[],
+        frame_no=1,
+    )
+
+    assert [control["id"] for control in frame.controls] == [
+        "search-global",
+        "E1WHE5T",
+    ]
+    assert frame.controls[1]["rect"] == {
+        "x": 212,
+        "y": 428,
+        "w": 184,
+        "h": 32,
+    }
 
 
 def test_enhanced_materializes_partial_dom_table_with_incomplete_coverage(tmp_path: Path) -> None:
@@ -271,6 +315,7 @@ def test_collector_establishes_filter_scope_before_materializing_rows(tmp_path: 
         "kind": "native_select",
         "label": "Status",
         "options": ["Complete", "Processing"],
+        "rect": {"x": 50, "y": 60, "w": 100, "h": 30},
     }]
 
     filtered_table = {
@@ -329,3 +374,43 @@ def test_vision_only_never_invokes_platform_perception(tmp_path: Path) -> None:
     assert materializer.data_store.collection_chunks(frame.collections[0].ref) == [
         [{"term": "visual-value", "uses": 2}]
     ]
+
+
+def test_vision_only_normalizes_declared_datetime_before_storage(tmp_path: Path) -> None:
+    requirement = DataRequirement(
+        id="orders",
+        description="Visible orders",
+        row_schema={
+            "type": "object",
+            "properties": {
+                "id": {"type": "string"},
+                "purchase_date": {"type": "string"},
+            },
+            "required": ["id", "purchase_date"],
+        },
+        field_sources={"id": "ID", "purchase_date": "Purchase Date"},
+        field_types={"id": "text", "purchase_date": "datetime"},
+    )
+    materializer = _materializer(tmp_path, "vision-only")
+    materializer._vision_extract = lambda _requirement, _png: {  # type: ignore[method-assign]
+        "found": True,
+        "rows": [{"id": "1", "purchase_date": "May 19, 2023 8:11:51 AM"}],
+        "end_visible": True,
+    }
+
+    frame, _ = materializer.observe(
+        bundle=FakeBundle([]),
+        platform=FakePlatform(),
+        requirements=[requirement],
+        frame_no=1,
+    )
+
+    assert frame.chunks[0].provider == "vision"
+    assert frame.chunks[0].coverage["normalization"] == {
+        "id": "text",
+        "purchase_date": "datetime",
+    }
+    assert materializer.data_store.collection_rows(frame.collections[0].ref) == [{
+        "id": "1",
+        "purchase_date": "2023-05-19T08:11:51+00:00",
+    }]

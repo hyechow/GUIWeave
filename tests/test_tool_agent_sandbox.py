@@ -24,6 +24,20 @@ def test_transform_processes_private_chunks_and_validates_result() -> None:
     assert result == ["first", "second"]
 
 
+def test_transform_can_guard_canonical_values_by_safe_runtime_type() -> None:
+    source = """def transform(rows):
+    return [row["value"] for row in rows if isinstance(row["value"], str)]
+"""
+
+    result = execute_transform(
+        source,
+        [{"value": "2023-01-01T00:00:00+00:00"}, {"value": 1}],
+        {"type": "array", "items": {"type": "string"}},
+    )
+
+    assert result == ["2023-01-01T00:00:00+00:00"]
+
+
 @pytest.mark.parametrize(
     "source",
     [

@@ -22,7 +22,7 @@ def test_tool_agent_trace_populates_report_timeline(tmp_path: Path) -> None:
         "orchestrator": {"kind": "tool_agent", "perception_mode": "vision-only"},
     }), encoding="utf-8")
     (tmp_path / "screenshot_tool_agent_1.png").write_bytes(b"not-decoded-by-builder")
-    transform = "def transform(rows):\n    return [row['label'] for row in rows[:2]]"
+    transform = "def transform(inputs):\n    return [row['label'] for row in inputs[0][:2]]"
     (tmp_path / "tool_agent_trace.json").write_text(json.dumps({
         "phase": "completed",
         "output": ["alpha", "beta"],
@@ -33,9 +33,8 @@ def test_tool_agent_trace_populates_report_timeline(tmp_path: Path) -> None:
                 "step": 1,
                 "tool": "run_worker",
                 "args": {"spec": {"actions": [{
-                    "name": "compute_labels",
-                    "capability": "python_transform",
-                    "fixed_args": {"source": transform},
+                    "name": "reveal_labels",
+                    "capability": "scroll",
                 }]}},
             },
             {
@@ -49,19 +48,21 @@ def test_tool_agent_trace_populates_report_timeline(tmp_path: Path) -> None:
             {
                 "index": 3,
                 "event": "worker_state_recovered",
-                "tool": "compute_labels",
-                "state": {"status": "computing", "summary": "Ready to transform"},
+                "tool": "runtime_scroll_visible",
+                "state": {"status": "collecting", "summary": "Collecting labels"},
             },
                 {
                     "index": 4,
                     "event": "worker_decision",
                 "frame_id": "frame:1",
                 "step": 1,
-                "tool": "compute_labels",
+                "tool": "runtime_scroll_visible",
+                "memory_event_count": 3,
+                "context_chars": 2048,
                 "state": {
-                    "status": "computing",
-                    "summary": "Coverage is complete; transform the collection",
-                        "next_instruction": "Transform",
+                    "status": "collecting",
+                    "summary": "Reveal the remaining labels",
+                        "next_instruction": "Scroll the label list",
                     },
                     "context_reports": [
                         {
@@ -80,20 +81,33 @@ def test_tool_agent_trace_populates_report_timeline(tmp_path: Path) -> None:
                         {
                             "kind": "llm_output",
                             "label": "tool_agent.worker",
-                            "raw_output": "compute_labels",
-                            "parsed": {"status": "computing"},
+                            "raw_output": "runtime_scroll_visible",
+                            "parsed": {"status": "collecting"},
                         },
                     ],
                 },
             {
                 "index": 5,
-                "event": "python_transform",
-                "tool": "compute_labels",
-                "data_ref": "collection:labels",
-                "result_ref": {"ref": "result:1"},
+                "event": "runtime_action",
+                "tool": "runtime_scroll_visible",
+                "action_type": "scroll",
+                "status": "executed",
             },
             {
                 "index": 6,
+                "event": "transform_started",
+                "transform_id": "compute_labels",
+                "inputs": ["collection:labels"],
+                "source": transform,
+            },
+            {
+                "index": 7,
+                "event": "transform_completed",
+                "transform_id": "compute_labels",
+                "result_ref": {"ref": "result:1"},
+            },
+            {
+                "index": 8,
                 "event": "master_tool",
                 "step": 2,
                 "tool": "finish_task",
@@ -101,22 +115,25 @@ def test_tool_agent_trace_populates_report_timeline(tmp_path: Path) -> None:
             },
         ],
     }), encoding="utf-8")
-
     data = RunnerReportBuilder().build(tmp_path)
     report_path = save_report(data, tmp_path / "report.html")
     html = report_path.read_text(encoding="utf-8")
 
-    assert len(data.pages) == 1
+    assert len(data.pages) == 2
     assert len(data.pages[0].steps) == 1
-    assert data.stats == {"workers": 1, "turns": 1, "executed": 1}
+    assert data.pages[1].title == "Runtime Transform · compute_labels"
+    assert data.stats == {"workers": 1, "turns": 2, "executed": 2}
     assert "GUI Worker · gui_worker" in html
-    assert "computing · compute_labels" in html
+    assert "collecting · runtime_scroll_visible" in html
     assert "Worker state recovery" not in html
     assert "chunk:labels:1" in html
-    assert "def transform(rows)" in html
+    assert "def transform(inputs)" in html
     assert "result:1" in html
     assert "frame metadata" in html
     assert "compute_labels" in html
+    assert "rebuilt_per_frame" in html
+    assert "2048" in html
+    assert "journal_events" in html
 
 
 def test_tool_agent_report_exposes_coding_master_and_worker_boundaries(tmp_path: Path) -> None:
@@ -131,12 +148,14 @@ def test_tool_agent_report_exposes_coding_master_and_worker_boundaries(tmp_path:
             "summary": "done",
             "output": "1",
         },
+        "reply": "The result is 1.",
         "orchestrator": {"kind": "tool_agent", "perception_mode": "enhanced"},
     }), encoding="utf-8")
     source = (
         "def run(ctx):\n"
-        "    result = ctx.worker_result('collect')\n"
-        "    ctx.finish(result['result_ref']['ref'])"
+        "    collected = ctx.worker_result('collect')\n"
+        "    result = ctx.transform(transform_id='shape', inputs=[collected['collection_ref']['ref']], source='def transform(inputs):\\n    return 1', result_schema={'type': 'integer'})\n"
+        "    ctx.finish(result['ref'])"
     )
     (tmp_path / "tool_agent_trace.json").write_text(json.dumps({
         "phase": "completed",
@@ -159,15 +178,47 @@ def test_tool_agent_report_exposes_coding_master_and_worker_boundaries(tmp_path:
                 "index": 3,
                 "event": "master_worker_result",
                 "worker_id": "collect",
-                "outcome": {"phase": "completed", "result_ref": {"ref": "result:1"}},
+                "outcome": {"phase": "completed", "collection_ref": {"ref": "collection:one"}},
             },
             {
                 "index": 4,
+                "event": "transform_started",
+                "transform_id": "shape",
+                "inputs": ["collection:one"],
+                "source": "def transform(inputs):\n    return 1",
+            },
+            {
+                "index": 5,
+                "event": "transform_completed",
+                "transform_id": "shape",
+                "result_ref": {"ref": "result:1"},
+            },
+            {
+                "index": 6,
                 "event": "master_program_completed",
                 "phase": "completed",
                 "result_ref": "result:1",
             },
         ],
+    }), encoding="utf-8")
+    (tmp_path / "tool_agent_replay.json").write_text(json.dumps({
+        "status": "passed",
+        "summary": "Deterministic replay passed",
+        "program_count": 1,
+        "gui_worker_count": 1,
+        "uses_browser": False,
+        "uses_llm": False,
+    }), encoding="utf-8")
+    (tmp_path / "tool_agent_presentation.json").write_text(json.dumps({
+        "status": "generated",
+        "reply": "The result is 1.",
+        "result_digest": "a" * 64,
+        "model": "presenter",
+        "elapsed_s": 0.4,
+        "llm_calls": 1,
+        "token_usage": {"input": 40, "output": 8},
+        "context_reports": [],
+        "error": "",
     }), encoding="utf-8")
 
     data = RunnerReportBuilder().build(tmp_path)
@@ -178,6 +229,11 @@ def test_tool_agent_report_exposes_coding_master_and_worker_boundaries(tmp_path:
     assert "GUI Worker · collect" in html
     assert "def run(ctx)" in html
     assert "worker_result" in html
+    assert "Replay · 通过" in html
+    assert "0 LLM / 0 browser" in html
+    assert "Presentation · User-facing reply" in html
+    assert "input: goal + public result + replay verdict" in html
+    assert "The result is 1." in html
     assert data.pages[0].verify_outcome["status"] == "done"
 
 
