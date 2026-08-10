@@ -309,6 +309,7 @@ def _tool_agent_result_and_context(
     run: object,
     log_dir: Path,
     knowledge_summary: dict | None,
+    presentation: object | None = None,
 ) -> AgentResult:
     """Project the experimental runtime onto stable AgentResult/PolicyContext contracts."""
     from gui_agent.core.schemas import PolicyContext
@@ -337,6 +338,17 @@ def _tool_agent_result_and_context(
                 "perception": getattr(run, "perception_model", ""),
             },
             "trace_path": str(log_dir / "tool_agent_trace.json"),
+            "replay_path": str(log_dir / "tool_agent_replay.json"),
+            "presentation_path": str(log_dir / "tool_agent_presentation.json"),
+            "presentation": (
+                {
+                    "status": getattr(presentation, "status", ""),
+                    "result_digest": getattr(presentation, "result_digest", ""),
+                    "model": getattr(presentation, "model", ""),
+                }
+                if presentation is not None
+                else None
+            ),
         },
     )
     context = PolicyContext(
@@ -352,8 +364,10 @@ def _tool_agent_result_and_context(
         "tool_agent.master": getattr(run, "master_model", ""),
         "tool_agent.worker": getattr(run, "worker_model", ""),
         "tool_agent.perception": getattr(run, "perception_model", ""),
+        "tool_agent.presentation": getattr(presentation, "model", ""),
     }
     context.orchestrator = dict(result.orchestrator or {})
+    context.reply = getattr(presentation, "reply", None)
     (log_dir / "context.json").write_text(context.model_dump_json(indent=2), encoding="utf-8")
     return result
 
@@ -1311,11 +1325,42 @@ def main() -> int:
                                 page_url=page_url,
                                 page_title=page_title,
                             )
+                            from gui_agent.core.tool_agent.presentation import (
+                                present_result,
+                                write_presentation_artifact,
+                            )
+
+                            replay_path = log_dir / "tool_agent_replay.json"
+                            try:
+                                replay_payload = json.loads(
+                                    replay_path.read_text(encoding="utf-8")
+                                )
+                            except (OSError, json.JSONDecodeError):
+                                replay_payload = {"status": "unavailable"}
+                            if hud:
+                                hud.update("Presentation · rendering verified result")
+                            presentation = present_result(
+                                goal=intent,
+                                phase=tool_run.phase,
+                                result=tool_run.output,
+                                summary=tool_run.summary,
+                                replay=replay_payload,
+                            )
+                            write_presentation_artifact(log_dir, presentation)
+                            with (log_dir / "tool_agent.log").open(
+                                "a", encoding="utf-8"
+                            ) as stream:
+                                stream.write(
+                                    "[Presentation] "
+                                    f"{presentation.status.upper()} · "
+                                    f"{presentation.reply}\n"
+                                )
                             tool_result = _tool_agent_result_and_context(
                                 intent=intent,
                                 run=tool_run,
                                 log_dir=log_dir,
                                 knowledge_summary=knowledge_summary,
+                                presentation=presentation,
                             )
                             return (
                                 None,

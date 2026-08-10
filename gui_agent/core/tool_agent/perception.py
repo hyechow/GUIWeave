@@ -20,6 +20,11 @@ from gui_agent.core.filter_contract import (
     compile_filter_predicates,
     match_filter_state,
 )
+from gui_agent.core.run.statements.compute_kernel import (
+    ComputeKernelError,
+    json_value,
+    normalize_table_value,
+)
 from gui_agent.prompts import load_prompt_text
 from gui_agent.core.tool_agent.contracts import (
     DataRequirement,
@@ -36,6 +41,20 @@ from gui_agent.core.tool_agent.protocol import (
 PerceptionMode = Literal["vision-only", "enhanced"]
 
 _VISION_SYSTEM = load_prompt_text("task.tool_agent.visual_transcription")
+
+
+class DataNormalizationError(ValueError):
+    """A declared runtime field type could not be normalized losslessly."""
+
+
+def _normalize_runtime_value(
+    field_name: str,
+    value: Any,
+    value_type: str,
+) -> Any:
+    """Normalize an observed value into the JSON form stored by Tool Agent."""
+
+    return json_value(normalize_table_value(field_name, value, value_type))
 
 
 def _normalize(text: str) -> str:
@@ -97,7 +116,7 @@ def _structured_rows(
     source_map = requirement.field_sources
     properties = requirement.row_schema.get("properties") or {}
     rows: list[dict[str, Any]] = []
-    for source_row in list(table.get("rows") or []):
+    for row_index, source_row in enumerate(list(table.get("rows") or []), start=1):
         if not isinstance(source_row, dict):
             continue
         normalized_sources = {_normalize(str(key)): value for key, value in source_row.items()}
@@ -105,22 +124,94 @@ def _structured_rows(
         for field, field_schema in properties.items():
             source = source_map.get(field, field)
             value = source_row.get(source, normalized_sources.get(_normalize(source)))
-            field_type = field_schema.get("type") if isinstance(field_schema, dict) else None
-            if value is not None and field_type in {"integer", "number"}:
+            declared_type = requirement.field_types.get(field)
+            if value is not None and declared_type is not None:
                 try:
-                    value = int(str(value).replace(",", "")) if field_type == "integer" else float(str(value).replace(",", ""))
-                except ValueError:
-                    pass
+                    value = _normalize_runtime_value(source, value, declared_type)
+                except ComputeKernelError as exc:
+                    raise DataNormalizationError(
+                        f"row {row_index} field {field!r} cannot normalize as "
+                        f"{declared_type}"
+                    ) from exc
+            elif value is not None:
+                json_type = field_schema.get("type") if isinstance(field_schema, dict) else None
+                if json_type in {"integer", "number"}:
+                    try:
+                        value = (
+                            int(str(value).replace(",", ""))
+                            if json_type == "integer"
+                            else float(str(value).replace(",", ""))
+                        )
+                    except ValueError:
+                        pass
             output[field] = value
         try:
             validate(instance=output, schema=requirement.row_schema)
-        except ValidationError:
+        except ValidationError as exc:
+            if requirement.field_types:
+                raise DataNormalizationError(
+                    f"row {row_index} does not satisfy the normalized row schema"
+                ) from exc
             continue
         rows.append(output)
     return rows
 
 
-def _compare_values(left: Any, right: Any) -> int:
+def _normalize_visual_rows(
+    requirement: DataRequirement,
+    rows: list[Any],
+) -> list[dict[str, Any]]:
+    normalized_rows: list[dict[str, Any]] = []
+    for row_index, row in enumerate(rows, start=1):
+        if not isinstance(row, dict):
+            if requirement.field_types:
+                raise DataNormalizationError(
+                    f"visual row {row_index} is not an object"
+                )
+            continue
+        normalized = dict(row)
+        for field, declared_type in requirement.field_types.items():
+            if field not in normalized or normalized[field] is None:
+                continue
+            source = requirement.field_sources.get(field, field)
+            try:
+                normalized[field] = _normalize_runtime_value(
+                    source,
+                    normalized[field],
+                    declared_type,
+                )
+            except ComputeKernelError as exc:
+                raise DataNormalizationError(
+                    f"visual row {row_index} field {field!r} cannot normalize as "
+                    f"{declared_type}"
+                ) from exc
+        try:
+            validate(instance=normalized, schema=requirement.row_schema)
+        except ValidationError as exc:
+            if requirement.field_types:
+                raise DataNormalizationError(
+                    f"visual row {row_index} does not satisfy the normalized row schema"
+                ) from exc
+            continue
+        normalized_rows.append(normalized)
+    return normalized_rows
+
+
+def _compare_values(
+    left: Any,
+    right: Any,
+    *,
+    field_name: str = "",
+    field_type: str | None = None,
+) -> int:
+    if field_type is not None:
+        try:
+            left = _normalize_runtime_value(field_name, left, field_type)
+            right = _normalize_runtime_value(field_name, right, field_type)
+        except ComputeKernelError as exc:
+            raise DataNormalizationError(
+                f"filter field {field_name!r} cannot normalize as {field_type}"
+            ) from exc
     left_value = canonical_filter_value(left)
     right_value = canonical_filter_value(right)
     try:
@@ -156,16 +247,43 @@ def _rows_satisfy_filters(
             if row_field not in row:
                 return None
             value = row[row_field]
+            field_type = requirement.field_types.get(row_field)
+            field_name = requirement.field_sources.get(row_field, row_field)
             if predicate.operator == "eq":
-                matches = _compare_values(value, predicate.values[0]) == 0
+                matches = _compare_values(
+                    value,
+                    predicate.values[0],
+                    field_name=field_name,
+                    field_type=field_type,
+                ) == 0
             elif predicate.operator == "gte":
-                matches = _compare_values(value, predicate.values[0]) >= 0
+                matches = _compare_values(
+                    value,
+                    predicate.values[0],
+                    field_name=field_name,
+                    field_type=field_type,
+                ) >= 0
             elif predicate.operator == "lte":
-                matches = _compare_values(value, predicate.values[0]) <= 0
+                matches = _compare_values(
+                    value,
+                    predicate.values[0],
+                    field_name=field_name,
+                    field_type=field_type,
+                ) <= 0
             else:
                 matches = (
-                    _compare_values(value, predicate.values[0]) >= 0
-                    and _compare_values(value, predicate.values[1]) <= 0
+                    _compare_values(
+                        value,
+                        predicate.values[0],
+                        field_name=field_name,
+                        field_type=field_type,
+                    ) >= 0
+                    and _compare_values(
+                        value,
+                        predicate.values[1],
+                        field_name=field_name,
+                        field_type=field_type,
+                    ) <= 0
                 )
             if not matches:
                 return False
@@ -333,9 +451,17 @@ class PerceptionMaterializer:
             observation = bundle.make_perception(platform, screenshot_path).observe()
             png = observation.png_bytes
             tables = list(observation.tables or [])
+            # Geometry is optional platform-enhanced evidence. Keeping normalized
+            # control centers lets the adapter ground a visual action by exact ref;
+            # vision-only mode remains independent because it supplies no controls.
+            control_inventory = (
+                getattr(observation, "form_control_state", None)
+                or getattr(observation, "form_controls", None)
+                or []
+            )
             controls = [
-                {key: value for key, value in item.items() if key != "rect"}
-                for item in list(getattr(observation, "form_controls", None) or [])
+                dict(item)
+                for item in list(control_inventory)
                 if isinstance(item, dict)
             ]
             applied_filters = dict(getattr(observation, "applied_filters", None) or {})
@@ -394,7 +520,10 @@ class PerceptionMaterializer:
                 )
                 requirement_scopes[requirement.id] = scope
                 if visually_found:
-                    rows = list(extracted.get("rows") or [])
+                    rows = _normalize_visual_rows(
+                        requirement,
+                        list(extracted.get("rows") or []),
+                    )
                     coverage = {
                         "scope": requirement.scope,
                         "scope_status": scope["status"],
@@ -431,6 +560,10 @@ class PerceptionMaterializer:
             if not collection_found:
                 missing.append(requirement.id)
                 continue
+            if requirement.field_types:
+                coverage["normalization"] = dict(requirement.field_types)
+                coverage["normalized_rows"] = len(rows)
+                coverage["rejected_rows"] = 0
             chunk, collection, _created = self.data_store.put_chunk(
                 requirement_id=requirement.id,
                 frame_id=frame_id,
@@ -474,13 +607,7 @@ class PerceptionMaterializer:
         rows = value.get("rows")
         if not isinstance(rows, list):
             value["rows"] = []
-        valid_rows = []
-        for row in value["rows"]:
-            try:
-                validate(instance=row, schema=requirement.row_schema)
-            except ValidationError:
-                continue
-            valid_rows.append(row)
+        valid_rows = _normalize_visual_rows(requirement, value["rows"])
         value["rows"] = valid_rows
         on_event = getattr(self, "_on_event", None)
         if on_event is not None:

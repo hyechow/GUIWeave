@@ -37,6 +37,7 @@ _SAFE_BUILTINS = {
     "filter": filter,
     "float": float,
     "int": int,
+    "isinstance": isinstance,
     "len": len,
     "list": list,
     "map": map,

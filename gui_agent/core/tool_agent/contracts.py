@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+from copy import deepcopy
 from typing import Any, Literal
 
 from pydantic import BaseModel, ConfigDict, Field, model_validator
@@ -9,6 +10,9 @@ from pydantic import BaseModel, ConfigDict, Field, model_validator
 
 class StrictModel(BaseModel):
     model_config = ConfigDict(extra="forbid")
+
+
+DataFieldType = Literal["text", "number", "money", "datetime", "boolean"]
 
 
 class DataRequirement(StrictModel):
@@ -25,6 +29,14 @@ class DataRequirement(StrictModel):
     field_sources: dict[str, str] = Field(
         default_factory=dict,
         description="Normalized output field to platform-visible source header.",
+    )
+    field_types: dict[str, DataFieldType] = Field(
+        default_factory=dict,
+        description=(
+            "Source-value semantics used to normalize private runtime rows before "
+            "they enter the DataStore. Datetimes become ISO 8601 strings; numbers "
+            "and money become JSON numbers."
+        ),
     )
     filters: dict[str, Any] = Field(
         default_factory=dict,
@@ -72,6 +84,31 @@ class DataRequirement(StrictModel):
             raise ValueError(
                 f"field_sources keys are absent from row_schema: {sorted(unknown_sources)}"
             )
+        unknown_types = set(self.field_types).difference(properties)
+        if unknown_types:
+            raise ValueError(
+                f"field_types keys are absent from row_schema: {sorted(unknown_types)}"
+            )
+        expected_json_types = {
+            "text": {"string"},
+            "datetime": {"string"},
+            "number": {"number", "integer"},
+            "money": {"number", "integer"},
+            "boolean": {"boolean"},
+        }
+        schema = deepcopy(self.row_schema)
+        schema_properties = schema.get("properties") or {}
+        for field, field_type in self.field_types.items():
+            field_schema = schema_properties.get(field)
+            json_type = field_schema.get("type") if isinstance(field_schema, dict) else None
+            if json_type not in expected_json_types[field_type]:
+                raise ValueError(
+                    f"field_types[{field!r}]={field_type!r} is incompatible with "
+                    f"row_schema type {json_type!r}"
+                )
+            if field_type == "datetime":
+                field_schema.setdefault("format", "date-time")
+        self.row_schema = schema
         return self
 
 
@@ -79,7 +116,7 @@ class DynamicActionSpec(StrictModel):
     """One business-named action bound to a small runtime capability."""
 
     name: str = Field(pattern=r"^[a-z][a-z0-9_]{0,63}$")
-    capability: Literal["tap", "scroll", "select_option", "python_transform"]
+    capability: Literal["tap", "type", "scroll", "select_option"]
     description: str
     fixed_args: dict[str, Any] = Field(default_factory=dict)
     exposed_args: list[str] = Field(default_factory=list)
@@ -97,6 +134,7 @@ class DynamicActionSpec(StrictModel):
         """
         if not isinstance(data, dict) or data.get("capability") not in {
             "tap",
+            "type",
             "scroll",
             "select_option",
         }:
@@ -108,34 +146,17 @@ class DynamicActionSpec(StrictModel):
             fixed_args.pop(name, None)
             if name not in exposed_args:
                 exposed_args.append(name)
+        # DOM identity is deliberately not part of the Worker action protocol.
+        # Enhanced adapters may ground the visual point after the Worker decides
+        # an action; vision-only execution uses the point unchanged.
+        fixed_args.pop("target_ref", None)
+        exposed_args = [name for name in exposed_args if name != "target_ref"]
         if (
             normalized.get("capability") == "select_option"
             and "text" not in fixed_args
             and "text" not in exposed_args
         ):
             exposed_args.append("text")
-        normalized["fixed_args"] = fixed_args
-        normalized["exposed_args"] = exposed_args
-        return normalized
-
-    @model_validator(mode="before")
-    @classmethod
-    def _assign_runtime_ref_to_worker(cls, data: object) -> object:
-        """Make runtime-created CollectionRefs a Worker-owned argument.
-
-        A text-only Master cannot know which frame-bound collection the visual
-        Worker will transform.  This mirrors the coordinate canonicalization
-        above: the capability registry, rather than generated orchestration
-        code, owns the required runtime argument.
-        """
-        if not isinstance(data, dict) or data.get("capability") != "python_transform":
-            return data
-        normalized = dict(data)
-        fixed_args = dict(normalized.get("fixed_args") or {})
-        exposed_args = list(normalized.get("exposed_args") or [])
-        fixed_args.pop("data_ref", None)
-        if "data_ref" not in exposed_args:
-            exposed_args.append("data_ref")
         normalized["fixed_args"] = fixed_args
         normalized["exposed_args"] = exposed_args
         return normalized
@@ -164,7 +185,6 @@ class WorkerSpec(StrictModel):
     success_criteria: list[str] = Field(min_length=1)
     data_requirements: list[DataRequirement] = Field(default_factory=list)
     actions: list[DynamicActionSpec] = Field(min_length=1)
-    result_schema: dict[str, Any]
     max_steps: int = Field(default=8, ge=1, le=20)
 
     @model_validator(mode="after")
@@ -177,13 +197,17 @@ class WorkerSpec(StrictModel):
             raise ValueError("worker action names must be unique")
         if len(set(requirement_ids)) != len(requirement_ids):
             raise ValueError("data requirement ids must be unique")
+        if self.profile == "collector" and len(self.data_requirements) != 1:
+            raise ValueError("collector profile requires exactly one logical data requirement")
+        if self.profile == "operator" and self.data_requirements:
+            raise ValueError("operator profile cannot declare data requirements")
         return self
 
 
 class WorkerState(StrictModel):
     """Visible state-machine channel emitted in assistant ``content``."""
 
-    status: Literal["exploring", "collecting", "computing", "completed", "failed"]
+    status: Literal["exploring", "collecting", "completed", "failed"]
     summary: str
     established_facts: list[str] = Field(default_factory=list)
     open_gaps: list[str] = Field(default_factory=list)
@@ -237,7 +261,7 @@ class MaterializedFrame(StrictModel):
 class WorkerOutcome(StrictModel):
     phase: Literal["completed", "failed"]
     summary: str
-    result_ref: ResultRef | None = None
+    collection_ref: CollectionRef | None = None
     steps: int
 
 

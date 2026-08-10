@@ -19,7 +19,7 @@ from typing import Any, Callable, Literal
 from jsonschema import Draft202012Validator
 from langchain_core.messages import HumanMessage, SystemMessage
 
-from gui_agent.core.tool_agent.contracts import WorkerOutcome, WorkerSpec
+from gui_agent.core.tool_agent.contracts import ResultRef, WorkerOutcome, WorkerSpec
 from gui_agent.core.tool_agent.data_store import RuntimeDataStore
 from gui_agent.core.tool_agent.protocol import (
     diagnostic_prompt_reports,
@@ -37,7 +37,7 @@ _MASTER_FILENAME = "<tool-agent-master>"
 _WORKER_ID_PATTERN = re.compile(r"^[a-z][a-z0-9_]{0,63}$")
 _CTX_METHODS = {
     "gui_worker",
-    "data_worker",
+    "transform",
     "worker_result",
     "finish",
     "replan",
@@ -163,18 +163,8 @@ class MasterExecution:
 @dataclass(frozen=True)
 class WorkerRecord:
     worker_id: str
-    kind: Literal["gui", "data"]
-    goal: str
     signature: str
     outcome: WorkerOutcome
-
-    def summary(self) -> dict[str, Any]:
-        return {
-            "worker_id": self.worker_id,
-            "kind": self.kind,
-            "goal": self.goal,
-            "outcome": self.outcome.model_dump(mode="json"),
-        }
 
 
 class MasterCompileError(ValueError):
@@ -216,7 +206,6 @@ def _validate_gui_worker_call(call: ast.Call) -> list[MasterDiagnostic]:
         "success_criteria",
         "data_requirements",
         "actions",
-        "result_schema",
     }
     values: dict[str, Any] = {}
     for name in required:
@@ -239,34 +228,22 @@ def _validate_gui_worker_call(call: ast.Call) -> list[MasterDiagnostic]:
         spec = WorkerSpec.model_validate(
             {**values, "profile": profile, "max_steps": max_steps}
         )
-        Draft202012Validator.check_schema(spec.result_schema)
         for requirement in spec.data_requirements:
             Draft202012Validator.check_schema(requirement.row_schema)
-        combined_row_schema = {
-            "type": "object",
-            "properties": {
-                key: value
-                for requirement in spec.data_requirements
-                for key, value in (requirement.row_schema.get("properties") or {}).items()
-            },
-        }
-        for action in spec.actions:
-            if action.capability == "python_transform":
-                source = str(action.fixed_args.get("source") or "")
-                validate_transform_source(source)
-                validate_transform_row_fields(source, combined_row_schema)
     except Exception as exc:  # noqa: BLE001 - surfaced as a compile diagnostic
         diagnostics.append(_diagnostic("GUI_WORKER_SPEC", str(exc), call))
     return diagnostics
 
 
-def _validate_data_worker_call(call: ast.Call) -> list[MasterDiagnostic]:
-    diagnostics = _validate_worker_id(call)
-    for name in ("goal", "source", "result_schema"):
+def _validate_transform_call(call: ast.Call) -> list[MasterDiagnostic]:
+    diagnostics: list[MasterDiagnostic] = []
+    for name in ("transform_id", "source", "result_schema"):
         try:
             value = _literal_keyword(call, name)
-            if name == "goal" and (not isinstance(value, str) or not value.strip()):
-                raise ValueError("goal must be a non-empty string")
+            if name == "transform_id" and (
+                not isinstance(value, str) or _WORKER_ID_PATTERN.fullmatch(value) is None
+            ):
+                raise ValueError("transform_id must be a stable snake_case identifier")
             if name == "source":
                 if not isinstance(value, str):
                     raise ValueError("source must be a string")
@@ -274,17 +251,17 @@ def _validate_data_worker_call(call: ast.Call) -> list[MasterDiagnostic]:
             if name == "result_schema":
                 Draft202012Validator.check_schema(value)
         except Exception as exc:  # noqa: BLE001 - one deterministic diagnostic channel
-            diagnostics.append(_diagnostic("DATA_WORKER_SPEC", f"{name}: {exc}", call))
+            diagnostics.append(_diagnostic("TRANSFORM_SPEC", f"{name}: {exc}", call))
     if not any(item.arg == "inputs" for item in call.keywords):
-        diagnostics.append(_diagnostic("DATA_WORKER_SPEC", "missing required keyword 'inputs'", call))
+        diagnostics.append(_diagnostic("TRANSFORM_SPEC", "missing required keyword 'inputs'", call))
     else:
         inputs = next(item.value for item in call.keywords if item.arg == "inputs")
         if isinstance(inputs, (ast.List, ast.Tuple)):
             for item in inputs.elts:
-                if _subscript_key(item) == "result_ref":
+                if _subscript_key(item) in {"collection_ref", "result_ref"}:
                     diagnostics.append(_diagnostic(
                         "REF_VALUE_REQUIRED",
-                        "data_worker inputs require result_ref['ref'], not the result_ref descriptor",
+                        "ctx.transform inputs require descriptor['ref'], not a descriptor object",
                         item,
                     ))
     return diagnostics
@@ -306,7 +283,7 @@ def _validate_finish_call(call: ast.Call) -> list[MasterDiagnostic]:
         value = keyword.value
     if value is None:
         return [_diagnostic("FINISH_SIGNATURE", "ctx.finish requires a result ref string", call)]
-    if _subscript_key(value) == "result_ref":
+    if _subscript_key(value) in {"collection_ref", "result_ref"}:
         return [_diagnostic(
             "REF_VALUE_REQUIRED",
             "ctx.finish requires result_ref['ref'], not the result_ref descriptor",
@@ -373,12 +350,12 @@ def validate_master_source(source: str) -> list[MasterDiagnostic]:
             if method not in _CTX_METHODS:
                 diagnostics.append(_diagnostic("UNKNOWN_CTX_API", f"ctx.{method} is not available", node))
                 continue
-            if method in {"gui_worker", "data_worker"} and node.args:
-                diagnostics.append(_diagnostic("WORKER_SIGNATURE", f"ctx.{method} accepts keyword arguments only", node))
+            if method in {"gui_worker", "transform"} and node.args:
+                diagnostics.append(_diagnostic("CALL_SIGNATURE", f"ctx.{method} accepts keyword arguments only", node))
             if method == "gui_worker":
                 diagnostics.extend(_validate_gui_worker_call(node))
-            elif method == "data_worker":
-                diagnostics.extend(_validate_data_worker_call(node))
+            elif method == "transform":
+                diagnostics.extend(_validate_transform_call(node))
             elif method in {"finish", "replan", "fail"}:
                 terminal_calls += 1
                 if method == "finish":
@@ -410,8 +387,6 @@ def compile_master_program(
     llm: Any,
     system_prompt: str,
     task_context: dict[str, Any],
-    execution_history: list[dict[str, Any]],
-    feedback: str = "",
     max_attempts: int = 3,
     on_event: Callable[[str, dict[str, Any]], None] | None = None,
 ) -> MasterProgram:
@@ -426,11 +401,7 @@ def compile_master_program(
     rejected = ""
     last_diagnostics: list[MasterDiagnostic] = []
     for attempt in range(1, max_attempts + 1):
-        payload = {
-            "task": task_context,
-            "completed_worker_history": execution_history,
-            "runtime_feedback": feedback or "(none)",
-        }
+        payload = {"task": task_context}
         if rejected:
             payload["rejected_program"] = rejected
             payload["validation_issues"] = [item.render() for item in last_diagnostics]
@@ -490,14 +461,12 @@ class WorkerOrchestrationContext:
         self._run_gui_worker = run_gui_worker
         self._trace = trace
         self._records: dict[str, WorkerRecord] = {}
+        self._transforms: dict[str, tuple[str, ResultRef]] = {}
         self._terminal: MasterTerminal | None = None
 
     @property
     def terminal(self) -> MasterTerminal | None:
         return self._terminal
-
-    def history_for_model(self) -> list[dict[str, Any]]:
-        return [record.summary() for record in self._records.values()]
 
     def _reuse(self, worker_id: str, signature: str) -> dict[str, Any] | None:
         record = self._records.get(worker_id)
@@ -506,12 +475,20 @@ class WorkerOrchestrationContext:
         if record.signature != signature:
             raise ValueError(
                 f"worker_id {worker_id!r} is already bound to a different specification; "
-                "use a new worker_id for a retry or changed subgoal"
+                "use a new worker_id for a changed subgoal"
             )
+        if record.outcome.phase == "failed":
+            self._trace(
+                "master_worker_retry",
+                worker_id=worker_id,
+                kind="gui",
+                prior_outcome=record.outcome.model_dump(mode="json"),
+            )
+            return None
         self._trace(
             "master_worker_reuse",
             worker_id=worker_id,
-            kind=record.kind,
+            kind="gui",
             outcome=record.outcome.model_dump(mode="json"),
         )
         return record.outcome.model_dump(mode="json")
@@ -525,7 +502,6 @@ class WorkerOrchestrationContext:
         success_criteria: list[str],
         data_requirements: list[dict[str, Any]],
         actions: list[dict[str, Any]],
-        result_schema: dict[str, Any],
         max_steps: int = 8,
     ) -> dict[str, Any]:
         if _WORKER_ID_PATTERN.fullmatch(worker_id) is None:
@@ -537,7 +513,6 @@ class WorkerOrchestrationContext:
                 "success_criteria": success_criteria,
                 "data_requirements": data_requirements,
                 "actions": actions,
-                "result_schema": result_schema,
                 "max_steps": max_steps,
             }
         )
@@ -560,7 +535,7 @@ class WorkerOrchestrationContext:
                 summary=f"GUI Worker runtime error: {type(exc).__name__}: {exc}",
                 steps=0,
             )
-        self._records[worker_id] = WorkerRecord(worker_id, "gui", goal, signature, outcome)
+        self._records[worker_id] = WorkerRecord(worker_id, signature, outcome)
         self._trace(
             "master_worker_result",
             worker_id=worker_id,
@@ -569,59 +544,79 @@ class WorkerOrchestrationContext:
         )
         return outcome.model_dump(mode="json")
 
-    def data_worker(
+    def transform(
         self,
         *,
-        worker_id: str,
-        goal: str,
+        transform_id: str,
         inputs: list[str],
         source: str,
         result_schema: dict[str, Any],
     ) -> dict[str, Any]:
-        if _WORKER_ID_PATTERN.fullmatch(worker_id) is None:
-            raise ValueError("worker_id must be a stable snake_case identifier")
-        if not isinstance(inputs, list) or not inputs or any(not isinstance(item, str) for item in inputs):
-            raise ValueError("data_worker inputs must be a non-empty list of data refs")
+        if _WORKER_ID_PATTERN.fullmatch(transform_id) is None:
+            raise ValueError("transform_id must be a stable snake_case identifier")
+        if not isinstance(inputs, list) or any(not isinstance(item, str) for item in inputs):
+            raise ValueError("transform inputs must be a list of data refs")
         Draft202012Validator.check_schema(result_schema)
         validate_transform_source(source)
-        request = {
-            "goal": goal,
-            "inputs": inputs,
-            "source": source,
-            "result_schema": result_schema,
-        }
+        request = {"inputs": inputs, "source": source, "result_schema": result_schema}
         signature = hashlib.sha256(_canonical(request).encode()).hexdigest()
-        reused = self._reuse(worker_id, signature)
-        if reused is not None:
-            return reused
-        self._trace("data_worker_start", worker_id=worker_id, goal=goal, inputs=inputs, source=source)
+        prior = self._transforms.get(transform_id)
+        if prior is not None:
+            prior_signature, prior_descriptor = prior
+            if prior_signature != signature:
+                raise ValueError(
+                    f"transform_id {transform_id!r} is already bound to a different specification"
+                )
+            self._trace(
+                "transform_reused",
+                transform_id=transform_id,
+                result_ref=prior_descriptor.model_dump(mode="json"),
+            )
+            return prior_descriptor.model_dump(mode="json")
+        row_schemas = [
+            schema for ref in inputs
+            if (schema := self._data_store.ref_row_schema(ref)) is not None
+        ]
+        if row_schemas:
+            combined_row_schema = {
+                "type": "object",
+                "properties": {
+                    key: value
+                    for schema in row_schemas
+                    for key, value in (schema.get("properties") or {}).items()
+                },
+            }
+            validate_transform_row_fields(source, combined_row_schema)
+        self._trace(
+            "transform_started",
+            transform_id=transform_id,
+            inputs=inputs,
+            source=source,
+            result_schema=result_schema,
+        )
         try:
             input_values = [self._data_store.resolve_value(item) for item in inputs]
             value = execute_transform(source, input_values, result_schema)
             descriptor = self._data_store.put_result(
                 value,
                 result_schema,
-                summary=f"Data Worker {worker_id} completed: {goal}",
+                summary=f"Deterministic transform {transform_id} completed.",
             )
-            outcome = WorkerOutcome(
-                phase="completed",
-                summary=descriptor.summary,
-                result_ref=descriptor,
-                steps=1,
+        except Exception as exc:
+            self._trace(
+                "transform_failed",
+                transform_id=transform_id,
+                error=f"{type(exc).__name__}: {exc}",
             )
-        except Exception as exc:  # noqa: BLE001 - branchable typed outcome
-            outcome = WorkerOutcome(
-                phase="failed",
-                summary=f"Data Worker error: {type(exc).__name__}: {exc}",
-                steps=1,
-            )
-        self._records[worker_id] = WorkerRecord(worker_id, "data", goal, signature, outcome)
+            raise
         self._trace(
-            "data_worker_complete",
-            worker_id=worker_id,
-            outcome=outcome.model_dump(mode="json"),
+            "transform_completed",
+            transform_id=transform_id,
+            inputs=inputs,
+            result_ref=descriptor.model_dump(mode="json"),
         )
-        return outcome.model_dump(mode="json")
+        self._transforms[transform_id] = (signature, descriptor)
+        return descriptor.model_dump(mode="json")
 
     def worker_result(self, worker_id: str) -> dict[str, Any] | None:
         record = self._records.get(worker_id)

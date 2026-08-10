@@ -1,4 +1,4 @@
-"""Experimental Coding-Master and autonomous-Worker runtime."""
+"""Experimental Coding Master with autonomous GUI Workers and runtime transforms."""
 
 from gui_agent.core.tool_agent.contracts import (
     CollectionRef,
@@ -16,6 +16,16 @@ from gui_agent.core.tool_agent.orchestrator import (
     execute_master_program,
     validate_master_source,
 )
+from gui_agent.core.tool_agent.replay import (
+    RecordedContext,
+    ReplayResult,
+    replay_program,
+    replay_run_directory,
+)
+from gui_agent.core.tool_agent.presentation import (
+    PresentationResult,
+    present_result,
+)
 
 __all__ = [
     "CollectionRef",
@@ -23,12 +33,18 @@ __all__ = [
     "DataRequirement",
     "DynamicActionSpec",
     "MasterProgram",
+    "PresentationResult",
     "ResultRef",
+    "RecordedContext",
+    "ReplayResult",
     "ToolAgentRun",
     "ToolAgentRuntime",
     "WorkerSpec",
     "WorkerState",
     "WorkerOrchestrationContext",
     "execute_master_program",
+    "present_result",
+    "replay_program",
+    "replay_run_directory",
     "validate_master_source",
 ]

@@ -117,6 +117,39 @@ def _render_orchestrator_metrics(orchestrator: dict) -> str:
     return f'<span class="statement-time">{" · ".join(parts)}</span>'
 
 
+def _render_replay_status(orchestrator: dict) -> str:
+    replay = orchestrator.get("replay")
+    if not isinstance(replay, dict):
+        return ""
+    status = str(replay.get("status") or "unavailable")
+    label = {
+        "passed": "Replay · 通过",
+        "failed": "Replay · 失败",
+        "unavailable": "Replay · 不可用",
+    }.get(status, f"Replay · {status}")
+    program_count = int(replay.get("program_count") or 0)
+    worker_count = int(replay.get("gui_worker_count") or 0)
+    note = (
+        f"确定性重跑 {program_count} 个 Master 程序 · "
+        f"复用 {worker_count} 个 GUI Worker 录制结果 · 0 LLM / 0 browser"
+    )
+    detail = str(replay.get("error") or replay.get("summary") or "")
+    detail_html = (
+        '<details class="coding-src-index"><summary>Replay detail</summary>'
+        f'<div class="coding-src-index-body"><pre class="coding-data-pre">'
+        f'{_safe(detail)}</pre></div></details>'
+        if status != "passed" and detail
+        else ""
+    )
+    return (
+        '<div class="compat-row">'
+        f'<span class="compat-chip">{_safe(label)}</span>'
+        f'<span class="coding-note">{_safe(note)}</span>'
+        '</div>'
+        f'{detail_html}'
+    )
+
+
 def _estimate_orchestrator_token_usage(reports: list[dict]) -> dict:
     input_chars = 0
     output_chars = 0
@@ -299,15 +332,15 @@ def _coding_call_label(op: str, payload: dict | None = None) -> str:
         worker_id = payload.get("worker_id") or payload.get("id") or "?"
         profile = payload.get("profile") or "operator"
         return f"ctx.gui_worker({worker_id!r}, profile={profile!r}, …)"
-    if op == "data_worker":
-        worker_id = payload.get("worker_id") or payload.get("id") or "?"
-        return f"ctx.data_worker({worker_id!r}, …)"
+    if op == "transform":
+        transform_id = payload.get("transform_id") or payload.get("id") or "?"
+        return f"ctx.transform({transform_id!r}, …)"
     return f"ctx.{op}(…)"
 
 
 _CODING_CTX_PLAN_OPS = frozenset({
     "reach", "commit", "gui", "write", "query", "lookup", "constrain", "focus",
-    "acquire", "read", "command", "interact", "gui_worker", "data_worker",
+    "acquire", "read", "command", "interact", "gui_worker", "transform",
 })
 
 # Plan-level ctx.* call → ordered runtime ops it may expand into.
@@ -323,7 +356,7 @@ _PLAN_RUNTIME_CONSUME: dict[str, tuple[str, ...]] = {
     "command": ("command",),
     "interact": ("reach", "commit"),
     "gui_worker": ("gui_worker",),
-    "data_worker": ("data_worker",),
+    "transform": ("transform",),
 }
 
 
@@ -981,7 +1014,8 @@ def _render_coding_program_shell(orchestrator: dict, program: dict) -> str:
         '<span class="statement-badge statement-badge-default">python</span>'
         f'{_render_orchestrator_metrics(orchestrator)}'
         '</div>'
-        f'<div class="prog-body">{input_html}{compile_html}{history_html}{source_html}'
+        f'<div class="prog-body">{input_html}{compile_html}{_render_replay_status(orchestrator)}'
+        f'{history_html}{source_html}'
         f'{_render_orchestrator_context_reports(orchestrator)}'
         '</div>'
         '</div>'

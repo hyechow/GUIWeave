@@ -543,6 +543,7 @@ HTML_TEMPLATE = """\
 
     {program_html}
     {pages_html}
+    {presentation_html}
     {result_html}
     {webarena_html}
     {mobileworld_html}
@@ -717,7 +718,7 @@ TIMING_COLORS: dict[str, str] = {
     "tool_agent.master": "#7c3aed",
     "tool_agent.worker": "#2563eb",
     "tool_agent.perception": "#0891b2",
-    "data_worker": "#16a34a",
+    "transform": "#16a34a",
 }
 
 KIND_BADGE = {
@@ -1313,6 +1314,72 @@ def _render_provenance(raw_input: str, goal: str, router: dict) -> str:
         f'</div>'
     )
 
+
+def _render_presentation_stage(orchestrator: dict) -> str:
+    presentation = orchestrator.get("presentation")
+    if not isinstance(presentation, dict):
+        return ""
+    status = str(presentation.get("status") or "fallback")
+    status_label = "LLM · 通过" if status == "generated" else "确定性降级"
+    phase_cls = "coding-phase-ok" if status == "generated" else "coding-phase-warn"
+    elapsed = float(presentation.get("elapsed_s") or 0)
+    calls = int(presentation.get("llm_calls") or 0)
+    raw_usage = (
+        presentation.get("token_usage")
+        if isinstance(presentation.get("token_usage"), dict)
+        else {}
+    )
+    usage = {"tool_agent.presentation": raw_usage} if raw_usage else {}
+    ti, to = _sum_tokens(usage)
+    metrics = []
+    if elapsed:
+        metrics.append(f"{elapsed:.1f}s")
+    if calls:
+        metrics.append(f"{calls} call{'s' if calls != 1 else ''}")
+    if ti or to:
+        metrics.append(f"{_fmt_tokens(ti)}/{_fmt_tokens(to)} tok")
+        metrics.append(f"≈{pricing_currency()}{_token_cost(usage):.4f}")
+    metrics_html = (
+        f'<span class="statement-time">{_safe(" · ".join(metrics))}</span>'
+        if metrics else ""
+    )
+    digest = str(presentation.get("result_digest") or "")
+    model = str(presentation.get("model") or "")
+    error = str(presentation.get("error") or "")
+    contract_bits = [
+        "input: goal + public result + replay verdict",
+        "capabilities: none",
+    ]
+    if digest:
+        contract_bits.append(f"result sha256: {digest[:12]}…")
+    if model:
+        contract_bits.append(f"model: {model}")
+    contract_text = "\n".join(contract_bits)
+    error_html = (
+        f'<pre class="nonui-code">{_safe(error)}</pre>' if error else ""
+    )
+    reports = [
+        item for item in (presentation.get("context_reports") or [])
+        if isinstance(item, dict)
+    ]
+    return (
+        '<div class="statement" id="stage-presentation">'
+        '<div class="statement-header">'
+        '<h2>#P</h2>'
+        '<span class="statement-name">Presentation · User-facing reply</span>'
+        '<span class="statement-badge statement-badge-default">result → reply</span>'
+        f'<span class="coding-phase {phase_cls}">{_safe(status_label)}</span>'
+        f'{metrics_html}'
+        '</div>'
+        '<div class="nonui-detail">'
+        '<div class="nonui-title">独立表达阶段</div>'
+        f'<pre class="nonui-code">{_safe(contract_text)}</pre>'
+        f'{error_html}'
+        '</div>'
+        f'{_render_module_io_html(reports, usage) if reports else ""}'
+        '</div>'
+    )
+
 def generate_html(data: ReportData, grid: bool = False) -> str:
     stats_parts = [f"{k}: {v}" for k, v in data.stats.items()]
     orchestrator_timings = (
@@ -1320,9 +1387,25 @@ def generate_html(data: ReportData, grid: bool = False) -> str:
         if isinstance(data.orchestrator.get("timings"), dict)
         else {}
     )
+    presentation = (
+        data.orchestrator.get("presentation")
+        if isinstance(data.orchestrator.get("presentation"), dict)
+        else {}
+    )
+    presentation_elapsed = float(presentation.get("elapsed_s") or 0)
+    presentation_usage_raw = (
+        presentation.get("token_usage")
+        if isinstance(presentation.get("token_usage"), dict)
+        else {}
+    )
+    presentation_usage = (
+        {"tool_agent.presentation": presentation_usage_raw}
+        if presentation_usage_raw else {}
+    )
     llm_s = (
         sum(m.get("total_time", 0) for m in data.statements)
         + sum(float(value or 0) for value in orchestrator_timings.values())
+        + presentation_elapsed
     )
     if data.wall_clock_s:
         # True end-to-end elapsed, split into LLM compute, settle waits, and "other"
@@ -1340,11 +1423,21 @@ def generate_html(data: ReportData, grid: bool = False) -> str:
         else {}
     )
     orchestrator_in, orchestrator_out = _sum_tokens(orchestrator_usage)
-    sess_in = sum(int(m.get("input_tokens", 0)) for m in data.statements) + orchestrator_in
-    sess_out = sum(int(m.get("output_tokens", 0)) for m in data.statements) + orchestrator_out
+    presentation_in, presentation_out = _sum_tokens(presentation_usage)
+    sess_in = (
+        sum(int(m.get("input_tokens", 0)) for m in data.statements)
+        + orchestrator_in
+        + presentation_in
+    )
+    sess_out = (
+        sum(int(m.get("output_tokens", 0)) for m in data.statements)
+        + orchestrator_out
+        + presentation_out
+    )
     sess_cost = (
         sum(float(m.get("cost", 0)) for m in data.statements)
         + _token_cost(orchestrator_usage)
+        + _token_cost(presentation_usage)
     )
     if sess_in or sess_out:
         stats_parts.append(
@@ -1770,6 +1863,7 @@ def generate_html(data: ReportData, grid: bool = False) -> str:
         pages_html = "".join(str(chunk["html"]) for chunk in page_chunks)
 
     program_html = _render_program_section(data.orchestrator)
+    presentation_html = _render_presentation_stage(data.orchestrator)
 
     # Model-config box with an inline "参考单价" chip that pops the rate table on hover.
     cost_note_html = ""
@@ -1837,6 +1931,7 @@ def generate_html(data: ReportData, grid: bool = False) -> str:
         webarena_html=_render_webarena_result(data.webarena),
         mobileworld_html=_render_mobileworld_result(data.mobileworld),
         program_html=program_html,
+        presentation_html=presentation_html,
         phase_badge=_render_phase_badge(data),
         sidebar_html=sidebar_html,
         cost_note_html=cost_note_html,

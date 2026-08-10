@@ -20,7 +20,13 @@ class ProtocolError(RuntimeError):
 
 class CompleteWorkerArgs(BaseModel):
     model_config = ConfigDict(extra="forbid")
-    result_ref: str
+    collection_ref: str = Field(
+        default="",
+        description=(
+            "Complete CollectionRef for a collector Worker. Leave empty for an "
+            "operator Worker after its target UI state is confirmed."
+        ),
+    )
     evidence: list[str] = Field(default_factory=list)
 
 
@@ -34,8 +40,15 @@ class RequestActionPatchArgs(BaseModel):
 
     model_config = ConfigDict(extra="forbid")
     name: str = Field(pattern=r"^[a-z][a-z0-9_]{0,63}$")
-    capability: Literal["tap", "scroll", "select_option"]
+    capability: Literal["tap", "type", "scroll", "select_option"]
     description: str
+    input_text: str = Field(
+        default="",
+        description=(
+            "Exact goal-determined text for type when known; leave empty when the "
+            "Worker must choose it from current task context."
+        ),
+    )
     option_text: str = Field(
         default="",
         description=(
@@ -52,9 +65,40 @@ _CAPABILITY_SCHEMAS: dict[str, dict[str, Any]] = {
         "properties": {
             "x": {"type": "number", "minimum": 0, "maximum": 999},
             "y": {"type": "number", "minimum": 0, "maximum": 999},
-            "description": {"type": "string"},
+            "description": {
+                "type": "string",
+                "minLength": 5,
+                "maxLength": 240,
+                "description": (
+                    "One atomic visible target: include its visible name, control type, "
+                    "and screen region; do not include later actions."
+                ),
+            },
         },
         "required": ["x", "y"],
+        "additionalProperties": False,
+    },
+    "type": {
+        "type": "object",
+        "properties": {
+            "x": {"type": "number", "minimum": 0, "maximum": 999},
+            "y": {"type": "number", "minimum": 0, "maximum": 999},
+            "text": {
+                "type": "string",
+                "minLength": 1,
+                "description": "Text to enter into the visible input control.",
+            },
+            "description": {
+                "type": "string",
+                "minLength": 5,
+                "maxLength": 240,
+                "description": (
+                    "One atomic visible input target: include its visible name and screen "
+                    "region; do not include later actions."
+                ),
+            },
+        },
+        "required": ["x", "y", "text"],
         "additionalProperties": False,
     },
     "scroll": {
@@ -69,7 +113,12 @@ _CAPABILITY_SCHEMAS: dict[str, dict[str, Any]] = {
             },
             "x": {"type": ["number", "null"], "minimum": 0, "maximum": 999},
             "y": {"type": ["number", "null"], "minimum": 0, "maximum": 999},
-            "description": {"type": "string"},
+            "description": {
+                "type": "string",
+                "minLength": 5,
+                "maxLength": 240,
+                "description": "Describe only the current scroll region and purpose.",
+            },
         },
         "required": ["direction"],
         "additionalProperties": False,
@@ -84,17 +133,14 @@ _CAPABILITY_SCHEMAS: dict[str, dict[str, Any]] = {
                 "minLength": 1,
                 "description": "Visible option label to select.",
             },
-            "description": {"type": "string"},
+            "description": {
+                "type": "string",
+                "minLength": 5,
+                "maxLength": 240,
+                "description": "Describe only the current visible choice control.",
+            },
         },
         "required": ["x", "y", "text"],
-        "additionalProperties": False,
-    },
-    "python_transform": {
-        "type": "object",
-        "properties": {
-            "data_ref": {"type": "string", "description": "CollectionRef to transform"},
-        },
-        "required": ["data_ref"],
         "additionalProperties": False,
     },
 }
@@ -126,27 +172,69 @@ def worker_action_floor() -> list[DynamicActionSpec]:
             description="Scroll a visible region to reveal content needed by the current Worker goal.",
             exposed_args=["direction", "amount", "target_area", "description"],
         ),
+        DynamicActionSpec(
+            name="runtime_type_visible",
+            capability="type",
+            description="Enter task-determined text into one visible input control.",
+            exposed_args=["text", "description"],
+        ),
     ]
 
 
+_WORKER_STATE_SCHEMA: dict[str, Any] = {
+    "type": "object",
+    "description": "Compact semantic state paired with this atomic action.",
+    "properties": {
+        "status": {
+            "type": "string",
+            "enum": ["exploring", "collecting", "completed", "failed"],
+        },
+        "summary": {"type": "string", "maxLength": 320},
+        "next_instruction": {"type": "string", "maxLength": 240},
+    },
+    "required": ["status", "summary", "next_instruction"],
+    "additionalProperties": False,
+}
+
+
+def _with_worker_state(tool: dict[str, Any]) -> dict[str, Any]:
+    """Add one compact common state carrier to a provider-facing tool schema."""
+    wrapped = deepcopy(tool)
+    parameters = wrapped["function"]["parameters"]
+    parameters["properties"] = {
+        "state": deepcopy(_WORKER_STATE_SCHEMA),
+        **dict(parameters.get("properties") or {}),
+    }
+    parameters["required"] = [
+        "state",
+        *[name for name in parameters.get("required") or [] if name != "state"],
+    ]
+    return wrapped
+
+
 def dynamic_worker_tools(actions: list[DynamicActionSpec]) -> list[dict[str, Any]]:
-    tools = [dynamic_action_tool(item) for item in actions]
+    tools = [_with_worker_state(dynamic_action_tool(item)) for item in actions]
     tools.extend(
         [
-            model_tool(
+            _with_worker_state(model_tool(
                 "request_action_patch",
                 (
                     "Add one missing frame-driven GUI action from the registered capability set, "
                     "then reason again on the same screenshot. This does not execute a GUI action."
                 ),
                 RequestActionPatchArgs,
-            ),
-            model_tool(
+            )),
+            _with_worker_state(model_tool(
                 "complete",
-                "Complete this worker using a ResultRef produced by a runtime action.",
+                (
+                    "Complete this GUI Worker. A collector must provide its complete "
+                    "CollectionRef; an operator leaves collection_ref empty."
+                ),
                 CompleteWorkerArgs,
-            ),
-            model_tool("fail", "Stop this worker with an explicit reason.", FailWorkerArgs),
+            )),
+            _with_worker_state(model_tool(
+                "fail", "Stop this worker with an explicit reason.", FailWorkerArgs
+            )),
         ]
     )
     return tools
@@ -158,6 +246,11 @@ def materialize_action_patch(args: RequestActionPatchArgs) -> DynamicActionSpec:
     exposed_args: list[str] = []
     if args.capability == "scroll":
         exposed_args = ["direction", "amount", "target_area", "description"]
+    elif args.capability == "type":
+        if args.input_text.strip():
+            fixed_args["text"] = args.input_text.strip()
+        else:
+            exposed_args.append("text")
     elif args.capability == "select_option":
         if args.option_text.strip():
             fixed_args["text"] = args.option_text.strip()
@@ -182,6 +275,8 @@ def dynamic_action_tool(action: DynamicActionSpec) -> dict[str, Any]:
     properties = {name: value for name, value in properties.items() if name in exposed}
     schema["properties"] = properties
     schema["required"] = [name for name in schema.get("required", []) if name in exposed]
+    if "description" in exposed and "description" not in schema["required"]:
+        schema["required"].append("description")
     return function_tool(action.name, action.description, schema)
 
 
@@ -365,8 +460,74 @@ def exactly_one_tool_call(response: Any) -> dict[str, Any]:
     if len(calls) != 1:
         raise ProtocolError(f"expected exactly one tool call, got {len(calls)}")
     call = calls[0]
+    raw_args = call.get("args") or {}
+    if isinstance(raw_args, str):
+        try:
+            raw_args = json.loads(raw_args)
+        except json.JSONDecodeError as exc:
+            raise ProtocolError(f"tool arguments are invalid JSON: {exc}") from exc
+    if not isinstance(raw_args, dict):
+        raise ProtocolError("tool arguments must be an object")
     return {
         "id": str(call.get("id") or "tool-call"),
         "name": str(call.get("name") or ""),
-        "args": dict(call.get("args") or {}),
+        "args": dict(raw_args),
     }
+
+
+def normalize_action_arguments(args: dict[str, Any]) -> dict[str, Any]:
+    """Repair common provider coordinate encodings before strict validation.
+
+    The model-facing schema remains the simple canonical form. Some multimodal
+    endpoints nevertheless return a point as ``[x, y]`` in both coordinate fields,
+    or under a ``point``/``coordinates`` alias. These are losslessly decodable
+    transport variants, so rejecting them and paying for another LLM turn would be
+    wasteful. Ambiguous or non-numeric values are deliberately left for validation.
+    """
+    normalized = dict(args)
+    point = None
+    for alias in ("point", "coordinate", "coordinates"):
+        candidate = normalized.pop(alias, None)
+        if point is None and isinstance(candidate, (list, tuple)) and len(candidate) == 2:
+            point = candidate
+    if point is not None:
+        normalized.setdefault("x", point[0])
+        normalized.setdefault("y", point[1])
+
+    for coordinate in ("x", "y"):
+        value = normalized.get(coordinate)
+        if not isinstance(value, str):
+            continue
+        stripped = value.strip()
+        if stripped.startswith("[") and stripped.endswith("]"):
+            try:
+                decoded = json.loads(stripped)
+            except json.JSONDecodeError:
+                pass
+            else:
+                normalized[coordinate] = decoded
+                continue
+        try:
+            number = float(stripped)
+        except ValueError:
+            continue
+        normalized[coordinate] = int(number) if number.is_integer() else number
+
+    x = normalized.get("x")
+    y = normalized.get("y")
+    if isinstance(x, (list, tuple)):
+        if len(x) == 2:
+            normalized["x"] = x[0]
+            if not isinstance(y, (int, float)) or isinstance(y, bool):
+                normalized["y"] = x[1]
+        elif len(x) == 1:
+            normalized["x"] = x[0]
+    y = normalized.get("y")
+    if isinstance(y, (list, tuple)):
+        if len(y) == 2:
+            if not isinstance(normalized.get("x"), (int, float)):
+                normalized["x"] = y[0]
+            normalized["y"] = y[1]
+        elif len(y) == 1:
+            normalized["y"] = y[0]
+    return normalized

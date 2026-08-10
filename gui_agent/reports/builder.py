@@ -98,12 +98,13 @@ def _reduce_tool_agent_events(events: list[dict]) -> list[dict]:
             pending["profile"] = event.get("profile") or pending.get("profile")
             pending["worker_id"] = event.get("worker_id") or pending.get("worker_id")
             continue
-        if pending is not None and name in {"runtime_action", "python_transform"}:
+        if pending is not None and name == "runtime_action":
             pending["action_events"].append(event)
             continue
         if pending is not None and name in {
             "worker_action_patch",
             "worker_action_patch_error",
+            "worker_action_blocked",
             "worker_tool_error",
             "worker_complete",
         }:
@@ -122,7 +123,7 @@ def _tool_agent_report_steps(
     orchestrator: dict,
     goal: str = "",
 ) -> tuple[list[ReportPage], list[dict], dict]:
-    """Project a Tool Agent run into Master, GUI Worker and Data Worker layers.
+    """Project a Tool Agent run into Master, GUI Worker and transform layers.
 
     The persisted JSONL remains event-oriented.  The report is task-oriented: the
     reviewed Master program is rendered as the plan, each autonomous GUI Worker is
@@ -149,6 +150,24 @@ def _tool_agent_report_steps(
             raw = {"phase": "running", "trace": events}
     if trace_path.is_file():
         raw = json.loads(trace_path.read_text(encoding="utf-8"))
+    replay_path = run_dir / "tool_agent_replay.json"
+    if replay_path.is_file():
+        try:
+            replay = json.loads(replay_path.read_text(encoding="utf-8"))
+            if isinstance(replay, dict):
+                orchestrator["replay"] = replay
+        except (OSError, json.JSONDecodeError):
+            pass
+    presentation_path = run_dir / "tool_agent_presentation.json"
+    if presentation_path.is_file():
+        try:
+            presentation = json.loads(
+                presentation_path.read_text(encoding="utf-8")
+            )
+            if isinstance(presentation, dict):
+                orchestrator["presentation"] = presentation
+        except (OSError, json.JSONDecodeError):
+            pass
     events = [item for item in (raw.get("trace") or []) if isinstance(item, dict)]
     timeline_events = _reduce_tool_agent_events(events)
     screenshots = sorted(
@@ -404,9 +423,6 @@ def _tool_agent_report_steps(
             if action_event == "runtime_action":
                 action_type = str(action.get("action_type") or "command")
                 operation_mode = "interactive"
-            elif action_event == "python_transform":
-                action_type = "command"
-                operation_mode = "non_interactive"
             else:
                 action_type = runtime_action_types.get(str(turn.get("tool") or "")) or "acquire"
                 operation_mode = (
@@ -436,6 +452,11 @@ def _tool_agent_report_steps(
                 for item in (turn.get("details") or [])
                 if isinstance(item, dict) and item.get("event") == "worker_action_patch"
             ]
+            decisions = [
+                item for item in (turn.get("decisions") or [])
+                if isinstance(item, dict)
+            ]
+            final_decision = decisions[-1] if decisions else {}
             non_ui = {
                 "executor": "read",
                 "goal": "Observation and decision evidence",
@@ -455,6 +476,19 @@ def _tool_agent_report_steps(
                         "data_ref": action.get("data_ref"),
                         "result_ref": action.get("result_ref"),
                         "patches": [item for item in patches if item],
+                    },
+                    "context": {
+                        "assembly": "rebuilt_per_frame",
+                        "chars": int(final_decision.get("context_chars") or 0),
+                        "journal_events": int(
+                            final_decision.get("memory_event_count") or 0
+                        ),
+                        "state_source": str(
+                            final_decision.get("state_source") or "legacy"
+                        ),
+                        "compatibility": list(
+                            final_decision.get("state_compatibility") or []
+                        ),
                     },
                     **({"worker_actions": spec.get("actions") or []} if program_event is None else {}),
                 },
@@ -572,7 +606,7 @@ def _tool_agent_report_steps(
             "output_tokens": output_tokens,
             "cost": sum(_token_cost(step.token_usage) for step in steps) + _token_cost(outcome_tokens),
             "inputs": spec,
-            "outputs": {"result_ref": outcome.get("result_ref")},
+            "outputs": {"collection_ref": outcome.get("collection_ref")},
             "last_summary": str(outcome.get("summary") or ""),
         }
         statements.append(statement)
@@ -590,20 +624,20 @@ def _tool_agent_report_steps(
             "result": {
                 "phase": str(outcome.get("phase") or raw.get("phase") or ""),
                 "summary": str(outcome.get("summary") or ""),
-                "outputs": {"result_ref": outcome.get("result_ref")},
+                "outputs": {"collection_ref": outcome.get("collection_ref")},
             },
         })
 
-    data_starts = [event for event in events if event.get("event") == "data_worker_start"]
-    data_completes = {
-        str(event.get("worker_id") or ""): event
-        for event in events if event.get("event") == "data_worker_complete"
+    transform_starts = [event for event in events if event.get("event") == "transform_started"]
+    transform_completes = {
+        str(event.get("transform_id") or ""): event
+        for event in events if event.get("event") in {"transform_completed", "transform_failed"}
     }
-    for start in data_starts:
-        worker_id = str(start.get("worker_id") or "data_worker")
-        complete = data_completes.get(worker_id) or {}
-        outcome = complete.get("outcome") if isinstance(complete.get("outcome"), dict) else {}
-        completed = str(outcome.get("phase") or "") == "completed"
+    for start in transform_starts:
+        transform_id = str(start.get("transform_id") or "transform")
+        complete = transform_completes.get(transform_id) or {}
+        completed = complete.get("event") == "transform_completed"
+        result_ref = complete.get("result_ref") if isinstance(complete.get("result_ref"), dict) else None
         duration = max(0.0, float(complete.get("elapsed_s") or 0) - float(start.get("elapsed_s") or 0))
         screenshot = last_screenshot
         step = ReportStep(
@@ -618,35 +652,35 @@ def _tool_agent_report_steps(
             status="✓" if completed else "✗",
             # This step has an explicit deterministic duration.  Leaving the
             # action timestamp empty prevents the renderer from attributing the
-            # GUI Worker's terminal verification gap to this Data Worker.
+            # GUI Worker's terminal verification gap to this Runtime transform.
             timestamp="",
             index=1,
-            statement_id=worker_id,
-            instance_id=worker_id,
+            statement_id=transform_id,
+            instance_id=transform_id,
             statement_executor="command",
-            instruction=str(start.get("goal") or ""),
-            summary=str(outcome.get("summary") or complete.get("message") or ""),
-            timings={"data_worker": duration} if duration else {},
+            instruction=f"Execute deterministic transform {transform_id}",
+            summary=str(complete.get("message") or complete.get("error") or ""),
+            timings={"transform": duration} if duration else {},
             operation_mode="non_interactive",
             non_ui={
                 "executor": "command",
-                "goal": str(start.get("goal") or ""),
-                "summary": str(outcome.get("summary") or ""),
+                "goal": f"Deterministic transform {transform_id}",
+                "summary": str(complete.get("message") or complete.get("error") or ""),
                 "outputs": {
                     "inputs": start.get("inputs") or [],
-                    "result_ref": outcome.get("result_ref"),
+                    "result_ref": result_ref,
                 },
                 "evidence": [str(start.get("source") or "")],
             },
         )
         page = ReportPage(
-            title=f"Data Worker · {worker_id}",
+            title=f"Runtime Transform · {transform_id}",
             steps=[step],
-            statement_id=worker_id,
-            instance_id=worker_id,
+            statement_id=transform_id,
+            instance_id=transform_id,
             statement_executor="command",
-            statement_name=f"Data Worker · {worker_id}",
-            statement_description=str(start.get("goal") or ""),
+            statement_name=f"Runtime Transform · {transform_id}",
+            statement_description="Deterministic, sandboxed Python data processing",
             statement_success="Produce a schema-validated ResultRef.",
             checklist=[{
                 "text": "Deterministic transform produced a schema-valid ResultRef",
@@ -657,48 +691,47 @@ def _tool_agent_report_steps(
         total_turns += 1
         executed += int(completed)
         statement = {
-            "id": worker_id,
-            "instance_id": worker_id,
+            "id": transform_id,
+            "instance_id": transform_id,
             "name": page.statement_name,
             "executor": "command",
             "description": page.statement_description,
             "success": page.statement_success,
-            "status": str(outcome.get("phase") or ""),
-            "phase": str(outcome.get("phase") or ""),
+            "status": "completed" if completed else "failed",
+            "phase": "completed" if completed else "failed",
             "checklist": page.checklist,
             "turns": "1",
             # Deterministic execution time is shown on the card but is not LLM time.
             "total_time": 0.0,
-            "timings": {"data_worker": duration} if duration else {},
+            "timings": {"transform": duration} if duration else {},
             "input_tokens": 0,
             "output_tokens": 0,
             "cost": 0.0,
             "inputs": {
-                "goal": start.get("goal"),
+                "transform_id": transform_id,
                 "inputs": start.get("inputs") or [],
                 "source": start.get("source") or "",
             },
-            "outputs": {"result_ref": outcome.get("result_ref")},
-            "last_summary": str(outcome.get("summary") or ""),
+            "outputs": {"result_ref": result_ref},
+            "last_summary": str(complete.get("message") or complete.get("error") or ""),
         }
         statements.append(statement)
         run_log.append({
-            "instance_id": worker_id,
-            "node_id": worker_id,
+            "instance_id": transform_id,
+            "node_id": transform_id,
             "name": page.statement_name,
             "executor": "command",
-            "coding_op": "data_worker",
-            "coding_call_id": f"worker:{worker_id}",
+            "coding_op": "transform",
+            "coding_call_id": f"transform:{transform_id}",
             "coding_payload": {
-                "worker_id": worker_id,
-                "goal": start.get("goal"),
+                "transform_id": transform_id,
                 "inputs": start.get("inputs") or [],
                 "source": start.get("source") or "",
             },
             "result": {
-                "phase": str(outcome.get("phase") or ""),
-                "summary": str(outcome.get("summary") or ""),
-                "outputs": {"result_ref": outcome.get("result_ref")},
+                "phase": "completed" if completed else "failed",
+                "summary": str(complete.get("message") or complete.get("error") or ""),
+                "outputs": {"result_ref": result_ref},
             },
         })
 
@@ -713,7 +746,7 @@ def _tool_agent_report_steps(
         for event in events if event.get("event") == "runtime_action"
     )
     return pages, statements, {
-        "workers": len(pages),
+        "workers": len(worker_order),
         "turns": total_turns,
         "executed": executed,
     }
@@ -1169,8 +1202,8 @@ class RunnerReportBuilder:
                 data.orchestrator.get("settle_s_total") or 0
             )
             data.orchestration_summary = (
-                "Coding Master → Reviewed Python → Agentic Workers → Active Perception → "
-                "DataRefs → Deterministic Data Worker → ResultRef"
+                "Coding Master → Frozen Reviewed Python → Agentic GUI Workers → Active Perception → "
+                "CollectionRefs → Deterministic Runtime Transform → ResultRef"
             )
             if not data.reply:
                 data.reply = data.program_output

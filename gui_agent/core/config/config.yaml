@@ -60,6 +60,10 @@ llm:
     perception:
       <<: *token_plan
       model: qwen3.7-plus
+    presentation:
+      # Final wording only; receives no screenshot, browser handle, or private data.
+      <<: *token_plan
+      model: qwen3.6-flash
 
 # AGENT_MODEL=<profile> 时，把对应 profile 深合并进上面的 llm（只覆盖列出的字段）。
 # qwen37 为基线（无需在此列，留空即用上面默认）。新增对比模型只在此加一项即可。

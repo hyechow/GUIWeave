@@ -9,12 +9,12 @@ from pathlib import Path
 from typing import Any, Callable, Literal
 
 from jsonschema import Draft202012Validator, validate
-from langchain_core.messages import HumanMessage, SystemMessage, ToolMessage
+from langchain_core.messages import HumanMessage, SystemMessage
 from langchain_openai import ChatOpenAI
 
 from gui_agent.core.config import resolve_llm_config
 from gui_agent.prompts import load_prompt_text
-from gui_agent.core.run.action_exec import settle_after_action
+from gui_agent.core.run.action_exec import has_snapped_point, settle_after_action
 from gui_agent.core.schemas import BaseAction, BaseActionDecision
 from gui_agent.core.tool_agent.contracts import (
     DynamicActionSpec,
@@ -24,6 +24,7 @@ from gui_agent.core.tool_agent.contracts import (
     WorkerSpec,
     WorkerState,
 )
+from gui_agent.core.tool_agent.action_guard import WorkerActionCircuitBreaker
 from gui_agent.core.tool_agent.data_store import RuntimeDataStore
 from gui_agent.core.tool_agent.orchestrator import (
     MasterCompileError,
@@ -44,19 +45,22 @@ from gui_agent.core.tool_agent.protocol import (
     exactly_one_tool_call,
     image_message,
     materialize_action_patch,
+    normalize_action_arguments,
     parse_json_object,
     response_usage,
     worker_action_floor,
 )
-from gui_agent.core.tool_agent.sandbox import (
-    execute_transform,
-    validate_transform_row_fields,
-    validate_transform_source,
+from gui_agent.core.tool_agent.replay import write_replay_artifact
+from gui_agent.core.tool_agent.worker_memory import (
+    WorkerJournal,
+    build_worker_memory_view,
+    project_worker_context,
 )
 
 _MASTER_SYSTEM = load_prompt_text("task.tool_agent.master")
 _WORKER_SYSTEM = load_prompt_text("task.tool_agent.worker")
 _MAX_ACTION_PATCHES_PER_FRAME = 3
+_MAX_ACTION_GUARD_REPAIRS_PER_FRAME = 1
 _RUNTIME_WORKER_TOOL_NAMES = {"request_action_patch", "complete", "fail"}
 
 
@@ -76,7 +80,7 @@ def _llm(config_name: str, *, temperature: float = 0) -> tuple[ChatOpenAI, Any]:
 
 
 class ToolAgentRuntime:
-    """Run reviewed Master programs over autonomous visual and data Workers."""
+    """Run one reviewed Master program over autonomous visual Workers."""
 
     def __init__(
         self,
@@ -85,7 +89,7 @@ class ToolAgentRuntime:
         platform: Any,
         log_dir: Path,
         perception_mode: PerceptionMode,
-        max_master_programs: int = 3,
+        max_subgoal_replans: int = 2,
         max_compile_attempts: int = 5,
         status_cb: Callable[[str], None] | None = None,
     ) -> None:
@@ -95,11 +99,11 @@ class ToolAgentRuntime:
         self.platform = platform
         self.log_dir = log_dir
         self.perception_mode = perception_mode
-        if max_master_programs < 1:
-            raise ValueError("max_master_programs must be positive")
+        if max_subgoal_replans < 0:
+            raise ValueError("max_subgoal_replans cannot be negative")
         if max_compile_attempts < 1:
             raise ValueError("max_compile_attempts must be positive")
-        self.max_master_programs = max_master_programs
+        self.max_subgoal_replans = max_subgoal_replans
         self.max_compile_attempts = max_compile_attempts
         self.data_store = RuntimeDataStore()
         self.master, self.master_cfg = _llm("tool_agent.master")
@@ -117,11 +121,27 @@ class ToolAgentRuntime:
         (self.log_dir / "tool_agent_events.jsonl").write_text("", encoding="utf-8")
         (self.log_dir / "tool_agent.log").write_text("", encoding="utf-8")
         self._frame_no = 0
+        self._worker_journals: dict[str, WorkerJournal] = {}
         self._executor = bundle.make_executor(platform)
+        try:
+            self._visualizer = bundle.make_action_visualizer(platform)
+        except Exception:  # noqa: BLE001 - action visualization is cosmetic
+            self._visualizer = None
         if perception_mode == "vision-only":
             setattr(self._executor, "disable_dom_snap", True)
 
     def run(self, goal: str, *, knowledge: str = "", page_url: str = "", page_title: str = "") -> ToolAgentRun:
+        try:
+            return self._run(
+                goal,
+                knowledge=knowledge,
+                page_url=page_url,
+                page_title=page_title,
+            )
+        finally:
+            self._clear_action_visualizer()
+
+    def _run(self, goal: str, *, knowledge: str = "", page_url: str = "", page_title: str = "") -> ToolAgentRun:
         self._trace(
             "runtime_started",
             goal=goal,
@@ -142,46 +162,42 @@ class ToolAgentRuntime:
             run_gui_worker=self._run_worker,
             trace=self._trace,
         )
-        feedback = ""
         try:
-            for generation in range(1, self.max_master_programs + 1):
-                program = compile_master_program(
-                    llm=self.master,
-                    system_prompt=_MASTER_SYSTEM,
-                    task_context=task_context,
-                    execution_history=orchestration.history_for_model(),
-                    feedback=feedback,
-                    max_attempts=self.max_compile_attempts,
-                    on_event=lambda event, payload: self._trace(
-                        event,
-                        generation=generation,
-                        **payload,
-                    ),
-                )
+            program = compile_master_program(
+                llm=self.master,
+                system_prompt=_MASTER_SYSTEM,
+                task_context=task_context,
+                max_attempts=self.max_compile_attempts,
+                on_event=lambda event, payload: self._trace(event, **payload),
+            )
+            self._trace(
+                "master_program_generated",
+                compile_attempts=program.attempts,
+                source=program.source,
+            )
+            for execution_no in range(1, self.max_subgoal_replans + 2):
                 self._trace(
-                    "master_program_generated",
-                    generation=generation,
-                    compile_attempts=program.attempts,
+                    "master_program_execution_started",
+                    execution=execution_no,
                     source=program.source,
                 )
                 execution = execute_master_program(program.source, orchestration)
                 if execution.error:
-                    feedback = (
-                        "The reviewed program failed during deterministic execution: "
-                        f"{execution.error}. Preserve completed worker IDs and rewrite the entire "
-                        "remaining orchestration."
-                    )
                     self._trace(
                         "master_program_error",
-                        generation=generation,
+                        execution=execution_no,
                         error=execution.error,
                     )
-                    continue
+                    final_summary = (
+                        "Reviewed Master program failed during deterministic execution: "
+                        f"{execution.error}"
+                    )
+                    break
                 assert execution.terminal is not None
                 terminal = execution.terminal
                 self._trace(
                     "master_program_completed",
-                    generation=generation,
+                    execution=execution_no,
                     phase=terminal.phase,
                     summary=terminal.summary,
                     result_ref=terminal.result_ref,
@@ -194,17 +210,13 @@ class ToolAgentRuntime:
                 if terminal.phase == "failed":
                     final_summary = terminal.summary
                     break
-                feedback = (
-                    "The previous program explicitly requested replanning: "
-                    f"{terminal.summary}. Use the typed Worker history and do not repeat completed work."
-                )
                 self._trace(
-                    "master_replan",
-                    generation=generation,
+                    "subgoal_replan",
+                    execution=execution_no,
                     reason=terminal.summary,
                 )
             else:
-                final_summary = "Coding Master exceeded its program/replan limit."
+                final_summary = "GUI subgoal exceeded its local replan limit."
         except KeyboardInterrupt:
             final_summary = "Tool Agent interrupted before reaching a terminal result."
             self._trace(
@@ -237,14 +249,54 @@ class ToolAgentRuntime:
             perception_mode=self.perception_mode,
         )
         self._write_artifacts(run)
+        replay = write_replay_artifact(self.log_dir)
+        with (self.log_dir / "tool_agent.log").open("a", encoding="utf-8") as stream:
+            stream.write(
+                f"\n[Replay] {replay.status.upper()} · {replay.summary}\n"
+            )
         return run
+
+    def _show_action(self, action: Any) -> None:
+        """Best-effort live cursor update through the platform visualizer."""
+        visualizer = getattr(self, "_visualizer", None)
+        if visualizer is None or action is None:
+            return
+        try:
+            visualizer.show_action(action)
+        except Exception:  # noqa: BLE001 - visualization must never block execution
+            pass
+
+    def _clear_action_visualizer(self) -> None:
+        visualizer = getattr(self, "_visualizer", None)
+        if visualizer is None:
+            return
+        try:
+            visualizer.clear()
+        except Exception:  # noqa: BLE001 - teardown remains best-effort
+            pass
 
     def _run_worker(self, worker_id: str, spec: WorkerSpec) -> WorkerOutcome:
         self._validate_worker_spec(spec)
         self._active_worker_id = worker_id
+        journals = getattr(self, "_worker_journals", None)
+        if journals is None:
+            self._worker_journals = {}
+            journals = self._worker_journals
+        journal = journals.setdefault(worker_id, WorkerJournal(worker_id=worker_id))
+        attempts = getattr(self, "_worker_attempts", None)
+        if attempts is None:
+            self._worker_attempts = {}
+            attempts = self._worker_attempts
+        attempt = int(attempts.get(worker_id) or 0) + 1
+        attempts[worker_id] = attempt
+        retained_events = len(journal.events)
+        if attempt > 1:
+            journal.record_replan(attempt=attempt)
         self._trace(
             "worker_started",
             worker_id=worker_id,
+            attempt=attempt,
+            retained_memory_events=retained_events,
             profile=spec.profile,
             goal=spec.goal,
             success_criteria=spec.success_criteria,
@@ -254,33 +306,22 @@ class ToolAgentRuntime:
         )
         active_actions = self._initial_worker_actions(spec)
         worker_tools = dynamic_worker_tools(active_actions)
-        spec_for_prompt = spec.model_dump(mode="json")
-        spec_for_prompt["actions"] = [
-            action.model_dump(mode="json") for action in active_actions
-        ]
-        for action in spec_for_prompt["actions"]:
-            if action["capability"] == "python_transform":
-                source = str(action["fixed_args"].pop("source", ""))
-                action["fixed_args"]["source_bound"] = bool(source)
-        messages: list[Any] = [
-            SystemMessage(
-                content=(
-                    _WORKER_SYSTEM
-                    + "\n\nWorkerState JSON Schema:\n"
-                    + json.dumps(WorkerState.model_json_schema(), ensure_ascii=False)
-                    + "\n\nWorkerSpec (transform source is bound but hidden):\n"
-                    + json.dumps(spec_for_prompt, ensure_ascii=False)
-                )
-            )
-        ]
-        last_result_ref = None
+        circuit_breaker = WorkerActionCircuitBreaker()
         for step in range(1, spec.max_steps + 1):
             frame, png = self._observe(spec)
-            prompt = self._worker_frame_prompt(spec, frame)
-            frame_message = image_message(prompt, png)
-            messages.append(frame_message)
             patch_turn = 0
+            guard_repair_turn = 0
+            circuit_decision = None
+            same_frame_feedback: dict[str, Any] | None = None
             while True:
+                messages, context_reports = self._worker_messages(
+                    spec=spec,
+                    active_actions=active_actions,
+                    journal=journal,
+                    frame=frame,
+                    png=png,
+                    same_frame_feedback=same_frame_feedback,
+                )
                 response = None
                 state = None
                 call = None
@@ -290,18 +331,23 @@ class ToolAgentRuntime:
                     started_at = time.perf_counter()
                     response = self.worker.bind_tools(
                         worker_tools,
-                        tool_choice="auto",
+                        tool_choice="required",
                         parallel_tool_calls=False,
-                        extra_body={"enable_thinking": True},
+                        extra_body={"enable_thinking": False},
                     ).invoke(messages)
                     llm_elapsed_s = time.perf_counter() - started_at
                     token_usage = response_usage(response)
                     try:
                         call = exactly_one_tool_call(response)
-                        try:
-                            state = WorkerState.model_validate(parse_json_object(response.content))
-                        except Exception as state_exc:  # noqa: BLE001 - state-only fallback
-                            state = self._recover_worker_state(messages, call, state_exc)
+                        raw_state = call["args"].pop("state", None)
+                        call["args"] = normalize_action_arguments(call["args"])
+                        state, state_source, state_compatibility = self._decode_worker_state(
+                            raw_state=raw_state,
+                            content=getattr(response, "content", ""),
+                            call=call,
+                            frame=frame,
+                            spec=spec,
+                        )
                         break
                     except Exception as exc:  # noqa: BLE001 - one same-frame protocol repair
                         self._trace(
@@ -313,21 +359,18 @@ class ToolAgentRuntime:
                             llm_elapsed_s=round(llm_elapsed_s, 3),
                             token_usage=token_usage,
                             context_reports=diagnostic_prompt_reports(
-                                "tool_agent.worker.protocol_repair",
-                                messages,
-                                response,
+                                "tool_agent.worker.protocol_repair", messages, response,
                                 schema="WorkerState + exactly one tool call",
-                            ),
+                            ) + context_reports,
                         )
                         if attempt:
                             raise
-                        messages.append(response)
-                        messages.append(HumanMessage(content=(
+                        messages = [*messages, response, HumanMessage(content=(
                             "Protocol repair: the previous response was invalid. On this SAME frame, "
-                            "emit WorkerState JSON in content and exactly one tool call. No action was executed."
-                        )))
+                            "emit exactly one required tool call including its state field. "
+                            "No action was executed."
+                        ))]
                 assert response is not None and state is not None and call is not None
-                messages.append(response)
                 self._trace(
                     "worker_decision",
                     step=step,
@@ -339,119 +382,203 @@ class ToolAgentRuntime:
                     args=call["args"],
                     llm_elapsed_s=round(llm_elapsed_s, 3),
                     token_usage=token_usage,
-                    context_reports=diagnostic_prompt_reports(
+                    context_reports=[*context_reports, *diagnostic_prompt_reports(
                         "tool_agent.worker",
-                        messages[:-1],
+                        messages,
                         response,
                         parsed={
                             "state": state.model_dump(mode="json"),
                             "tool_call": call,
                         },
                         schema="WorkerState + exactly one tool call",
-                    ),
+                    )],
+                    memory_event_count=len(journal.events),
+                    context_chars=int(context_reports[0].get("after_chars") or 0),
+                    state_source=state_source,
+                    state_compatibility=state_compatibility,
                 )
-                if call["name"] != "request_action_patch":
-                    break
-                patch_turn += 1
-                try:
-                    if patch_turn > _MAX_ACTION_PATCHES_PER_FRAME:
-                        raise ProtocolError("same-frame action patch limit exceeded")
-                    parsed_patch = RequestActionPatchArgs.model_validate(call["args"])
-                    added_action = materialize_action_patch(parsed_patch)
-                    self._validate_action_spec(added_action)
-                    existing = next(
-                        (item for item in active_actions if item.name == added_action.name),
-                        None,
-                    )
-                    if existing is not None:
-                        if existing != added_action:
-                            raise ProtocolError(
-                                f"action name {added_action.name!r} already has a different contract"
+                circuit_decision = None
+                if call["name"] == "request_action_patch":
+                    patch_turn += 1
+                    try:
+                        if patch_turn > _MAX_ACTION_PATCHES_PER_FRAME:
+                            raise ProtocolError("same-frame action patch limit exceeded")
+                        parsed_patch = RequestActionPatchArgs.model_validate(call["args"])
+                        added_action = materialize_action_patch(parsed_patch)
+                        self._validate_action_spec(added_action)
+                        existing = next(
+                            (item for item in active_actions if item.name == added_action.name),
+                            None,
+                        )
+                        if existing is not None:
+                            if existing != added_action:
+                                raise ProtocolError(
+                                    f"action name {added_action.name!r} already has a different contract"
+                                )
+                            patch_payload = {
+                                "status": "already_available",
+                                "action": existing.model_dump(mode="json"),
+                            }
+                        else:
+                            active_actions.append(added_action)
+                            worker_tools = dynamic_worker_tools(active_actions)
+                            patch_payload = {
+                                "status": "added",
+                                "action": added_action.model_dump(mode="json"),
+                                "instruction": (
+                                    "The action is now available. Reason again and choose exactly one "
+                                    "action on the same screenshot."
+                                ),
+                            }
+                            self._trace(
+                                "worker_action_patch",
+                                step=step,
+                                frame_id=frame.frame_id,
+                                reason=parsed_patch.reason,
+                                action=added_action.model_dump(mode="json"),
                             )
+                    except Exception as exc:  # noqa: BLE001 - Worker may repair its patch request
                         patch_payload = {
-                            "status": "already_available",
-                            "action": existing.model_dump(mode="json"),
-                        }
-                    else:
-                        active_actions.append(added_action)
-                        worker_tools = dynamic_worker_tools(active_actions)
-                        patch_payload = {
-                            "status": "added",
-                            "action": added_action.model_dump(mode="json"),
+                            "status": "error",
+                            "error": f"{type(exc).__name__}: {exc}",
                             "instruction": (
-                                "The action is now available. Reason again and choose exactly one "
-                                "action on the same screenshot."
+                                "Request a valid registered GUI capability or use an already available "
+                                "action on this same screenshot."
                             ),
                         }
                         self._trace(
-                            "worker_action_patch",
+                            "worker_action_patch_error",
                             step=step,
                             frame_id=frame.frame_id,
-                            reason=parsed_patch.reason,
-                            action=added_action.model_dump(mode="json"),
+                            error=patch_payload["error"],
                         )
-                except Exception as exc:  # noqa: BLE001 - Worker may repair its patch request
-                    patch_payload = {
-                        "status": "error",
-                        "error": f"{type(exc).__name__}: {exc}",
-                        "instruction": (
-                            "Request a valid registered GUI capability or use an already available "
-                            "action on this same screenshot."
-                        ),
-                    }
-                    self._trace(
-                        "worker_action_patch_error",
+                    journal.record_patch(
                         step=step,
-                        frame_id=frame.frame_id,
-                        error=patch_payload["error"],
+                        patch_turn=patch_turn,
+                        payload=patch_payload,
                     )
-                messages.append(ToolMessage(
-                    content=json.dumps(patch_payload, ensure_ascii=False),
-                    tool_call_id=call["id"],
-                ))
-                if patch_turn > _MAX_ACTION_PATCHES_PER_FRAME:
-                    return WorkerOutcome(
-                        phase="failed",
-                        summary="Worker exceeded the same-frame action patch limit.",
-                        steps=step - 1,
+                    same_frame_feedback = patch_payload
+                    if patch_turn > _MAX_ACTION_PATCHES_PER_FRAME:
+                        return WorkerOutcome(
+                            phase="failed",
+                            summary="Worker exceeded the same-frame action patch limit.",
+                            steps=step - 1,
+                        )
+                    continue
+
+                action_spec = next(
+                    (item for item in active_actions if item.name == call["name"]),
+                    None,
+                )
+                if action_spec is not None:
+                    circuit_decision = circuit_breaker.inspect(
+                        tool=call["name"],
+                        capability=action_spec.capability,
+                        args=call["args"],
+                        frame=frame,
                     )
+                    if circuit_decision.blocked:
+                        guard_repair_turn += 1
+                        feedback = {
+                            "status": "blocked_repeated_action",
+                            "reason": circuit_decision.reason,
+                            "prior_attempts": circuit_decision.prior_attempts,
+                            "instruction": (
+                                "Do not repeat the same point estimate. Choose one unambiguous "
+                                "visible target and describe its name, control type, and screen "
+                                "region; otherwise change the action or coordinates materially."
+                            ),
+                        }
+                        self._trace(
+                            "worker_action_blocked",
+                            step=step,
+                            frame_id=frame.frame_id,
+                            tool=call["name"],
+                            args=call["args"],
+                            signature=circuit_decision.signature,
+                            progress=circuit_decision.progress,
+                            prior_attempts=circuit_decision.prior_attempts,
+                            reason=circuit_decision.reason,
+                        )
+                        journal.record_guard(
+                            step=step,
+                            repair_turn=guard_repair_turn,
+                            tool=call["name"],
+                            reason=circuit_decision.reason,
+                        )
+                        if guard_repair_turn > _MAX_ACTION_GUARD_REPAIRS_PER_FRAME:
+                            return WorkerOutcome(
+                                phase="failed",
+                                summary=(
+                                    "Worker repeated a circuit-blocked action after corrective "
+                                    f"feedback: {call['name']}"
+                                ),
+                                steps=step - 1,
+                            )
+                        same_frame_feedback = feedback
+                        continue
+                break
             try:
                 result_payload, terminal = self._execute_worker_tool(
                     spec,
                     active_actions,
                     call,
                     png,
+                    frame,
                 )
             except Exception as exc:  # noqa: BLE001 - feed capability failure back into ReAct
                 result_payload = {
                     "status": "error",
                     "error": f"{type(exc).__name__}: {exc}",
                     "recovery": (
-                        "If this is a bound python_transform error, call fail so the Master can "
-                        "replace the WorkerSpec. Do not repeat the same call."
+                        "Use the error and current frame to choose a materially different GUI "
+                        "action. Do not repeat the same failed call."
                     ),
                 }
                 terminal = None
                 self._trace("worker_tool_error", step=step, tool=call["name"], error=result_payload["error"])
-            if isinstance(result_payload, dict) and result_payload.get("kind") == "result":
-                last_result_ref = result_payload["ref"]
-            messages.append(ToolMessage(
-                content=json.dumps(result_payload, ensure_ascii=False),
-                tool_call_id=call["id"],
-            ))
+            if circuit_decision is not None:
+                # A visually effective scroll is itself progress even when a
+                # vision-only frame has no structured scopes or collections to
+                # fingerprint. Do not accumulate those scrolls toward the fuse.
+                # Failed/no-effect scrolls and all other guarded actions remain
+                # tracked against the task-progress signature.
+                effective_visual_scroll = bool(
+                    action_spec is not None
+                    and action_spec.capability == "scroll"
+                    and isinstance(result_payload, dict)
+                    and result_payload.get("status") == "executed"
+                    and result_payload.get("no_effect") is False
+                )
+                if not effective_visual_scroll:
+                    circuit_breaker.record(circuit_decision)
+            journal.record_turn(
+                step=step,
+                frame_id=frame.frame_id,
+                state=state,
+                tool=call["name"],
+                args=call["args"],
+                result=result_payload,
+            )
             if terminal == "complete":
                 parsed = CompleteWorkerArgs.model_validate(call["args"])
-                descriptor = self.data_store.result_descriptor(parsed.result_ref)
+                descriptor = (
+                    self.data_store.collection_descriptor(parsed.collection_ref)
+                    if parsed.collection_ref
+                    else None
+                )
                 self._trace(
                     "worker_complete",
                     step=step,
                     profile=spec.profile,
-                    result_ref=descriptor.model_dump(mode="json"),
+                    collection_ref=(
+                        descriptor.model_dump(mode="json") if descriptor is not None else None
+                    ),
                 )
                 return WorkerOutcome(
                     phase="completed",
                     summary=state.summary,
-                    result_ref=descriptor,
+                    collection_ref=descriptor,
                     steps=step,
                 )
             if terminal == "fail":
@@ -459,62 +586,98 @@ class ToolAgentRuntime:
                 return WorkerOutcome(phase="failed", summary=reason, steps=step)
         return WorkerOutcome(
             phase="failed",
-            summary=(
-                f"Worker exceeded {spec.max_steps} steps"
-                + (f" after producing {last_result_ref}" if last_result_ref else "")
-            ),
+            summary=f"Worker exceeded {spec.max_steps} steps",
             steps=spec.max_steps,
         )
 
-    def _recover_worker_state(
-        self,
-        messages: list[Any],
+    @staticmethod
+    def _decode_worker_state(
+        *,
+        raw_state: Any,
+        content: Any,
         call: dict[str, Any],
-        state_error: Exception,
-    ) -> WorkerState:
-        """Recover only the explicit state channel when a valid action exists.
+        frame: MaterializedFrame,
+        spec: WorkerSpec,
+    ) -> tuple[WorkerState, str, list[str]]:
+        """Decode new and legacy state carriers without another model call."""
+        compatibility: list[str] = []
+        if isinstance(raw_state, dict):
+            try:
+                return (
+                    WorkerState.model_validate({
+                        **raw_state,
+                        "action_space_status": (
+                            "missing_action"
+                            if call["name"] == "request_action_patch"
+                            else "sufficient"
+                        ),
+                        "missing_action": (
+                            str(call["args"].get("reason") or "")
+                            if call["name"] == "request_action_patch"
+                            else ""
+                        ),
+                    }),
+                    "tool_args",
+                    compatibility,
+                )
+            except Exception as exc:  # noqa: BLE001 - try legacy carrier locally
+                compatibility.append(f"invalid tool state: {exc}")
+        elif raw_state is not None:
+            compatibility.append("tool state was not an object")
 
-        Some tool-call endpoints omit assistant ``content`` even though they
-        return a valid action. Re-running the whole action policy can change the
-        decision on the same frame. A state-only call preserves that action and
-        restores the independently inspectable state-machine channel.
-        """
-        prompt = (
-            "State-channel repair on the SAME frame. The action policy already selected this "
-            "tool call:\n"
-            + json.dumps({"name": call["name"], "args": call["args"]}, ensure_ascii=False)
-            + "\nReturn only one WorkerState JSON object matching this schema; do not call a tool:\n"
-            + json.dumps(WorkerState.model_json_schema(), ensure_ascii=False)
-        )
-        recovery_model = (
-            self.worker.bind(
-                max_tokens=2_000,
-                extra_body={"enable_thinking": False},
+        try:
+            state = WorkerState.model_validate(parse_json_object(content))
+            compatibility.append("used legacy assistant content state")
+            return state, "content_compat", compatibility
+        except Exception as exc:  # noqa: BLE001 - deterministic local fallback
+            compatibility.append(f"assistant content state unavailable: {exc}")
+
+        coverage: dict[str, str] = {}
+        for requirement_id, scope in frame.requirement_scopes.items():
+            coverage[requirement_id] = str(scope.get("status") or "unknown")
+        for collection in frame.collections:
+            coverage[collection.requirement_id] = str(
+                collection.coverage.get("status") or coverage.get(collection.requirement_id) or "unknown"
             )
-            if callable(getattr(self.worker, "bind", None))
-            else self.worker
+        action_by_name = {action.name: action for action in spec.actions}
+        action = action_by_name.get(call["name"])
+        instruction = str(
+            call["args"].get("description")
+            or (action.description if action is not None else "")
+            or call["name"]
         )
-        started_at = time.perf_counter()
-        recovery_messages = [*messages, HumanMessage(content=prompt)]
-        response = recovery_model.invoke(recovery_messages)
-        llm_elapsed_s = time.perf_counter() - started_at
-        state = WorkerState.model_validate(parse_json_object(response.content))
-        self._trace(
-            "worker_state_recovered",
-            tool=call["name"],
-            original_error=str(state_error),
-            state=state.model_dump(mode="json"),
-            llm_elapsed_s=round(llm_elapsed_s, 3),
-            token_usage=response_usage(response),
-            context_reports=diagnostic_prompt_reports(
-                "tool_agent.worker.state_recovery",
-                recovery_messages,
-                response,
-                parsed=state.model_dump(mode="json"),
-                schema="WorkerState",
+        capability = action.capability if action is not None else ""
+        if call["name"] == "complete":
+            status = "completed"
+        elif call["name"] == "fail":
+            status = "failed"
+        elif spec.profile == "collector" and any(
+            value == "met" for value in coverage.values()
+        ):
+            status = "collecting"
+        else:
+            status = "exploring"
+        return (
+            WorkerState(
+                status=status,
+                summary=f"Runtime accepted {call['name']} from the current frame.",
+                open_gaps=[] if status in {"completed", "failed"} else [instruction],
+                coverage=coverage,
+                action_space_status=(
+                    "missing_action"
+                    if call["name"] == "request_action_patch"
+                    else "sufficient"
+                ),
+                missing_action=(
+                    str(call["args"].get("reason") or "")
+                    if call["name"] == "request_action_patch"
+                    else ""
+                ),
+                next_instruction=instruction,
             ),
+            "runtime_compat",
+            compatibility,
         )
-        return state
 
     def _observe(self, spec: WorkerSpec) -> tuple[MaterializedFrame, bytes]:
         self._frame_no += 1
@@ -544,17 +707,43 @@ class ToolAgentRuntime:
         )
         return frame, png
 
-    def _worker_frame_prompt(self, spec: WorkerSpec, frame: MaterializedFrame) -> str:
-        metadata = {
-            "profile": spec.profile,
-            "worker_goal": spec.goal,
-            "success_criteria": spec.success_criteria,
-            "frame": frame.model_dump(mode="json", exclude={"screenshot_path"}),
-        }
+    @staticmethod
+    def _worker_system_prompt(
+        spec: WorkerSpec,
+        active_actions: list[DynamicActionSpec],
+    ) -> str:
+        spec_for_prompt = spec.model_dump(mode="json")
+        spec_for_prompt["actions"] = [
+            action.model_dump(mode="json") for action in active_actions
+        ]
         return (
-            "Current frame metadata and runtime artifacts follow. Values are intentionally absent.\n"
-            + json.dumps(metadata, ensure_ascii=False)
+            _WORKER_SYSTEM
+            + "\n\nWorkerSpec:\n"
+            + json.dumps(spec_for_prompt, ensure_ascii=False)
         )
+
+    def _worker_messages(
+        self,
+        *,
+        spec: WorkerSpec,
+        active_actions: list[DynamicActionSpec],
+        journal: WorkerJournal,
+        frame: MaterializedFrame,
+        png: bytes,
+        same_frame_feedback: dict[str, Any] | None,
+    ) -> tuple[list[Any], list[dict[str, Any]]]:
+        """Rebuild one frame from bounded Journal memory; never replay chat history."""
+        memory = build_worker_memory_view(journal)
+        projection = project_worker_context(
+            memory=memory,
+            frame=frame,
+            same_frame_feedback=same_frame_feedback,
+        )
+        messages = [
+            SystemMessage(content=self._worker_system_prompt(spec, active_actions)),
+            image_message(projection.text, png),
+        ]
+        return messages, [projection.report]
 
     def _execute_worker_tool(
         self,
@@ -562,11 +751,32 @@ class ToolAgentRuntime:
         actions: list[DynamicActionSpec],
         call: dict[str, Any],
         png: bytes,
+        frame: MaterializedFrame | None = None,
     ) -> tuple[dict[str, Any], str | None]:
         if call["name"] == "complete":
             parsed = CompleteWorkerArgs.model_validate(call["args"])
-            descriptor = self.data_store.result_descriptor(parsed.result_ref)
-            return descriptor.model_dump(mode="json"), "complete"
+            if spec.profile == "collector":
+                if not parsed.collection_ref:
+                    raise ValueError("collector complete requires a CollectionRef")
+                descriptor = self.data_store.collection_descriptor(parsed.collection_ref)
+                requirement = spec.data_requirements[0]
+                if descriptor.requirement_id != requirement.id:
+                    raise ValueError(
+                        f"CollectionRef {descriptor.ref!r} belongs to requirement "
+                        f"{descriptor.requirement_id!r}, not {requirement.id!r}"
+                    )
+                if descriptor.coverage.get("scope_status") != "met":
+                    raise ValueError(
+                        f"CollectionRef {descriptor.ref!r} scope is not established"
+                    )
+                if descriptor.coverage.get("status") != "complete":
+                    raise ValueError(
+                        f"CollectionRef {descriptor.ref!r} coverage is not complete"
+                    )
+                return descriptor.model_dump(mode="json"), "complete"
+            if parsed.collection_ref:
+                raise ValueError("operator complete must not return a CollectionRef")
+            return {"status": "completed"}, "complete"
         if call["name"] == "fail":
             parsed = FailWorkerArgs.model_validate(call["args"])
             return {"status": "failed", "reason": parsed.reason}, "fail"
@@ -577,7 +787,7 @@ class ToolAgentRuntime:
         full_args = {**action_spec.fixed_args, **call["args"]}
         parameters = dynamic_action_tool(action_spec)["function"]["parameters"]
         validate(instance=call["args"], schema=parameters)
-        if action_spec.capability in {"tap", "scroll", "select_option"}:
+        if action_spec.capability in {"tap", "type", "scroll", "select_option"}:
             for coordinate in ("x", "y"):
                 value = full_args.get(coordinate)
                 if value is not None and not 0 <= float(value) < 1000:
@@ -590,7 +800,28 @@ class ToolAgentRuntime:
                 }
             )
             decision = BaseActionDecision(action=action)
+            # Enhanced adapters may invisibly correct a visual near-miss using
+            # current rendered-control geometry. Vision-only frames contain no
+            # controls and their executor has DOM snap disabled, so their model
+            # coordinates remain untouched end to end.
+            ground = getattr(self._executor, "ground_coordinates", None)
+            if (
+                getattr(self, "perception_mode", "enhanced") == "enhanced"
+                and frame is not None
+                and frame.controls
+                and callable(ground)
+            ):
+                try:
+                    decision = ground(decision, frame.controls)
+                except Exception:  # noqa: BLE001 - optional enhancement fails open
+                    pass
+            # Grounding has already produced the best currently known point.
+            # Show it before dispatch, then mirror the original runtime contract
+            # by updating once more if the executor records a DOM snap.
+            self._show_action(decision.action)
             executed = self._executor.execute(decision, png_bytes=png)
+            if executed and has_snapped_point(decision):
+                self._show_action(decision.action)
             elapsed, no_effect = settle_after_action(
                 self.platform,
                 png,
@@ -601,6 +832,7 @@ class ToolAgentRuntime:
                 "action_type": action.action_type,
                 "settle_seconds": round(elapsed, 3),
                 "no_effect": no_effect,
+                "grounding": getattr(decision.action, "snap", None),
             }
             self._trace(
                 "runtime_action",
@@ -609,72 +841,20 @@ class ToolAgentRuntime:
                 **payload,
             )
             return payload, None
-        if action_spec.capability == "python_transform":
-            source = str(full_args.get("source") or "")
-            data_ref = str(full_args.get("data_ref") or "")
-            collection = self.data_store.collection_descriptor(data_ref)
-            scope_status = collection.coverage.get("scope_status")
-            if scope_status != "met":
-                raise ValueError(
-                    f"CollectionRef {data_ref!r} filter scope is {scope_status!r}; "
-                    "establish the requested UI scope before collection and transform"
-                )
-            coverage_status = collection.coverage.get("status")
-            if coverage_status != "complete":
-                raise ValueError(
-                    f"CollectionRef {data_ref!r} coverage is {coverage_status!r}; "
-                    "continue observing and traversing before python_transform"
-                )
-            rows = self.data_store.collection_rows(data_ref)
-            value = execute_transform(source, rows, spec.result_schema)
-            descriptor = self.data_store.put_result(
-                value,
-                spec.result_schema,
-                summary=f"Worker computed result from {data_ref}.",
-            )
-            payload = descriptor.model_dump(mode="json")
-            self._trace(
-                "python_transform",
-                tool=call["name"],
-                profile=spec.profile,
-                data_ref=data_ref,
-                result_ref=payload,
-            )
-            return payload, None
         raise ProtocolError(f"unsupported capability {action_spec.capability!r}")
 
     @staticmethod
     def _validate_worker_spec(spec: WorkerSpec) -> None:
-        Draft202012Validator.check_schema(spec.result_schema)
         for requirement in spec.data_requirements:
             Draft202012Validator.check_schema(requirement.row_schema)
-        combined_row_schema = {
-            "type": "object",
-            "properties": {
-                key: value
-                for requirement in spec.data_requirements
-                for key, value in (requirement.row_schema.get("properties") or {}).items()
-            },
-        }
         for action in spec.actions:
             ToolAgentRuntime._validate_action_spec(action)
-        for action in spec.actions:
-            if action.capability != "python_transform":
-                continue
-            source = str(action.fixed_args.get("source") or "")
-            if not source.strip():
-                raise ValueError(f"{action.name}: python_transform requires fixed_args.source")
-            if "data_ref" not in action.exposed_args:
-                raise ValueError(f"{action.name}: python_transform must expose data_ref")
-            validate_transform_source(source)
-            validate_transform_row_fields(source, combined_row_schema)
 
     @staticmethod
     def _validate_action_spec(action: DynamicActionSpec) -> None:
         parameters = capability_parameters(action.capability)
         properties = parameters.get("properties") or {}
-        allowed_extra = {"source"} if action.capability == "python_transform" else set()
-        unknown_fixed = set(action.fixed_args).difference(properties).difference(allowed_extra)
+        unknown_fixed = set(action.fixed_args).difference(properties)
         if unknown_fixed:
             raise ValueError(f"{action.name}: unknown fixed args {sorted(unknown_fixed)}")
         for name, value in action.fixed_args.items():
@@ -709,7 +889,7 @@ class ToolAgentRuntime:
             return "observer"
         if event in {"runtime_action"}:
             return "action"
-        if event.startswith("data_worker") or event == "python_transform":
+        if event.startswith("transform_"):
             return "data"
         if event.startswith("worker_"):
             return "worker"
@@ -724,7 +904,9 @@ class ToolAgentRuntime:
                 + (f"{len(issues)} issue(s)" if issues else "passed")
             )
         if event == "master_program_generated":
-            return f"Master program generation {payload.get('generation', '?')} is ready"
+            return "Reviewed Master program is ready"
+        if event == "master_program_execution_started":
+            return f"Execute frozen Master program · attempt {payload.get('execution', '?')}"
         if event == "master_worker_dispatch":
             spec = payload.get("spec") if isinstance(payload.get("spec"), dict) else {}
             profile = str(spec.get("profile") or "operator")
@@ -735,7 +917,8 @@ class ToolAgentRuntime:
         if event == "worker_started":
             return (
                 f"Start {payload.get('profile', 'operator')} Worker "
-                f"{payload.get('worker_id', '?')}: {payload.get('goal', '')}"
+                f"{payload.get('worker_id', '?')} attempt {payload.get('attempt', 1)}: "
+                f"{payload.get('goal', '')}"
             )
         if event == "observe":
             collections = []
@@ -771,20 +954,34 @@ class ToolAgentRuntime:
         if event == "runtime_action":
             effect = "no effect" if payload.get("no_effect") else str(payload.get("status") or "")
             return f"{payload.get('action_type', 'GUI')} action via {payload.get('tool', '?')}: {effect}"
-        if event == "python_transform":
+        if event == "transform_started":
+            return (
+                f"Start transform {payload.get('transform_id', '?')} from "
+                f"{payload.get('inputs', [])}"
+            )
+        if event == "transform_completed":
             result = payload.get("result_ref") if isinstance(payload.get("result_ref"), dict) else {}
-            return f"Transform {payload.get('data_ref', '?')} → {result.get('ref', '?')}"
+            return f"Transform {payload.get('transform_id', '?')} → {result.get('ref', '?')}"
+        if event == "transform_reused":
+            result = payload.get("result_ref") if isinstance(payload.get("result_ref"), dict) else {}
+            return f"Reuse transform {payload.get('transform_id', '?')} → {result.get('ref', '?')}"
+        if event == "transform_failed":
+            return f"Transform {payload.get('transform_id', '?')} failed: {payload.get('error', '')}"
         if event == "worker_complete":
-            result = payload.get("result_ref") if isinstance(payload.get("result_ref"), dict) else {}
-            return f"Worker completed with {result.get('ref', '?')}"
+            collection = (
+                payload.get("collection_ref")
+                if isinstance(payload.get("collection_ref"), dict)
+                else {}
+            )
+            suffix = f" with {collection.get('ref')}" if collection.get("ref") else ""
+            return f"Worker completed{suffix}"
         if event == "master_worker_result":
             outcome = payload.get("outcome") if isinstance(payload.get("outcome"), dict) else {}
             return f"Worker {payload.get('worker_id', '?')} returned {outcome.get('phase', '?')}"
-        if event == "data_worker_start":
-            return f"Start Data Worker {payload.get('worker_id', '?')}: {payload.get('goal', '')}"
-        if event == "data_worker_complete":
-            outcome = payload.get("outcome") if isinstance(payload.get("outcome"), dict) else {}
-            return f"Data Worker {payload.get('worker_id', '?')} returned {outcome.get('phase', '?')}"
+        if event == "master_worker_retry":
+            return f"Retry failed GUI Worker {payload.get('worker_id', '?')} with retained experience"
+        if event == "subgoal_replan":
+            return f"Retry failed GUI subgoal using retained experience: {payload.get('reason', '')}"
         if event == "master_program_completed":
             return f"Master program terminal: {payload.get('phase', '?')}"
         if event == "runtime_finished":
@@ -823,15 +1020,15 @@ class ToolAgentRuntime:
                 )
             metric_text = f" ({' · '.join(metrics)})" if metrics else ""
             return (
-                f"  [Review] g{entry.get('generation', '?')}."
-                f"a{entry.get('attempt', '?')} {verdict}{metric_text}"
+                f"  [Review] attempt {entry.get('attempt', '?')} {verdict}{metric_text}"
             )
         if event == "master_program_generated":
             return (
-                "Coding Master: reviewed Python ready "
-                f"(generation {entry.get('generation', '?')} · "
-                f"{entry.get('compile_attempts', '?')} attempts)"
+                "Coding Master: frozen reviewed Python ready "
+                f"({entry.get('compile_attempts', '?')} review attempts)"
             )
+        if event == "master_program_execution_started":
+            return f"MASTER  execute frozen program · attempt {entry.get('execution', '?')}"
         if event == "master_worker_dispatch":
             spec = entry.get("spec") if isinstance(entry.get("spec"), dict) else {}
             criteria = list(spec.get("success_criteria") or [])
@@ -904,10 +1101,24 @@ class ToolAgentRuntime:
                 metrics += f"\nTiming     : {timing_text}"
             if input_tokens or output_tokens:
                 metrics += f"\nTokens     : {input_tokens}/{output_tokens}"
+            context_chars = int(entry.get("context_chars") or 0)
+            memory_events = int(entry.get("memory_event_count") or 0)
+            context_text = (
+                f"\nContext    : rebuilt for frame · {context_chars} chars · "
+                f"{memory_events} journal events"
+            )
+            state_source = str(entry.get("state_source") or "")
+            protocol_text = (
+                f"\nProtocol   : state={state_source}"
+                if state_source
+                else ""
+            )
             return (
                 f"State      : {state.get('status', '?')} · {state.get('summary', '')}\n"
                 f"Action plan: {entry.get('tool', '?')} · "
                 f"{state.get('next_instruction', '')}"
+                f"{context_text}"
+                f"{protocol_text}"
                 f"{metrics}"
             )
         if event == "runtime_action":
@@ -931,30 +1142,45 @@ class ToolAgentRuntime:
                 f"Action set : +{action.get('name', '?')} "
                 f"({action.get('capability', '?')})"
             )
-        if event == "python_transform":
-            result = entry.get("result_ref") if isinstance(entry.get("result_ref"), dict) else {}
-            return f"Result     : {entry.get('data_ref', '?')} → {result.get('ref', '?')}"
+        if event == "worker_action_blocked":
+            return (
+                f"Action fuse: blocked {entry.get('tool', '?')} after "
+                f"{entry.get('prior_attempts', '?')} equivalent attempts"
+            )
         if event == "worker_complete":
-            result = entry.get("result_ref") if isinstance(entry.get("result_ref"), dict) else {}
-            return f"Verification: completed · {result.get('ref', '?')}"
+            collection = (
+                entry.get("collection_ref")
+                if isinstance(entry.get("collection_ref"), dict)
+                else {}
+            )
+            suffix = f" · {collection.get('ref')}" if collection.get("ref") else ""
+            return f"Verification: completed{suffix}"
         if event == "master_worker_result":
             outcome = entry.get("outcome") if isinstance(entry.get("outcome"), dict) else {}
             return f"Worker outcome: {entry.get('worker_id', '?')} · {outcome.get('phase', '?')}"
-        if event == "master_replan":
-            return f"MASTER  replan · {entry.get('reason', '')}"
-        if event == "data_worker_start":
+        if event == "master_worker_retry":
             return (
-                f"\n--- Data Worker {entry.get('worker_id', '?')} ---\n"
-                f"Goal    : {entry.get('goal', '')}\n"
+                f"Worker retry: {entry.get('worker_id', '?')} · retain prior journal, "
+                "restart only this GUI subgoal"
+            )
+        if event == "subgoal_replan":
+            return (
+                "SUBGOAL replan · replay the same reviewed program and retry only "
+                f"failed GUI work · {entry.get('reason', '')}"
+            )
+        if event == "transform_started":
+            return (
+                f"\n--- Transform {entry.get('transform_id', '?')} ---\n"
                 f"Inputs  : {entry.get('inputs', [])}"
             )
-        if event == "data_worker_complete":
-            outcome = entry.get("outcome") if isinstance(entry.get("outcome"), dict) else {}
-            result = outcome.get("result_ref") if isinstance(outcome.get("result_ref"), dict) else {}
-            return (
-                f"Result  : {outcome.get('phase', '?')}"
-                + (f" · {result.get('ref')}" if result.get("ref") else "")
-            )
+        if event == "transform_completed":
+            result = entry.get("result_ref") if isinstance(entry.get("result_ref"), dict) else {}
+            return f"Result  : completed · {result.get('ref', '?')}"
+        if event == "transform_reused":
+            result = entry.get("result_ref") if isinstance(entry.get("result_ref"), dict) else {}
+            return f"Result  : reused · {result.get('ref', '?')}"
+        if event == "transform_failed":
+            return f"Result  : ERROR · {entry.get('error', '')}"
         if event in {
             "master_compile_error",
             "master_program_error",
@@ -993,7 +1219,7 @@ class ToolAgentRuntime:
         if (
             "worker_id" not in entry
             and getattr(self, "_active_worker_id", "")
-            and (layer in {"worker", "observer", "action"} or event == "python_transform")
+            and layer in {"worker", "observer", "action"}
         ):
             entry["worker_id"] = self._active_worker_id
         trace.append(entry)
@@ -1011,8 +1237,7 @@ class ToolAgentRuntime:
             self._write_live_artifacts(
                 write_data=event in {
                     "observe",
-                    "python_transform",
-                    "data_worker_complete",
+                    "transform_completed",
                     "runtime_interrupted",
                 }
             )

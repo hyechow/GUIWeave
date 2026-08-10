@@ -171,6 +171,9 @@ class RuntimeDataStore:
             coverage=combined_coverage,
         )
         self._collections[collection_id] = collection
+        self._values[collection_id] = [
+            row for chunk_ref in chunk_ids for row in self._values[chunk_ref]
+        ]
         return chunk, collection, created
 
     def collection_chunks(self, ref: str) -> list[list[dict[str, Any]]]:
@@ -180,20 +183,31 @@ class RuntimeDataStore:
         return [self._values[item] for item in collection.chunk_refs]
 
     def collection_rows(self, ref: str) -> list[dict[str, Any]]:
-        collection = self._collections.get(ref)
-        if collection is None:
-            raise KeyError(f"unknown CollectionRef {ref!r}")
-        return [
-            row
-            for chunk_ref in collection.chunk_refs
-            for row in self._values[chunk_ref]
-        ]
+        self.collection_descriptor(ref)
+        return list(self._values[ref])
 
     def collection_descriptor(self, ref: str) -> CollectionRef:
         try:
             return self._collections[ref]
         except KeyError as exc:
             raise KeyError(f"unknown CollectionRef {ref!r}") from exc
+
+    def restore_collection(self, descriptor: CollectionRef, rows: list[dict[str, Any]]) -> None:
+        """Restore one recorded GUI artifact without replaying browser observations."""
+        for row in rows:
+            validate(instance=row, schema=descriptor.row_schema)
+        if len(rows) != descriptor.row_count:
+            raise ValueError(
+                f"recorded CollectionRef {descriptor.ref!r} declares "
+                f"{descriptor.row_count} rows but contains {len(rows)}"
+            )
+        self._collections[descriptor.ref] = descriptor
+        self._values[descriptor.ref] = list(rows)
+
+    def ref_row_schema(self, ref: str) -> dict[str, Any] | None:
+        """Return the normalized row schema for a collection-like input ref."""
+        collection = self._collections.get(ref)
+        return collection.row_schema if collection is not None else None
 
     def put_result(self, value: Any, schema: dict[str, Any], *, summary: str = "") -> ResultRef:
         validate(instance=value, schema=schema)
