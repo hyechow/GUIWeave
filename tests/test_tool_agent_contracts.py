@@ -142,6 +142,11 @@ def test_runtime_action_floor_and_patch_tool_are_always_available() -> None:
         "runtime_tap_visible",
         "runtime_type_visible",
         "runtime_scroll_visible",
+        "runtime_clear_focused",
+        "runtime_press_enter",
+        "runtime_select_visible",
+        "runtime_open_url",
+        "runtime_browser_back",
     }.issubset(names)
     assert {"request_action_patch", "complete", "fail"}.issubset(names)
     for tool in tools:
@@ -153,6 +158,21 @@ def test_runtime_action_floor_and_patch_tool_are_always_available() -> None:
         if tool["function"]["name"] == "runtime_tap_visible"
     )
     assert "description" in runtime_tap["function"]["parameters"]["required"]
+
+    runtime_select = next(
+        tool for tool in tools
+        if tool["function"]["name"] == "runtime_select_visible"
+    )
+    assert set(runtime_select["function"]["parameters"]["required"]) == {
+        "state", "x", "y", "text", "description"
+    }
+    runtime_open_url = next(
+        tool for tool in tools
+        if tool["function"]["name"] == "runtime_open_url"
+    )
+    assert set(runtime_open_url["function"]["parameters"]["required"]) == {
+        "state", "url"
+    }
 
 
 def test_collector_completion_tool_is_frame_gated_and_runtime_bound() -> None:
@@ -236,6 +256,26 @@ def test_worker_can_materialize_registered_frame_driven_action() -> None:
 
     assert action.fixed_args == {"text": "Complete"}
     assert set(action.exposed_args) == {"x", "y"}
+
+
+def test_open_url_is_worker_owned_or_can_be_bound_by_action_patch() -> None:
+    dynamic = DynamicActionSpec(
+        name="open_goal_url",
+        capability="open_url",
+        description="Open the URL required by the current subgoal",
+    )
+    assert dynamic.fixed_args == {}
+    assert dynamic.exposed_args == ["url"]
+
+    bound = materialize_action_patch(RequestActionPatchArgs(
+        name="open_known_url",
+        capability="open_url",
+        description="Open the known URL required by the current subgoal",
+        url="https://example.test/records",
+        reason="The exact target URL is present in task knowledge.",
+    ))
+    assert bound.fixed_args == {"url": "https://example.test/records"}
+    assert bound.exposed_args == []
 
 
 def test_worker_action_patch_registry_owns_scroll_parameters() -> None:

@@ -5,6 +5,7 @@ from types import SimpleNamespace
 
 import pytest
 
+from gui_agent.adapters.browser.actions import BrowserAction
 from gui_agent.core.tool_agent.contracts import (
     DynamicActionSpec,
     MaterializedFrame,
@@ -40,6 +41,7 @@ def test_private_access_context_reaches_worker_but_is_redacted_from_trace() -> N
     )
     runtime = object.__new__(ToolAgentRuntime)
     runtime._worker_access_context = access_context
+    runtime._master_knowledge = "Account settings are available from the profile menu."
     runtime._access_log_redactions = _access_log_redactions(access_context)
     runtime.trace = []
     spec = WorkerSpec(
@@ -57,6 +59,8 @@ def test_private_access_context_reaches_worker_but_is_redacted_from_trace() -> N
     assert "Session access context" in prompt
     assert "runtime-user-73" in prompt
     assert "runtime-secret-73" in prompt
+    assert "Application knowledge" in prompt
+    assert "profile menu" in prompt
 
     runtime._trace(
         "worker_decision",
@@ -613,6 +617,62 @@ def test_vision_only_execution_does_not_use_enhanced_control_geometry(
     assert executed.snap is None
 
 
+@pytest.mark.parametrize(
+    ("capability", "args", "action_type"),
+    [
+        ("open_url", {"url": "https://example.test/reviews"}, "navigate"),
+        ("back", {}, "back"),
+        ("clear_text", {}, "clear_text"),
+        ("press_enter", {}, "press_enter"),
+    ],
+)
+def test_runtime_executes_nonspatial_browser_capabilities_through_adapter_action(
+    monkeypatch,
+    capability: str,
+    args: dict[str, str],
+    action_type: str,
+) -> None:
+    runtime = object.__new__(ToolAgentRuntime)
+    runtime.bundle = SimpleNamespace(
+        make_action=lambda payload: BrowserAction.model_validate(payload)
+    )
+    runtime.perception_mode = "enhanced"
+    runtime._executor = _Executor()
+    runtime._visualizer = None
+    runtime.platform = object()
+    runtime._trace = lambda *_args, **_kwargs: None
+    monkeypatch.setattr(
+        "gui_agent.core.tool_agent.runtime.settle_after_action",
+        lambda platform, png, *, action_type: (0.0, False),
+    )
+    action = DynamicActionSpec(
+        name=f"do_{capability}",
+        capability=capability,
+        description=f"Execute {capability} for the current subgoal",
+        exposed_args=list(args),
+    )
+    spec = WorkerSpec(
+        goal="Advance the browser subgoal",
+        success_criteria=["The browser state advances"],
+        actions=[action],
+    )
+
+    payload, terminal = runtime._execute_worker_tool(
+        spec,
+        [action],
+        {"name": action.name, "args": args},
+        b"png",
+        MaterializedFrame(frame_id="frame:1", screenshot_path="frame.png"),
+    )
+
+    executed = runtime._executor.actions[-1]
+    assert isinstance(executed, BrowserAction)
+    assert executed.action_type == action_type
+    assert getattr(executed, "url", None) == args.get("url")
+    assert payload["status"] == "executed"
+    assert terminal is None
+
+
 def test_collector_completion_is_unavailable_until_collection_is_ready() -> None:
     runtime = object.__new__(ToolAgentRuntime)
     runtime.data_store = RuntimeDataStore()
@@ -849,7 +909,7 @@ def _coding_program() -> str:
         max_steps=4,
     )
     if result["phase"] != "completed":
-        ctx.replan(result["summary"])
+        ctx.fail(result["summary"])
     computed = ctx.transform(
         transform_id="count_records",
         inputs=[result["collection_ref"]["ref"]],
@@ -860,13 +920,42 @@ def _coding_program() -> str:
 '''
 
 
-def test_runtime_replans_failed_subgoal_without_recompiling_master(tmp_path) -> None:
+def test_runtime_replans_inside_worker_call_without_replaying_program(tmp_path) -> None:
     runtime = object.__new__(ToolAgentRuntime)
     runtime.max_subgoal_replans = 1
     runtime.max_compile_attempts = 1
     runtime.data_store = RuntimeDataStore()
     runtime.trace = []
-    runtime.master = _CodingMaster(_coding_program())
+    replacement = {
+        "profile": "collector",
+        "goal": "Collect the requested records",
+        "success_criteria": ["The requested records are collected"],
+        "data_requirements": [{
+            "id": "records",
+            "description": "Requested records",
+            "row_schema": {
+                "type": "object",
+                "properties": {"value": {"type": "integer"}},
+                "required": ["value"],
+                "additionalProperties": False,
+            },
+        }],
+        "actions": [{
+            "name": "reveal_more_aggressively",
+            "capability": "scroll",
+            "description": "Reveal a larger window of records",
+            "fixed_args": {
+                "direction": "down",
+                "amount": "large",
+                "target_area": "main_content",
+            },
+        }],
+        "max_steps": 4,
+    }
+    runtime.master = _CodingMaster(
+        _coding_program(),
+        json.dumps({"worker_spec": replacement}),
+    )
     runtime.master_cfg = SimpleNamespace(model="coding-master")
     runtime.worker_cfg = SimpleNamespace(model="visual-worker")
     runtime.materializer = SimpleNamespace(model="perception")
@@ -875,8 +964,7 @@ def test_runtime_replans_failed_subgoal_without_recompiling_master(tmp_path) -> 
     worker_calls = []
 
     def run_worker(worker_id, spec):
-        assert worker_id == "collect_records"
-        worker_calls.append(spec)
+        worker_calls.append((worker_id, spec))
         if len(worker_calls) == 1:
             return WorkerOutcome(
                 phase="failed",
@@ -911,18 +999,63 @@ def test_runtime_replans_failed_subgoal_without_recompiling_master(tmp_path) -> 
     assert run.phase == "completed"
     assert run.output == 1
     assert len(worker_calls) == 2
+    assert [worker_id for worker_id, _ in worker_calls] == [
+        "collect_records",
+        "collect_records_replan_1",
+    ]
     assert runtime.master.sources == []
-    assert any(event["event"] == "subgoal_replan" for event in run.trace)
-    assert any(event["event"] == "master_worker_retry" for event in run.trace)
+    assert any(event["event"] == "master_worker_redelegated" for event in run.trace)
+    assert not any(event["event"] == "subgoal_replan" for event in run.trace)
     assert (tmp_path / "tool_agent_trace.json").is_file()
     replay = json.loads(
         (tmp_path / "tool_agent_replay.json").read_text(encoding="utf-8")
     )
     assert replay["status"] == "passed"
-    assert replay["program_count"] == 2
+    assert replay["program_count"] == 1
     assert replay["gui_worker_count"] == 1
     assert replay["uses_browser"] is False
     assert replay["uses_llm"] is False
+
+
+def test_runtime_does_not_replay_frozen_program_after_local_budget_failure(
+    tmp_path,
+) -> None:
+    runtime = object.__new__(ToolAgentRuntime)
+    runtime.max_subgoal_replans = 2
+    runtime.max_compile_attempts = 1
+    runtime.data_store = RuntimeDataStore()
+    runtime.trace = []
+    runtime.master = _CodingMaster(_coding_program())
+    runtime.master_cfg = SimpleNamespace(model="coding-master")
+    runtime.worker_cfg = SimpleNamespace(model="visual-worker")
+    runtime.materializer = SimpleNamespace(model="perception")
+    runtime.perception_mode = "enhanced"
+    runtime.log_dir = tmp_path
+    worker_calls = []
+
+    def fail_worker(worker_id, spec):
+        worker_calls.append((worker_id, spec))
+        return WorkerOutcome(
+            phase="failed",
+            summary="No remaining local strategy",
+            steps=4,
+        )
+
+    runtime._run_worker = fail_worker
+
+    run = runtime.run("Collect the requested records")
+
+    assert run.phase == "failed"
+    assert len(worker_calls) == 1
+    assert sum(
+        event["event"] == "master_program_execution_started"
+        for event in run.trace
+    ) == 1
+    replay = json.loads(
+        (tmp_path / "tool_agent_replay.json").read_text(encoding="utf-8")
+    )
+    assert replay["status"] == "passed"
+    assert replay["program_count"] == 1
 
 
 def test_runtime_interruption_is_sealed_as_a_reportable_failed_run(tmp_path) -> None:

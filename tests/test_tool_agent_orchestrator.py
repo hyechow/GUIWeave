@@ -103,6 +103,46 @@ def test_master_review_requires_ref_strings_from_descriptors() -> None:
     assert any(item.code == "ATTRIBUTE_ACCESS" for item in attribute_access)
 
 
+def test_master_review_rejects_transform_fields_missing_from_worker_schema() -> None:
+    source = _program(
+        '''
+reviews = ctx.gui_worker(
+    worker_id="collect_reviews",
+    profile="collector",
+    goal="Collect the requested reviews",
+    success_criteria=["All requested review data is collected"],
+    data_requirements=[{
+        "id": "reviews",
+        "description": "Requested reviews",
+        "row_schema": {
+            "type": "object",
+            "properties": {"title": {"type": "string"}},
+            "required": ["title"],
+        },
+    }],
+    actions=[{
+        "name": "collect_visible_reviews",
+        "capability": "scroll",
+        "description": "Collect all review rows",
+        "fixed_args": {"direction": "down"},
+    }],
+)
+result = ctx.transform(
+    transform_id="filter_reviews",
+    inputs=[reviews["collection_ref"]["ref"]],
+    source="def transform(inputs):\\n    rows = inputs[0]\\n    return [row.get('rating') for row in rows]",
+    result_schema={"type": "array", "items": {"type": "number"}},
+)
+ctx.finish(result["ref"])
+'''.strip()
+    )
+
+    diagnostics = validate_master_source(source)
+
+    assert any(item.code == "TRANSFORM_INPUT_SCHEMA" for item in diagnostics)
+    assert any("rating" in item.message for item in diagnostics)
+
+
 def test_master_compiler_regenerates_only_during_static_review() -> None:
     invalid = "def run(ctx):\n    ctx.tap(1, 2)\n    ctx.fail('bad')"
     valid = "def run(ctx):\n    ctx.fail('No safe execution path')"
@@ -149,7 +189,7 @@ def test_coding_master_orchestrates_gui_then_runtime_transform() -> None:
         f"""
 records = {GUI_CALL}
 if records["phase"] != "completed":
-    ctx.replan(records["summary"])
+    ctx.fail(records["summary"])
 total = ctx.transform(
     transform_id="sum_amounts",
     inputs=[records["collection_ref"]["ref"]],
@@ -218,7 +258,7 @@ ctx.finish(result["ref"])
     assert ctx.worker_result("collect_records")["phase"] == "completed"
 
 
-def test_program_can_request_local_replan_from_typed_worker_failure() -> None:
+def test_legacy_program_replan_is_sealed_as_failure_without_reexecution() -> None:
     store = RuntimeDataStore()
 
     def fail_gui_worker(worker_id, spec):
@@ -244,7 +284,7 @@ ctx.fail("unreachable")
 
     assert execution.ok
     assert execution.terminal is not None
-    assert execution.terminal.phase == "replan"
+    assert execution.terminal.phase == "failed"
     assert execution.terminal.summary == "Unexpected access gate"
 
 
@@ -276,7 +316,7 @@ updated = ctx.gui_worker(
     }],
 )
 if updated["phase"] != "completed":
-    ctx.replan(updated["summary"])
+    ctx.fail(updated["summary"])
 result = ctx.transform(
     transform_id="operator_success",
     inputs=[],
