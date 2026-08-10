@@ -47,6 +47,10 @@ class AppKnowledge:
     navigation: str  # _app.md content → Supervisor
     elements: str    # _elements.md content → statement execution and fallback
     app_name: str
+    # Per-session environment/access facts from _deploy.md.  Kept separate so an
+    # autonomous GUI Worker can handle a login screen without exposing credentials
+    # to the task-planning Orchestrator.
+    deployment: str = ""
     # Complete per-feature facts and procedures. Frontmatter controls whether a section
     # participates in orchestration; Markdown headings inside the body have no runtime meaning.
     sections: dict[str, str] = field(default_factory=dict)
@@ -94,7 +98,10 @@ class AppKnowledge:
                 str(item).strip() for item in nav_scope
             }:
                 return ""
-            return self.navigation
+            navigation = self.navigation
+            if self.deployment and navigation.startswith(self.deployment):
+                navigation = navigation[len(self.deployment):].lstrip()
+            return navigation
         selected = ProgressiveKnowledge({
             stem: self.sections[stem]
             for stem in stems
@@ -111,6 +118,7 @@ class AppKnowledge:
             "app_name": self.app_name,
             "profile": "with-skills" if "_skill" in self.overlays else "functional-only",
             "nav_chars": len(self.navigation),
+            "deployment_chars": len(self.deployment),
             "elements_chars": len(self.elements),
             "check_chars": len(self.check),
             "section_count": len(self.sections),
@@ -406,6 +414,7 @@ def load_app_dir(d: Path, *, include_skills: bool = False) -> AppKnowledge | Non
         metadata["_app"] = nav_meta
     channels: dict[str, int] = {}  # overlay file stem → char count (for the report)
     overlays = []
+    deployment = ""
     for overlay_name in ("_deploy.md", "_update.md"):
         overlay_path = d / overlay_name
         if overlay_path.exists():
@@ -415,6 +424,8 @@ def load_app_dir(d: Path, *, include_skills: bool = False) -> AppKnowledge | Non
             channels[overlay_name[:-3]] = len(text)
             if text:
                 overlays.append(text)
+                if overlay_name == "_deploy.md":
+                    deployment = text
     if overlays:
         nav = "\n\n".join(overlays + [nav])
     # Optional reusable orchestrations. They are deliberately excluded by default so a cold-start
@@ -450,6 +461,7 @@ def load_app_dir(d: Path, *, include_skills: bool = False) -> AppKnowledge | Non
         if meta:
             metadata[stem] = meta
     return AppKnowledge(navigation=nav, elements=elements, app_name=d.name,
+                        deployment=deployment,
                         sections=sections, check=check, overlays=channels, metadata=metadata)
 
 

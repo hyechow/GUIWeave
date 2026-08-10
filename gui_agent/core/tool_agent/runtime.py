@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import json
+import re
 import time
 from datetime import datetime
 from pathlib import Path
@@ -17,6 +18,7 @@ from gui_agent.prompts import load_prompt_text
 from gui_agent.core.run.action_exec import has_snapped_point, settle_after_action
 from gui_agent.core.schemas import BaseAction, BaseActionDecision
 from gui_agent.core.tool_agent.contracts import (
+    CollectionRef,
     DynamicActionSpec,
     MaterializedFrame,
     ToolAgentRun,
@@ -34,7 +36,7 @@ from gui_agent.core.tool_agent.orchestrator import (
 )
 from gui_agent.core.tool_agent.perception import PerceptionMaterializer, PerceptionMode
 from gui_agent.core.tool_agent.protocol import (
-    CompleteWorkerArgs,
+    CompleteReadyWorkerArgs,
     capability_parameters,
     FailWorkerArgs,
     ProtocolError,
@@ -62,6 +64,43 @@ _WORKER_SYSTEM = load_prompt_text("task.tool_agent.worker")
 _MAX_ACTION_PATCHES_PER_FRAME = 3
 _MAX_ACTION_GUARD_REPAIRS_PER_FRAME = 1
 _RUNTIME_WORKER_TOOL_NAMES = {"request_action_patch", "complete", "fail"}
+_REDACTED_ACCESS_VALUE = "[session access value redacted]"
+
+
+def _access_log_redactions(access_context: str) -> tuple[str, ...]:
+    """Return exact sensitive strings that must never reach durable run artifacts."""
+
+    values = {access_context.strip()} if access_context.strip() else set()
+    # Deployment knowledge conventionally wraps account names, passwords and tokens
+    # in Markdown code spans.  Keep the whole block private and also redact individual
+    # values in case a Worker emits one as a tool argument or state summary.
+    values.update(
+        match.strip()
+        for match in re.findall(r"`([^`\n]+)`", access_context)
+        if match.strip()
+    )
+    return tuple(sorted(values, key=len, reverse=True))
+
+
+def _redact_log_value(value: Any, redactions: tuple[str, ...]) -> Any:
+    """Recursively copy a report payload while replacing session access values."""
+
+    if not redactions:
+        return value
+    if isinstance(value, str):
+        for secret in redactions:
+            value = value.replace(secret, _REDACTED_ACCESS_VALUE)
+        return value
+    if isinstance(value, dict):
+        return {
+            key: _redact_log_value(item, redactions)
+            for key, item in value.items()
+        }
+    if isinstance(value, list):
+        return [_redact_log_value(item, redactions) for item in value]
+    if isinstance(value, tuple):
+        return tuple(_redact_log_value(item, redactions) for item in value)
+    return value
 
 
 def _llm(config_name: str, *, temperature: float = 0) -> tuple[ChatOpenAI, Any]:
@@ -121,6 +160,8 @@ class ToolAgentRuntime:
         (self.log_dir / "tool_agent_events.jsonl").write_text("", encoding="utf-8")
         (self.log_dir / "tool_agent.log").write_text("", encoding="utf-8")
         self._frame_no = 0
+        self._worker_access_context = ""
+        self._access_log_redactions: tuple[str, ...] = ()
         self._worker_journals: dict[str, WorkerJournal] = {}
         self._executor = bundle.make_executor(platform)
         try:
@@ -130,7 +171,24 @@ class ToolAgentRuntime:
         if perception_mode == "vision-only":
             setattr(self._executor, "disable_dom_snap", True)
 
-    def run(self, goal: str, *, knowledge: str = "", page_url: str = "", page_title: str = "") -> ToolAgentRun:
+    def run(
+        self,
+        goal: str,
+        *,
+        knowledge: str = "",
+        access_context: str = "",
+        page_url: str = "",
+        page_title: str = "",
+    ) -> ToolAgentRun:
+        self._worker_access_context = access_context.strip()
+        self._access_log_redactions = _access_log_redactions(access_context)
+        executor = getattr(self, "_executor", None)
+        if executor is not None:
+            setattr(
+                executor,
+                "sensitive_text_values",
+                self._access_log_redactions,
+            )
         try:
             return self._run(
                 goal,
@@ -140,6 +198,13 @@ class ToolAgentRuntime:
             )
         finally:
             self._clear_action_visualizer()
+            self._worker_access_context = ""
+            self._access_log_redactions = ()
+            if executor is not None:
+                setattr(executor, "sensitive_text_values", ())
+            journals = getattr(self, "_worker_journals", None)
+            if journals is not None:
+                journals.clear()
 
     def _run(self, goal: str, *, knowledge: str = "", page_url: str = "", page_title: str = "") -> ToolAgentRun:
         self._trace(
@@ -305,10 +370,10 @@ class ToolAgentRuntime:
             max_steps=spec.max_steps,
         )
         active_actions = self._initial_worker_actions(spec)
-        worker_tools = dynamic_worker_tools(active_actions)
         circuit_breaker = WorkerActionCircuitBreaker()
         for step in range(1, spec.max_steps + 1):
             frame, png = self._observe(spec)
+            worker_tools = self._worker_tools_for_frame(spec, active_actions, frame)
             patch_turn = 0
             guard_repair_turn = 0
             circuit_decision = None
@@ -421,7 +486,11 @@ class ToolAgentRuntime:
                             }
                         else:
                             active_actions.append(added_action)
-                            worker_tools = dynamic_worker_tools(active_actions)
+                            worker_tools = self._worker_tools_for_frame(
+                                spec,
+                                active_actions,
+                                frame,
+                            )
                             patch_payload = {
                                 "status": "added",
                                 "action": added_action.model_dump(mode="json"),
@@ -561,10 +630,9 @@ class ToolAgentRuntime:
                 result=result_payload,
             )
             if terminal == "complete":
-                parsed = CompleteWorkerArgs.model_validate(call["args"])
                 descriptor = (
-                    self.data_store.collection_descriptor(parsed.collection_ref)
-                    if parsed.collection_ref
+                    CollectionRef.model_validate(result_payload)
+                    if spec.profile == "collector"
                     else None
                 )
                 self._trace(
@@ -707,8 +775,8 @@ class ToolAgentRuntime:
         )
         return frame, png
 
-    @staticmethod
     def _worker_system_prompt(
+        self,
         spec: WorkerSpec,
         active_actions: list[DynamicActionSpec],
     ) -> str:
@@ -716,11 +784,21 @@ class ToolAgentRuntime:
         spec_for_prompt["actions"] = [
             action.model_dump(mode="json") for action in active_actions
         ]
-        return (
+        prompt = (
             _WORKER_SYSTEM
             + "\n\nWorkerSpec:\n"
             + json.dumps(spec_for_prompt, ensure_ascii=False)
         )
+        access_context = getattr(self, "_worker_access_context", "")
+        if access_context:
+            prompt += (
+                "\n\n## Session access context (private runtime input)\n"
+                "Use these deployment/access facts only when the current screenshot requires "
+                "authentication. Never repeat credentials in state summaries, evidence, final "
+                "results, or user-facing text.\n"
+                + access_context
+            )
+        return prompt
 
     def _worker_messages(
         self,
@@ -745,6 +823,40 @@ class ToolAgentRuntime:
         ]
         return messages, [projection.report]
 
+    @staticmethod
+    def _ready_collection(
+        spec: WorkerSpec,
+        frame: MaterializedFrame,
+    ) -> CollectionRef | None:
+        """Return the current frame's single Runtime-verifiable collection."""
+
+        if spec.profile != "collector" or not spec.data_requirements:
+            return None
+        requirement_id = spec.data_requirements[0].id
+        ready = [
+            collection
+            for collection in frame.collections
+            if collection.requirement_id == requirement_id
+            and collection.coverage.get("scope_status") == "met"
+            and collection.coverage.get("status") == "complete"
+        ]
+        return ready[0] if len(ready) == 1 else None
+
+    def _worker_tools_for_frame(
+        self,
+        spec: WorkerSpec,
+        actions: list[DynamicActionSpec],
+        frame: MaterializedFrame,
+    ) -> list[dict[str, Any]]:
+        completion_mode: Literal["unavailable", "operator", "collector"]
+        if spec.profile == "operator":
+            completion_mode = "operator"
+        elif self._ready_collection(spec, frame) is not None:
+            completion_mode = "collector"
+        else:
+            completion_mode = "unavailable"
+        return dynamic_worker_tools(actions, completion_mode=completion_mode)
+
     def _execute_worker_tool(
         self,
         spec: WorkerSpec,
@@ -754,11 +866,17 @@ class ToolAgentRuntime:
         frame: MaterializedFrame | None = None,
     ) -> tuple[dict[str, Any], str | None]:
         if call["name"] == "complete":
-            parsed = CompleteWorkerArgs.model_validate(call["args"])
+            CompleteReadyWorkerArgs.model_validate(call["args"])
             if spec.profile == "collector":
-                if not parsed.collection_ref:
-                    raise ValueError("collector complete requires a CollectionRef")
-                descriptor = self.data_store.collection_descriptor(parsed.collection_ref)
+                if frame is None:
+                    raise ValueError("collector complete requires a current frame")
+                frame_collection = self._ready_collection(spec, frame)
+                if frame_collection is None:
+                    raise ValueError(
+                        "collector complete is unavailable until the current frame "
+                        "contains one scope-met, complete CollectionRef"
+                    )
+                descriptor = self.data_store.collection_descriptor(frame_collection.ref)
                 requirement = spec.data_requirements[0]
                 if descriptor.requirement_id != requirement.id:
                     raise ValueError(
@@ -774,8 +892,6 @@ class ToolAgentRuntime:
                         f"CollectionRef {descriptor.ref!r} coverage is not complete"
                     )
                 return descriptor.model_dump(mode="json"), "complete"
-            if parsed.collection_ref:
-                raise ValueError("operator complete must not return a CollectionRef")
             return {"status": "completed"}, "complete"
         if call["name"] == "fail":
             parsed = FailWorkerArgs.model_validate(call["args"])
@@ -1203,6 +1319,10 @@ class ToolAgentRuntime:
         if trace is None:
             self.trace = []
             trace = self.trace
+        payload = _redact_log_value(
+            payload,
+            getattr(self, "_access_log_redactions", ()),
+        )
         layer = self._event_layer(event)
         message = self._event_message(event, payload)
         started_at = getattr(self, "_started_at", None)

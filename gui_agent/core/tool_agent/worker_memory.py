@@ -211,8 +211,30 @@ def build_worker_memory_view(
 
 
 def _frame_payload(frame: MaterializedFrame, *, compact: bool) -> dict[str, Any]:
+    scope_blockers: dict[str, dict[str, Any]] = {}
+    for requirement_id, scope in frame.requirement_scopes.items():
+        if str(scope.get("status") or "") != "unmet":
+            continue
+        requested = dict(scope.get("requested_filters") or {})
+        applied = dict(scope.get("applied_filters") or {})
+        scope_blockers[requirement_id] = {
+            "status": "unmet",
+            "missing_applied_filters": sorted(set(requested).difference(applied)),
+            "extra_applied_filters": sorted(set(applied).difference(requested)),
+            "conflicting_applied_filters": sorted(
+                key
+                for key in set(requested).intersection(applied)
+                if requested[key] != applied[key]
+            ),
+            "instruction": (
+                "Resolve every missing, conflicting, or extra applied filter through "
+                "the visible UI before collecting or completing."
+            ),
+        }
     if not compact:
-        return frame.model_dump(mode="json", exclude={"screenshot_path"})
+        payload = frame.model_dump(mode="json", exclude={"screenshot_path"})
+        payload["scope_blockers"] = scope_blockers
+        return payload
     return {
         "frame_id": frame.frame_id,
         "url": frame.url,
@@ -240,6 +262,7 @@ def _frame_payload(frame: MaterializedFrame, *, compact: bool) -> dict[str, Any]
             for item in frame.collections
         ],
         "missing_requirements": frame.missing_requirements,
+        "scope_blockers": scope_blockers,
     }
 
 

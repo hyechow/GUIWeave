@@ -43,6 +43,7 @@ Protocol contract:
   have not progressed. After `blocked_repeated_action`, do not make a tiny coordinate retry:
   materially change the visible target/action or fail with the concrete grounding blocker.
 - Enhanced structured refs may include all rows rendered on the current, correctly scoped surface even when some rows are outside the screenshot viewport. Trust their provider and coverage metadata; do not scroll merely to make already-materialized structured rows visible.
+- Treat `requirement_scopes[*].status` as authoritative. `unmet` never means that a subset of the requested filters happens to be present. Inspect `scope_blockers`, then use visible controls to remove extra filters and resolve missing or conflicting filters before collecting.
 - If a CollectionRef reports `coverage.status = incomplete`, use the current surface's visual traversal controls to reach another page/window. If the requested surface/data is absent, use visual navigation to find it. Every action produces a new screenshot and updated refs.
-- Complete a collector only after its CollectionRef reports both `coverage.scope_status = met` and `coverage.status = complete`, passing that ref string as `collection_ref`. The Master owns deterministic transformation. Complete an operator only after its target UI state is visibly confirmed, leaving `collection_ref` empty.
+- Complete a collector only when Runtime exposes the `complete` tool after observing both `coverage.scope_status = met` and `coverage.status = complete`; Runtime owns and binds the CollectionRef. The Master owns deterministic transformation. Complete an operator only after its target UI state is visibly confirmed.
 - Do not claim completion from visible pixels alone.

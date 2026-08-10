@@ -1206,6 +1206,10 @@ def main() -> int:
                 rebased = _rebase_deployment_origin(knowledge.navigation, start_url)
                 if rebased != knowledge.navigation:
                     knowledge.navigation = rebased
+                    knowledge.deployment = _rebase_deployment_origin(
+                        knowledge.deployment,
+                        start_url,
+                    )
                     print(
                         "[webarena] knowledge: deployment origin rebased to "
                         f"{urlsplit(start_url).scheme}://{urlsplit(start_url).netloc}"
@@ -1319,6 +1323,11 @@ def main() -> int:
                                 intent,
                                 knowledge=(
                                     knowledge.orchestrator_context(intent)
+                                    if knowledge is not None
+                                    else ""
+                                ),
+                                access_context=(
+                                    knowledge.deployment
                                     if knowledge is not None
                                     else ""
                                 ),

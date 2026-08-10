@@ -256,13 +256,18 @@ class BrowserExecutor(VisionExecutor):
         # (the field is empty in the vast majority of type targets; a genuine replace
         # can emit a separate clear_text).
         kind = _focused_kind(client)
+        displayed_text = (
+            "[session access value redacted]"
+            if text in getattr(self, "sensitive_text_values", ())
+            else repr(text)
+        )
         if kind == "input":
-            print(f"  清空并输入: {text!r}")
+            print(f"  清空并输入: {displayed_text}")
             result = client.select_all()
             print(f"  结果: {result}")
             return self._result_succeeded(result, "输入前全选")
         else:
-            print(f"  输入（{kind}，跳过 select_all 防块编辑器吞字）: {text!r}")
+            print(f"  输入（{kind}，跳过 select_all 防块编辑器吞字）: {displayed_text}")
             return True
 
     def _dispatch_extra(self, action: BrowserAction, client) -> Optional[bool]:

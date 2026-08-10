@@ -30,6 +30,13 @@ class CompleteWorkerArgs(BaseModel):
     evidence: list[str] = Field(default_factory=list)
 
 
+class CompleteReadyWorkerArgs(BaseModel):
+    """Completion evidence when Runtime owns any required data reference."""
+
+    model_config = ConfigDict(extra="forbid")
+    evidence: list[str] = Field(default_factory=list)
+
+
 class FailWorkerArgs(BaseModel):
     model_config = ConfigDict(extra="forbid")
     reason: str
@@ -212,31 +219,47 @@ def _with_worker_state(tool: dict[str, Any]) -> dict[str, Any]:
     return wrapped
 
 
-def dynamic_worker_tools(actions: list[DynamicActionSpec]) -> list[dict[str, Any]]:
+def dynamic_worker_tools(
+    actions: list[DynamicActionSpec],
+    *,
+    completion_mode: Literal[
+        "legacy", "unavailable", "operator", "collector"
+    ] = "legacy",
+) -> list[dict[str, Any]]:
     tools = [_with_worker_state(dynamic_action_tool(item)) for item in actions]
-    tools.extend(
-        [
-            _with_worker_state(model_tool(
-                "request_action_patch",
-                (
-                    "Add one missing frame-driven GUI action from the registered capability set, "
-                    "then reason again on the same screenshot. This does not execute a GUI action."
-                ),
-                RequestActionPatchArgs,
-            )),
-            _with_worker_state(model_tool(
-                "complete",
-                (
-                    "Complete this GUI Worker. A collector must provide its complete "
-                    "CollectionRef; an operator leaves collection_ref empty."
-                ),
-                CompleteWorkerArgs,
-            )),
-            _with_worker_state(model_tool(
-                "fail", "Stop this worker with an explicit reason.", FailWorkerArgs
-            )),
-        ]
-    )
+    tools.append(_with_worker_state(model_tool(
+        "request_action_patch",
+        (
+            "Add one missing frame-driven GUI action from the registered capability set, "
+            "then reason again on the same screenshot. This does not execute a GUI action."
+        ),
+        RequestActionPatchArgs,
+    )))
+    if completion_mode != "unavailable":
+        complete_model = (
+            CompleteWorkerArgs
+            if completion_mode == "legacy"
+            else CompleteReadyWorkerArgs
+        )
+        description = (
+            "Complete this GUI Worker. A collector must provide its complete "
+            "CollectionRef; an operator leaves collection_ref empty."
+            if completion_mode == "legacy"
+            else "Complete this operator after its target UI state is visibly confirmed."
+            if completion_mode == "operator"
+            else (
+                "Complete this collector using the valid complete CollectionRef already "
+                "bound by Runtime for the current frame."
+            )
+        )
+        tools.append(_with_worker_state(model_tool(
+            "complete",
+            description,
+            complete_model,
+        )))
+    tools.append(_with_worker_state(model_tool(
+        "fail", "Stop this worker with an explicit reason.", FailWorkerArgs
+    )))
     return tools
 
 
