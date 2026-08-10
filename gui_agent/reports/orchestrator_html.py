@@ -295,12 +295,19 @@ def _coding_call_label(op: str, payload: dict | None = None) -> str:
     if op == "query":
         entity = payload.get("entity") or "?"
         return f"ctx.query({entity!r}, …)"
+    if op == "gui_worker":
+        worker_id = payload.get("worker_id") or payload.get("id") or "?"
+        profile = payload.get("profile") or "operator"
+        return f"ctx.gui_worker({worker_id!r}, profile={profile!r}, …)"
+    if op == "data_worker":
+        worker_id = payload.get("worker_id") or payload.get("id") or "?"
+        return f"ctx.data_worker({worker_id!r}, …)"
     return f"ctx.{op}(…)"
 
 
 _CODING_CTX_PLAN_OPS = frozenset({
     "reach", "commit", "gui", "write", "query", "lookup", "constrain", "focus",
-    "acquire", "read", "command", "interact",
+    "acquire", "read", "command", "interact", "gui_worker", "data_worker",
 })
 
 # Plan-level ctx.* call → ordered runtime ops it may expand into.
@@ -315,6 +322,8 @@ _PLAN_RUNTIME_CONSUME: dict[str, tuple[str, ...]] = {
     "focus": ("focus",),
     "command": ("command",),
     "interact": ("reach", "commit"),
+    "gui_worker": ("gui_worker",),
+    "data_worker": ("data_worker",),
 }
 
 
@@ -863,15 +872,61 @@ def coding_source_line_by_call_id(orchestrator: dict | None) -> dict[str, int]:
     }
 
 
+def _render_compile_attempt_history(orchestrator: dict) -> str:
+    attempts = [
+        item for item in (orchestrator.get("compile_attempts") or [])
+        if isinstance(item, dict)
+    ]
+    if not attempts:
+        return ""
+    failed = sum(not bool(item.get("passed")) for item in attempts)
+    rows: list[str] = []
+    for item in attempts:
+        passed = bool(item.get("passed"))
+        diagnostics = [str(value) for value in (item.get("diagnostics") or [])]
+        usage = item.get("token_usage") if isinstance(item.get("token_usage"), dict) else {}
+        elapsed = float(item.get("elapsed_s") or 0)
+        meta = [f"{elapsed:.1f}s"] if elapsed else []
+        if usage:
+            meta.append(
+                f"{_fmt_tokens(int(usage.get('input') or 0))}/"
+                f"{_fmt_tokens(int(usage.get('output') or 0))} tok"
+            )
+        verdict = "passed" if passed else f"{len(diagnostics)} issue(s)"
+        phase_cls = "coding-phase-ok" if passed else "coding-phase-fail"
+        detail = "\n".join(diagnostics) or "Program passed static review."
+        rows.append(
+            '<details class="coding-src-api-group"'
+            + ("" if passed else " open")
+            + '><summary>'
+            f'<span class="coding-src-index-line">g{_safe(str(item.get("generation") or "?"))}.'
+            f'a{_safe(str(item.get("attempt") or "?"))}</span>'
+            f'<span class="coding-phase {phase_cls}">{_safe(verdict)}</span>'
+            f'<span class="coding-src-api-meta">{_safe(" · ".join(meta))}</span>'
+            '</summary><div class="coding-src-api-body">'
+            f'<pre class="coding-data-pre">{_safe(detail)}</pre>'
+            '</div></details>'
+        )
+    return (
+        '<details class="coding-src-index">'
+        f'<summary>Review history<span>{len(attempts)} attempts · {failed} repaired</span></summary>'
+        f'<div class="coding-src-index-body">{"".join(rows)}</div>'
+        '</details>'
+    )
+
+
 def _render_coding_program_shell(orchestrator: dict, program: dict) -> str:
     """Coding plan shell: goal, compile status, annotated Python source."""
     source = str(program.get("source") or "").strip()
     if not source:
         return ""
     goal = str(program.get("goal") or "")
+    downstream_label = str(
+        program.get("downstream_label") or "Statement 卡片（数据 + UI 交互）"
+    )
     input_html = (
         f'<div class="prog-input"><span class="prog-input-label">输入</span>{_safe(goal)}'
-        '<span class="prog-input-arrow">↓ Statement 卡片（数据 + UI 交互）</span></div>'
+        f'<span class="prog-input-arrow">↓ {_safe(downstream_label)}</span></div>'
         if goal else ""
     )
     compile_report = next(
@@ -914,15 +969,19 @@ def _render_coding_program_shell(orchestrator: dict, program: dict) -> str:
         f'{_render_annotated_coding_source(source, orchestrator)}'
         f'</details>'
     )
+    history_html = _render_compile_attempt_history(orchestrator)
+    program_label = str(
+        program.get("label") or "Coding Orchestrator · Python 执行计划"
+    )
     return (
         '<div class="statement prog-section" id="ms-orchestrate-coding">'
         '<div class="statement-header">'
         '<h2>#0</h2>'
-        '<span class="statement-name">Coding Orchestrator · Python 执行计划</span>'
+        f'<span class="statement-name">{_safe(program_label)}</span>'
         '<span class="statement-badge statement-badge-default">python</span>'
         f'{_render_orchestrator_metrics(orchestrator)}'
         '</div>'
-        f'<div class="prog-body">{input_html}{compile_html}{source_html}'
+        f'<div class="prog-body">{input_html}{compile_html}{history_html}{source_html}'
         f'{_render_orchestrator_context_reports(orchestrator)}'
         '</div>'
         '</div>'

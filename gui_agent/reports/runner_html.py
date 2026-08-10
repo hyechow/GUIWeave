@@ -714,6 +714,10 @@ TIMING_COLORS: dict[str, str] = {
     "transition": "#3b82f6",
     "action_policy": "#22c55e",
     "read": "#0f766e",
+    "tool_agent.master": "#7c3aed",
+    "tool_agent.worker": "#2563eb",
+    "tool_agent.perception": "#0891b2",
+    "data_worker": "#16a34a",
 }
 
 KIND_BADGE = {
@@ -1311,7 +1315,15 @@ def _render_provenance(raw_input: str, goal: str, router: dict) -> str:
 
 def generate_html(data: ReportData, grid: bool = False) -> str:
     stats_parts = [f"{k}: {v}" for k, v in data.stats.items()]
-    llm_s = sum(m.get("total_time", 0) for m in data.statements)  # Σ LLM-module timings
+    orchestrator_timings = (
+        data.orchestrator.get("timings")
+        if isinstance(data.orchestrator.get("timings"), dict)
+        else {}
+    )
+    llm_s = (
+        sum(m.get("total_time", 0) for m in data.statements)
+        + sum(float(value or 0) for value in orchestrator_timings.values())
+    )
     if data.wall_clock_s:
         # True end-to-end elapsed, split into LLM compute, settle waits, and "other"
         # (perception / action execution / scheduling overhead = wall − LLM − settle).
@@ -1322,9 +1334,18 @@ def generate_html(data: ReportData, grid: bool = False) -> str:
         )
     else:
         stats_parts.append(f"LLM: {llm_s:.1f}s")  # old logs without wall_clock_s
-    sess_in = sum(int(m.get("input_tokens", 0)) for m in data.statements)
-    sess_out = sum(int(m.get("output_tokens", 0)) for m in data.statements)
-    sess_cost = sum(float(m.get("cost", 0)) for m in data.statements)
+    orchestrator_usage = (
+        data.orchestrator.get("token_usage")
+        if isinstance(data.orchestrator.get("token_usage"), dict)
+        else {}
+    )
+    orchestrator_in, orchestrator_out = _sum_tokens(orchestrator_usage)
+    sess_in = sum(int(m.get("input_tokens", 0)) for m in data.statements) + orchestrator_in
+    sess_out = sum(int(m.get("output_tokens", 0)) for m in data.statements) + orchestrator_out
+    sess_cost = (
+        sum(float(m.get("cost", 0)) for m in data.statements)
+        + _token_cost(orchestrator_usage)
+    )
     if sess_in or sess_out:
         stats_parts.append(
             f"tokens: in {_fmt_tokens(sess_in)} / out {_fmt_tokens(sess_out)}"
@@ -1759,8 +1780,7 @@ def generate_html(data: ReportData, grid: bool = False) -> str:
         price_chip = ""
         if sess_in or sess_out:
             models_seen: dict[str, tuple[float, float]] = {}
-            for k in ("supervisor", "orchestrator", "action_policy"):
-                mdl = (data.models or {}).get(k)
+            for k, mdl in (data.models or {}).items():
                 if mdl and mdl not in models_seen:
                     models_seen[mdl] = model_price(mdl)
             if not models_seen:

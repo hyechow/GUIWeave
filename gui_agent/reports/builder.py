@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import io
 import json
+from datetime import datetime, timedelta
 from pathlib import Path
 
 from PIL import Image
@@ -30,20 +31,126 @@ from .models import (
 _REPO_ROOT = Path(__file__).resolve().parents[2]
 
 
+def _reduce_tool_agent_events(events: list[dict]) -> list[dict]:
+    """Collapse one visual Worker turn into one report timeline entry.
+
+    The JSONL trace remains lossless. The HTML timeline is a narrative projection:
+    observe, state/action decisions, same-frame action patches, execution and protocol
+    telemetry belong to one Worker turn rather than several unrelated cards.
+    """
+    projected: list[dict] = []
+    pending: dict | None = None
+    pre_observe_details: list[dict] = []
+
+    def flush() -> None:
+        nonlocal pending
+        if pending is None:
+            return
+        decisions = pending.get("decisions") or []
+        final_decision = decisions[-1] if decisions else {}
+        state = (
+            final_decision.get("state")
+            if isinstance(final_decision.get("state"), dict)
+            else {}
+        )
+        action_events = pending.get("action_events") or []
+        final_action = action_events[-1] if action_events else {}
+        pending.update({
+            "event": "worker_turn",
+            "state": state,
+            "tool": final_decision.get("tool") or final_action.get("tool") or "",
+            "args": final_decision.get("args") or {},
+            "action": final_action,
+            "message": state.get("summary") or pending.get("message") or "",
+            "has_error": bool(pending.get("errors")),
+        })
+        projected.append(pending)
+        pending = None
+
+    for event in events:
+        name = str(event.get("event") or "")
+        if name == "perception_extract":
+            # Perception is emitted immediately before its ``observe`` event, so
+            # once a prior Turn is pending it already belongs to the next frame.
+            pre_observe_details.append(event)
+            continue
+        if name == "worker_state_recovered":
+            if pending is not None:
+                pending.setdefault("details", []).append(event)
+            else:
+                pre_observe_details.append(event)
+            continue
+        if name == "observe":
+            flush()
+            pending = {
+                **event,
+                "observation": event,
+                "decisions": [],
+                "action_events": [],
+                "errors": [],
+                "details": pre_observe_details,
+            }
+            pre_observe_details = []
+            continue
+        if pending is not None and name == "worker_decision":
+            pending["decisions"].append(event)
+            pending["step"] = event.get("step")
+            pending["profile"] = event.get("profile") or pending.get("profile")
+            pending["worker_id"] = event.get("worker_id") or pending.get("worker_id")
+            continue
+        if pending is not None and name in {"runtime_action", "python_transform"}:
+            pending["action_events"].append(event)
+            continue
+        if pending is not None and name in {
+            "worker_action_patch",
+            "worker_action_patch_error",
+            "worker_tool_error",
+            "worker_complete",
+        }:
+            pending["details"].append(event)
+            if name in {"worker_action_patch_error", "worker_tool_error"}:
+                pending["errors"].append(event)
+            continue
+        flush()
+        projected.append(event)
+    flush()
+    return projected
+
+
 def _tool_agent_report_steps(
     run_dir: Path,
     orchestrator: dict,
+    goal: str = "",
 ) -> tuple[list[ReportPage], list[dict], dict]:
-    """Project ``tool_agent_trace.json`` into the existing report timeline model."""
+    """Project a Tool Agent run into Master, GUI Worker and Data Worker layers.
+
+    The persisted JSONL remains event-oriented.  The report is task-oriented: the
+    reviewed Master program is rendered as the plan, each autonomous GUI Worker is
+    one statement card, and one visual frame becomes one Turn.  Runtime diagnostics
+    stay nested inside their owning Turn instead of becoming timeline cards.
+    """
     trace_path = run_dir / "tool_agent_trace.json"
     if not trace_path.is_file():
         configured = Path(str(orchestrator.get("trace_path") or ""))
         if configured.is_file():
             trace_path = configured
         else:
-            return [], [], {"turns": 0, "executed": 0}
-    raw = json.loads(trace_path.read_text(encoding="utf-8"))
+            events_path = run_dir / "tool_agent_events.jsonl"
+            if not events_path.is_file():
+                return [], [], {"turns": 0, "executed": 0}
+            events = []
+            for line in events_path.read_text(encoding="utf-8").splitlines():
+                try:
+                    event = json.loads(line)
+                except json.JSONDecodeError:
+                    continue
+                if isinstance(event, dict):
+                    events.append(event)
+            raw = {"phase": "running", "trace": events}
+    if trace_path.is_file():
+        raw = json.loads(trace_path.read_text(encoding="utf-8"))
     events = [item for item in (raw.get("trace") or []) if isinstance(item, dict)]
+    timeline_events = _reduce_tool_agent_events(events)
     screenshots = sorted(
         run_dir.glob("screenshot_tool_agent_*.png"),
         key=lambda path: int(path.stem.rsplit("_", 1)[-1]),
@@ -52,166 +159,562 @@ def _tool_agent_report_steps(
     frame_screenshots = {
         f"frame:{index}": path.name for index, path in enumerate(screenshots, 1)
     }
-    runtime_actions = {
+    runtime_action_types = {
         str(event.get("tool") or ""): str(event.get("action_type") or "")
-        for event in events
-        if event.get("event") == "runtime_action"
+        for event in events if event.get("event") == "runtime_action"
     }
-    steps: list[ReportStep] = []
-    current_screenshot = first_screenshot
-    executed = 0
-    error_events = {
-        "runtime_error",
-        "worker_protocol_error",
-        "worker_spec_error",
-        "worker_tool_error",
-    }
-    labels = {
-        "master_tool": "Master tool",
-        "worker_spec_error": "WorkerSpec validation",
-        "observe": "Observe + materialize refs",
-        "worker_protocol_error": "Worker protocol repair",
-        "worker_decision": "Worker state + action",
-        "runtime_action": "Runtime GUI action",
-        "python_transform": "Python transform",
-        "worker_tool_error": "Worker tool error",
-        "worker_complete": "Worker complete",
-        "runtime_error": "Runtime error",
-    }
-    for ordinal, event in enumerate(events, 1):
-        event_name = str(event.get("event") or "event")
-        frame_id = str(event.get("frame_id") or "")
-        if frame_id and frame_id in frame_screenshots:
-            current_screenshot = frame_screenshots[frame_id]
-        tool_name = str(event.get("tool") or "")
-        action_type = "command"
-        operation_mode = "non_interactive"
-        executor = "command"
-        if event_name == "observe":
-            action_type = executor = "acquire"
-        elif event_name == "worker_decision":
-            action_type = runtime_actions.get(tool_name) or "command"
-            if action_type in {"tap", "scroll", "drag", "type"}:
-                operation_mode = "interactive"
-        elif event_name == "runtime_action":
-            action_type = str(event.get("action_type") or "command")
-            operation_mode = "interactive"
-        state = event.get("state") if isinstance(event.get("state"), dict) else {}
-        description = labels.get(event_name, event_name.replace("_", " ").title())
-        if tool_name:
-            description += f" · {tool_name}"
-        summary = str(
-            state.get("summary")
-            or event.get("error")
-            or event.get("summary")
-            or ""
-        )
-        is_error = event_name in error_events
-        if not is_error:
-            executed += 1
-        evidence_payload = {
-            key: value
-            for key, value in event.items()
-            if key not in {"index", "event"}
+
+    def event_timestamp(event: dict) -> str:
+        timestamp = str(event.get("timestamp") or "")
+        if timestamp:
+            return timestamp
+        try:
+            started = datetime.strptime(run_dir.name, "%Y%m%d_%H%M%S")
+            return (started + timedelta(seconds=float(event.get("elapsed_s") or 0))).isoformat()
+        except (TypeError, ValueError):
+            return ""
+
+    def turn_metrics(turn: dict) -> tuple[dict[str, float], dict[str, dict[str, int]], int]:
+        timings: dict[str, float] = {}
+        tokens: dict[str, dict[str, int]] = {}
+        calls = 0
+        metric_events = [
+            *(turn.get("details") or []),
+            *(turn.get("decisions") or []),
+        ]
+        for item in metric_events:
+            if not isinstance(item, dict):
+                continue
+            name = str(item.get("event") or "")
+            module = (
+                "tool_agent.perception"
+                if name == "perception_extract"
+                else "tool_agent.worker"
+            )
+            elapsed = float(item.get("llm_elapsed_s") or 0)
+            usage = item.get("token_usage") if isinstance(item.get("token_usage"), dict) else {}
+            if elapsed > 0:
+                timings[module] = timings.get(module, 0.0) + elapsed
+            if usage:
+                calls += 1
+                target = tokens.setdefault(module, {"input": 0, "output": 0})
+                target["input"] += int(usage.get("input") or 0)
+                target["output"] += int(usage.get("output") or 0)
+        return timings, tokens, calls
+
+    def annotated_frame(
+        screenshot: str,
+        *,
+        action_type: str,
+        args: dict,
+        ordinal: int,
+    ) -> tuple[str, str]:
+        x = args.get("x")
+        y = args.get("y")
+        if not isinstance(x, (int, float)) or not isinstance(y, (int, float)):
+            return screenshot, screenshot
+        source_path = run_dir / screenshot
+        if not source_path.is_file():
+            return screenshot, screenshot
+        ann_name = f"{source_path.stem}_ann.jpg"
+        full_name = f"{source_path.stem}_ann_full.jpg"
+        ann_path = run_dir / ann_name
+        full_path = run_dir / full_name
+        try:
+            image = annotate_action(
+                _load_img(source_path),
+                action_type,
+                float(x),
+                float(y),
+                ordinal,
+                direction=str(args.get("direction") or "") or None,
+                text=str(args.get("text") or args.get("description") or "") or None,
+            )
+            _save_report_img(image, ann_path)
+            _save_report_img(image, full_path, max_w=None)
+            return ann_name, full_name
+        except Exception:
+            return screenshot, screenshot
+
+    def compact_observation(observation: dict) -> dict:
+        collections = []
+        for item in observation.get("collections") or []:
+            if not isinstance(item, dict):
+                continue
+            coverage = item.get("coverage") if isinstance(item.get("coverage"), dict) else {}
+            collections.append({
+                "ref": item.get("ref"),
+                "requirement": item.get("requirement_id"),
+                "rows": item.get("row_count"),
+                "status": coverage.get("status"),
+                "known_total": coverage.get("known_total"),
+                "scope_status": coverage.get("scope_status"),
+                "source_scope": coverage.get("source_scope"),
+            })
+        return {
+            "frame": observation.get("frame_id"),
+            "mode": observation.get("mode"),
+            "scope": observation.get("requirement_scopes") or {},
+            "chunks": [
+                {
+                    "ref": item.get("ref"),
+                    "provider": item.get("provider"),
+                    "rows": item.get("row_count"),
+                }
+                for item in (observation.get("chunks") or [])
+                if isinstance(item, dict)
+            ],
+            "collections": collections,
+            "controls": observation.get("control_count", 0),
         }
-        steps.append(ReportStep(
-            label=f"Turn {ordinal}",
-            action_type=action_type,
+
+    compile_attempts = [
+        event for event in events if event.get("event") == "master_compile_attempt"
+    ]
+    program_event = next(
+        (event for event in reversed(events) if event.get("event") == "master_program_generated"),
+        None,
+    )
+    if program_event is not None:
+        master_usage = {"input": 0, "output": 0}
+        master_elapsed = 0.0
+        for attempt in compile_attempts:
+            usage = attempt.get("token_usage") if isinstance(attempt.get("token_usage"), dict) else {}
+            master_usage["input"] += int(usage.get("input") or 0)
+            master_usage["output"] += int(usage.get("output") or 0)
+            master_elapsed += float(attempt.get("llm_elapsed_s") or 0)
+        orchestrator["program"] = {
+            "kind": "coding",
+            "label": "Coding Master · Python orchestration",
+            "downstream_label": "Agentic Worker cards (GUI + data)",
+            "goal": goal,
+            "source": str(program_event.get("source") or ""),
+        }
+        orchestrator["llm_calls"] = len(compile_attempts)
+        orchestrator["timings"] = {"tool_agent.master": master_elapsed}
+        orchestrator["token_usage"] = {"tool_agent.master": master_usage}
+        orchestrator["compile_attempts"] = [
+            {
+                "generation": item.get("generation"),
+                "attempt": item.get("attempt"),
+                "passed": not bool(item.get("diagnostics")),
+                "diagnostics": item.get("diagnostics") or [],
+                "elapsed_s": item.get("llm_elapsed_s"),
+                "token_usage": item.get("token_usage") or {},
+                "source": item.get("source") or "",
+            }
+            for item in compile_attempts
+        ]
+        orchestrator["context_reports"] = [
+            *[
+                report
+                for attempt in compile_attempts
+                for report in (attempt.get("context_reports") or [])
+                if isinstance(report, dict)
+            ],
+            {
+                "kind": "coding_review",
+                "approved": True,
+                "repaired": len(compile_attempts) > 1,
+            },
+        ]
+
+    dispatches = [
+        event for event in events
+        if event.get("event") == "master_worker_dispatch" and event.get("kind") == "gui"
+    ]
+    legacy_dispatches = []
+    for event in events:
+        if event.get("event") != "master_tool" or event.get("tool") != "run_worker":
+            continue
+        args = event.get("args") if isinstance(event.get("args"), dict) else {}
+        spec = args.get("spec") if isinstance(args.get("spec"), dict) else {}
+        legacy_dispatches.append({
+            **event,
+            "worker_id": str(args.get("worker_id") or "gui_worker"),
+            "goal": str(spec.get("goal") or goal),
+            "spec": spec,
+        })
+    starts = [event for event in events if event.get("event") == "worker_started"]
+    worker_order: list[str] = []
+    worker_meta: dict[str, dict] = {}
+    for event in [*dispatches, *legacy_dispatches, *starts]:
+        worker_id = str(event.get("worker_id") or "")
+        if not worker_id:
+            worker_id = "gui_worker"
+        if worker_id not in worker_order:
+            worker_order.append(worker_id)
+        worker_meta.setdefault(worker_id, {}).update(event)
+
+    turns = [event for event in timeline_events if event.get("event") == "worker_turn"]
+    if turns and not worker_order:
+        fallback_id = str(turns[0].get("worker_id") or "gui_worker")
+        worker_order.append(fallback_id)
+        worker_meta[fallback_id] = {
+            "worker_id": fallback_id,
+            "goal": str(turns[0].get("goal") or goal),
+            "spec": {},
+        }
+    if len(worker_order) == 1:
+        for turn in turns:
+            if not turn.get("worker_id"):
+                turn["worker_id"] = worker_order[0]
+
+    worker_results = {
+        str(event.get("worker_id") or ""): event
+        for event in events if event.get("event") == "master_worker_result"
+    }
+    terminal_error = next(
+        (
+            event for event in reversed(events)
+            if event.get("event") in {"runtime_error", "runtime_interrupted", "master_program_error"}
+        ),
+        None,
+    )
+    pages: list[ReportPage] = []
+    statements: list[dict] = []
+    run_log: list[dict] = []
+    total_turns = 0
+    executed = 0
+    last_screenshot = first_screenshot
+
+    for worker_id in worker_order:
+        meta = worker_meta.get(worker_id) or {}
+        spec = meta.get("spec") if isinstance(meta.get("spec"), dict) else {}
+        profile = str(spec.get("profile") or meta.get("profile") or "operator")
+        worker_goal = str(meta.get("goal") or spec.get("goal") or worker_id)
+        criteria = list(spec.get("success_criteria") or meta.get("success_criteria") or [])
+        result_event = worker_results.get(worker_id) or {}
+        outcome = result_event.get("outcome") if isinstance(result_event.get("outcome"), dict) else {}
+        worker_turns = [turn for turn in turns if str(turn.get("worker_id") or "") == worker_id]
+        steps: list[ReportStep] = []
+        verify_turn: dict | None = None
+        for turn in worker_turns:
+            state = turn.get("state") if isinstance(turn.get("state"), dict) else {}
+            if str(turn.get("tool") or "") == "complete" and state.get("status") == "completed":
+                verify_turn = turn
+                continue
+            ordinal = len(steps) + 1
+            frame_id = str(turn.get("frame_id") or "")
+            screenshot = frame_screenshots.get(frame_id) or last_screenshot
+            if screenshot:
+                last_screenshot = screenshot
+            action = turn.get("action") if isinstance(turn.get("action"), dict) else {}
+            action_event = str(action.get("event") or "")
+            if action_event == "runtime_action":
+                action_type = str(action.get("action_type") or "command")
+                operation_mode = "interactive"
+            elif action_event == "python_transform":
+                action_type = "command"
+                operation_mode = "non_interactive"
+            else:
+                action_type = runtime_action_types.get(str(turn.get("tool") or "")) or "acquire"
+                operation_mode = (
+                    "interactive" if action_type != "acquire" else "observation"
+                )
+            args = turn.get("args") if isinstance(turn.get("args"), dict) else {}
+            annotated, annotated_full = annotated_frame(
+                screenshot,
+                action_type=action_type,
+                args=args,
+                ordinal=ordinal,
+            ) if screenshot else ("", "")
+            timings, token_usage, llm_calls = turn_metrics(turn)
+            llm_context = [
+                report
+                for item in [*(turn.get("details") or []), *(turn.get("decisions") or [])]
+                if isinstance(item, dict)
+                for report in (item.get("context_reports") or [])
+                if isinstance(report, dict)
+            ]
+            errors = [
+                str(item.get("error") or item.get("message") or "")
+                for item in (turn.get("errors") or []) if isinstance(item, dict)
+            ]
+            patches = [
+                item.get("action")
+                for item in (turn.get("details") or [])
+                if isinstance(item, dict) and item.get("event") == "worker_action_patch"
+            ]
+            non_ui = {
+                "executor": "read",
+                "goal": "Observation and decision evidence",
+                "outputs": {
+                    "observation": compact_observation(turn.get("observation") or turn),
+                    "state": {
+                        "status": state.get("status"),
+                        "coverage": state.get("coverage") or {},
+                        "established_facts": state.get("established_facts") or [],
+                        "open_gaps": state.get("open_gaps") or [],
+                    },
+                    "action": {
+                        "tool": turn.get("tool"),
+                        "args": args,
+                        "status": action.get("status"),
+                        "no_effect": action.get("no_effect", False),
+                        "data_ref": action.get("data_ref"),
+                        "result_ref": action.get("result_ref"),
+                        "patches": [item for item in patches if item],
+                    },
+                    **({"worker_actions": spec.get("actions") or []} if program_event is None else {}),
+                },
+                "evidence": errors,
+            }
+            step = ReportStep(
+                label=f"Turn {ordinal}",
+                action_type=action_type,
+                x=float(args["x"]) if isinstance(args.get("x"), (int, float)) else None,
+                y=float(args["y"]) if isinstance(args.get("y"), (int, float)) else None,
+                description=f"{state.get('status', 'observing')} · {turn.get('tool', 'observe')}",
+                annotated_before_url=annotated,
+                annotated_full_url=annotated_full,
+                raw_screenshot_url=screenshot,
+                status="✗" if turn.get("has_error") else "✓",
+                timestamp=event_timestamp(
+                    action or (turn.get("decisions") or [turn])[-1]
+                ),
+                index=int(turn.get("step") or ordinal),
+                statement_id=worker_id,
+                instance_id=worker_id,
+                statement_executor="interact",
+                instruction=str(state.get("next_instruction") or ""),
+                summary=str(state.get("summary") or turn.get("message") or ""),
+                timings=timings,
+                token_usage=token_usage,
+                llm_calls=llm_calls,
+                llm_context=llm_context,
+                action_direction=str(args.get("direction") or "") or None,
+                action_text=str(args.get("text") or args.get("description") or "") or None,
+                operation_mode=operation_mode,
+                non_ui=non_ui,
+                no_effect=bool(action.get("no_effect")),
+            )
+            steps.append(step)
+            total_turns += 1
+            if not turn.get("has_error"):
+                executed += 1
+
+        completed = str(outcome.get("phase") or "") == "completed"
+        checklist = [
+            {"text": str(item), "status": "done" if completed else "pending"}
+            for item in criteria
+        ]
+        verify_url = ""
+        verify_outcome: dict = {}
+        outcome_timings: dict[str, float] = {}
+        outcome_tokens: dict[str, dict[str, int]] = {}
+        if verify_turn is not None:
+            frame_id = str(verify_turn.get("frame_id") or "")
+            verify_url = frame_screenshots.get(frame_id) or last_screenshot
+            if verify_url:
+                last_screenshot = verify_url
+            verify_state = verify_turn.get("state") if isinstance(verify_turn.get("state"), dict) else {}
+            verify_outcome = {
+                "status": "done" if completed or verify_state.get("status") == "completed" else "in_progress",
+                "reason": str(verify_state.get("summary") or outcome.get("summary") or ""),
+                "summary": str(outcome.get("summary") or ""),
+            }
+            outcome_timings, outcome_tokens, _ = turn_metrics(verify_turn)
+        elif outcome:
+            verify_outcome = {
+                "status": "done" if completed else "failed",
+                "reason": str(outcome.get("summary") or ""),
+            }
+        elif terminal_error is not None:
+            verify_outcome = {
+                "status": "failed",
+                "reason": str(terminal_error.get("message") or ""),
+            }
+            outcome = {
+                "phase": "failed",
+                "summary": str(terminal_error.get("message") or ""),
+            }
+
+        terminal_note = str(outcome.get("summary") or "")
+        description = f"{profile} · {worker_goal}"
+        if terminal_note and not steps:
+            description += f" · {terminal_note}"
+
+        page = ReportPage(
+            title=f"GUI Worker · {worker_id}",
+            steps=steps,
+            statement_id=worker_id,
+            instance_id=worker_id,
+            statement_executor="interact",
+            statement_name=f"GUI Worker · {worker_id}",
+            statement_description=description,
+            statement_success="; ".join(map(str, criteria)),
+            checklist=checklist,
+            verify_url=verify_url,
+            verify_outcome=verify_outcome,
+            outcome_after_turn=len(steps),
+            outcome_timings=outcome_timings,
+            outcome_token_usage=outcome_tokens,
+        )
+        pages.append(page)
+        input_tokens = sum(_sum_tokens(step.token_usage)[0] for step in steps) + _sum_tokens(outcome_tokens)[0]
+        output_tokens = sum(_sum_tokens(step.token_usage)[1] for step in steps) + _sum_tokens(outcome_tokens)[1]
+        total_time = sum(sum(step.timings.values()) for step in steps) + sum(outcome_timings.values())
+        statement = {
+            "id": worker_id,
+            "instance_id": worker_id,
+            "name": page.statement_name,
+            "executor": "interact",
+            "description": page.statement_description,
+            "success": page.statement_success,
+            "status": str(outcome.get("phase") or raw.get("phase") or ""),
+            "phase": str(outcome.get("phase") or raw.get("phase") or ""),
+            "checklist": checklist,
+            "turns": str(len(steps)),
+            "total_time": total_time,
+            "timings": {},
+            "input_tokens": input_tokens,
+            "output_tokens": output_tokens,
+            "cost": sum(_token_cost(step.token_usage) for step in steps) + _token_cost(outcome_tokens),
+            "inputs": spec,
+            "outputs": {"result_ref": outcome.get("result_ref")},
+            "last_summary": str(outcome.get("summary") or ""),
+        }
+        statements.append(statement)
+        run_log.append({
+            "instance_id": worker_id,
+            "node_id": worker_id,
+            "name": page.statement_name,
+            "executor": "interact",
+            "coding_op": "gui_worker",
+            "coding_call_id": f"worker:{worker_id}",
+            "coding_payload": {
+                "worker_id": worker_id,
+                **(spec or {"profile": profile, "goal": worker_goal}),
+            },
+            "result": {
+                "phase": str(outcome.get("phase") or raw.get("phase") or ""),
+                "summary": str(outcome.get("summary") or ""),
+                "outputs": {"result_ref": outcome.get("result_ref")},
+            },
+        })
+
+    data_starts = [event for event in events if event.get("event") == "data_worker_start"]
+    data_completes = {
+        str(event.get("worker_id") or ""): event
+        for event in events if event.get("event") == "data_worker_complete"
+    }
+    for start in data_starts:
+        worker_id = str(start.get("worker_id") or "data_worker")
+        complete = data_completes.get(worker_id) or {}
+        outcome = complete.get("outcome") if isinstance(complete.get("outcome"), dict) else {}
+        completed = str(outcome.get("phase") or "") == "completed"
+        duration = max(0.0, float(complete.get("elapsed_s") or 0) - float(start.get("elapsed_s") or 0))
+        screenshot = last_screenshot
+        step = ReportStep(
+            label="Turn 1",
+            action_type="command",
             x=None,
             y=None,
-            description=description,
-            annotated_before_url=current_screenshot,
-            annotated_full_url=current_screenshot,
-            raw_screenshot_url=current_screenshot,
-            status="✗" if is_error else "✓",
-            index=ordinal,
-            statement_id="TA1",
-            instance_id="tool-agent-run",
-            statement_executor="interact",
-            instruction=str(state.get("next_instruction") or ""),
-            summary=summary,
-            operation_mode=operation_mode,
+            description="Deterministic Python data transform",
+            annotated_before_url=screenshot,
+            annotated_full_url=screenshot,
+            raw_screenshot_url=screenshot,
+            status="✓" if completed else "✗",
+            # This step has an explicit deterministic duration.  Leaving the
+            # action timestamp empty prevents the renderer from attributing the
+            # GUI Worker's terminal verification gap to this Data Worker.
+            timestamp="",
+            index=1,
+            statement_id=worker_id,
+            instance_id=worker_id,
+            statement_executor="command",
+            instruction=str(start.get("goal") or ""),
+            summary=str(outcome.get("summary") or complete.get("message") or ""),
+            timings={"data_worker": duration} if duration else {},
+            operation_mode="non_interactive",
             non_ui={
-                "executor": executor,
-                "goal": description,
-                "summary": summary,
+                "executor": "command",
+                "goal": str(start.get("goal") or ""),
+                "summary": str(outcome.get("summary") or ""),
                 "outputs": {
-                    "event": event_name,
-                    "frame": frame_id,
-                    "tool": tool_name,
+                    "inputs": start.get("inputs") or [],
+                    "result_ref": outcome.get("result_ref"),
                 },
-                "evidence": [
-                    json.dumps(evidence_payload, ensure_ascii=False, indent=2)
-                ],
+                "evidence": [str(start.get("source") or "")],
             },
-            no_effect=bool(event.get("no_effect")),
-        ))
-    page = ReportPage(
-        title="Tool Agent · Master → Worker → Runtime",
-        steps=steps,
-        statement_id="TA1",
-        instance_id="tool-agent-run",
-        statement_executor="interact",
-        statement_name="Dynamic agentic execution unit",
-        statement_description=(
-            "Master defines the WorkerSpec and action space; the Worker loops over screenshots "
-            "and refs; runtime executes GUI actions and deterministic transforms."
-        ),
-        statement_success="Finish with a schema-validated ResultRef.",
-        checklist=[
-            {
-                "text": "Master dispatched a dynamic Worker",
-                "status": "done" if any(
-                    e.get("event") == "master_tool" and e.get("tool") == "run_worker"
-                    for e in events
-                ) else "pending",
+        )
+        page = ReportPage(
+            title=f"Data Worker · {worker_id}",
+            steps=[step],
+            statement_id=worker_id,
+            instance_id=worker_id,
+            statement_executor="command",
+            statement_name=f"Data Worker · {worker_id}",
+            statement_description=str(start.get("goal") or ""),
+            statement_success="Produce a schema-validated ResultRef.",
+            checklist=[{
+                "text": "Deterministic transform produced a schema-valid ResultRef",
+                "status": "done" if completed else "blocked",
+            }],
+        )
+        pages.append(page)
+        total_turns += 1
+        executed += int(completed)
+        statement = {
+            "id": worker_id,
+            "instance_id": worker_id,
+            "name": page.statement_name,
+            "executor": "command",
+            "description": page.statement_description,
+            "success": page.statement_success,
+            "status": str(outcome.get("phase") or ""),
+            "phase": str(outcome.get("phase") or ""),
+            "checklist": page.checklist,
+            "turns": "1",
+            # Deterministic execution time is shown on the card but is not LLM time.
+            "total_time": 0.0,
+            "timings": {"data_worker": duration} if duration else {},
+            "input_tokens": 0,
+            "output_tokens": 0,
+            "cost": 0.0,
+            "inputs": {
+                "goal": start.get("goal"),
+                "inputs": start.get("inputs") or [],
+                "source": start.get("source") or "",
             },
-            {
-                "text": "Worker executed a GUI action",
-                "status": "done" if any(
-                    e.get("event") == "runtime_action" for e in events
-                ) else "pending",
+            "outputs": {"result_ref": outcome.get("result_ref")},
+            "last_summary": str(outcome.get("summary") or ""),
+        }
+        statements.append(statement)
+        run_log.append({
+            "instance_id": worker_id,
+            "node_id": worker_id,
+            "name": page.statement_name,
+            "executor": "command",
+            "coding_op": "data_worker",
+            "coding_call_id": f"worker:{worker_id}",
+            "coding_payload": {
+                "worker_id": worker_id,
+                "goal": start.get("goal"),
+                "inputs": start.get("inputs") or [],
+                "source": start.get("source") or "",
             },
-            {
-                "text": "Perception produced DataChunkRef metadata",
-                "status": "done" if any(
-                    (e.get("chunks") or [])
-                    for e in events if e.get("event") == "observe"
-                ) else "pending",
+            "result": {
+                "phase": str(outcome.get("phase") or ""),
+                "summary": str(outcome.get("summary") or ""),
+                "outputs": {"result_ref": outcome.get("result_ref")},
             },
-            {
-                "text": "Python produced a ResultRef",
-                "status": "done" if any(
-                    e.get("event") == "python_transform" for e in events
-                ) else "pending",
-            },
-            {
-                "text": "Master accepted the ResultRef",
-                "status": "done" if any(
-                    e.get("event") == "master_tool" and e.get("tool") == "finish_task"
-                    for e in events
-                ) else "pending",
-            },
-        ],
+        })
+
+    if run_log:
+        orchestrator["report_run_log"] = run_log
+    orchestrator["elapsed_s"] = max(
+        (float(event.get("elapsed_s") or 0) for event in events),
+        default=0.0,
     )
-    statements = [{
-        "id": "TA1",
-        "instance_id": "tool-agent-run",
-        "name": page.statement_name,
-        "executor": "interact",
-        "description": page.statement_description,
-        "success": page.statement_success,
-        "status": str(raw.get("phase") or ""),
-        "checklist": page.checklist,
-        "turns": f"1-{len(steps)}" if steps else "—",
-        "total_time": 0.0,
-        "timings": {},
-        "input_tokens": 0,
-        "output_tokens": 0,
-        "cost": 0.0,
-    }]
-    return ([page] if steps else []), statements, {
-        "turns": len(steps),
+    orchestrator["settle_s_total"] = sum(
+        float(event.get("settle_seconds") or 0)
+        for event in events if event.get("event") == "runtime_action"
+    )
+    return pages, statements, {
+        "workers": len(pages),
+        "turns": total_turns,
         "executed": executed,
     }
 
@@ -658,10 +1161,16 @@ class RunnerReportBuilder:
             data.pages, data.statements, data.stats = _tool_agent_report_steps(
                 run_dir,
                 data.orchestrator,
+                data.goal,
+            )
+            if not data.wall_clock_s:
+                data.wall_clock_s = float(data.orchestrator.get("elapsed_s") or 0)
+            data.settle_s_total = float(
+                data.orchestrator.get("settle_s_total") or 0
             )
             data.orchestration_summary = (
-                "Master → Dynamic Worker → Active Perception → DataRefs → "
-                "Python Transform → ResultRef"
+                "Coding Master → Reviewed Python → Agentic Workers → Active Perception → "
+                "DataRefs → Deterministic Data Worker → ResultRef"
             )
             if not data.reply:
                 data.reply = data.program_output
