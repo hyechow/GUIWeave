@@ -224,7 +224,10 @@ def worker_action_floor() -> list[DynamicActionSpec]:
         DynamicActionSpec(
             name="runtime_type_visible",
             capability="type",
-            description="Enter task-determined text into one visible input control.",
+            description=(
+                "Enter task- or observation-determined text into one visible input control. "
+                "Use this when recovery needs a value different from a fixed-input action."
+            ),
             exposed_args=["text", "description"],
         ),
         DynamicActionSpec(
@@ -376,7 +379,14 @@ def dynamic_action_tool(action: DynamicActionSpec) -> dict[str, Any]:
     schema["required"] = [name for name in schema.get("required", []) if name in exposed]
     if "description" in exposed and "description" not in schema["required"]:
         schema["required"].append("description")
-    return function_tool(action.name, action.description, schema)
+    description = action.description
+    if action.fixed_args:
+        description += (
+            " Runtime has fixed this tool's non-spatial input values; it cannot execute a "
+            "different recovery value. Choose a value-bearing baseline tool when the value "
+            "must change."
+        )
+    return function_tool(action.name, description, schema)
 
 
 def capability_parameters(capability: str) -> dict[str, Any]:

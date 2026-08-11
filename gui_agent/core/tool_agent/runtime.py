@@ -142,7 +142,7 @@ class ToolAgentRuntime:
         platform: Any,
         log_dir: Path,
         perception_mode: PerceptionMode,
-        max_turns: int = 64,
+        max_turns: int = 50,
         max_subgoal_replans: int = 2,
         max_compile_attempts: int = 5,
         status_cb: Callable[[str], None] | None = None,
@@ -155,6 +155,8 @@ class ToolAgentRuntime:
         self.perception_mode = perception_mode
         if max_turns < 1:
             raise ValueError("max_turns must be positive")
+        if max_turns > 50:
+            raise ValueError("max_turns cannot exceed 50")
         if max_subgoal_replans < 0:
             raise ValueError("max_subgoal_replans cannot be negative")
         if max_compile_attempts < 1:
@@ -244,7 +246,7 @@ class ToolAgentRuntime:
             "runtime_started",
             goal=goal,
             perception_mode=self.perception_mode,
-            max_turns=int(getattr(self, "max_turns", 64)),
+            max_turns=int(getattr(self, "max_turns", 50)),
             master_model=self.master_cfg.model,
             worker_model=self.worker_cfg.model,
         )
@@ -328,7 +330,7 @@ class ToolAgentRuntime:
             effect=final_effect,
             result_ref=final_ref.ref if final_ref is not None else "",
             turns_used=int(getattr(self, "_frame_no", 0)),
-            max_turns=int(getattr(self, "max_turns", 64)),
+            max_turns=int(getattr(self, "max_turns", 50)),
         )
         output = self.data_store.result_value(final_ref.ref) if final_ref is not None else None
         run = ToolAgentRun(
@@ -748,17 +750,21 @@ class ToolAgentRuntime:
     def _run_worker(self, worker_id: str, spec: WorkerSpec) -> WorkerOutcome:
         self._validate_worker_spec(spec)
         self._active_worker_id = worker_id
+        logical_worker_id = re.sub(r"_replan_\d+$", "", worker_id)
         journals = getattr(self, "_worker_journals", None)
         if journals is None:
             self._worker_journals = {}
             journals = self._worker_journals
-        journal = journals.setdefault(worker_id, WorkerJournal(worker_id=worker_id))
+        journal = journals.setdefault(
+            logical_worker_id,
+            WorkerJournal(worker_id=logical_worker_id),
+        )
         attempts = getattr(self, "_worker_attempts", None)
         if attempts is None:
             self._worker_attempts = {}
             attempts = self._worker_attempts
-        attempt = int(attempts.get(worker_id) or 0) + 1
-        attempts[worker_id] = attempt
+        attempt = int(attempts.get(logical_worker_id) or 0) + 1
+        attempts[logical_worker_id] = attempt
         retained_events = len(journal.events)
         if attempt > 1:
             journal.record_replan(attempt=attempt)
@@ -775,7 +781,6 @@ class ToolAgentRuntime:
             max_steps=spec.max_steps,
         )
         active_actions = self._initial_worker_actions(spec)
-        logical_worker_id = re.sub(r"_replan_\d+$", "", worker_id)
         breakers = getattr(self, "_logical_action_breakers", None)
         if breakers is None:
             self._logical_action_breakers = {}
@@ -980,10 +985,11 @@ class ToolAgentRuntime:
                     None,
                 )
                 if action_spec is not None:
+                    resolved_guard_args = {**action_spec.fixed_args, **call["args"]}
                     circuit_decision = circuit_breaker.inspect(
                         tool=call["name"],
                         capability=action_spec.capability,
-                        args=call["args"],
+                        args=resolved_guard_args,
                         frame=frame,
                     )
                     if circuit_decision.blocked:

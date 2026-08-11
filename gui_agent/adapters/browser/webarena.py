@@ -62,7 +62,8 @@ _STATUSES = (
 )
 _EVAL_COMPAT_ENV = "WEBARENA_EVAL_COMPAT"
 _REVIEWED_PYTHON_MAX_TURNS = 25
-_TOOL_AGENT_MAX_TURNS = 64
+_TOOL_AGENT_MAX_TURNS = 50
+_MAX_TURNS = 50
 _RESETTABLE_CONTAINERS = {
     "shopping_admin": "webarena_verified_shopping_admin",
 }
@@ -1287,6 +1288,8 @@ def main() -> int:
              "Also read from env WA_HOST / .env (lower precedence than --host).",
     )
     args = parser.parse_args()
+    if args.max_turns is not None and not 1 <= args.max_turns <= _MAX_TURNS:
+        parser.error(f"--max-turns must be between 1 and {_MAX_TURNS}")
     if args.max_turns is None:
         args.max_turns = (
             _TOOL_AGENT_MAX_TURNS

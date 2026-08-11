@@ -12,6 +12,14 @@ ttl: session
 ---
 # Existing product interface
 
+- The **Products** grid has the stable same-origin route `/admin/catalog/product/`. When the
+  direct URL capability is available, prefer this sourced route over reopening the Catalog menu.
+- The Products grid exposes one global input visibly labeled **Search by keyword** above the
+  table; it is not a per-column Name filter. Use that visible input when locating a product.
+- The Products keyword filter treats rendered punctuation and typographic marks as significant.
+  If a full-name query returns no rows while the unfiltered grid contains a visually matching
+  name, keep the required Type discriminator and retry with a distinctive name substring that
+  omits the differing mark. Do not repeat the empty full-name query.
 - A configurable parent has Type `Configurable Product` and owns **Short Description** and
   **Configurations**. A simple variation has Type `Simple Product` and owns **Price**,
   **Quantity**, and **Stock Status**.
@@ -29,6 +37,12 @@ ttl: session
   requested Size and Color values, advance through the remaining steps, use **Generate Products**,
   then save the parent. A selected value in the wizard is not durable until both generation and
   the parent save have completed.
+- Attribute Values initially checks values inherited from existing configurations. Those checks
+  are not part of the new requested set. Use **Deselect All** independently in each relevant
+  attribute section before choosing the requested values. On **Summary**, the New Product Review
+  rows must equal the Cartesian product of only those requested values (one Size and one Color
+  means exactly one pending row); if it is a superset, go Back and correct it before Generate
+  Products.
 - Supplying one requested Configurations member appends that member and preserves unrelated
   existing members; the current Configurations collection is not read or merged by the caller.
 - A request to add one or more Size values to all existing Color variants is one mutation on the
