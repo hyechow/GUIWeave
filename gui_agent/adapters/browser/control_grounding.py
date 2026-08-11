@@ -450,6 +450,11 @@ def _description_names_control(description: str, control: dict) -> bool:
     kind = str(control.get("kind") or "").casefold()
     if kind in {"a", "button", "link", "section_toggle"}:
         names.add(str(control.get("value") or "").strip())
+    if kind == "clickable_row":
+        names.update(
+            str(value or "").strip()
+            for value in (control.get("row_values") or [])
+        )
     return any(_contains_visible_name(description, name) for name in names if name)
 
 
@@ -475,6 +480,8 @@ def _explicit_target_position(description: str, control: dict) -> int | None:
         allowed_types = {"input", "field", "textbox", "textarea", "editor"}
     elif kind in {"native_select", "select", "selectmenu", "listbox", "combobox"}:
         allowed_types = {"select", "dropdown", "combobox", "listbox", "field"}
+    elif kind == "clickable_row":
+        allowed_types = {"row", "item", "record"}
     else:
         return None
     names = {
@@ -483,6 +490,11 @@ def _explicit_target_position(description: str, control: dict) -> int | None:
     }
     if kind in {"a", "button", "link", "section_toggle"}:
         names.add(str(control.get("value") or "").strip())
+    if kind == "clickable_row":
+        names.update(
+            str(value or "").strip()
+            for value in (control.get("row_values") or [])
+        )
     positions: list[int] = []
     for name in names:
         name_tokens = re.findall(r"[a-z0-9]+", name.casefold())
@@ -496,6 +508,15 @@ def _explicit_target_position(description: str, control: dict) -> int | None:
             # Natural descriptions commonly say "Password text input" or "Status native
             # select".  The optional adjective does not change the named control family.
             if any(token in allowed_types for token in following):
+                positions.append(index)
+                continue
+            # Row instructions commonly put the control family before a predicate carrying the
+            # visible identity: "the row where Attribute Code is 'size'".  Keep the wider
+            # preceding window specific to rows; other control families accept only adjacent
+            # wording so a layout-context mention cannot become a far-reaching retarget.
+            preceding_width = 12 if kind == "clickable_row" else 3
+            preceding = description_tokens[max(0, index - preceding_width):index]
+            if any(token in allowed_types for token in preceding):
                 positions.append(index)
     return min(positions) if positions else None
 
@@ -558,12 +579,18 @@ def ground_action_to_nearest_control(
         axis_misses = int(dx > 0) + int(dy > 0)
         edge_distance = math.hypot(dx, dy)
         center_distance = math.hypot(float(action.x) - cx, float(action.y) - cy)
-        if edge_distance > 35.0 or center_distance > 180.0:
+        # A text-entry point can land near the edge of a wide rendered field. Keep
+        # the form allowance only slightly wider than taps; compatibility and
+        # ambiguity checks still have to identify one unique nearby field.
+        form_action = action_type in {"type", "select_option"}
+        max_edge_distance = 50.0 if form_action else 35.0
+        max_center_distance = 220.0 if form_action else 180.0
+        if edge_distance > max_edge_distance or center_distance > max_center_distance:
             continue
         area = max(1.0, half_width * half_height * 4.0)
         candidate = (axis_misses, edge_distance, area, center_distance, control, cx, cy)
         nearby.append(candidate)
-        if center_distance <= 100.0:
+        if center_distance <= (220.0 if form_action else 100.0):
             candidates.append(candidate)
 
     semantic = [

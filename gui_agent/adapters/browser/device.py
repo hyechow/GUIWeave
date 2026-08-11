@@ -23,13 +23,16 @@ closing the user's browser.
 
 from __future__ import annotations
 
+import ipaddress
 import json
 import os
 import signal
 import threading
 import time
+from contextlib import contextmanager
 from pathlib import Path
-from typing import Optional
+from typing import Iterator, Optional
+from urllib.parse import urlsplit
 
 # Default viewport used to denormalize coordinates and for screenshots when the
 # real page viewport cannot be read (CDP pages frequently report viewport_size as
@@ -37,6 +40,46 @@ from typing import Optional
 _DEFAULT_VIEWPORT_W = 1280
 _DEFAULT_VIEWPORT_H = 800
 TEXT_RETARGET_RADIUS_PX = 220
+_CDP_PROXY_ENV_LOCK = threading.Lock()
+
+
+def _direct_cdp_host(cdp_url: str) -> str:
+    """Return a host that should bypass HTTP proxies, or an empty string."""
+
+    host = urlsplit(cdp_url).hostname or ""
+    if host.casefold() == "localhost":
+        return host
+    try:
+        address = ipaddress.ip_address(host)
+    except ValueError:
+        return ""
+    return host if address.is_private or address.is_loopback else ""
+
+
+@contextmanager
+def _cdp_proxy_bypass(cdp_url: str) -> Iterator[None]:
+    """Let the Playwright driver reach a local/private CDP endpoint directly."""
+
+    host = _direct_cdp_host(cdp_url)
+    if not host:
+        yield
+        return
+    bypass_hosts = {host}
+    if host in {"localhost", "127.0.0.1", "::1"}:
+        bypass_hosts.update({"localhost", "127.0.0.1", "::1"})
+    with _CDP_PROXY_ENV_LOCK:
+        previous = {name: os.environ.get(name) for name in ("NO_PROXY", "no_proxy")}
+        try:
+            for name, value in previous.items():
+                entries = {item.strip() for item in (value or "").split(",") if item.strip()}
+                os.environ[name] = ",".join(sorted(entries | bypass_hosts))
+            yield
+        finally:
+            for name, value in previous.items():
+                if value is None:
+                    os.environ.pop(name, None)
+                else:
+                    os.environ[name] = value
 
 # Hard wall-clock cap for a single raw-CDP send. A non-responding Chrome would
 # otherwise hang the agent loop forever. Normal round-trips are well under a second.
@@ -215,7 +258,11 @@ class PlaywrightDevice:
         """
         from playwright.sync_api import sync_playwright
 
-        self._pw = sync_playwright().start()
+        # The Playwright Node driver inherits proxy variables when spawned. CDP is
+        # a direct control channel, so ensure that driver bypasses the proxy for
+        # its configured endpoint without changing the parent process permanently.
+        with _cdp_proxy_bypass(self.cdp_url if not self.headless else ""):
+            self._pw = sync_playwright().start()
         if self.headless:
             viewport = {"width": _DEFAULT_VIEWPORT_W, "height": _DEFAULT_VIEWPORT_H}
             if self.user_data_dir:

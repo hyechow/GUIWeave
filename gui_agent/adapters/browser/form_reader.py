@@ -33,7 +33,7 @@ def form_controls_js() -> str:
     const st = getComputedStyle(el);
     return r.width > 0 && r.height > 0 && st.visibility !== 'hidden' && st.display !== 'none';
   };
-  const inViewport = (el) => {
+  const intersectsViewport = (el) => {
     const r = el.getBoundingClientRect();
     return r.bottom >= 0 && r.right >= 0
       && r.top <= (innerHeight || document.documentElement.clientHeight)
@@ -48,6 +48,33 @@ def form_controls_js() -> str:
     if (r.bottom < 0) return 'above';
     if (r.top > vh) return 'below';
     return 'in';
+  };
+  const viewState = (el) => {
+    const r = el.getBoundingClientRect();
+    const vw = innerWidth || document.documentElement.clientWidth;
+    const vh = innerHeight || document.documentElement.clientHeight;
+    if (!intersectsViewport(el)) {
+      return {in_viewport: false, viewport_pos: viewportPos(el)};
+    }
+    const cx = r.left + r.width / 2;
+    const cy = r.top + r.height / 2;
+    if (cx < 0 || cx >= vw || cy < 0 || cy >= vh) {
+      return {
+        in_viewport: false,
+        viewport_pos: cy < 0 ? 'above' : cy >= vh ? 'below' : (cx < vw / 2 ? 'above' : 'below'),
+      };
+    }
+    const hit = document.elementFromPoint(cx, cy);
+    const exposed = Boolean(hit && (hit === el || el.contains(hit)));
+    if (exposed) return {in_viewport: true, viewport_pos: 'in'};
+    // Sticky headers and fixed toolbars can geometrically overlap a row while hiding its center.
+    // Such a control is not actionable from the screenshot.  Mark it toward the nearest vertical
+    // edge so the visual policy reveals it before clicking instead of trusting stale geometry.
+    return {
+      in_viewport: false,
+      viewport_pos: cy < vh / 2 ? 'above' : 'below',
+      occluded: true,
+    };
   };
   // 收录所有已「渲染」的控件,不按视口位置丢弃,并给每个控件标 in_viewport。长表单(如 Cart
   // Price Rule)里 Rule Name 在顶、Discount/Save 在底,滚到中部时首尾控件滑出视口 —— 旧的视口
@@ -89,6 +116,21 @@ def form_controls_js() -> str:
       if (semantic.length >= 2) break;
     }
     return cut(semantic.join(' '), 80);
+  };
+  const rowValuesOf = (el) => {
+    const row = el.closest('tr,[role="row"],[data-role="row"]');
+    if (!row) return [];
+    const values = [];
+    const seen = new Set();
+    for (const cell of Array.from(row.querySelectorAll(':scope > td,:scope > [role="gridcell"]'))) {
+      const text = cut(cell.innerText || cell.textContent || cell.getAttribute('data-label'), 80);
+      const key = text.toLowerCase();
+      if (!text || seen.has(key)) continue;
+      seen.add(key);
+      values.push(text);
+      if (values.length >= 8) break;
+    }
+    return values;
   };
   const labelOf = (el) => {
     if (el.labels && el.labels.length) {
@@ -178,6 +220,16 @@ def form_controls_js() -> str:
   const kindOf = (el) => {
     const tag = el.tagName;
     const role = clean(el.getAttribute('role')).toLowerCase();
+    const dataRole = clean(el.getAttribute('data-role')).toLowerCase();
+    const rowRoute = clean(
+      el.getAttribute('data-href')
+      || el.getAttribute('data-url')
+      || el.getAttribute('title')
+    );
+    if (
+      (tag === 'TR' || role === 'row' || dataRole === 'row')
+      && (el.hasAttribute('onclick') || /^(?:https?:\/\/|\/)/i.test(rowRoute))
+    ) return 'clickable_row';
     if (tag === 'SELECT') return 'native_select';
     if (tag === 'TEXTAREA') return 'textarea';
     if (role === 'combobox') return 'aria_combobox';
@@ -256,8 +308,7 @@ def form_controls_js() -> str:
       kind: 'status_message',
       value: text,
       rect: rectOf(el),
-      in_viewport: inViewport(el),
-      viewport_pos: viewportPos(el),
+      ...viewState(el),
     }, statusControls);
   }
   const expandedState = (el) => {
@@ -359,13 +410,15 @@ def form_controls_js() -> str:
       id: cut(el.id || '', 80),
       value: expandedState(el),
       rect: rectOf(el),
-      in_viewport: inViewport(el),
-      viewport_pos: viewportPos(el),
+      ...viewState(el),
     }, sectionControls);
   }
   const selector = [
     'input', 'select', 'textarea', 'button', 'a[href]',
     '[role=button]', '[role=link]', '[role=combobox]', '[role=listbox]',
+    'tr[onclick]', '[role=row][onclick]', '[data-role=row][onclick]',
+    'tr[data-href]', 'tr[data-url]',
+    '[role=row][data-href]', '[role=row][data-url]',
   ].join(',');
   for (const el of Array.from(document.querySelectorAll(selector))) {
     if (seenElements.has(el) || !rendered(el)) continue;
@@ -405,14 +458,17 @@ def form_controls_js() -> str:
       selected_text: '',
       focused: el === document.activeElement,
       rect: rectOf(el),
-      in_viewport: inViewport(el),
-      viewport_pos: viewportPos(el),
+      ...viewState(el),
     };
-    const repeatedGroup = repeatedGroupOf(el);
+    const repeatedGroup = kind === 'clickable_row' ? null : repeatedGroupOf(el);
     if (repeatedGroup) {
       item.group_id = repeatedGroup.id;
       item.group_index = repeatedGroup.index;
       item.group_field = repeatedGroup.field;
+    }
+    if (kind === 'clickable_row') {
+      item.row_values = rowValuesOf(el);
+      item.label = item.row_values[0] || item.label;
     }
     if (isFilter) item.is_filter = true;
     if (queryAction) item.query_action = queryAction;
@@ -483,8 +539,7 @@ def form_controls_js() -> str:
       value: cut(richEditorValue(el), 80),
       focused: el === document.activeElement,
       rect: rectOf(el),
-      in_viewport: inViewport(el),
-      viewport_pos: viewportPos(el),
+      ...viewState(el),
     });
   }
   return JSON.stringify({
@@ -529,6 +584,7 @@ def normalize_form_control_snapshot(
         selected_text = _text(item.get("selected_text"), MAX_TEXT)
         selected_text_primary = _text(item.get("selected_text_primary"), MAX_TEXT)
         options = _string_list(item.get("options"))
+        row_values = _string_list(item.get("row_values"))
         if not any([
             kind, label, name, control_id, placeholder, value, selected_text,
             selected_text_primary, options,
@@ -556,6 +612,8 @@ def normalize_form_control_snapshot(
             norm["selected_text_primary"] = selected_text_primary
         if options:
             norm["options"] = options
+        if row_values:
+            norm["row_values"] = row_values
         if item.get("focused") is True:
             norm["focused"] = True
         if item.get("is_filter") is True:
@@ -594,6 +652,8 @@ def normalize_form_control_snapshot(
         # concluding it is absent.
         if item.get("in_viewport") is False:
             norm["in_viewport"] = False
+            if item.get("occluded") is True:
+                norm["occluded"] = True
             # Carry the scroll DIRECTION so the planner scrolls the right way to reach it.
             vp = item.get("viewport_pos")
             if vp in ("above", "below"):

@@ -120,7 +120,14 @@ def _setup_check(cdp_url: "Optional[str]", *, headless: bool | None = None) -> S
 
     url = cdp_url or os.environ.get("CHROME_CDP_URL") or "http://localhost:9222"
     try:
-        with urllib.request.urlopen(f"{url}/json/version", timeout=3) as resp:
+        from gui_agent.adapters.browser.device import _direct_cdp_host
+
+        if _direct_cdp_host(url):
+            opener = urllib.request.build_opener(urllib.request.ProxyHandler({}))
+            request = opener.open
+        else:
+            request = urllib.request.urlopen
+        with request(f"{url}/json/version", timeout=3) as resp:
             info = json.loads(resp.read().decode())
     except Exception as exc:  # noqa: BLE001
         return SetupCheckResult(
