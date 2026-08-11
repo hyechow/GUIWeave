@@ -63,6 +63,7 @@ def test_python_cli_uses_runtime_specific_default_max_turns() -> None:
     ).read_text(encoding="utf-8")
 
     assert '_REVIEWED_PYTHON_MAX_TURNS = 25' in source
-    assert '_TOOL_AGENT_MAX_TURNS = 64' in source
+    assert '_TOOL_AGENT_MAX_TURNS = 50' in source
+    assert '_MAX_TURNS = 50' in source
     assert 'default=None' in source
     assert 'if args.runtime == "tool-agent"' in source

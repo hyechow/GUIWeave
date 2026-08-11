@@ -113,9 +113,11 @@ def test_select_option_keeps_value_fixed_but_coordinates_worker_owned() -> None:
 
     assert action.fixed_args == {"text": "Complete"}
     assert set(action.exposed_args) == {"x", "y"}
-    parameters = dynamic_action_tool(action)["function"]["parameters"]
+    tool = dynamic_action_tool(action)["function"]
+    parameters = tool["parameters"]
     assert set(parameters["properties"]) == {"x", "y"}
     assert set(parameters["required"]) == {"x", "y"}
+    assert "cannot execute a different recovery value" in tool["description"]
     validate(instance={"x": 800, "y": 500}, schema=parameters)
 
 
@@ -246,6 +248,8 @@ def test_runtime_type_action_keeps_text_dynamic_and_coordinates_visual() -> None
         "x", "y", "text", "description"
     }
     parameters = dynamic_action_tool(action)["function"]["parameters"]
+    description = dynamic_action_tool(action)["function"]["description"]
+    assert "recovery needs a value different" in description
     validate(
         instance={
             "x": 200,

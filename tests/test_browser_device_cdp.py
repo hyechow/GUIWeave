@@ -1,4 +1,11 @@
-from gui_agent.adapters.browser.device import PlaywrightDevice, _CDPTimeout
+import os
+
+from gui_agent.adapters.browser.device import (
+    PlaywrightDevice,
+    _CDPTimeout,
+    _cdp_proxy_bypass,
+    _direct_cdp_host,
+)
 
 
 class _FakeSession:
@@ -16,6 +23,29 @@ def _device_with_session(session: _FakeSession) -> PlaywrightDevice:
     dev._xhr_ids = {}
     dev._xhr_last = 0.0
     return dev
+
+
+def test_cdp_proxy_bypass_is_scoped_to_driver_startup(monkeypatch):
+    monkeypatch.setenv("NO_PROXY", "example.test")
+    monkeypatch.delenv("no_proxy", raising=False)
+
+    with _cdp_proxy_bypass("http://localhost:9222"):
+        assert set(os.environ["NO_PROXY"].split(",")) >= {
+            "example.test",
+            "localhost",
+            "127.0.0.1",
+            "::1",
+        }
+        assert "localhost" in os.environ["no_proxy"].split(",")
+
+    assert os.environ["NO_PROXY"] == "example.test"
+    assert "no_proxy" not in os.environ
+
+
+def test_cdp_proxy_bypass_is_limited_to_local_and_private_hosts():
+    assert _direct_cdp_host("http://localhost:9222") == "localhost"
+    assert _direct_cdp_host("http://192.168.1.103:9222") == "192.168.1.103"
+    assert _direct_cdp_host("https://public.example:9222") == ""
 
 
 def test_ensure_net_tracking_uses_timed_send_and_arms_handlers():

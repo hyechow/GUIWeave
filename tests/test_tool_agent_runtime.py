@@ -32,6 +32,17 @@ def _state(*, missing: bool) -> str:
     )
 
 
+def test_runtime_rejects_max_turns_above_50(tmp_path) -> None:
+    with pytest.raises(ValueError, match="cannot exceed 50"):
+        ToolAgentRuntime(
+            bundle=SimpleNamespace(platform="browser"),
+            platform=SimpleNamespace(),
+            log_dir=tmp_path,
+            perception_mode="enhanced",
+            max_turns=51,
+        )
+
+
 def test_private_access_context_reaches_worker_but_is_redacted_from_trace() -> None:
     from gui_agent.core.tool_agent.runtime import _access_log_redactions
 
@@ -160,7 +171,7 @@ def test_global_turn_budget_is_shared_across_logical_workers() -> None:
 
 def test_redelegation_failure_reports_all_consumed_worker_steps() -> None:
     runtime = object.__new__(ToolAgentRuntime)
-    runtime.max_turns = 64
+    runtime.max_turns = 50
     runtime.max_subgoal_replans = 2
     runtime._frame_no = 0
     runtime._trace = lambda *_args, **_kwargs: None
@@ -509,7 +520,7 @@ def test_retried_gui_worker_retains_bounded_journal_experience(monkeypatch) -> N
     )
 
     first = runtime._run_worker("advance_subgoal", spec)
-    second = runtime._run_worker("advance_subgoal", spec)
+    second = runtime._run_worker("advance_subgoal_replan_1", spec)
 
     assert first.phase == second.phase == "failed"
     starts = [event for event in runtime.trace if event["event"] == "worker_started"]

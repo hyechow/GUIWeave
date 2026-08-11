@@ -111,6 +111,27 @@ def test_coding_contract_keeps_settings_atomic_and_visual_retrieval_on_source():
     assert "do not inspect `.year`" in prompt
 
 
+def test_tool_agent_worker_changes_strategy_after_empty_ui_search():
+    prompt = load_prompt_text("task.tool_agent.worker")
+
+    assert "returns zero rows as evidence against that exact query" in prompt
+    assert "do not call the old fixed-input action" in prompt
+    assert "matching baseline tool with the new exact value" in prompt
+    assert "same query again after clearing" in prompt
+    assert "shorter distinctive substring" in prompt
+
+
+def test_tool_agent_prompts_preserve_exact_pending_selection_sets():
+    worker = load_prompt_text("task.tool_agent.worker")
+    master = load_prompt_text("task.tool_agent.master")
+
+    assert "selection goals as set constraints" in worker
+    assert "verify set equality" in worker
+    assert "review contains extra" in worker
+    assert "exact-set semantics" in master
+    assert "alongside extra newly-created members" in master
+
+
 def test_statement_transition_separates_commit_boundary_from_action_family():
     prompt = load_prompt_text("task.statement.transition")
 
@@ -128,6 +149,18 @@ def test_tool_agent_master_budgets_complete_cohesive_workers() -> None:
     assert "not a reason to split one cohesive subgoal" in prompt
     assert "Never evade the private-array boundary by joining" in prompt
     assert "not a serialized collection or hidden foreach plan" in prompt
+
+
+def test_tool_agent_master_separates_candidate_coverage_from_result_selection() -> None:
+    prompt = load_prompt_text("task.tool_agent.master")
+
+    assert "acquire that field for every candidate" in prompt
+    assert "apply the predicate or calculation afterward in `ctx.transform`" in prompt
+    assert "query must never exist only as prose" in prompt
+    assert "Observer can verify the queried scope" in prompt
+
+    transcription = load_prompt_text("task.tool_agent.visual_transcription")
+    assert "must never make you omit a readable row" in transcription
 
 
 def test_coding_prompt_separates_projection_fields_from_source_filters():

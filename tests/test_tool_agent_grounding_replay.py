@@ -162,6 +162,86 @@ def test_task549_correct_row_link_point_is_not_snapped_to_filter_input() -> None
     assert grounded.action.snap is None
 
 
+def test_task549_wrong_filter_point_snaps_to_semantically_named_clickable_row() -> None:
+    """Replay the 20260811 turn-7 miss before it consumes a replan."""
+
+    original = BrowserActionDecision(action=BrowserAction(
+        action_type="tap",
+        x=167,
+        y=392,
+        description=(
+            "Tap the row in the attributes grid where Attribute Code is 'size' "
+            "to open its editor."
+        ),
+    ))
+    controls = [
+        {
+            "kind": "text_input",
+            "label": "Attribute Code",
+            "value": "size",
+            "rect": {"x": 167, "y": 392, "w": 170, "h": 28},
+        },
+        {
+            "kind": "clickable_row",
+            "row_values": ["size", "Size"],
+            "rect": {"x": 550, "y": 438, "w": 1100, "h": 36},
+        },
+    ]
+
+    grounded = ground_action_to_nearest_control(
+        original,
+        controls,
+        viewport_size=(1280, 963),
+    )
+
+    assert (grounded.action.x, grounded.action.y) == (550, 438)
+    assert grounded.action.snap == {
+        "method": "control_semantic_geometry",
+        "original": [167, 392],
+        "snapped": [550.0, 438.0],
+        "info": "clickable_row",
+    }
+
+
+def test_task549_wide_keyword_input_near_miss_snaps_to_unique_text_field() -> None:
+    """Replay turn 15 where the point landed just right of a wide search input."""
+
+    original = BrowserActionDecision(action=BrowserAction(
+        action_type="type",
+        x=445,
+        y=337,
+        text="Minerva LumaTech V-Tee",
+        description="Type into the Name keyword filter on the Products grid.",
+    ))
+    controls = [
+        {
+            "kind": "text_input",
+            "label": "Search Search",
+            "placeholder": "Search by keyword",
+            "rect": {"x": 247, "y": 337, "w": 396, "h": 33},
+        },
+        {
+            "kind": "number_input",
+            "label": "of 11",
+            "rect": {"x": 874, "y": 384, "w": 44, "h": 33},
+        },
+    ]
+
+    grounded = ground_action_to_nearest_control(
+        original,
+        controls,
+        viewport_size=(1280, 963),
+    )
+
+    assert (grounded.action.x, grounded.action.y) == (247.0, 337.0)
+    assert grounded.action.snap == {
+        "method": "control_geometry",
+        "original": [445, 337],
+        "snapped": [247.0, 337.0],
+        "info": "Search Search",
+    }
+
+
 def test_task108_replay_blocks_third_equivalent_action_until_target_progresses() -> None:
     case = _case()
     attempt = case["attempt"]

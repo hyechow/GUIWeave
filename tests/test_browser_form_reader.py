@@ -25,6 +25,9 @@ def test_form_controls_js_is_serialized_expression():
     assert "fieldset-wrapper-content" in js
     assert "_hide" in js
     assert "a[href]" in js
+    assert "tr[onclick]" in js
+    assert "'[onclick]'" not in js
+    assert "rowValuesOf" in js
     assert "query_action" in js
     assert "form_action" in js
     assert "status_message" in js
@@ -34,6 +37,8 @@ def test_form_controls_js_is_serialized_expression():
     assert "rowSemanticLabelOf" in js
     assert "cell.contains(el)" in js
     assert "filter[-_].*(apply|submit)" in js
+    assert "document.elementFromPoint" in js
+    assert "occluded: true" in js
     assert "effect_kind" not in js
 
 
@@ -165,6 +170,45 @@ def test_normalize_form_controls_keeps_offscreen_status_message():
         "rect": {"x": 500, "y": -1200, "w": 600, "h": 40},
         "in_viewport": False,
         "viewport_pos": "above",
+    }]
+
+
+def test_normalize_form_controls_marks_occluded_control_as_not_actionable():
+    controls = normalize_form_controls({
+        "controls": [{
+            "label": "Edit target record",
+            "kind": "a",
+            "rect": {"x": 994.0, "y": 196.0, "w": 23, "h": 18},
+            "in_viewport": False,
+            "viewport_pos": "above",
+            "occluded": True,
+        }]
+    })
+
+    assert controls == [{
+        "kind": "a",
+        "label": "Edit target record",
+        "rect": {"x": 994, "y": 196, "w": 23, "h": 18},
+        "in_viewport": False,
+        "occluded": True,
+        "viewport_pos": "above",
+    }]
+
+
+def test_normalize_form_controls_keeps_clickable_row_visible_values():
+    controls = normalize_form_controls({
+        "controls": [{
+            "kind": "clickable_row",
+            "row_values": ["size", "Size", "Catalog Input Type for Store Owner"],
+            "rect": {"x": 550.0, "y": 438.0, "w": 1100, "h": 36},
+            "in_viewport": True,
+        }]
+    })
+
+    assert controls == [{
+        "kind": "clickable_row",
+        "row_values": ["size", "Size", "Catalog Input Type for Store Owner"],
+        "rect": {"x": 550, "y": 438, "w": 1100, "h": 36},
     }]
 
 
