@@ -10,9 +10,9 @@ import yaml
 
 from llm.provider_config import ChatProviderConfig, resolve_chat_provider_config
 
-# Single config file. AGENT_MODEL selects a *profile* (default 'qwen37' = base, no
-# override); a profile under `profiles:` deep-merges into `llm` to swap the core model,
-# so adding a comparison model is one small block, not a whole duplicated file.
+# AGENT_CONFIG selects the YAML file. A bare filename is resolved next to this
+# module; a relative path is resolved from the working directory. AGENT_MODEL then
+# selects a profile inside that file.
 CONFIG_PATH = Path(__file__).with_name("config.yaml")
 _DEFAULT_PROFILE = "qwen37"
 _active_profile: str = os.environ.get("AGENT_MODEL", _DEFAULT_PROFILE)
@@ -20,6 +20,21 @@ _LLM_CONFIG_ALIASES = {
     "recon.navigator": ("back_nav",),
     "back_nav": ("recon.navigator",),
 }
+
+
+def active_config_path() -> Path:
+    """Return the YAML path selected by AGENT_CONFIG, or the default config.yaml."""
+
+    selected = os.environ.get("AGENT_CONFIG", "").strip()
+    if not selected:
+        return CONFIG_PATH
+
+    path = Path(selected).expanduser()
+    if path.is_absolute():
+        return path
+    if len(path.parts) == 1:
+        return CONFIG_PATH.with_name(path.name)
+    return (Path.cwd() / path).resolve()
 
 
 def _deep_merge(base: dict, override: dict) -> dict:
@@ -34,11 +49,14 @@ def _deep_merge(base: dict, override: dict) -> dict:
 
 @lru_cache(maxsize=1)
 def _load_raw() -> dict[str, Any]:
-    if not CONFIG_PATH.exists():
+    config_path = active_config_path()
+    if not config_path.exists():
+        if os.environ.get("AGENT_CONFIG", "").strip():
+            raise FileNotFoundError(f"AGENT_CONFIG file does not exist: {config_path}")
         return {}
-    data = yaml.safe_load(CONFIG_PATH.read_text(encoding="utf-8")) or {}
+    data = yaml.safe_load(config_path.read_text(encoding="utf-8")) or {}
     if not isinstance(data, dict):
-        raise ValueError(f"{CONFIG_PATH} must contain a YAML mapping")
+        raise ValueError(f"{config_path} must contain a YAML mapping")
     return data
 
 

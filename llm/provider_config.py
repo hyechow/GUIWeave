@@ -6,7 +6,15 @@ import os
 from dataclasses import dataclass
 from typing import Dict, Mapping, Optional
 
-SUPPORTED_CHAT_PROVIDERS = ("modelscope", "dashscope", "tokenplan", "nvidia", "openai", "local")
+SUPPORTED_CHAT_PROVIDERS = (
+    "modelscope",
+    "dashscope",
+    "tokenplan",
+    "standard",
+    "nvidia",
+    "openai",
+    "local",
+)
 
 _PROVIDER_ENV_MAP = {
     "modelscope": {
@@ -24,6 +32,12 @@ _PROVIDER_ENV_MAP = {
         "model": "TOKENPLAN_MODEL",
         "api_key": "TOKENPLAN_API_KEY",
         "base_url": "TOKENPLAN_BASE_URL",
+    },
+    # Private OpenAI-compatible endpoint configured through STANDARD_*.
+    "standard": {
+        "model": "STANDARD_MODEL",
+        "api_key": "STANDARD_API_KEY",
+        "base_url": "STANDARD_BASE_URL",
     },
     "nvidia": {
         "model": "NVIDIA_MODEL",
@@ -46,6 +60,7 @@ DEFAULT_MODEL_BY_PROVIDER = {
     "modelscope": "Qwen/Qwen2.5-72B-Instruct",
     "dashscope": "qwen-plus",
     "tokenplan": "qwen3.7-plus",
+    "standard": "qwen3.7-plus",
     "nvidia": "minimaxai/minimax-m2.1",
     "openai": "gpt-4o-mini",
     "local": "Qwen/Qwen3-8B",
@@ -55,6 +70,7 @@ DEFAULT_BASE_URL_BY_PROVIDER = {
     "modelscope": "https://api-inference.modelscope.cn/v1",
     "dashscope": "https://dashscope.aliyuncs.com/compatible-mode/v1",
     "tokenplan": "https://token-plan.cn-beijing.maas.aliyuncs.com/compatible-mode/v1",
+    "standard": "http://localhost:30000/v1",
     "nvidia": "https://integrate.api.nvidia.com/v1",
     "openai": "https://api.openai.com/v1",
     "local": "http://localhost:30000/v1",

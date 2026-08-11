@@ -1,0 +1,81 @@
+# LLM settings for the private STANDARD OpenAI-compatible endpoint.
+# Select this file with AGENT_CONFIG=config.standard.yaml.
+#
+# Credentials and endpoint URLs stay out of source. Set STANDARD_API_KEY and
+# STANDARD_BASE_URL in .env. STANDARD_MODEL is optional because each runtime
+# slot selects its model explicitly below. If the endpoint resolves to an
+# internal address while system proxies are enabled, also set NO_PROXY for its
+# hostname.
+#
+# Live verification on 2026-08-11 confirmed qwen3.7-plus text/image input,
+# qwen3.7-max text input, and qwen3.6-flash text input on this endpoint.
+
+_standard: &standard
+  provider: standard
+
+llm:
+  # Screenshot-bearing core reasoning slots use the verified multimodal model.
+  action_policy:
+    <<: *standard
+    model: qwen3.7-plus
+  recon:
+    navigator:
+      <<: *standard
+      model: qwen3.7-plus
+  supervisor:
+    <<: *standard
+    model: qwen3.7-plus
+    intent:
+      # Text-only intent parsing before planning.
+      <<: *standard
+      model: qwen3.7-plus
+  orchestrator:
+    # Reviewed-Python task planning and review; called only at task start.
+    <<: *standard
+    model: qwen3.7-plus
+  observation:
+    # Data Statement runtime plan.
+    <<: *standard
+    model: qwen3.7-plus
+  output:
+    <<: *standard
+    model: qwen3.6-flash
+  router:
+    <<: *standard
+    model: qwen3.6-flash
+  fingerprint:
+    <<: *standard
+    model: qwen3.6-flash
+  loading:
+    # Used only when platform signals and high-confidence heuristics are inconclusive.
+    <<: *standard
+    model: qwen3.6-flash
+  tool_agent:
+    # Master is text-only. Worker and perception receive screenshots.
+    master:
+      <<: *standard
+      model: qwen3.7-max
+    worker:
+      <<: *standard
+      model: qwen3.7-plus
+    perception:
+      <<: *standard
+      model: qwen3.7-plus
+    presentation:
+      # Final wording only; receives no screenshot, browser handle, or private data.
+      <<: *standard
+      model: qwen3.6-flash
+
+# AGENT_MODEL=<profile> deep-merges the selected profile into llm. The standard
+# configuration currently has no alternate model profiles.
+profiles: {}
+
+# Estimated per-million-token prices copied from the baseline configuration.
+# Adjust these values if the STANDARD distributor uses different billing rates.
+pricing:
+  currency: "¥"
+  default: {input: 1.0, output: 4.0}
+  models:
+    qwen3.6-flash: {input: 0.5, output: 4.0}
+    qwen3.7-plus:  {input: 2.0, output: 8.0}
+    qwen3.7-max:   {input: 12.0, output: 36.0}
