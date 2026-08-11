@@ -7,6 +7,7 @@ import json
 import re
 import time
 from datetime import datetime
+from math import hypot
 from pathlib import Path
 from typing import Any, Callable, Literal
 from urllib.parse import unquote, urlsplit
@@ -69,7 +70,13 @@ _MAX_ACTION_PATCHES_PER_FRAME = 3
 _MAX_ACTION_GUARD_REPAIRS_PER_FRAME = 1
 _MAX_LOGICAL_WORKER_STEPS = 40
 _LOCAL_REPLAN_EXTRA_STEPS = 28
-_RUNTIME_WORKER_TOOL_NAMES = {"request_action_patch", "complete", "fail"}
+_MULTI_ACTION_TARGET_TOLERANCE = 80.0
+_RUNTIME_WORKER_TOOL_NAMES = {
+    "continue_with_actions",
+    "request_action_patch",
+    "complete",
+    "fail",
+}
 _SPATIAL_CAPABILITIES = {"tap", "type", "scroll", "select_option"}
 _EXECUTABLE_CAPABILITIES = {
     *_SPATIAL_CAPABILITIES,
@@ -169,6 +176,7 @@ class ToolAgentRuntime:
         max_turns: int = 50,
         max_subgoal_replans: int = 2,
         max_compile_attempts: int = 5,
+        allow_multi_action: bool = False,
         status_cb: Callable[[str], None] | None = None,
     ) -> None:
         if bundle.platform != "browser":
@@ -188,6 +196,7 @@ class ToolAgentRuntime:
         self.max_turns = max_turns
         self.max_subgoal_replans = max_subgoal_replans
         self.max_compile_attempts = max_compile_attempts
+        self.allow_multi_action = allow_multi_action
         self.data_store = RuntimeDataStore()
         self.master, self.master_cfg = _llm("tool_agent.master")
         self.worker, self.worker_cfg = _llm("tool_agent.worker")
@@ -273,6 +282,7 @@ class ToolAgentRuntime:
             goal=goal,
             perception_mode=self.perception_mode,
             max_turns=int(getattr(self, "max_turns", 50)),
+            multi_action=bool(getattr(self, "allow_multi_action", False)),
             master_model=self.master_cfg.model,
             worker_model=self.worker_cfg.model,
         )
@@ -869,6 +879,12 @@ class ToolAgentRuntime:
                 response = None
                 state = None
                 call = None
+                calls: list[dict[str, Any]] = []
+                protocol_schema = (
+                    "WorkerState + ordered actions"
+                    if getattr(self, "allow_multi_action", False)
+                    else "WorkerState + exactly one tool call"
+                )
                 llm_elapsed_s = 0.0
                 token_usage: dict[str, int] = {}
                 for attempt in range(2):
@@ -884,7 +900,23 @@ class ToolAgentRuntime:
                     try:
                         call = exactly_one_tool_call(response)
                         raw_state = call["args"].pop("state", None)
-                        call["args"] = normalize_action_arguments(call["args"])
+                        if call["name"] == "continue_with_actions":
+                            raw_actions = call["args"].get("actions") or []
+                            if not isinstance(raw_actions, list):
+                                raise ProtocolError("actions must be an ordered list")
+                            calls = [{
+                                "name": str(item.get("name") or ""),
+                                "args": normalize_action_arguments(
+                                    dict(item.get("args") or {})
+                                ),
+                            } for item in raw_actions if isinstance(item, dict)]
+                            if len(calls) != len(raw_actions):
+                                raise ProtocolError("every action item must be an object")
+                        else:
+                            call["args"] = normalize_action_arguments(call["args"])
+                            calls = [call]
+                        if call["name"] == "continue_with_actions":
+                            self._validate_multi_action_calls(calls, active_actions)
                         state, state_source, state_compatibility = self._decode_worker_state(
                             raw_state=raw_state,
                             content=getattr(response, "content", ""),
@@ -904,7 +936,7 @@ class ToolAgentRuntime:
                             token_usage=token_usage,
                             context_reports=diagnostic_prompt_reports(
                                 "tool_agent.worker.protocol_repair", messages, response,
-                                schema="WorkerState + exactly one tool call",
+                                schema=protocol_schema,
                             ) + context_reports,
                         )
                         if attempt:
@@ -932,9 +964,9 @@ class ToolAgentRuntime:
                         response,
                         parsed={
                             "state": state.model_dump(mode="json"),
-                            "tool_call": call,
+                            "tool_calls": calls,
                         },
-                        schema="WorkerState + exactly one tool call",
+                        schema=protocol_schema,
                     )],
                     memory_event_count=len(journal.events),
                     context_chars=int(context_reports[0].get("after_chars") or 0),
@@ -942,6 +974,8 @@ class ToolAgentRuntime:
                     state_compatibility=state_compatibility,
                 )
                 circuit_decision = None
+                if call["name"] == "continue_with_actions":
+                    break
                 if call["name"] == "request_action_patch":
                     patch_turn += 1
                     try:
@@ -1068,13 +1102,27 @@ class ToolAgentRuntime:
                         continue
                 break
             try:
-                result_payload, terminal = self._execute_worker_tool(
-                    spec,
-                    active_actions,
-                    call,
-                    png,
-                    frame,
-                )
+                if call["name"] == "continue_with_actions":
+                    result_payload, terminal = self._execute_multi_action_calls(
+                        worker_id=worker_id,
+                        spec=spec,
+                        actions=active_actions,
+                        calls=calls,
+                        state=state,
+                        step=step,
+                        frame=frame,
+                        png=png,
+                        journal=journal,
+                        circuit_breaker=circuit_breaker,
+                    )
+                else:
+                    result_payload, terminal = self._execute_worker_tool(
+                        spec,
+                        active_actions,
+                        call,
+                        png,
+                        frame,
+                    )
             except Exception as exc:  # noqa: BLE001 - feed capability failure back into ReAct
                 result_payload = {
                     "status": "error",
@@ -1087,28 +1135,18 @@ class ToolAgentRuntime:
                 terminal = None
                 self._trace("worker_tool_error", step=step, tool=call["name"], error=result_payload["error"])
             if circuit_decision is not None:
-                # A visually effective scroll is itself progress even when a
-                # vision-only frame has no structured scopes or collections to
-                # fingerprint. Do not accumulate those scrolls toward the fuse.
-                # Failed/no-effect scrolls and all other guarded actions remain
-                # tracked against the task-progress signature.
-                effective_visual_scroll = bool(
-                    action_spec is not None
-                    and action_spec.capability == "scroll"
-                    and isinstance(result_payload, dict)
-                    and result_payload.get("status") == "executed"
-                    and result_payload.get("no_effect") is False
+                self._record_action_attempt(
+                    circuit_breaker, circuit_decision, action_spec, result_payload
                 )
-                if not effective_visual_scroll:
-                    circuit_breaker.record(circuit_decision)
-            journal.record_turn(
-                step=step,
-                frame_id=frame.frame_id,
-                state=state,
-                tool=call["name"],
-                args=call["args"],
-                result=result_payload,
-            )
+            if call["name"] != "continue_with_actions":
+                journal.record_turn(
+                    step=step,
+                    frame_id=frame.frame_id,
+                    state=state,
+                    tool=call["name"],
+                    args=call["args"],
+                    result=result_payload,
+                )
             if terminal == "complete":
                 descriptor = (
                     CollectionRef.model_validate(result_payload)
@@ -1326,6 +1364,17 @@ class ToolAgentRuntime:
                 "results, or user-facing text.\n"
                 + access_context
             )
+        if getattr(self, "allow_multi_action", False):
+            prompt += (
+                "\n\n## Ordered multi-action mode\n"
+                "Continue through `continue_with_actions`. Use 2–3 actions when all targets "
+                "are already visible and no later action depends on newly revealed UI; "
+                "otherwise use one. Runtime executes serially and may discard a stale suffix. "
+                "Type, clear_text and select_option may be non-final. A tap may be non-final "
+                "only to focus the same input used by following clear/type actions. Put "
+                "submit taps, Enter, scroll, back and navigation last. Include all safe, "
+                "required steps of a fully visible form. Use patch/complete/fail separately."
+            )
         spec_for_prompt = spec.model_dump(mode="json", exclude={"actions"})
         spec_for_prompt["action_contracts"] = [
             action.model_dump(
@@ -1407,7 +1456,11 @@ class ToolAgentRuntime:
             completion_mode = "collector"
         else:
             completion_mode = "unavailable"
-        return dynamic_worker_tools(actions, completion_mode=completion_mode)
+        return dynamic_worker_tools(
+            actions,
+            completion_mode=completion_mode,
+            action_envelope=bool(getattr(self, "allow_multi_action", False)),
+        )
 
     def _active_platform_rejection(self) -> dict[str, Any] | None:
         worker_id = str(getattr(self, "_active_worker_id", "") or "")
@@ -1416,6 +1469,222 @@ class ToolAgentRuntime:
             return None
         item = rejections.get(worker_id)
         return item if isinstance(item, dict) else None
+
+    @staticmethod
+    def _record_action_attempt(
+        breaker: WorkerActionCircuitBreaker,
+        decision: Any,
+        action: DynamicActionSpec | None,
+        result: dict[str, Any],
+    ) -> None:
+        effective_scroll = bool(
+            action
+            and action.capability == "scroll"
+            and result.get("status") == "executed"
+            and result.get("no_effect") is False
+        )
+        if not effective_scroll:
+            breaker.record(decision)
+
+    @staticmethod
+    def _validate_multi_action_calls(
+        calls: list[dict[str, Any]],
+        actions: list[DynamicActionSpec],
+    ) -> None:
+        if not 1 <= len(calls) <= 3:
+            raise ProtocolError("action envelope must contain 1–3 actions")
+        action_names = {action.name for action in actions}
+        unknown = [call["name"] for call in calls if call["name"] not in action_names]
+        if unknown:
+            raise ProtocolError(
+                "multi-action output may contain only executable action tools; got "
+                + ", ".join(unknown)
+            )
+
+    def _page_identity(self) -> tuple[str, str]:
+        client = getattr(self.platform, "client", None)
+        page_info = getattr(client, "page_info", None)
+        try:
+            if callable(page_info):
+                url, title = page_info()
+                return str(url or ""), str(title or "")
+        except Exception:  # noqa: BLE001 - optional short check
+            pass
+        return "", ""
+
+    def _suffix_requires_reobservation(
+        self,
+        *,
+        call: dict[str, Any],
+        action: DynamicActionSpec,
+        remaining: list[dict[str, Any]],
+        action_by_name: dict[str, DynamicActionSpec],
+    ) -> str:
+        capability = action.capability
+        if capability in {"type", "clear_text", "select_option"}:
+            return ""
+        if capability == "tap":
+            tap_args = {**action.fixed_args, **call["args"]}
+            try:
+                tap_point = float(tap_args["x"]), float(tap_args["y"])
+                typed = False
+                for later_call in remaining:
+                    later = action_by_name[later_call["name"]]
+                    if later.capability == "clear_text":
+                        continue
+                    if later.capability != "type":
+                        break
+                    later_args = {**later.fixed_args, **later_call["args"]}
+                    typed = True
+                    if hypot(
+                        tap_point[0] - float(later_args["x"]),
+                        tap_point[1] - float(later_args["y"]),
+                    ) > _MULTI_ACTION_TARGET_TOLERANCE:
+                        break
+                else:
+                    if typed:
+                        return ""
+            except (KeyError, TypeError, ValueError):
+                pass
+        return (
+            f"{capability} can invalidate coordinates for the remaining actions; "
+            "reobserve before continuing"
+        )
+
+    def _execute_multi_action_calls(
+        self,
+        *,
+        worker_id: str,
+        spec: WorkerSpec,
+        actions: list[DynamicActionSpec],
+        calls: list[dict[str, Any]],
+        state: WorkerState,
+        step: int,
+        frame: MaterializedFrame,
+        png: bytes,
+        journal: WorkerJournal,
+        circuit_breaker: WorkerActionCircuitBreaker,
+    ) -> tuple[dict[str, Any], str | None]:
+        """Execute one fused Worker decision as interruptible atomic actions."""
+
+        action_by_name = {action.name: action for action in actions}
+        current_png = png
+        live_identity = self._page_identity()
+        page_identity = (
+            frame.url or live_identity[0],
+            frame.title or live_identity[1],
+        )
+        executed = 0
+        reason = ""
+        terminal: str | None = None
+        for index, action_call in enumerate(calls, start=1):
+            action_spec = action_by_name[action_call["name"]]
+            remaining = calls[index:]
+            suffix_reason = (
+                self._suffix_requires_reobservation(
+                    call=action_call,
+                    action=action_spec,
+                    remaining=remaining,
+                    action_by_name=action_by_name,
+                )
+                if remaining
+                else ""
+            )
+            circuit_decision = circuit_breaker.inspect(
+                tool=action_call["name"],
+                capability=action_spec.capability,
+                args={**action_spec.fixed_args, **action_call["args"]},
+                frame=frame,
+            )
+            if circuit_decision.blocked:
+                reason = circuit_decision.reason
+                journal.record_guard(
+                    step=step,
+                    repair_turn=index,
+                    tool=action_call["name"],
+                    reason=reason,
+                )
+                break
+            self._trace(
+                "runtime_action_started",
+                worker_id=worker_id,
+                step=step,
+                batch_index=index,
+                batch_total=len(calls),
+                tool=action_call["name"],
+                action_type=action_spec.capability,
+                description=str(
+                    action_call["args"].get("description")
+                    or action_spec.description
+                ),
+            )
+            try:
+                result, terminal = self._execute_worker_tool(
+                    spec,
+                    actions,
+                    action_call,
+                    current_png,
+                    frame,
+                )
+            except Exception as exc:  # noqa: BLE001 - abort suffix and reobserve
+                result = {
+                    "status": "error",
+                    "error": f"{type(exc).__name__}: {exc}",
+                }
+                terminal = None
+            self._record_action_attempt(
+                circuit_breaker, circuit_decision, action_spec, result
+            )
+            executed += 1
+            journal.record_turn(
+                step=step,
+                substep=index,
+                frame_id=frame.frame_id,
+                state=state,
+                tool=action_call["name"],
+                args=action_call["args"],
+                result=result,
+            )
+            if terminal is not None or result.get("status") in {"error", "failed"}:
+                reason = str(
+                    result.get("error")
+                    or result.get("reason")
+                    or f"atomic action ended with {terminal or 'failure'}"
+                )
+                break
+            if not remaining:
+                continue
+            if suffix_reason:
+                reason = suffix_reason
+                break
+            try:
+                current_png = self.platform.screenshot()
+            except Exception as exc:  # noqa: BLE001 - never execute a blind suffix
+                reason = f"latest screenshot failed: {type(exc).__name__}: {exc}"
+                break
+            next_page_identity = self._page_identity()
+            if any(
+                before and after and before != after
+                for before, after in zip(page_identity, next_page_identity, strict=True)
+            ):
+                reason = "page identity changed before the action suffix completed"
+                break
+            page_identity = next_page_identity
+
+        payload = {
+            "status": "executed" if executed == len(calls) else "aborted",
+            "planned_actions": len(calls),
+            "executed_actions": executed,
+        }
+        event = (
+            "worker_multi_action_completed"
+            if payload["status"] == "executed"
+            else "worker_multi_action_aborted"
+        )
+        if reason:
+            payload["reason"] = reason
+        self._trace(event, worker_id=worker_id, step=step, **payload)
+        return payload, terminal
 
     def _execute_worker_tool(
         self,
@@ -1743,7 +2012,7 @@ class ToolAgentRuntime:
             return "master"
         if event in {"observe", "perception_extract"}:
             return "observer"
-        if event in {"runtime_action"}:
+        if event.startswith("runtime_action"):
             return "action"
         if event.startswith("transform_"):
             return "data"
@@ -1822,6 +2091,13 @@ class ToolAgentRuntime:
                 f"Worker step {payload.get('step', '?')} [{state.get('status', '?')}] "
                 f"→ {payload.get('tool', '?')}"
                 + (f": {summary}" if summary else "")
+            )
+        if event == "runtime_action_started":
+            return (
+                f"{payload.get('batch_index', '?')}/"
+                f"{payload.get('batch_total', '?')} · "
+                f"{payload.get('action_type', 'GUI')} · "
+                f"{payload.get('description', '')}"
             )
         if event == "runtime_action":
             effect = "no effect" if payload.get("no_effect") else str(payload.get("status") or "")
@@ -2051,6 +2327,20 @@ class ToolAgentRuntime:
                 f"{context_text}"
                 f"{protocol_text}"
                 f"{metrics}"
+            )
+        if event == "runtime_action_started":
+            return (
+                f"Action start: {entry.get('batch_index', '?')}/"
+                f"{entry.get('batch_total', '?')} · "
+                f"{entry.get('action_type', 'GUI')} · "
+                f"{entry.get('description', '')}"
+            )
+        if event in {"worker_multi_action_completed", "worker_multi_action_aborted"}:
+            status = "completed" if event.endswith("completed") else "interrupted"
+            reason = f" · {entry.get('reason')}" if entry.get("reason") else ""
+            return (
+                f"Action batch: {status} · {entry.get('executed_actions', 0)}/"
+                f"{entry.get('planned_actions', 0)} executed{reason}"
             )
         if event == "runtime_action":
             effect = (

@@ -54,7 +54,8 @@ def _reduce_tool_agent_events(events: list[dict]) -> list[dict]:
             else {}
         )
         action_events = pending.get("action_events") or []
-        final_action = action_events[-1] if action_events else {}
+        actions = [item for item in action_events if item.get("event") == "runtime_action"]
+        final_action = actions[-1] if actions else {}
         pending.update({
             "event": "worker_turn",
             "state": state,
@@ -98,18 +99,24 @@ def _reduce_tool_agent_events(events: list[dict]) -> list[dict]:
             pending["profile"] = event.get("profile") or pending.get("profile")
             pending["worker_id"] = event.get("worker_id") or pending.get("worker_id")
             continue
-        if pending is not None and name == "runtime_action":
+        if pending is not None and name in {"runtime_action", "runtime_action_started"}:
             pending["action_events"].append(event)
             continue
         if pending is not None and name in {
             "worker_action_patch",
             "worker_action_patch_error",
             "worker_action_blocked",
+            "worker_protocol_error",
             "worker_tool_error",
             "worker_complete",
+            "worker_multi_action_completed",
+            "worker_multi_action_aborted",
         }:
             pending["details"].append(event)
-            if name in {"worker_action_patch_error", "worker_tool_error"}:
+            if name in {
+                "worker_action_patch_error",
+                "worker_tool_error",
+            }:
                 pending["errors"].append(event)
             continue
         flush()
@@ -225,17 +232,7 @@ def _tool_agent_report_steps(
                 target["cached_input"] += int(usage.get("cached_input") or 0)
         return timings, tokens, calls
 
-    def annotated_frame(
-        screenshot: str,
-        *,
-        action_type: str,
-        args: dict,
-        ordinal: int,
-    ) -> tuple[str, str]:
-        x = args.get("x")
-        y = args.get("y")
-        if not isinstance(x, (int, float)) or not isinstance(y, (int, float)):
-            return screenshot, screenshot
+    def annotated_frame(screenshot: str, annotations: list[dict]) -> tuple[str, str]:
         source_path = run_dir / screenshot
         if not source_path.is_file():
             return screenshot, screenshot
@@ -244,15 +241,30 @@ def _tool_agent_report_steps(
         ann_path = run_dir / ann_name
         full_path = run_dir / full_name
         try:
-            image = annotate_action(
-                _load_img(source_path),
-                action_type,
-                float(x),
-                float(y),
-                ordinal,
-                direction=str(args.get("direction") or "") or None,
-                text=str(args.get("text") or args.get("description") or "") or None,
-            )
+            image = _load_img(source_path)
+            annotated = False
+            for item in annotations:
+                item_args = item.get("args") if isinstance(item.get("args"), dict) else {}
+                x = item_args.get("x")
+                y = item_args.get("y")
+                if not isinstance(x, (int, float)) or not isinstance(y, (int, float)):
+                    continue
+                image = annotate_action(
+                    image,
+                    str(item.get("action_type") or "command"),
+                    float(x),
+                    float(y),
+                    int(item.get("index") or 1),
+                    direction=str(item_args.get("direction") or "") or None,
+                    text=str(
+                        item_args.get("text")
+                        or item_args.get("description")
+                        or ""
+                    ) or None,
+                )
+                annotated = True
+            if not annotated:
+                return screenshot, screenshot
             _save_report_img(image, ann_path)
             _save_report_img(image, full_path, max_w=None)
             return ann_name, full_name
@@ -289,6 +301,61 @@ def _tool_agent_report_steps(
             ],
             "collections": collections,
             "controls": observation.get("control_count", 0),
+        }
+
+    def compact_action_batch(turn: dict, decision: dict) -> dict | None:
+        decision_args = decision.get("args") if isinstance(decision.get("args"), dict) else {}
+        calls = [item for item in (decision_args.get("actions") or []) if isinstance(item, dict)]
+        if not calls:  # Compatibility with early multi-action experiment traces.
+            calls = [
+                {"name": name, "args": args}
+                for name, args in zip(
+                    decision.get("ordered_tools") or [],
+                    decision.get("ordered_args") or [],
+                )
+            ]
+        action_events = turn.get("action_events") or []
+        results = [item for item in action_events if item.get("event") == "runtime_action"]
+        outcome = next((
+            item for item in reversed(turn.get("details") or [])
+            if str(item.get("event") or "").startswith("worker_multi_action_")
+        ), {})
+        planned = int(outcome.get("planned_actions") or len(calls))
+        executed_count = int(outcome.get("executed_actions") or len(results))
+        is_aborted = str(outcome.get("event") or "").endswith("aborted")
+        if planned <= 1 and not is_aborted:
+            return None
+
+        items = []
+        for offset in range(planned):
+            result = results[offset] if offset < len(results) else {}
+            call = calls[offset] if offset < len(calls) else {}
+            tool = str(call.get("name") or result.get("tool") or "action")
+            args = call.get("args") if isinstance(call.get("args"), dict) else {}
+            action_type = str(
+                result.get("action_type")
+                or runtime_action_types.get(tool)
+                or "command"
+            )
+            items.append({
+                "index": offset + 1,
+                "tool": tool,
+                "action_type": action_type,
+                "description": str(args.get("description") or ""),
+                "args": args,
+                "status": (
+                    str(result.get("status") or "executed")
+                    if result else "discarded" if is_aborted else "planned"
+                ),
+                "no_effect": bool(result.get("no_effect")),
+                "settle_seconds": float(result.get("settle_seconds") or 0),
+            })
+        return {
+            "status": "aborted" if is_aborted else "completed",
+            "planned": planned,
+            "executed": executed_count,
+            "reason": str(outcome.get("reason") or ""),
+            "actions": items,
         }
 
     compile_attempts = [
@@ -423,9 +490,18 @@ def _tool_agent_report_steps(
             screenshot = frame_screenshots.get(frame_id) or last_screenshot
             if screenshot:
                 last_screenshot = screenshot
+            decisions = [
+                item for item in (turn.get("decisions") or [])
+                if isinstance(item, dict)
+            ]
+            final_decision = decisions[-1] if decisions else {}
+            action_batch = compact_action_batch(turn, final_decision)
             action = turn.get("action") if isinstance(turn.get("action"), dict) else {}
             action_event = str(action.get("event") or "")
-            if action_event == "runtime_action":
+            if action_batch is not None:
+                action_type = "batch"
+                operation_mode = "interactive"
+            elif action_event == "runtime_action":
                 action_type = str(action.get("action_type") or "command")
                 operation_mode = "interactive"
             else:
@@ -434,12 +510,14 @@ def _tool_agent_report_steps(
                     "interactive" if action_type != "acquire" else "observation"
                 )
             args = turn.get("args") if isinstance(turn.get("args"), dict) else {}
-            annotated, annotated_full = annotated_frame(
-                screenshot,
-                action_type=action_type,
-                args=args,
-                ordinal=ordinal,
-            ) if screenshot else ("", "")
+            annotations = (
+                [item for item in action_batch["actions"] if item["status"] == "executed"]
+                if action_batch is not None
+                else [{"action_type": action_type, "args": args, "index": ordinal}]
+            )
+            annotated, annotated_full = (
+                annotated_frame(screenshot, annotations) if screenshot else ("", "")
+            )
             timings, token_usage, llm_calls = turn_metrics(turn)
             llm_context = [
                 report
@@ -457,11 +535,6 @@ def _tool_agent_report_steps(
                 for item in (turn.get("details") or [])
                 if isinstance(item, dict) and item.get("event") == "worker_action_patch"
             ]
-            decisions = [
-                item for item in (turn.get("decisions") or [])
-                if isinstance(item, dict)
-            ]
-            final_decision = decisions[-1] if decisions else {}
             non_ui = {
                 "executor": "read",
                 "goal": "Observation and decision evidence",
@@ -475,7 +548,7 @@ def _tool_agent_report_steps(
                     },
                     "action": {
                         "tool": turn.get("tool"),
-                        "args": args,
+                        "args": {} if action_batch is not None else args,
                         "status": action.get("status"),
                         "no_effect": action.get("no_effect", False),
                         "data_ref": action.get("data_ref"),
@@ -504,7 +577,13 @@ def _tool_agent_report_steps(
                 action_type=action_type,
                 x=float(args["x"]) if isinstance(args.get("x"), (int, float)) else None,
                 y=float(args["y"]) if isinstance(args.get("y"), (int, float)) else None,
-                description=f"{state.get('status', 'observing')} · {turn.get('tool', 'observe')}",
+                description=(
+                    f"{state.get('status', 'observing')} · "
+                    f"{action_batch['planned']} actions"
+                    if action_batch is not None
+                    else f"{state.get('status', 'observing')} · "
+                    f"{turn.get('tool', 'observe')}"
+                ),
                 annotated_before_url=annotated,
                 annotated_full_url=annotated_full,
                 raw_screenshot_url=screenshot,
@@ -522,11 +601,18 @@ def _tool_agent_report_steps(
                 token_usage=token_usage,
                 llm_calls=llm_calls,
                 llm_context=llm_context,
-                action_direction=str(args.get("direction") or "") or None,
-                action_text=str(args.get("text") or args.get("description") or "") or None,
+                action_direction=(
+                    None if action_batch is not None
+                    else str(args.get("direction") or "") or None
+                ),
+                action_text=(
+                    None if action_batch is not None
+                    else str(args.get("text") or args.get("description") or "") or None
+                ),
                 operation_mode=operation_mode,
                 non_ui=non_ui,
                 no_effect=bool(action.get("no_effect")),
+                action_batch=action_batch,
             )
             steps.append(step)
             total_turns += 1

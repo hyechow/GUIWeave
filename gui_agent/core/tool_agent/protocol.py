@@ -299,8 +299,13 @@ def dynamic_worker_tools(
     completion_mode: Literal[
         "legacy", "unavailable", "operator", "collector"
     ] = "legacy",
+    action_envelope: bool = False,
 ) -> list[dict[str, Any]]:
-    tools = [_with_worker_state(dynamic_action_tool(item)) for item in actions]
+    tools = (
+        [_with_worker_state(dynamic_action_envelope_tool(actions))]
+        if action_envelope
+        else [_with_worker_state(dynamic_action_tool(item)) for item in actions]
+    )
     tools.append(_with_worker_state(model_tool(
         "request_action_patch",
         (
@@ -335,6 +340,47 @@ def dynamic_worker_tools(
         "fail", "Stop this worker with an explicit reason.", FailWorkerArgs
     )))
     return tools
+
+
+def dynamic_action_envelope_tool(
+    actions: list[DynamicActionSpec],
+) -> dict[str, Any]:
+    """Wrap unchanged dynamic actions in one ordered Worker decision."""
+
+    variants = [
+        {
+            "type": "object",
+            "properties": {
+                "name": {"type": "string", "const": action.name},
+                "args": dynamic_action_tool(action)["function"]["parameters"],
+            },
+            "required": ["name", "args"],
+            "additionalProperties": False,
+        }
+        for action in actions
+    ]
+    return function_tool(
+        "continue_with_actions",
+        (
+            "Continue with one to three ordered actions on already-visible targets. "
+            "Later actions must not depend on newly revealed UI. Put surface-changing "
+            "actions last, except a tap that focuses the input used by following "
+            "clear/type actions. Runtime may discard a stale suffix."
+        ),
+        {
+            "type": "object",
+            "properties": {
+                "actions": {
+                    "type": "array",
+                    "items": {"oneOf": variants},
+                    "minItems": 1,
+                    "maxItems": 3,
+                },
+            },
+            "required": ["actions"],
+            "additionalProperties": False,
+        },
+    )
 
 
 def materialize_action_patch(args: RequestActionPatchArgs) -> DynamicActionSpec:

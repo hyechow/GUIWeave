@@ -157,6 +157,7 @@ class WorkerJournal:
         tool: str,
         args: dict[str, Any],
         result: Any,
+        substep: int | None = None,
     ) -> None:
         del frame_id  # Frame identity and coordinates do not improve later decisions.
         memory_args = _semantic_action_args(args)
@@ -202,7 +203,11 @@ class WorkerJournal:
             else ""
         )
         self.events.append(WorkerJournalEvent(
-            event_ref=f"step:{step}",
+            event_ref=(
+                f"step:{step}.{substep}"
+                if substep is not None
+                else f"step:{step}"
+            ),
             kind="action_result",
             durable_text=durable_text,
             narrative_text=(

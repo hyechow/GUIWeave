@@ -442,6 +442,24 @@ HTML_TEMPLATE = """\
   .detail-gap {{ font-size: 12px; font-weight: 800; color: #b45309; background: #fff7ed; border: 1px solid #fed7aa; padding: 1px 7px; border-radius: 10px; margin-left: 6px; flex-shrink: 0; font-variant-numeric: tabular-nums; }}
   .detail-instruction {{ font-size: 12px; color: var(--muted); }}
   .detail-summary {{ font-size: 12px; color: #475569; line-height: 1.4; }}
+  .action-batch {{ border:1px solid #c7d2fe; background:#f8faff; border-radius:9px; padding:9px 10px; }}
+  .action-batch-aborted {{ border-color:#fed7aa; background:#fffaf3; }}
+  .action-batch-head {{ display:flex; align-items:center; gap:8px; margin-bottom:8px; color:#3730a3; font-size:11px; font-weight:800; }}
+  .action-batch-aborted .action-batch-head {{ color:#9a3412; }}
+  .action-batch-count {{ margin-left:auto; padding:1px 7px; border-radius:999px; background:#e0e7ff; color:#4338ca; font-family:ui-monospace, SFMono-Regular, monospace; }}
+  .action-batch-aborted .action-batch-count {{ background:#ffedd5; color:#9a3412; }}
+  .action-batch-flow {{ display:flex; align-items:stretch; gap:5px; overflow-x:auto; padding-bottom:2px; }}
+  .action-batch-arrow {{ align-self:center; color:#94a3b8; font-size:14px; flex:0 0 auto; }}
+  .action-batch-item {{ min-width:132px; max-width:220px; flex:1 0 132px; border:1px solid #e2e8f0; background:#fff; border-radius:7px; padding:7px 8px; }}
+  .action-batch-item-discarded {{ border-style:dashed; opacity:.62; }}
+  .action-batch-item-failed {{ border-color:#fecaca; background:#fff7f7; }}
+  .action-batch-item-head {{ display:flex; align-items:center; gap:5px; margin-bottom:4px; }}
+  .action-batch-index {{ display:inline-flex; align-items:center; justify-content:center; width:18px; height:18px; border-radius:50%; background:#4f46e5; color:#fff; font:800 10px/1 ui-monospace, SFMono-Regular, monospace; }}
+  .action-batch-type {{ color:#334155; font-size:11px; font-weight:800; }}
+  .action-batch-state {{ margin-left:auto; color:#64748b; font-size:9px; font-weight:700; text-transform:uppercase; }}
+  .action-batch-desc {{ color:#475569; font-size:10px; line-height:1.35; word-break:break-word; }}
+  .action-batch-tool {{ margin-top:4px; color:#94a3b8; font:9px/1.3 ui-monospace, SFMono-Regular, monospace; overflow-wrap:anywhere; }}
+  .action-batch-reason {{ margin-top:7px; color:#9a3412; font-size:10px; line-height:1.4; }}
   .ctx-detail {{ margin-top: 2px; border: 1px solid #e0f2fe; background: #f8fdff; border-radius: 7px; padding: 7px 9px; }}
   .ctx-detail summary {{ cursor: pointer; color: #0369a1; font-size: 11px; font-weight: 700; }}
   .ctx-list {{ margin-top: 7px; display: flex; flex-direction: column; gap: 6px; }}
@@ -520,6 +538,7 @@ HTML_TEMPLATE = """\
   .at-back {{ background: #6366f1; }} .at-new_tab {{ background: #14b8a6; }}
   .at-select_tab {{ background: #f59e0b; }} .at-close_tab {{ background: #64748b; }}
   .at-select_option {{ background: #0ea5e9; }}
+  .at-batch {{ background: #4f46e5; }}
 
   .modal {{ display: none; position: fixed; top: 0; left: 0; width: 100%; height: 100%; background: rgba(0,0,0,0.85); z-index: 999; justify-content: center; align-items: center; }}
   .modal.show {{ display: flex; }}
@@ -736,6 +755,7 @@ AT_LABELS = {
     "upload": "上传", "navigate": "导航", "back": "后退",
     "new_tab": "新标签页", "select_tab": "切标签页", "close_tab": "关标签页",
     "select_option": "选项",
+    "batch": "多动作",
     "acquire": "采集", "read": "绑定", "command": "命令", "non_ui": "非交互",
 }
 
@@ -927,6 +947,57 @@ def _gap_seconds(prev_iso: str, cur_iso: str) -> float | None:
         return None
 
 
+def _render_action_batch_html(batch: dict | None) -> str:
+    if not isinstance(batch, dict):
+        return ""
+    actions = [item for item in (batch.get("actions") or []) if isinstance(item, dict)]
+    if not actions:
+        return ""
+    aborted = batch.get("status") == "aborted"
+    planned = int(batch.get("planned") or len(actions))
+    executed = int(batch.get("executed") or 0)
+    nodes: list[str] = []
+    for offset, item in enumerate(actions):
+        item_status = str(item.get("status") or "planned")
+        item_class = {
+            "failed": "action-batch-item-failed",
+            "discarded": "action-batch-item-discarded",
+            "planned": "action-batch-item-discarded",
+        }.get(item_status, "")
+        action_type = str(item.get("action_type") or "command")
+        settle = float(item.get("settle_seconds") or 0)
+        state_label = {
+            "executed": "已执行", "failed": "失败",
+            "discarded": "已丢弃", "planned": "未执行",
+        }.get(item_status, item_status)
+        if item.get("no_effect"):
+            state_label += " · no_effect"
+        if settle > 0:
+            state_label += f" · {settle:.1f}s"
+        nodes.append(
+            f'<div class="action-batch-item {item_class}">'
+            f'<div class="action-batch-item-head">'
+            f'<span class="action-batch-index">{int(item.get("index") or offset + 1)}</span>'
+            f'<span class="action-batch-type">{_safe(AT_LABELS.get(action_type, action_type))}</span>'
+            f'<span class="action-batch-state">{_safe(state_label)}</span>'
+            f'</div>'
+            f'<div class="action-batch-desc">{_safe(str(item.get("description") or ""))}</div>'
+            f'<div class="action-batch-tool">{_safe(str(item.get("tool") or ""))}</div>'
+            f'</div>'
+        )
+    reason = _safe(str(batch.get("reason") or ""))
+    reason_html = f'<div class="action-batch-reason">截断原因：{reason}</div>' if reason else ""
+    arrow = '<span class="action-batch-arrow">→</span>'
+    return (
+        f'<div class="action-batch {"action-batch-aborted" if aborted else ""}">'
+        f'<div class="action-batch-head">动作批次 · '
+        f'{"安全截断" if aborted else "顺序执行"}'
+        f'<span class="action-batch-count">{executed}/{planned}</span></div>'
+        f'<div class="action-batch-flow">{arrow.join(nodes)}</div>'
+        f'{reason_html}</div>'
+    )
+
+
 def _render_step_detail(step: ReportStep, detail_id: str, prev_timestamp: str = "", extra_html: str = "") -> str:
     """Render the expandable detail panel for a step.
 
@@ -958,6 +1029,7 @@ def _render_step_detail(step: ReportStep, detail_id: str, prev_timestamp: str = 
     if step.summary and step.summary != step.description:
         summary_html = f'<div class="detail-summary">{_safe(step.summary)}</div>'
     non_ui_html = _render_non_ui_detail(step.non_ui) if step.non_ui else ""
+    action_batch_html = _render_action_batch_html(step.action_batch)
 
     snap_html = ""
     if step.snap and step.snap.get("original"):
@@ -1026,6 +1098,7 @@ def _render_step_detail(step: ReportStep, detail_id: str, prev_timestamp: str = 
           <span class="detail-status {status_cls.replace('thumb-status', 'detail-status')}">{step.status}</span>
         </div>
         {instruction_html}
+        {action_batch_html}
         {snap_html}
         {sections_html}
         {summary_html}
@@ -1565,11 +1638,17 @@ def generate_html(data: ReportData, grid: bool = False) -> str:
             # Thumbnail
             if step.annotated_before_url:
                 thumb_time_html, thumb_search = _render_thumb_time(step, prev_timestamp=prev_ts)
+                batch_search = " ".join(
+                    f"{item.get('tool', '')} {item.get('description', '')}"
+                    for item in ((step.action_batch or {}).get("actions") or [])
+                    if isinstance(item, dict)
+                )
                 thumb_search_index = _attr(
                     " ".join([
                         f"T{turn_no}",
                         at_label,
                         thumb_search,
+                        batch_search,
                         step.description or "",
                         step.summary or "",
                     ])

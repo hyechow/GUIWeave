@@ -36,6 +36,7 @@ class ReportStep:
     operation_mode: str = "interactive"  # interactive | observation | non_interactive
     non_ui: dict | None = None
     no_effect: bool = False
+    action_batch: dict | None = None  # ordered atomic actions from one Worker decision
 
 
 @dataclass

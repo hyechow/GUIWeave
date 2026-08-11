@@ -1266,6 +1266,14 @@ def main() -> int:
         help="tool-agent perception provider (the WorkerSpec and actions remain identical)",
     )
     parser.add_argument(
+        "--tool-agent-multi-action",
+        action="store_true",
+        help=(
+            "experimental: let one fused Worker decision return an ordered "
+            "1–3 action envelope"
+        ),
+    )
+    parser.add_argument(
         "--include-skills",
         action="store_true",
         help="explicitly include optional _skill.md orchestration hints; default: functional docs only",
@@ -1567,7 +1575,8 @@ def main() -> int:
                             print(
                                 "[webarena][tool-agent] "
                                 f"master=qwen3.7-max worker=qwen3.7-plus "
-                                f"perception={args.perception}"
+                                f"perception={args.perception} "
+                                f"multi_action={args.tool_agent_multi_action}"
                             )
                             runtime = ToolAgentRuntime(
                                 bundle=bundle,
@@ -1575,6 +1584,7 @@ def main() -> int:
                                 log_dir=log_dir,
                                 perception_mode=args.perception,
                                 max_turns=args.max_turns,
+                                allow_multi_action=args.tool_agent_multi_action,
                                 status_cb=hud.update if hud else None,
                             )
                             if hud:
