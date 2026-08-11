@@ -209,8 +209,13 @@ def test_shopping_admin_material_query_receives_goal_matched_product_facts() -> 
 
     assert sections == ["Products_query_interface"]
     assert "**Quantity** (`number`)" in context
-    assert "**Material** and **Size** are not collection fields" in context
-    assert "nonempty resolved Material values" in context
+    assert "**Material** and **Size** are not Products grid columns" in context
+    assert "logical collection output" in context
+    assert "separate `from` and `to` inputs" in context
+    assert "`from` alone produces `N - ...`" in context
+    assert "not result fields" in context
+    assert "temporarily remove the original" in context
+    assert '"minLength": 1' in context
 
 
 def test_shopping_admin_theme_settings_receives_theme_interface_facts() -> None:

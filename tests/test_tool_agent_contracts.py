@@ -28,6 +28,9 @@ from gui_agent.core.tool_agent.protocol import (
 )
 
 
+_TARGET_DESCRIPTION = "Target the visible named control"
+
+
 def test_action_envelope_preserves_dynamic_atomic_schemas() -> None:
     tools = dynamic_worker_tools(
         worker_action_floor(),
@@ -180,8 +183,8 @@ def test_dynamic_action_exposes_only_worker_decisions() -> None:
 
     parameters = dynamic_action_tool(action)["function"]["parameters"]
 
-    assert set(parameters["properties"]) == {"amount", "x", "y"}
-    validate(instance={"amount": "medium"}, schema=parameters)
+    assert set(parameters["properties"]) == {"amount", "x", "y", "description"}
+    validate(instance={"amount": "medium", "description": _TARGET_DESCRIPTION}, schema=parameters)
     with pytest.raises(ValidationError):
         validate(instance={"direction": "up"}, schema=parameters)
 
@@ -196,13 +199,13 @@ def test_tap_coordinates_are_always_owned_by_visual_worker() -> None:
     )
 
     assert action.fixed_args == {}
-    assert set(action.exposed_args) == {"x", "y"}
+    assert set(action.exposed_args) == {"x", "y", "description"}
     parameters = dynamic_action_tool(action)["function"]["parameters"]
-    assert set(parameters["properties"]) == {"x", "y"}
-    assert set(parameters["required"]) == {"x", "y"}
+    assert set(parameters["properties"]) == {"x", "y", "description"}
+    assert set(parameters["required"]) == {"x", "y", "description"}
     with pytest.raises(ValidationError):
         validate(instance={}, schema=parameters)
-    validate(instance={"x": 125, "y": 750}, schema=parameters)
+    validate(instance={"x": 125, "y": 750, "description": _TARGET_DESCRIPTION}, schema=parameters)
 
 
 def test_scroll_coordinates_are_optional_worker_owned_anchors() -> None:
@@ -215,11 +218,11 @@ def test_scroll_coordinates_are_optional_worker_owned_anchors() -> None:
     )
 
     assert action.fixed_args == {"direction": "down"}
-    assert set(action.exposed_args) == {"x", "y"}
+    assert set(action.exposed_args) == {"x", "y", "description"}
     parameters = dynamic_action_tool(action)["function"]["parameters"]
-    assert set(parameters["properties"]) == {"x", "y"}
-    assert parameters["required"] == []
-    validate(instance={}, schema=parameters)
+    assert set(parameters["properties"]) == {"x", "y", "description"}
+    assert parameters["required"] == ["description"]
+    validate(instance={"description": _TARGET_DESCRIPTION}, schema=parameters)
 
 
 def test_select_option_keeps_value_fixed_but_coordinates_worker_owned() -> None:
@@ -232,13 +235,13 @@ def test_select_option_keeps_value_fixed_but_coordinates_worker_owned() -> None:
     )
 
     assert action.fixed_args == {"text": "Complete"}
-    assert set(action.exposed_args) == {"x", "y"}
+    assert set(action.exposed_args) == {"x", "y", "description"}
     tool = dynamic_action_tool(action)["function"]
     parameters = tool["parameters"]
-    assert set(parameters["properties"]) == {"x", "y"}
-    assert set(parameters["required"]) == {"x", "y"}
+    assert set(parameters["properties"]) == {"x", "y", "description"}
+    assert set(parameters["required"]) == {"x", "y", "description"}
     assert "cannot execute a different recovery value" in tool["description"]
-    validate(instance={"x": 800, "y": 500}, schema=parameters)
+    validate(instance={"x": 800, "y": 500, "description": _TARGET_DESCRIPTION}, schema=parameters)
 
 
 def test_select_option_exposes_value_when_master_does_not_bind_it() -> None:
@@ -249,10 +252,13 @@ def test_select_option_exposes_value_when_master_does_not_bind_it() -> None:
     )
 
     assert action.fixed_args == {}
-    assert set(action.exposed_args) == {"x", "y", "text"}
+    assert set(action.exposed_args) == {"x", "y", "text", "description"}
     parameters = dynamic_action_tool(action)["function"]["parameters"]
-    assert set(parameters["required"]) == {"x", "y", "text"}
-    validate(instance={"x": 800, "y": 500, "text": "Complete"}, schema=parameters)
+    assert set(parameters["required"]) == {"x", "y", "text", "description"}
+    validate(
+        instance={"x": 800, "y": 500, "text": "Complete", "description": _TARGET_DESCRIPTION},
+        schema=parameters,
+    )
 
 
 def test_runtime_action_floor_and_patch_tool_are_always_available() -> None:
@@ -393,7 +399,7 @@ def test_worker_can_materialize_registered_frame_driven_action() -> None:
     action = materialize_action_patch(patch)
 
     assert action.fixed_args == {"text": "Complete"}
-    assert set(action.exposed_args) == {"x", "y"}
+    assert set(action.exposed_args) == {"x", "y", "description"}
 
 
 def test_open_url_is_worker_owned_or_can_be_bound_by_action_patch() -> None:
@@ -527,6 +533,23 @@ def test_data_requirement_rejects_incompatible_runtime_type() -> None:
         )
 
 
+def test_data_requirement_accepts_nullable_runtime_type() -> None:
+    requirement = DataRequirement(
+        id="records",
+        description="optional labels",
+        row_schema={
+            "type": "object",
+            "properties": {"label": {"type": ["string", "null"]}},
+        },
+        field_types={"label": "text"},
+    )
+
+    assert requirement.row_schema["properties"]["label"]["type"] == [
+        "string",
+        "null",
+    ]
+
+
 def test_worker_profile_is_inferred_without_creating_distinct_worker_types() -> None:
     common = {
         "goal": "Reach the requested outcome",
@@ -609,6 +632,34 @@ def test_worker_normalizes_explicit_null_input_refs_to_empty_mapping() -> None:
     })
 
     assert spec.input_refs == {}
+
+
+def test_worker_normalizes_string_action_input_shorthand() -> None:
+    spec = WorkerSpec.model_validate({
+        "profile": "operator",
+        "goal": "Search for the next record",
+        "success_criteria": ["The record is visible"],
+        "input_refs": {"known_query": "result:query"},
+        "actions": [
+            {
+                "name": "search_known",
+                "capability": "type",
+                "description": "Search using a Runtime-owned value",
+                "input_args": {"text": "known_query"},
+            },
+            {
+                "name": "search_observed",
+                "capability": "type",
+                "description": "Search using a value derived from the current UI",
+                "input_args": {"text": "derived_query"},
+            },
+        ],
+    })
+
+    assert spec.actions[0].input_args["text"].input == "known_query"
+    assert "text" not in spec.actions[0].exposed_args
+    assert spec.actions[1].input_args == {}
+    assert "text" in spec.actions[1].exposed_args
 
 
 def test_worker_clamps_model_requested_steps_to_protocol_limit() -> None:

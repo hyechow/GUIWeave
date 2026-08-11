@@ -127,6 +127,9 @@ def test_tool_agent_worker_disambiguates_related_navigation_targets():
     assert "matching their exact visible labels" in prompt
     assert "Complete only when the page title" in prompt
     assert "selected value" in prompt
+    assert "`detail_resolution.status = active`" in prompt
+    assert "`pending_candidate_ordinal`" in prompt
+    assert "never add lookup rows as candidates" in prompt
 
 
 def test_tool_agent_prompts_preserve_exact_pending_selection_sets():
@@ -167,6 +170,10 @@ def test_tool_agent_master_separates_candidate_coverage_from_result_selection() 
     assert "query must never exist only as prose" in prompt
     assert "Observer can verify the queried scope" in prompt
     assert "never rely on UI row order or collection arrival order" in prompt
+    assert "Linked-detail resolution remains source acquisition" in prompt
+    assert "Never finish or transform a partial candidate collection" in prompt
+    assert "Observation is automatic" in prompt
+    assert "pseudo-actions" in prompt
 
     transcription = load_prompt_text("task.tool_agent.visual_transcription")
     assert "must never make you omit a readable row" in transcription

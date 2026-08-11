@@ -349,3 +349,68 @@ def test_control_value_change_counts_as_task_progress() -> None:
     )
 
     assert progressed.blocked is False
+
+
+def test_action_guard_rejects_control_capability_mismatches() -> None:
+    controls = [
+        {
+            "kind": "native_select",
+            "label": "Material",
+            "selected_text": "",
+            "rect": {"x": 500, "y": 200, "w": 100, "h": 40},
+        },
+        {
+            "kind": "button",
+            "label": "Filters",
+            "rect": {"x": 500, "y": 300, "w": 100, "h": 40},
+        },
+    ]
+    frame = MaterializedFrame(
+        frame_id="controls",
+        screenshot_path="controls.png",
+        controls=controls,
+    )
+
+    tap = WorkerActionCircuitBreaker().inspect(
+        tool="tap", capability="tap", args={"x": 500, "y": 200}, frame=frame
+    )
+    typed = WorkerActionCircuitBreaker().inspect(
+        tool="type", capability="type", args={"x": 500, "y": 300}, frame=frame
+    )
+
+    assert tap.blocked and "use select_option" in tap.reason
+    assert typed.blocked and "editable input" in typed.reason
+
+
+def test_action_guard_blocks_redundant_detail_scroll_and_unscoped_row() -> None:
+    breaker = WorkerActionCircuitBreaker()
+    detail = MaterializedFrame(
+        frame_id="detail",
+        screenshot_path="detail.png",
+        requirement_scopes={"products": {
+            "status": "unknown",
+            "detail_resolution": {
+                "detail_fields": ["material"],
+                "current_observed_detail_fields": ["material"],
+            },
+        }},
+    )
+    assert breaker.inspect(
+        tool="scroll",
+        capability="scroll",
+        args={"direction": "down", "description": "Reveal Material"},
+        frame=detail,
+    ).blocked
+
+    row = detail.model_copy(update={
+        "requirement_scopes": {"products": {"status": "unmet"}},
+        "controls": [{
+            "kind": "a",
+            "label": "Edit product",
+            "group_index": 0,
+            "rect": {"x": 800, "y": 500, "w": 80, "h": 30},
+        }],
+    })
+    assert breaker.inspect(
+        tool="tap", capability="tap", args={"x": 800, "y": 500}, frame=row
+    ).blocked

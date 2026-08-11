@@ -143,6 +143,57 @@ def test_worker_context_always_uses_compact_semantic_frame() -> None:
     assert '"rect": {"x": 100, "y": 200, "w": 80, "h": 30}' in projection.text
 
 
+def test_worker_context_hides_offscreen_inventory_but_keeps_choice_state() -> None:
+    frame = MaterializedFrame(
+        frame_id="frame:detail",
+        screenshot_path="frame.png",
+        requirement_scopes={
+            "products": {
+                "status": "unknown",
+                "detail_resolution": {
+                    "status": "active",
+                    "current_observed_detail_fields": ["material"],
+                },
+            },
+        },
+        controls=[
+            {"kind": "button", "label": "Back", "in_viewport": True},
+            *[
+                {
+                    "kind": "a",
+                    "label": f"Edit row {index}",
+                    "value": "Edit",
+                    "in_viewport": False,
+                }
+                for index in range(200)
+            ],
+            {
+                "kind": "native_select",
+                "label": "Material",
+                "selected_text": "",
+                "in_viewport": False,
+                "viewport_pos": "below",
+            },
+        ],
+    )
+
+    projection = project_worker_context(
+        memory=build_worker_memory_view(WorkerJournal(worker_id="detail")),
+        frame=frame,
+    )
+
+    assert '"label": "Material"' in projection.text
+    assert '"selected_text": ""' in projection.text
+    assert "Edit row" not in projection.text
+    assert '"observed_choice_state"' in projection.text
+    observed = projection.text.split('"observed_choice_state"', 1)[1]
+    assert '"in_viewport"' not in observed.split('"structured_surfaces"', 1)[0]
+    controls = projection.text.split('"controls"', 1)[1]
+    assert '"label": "Material"' not in controls
+    assert projection.text.index('"requirement_scopes"') < projection.text.index('"controls"')
+    assert len(projection.text) < 5_000
+
+
 def test_worker_context_keeps_structured_surface_completion_evidence() -> None:
     frame = MaterializedFrame(
         frame_id="frame:2",

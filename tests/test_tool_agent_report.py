@@ -21,7 +21,10 @@ def test_tool_agent_trace_populates_report_timeline(tmp_path: Path) -> None:
         "models": {"tool_agent.master": "master", "tool_agent.worker": "worker"},
         "orchestrator": {"kind": "tool_agent", "perception_mode": "vision-only"},
     }), encoding="utf-8")
-    (tmp_path / "screenshot_tool_agent_1.png").write_bytes(b"not-decoded-by-builder")
+    for index in range(1, 6):
+        (tmp_path / f"screenshot_tool_agent_{index}.png").write_bytes(
+            b"not-decoded-by-builder"
+        )
     transform = "def transform(inputs):\n    return [row['label'] for row in inputs[0][:2]]"
     (tmp_path / "tool_agent_trace.json").write_text(json.dumps({
         "phase": "completed",
@@ -40,7 +43,7 @@ def test_tool_agent_trace_populates_report_timeline(tmp_path: Path) -> None:
             {
                 "index": 2,
                 "event": "observe",
-                "frame_id": "frame:1",
+                "frame_id": "frame:5",
                 "mode": "vision-only",
                 "chunks": [{"ref": "chunk:labels:1", "provider": "vision", "row_count": 2}],
                 "collections": [{"ref": "collection:labels", "row_count": 2}],
@@ -54,7 +57,7 @@ def test_tool_agent_trace_populates_report_timeline(tmp_path: Path) -> None:
                 {
                     "index": 4,
                     "event": "worker_decision",
-                "frame_id": "frame:1",
+                "frame_id": "frame:5",
                 "step": 1,
                 "tool": "runtime_scroll_visible",
                 "memory_event_count": 3,
@@ -127,6 +130,8 @@ def test_tool_agent_trace_populates_report_timeline(tmp_path: Path) -> None:
     assert len(data.pages) == 2
     assert len(data.pages[0].steps) == 1
     assert data.pages[1].title == "Runtime Transform · compute_labels"
+    assert data.pages[1].steps[0].raw_screenshot_url == "screenshot_tool_agent_5.png"
+    assert data.pages[1].steps[0].display_label == "来源 GUI T5"
     assert data.stats == {"workers": 1, "turns": 2, "executed": 2}
     assert "GUI Worker · gui_worker" in html
     assert "collecting · runtime_scroll_visible" in html
@@ -136,6 +141,7 @@ def test_tool_agent_trace_populates_report_timeline(tmp_path: Path) -> None:
     assert "result:1" in html
     assert "frame metadata" in html
     assert "compute_labels" in html
+    assert "来源 GUI T5 · 命令" in html
     assert "rebuilt_per_frame" in html
     assert "2048" in html
     assert "journal_events" in html

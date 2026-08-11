@@ -1,0 +1,76 @@
+{
+  "requirement": {
+    "id": "products_qty_3",
+    "description": "Products with Quantity equal to 3 including resolved Material",
+    "row_schema": {
+      "type": "object",
+      "properties": {
+        "name": {"type": "string"},
+        "type": {"type": "string"},
+        "sku": {"type": "string"},
+        "quantity": {"type": "number"},
+        "material": {"type": "string"}
+      },
+      "required": ["name", "type", "sku", "quantity"]
+    },
+    "field_sources": {
+      "name": "Name",
+      "type": "Type",
+      "sku": "SKU",
+      "quantity": "Quantity",
+      "material": "Material"
+    },
+    "field_types": {
+      "name": "text",
+      "type": "text",
+      "sku": "text",
+      "quantity": "number",
+      "material": "text"
+    },
+    "filters": {"quantity": 3}
+  },
+  "list_table": {
+    "headers": ["Name", "Type", "SKU", "Quantity", "Action"],
+    "rows": [
+      {
+        "Name": "Eos V-Neck Hoodie-S-Blue",
+        "Type": "Simple Product",
+        "SKU": "WH11-S-Blue",
+        "Quantity": "3",
+        "Action": "Edit"
+      },
+      {
+        "Name": "Minerva LumaTech™ V-Tee-XS-Blue",
+        "Type": "Simple Product",
+        "SKU": "WS08-XS-Blue",
+        "Quantity": "3",
+        "Action": "Edit"
+      }
+    ],
+    "total_records": 2,
+    "partial": false,
+    "traversal": {"type": "paged", "page_index": 1, "page_count": 1, "has_next_page": false}
+  },
+  "details": [
+    [
+      {"label": "SKU", "value": "WH11-S-Blue"},
+      {"label": "Material", "value": null, "selected_text": ""}
+    ],
+    [
+      {"label": "SKU", "value": "WH11"},
+      {"label": "Material", "selected_text": "Cotton"}
+    ],
+    [
+      {"label": "SKU", "value": "WS08-XS-Blue"},
+      {"label": "Material", "value": null, "selected_text": ""}
+    ],
+    [
+      {"label": "SKU", "value": "WS08"},
+      {"label": "Material", "selected_text": "Fleece"}
+    ]
+  ],
+  "expected_rows": [
+    {"name": "Eos V-Neck Hoodie-S-Blue", "type": "Simple Product", "sku": "WH11-S-Blue", "quantity": 3, "material": "Cotton"},
+    {"name": "Minerva LumaTech™ V-Tee-XS-Blue", "type": "Simple Product", "sku": "WS08-XS-Blue", "quantity": 3, "material": "Fleece"}
+  ]
+}

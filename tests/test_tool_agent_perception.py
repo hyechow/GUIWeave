@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import json
 from pathlib import Path
 from types import SimpleNamespace
 
@@ -18,6 +19,9 @@ ROW_SCHEMA = {
     "required": ["term", "uses"],
     "additionalProperties": False,
 }
+TASK185_FIXTURE = (
+    Path(__file__).parent / "fixtures/tool_agent/task185_material_inheritance.json"
+)
 
 
 def _requirement() -> DataRequirement:
@@ -101,6 +105,8 @@ def _materializer(tmp_path: Path, mode: str) -> PerceptionMaterializer:
     materializer.data_store = RuntimeDataStore()
     materializer.log_dir = tmp_path
     materializer.model = "fake"
+    materializer._expected_totals = {}
+    materializer._detail_collections = {}
     materializer._vision_extract = lambda _requirement, _png, **_kwargs: {  # type: ignore[method-assign]
         "found": False,
         "rows": [],
@@ -353,14 +359,7 @@ def test_detail_collection_keeps_candidate_total_and_survives_list_navigation(
         "partial": False,
         "traversal": {"type": "static", "has_next_page": False},
     }
-    list_extract = {
-        "found": True,
-        "rows": [{"product": "Candidate Product", "title": "First"}],
-        "end_visible": True,
-        "scope_satisfied": True,
-    }
     extracts = iter([
-        list_extract,
         {
             "found": True,
             "rows": [{
@@ -371,7 +370,6 @@ def test_detail_collection_keeps_candidate_total_and_survives_list_navigation(
             "end_visible": True,
             "scope_satisfied": True,
         },
-        list_extract,
         {
             "found": True,
             "rows": [{
@@ -382,7 +380,6 @@ def test_detail_collection_keeps_candidate_total_and_survives_list_navigation(
             "end_visible": True,
             "scope_satisfied": True,
         },
-        list_extract,
     ])
     materializer = _materializer(tmp_path, "enhanced")
     materializer._vision_extract = lambda *_args, **_kwargs: next(extracts)  # type: ignore[method-assign]
@@ -723,6 +720,115 @@ def test_collector_establishes_filter_scope_before_materializing_rows(tmp_path: 
         "owner": "b",
         "status": "Complete",
     }]
+
+
+def test_linked_details_resolve_empty_values_from_related_records(tmp_path: Path) -> None:
+    case = json.loads(TASK185_FIXTURE.read_text(encoding="utf-8"))
+    requirement = DataRequirement.model_validate(case["requirement"])
+    materializer = _materializer(tmp_path, "enhanced")
+    materializer._vision_extract = lambda *_args, **_kwargs: (_ for _ in ()).throw(  # type: ignore[method-assign]
+        AssertionError("enhanced list/detail evidence must not invoke visual extraction")
+    )
+
+    def observe(
+        frame_no: int,
+        *,
+        table: dict | None = None,
+        controls: list[dict] | None = None,
+        applied: dict[str, str] | None = None,
+        predicates: dict | None = None,
+    ):
+        frame, _ = materializer.observe(
+            bundle=FakeBundle(
+                [table] if table else [],
+                controls=controls,
+                applied_filters=applied,
+                applied_filter_state=(
+                    AppliedFilterState(
+                        predicates=compile_filter_predicates(predicates),
+                        coverage="complete",
+                        source="replay",
+                    )
+                    if predicates is not None
+                    else None
+                ),
+            ),
+            platform=FakePlatform(),
+            requirements=[requirement],
+            acquisition_filters={"quantity": 3},
+            frame_no=frame_no,
+        )
+        return frame
+
+    initial = observe(
+        1,
+        table=case["list_table"],
+        applied={"Quantity": "3 - 3"},
+        predicates={"Quantity": 3},
+    )
+    assert initial.collections == []
+
+    child = observe(2, controls=case["details"][0])
+    detail = child.requirement_scopes[requirement.id]["detail_resolution"]
+    assert detail["pending_candidate_ordinal"] == 1
+    assert detail["current_observed_detail_fields"] == ["material"]
+
+    parent_table = {
+        "headers": ["Type", "SKU", "Action"],
+        "rows": [{"Type": "Configurable Product", "SKU": "WH11", "Action": "Edit"}],
+        "total_records": 1,
+        "partial": False,
+        "traversal": {"type": "static"},
+    }
+    parent_search = observe(
+        3,
+        table=parent_table,
+        applied={
+            "Keyword": "WH11",
+            "Quantity": "3 - 3",
+            "Type": "Configurable Product",
+        },
+        predicates={
+            "Keyword": "WH11",
+            "Quantity": 3,
+            "Type": "Configurable Product",
+        },
+    )
+    resolution = parent_search.requirement_scopes[requirement.id]["detail_resolution"]
+    assert resolution["pending_candidate_ordinal"] == 1
+    assert parent_search.requirement_scopes[requirement.id]["applied_filters"] == {
+        "Keyword": "WH11",
+        "Quantity": "3 - 3",
+        "Type": "Configurable Product",
+    }
+
+    first_parent = observe(4, controls=case["details"][1])
+    progress = first_parent.requirement_scopes[requirement.id]["detail_resolution"]
+    assert progress["resolved_candidate_ordinals"] == [1]
+    assert progress["next_unresolved_candidate"]["ordinal"] == 2
+
+    observe(5, controls=case["details"][2])
+    observe(6, controls=case["details"][3])
+    broad = observe(
+        7,
+        table=case["list_table"],
+        applied={"Quantity": "3 - ..."},
+        predicates={"Quantity": {"from": 3}},
+    )
+    assert broad.collections == []
+    assert broad.requirement_scopes[requirement.id]["detail_resolution"]["status"] == "resolved"
+
+    completed = observe(
+        8,
+        table=case["list_table"],
+        applied={"Quantity": "3 - 3"},
+        predicates={"Quantity": 3},
+    )
+    collection = completed.collections[0]
+    assert collection.coverage["status"] == "complete"
+    assert collection.row_count == 2
+    assert completed.chunks[0].provider == "structured"
+    assert materializer.data_store.collection_rows(collection.ref) == case["expected_rows"]
 
 
 def test_vision_only_never_invokes_platform_perception(tmp_path: Path) -> None:

@@ -448,20 +448,28 @@ _LOGIN_ACTIONS = [
 
 
 class _MultiActionWorker:
-    def __init__(self) -> None:
+    def __init__(self, action_batches: list[list[dict]] | None = None) -> None:
         self.calls = 0
         self.bound_names: set[str] = set()
+        self.bound_schemas: list[str] = []
+        self.action_batches = action_batches
 
     def bind_tools(self, tools, **kwargs):
         assert kwargs.get("parallel_tool_calls") is False
         self.bound_names = {tool["function"]["name"] for tool in tools}
+        self.bound_schemas.append(json.dumps(tools))
         return self
 
     def invoke(self, messages):
         del messages
         self.calls += 1
+        actions = (
+            self.action_batches[self.calls - 1]
+            if self.action_batches is not None
+            else _LOGIN_ACTIONS
+        )
         return SimpleNamespace(content="", tool_calls=[{
-            "id": "decision",
+            "id": f"decision-{self.calls}",
             "name": "continue_with_actions",
             "args": {
                 "state": {
@@ -469,35 +477,57 @@ class _MultiActionWorker:
                     "summary": "The complete login form is visible.",
                     "next_instruction": "Fill and submit the login form.",
                 },
-                "actions": _LOGIN_ACTIONS,
+                "actions": actions,
             },
         }])
+
+
+_GUARD_REPAIR_ACTIONS = [
+    [{
+        "name": "runtime_scroll_visible",
+        "args": {
+            "direction": "down",
+            "amount": "medium",
+            "description": "Scroll to reveal Material",
+        },
+    }],
+    [{"name": "task_action", "args": {"x": 500, "y": 100}}],
+]
 
 
 def _run_fused_worker(
     monkeypatch,
     *,
     current_url: str,
+    worker=None,
+    actions: list[DynamicActionSpec] | None = None,
+    controls: list[dict] | None = None,
+    requirement_scopes: dict[str, dict] | None = None,
 ) -> ToolAgentRuntime:
     runtime = object.__new__(ToolAgentRuntime)
     runtime.trace = []
     runtime.statuses = []
     runtime._status_cb = runtime.statuses.append
-    runtime.worker = _MultiActionWorker()
+    runtime.worker = worker or _MultiActionWorker()
     runtime._executor = _Executor()
     runtime.platform = SimpleNamespace(
         screenshot=lambda: b"latest-png",
         client=SimpleNamespace(page_info=lambda: (current_url, "Login")),
     )
     runtime.allow_multi_action = True
-    runtime._observe = lambda _spec: (
-        MaterializedFrame(
+    runtime.observe_calls = 0
+
+    def observe(_spec):
+        runtime.observe_calls += 1
+        return MaterializedFrame(
             frame_id="frame:1",
             screenshot_path="frame.png",
             url="https://example.test/login",
-        ),
-        b"initial-png",
-    )
+            controls=controls or [],
+            requirement_scopes=requirement_scopes or {},
+        ), b"initial-png"
+
+    runtime._observe = observe
     monkeypatch.setattr(
         "gui_agent.core.tool_agent.runtime.settle_after_action",
         lambda platform, png, *, action_type: (0.0, False),
@@ -505,7 +535,7 @@ def _run_fused_worker(
     spec = WorkerSpec(
         goal="Complete the visible local interaction",
         success_criteria=["The requested interface state is reached"],
-        actions=[DynamicActionSpec(
+        actions=actions or [DynamicActionSpec(
             name="task_action",
             capability="tap",
             description="Complete the visible local interaction",
@@ -538,6 +568,38 @@ def test_fused_worker_executes_ordered_actions_and_discards_invalid_suffix(
     assert any(event["event"] == expected_event for event in runtime.trace)
     if expected_actions == 3:
         assert any(status.startswith("Action · 2/3 · type") for status in runtime.statuses)
+
+
+def test_fused_worker_repairs_guarded_first_action_on_same_frame(monkeypatch) -> None:
+    worker = _MultiActionWorker(_GUARD_REPAIR_ACTIONS)
+    runtime = _run_fused_worker(
+        monkeypatch,
+        current_url="https://example.test/item",
+        worker=worker,
+        controls=[{
+            "kind": "button",
+            "label": "Filters",
+            "rect": {"x": 500, "y": 100, "w": 100, "h": 40},
+        }],
+        requirement_scopes={"records": {
+            "status": "unknown",
+            "detail_resolution": {
+                "detail_fields": ["material"],
+                "current_observed_detail_fields": ["material"],
+            },
+        }},
+        actions=[DynamicActionSpec(
+                name="task_action",
+                capability="tap",
+                description="Open the visible Filters button",
+        )],
+    )
+    assert runtime.observe_calls == 1
+    assert runtime.worker.calls == 2
+    assert len(runtime._executor.actions) == 1
+    assert any(event["event"] == "worker_action_blocked" for event in runtime.trace)
+    assert "runtime_scroll_visible" in worker.bound_schemas[0]
+    assert "runtime_scroll_visible" in worker.bound_schemas[1]
 
 
 def test_multi_action_suffix_requires_stable_visible_targets() -> None:
@@ -924,6 +986,45 @@ def test_vision_only_execution_does_not_use_enhanced_control_geometry(
     executed = runtime._executor.actions[-1]
     assert (executed.x, executed.y) == (207, 448)
     assert executed.snap is None
+
+
+def test_runtime_recovers_missing_exposed_action_description(monkeypatch) -> None:
+    runtime = object.__new__(ToolAgentRuntime)
+    runtime.bundle = SimpleNamespace(
+        make_action=lambda payload: BrowserAction.model_validate(payload)
+    )
+    runtime.perception_mode = "enhanced"
+    runtime._executor = _Executor()
+    runtime._visualizer = None
+    runtime.platform = object()
+    runtime._trace = lambda *_args, **_kwargs: None
+    monkeypatch.setattr(
+        "gui_agent.core.tool_agent.runtime.settle_after_action",
+        lambda platform, png, *, action_type: (0.0, False),
+    )
+    action = DynamicActionSpec(
+        name="runtime_scroll_visible",
+        capability="scroll",
+        description="Scroll the main content to reveal the required detail",
+        exposed_args=["direction", "amount", "target_area", "description"],
+    )
+    spec = WorkerSpec(
+        goal="Reveal the required detail",
+        success_criteria=["The detail is visible"],
+        actions=[action],
+    )
+
+    payload, terminal = runtime._execute_worker_tool(
+        spec,
+        [action],
+        {"name": action.name, "args": {"direction": "down"}},
+        b"png",
+        MaterializedFrame(frame_id="frame:1", screenshot_path="frame.png"),
+    )
+
+    assert payload["status"] == "executed"
+    assert terminal is None
+    assert runtime._executor.actions[-1].description == action.description
 
 
 @pytest.mark.parametrize(
