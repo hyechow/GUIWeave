@@ -552,11 +552,6 @@ def ground_action_to_nearest_control(
     for control in controls or []:
         if not isinstance(control, dict) or not _compatible_with_action(control, action_type):
             continue
-        if action_type in {"tap", "click"} and not _matches_described_control_type(
-            action.description,
-            control,
-        ):
-            continue
         if control.get("in_viewport") is False:
             continue
         rect = control.get("rect") or {}
@@ -572,6 +567,15 @@ def ground_action_to_nearest_control(
         target_position = _explicit_target_position(action.description, control)
         if target_position is not None:
             explicit_semantic.append((target_position, control, cx, cy))
+        # A later layout qualifier may name a different control family, e.g.
+        # "Search button ... left of Reset Filter link". Preserve the first
+        # explicit name/type target above even when the coarse type filter below
+        # selects the neighboring family for geometry-only snapping.
+        if action_type in {"tap", "click"} and not _matches_described_control_type(
+            action.description,
+            control,
+        ):
+            continue
         half_width = width_px / viewport_width * 500.0
         half_height = height_px / viewport_height * 500.0
         dx = max(abs(float(action.x) - cx) - half_width, 0.0)
