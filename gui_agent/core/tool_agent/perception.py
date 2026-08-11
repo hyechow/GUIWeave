@@ -2,10 +2,12 @@
 
 from __future__ import annotations
 
-import json
 import hashlib
+import html
+import json
 import re
 import time
+from dataclasses import dataclass
 from decimal import Decimal, InvalidOperation
 from pathlib import Path
 from typing import Any, Callable, Literal
@@ -45,6 +47,15 @@ _VISION_SYSTEM = load_prompt_text("task.tool_agent.visual_transcription")
 
 class DataNormalizationError(ValueError):
     """A declared runtime field type could not be normalized losslessly."""
+
+
+@dataclass
+class _DetailCollectionState:
+    """Private partial rows assembled across one list/detail traversal."""
+
+    rows: list[dict[str, Any]]
+    detail_fields: set[str]
+    pending_index: int | None = None
 
 
 def _normalize_runtime_value(
@@ -206,6 +217,74 @@ def _structured_rows(
             continue
         rows.append(output)
     return rows
+
+
+def _partial_structured_rows(
+    requirement: DataRequirement,
+    table: dict[str, Any],
+) -> tuple[list[dict[str, Any]], set[str]]:
+    """Read candidate fields without pretending detail-only fields were observed."""
+
+    properties = requirement.row_schema.get("properties") or {}
+    available = _table_fields(table)
+    list_fields = {
+        field
+        for field in properties
+        if _normalize(requirement.field_sources.get(field, field)) in available
+    }
+    if len(list_fields) < 2:
+        return [], set()
+    required_fields = set(requirement.row_schema.get("required") or [])
+    # Every declared projection field absent from the list belongs to linked
+    # detail acquisition. ``required`` controls final JSON validation; it must
+    # not silently erase a field the Master explicitly asked to collect.
+    detail_fields = set(properties).difference(list_fields)
+    candidate_requirement = requirement.model_copy(update={"row_schema": {
+        "type": "object",
+        "properties": {field: properties[field] for field in list_fields},
+        "required": sorted(required_fields.intersection(list_fields)),
+        "additionalProperties": False,
+    }})
+    return _structured_rows(candidate_requirement, table), detail_fields
+
+
+def _control_row(
+    requirement: DataRequirement,
+    controls: list[dict[str, Any]],
+) -> tuple[dict[str, Any], set[str]]:
+    """Project current form values by declared visible labels, preserving emptiness."""
+
+    by_label = {
+        _normalize(str(control.get("label") or "")): control
+        for control in reversed(controls)
+        if control.get("label")
+    }
+    row: dict[str, Any] = {}
+    observed: set[str] = set()
+    for field in (requirement.row_schema.get("properties") or {}):
+        source = requirement.field_sources.get(field, field)
+        control = by_label.get(_normalize(source))
+        if control is None:
+            continue
+        missing = object()
+        value = next(
+            (control[key] for key in ("selected_text_primary", "selected_text", "value") if key in control),
+            missing,
+        )
+        if value is missing:
+            continue
+        observed.add(field)
+        if isinstance(value, str):
+            value = html.unescape(value).strip()
+        declared_type = requirement.field_types.get(field)
+        if value not in (None, "") and declared_type is not None:
+            value = _normalize_runtime_value(source, value, declared_type)
+        row[field] = "" if value is None else value
+    return row, observed
+
+
+def _nonempty(value: Any) -> bool:
+    return value is not None and (not isinstance(value, str) or bool(value.strip()))
 
 
 def _normalize_visual_rows(
@@ -493,6 +572,7 @@ class PerceptionMaterializer:
         self.log_dir = log_dir
         self._on_event = on_event
         self._expected_totals: dict[tuple[str, str], int] = {}
+        self._detail_collections: dict[str, _DetailCollectionState] = {}
         cfg = resolve_llm_config("tool_agent.perception")
         self.model = cfg.model
         self._vision = ChatOpenAI(
@@ -503,6 +583,95 @@ class PerceptionMaterializer:
             max_retries=cfg.max_retries,
             temperature=0,
         )
+
+    def _assemble_detail_collection(
+        self,
+        *,
+        requirement: DataRequirement,
+        candidate_rows: list[dict[str, Any]],
+        detail_fields: set[str],
+        controls: list[dict[str, Any]],
+        scope_status: str,
+    ) -> tuple[_DetailCollectionState, list[dict[str, Any]], dict[str, Any]] | None:
+        """Accumulate list candidates and form details without exposing row values."""
+
+        state = self._detail_collections.get(requirement.id)
+        if candidate_rows and detail_fields and scope_status == "met":
+            identity_fields = detail_fields | (state.detail_fields if state else set())
+            def identities(items: list[dict[str, Any]]) -> list[dict[str, Any]]:
+                return [
+                    {key: value for key, value in row.items() if key not in identity_fields}
+                    for row in items
+                ]
+
+            if state is None or identities(state.rows) != identities(candidate_rows):
+                state = _DetailCollectionState(
+                    rows=[dict(row) for row in candidate_rows],
+                    detail_fields=set(detail_fields),
+                )
+                self._detail_collections[requirement.id] = state
+            else:
+                state.detail_fields.update(detail_fields)
+                for row, candidate in zip(state.rows, candidate_rows, strict=True):
+                    row.update(candidate)
+        if state is None or not state.rows or not state.detail_fields:
+            return None
+
+        detail, observed = _control_row(requirement, controls)
+        if observed.intersection(state.detail_fields):
+            scores = [
+                sum(
+                    key not in state.detail_fields
+                    and _nonempty(value)
+                    and row.get(key) == value
+                    for key, value in detail.items()
+                )
+                for row in state.rows
+            ]
+            best = max(scores, default=0)
+            matching = scores.index(best) if best and scores.count(best) == 1 else None
+            target = matching if matching is not None else state.pending_index
+            if target is not None:
+                for key in state.detail_fields.intersection(observed):
+                    value = detail.get(key)
+                    if matching is not None or (
+                        _nonempty(value) and not _nonempty(state.rows[target].get(key))
+                    ):
+                        state.rows[target][key] = value
+                state.pending_index = target if any(
+                    not _nonempty(state.rows[target].get(field))
+                    for field in state.detail_fields
+                ) else None
+
+        unresolved_indexes = [
+            index for index, row in enumerate(state.rows)
+            if any(not _nonempty(row.get(field)) for field in state.detail_fields)
+        ]
+        progress = {
+            "candidate_records": len(state.rows),
+            "current_observed_detail_fields": sorted(
+                state.detail_fields.intersection(observed)
+            ),
+            "resolved_candidate_ordinals": [
+                index + 1
+                for index in range(len(state.rows))
+                if index not in unresolved_indexes
+            ],
+            "next_unresolved_candidate": (
+                {
+                    "ordinal": unresolved_indexes[0] + 1,
+                    "fields": {
+                        key: value
+                        for key, value in state.rows[unresolved_indexes[0]].items()
+                        if key not in state.detail_fields and _nonempty(value)
+                    },
+                }
+                if unresolved_indexes
+                else None
+            ),
+        }
+        rows = [dict(row) for row in state.rows] if not unresolved_indexes else []
+        return state, rows, progress
 
     def observe(
         self,
@@ -551,10 +720,7 @@ class PerceptionMaterializer:
         chunks = []
         collections = []
         missing = []
-        expected_totals = getattr(self, "_expected_totals", None)
-        if expected_totals is None:
-            expected_totals = {}
-            self._expected_totals = expected_totals
+        expected_totals = self._expected_totals
         requirement_scopes: dict[str, dict[str, Any]] = {}
         for requirement in requirements:
             attempt_filters = (
@@ -565,6 +731,8 @@ class PerceptionMaterializer:
             rows: list[dict[str, Any]] = []
             provider: Literal["vision", "structured"] = "vision"
             table = _match_table(requirement, tables) if tables else None
+            candidate_rows: list[dict[str, Any]] = []
+            detail_fields: set[str] = set()
             coverage: dict[str, Any] = {}
             collection_found = False
             if table is None:
@@ -575,17 +743,26 @@ class PerceptionMaterializer:
                 ]
                 if len(empty_tables) == 1:
                     table = empty_tables[0]
-            if table is not None and _table_supports_requirement(requirement, table):
+            table_complete = bool(
+                table is not None and _table_supports_requirement(requirement, table)
+            )
+            empty_complete = bool(
+                table is not None and _authoritative_empty_table(table)
+            )
+            if table_complete:
                 rows = _structured_rows(requirement, table)
+            elif self.mode == "enhanced" and table is not None and not empty_complete:
+                candidate_rows, detail_fields = _partial_structured_rows(requirement, table)
+            if table_complete or empty_complete or candidate_rows:
                 scope = _scope_descriptor(
                     requirement,
                     acquisition_filters=attempt_filters,
                     applied_filter_state=applied_filter_state,
                     applied_filters=applied_filters,
-                    rows=rows,
+                    rows=rows or candidate_rows,
                 )
                 requirement_scopes[requirement.id] = scope
-                if scope["status"] == "met":
+                if scope["status"] == "met" and (table_complete or empty_complete):
                     provider = "structured"
                     coverage = _structured_coverage(
                         table,
@@ -594,27 +771,14 @@ class PerceptionMaterializer:
                         url=url,
                     )
                     collection_found = True
-            elif table is not None and _authoritative_empty_table(table):
-                scope = _scope_descriptor(
-                    requirement,
-                    acquisition_filters=attempt_filters,
-                    applied_filter_state=applied_filter_state,
-                    applied_filters=applied_filters,
-                    rows=[],
+            detail_state = self._detail_collections.get(requirement.id)
+            structured_detail = bool(
+                detail_state
+                and detail_state.detail_fields.intersection(
+                    _control_row(requirement, controls)[1]
                 )
-                requirement_scopes[requirement.id] = scope
-                if scope["status"] == "met":
-                    provider = "structured"
-                    coverage = _structured_coverage(
-                        table,
-                        requirement,
-                        scope=scope,
-                        url=url,
-                    )
-                    collection_found = True
-            if not collection_found and (
-                table is None or not _table_supports_requirement(requirement, table)
-            ):
+            )
+            if not collection_found and not candidate_rows and not structured_detail:
                 extracted = self._vision_extract(
                     requirement,
                     png,
@@ -702,6 +866,55 @@ class PerceptionMaterializer:
                 ),
             )
             scope = requirement_scopes[requirement.id]
+            assembled = (
+                self._assemble_detail_collection(
+                    requirement=requirement,
+                    candidate_rows=candidate_rows,
+                    detail_fields=detail_fields,
+                    controls=controls,
+                    scope_status=str(scope.get("status") or "unknown"),
+                )
+                if self.mode == "enhanced"
+                else None
+            )
+            if assembled is not None:
+                detail_state, assembled_rows, detail_progress = assembled
+                ready = bool(assembled_rows)
+                pending_ordinal = detail_state.pending_index
+                pending_ordinal = pending_ordinal + 1 if pending_ordinal is not None else None
+                current_detail_fields = set(
+                    detail_progress.get("current_observed_detail_fields") or []
+                )
+                scope["detail_resolution"] = {
+                    "status": "resolved" if ready else "active",
+                    **detail_progress,
+                    "detail_fields": sorted(detail_state.detail_fields),
+                    "pending_candidate_ordinal": pending_ordinal,
+                }
+                if current_detail_fields or pending_ordinal is not None or ready:
+                    rows = []
+                    collection_found = False
+                if scope["status"] == "met" and ready:
+                    rows = assembled_rows
+                    provider = "structured"
+                    coverage = {
+                        "scope": requirement.scope,
+                        "scope_status": "met",
+                        "requested_filters": scope["requested_filters"],
+                        "applied_filters": scope["applied_filters"],
+                        "collection_key": "visual:" + _fingerprint({
+                            "requirement": requirement.id,
+                            "filters": scope["requested_filters"],
+                        }),
+                        "source_scope": "linked_detail",
+                        "window_context": requirement.id,
+                        "at_end": True,
+                        "partial": False,
+                        "total_records": detail_progress["candidate_records"],
+                        "coverage_evidence": "linked_detail_assembly",
+                        **detail_progress,
+                    }
+                    collection_found = True
             scope_key = (
                 requirement.id,
                 json.dumps(

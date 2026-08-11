@@ -103,7 +103,18 @@ class DataRequirement(StrictModel):
         for field, field_type in self.field_types.items():
             field_schema = schema_properties.get(field)
             json_type = field_schema.get("type") if isinstance(field_schema, dict) else None
-            if json_type not in expected_json_types[field_type]:
+            json_types = (
+                {json_type}
+                if isinstance(json_type, str)
+                else set(json_type)
+                if isinstance(json_type, list)
+                and all(isinstance(item, str) for item in json_type)
+                else set()
+            )
+            expected = expected_json_types[field_type]
+            if not json_types.intersection(expected) or not json_types.issubset(
+                expected | {"null"}
+            ):
                 raise ValueError(
                     f"field_types[{field!r}]={field_type!r} is incompatible with "
                     f"row_schema type {json_type!r}"
@@ -168,7 +179,9 @@ class DynamicActionSpec(StrictModel):
         exposed_args = list(normalized.get("exposed_args") or [])
         capability = normalized.get("capability")
         if capability in {"tap", "type", "scroll", "select_option"}:
-            for name in ("x", "y"):
+            # The screenshot-owning Worker supplies both the point and the
+            # frame-specific target description used by enhanced grounding.
+            for name in ("x", "y", "description"):
                 fixed_args.pop(name, None)
                 if name not in exposed_args:
                     exposed_args.append(name)
@@ -262,6 +275,32 @@ class WorkerSpec(StrictModel):
             normalized["success_criteria"] = [success_criteria.strip()]
         if normalized.get("input_refs") is None:
             normalized["input_refs"] = {}
+        input_refs = normalized.get("input_refs")
+        input_names = set(input_refs) if isinstance(input_refs, dict) else set()
+        actions = list(normalized.get("actions") or [])
+        for index, raw_action in enumerate(actions):
+            if not isinstance(raw_action, dict):
+                continue
+            action = dict(raw_action)
+            input_args = dict(action.get("input_args") or {})
+            exposed_args = list(action.get("exposed_args") or [])
+            for argument, binding in list(input_args.items()):
+                if not isinstance(binding, str):
+                    continue
+                if binding in input_names:
+                    input_args[argument] = {"input": binding}
+                    continue
+                input_args.pop(argument)
+                if argument not in exposed_args:
+                    # Providers sometimes use input_args as shorthand for a value
+                    # the visual Worker should supply. Only declared input_refs are
+                    # eligible for deterministic Runtime binding.
+                    exposed_args.append(argument)
+            action["input_args"] = input_args
+            action["exposed_args"] = exposed_args
+            actions[index] = action
+        if "actions" in normalized:
+            normalized["actions"] = actions
         max_steps = normalized.get("max_steps")
         if isinstance(max_steps, (int, float)) and not isinstance(max_steps, bool):
             normalized["max_steps"] = min(int(max_steps), 20)

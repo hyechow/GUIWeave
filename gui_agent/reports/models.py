@@ -12,6 +12,7 @@ class ReportStep:
     y: float | None
     description: str
     annotated_before_url: str  # path to annotated screenshot (downscaled thumbnail)
+    display_label: str = ""  # optional thumbnail/detail marker; defaults to T{turn}
     annotated_full_url: str = ""  # full-resolution annotated frame for click-to-zoom
     raw_screenshot_url: str = ""  # path to raw screenshot (no annotations)
     after_url: str | None = None      # screenshot after action

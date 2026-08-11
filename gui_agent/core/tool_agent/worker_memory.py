@@ -50,6 +50,11 @@ _CONTROL_PROMPT_FIELDS = (
     "occluded",
     "rect",
 )
+_CHOICE_STATE_FIELDS = (
+    "selected_text",
+    "selected_text_primary",
+)
+_SIGNIFICANT_EMPTY_CONTROL_FIELDS = ("value", *_CHOICE_STATE_FIELDS)
 _RESULT_MEMORY_FIELDS = (
     "status",
     "action_type",
@@ -86,16 +91,37 @@ def _semantic_result(result: Any) -> Any:
 
 
 def _semantic_controls(controls: list[dict[str, Any]]) -> list[dict[str, Any]]:
-    """Expose actionable semantics without volatile DOM identity fields."""
+    """Expose controls that can be grounded in the current screenshot."""
 
     return [
         {
             key: control[key]
             for key in _CONTROL_PROMPT_FIELDS
-            if key in control and control[key] not in (None, "", [], {})
+            if key in control
+            and (
+                key in _SIGNIFICANT_EMPTY_CONTROL_FIELDS
+                or control[key] not in (None, "", [], {})
+            )
         }
         for control in controls
         if isinstance(control, dict)
+        and control.get("in_viewport") is not False
+    ]
+
+
+def _observed_choice_state(controls: list[dict[str, Any]]) -> list[dict[str, Any]]:
+    """Expose authoritative off-screen values without presenting action targets."""
+
+    return [
+        {
+            key: control[key]
+            for key in ("kind", "label", *_SIGNIFICANT_EMPTY_CONTROL_FIELDS)
+            if key in control
+        }
+        for control in controls
+        if isinstance(control, dict)
+        and control.get("in_viewport") is False
+        and any(key in control for key in _CHOICE_STATE_FIELDS)
     ]
 
 
@@ -309,6 +335,13 @@ def _frame_payload(frame: MaterializedFrame) -> dict[str, Any]:
     for requirement_id, scope in frame.requirement_scopes.items():
         if str(scope.get("status") or "") != "unmet":
             continue
+        detail = scope.get("detail_resolution")
+        if (
+            isinstance(detail, dict)
+            and detail.get("status") == "active"
+            and detail.get("pending_candidate_ordinal") is not None
+        ):
+            continue
         requested = dict(scope.get("requested_filters") or {})
         applied = dict(scope.get("applied_filters") or {})
         scope_blockers[requirement_id] = {
@@ -329,10 +362,11 @@ def _frame_payload(frame: MaterializedFrame) -> dict[str, Any]:
         "frame_id": frame.frame_id,
         "url": frame.url,
         "title": frame.title,
-        "controls": _semantic_controls(frame.controls),
-        "structured_surfaces": frame.structured_surfaces,
         "applied_filters": frame.applied_filters,
         "requirement_scopes": frame.requirement_scopes,
+        "scope_blockers": scope_blockers,
+        "observed_choice_state": _observed_choice_state(frame.controls),
+        "structured_surfaces": frame.structured_surfaces,
         "chunks": [
             {
                 "ref": item.ref,
@@ -353,7 +387,7 @@ def _frame_payload(frame: MaterializedFrame) -> dict[str, Any]:
             for item in frame.collections
         ],
         "missing_requirements": frame.missing_requirements,
-        "scope_blockers": scope_blockers,
+        "controls": _semantic_controls(frame.controls),
     }
 
 

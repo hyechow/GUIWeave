@@ -731,8 +731,12 @@ def _tool_agent_report_steps(
         result_ref = complete.get("result_ref") if isinstance(complete.get("result_ref"), dict) else None
         duration = max(0.0, float(complete.get("elapsed_s") or 0) - float(start.get("elapsed_s") or 0))
         screenshot = last_screenshot
+        source_frame = Path(screenshot).stem.rsplit("_", 1)[-1] if screenshot else ""
         step = ReportStep(
             label="Turn 1",
+            display_label=(
+                f"来源 GUI T{source_frame}" if source_frame.isdigit() else "Runtime"
+            ),
             action_type="command",
             x=None,
             y=None,

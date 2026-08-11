@@ -760,6 +760,10 @@ AT_LABELS = {
 }
 
 
+def _step_display_label(step: ReportStep) -> str:
+    return step.display_label or f"T{step.label.split()[-1]}"
+
+
 def _short_mid(mid) -> str:
     """Display-only short id: leading number of a slug ('1_open_wechat' -> '1').
 
@@ -1091,7 +1095,7 @@ def _render_step_detail(step: ReportStep, detail_id: str, prev_timestamp: str = 
       {ss_html}
       <div class="detail-info">
         <div class="detail-top">
-          <span class="detail-idx {at_cls}">{step.label.split()[-1]}</span>
+          <span class="detail-idx {at_cls}">{_safe(_step_display_label(step))}</span>
           <span class="detail-at" style="background:#f1f5f9;color:#475569">{at_label}</span>
           <span class="detail-desc">{action_detail}</span>
           {time_html}
@@ -1619,7 +1623,7 @@ def generate_html(data: ReportData, grid: bool = False) -> str:
         details_html = ""
         ms_elapsed = 0.0
         for si, step in enumerate(page.steps):
-            turn_no = step.label.split()[-1]
+            display_label = _step_display_label(step)
             detail_id = f"detail-ms{mid_safe}-s{si}"
             turn_elapsed, _ = _turn_elapsed_seconds(step, prev_ts)
             ms_elapsed += turn_elapsed
@@ -1645,7 +1649,7 @@ def generate_html(data: ReportData, grid: bool = False) -> str:
                 )
                 thumb_search_index = _attr(
                     " ".join([
-                        f"T{turn_no}",
+                        display_label,
                         at_label,
                         thumb_search,
                         batch_search,
@@ -1655,10 +1659,10 @@ def generate_html(data: ReportData, grid: bool = False) -> str:
                 )
                 thumbs_html += (
                     f'<div class="thumb" data-detail="{detail_id}" data-search-index="{thumb_search_index}" onclick="showDetail(\'{detail_id}\')">'
-                    f'<img src="{step.annotated_before_url}" alt="Turn {turn_no}">'
+                    f'<img src="{step.annotated_before_url}" alt="{_attr(display_label)}">'
                     f'<div class="thumb-action {at_cls}" title="{at_label}"></div>'
                     f'<div class="thumb-status {status_cls}">{status_text}</div>'
-                    f'<div class="thumb-label">T{turn_no} · {at_label}{thumb_time_html}</div>'
+                    f'<div class="thumb-label">{_safe(display_label)} · {at_label}{thumb_time_html}</div>'
                     f'</div>'
                 )
 

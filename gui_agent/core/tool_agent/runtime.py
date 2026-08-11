@@ -975,8 +975,6 @@ class ToolAgentRuntime:
                     state_compatibility=state_compatibility,
                 )
                 circuit_decision = None
-                if call["name"] == "continue_with_actions":
-                    break
                 if call["name"] == "request_action_patch":
                     patch_turn += 1
                     try:
@@ -1049,14 +1047,19 @@ class ToolAgentRuntime:
                         )
                     continue
 
+                guarded_call = calls[0] if call["name"] == "continue_with_actions" else call
                 action_spec = next(
-                    (item for item in active_actions if item.name == call["name"]),
+                    (item for item in active_actions if item.name == guarded_call["name"]),
                     None,
                 )
                 if action_spec is not None:
-                    resolved_guard_args = {**action_spec.fixed_args, **call["args"]}
+                    resolved_guard_args = {
+                        "description": action_spec.description,
+                        **action_spec.fixed_args,
+                        **guarded_call["args"],
+                    }
                     circuit_decision = circuit_breaker.inspect(
-                        tool=call["name"],
+                        tool=guarded_call["name"],
                         capability=action_spec.capability,
                         args=resolved_guard_args,
                         frame=frame,
@@ -1068,17 +1071,17 @@ class ToolAgentRuntime:
                             "reason": circuit_decision.reason,
                             "prior_attempts": circuit_decision.prior_attempts,
                             "instruction": (
-                                "Do not repeat the same point estimate. Choose one unambiguous "
-                                "visible target and describe its name, control type, and screen "
-                                "region; otherwise change the action or coordinates materially."
+                                "Treat the Runtime guard as authoritative. Do not rephrase or "
+                                "retry the blocked action; advance from the current observation "
+                                "or choose a materially different capability."
                             ),
                         }
                         self._trace(
                             "worker_action_blocked",
                             step=step,
                             frame_id=frame.frame_id,
-                            tool=call["name"],
-                            args=call["args"],
+                            tool=guarded_call["name"],
+                            args=guarded_call["args"],
                             signature=circuit_decision.signature,
                             progress=circuit_decision.progress,
                             prior_attempts=circuit_decision.prior_attempts,
@@ -1087,7 +1090,7 @@ class ToolAgentRuntime:
                         journal.record_guard(
                             step=step,
                             repair_turn=guard_repair_turn,
-                            tool=call["name"],
+                            tool=guarded_call["name"],
                             reason=circuit_decision.reason,
                         )
                         if guard_repair_turn > _MAX_ACTION_GUARD_REPAIRS_PER_FRAME:
@@ -1095,12 +1098,15 @@ class ToolAgentRuntime:
                                 phase="failed",
                                 summary=(
                                     "Worker repeated a circuit-blocked action after corrective "
-                                    f"feedback: {call['name']}"
+                                    f"feedback: {guarded_call['name']}"
                                 ),
                                 steps=step - 1,
                             )
                         same_frame_feedback = feedback
                         continue
+                if call["name"] == "continue_with_actions":
+                    # The executor owns per-atomic-action attempt accounting.
+                    circuit_decision = None
                 break
             try:
                 if call["name"] == "continue_with_actions":
@@ -1594,7 +1600,11 @@ class ToolAgentRuntime:
             circuit_decision = circuit_breaker.inspect(
                 tool=action_call["name"],
                 capability=action_spec.capability,
-                args={**action_spec.fixed_args, **action_call["args"]},
+                args={
+                    "description": action_spec.description,
+                    **action_spec.fixed_args,
+                    **action_call["args"],
+                },
                 frame=frame,
             )
             if circuit_decision.blocked:
@@ -1673,7 +1683,7 @@ class ToolAgentRuntime:
             page_identity = next_page_identity
 
         payload = {
-            "status": "executed" if executed == len(calls) else "aborted",
+            "status": "executed" if executed == len(calls) and not reason else "aborted",
             "planned_actions": len(calls),
             "executed_actions": executed,
         }
@@ -1746,15 +1756,23 @@ class ToolAgentRuntime:
         action_spec = action_by_name.get(call["name"])
         if action_spec is None:
             raise ProtocolError(f"unknown Worker tool {call['name']!r}")
-        full_args = {**action_spec.fixed_args, **call["args"]}
+        parameters = dynamic_action_tool(action_spec)["function"]["parameters"]
+        call_args = dict(call["args"])
+        if "description" in parameters.get("properties", {}) and not str(
+            call_args.get("description") or ""
+        ).strip():
+            # The action contract already supplies an unambiguous description.
+            # Recover this single lossless omission instead of spending another
+            # visual-policy turn on provider schema noncompliance.
+            call_args["description"] = action_spec.description
+        validate(instance=call_args, schema=parameters)
+        full_args = {**action_spec.fixed_args, **call_args}
         if call["name"] == "runtime_open_url":
             self._validate_runtime_open_url(
                 str(full_args.get("url") or ""),
                 spec=spec,
                 frame=frame,
             )
-        parameters = dynamic_action_tool(action_spec)["function"]["parameters"]
-        validate(instance=call["args"], schema=parameters)
         if action_spec.capability in _EXECUTABLE_CAPABILITIES:
             spatial = action_spec.capability in _SPATIAL_CAPABILITIES
             for coordinate in ("x", "y"):
