@@ -27,6 +27,24 @@ def _sum_tokens(token_usage: dict) -> tuple[int, int]:
     return ti, to
 
 
+def _sum_cached_tokens(token_usage: dict) -> int:
+    """Sum provider-reported cached input tokens across modules."""
+
+    return sum(
+        max(0, min(int(v.get("input", 0)), int(v.get("cached_input", 0))))
+        for v in (token_usage or {}).values()
+        if isinstance(v, dict)
+    )
+
+
+def _fmt_cache(input_tokens: int, cached_input: int) -> str:
+    input_tokens = max(0, int(input_tokens))
+    cached_input = max(0, min(input_tokens, int(cached_input)))
+    if not input_tokens or not cached_input:
+        return ""
+    return f"cache {_fmt_tokens(cached_input)} ({cached_input / input_tokens:.0%})"
+
+
 # Set from context.json's run-level `models` map (config_key → model). Missing → "",
 # which model_price() prices at the configured default — no active-config fallback.
 _MODELS_MAP: dict[str, str] = {}

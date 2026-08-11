@@ -8,7 +8,7 @@ import json
 from gui_agent.core.config import pricing_currency
 
 from .html_utils import _safe
-from .metrics import _fmt_tokens, _sum_tokens, _token_cost
+from .metrics import _fmt_cache, _fmt_tokens, _sum_cached_tokens, _sum_tokens, _token_cost
 from .prompt_html import _render_module_io_html
 
 def _field_summary(fields: list[str]) -> str:
@@ -111,6 +111,9 @@ def _render_orchestrator_metrics(orchestrator: dict) -> str:
         prefix = "≈" if estimated else ""
         cost_prefix = "≈"
         parts.append(f"{prefix}{_fmt_tokens(ti)}/{_fmt_tokens(to)} tok")
+        cache = _fmt_cache(ti, _sum_cached_tokens(token_usage))
+        if cache:
+            parts.append(cache)
         parts.append(f"{cost_prefix}{pricing_currency()}{_token_cost(token_usage):.4f}")
     if not parts:
         return ""
@@ -921,10 +924,17 @@ def _render_compile_attempt_history(orchestrator: dict) -> str:
         elapsed = float(item.get("elapsed_s") or 0)
         meta = [f"{elapsed:.1f}s"] if elapsed else []
         if usage:
-            meta.append(
+            usage_text = (
                 f"{_fmt_tokens(int(usage.get('input') or 0))}/"
                 f"{_fmt_tokens(int(usage.get('output') or 0))} tok"
             )
+            cache = _fmt_cache(
+                int(usage.get("input") or 0),
+                int(usage.get("cached_input") or 0),
+            )
+            if cache:
+                usage_text += f" · {cache}"
+            meta.append(usage_text)
         verdict = "passed" if passed else f"{len(diagnostics)} issue(s)"
         phase_cls = "coding-phase-ok" if passed else "coding-phase-fail"
         detail = "\n".join(diagnostics) or "Program passed static review."

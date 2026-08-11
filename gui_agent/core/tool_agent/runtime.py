@@ -12,7 +12,7 @@ from typing import Any, Callable, Literal
 from urllib.parse import unquote, urlsplit
 
 from jsonschema import Draft202012Validator, validate
-from langchain_core.messages import HumanMessage, SystemMessage
+from langchain_core.messages import HumanMessage
 from langchain_openai import ChatOpenAI
 
 from gui_agent.core.config import resolve_llm_config
@@ -42,6 +42,7 @@ from gui_agent.core.tool_agent.protocol import (
     FailWorkerArgs,
     ProtocolError,
     RequestActionPatchArgs,
+    cacheable_system_message,
     diagnostic_prompt_reports,
     dynamic_worker_tools,
     dynamic_action_tool,
@@ -79,6 +80,29 @@ _EXECUTABLE_CAPABILITIES = {
 }
 _ACTION_TYPES = {"open_url": "navigate"}
 _REDACTED_ACCESS_VALUE = "[session access value redacted]"
+
+
+def _token_metric(
+    input_tokens: int,
+    output_tokens: int,
+    cached_input: int = 0,
+) -> str:
+    """Render gross token usage plus provider-reported prompt-cache reuse."""
+
+    input_tokens = max(0, int(input_tokens))
+    output_tokens = max(0, int(output_tokens))
+    cached_input = max(0, min(input_tokens, int(cached_input)))
+    text = f"{input_tokens}/{output_tokens} tok"
+    if cached_input and input_tokens:
+        text += f" · cache {cached_input} ({cached_input / input_tokens:.0%})"
+    return text
+
+
+def _supports_explicit_prompt_cache(config: Any) -> bool:
+    return (
+        str(getattr(config, "provider", "")).casefold() in {"dashscope", "tokenplan"}
+        and str(getattr(config, "model", "")).casefold().startswith("qwen")
+    )
 
 
 def _access_log_redactions(access_context: str) -> tuple[str, ...]:
@@ -167,6 +191,8 @@ class ToolAgentRuntime:
         self.data_store = RuntimeDataStore()
         self.master, self.master_cfg = _llm("tool_agent.master")
         self.worker, self.worker_cfg = _llm("tool_agent.worker")
+        self._master_explicit_cache = _supports_explicit_prompt_cache(self.master_cfg)
+        self._worker_explicit_cache = _supports_explicit_prompt_cache(self.worker_cfg)
         self.materializer = PerceptionMaterializer(
             mode=perception_mode,
             data_store=self.data_store,
@@ -270,6 +296,11 @@ class ToolAgentRuntime:
                 system_prompt=_MASTER_SYSTEM,
                 task_context=task_context,
                 max_attempts=self.max_compile_attempts,
+                cache_system_prompt=getattr(
+                    self,
+                    "_master_explicit_cache",
+                    False,
+                ),
                 on_event=lambda event, payload: self._trace(event, **payload),
             )
             self._trace(
@@ -566,7 +597,10 @@ class ToolAgentRuntime:
                 payload["rejected_worker_spec"] = rejected
                 payload["validation_issues"] = validation_issues
             messages = [
-                SystemMessage(content=_MASTER_REDELEGATE_SYSTEM),
+                cacheable_system_message(
+                    _MASTER_REDELEGATE_SYSTEM,
+                    enabled=getattr(self, "_master_explicit_cache", False),
+                ),
                 HumanMessage(content=json.dumps(payload, ensure_ascii=False)),
             ]
             started_at = time.perf_counter()
@@ -1271,15 +1305,9 @@ class ToolAgentRuntime:
         spec: WorkerSpec,
         active_actions: list[DynamicActionSpec],
     ) -> str:
-        spec_for_prompt = spec.model_dump(mode="json")
-        spec_for_prompt["actions"] = [
-            action.model_dump(mode="json") for action in active_actions
-        ]
-        prompt = (
-            _WORKER_SYSTEM
-            + "\n\nWorkerSpec:\n"
-            + json.dumps(spec_for_prompt, ensure_ascii=False)
-        )
+        # Keep reusable runtime instructions and deployment context at the front.
+        # A redelegated Worker changes only the attempt contract at the suffix.
+        prompt = _WORKER_SYSTEM
         application_knowledge = getattr(self, "_master_knowledge", "").strip()
         if application_knowledge:
             prompt += (
@@ -1298,6 +1326,22 @@ class ToolAgentRuntime:
                 "results, or user-facing text.\n"
                 + access_context
             )
+        spec_for_prompt = spec.model_dump(mode="json", exclude={"actions"})
+        spec_for_prompt["action_contracts"] = [
+            action.model_dump(
+                mode="json",
+                include={"name", "fixed_args", "input_args"},
+                exclude_defaults=True,
+            )
+            for action in active_actions
+        ]
+        prompt += (
+            "\n\n## Worker attempt contract\n"
+            "The bound tools are the authoritative action descriptions and argument "
+            "schemas. This compact contract supplies only the subgoal, acceptance/data "
+            "contract, and Runtime-bound action values.\n"
+            + json.dumps(spec_for_prompt, ensure_ascii=False)
+        )
         return prompt
 
     def _worker_messages(
@@ -1317,8 +1361,16 @@ class ToolAgentRuntime:
             frame=frame,
             same_frame_feedback=same_frame_feedback,
         )
+        system_prompt = self._worker_system_prompt(spec, active_actions)
+        stable_prompt, delimiter, attempt_prompt = system_prompt.partition(
+            "## Worker attempt contract"
+        )
         messages = [
-            SystemMessage(content=self._worker_system_prompt(spec, active_actions)),
+            cacheable_system_message(
+                stable_prompt,
+                enabled=getattr(self, "_worker_explicit_cache", False),
+                suffix=(delimiter + attempt_prompt if delimiter else ""),
+            ),
             image_message(projection.text, png),
         ]
         return messages, [projection.report]
@@ -1844,7 +1896,11 @@ class ToolAgentRuntime:
                 metrics.append(f"{float(entry['llm_elapsed_s']):.1f}s")
             if usage:
                 metrics.append(
-                    f"{int(usage.get('input') or 0)}/{int(usage.get('output') or 0)} tok"
+                    _token_metric(
+                        int(usage.get("input") or 0),
+                        int(usage.get("output") or 0),
+                        int(usage.get("cached_input") or 0),
+                    )
                 )
             metric_text = f" ({' · '.join(metrics)})" if metrics else ""
             return (
@@ -1882,7 +1938,11 @@ class ToolAgentRuntime:
                 metrics.append(f"{float(entry['llm_elapsed_s']):.1f}s")
             if usage:
                 metrics.append(
-                    f"{int(usage.get('input') or 0)}/{int(usage.get('output') or 0)} tok"
+                    _token_metric(
+                        int(usage.get("input") or 0),
+                        int(usage.get("output") or 0),
+                        int(usage.get("cached_input") or 0),
+                    )
                 )
             suffix = f" ({' · '.join(metrics)})" if metrics else ""
             return (
@@ -1948,6 +2008,7 @@ class ToolAgentRuntime:
             timings: dict[str, float] = {}
             input_tokens = 0
             output_tokens = 0
+            cached_input = 0
             for item in recent:
                 name = str(item.get("event") or "")
                 label = {
@@ -1961,12 +2022,16 @@ class ToolAgentRuntime:
                     usage = item.get("token_usage") if isinstance(item.get("token_usage"), dict) else {}
                     input_tokens += int(usage.get("input") or 0)
                     output_tokens += int(usage.get("output") or 0)
+                    cached_input += int(usage.get("cached_input") or 0)
             timing_text = " | ".join(f"{key}={value:.1f}s" for key, value in timings.items())
             metrics = ""
             if timing_text:
                 metrics += f"\nTiming     : {timing_text}"
             if input_tokens or output_tokens:
-                metrics += f"\nTokens     : {input_tokens}/{output_tokens}"
+                metrics += (
+                    "\nTokens     : "
+                    + _token_metric(input_tokens, output_tokens, cached_input)
+                )
             context_chars = int(entry.get("context_chars") or 0)
             memory_events = int(entry.get("memory_event_count") or 0)
             context_text = (

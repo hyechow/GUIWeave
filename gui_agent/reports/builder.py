@@ -216,9 +216,13 @@ def _tool_agent_report_steps(
                 timings[module] = timings.get(module, 0.0) + elapsed
             if usage:
                 calls += 1
-                target = tokens.setdefault(module, {"input": 0, "output": 0})
+                target = tokens.setdefault(
+                    module,
+                    {"input": 0, "output": 0, "cached_input": 0},
+                )
                 target["input"] += int(usage.get("input") or 0)
                 target["output"] += int(usage.get("output") or 0)
+                target["cached_input"] += int(usage.get("cached_input") or 0)
         return timings, tokens, calls
 
     def annotated_frame(
@@ -295,12 +299,13 @@ def _tool_agent_report_steps(
         None,
     )
     if program_event is not None:
-        master_usage = {"input": 0, "output": 0}
+        master_usage = {"input": 0, "output": 0, "cached_input": 0}
         master_elapsed = 0.0
         for attempt in compile_attempts:
             usage = attempt.get("token_usage") if isinstance(attempt.get("token_usage"), dict) else {}
             master_usage["input"] += int(usage.get("input") or 0)
             master_usage["output"] += int(usage.get("output") or 0)
+            master_usage["cached_input"] += int(usage.get("cached_input") or 0)
             master_elapsed += float(attempt.get("llm_elapsed_s") or 0)
         orchestrator["program"] = {
             "kind": "coding",

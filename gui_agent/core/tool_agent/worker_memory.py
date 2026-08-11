@@ -10,7 +10,6 @@ from typing import Any
 from gui_agent.context.blocks import (
     ContextBlock,
     ContextCompressor,
-    ContextVariant,
     render_context_blocks,
 )
 from gui_agent.core.tool_agent.contracts import MaterializedFrame, WorkerState
@@ -26,6 +25,78 @@ DEFAULT_WORKER_CONTEXT_MAX_CHARS = int(
 def _bounded_json(value: Any, *, limit: int = 1_200) -> str:
     text = json.dumps(value, ensure_ascii=False, sort_keys=True, default=str)
     return text if len(text) <= limit else text[: limit - 1] + "…"
+
+
+_SPATIAL_MEMORY_ARGS = {"x", "y", "to_x", "to_y", "target_ref"}
+_CONTROL_PROMPT_FIELDS = (
+    "kind",
+    "label",
+    "placeholder",
+    "value",
+    "selected_text",
+    "selected_text_primary",
+    "options",
+    "focused",
+    "required",
+    "is_filter",
+    "query_action",
+    "form_action",
+    "is_datepicker",
+    "group_index",
+    "group_field",
+    "row_values",
+    "in_viewport",
+    "viewport_pos",
+    "occluded",
+    "rect",
+)
+_RESULT_MEMORY_FIELDS = (
+    "status",
+    "action_type",
+    "no_effect",
+    "kind",
+    "ref",
+    "requirement_id",
+    "row_count",
+    "coverage",
+    "summary",
+    "reason",
+    "error",
+    "recovery",
+    "platform_feedback",
+)
+
+
+def _semantic_action_args(args: dict[str, Any]) -> dict[str, Any]:
+    return {
+        key: value
+        for key, value in args.items()
+        if key not in _SPATIAL_MEMORY_ARGS
+    }
+
+
+def _semantic_result(result: Any) -> Any:
+    if not isinstance(result, dict):
+        return result
+    return {
+        key: result[key]
+        for key in _RESULT_MEMORY_FIELDS
+        if key in result and result[key] not in (None, "", [], {})
+    }
+
+
+def _semantic_controls(controls: list[dict[str, Any]]) -> list[dict[str, Any]]:
+    """Expose actionable semantics without volatile DOM identity fields."""
+
+    return [
+        {
+            key: control[key]
+            for key in _CONTROL_PROMPT_FIELDS
+            if key in control and control[key] not in (None, "", [], {})
+        }
+        for control in controls
+        if isinstance(control, dict)
+    ]
 
 
 @dataclass(frozen=True)
@@ -87,6 +158,9 @@ class WorkerJournal:
         args: dict[str, Any],
         result: Any,
     ) -> None:
+        del frame_id  # Frame identity and coordinates do not improve later decisions.
+        memory_args = _semantic_action_args(args)
+        memory_result = _semantic_result(result)
         result_status = (
             str(result.get("status") or "")
             if isinstance(result, dict)
@@ -105,7 +179,7 @@ class WorkerJournal:
         durable_text = ""
         if is_exception or result_status in {"error", "failed"}:
             durable_text = (
-                f"tool={tool}; failure={_bounded_json(result, limit=420)}"
+                f"tool={tool}; failure={_bounded_json(memory_result, limit=420)}"
             )
         elif is_no_effect:
             action_type = (
@@ -121,15 +195,19 @@ class WorkerJournal:
             else:
                 durable_text = f"tool={tool}; runtime reported no_effect"
         elif is_result_ref:
-            durable_text = f"tool={tool}; result={_bounded_json(result, limit=420)}"
+            durable_text = f"tool={tool}; result={_bounded_json(memory_result, limit=420)}"
+        args_text = (
+            f"; args={_bounded_json(memory_args, limit=220)}"
+            if memory_args
+            else ""
+        )
         self.events.append(WorkerJournalEvent(
             event_ref=f"step:{step}",
             kind="action_result",
             durable_text=durable_text,
             narrative_text=(
-                f"frame={frame_id}; state={state.status}; tool={tool}; "
-                f"args={_bounded_json(args, limit=220)}; "
-                f"result={_bounded_json(result, limit=260)}; "
+                f"state={state.status}; tool={tool}{args_text}; "
+                f"result={_bounded_json(memory_result, limit=260)}; "
                 f"summary={state.summary[:240]}; next={state.next_instruction[:200]}"
             ),
             pending_subgoal=(
@@ -221,7 +299,7 @@ def build_worker_memory_view(
     )
 
 
-def _frame_payload(frame: MaterializedFrame, *, compact: bool) -> dict[str, Any]:
+def _frame_payload(frame: MaterializedFrame) -> dict[str, Any]:
     scope_blockers: dict[str, dict[str, Any]] = {}
     for requirement_id, scope in frame.requirement_scopes.items():
         if str(scope.get("status") or "") != "unmet":
@@ -242,15 +320,11 @@ def _frame_payload(frame: MaterializedFrame, *, compact: bool) -> dict[str, Any]
                 "the visible UI before collecting or completing."
             ),
         }
-    if not compact:
-        payload = frame.model_dump(mode="json", exclude={"screenshot_path"})
-        payload["scope_blockers"] = scope_blockers
-        return payload
     return {
         "frame_id": frame.frame_id,
         "url": frame.url,
         "title": frame.title,
-        "controls": frame.controls,
+        "controls": _semantic_controls(frame.controls),
         "structured_surfaces": frame.structured_surfaces,
         "applied_filters": frame.applied_filters,
         "requirement_scopes": frame.requirement_scopes,
@@ -293,8 +367,7 @@ def project_worker_context(
 ) -> WorkerContextProjection:
     """Build one capacity-managed context; the screenshot is supplied separately."""
     memory_text = memory.render_prompt_section()
-    full_frame = json.dumps(_frame_payload(frame, compact=False), ensure_ascii=False)
-    compact_frame = json.dumps(_frame_payload(frame, compact=True), ensure_ascii=False)
+    compact_frame = json.dumps(_frame_payload(frame), ensure_ascii=False)
     blocks = [
         ContextBlock(
             id="tool_agent.worker.memory",
@@ -315,20 +388,10 @@ def project_worker_context(
             freshness="turn",
             coverage="complete",
             content=(
-                "## Current MaterializedFrame\n"
+                "## Current MaterializedFrame (compact semantic projection)\n"
                 "Values remain private; descriptors and controls only.\n"
-                + full_frame
+                + compact_frame
             ),
-            variants=(ContextVariant(
-                strategy="drop_descriptor_schemas",
-                content=(
-                    "## Current MaterializedFrame (compact descriptors)\n"
-                    "Values remain private; descriptors and controls only.\n"
-                    + compact_frame
-                ),
-                priority=10,
-                reason="remove repeated row/value schemas while preserving current controls and refs",
-            ),),
         ),
         (
             ContextBlock(

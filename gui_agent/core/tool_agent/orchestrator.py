@@ -17,7 +17,7 @@ from dataclasses import dataclass
 from typing import Any, Callable, Literal
 
 from jsonschema import Draft202012Validator
-from langchain_core.messages import HumanMessage, SystemMessage
+from langchain_core.messages import HumanMessage
 
 from gui_agent.core.tool_agent.contracts import (
     DataRequirement,
@@ -27,6 +27,7 @@ from gui_agent.core.tool_agent.contracts import (
 )
 from gui_agent.core.tool_agent.data_store import RuntimeDataStore
 from gui_agent.core.tool_agent.protocol import (
+    cacheable_system_message,
     diagnostic_prompt_reports,
     message_text,
     response_usage,
@@ -853,6 +854,7 @@ def compile_master_program(
     system_prompt: str,
     task_context: dict[str, Any],
     max_attempts: int = 3,
+    cache_system_prompt: bool = False,
     on_event: Callable[[str, dict[str, Any]], None] | None = None,
 ) -> MasterProgram:
     """Generate and deterministically review a complete orchestration program."""
@@ -872,7 +874,10 @@ def compile_master_program(
             payload["validation_issues"] = [item.render() for item in last_diagnostics]
         started_at = time.perf_counter()
         messages = [
-            SystemMessage(content=system_prompt),
+            cacheable_system_message(
+                system_prompt,
+                enabled=cache_system_prompt,
+            ),
             HumanMessage(content=json.dumps(payload, ensure_ascii=False)),
         ]
         response = generator.invoke(messages)

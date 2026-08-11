@@ -8,7 +8,7 @@ import re
 from gui_agent.core.config import pricing_currency
 
 from .html_utils import _attr, _safe
-from .metrics import _fmt_tokens, _sum_tokens, _token_cost
+from .metrics import _fmt_cache, _fmt_tokens, _sum_cached_tokens, _sum_tokens, _token_cost
 
 
 def _render_module_io_html(reports: list[dict], token_usage: dict | None = None) -> str:
@@ -134,10 +134,13 @@ def _render_token_usage_html(token_usage: dict) -> str:
         mo = int(usage.get("output") or 0)
         if not mi and not mo:
             continue
+        cache = _fmt_cache(mi, int(usage.get("cached_input") or 0))
+        cache_text = f" · {cache}" if cache else ""
         rows.append(
             f'<span class="prompt-token-chip">'
             f'<span class="prompt-token-name">{_safe(str(name))}</span>'
-            f'<span class="prompt-token-count">{_fmt_tokens(mi)}/{_fmt_tokens(mo)} tok</span>'
+            f'<span class="prompt-token-count">'
+            f'{_fmt_tokens(mi)}/{_fmt_tokens(mo)} tok{cache_text}</span>'
             f'</span>'
         )
     if not rows:
@@ -158,7 +161,13 @@ def _token_usage_summary_text(token_usage: dict) -> str:
     ti, to = _sum_tokens(token_usage)
     if not ti and not to:
         return ""
-    return f"{_fmt_tokens(ti)}/{_fmt_tokens(to)} tok · ≈{pricing_currency()}{_token_cost(token_usage):.4f}"
+    cached = _sum_cached_tokens(token_usage)
+    cache = _fmt_cache(ti, cached)
+    cache_text = f" · {cache}" if cache else ""
+    return (
+        f"{_fmt_tokens(ti)}/{_fmt_tokens(to)} tok{cache_text} · "
+        f"≈{pricing_currency()}{_token_cost(token_usage):.4f}"
+    )
 
 
 def _module_io_meta(calls: list[dict], token_usage: dict) -> str:

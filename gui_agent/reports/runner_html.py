@@ -9,7 +9,7 @@ from datetime import datetime
 from gui_agent.core.config import model_price, pricing_currency
 
 from .html_utils import _attr, _safe
-from .metrics import _fmt_tokens, _sum_tokens, _token_cost
+from .metrics import _fmt_cache, _fmt_tokens, _sum_cached_tokens, _sum_tokens, _token_cost
 from .models import ReportData, ReportStep
 from .orchestrator_html import (
     _coding_call_label,
@@ -1434,14 +1434,26 @@ def generate_html(data: ReportData, grid: bool = False) -> str:
         + orchestrator_out
         + presentation_out
     )
+    sess_cached = (
+        sum(
+            _sum_cached_tokens(step.token_usage)
+            for page in data.pages
+            for step in page.steps
+        )
+        + sum(_sum_cached_tokens(page.outcome_token_usage) for page in data.pages)
+        + _sum_cached_tokens(orchestrator_usage)
+        + _sum_cached_tokens(presentation_usage)
+    )
     sess_cost = (
         sum(float(m.get("cost", 0)) for m in data.statements)
         + _token_cost(orchestrator_usage)
         + _token_cost(presentation_usage)
     )
     if sess_in or sess_out:
+        cache = _fmt_cache(sess_in, sess_cached)
+        cache_text = f" / {cache}" if cache else ""
         stats_parts.append(
-            f"tokens: in {_fmt_tokens(sess_in)} / out {_fmt_tokens(sess_out)}"
+            f"tokens: in {_fmt_tokens(sess_in)} / out {_fmt_tokens(sess_out)}{cache_text}"
             f"  |  cost: ≈{pricing_currency()}{sess_cost:.4f}"
         )
     stats_str = "  |  ".join(stats_parts)

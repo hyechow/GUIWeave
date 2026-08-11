@@ -9,7 +9,7 @@ from copy import deepcopy
 from typing import Any, Literal
 
 from jsonschema import validate
-from langchain_core.messages import HumanMessage
+from langchain_core.messages import HumanMessage, SystemMessage
 from pydantic import BaseModel, ConfigDict, Field
 
 from gui_agent.core.tool_agent.contracts import (
@@ -439,6 +439,26 @@ def image_message(text: str, png: bytes) -> HumanMessage:
     )
 
 
+def cacheable_system_message(
+    text: str,
+    *,
+    enabled: bool,
+    suffix: str = "",
+) -> SystemMessage:
+    """Mark one stable system prefix for providers with explicit prompt caching."""
+
+    if not enabled:
+        return SystemMessage(content=text + suffix)
+    content: list[dict[str, Any]] = [{
+        "type": "text",
+        "text": text,
+        "cache_control": {"type": "ephemeral"},
+    }]
+    if suffix:
+        content.append({"type": "text", "text": suffix})
+    return SystemMessage(content=content)
+
+
 def message_text(content: Any) -> str:
     if isinstance(content, str):
         return content
@@ -472,10 +492,29 @@ def response_usage(response: Any) -> dict[str, int]:
         or fallback.get("total_tokens")
         or input_tokens + output_tokens
     )
+    cached_input = 0
+    for details in (
+        usage.get("input_token_details"),
+        fallback.get("prompt_tokens_details"),
+        fallback.get("input_token_details"),
+        usage,
+        fallback,
+    ):
+        if isinstance(details, dict):
+            cached_input = int(
+                details.get("cache_read")
+                or details.get("cached_tokens")
+                or details.get("cache_read_input_tokens")
+                or 0
+            )
+        if cached_input:
+            break
+    cached_input = max(0, min(input_tokens, cached_input))
     return {
         "input": input_tokens,
         "output": output_tokens,
         "total": total_tokens,
+        "cached_input": cached_input,
     }
 
 
