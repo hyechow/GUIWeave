@@ -87,6 +87,44 @@ def test_private_access_context_reaches_worker_but_is_redacted_from_trace() -> N
     assert "session access value redacted" in rendered_trace
 
 
+def test_worker_prompt_keeps_stable_context_before_compact_attempt_contract() -> None:
+    runtime = object.__new__(ToolAgentRuntime)
+    runtime._master_knowledge = "The settings page is reached from the profile menu."
+    runtime._worker_access_context = "Use the active authenticated session."
+    first = WorkerSpec(
+        goal="Find the requested record",
+        success_criteria=["The record is visible"],
+        actions=[DynamicActionSpec(
+            name="search_record",
+            capability="type",
+            description="Search the visible record grid using the requested literal.",
+            fixed_args={"text": "record-17"},
+        )],
+    )
+    revised = WorkerSpec(
+        goal="Find the requested record using a different visible route",
+        success_criteria=["The record is visible"],
+        actions=[DynamicActionSpec(
+            name="open_records",
+            capability="tap",
+            description="Open the visible records control.",
+        )],
+    )
+
+    first_prompt = runtime._worker_system_prompt(first, first.actions)
+    revised_prompt = runtime._worker_system_prompt(revised, revised.actions)
+    delimiter = "## Worker attempt contract"
+
+    assert first_prompt.split(delimiter, 1)[0] == revised_prompt.split(delimiter, 1)[0]
+    assert first_prompt.index("Application knowledge") < first_prompt.index(delimiter)
+    assert first_prompt.index("Session access context") < first_prompt.index(delimiter)
+    assert '"fixed_args": {"text": "record-17"}' in first_prompt
+    assert "Search the visible record grid using the requested literal." not in first_prompt
+    attempt_contract = first_prompt.split(delimiter, 1)[1]
+    assert '"capability"' not in attempt_contract
+    assert '"exposed_args"' not in attempt_contract
+
+
 def test_runtime_materializes_result_ref_into_fixed_action_argument() -> None:
     runtime = object.__new__(ToolAgentRuntime)
     runtime.data_store = RuntimeDataStore()

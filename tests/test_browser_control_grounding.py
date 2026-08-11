@@ -195,6 +195,44 @@ def test_explicit_target_phrase_repairs_large_coordinate_miss_despite_neighbor_n
     }
 
 
+def test_first_explicit_target_wins_over_later_different_control_family() -> None:
+    visual = BrowserActionDecision(action=BrowserAction(
+        action_type="tap",
+        x=159,
+        y=292,
+        description=(
+            "Search button located in the filter toolbar above the grid, "
+            "to the left of Reset Filter link"
+        ),
+    ))
+    controls = [
+        {
+            "kind": "button",
+            "label": "Search",
+            "rect": {"x": 122, "y": 276, "w": 75, "h": 33},
+        },
+        {
+            "kind": "a",
+            "label": "Reset Filter",
+            "rect": {"x": 195, "y": 276, "w": 106, "h": 33},
+        },
+    ]
+
+    decision = ground_action_to_nearest_control(
+        visual,
+        controls,
+        viewport_size=(1280, 963),
+    )
+
+    assert (decision.action.x, decision.action.y) == (122.0, 276.0)
+    assert decision.action.snap == {
+        "method": "control_semantic_geometry",
+        "original": [159.0, 292.0],
+        "snapped": [122.0, 276.0],
+        "info": "Search",
+    }
+
+
 def test_explicit_text_input_phrase_disambiguates_login_fields() -> None:
     visual = BrowserActionDecision(action=BrowserAction(
         action_type="type",

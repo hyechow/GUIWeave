@@ -58,12 +58,53 @@ def test_worker_memory_is_a_bounded_projection_of_append_only_runtime_facts() ->
     assert "Only runtime results below are facts" in rendered
 
 
-def test_worker_context_uses_semantic_frame_variant_before_exceeding_budget() -> None:
+def test_worker_memory_omits_spatial_and_execution_metadata() -> None:
+    journal = WorkerJournal(worker_id="compact_worker")
+    journal.record_turn(
+        step=1,
+        frame_id="volatile-frame:17",
+        state=_state(1),
+        tool="choose_status",
+        args={
+            "x": 410,
+            "y": 520,
+            "text": "Complete",
+            "description": "Choose the Complete status in the upper filter area",
+        },
+        result={
+            "status": "executed",
+            "action_type": "select_option",
+            "settle_seconds": 1.2,
+            "no_effect": False,
+            "grounding": {"x": 421, "y": 532, "source": "dom"},
+        },
+    )
+
+    rendered = build_worker_memory_view(journal).render_prompt_section()
+
+    assert "volatile-frame:17" not in rendered
+    assert '"x"' not in rendered
+    assert '"y"' not in rendered
+    assert "settle_seconds" not in rendered
+    assert "grounding" not in rendered
+    assert "Complete" in rendered
+    assert "select_option" in rendered
+
+
+def test_worker_context_always_uses_compact_semantic_frame() -> None:
     journal = WorkerJournal(worker_id="collector")
     frame = MaterializedFrame.model_validate({
         "frame_id": "frame:1",
         "screenshot_path": "frame.png",
-        "controls": [{"kind": "button", "label": "Apply"}],
+        "controls": [{
+            "kind": "button",
+            "label": "Apply",
+            "id": "private-dom-id",
+            "name": "private-control-name",
+            "group_id": "private-group-id",
+            "form_action": "commit",
+            "rect": {"x": 100, "y": 200, "w": 80, "h": 30},
+        }],
         "collections": [{
             "ref": "collection:records",
             "requirement_id": "records",
@@ -92,11 +133,14 @@ def test_worker_context_uses_semantic_frame_variant_before_exceeding_budget() ->
         item for item in projection.report["blocks"]
         if item["id"] == "tool_agent.worker.current_frame"
     )
-    assert frame_decision["action"] == "compressed"
-    assert frame_decision["strategy"] == "drop_descriptor_schemas"
-    assert projection.report["after_chars"] < projection.report["before_chars"]
+    assert frame_decision["action"] == "kept"
     assert "collection:records" in projection.text
     assert "x" * 100 not in projection.text
+    assert "private-dom-id" not in projection.text
+    assert "private-control-name" not in projection.text
+    assert "private-group-id" not in projection.text
+    assert '"form_action": "commit"' in projection.text
+    assert '"rect": {"x": 100, "y": 200, "w": 80, "h": 30}' in projection.text
 
 
 def test_worker_context_keeps_structured_surface_completion_evidence() -> None:

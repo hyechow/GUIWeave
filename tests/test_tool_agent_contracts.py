@@ -15,14 +15,82 @@ from gui_agent.core.tool_agent.contracts import (
 )
 from gui_agent.core.tool_agent.protocol import (
     RequestActionPatchArgs,
+    cacheable_system_message,
     diagnostic_prompt_reports,
     dynamic_action_tool,
     dynamic_worker_tools,
     exactly_one_tool_call,
     materialize_action_patch,
     normalize_action_arguments,
+    response_usage,
     worker_action_floor,
 )
+
+
+def test_explicit_cache_marker_wraps_only_the_stable_system_prefix() -> None:
+    message = cacheable_system_message(
+        "stable policy",
+        enabled=True,
+        suffix="dynamic attempt",
+    )
+
+    assert message.content == [
+        {
+            "type": "text",
+            "text": "stable policy",
+            "cache_control": {"type": "ephemeral"},
+        },
+        {"type": "text", "text": "dynamic attempt"},
+    ]
+@pytest.mark.parametrize(
+    ("response", "expected"),
+    [
+        (
+            SimpleNamespace(
+                usage_metadata={
+                    "input_tokens": 1_000,
+                    "output_tokens": 20,
+                    "total_tokens": 1_020,
+                    "input_token_details": {"cache_read": 800},
+                },
+                response_metadata={},
+            ),
+            {"input": 1_000, "output": 20, "total": 1_020, "cached_input": 800},
+        ),
+        (
+            SimpleNamespace(
+                usage_metadata={},
+                response_metadata={
+                    "token_usage": {
+                        "prompt_tokens": 500,
+                        "completion_tokens": 10,
+                        "total_tokens": 510,
+                        "prompt_tokens_details": {"cached_tokens": 320},
+                    },
+                },
+            ),
+            {"input": 500, "output": 10, "total": 510, "cached_input": 320},
+        ),
+    ],
+)
+def test_response_usage_normalizes_provider_cache_metadata(
+    response: SimpleNamespace,
+    expected: dict[str, int],
+) -> None:
+    assert response_usage(response) == expected
+
+
+def test_response_usage_clamps_invalid_cached_token_counts() -> None:
+    response = SimpleNamespace(
+        usage_metadata={
+            "input_tokens": 100,
+            "output_tokens": 5,
+            "input_token_details": {"cache_read": 900},
+        },
+        response_metadata={},
+    )
+
+    assert response_usage(response)["cached_input"] == 100
 
 
 def test_diagnostic_prompt_reports_omit_image_payloads() -> None:

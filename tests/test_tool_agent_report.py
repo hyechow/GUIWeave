@@ -64,6 +64,11 @@ def test_tool_agent_trace_populates_report_timeline(tmp_path: Path) -> None:
                     "summary": "Reveal the remaining labels",
                         "next_instruction": "Scroll the label list",
                     },
+                    "token_usage": {
+                        "input": 1000,
+                        "output": 20,
+                        "cached_input": 800,
+                    },
                     "context_reports": [
                         {
                             "kind": "prompt_snapshot",
@@ -134,6 +139,12 @@ def test_tool_agent_trace_populates_report_timeline(tmp_path: Path) -> None:
     assert "rebuilt_per_frame" in html
     assert "2048" in html
     assert "journal_events" in html
+    assert data.pages[0].steps[0].token_usage["tool_agent.worker"] == {
+        "input": 1000,
+        "output": 20,
+        "cached_input": 800,
+    }
+    assert "cache 800 (80%)" in html
 
 
 def test_tool_agent_report_exposes_coding_master_and_worker_boundaries(tmp_path: Path) -> None:
