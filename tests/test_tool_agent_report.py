@@ -295,3 +295,64 @@ def test_tool_agent_report_can_recover_from_streamed_events_without_final_trace(
     assert data.stats == {"workers": 1, "turns": 0, "executed": 0}
     assert "Tool Agent interrupted" in html
     assert data.pages[0].verify_outcome["status"] == "failed"
+
+
+def test_tool_agent_report_groups_ordered_actions_and_safe_suffix_abort(
+    tmp_path: Path,
+) -> None:
+    (tmp_path / "context.json").write_text(json.dumps({
+        "goal": "Exercise ordered GUI actions",
+        "raw_input": "Exercise ordered GUI actions",
+        "platform": "browser",
+        "journal": {"schema_version": 4, "events": []},
+        "outcome": {"phase": "completed", "summary": "done"},
+        "orchestrator": {"kind": "tool_agent", "perception_mode": "enhanced"},
+    }), encoding="utf-8")
+    for index in (1, 2):
+        (tmp_path / f"screenshot_tool_agent_{index}.png").write_bytes(b"not-an-image")
+    state = {
+        "status": "exploring",
+        "summary": "Continue through the visible controls",
+        "next_instruction": "Execute the local action sequence",
+    }
+    batches = [
+        ([
+            {"name": "runtime_tap_visible", "args": {"x": 500, "y": 400, "description": "Focus Product input"}},
+            {"name": "runtime_clear_focused", "args": {}},
+            {"name": "runtime_type_visible", "args": {"x": 500, "y": 400, "text": "Erica", "description": "Type Product query"}},
+        ], 3, ""),
+        ([
+            {"name": "runtime_scroll_visible", "args": {"direction": "down", "description": "Reveal next row"}},
+            {"name": "runtime_tap_visible", "args": {"x": 800, "y": 800, "description": "Open revealed row"}},
+        ], 1, "scroll invalidated the remaining coordinates"),
+    ]
+    trace = [
+        {"event": "worker_started", "worker_id": "ordered-worker", "profile": "operator", "goal": "Exercise ordered GUI actions"},
+    ]
+    for step, (actions, executed, reason) in enumerate(batches, 1):
+        trace.extend([
+            {"event": "observe", "worker_id": "ordered-worker", "frame_id": f"frame:{step}"},
+            {"event": "worker_decision", "worker_id": "ordered-worker", "step": step, "tool": "continue_with_actions", "args": {"actions": actions}, "state": state},
+            *({"event": "runtime_action", "tool": item["name"], "status": "executed"} for item in actions[:executed]),
+            {"event": "worker_multi_action_aborted" if reason else "worker_multi_action_completed", "planned_actions": len(actions), "executed_actions": executed, "reason": reason},
+        ])
+    trace.append({"event": "runtime_finished", "phase": "completed", "summary": "done"})
+    (tmp_path / "tool_agent_trace.json").write_text(json.dumps({
+        "phase": "completed",
+        "trace": trace,
+    }), encoding="utf-8")
+
+    data = RunnerReportBuilder().build(tmp_path)
+    html = save_report(data, tmp_path / "report.html").read_text(encoding="utf-8")
+
+    assert len(data.pages) == 1
+    assert len(data.pages[0].steps) == 2
+    first_batch = data.pages[0].steps[0].action_batch
+    second_batch = data.pages[0].steps[1].action_batch
+    assert first_batch is not None and first_batch["executed"] == 3
+    assert second_batch is not None and second_batch["status"] == "aborted"
+    assert second_batch["actions"][1]["status"] == "discarded"
+    assert "动作批次 · 顺序执行" in html
+    assert "动作批次 · 安全截断" in html
+    assert "runtime_clear_focused" in html
+    assert "scroll invalidated the remaining coordinates" in html

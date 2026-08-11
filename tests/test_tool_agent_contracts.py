@@ -27,6 +27,53 @@ from gui_agent.core.tool_agent.protocol import (
 )
 
 
+def test_action_envelope_preserves_dynamic_atomic_schemas() -> None:
+    tools = dynamic_worker_tools(
+        worker_action_floor(),
+        completion_mode="operator",
+        action_envelope=True,
+    )
+    names = {tool["function"]["name"] for tool in tools}
+
+    assert "continue_with_actions" in names
+    assert "runtime_type_visible" not in names
+    envelope = next(
+        tool for tool in tools
+        if tool["function"]["name"] == "continue_with_actions"
+    )
+    parameters = envelope["function"]["parameters"]
+    state = {
+        "status": "exploring",
+        "summary": "The complete form is visible.",
+        "next_instruction": "Fill and submit the form.",
+    }
+    actions = [
+        {
+            "name": "runtime_type_visible",
+            "args": {
+                "x": 500,
+                "y": 400,
+                "text": "demo-user",
+                "description": "Enter the visible Username input",
+            },
+        },
+        {
+            "name": "runtime_tap_visible",
+            "args": {
+                "x": 500,
+                "y": 600,
+                "description": "Tap the visible submit button",
+            },
+        },
+    ]
+    validate(instance={"state": state, "actions": actions}, schema=parameters)
+    with pytest.raises(ValidationError):
+        validate(
+            instance={"state": state, "actions": actions * 2},
+            schema=parameters,
+        )
+
+
 def test_explicit_cache_marker_wraps_only_the_stable_system_prefix() -> None:
     message = cacheable_system_message(
         "stable policy",

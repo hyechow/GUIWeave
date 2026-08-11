@@ -439,6 +439,130 @@ class _RepeatedEffectiveScrollWorker:
         )
 
 
+_LOGIN_ACTIONS = [
+    {"name": "runtime_type_visible", "args": {"x": 500, "y": 400, "text": "demo-user", "description": "Enter Username"}},
+    {"name": "runtime_type_visible", "args": {"x": 500, "y": 500, "text": "demo-pass", "description": "Enter Password"}},
+    {"name": "runtime_tap_visible", "args": {"x": 500, "y": 600, "description": "Tap Sign in"}},
+]
+
+
+class _MultiActionWorker:
+    def __init__(self) -> None:
+        self.calls = 0
+        self.bound_names: set[str] = set()
+
+    def bind_tools(self, tools, **kwargs):
+        assert kwargs.get("parallel_tool_calls") is False
+        self.bound_names = {tool["function"]["name"] for tool in tools}
+        return self
+
+    def invoke(self, messages):
+        del messages
+        self.calls += 1
+        return SimpleNamespace(content="", tool_calls=[{
+            "id": "decision",
+            "name": "continue_with_actions",
+            "args": {
+                "state": {
+                    "status": "exploring",
+                    "summary": "The complete login form is visible.",
+                    "next_instruction": "Fill and submit the login form.",
+                },
+                "actions": _LOGIN_ACTIONS,
+            },
+        }])
+
+
+def _run_fused_worker(
+    monkeypatch,
+    *,
+    current_url: str,
+) -> ToolAgentRuntime:
+    runtime = object.__new__(ToolAgentRuntime)
+    runtime.trace = []
+    runtime.statuses = []
+    runtime._status_cb = runtime.statuses.append
+    runtime.worker = _MultiActionWorker()
+    runtime._executor = _Executor()
+    runtime.platform = SimpleNamespace(
+        screenshot=lambda: b"latest-png",
+        client=SimpleNamespace(page_info=lambda: (current_url, "Login")),
+    )
+    runtime.allow_multi_action = True
+    runtime._observe = lambda _spec: (
+        MaterializedFrame(
+            frame_id="frame:1",
+            screenshot_path="frame.png",
+            url="https://example.test/login",
+        ),
+        b"initial-png",
+    )
+    monkeypatch.setattr(
+        "gui_agent.core.tool_agent.runtime.settle_after_action",
+        lambda platform, png, *, action_type: (0.0, False),
+    )
+    spec = WorkerSpec(
+        goal="Complete the visible local interaction",
+        success_criteria=["The requested interface state is reached"],
+        actions=[DynamicActionSpec(
+            name="task_action",
+            capability="tap",
+            description="Complete the visible local interaction",
+        )],
+        max_steps=1,
+    )
+    runtime._run_worker("fused-worker", spec)
+    return runtime
+
+
+@pytest.mark.parametrize(
+    ("current_url", "expected_actions", "expected_event"),
+    [
+        ("https://example.test/login", 3, "worker_multi_action_completed"),
+        ("https://example.test/dashboard", 1, "worker_multi_action_aborted"),
+    ],
+)
+def test_fused_worker_executes_ordered_actions_and_discards_invalid_suffix(
+    monkeypatch,
+    current_url: str,
+    expected_actions: int,
+    expected_event: str,
+) -> None:
+    runtime = _run_fused_worker(monkeypatch, current_url=current_url)
+
+    assert runtime.worker.calls == 1
+    assert "continue_with_actions" in runtime.worker.bound_names
+    assert "runtime_type_visible" not in runtime.worker.bound_names
+    assert len(runtime._executor.actions) == expected_actions
+    assert any(event["event"] == expected_event for event in runtime.trace)
+    if expected_actions == 3:
+        assert any(status.startswith("Action · 2/3 · type") for status in runtime.statuses)
+
+
+def test_multi_action_suffix_requires_stable_visible_targets() -> None:
+    runtime = object.__new__(ToolAgentRuntime)
+    specs = {
+        name: DynamicActionSpec(name=name, capability=capability, description=name)
+        for name, capability in {
+            "tap": "tap", "clear": "clear_text", "type": "type", "scroll": "scroll"
+        }.items()
+    }
+    type_call = {"name": "type", "args": {"x": 500, "y": 400}}
+
+    assert runtime._suffix_requires_reobservation(
+        call={"name": "tap", "args": {"x": 500, "y": 400}},
+        action=specs["tap"],
+        remaining=[{"name": "clear", "args": {}}, type_call],
+        action_by_name=specs,
+    ) == ""
+    assert "invalidate coordinates" in runtime._suffix_requires_reobservation(
+        call={"name": "scroll", "args": {}},
+        action=specs["scroll"],
+        remaining=[type_call],
+        action_by_name=specs,
+    )
+
+
 def test_worker_patches_action_space_and_acts_on_same_frame(monkeypatch) -> None:
     runtime = object.__new__(ToolAgentRuntime)
     runtime.trace = []
