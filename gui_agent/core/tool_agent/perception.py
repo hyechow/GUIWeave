@@ -61,6 +61,10 @@ def _normalize(text: str) -> str:
     return re.sub(r"[^a-z0-9]+", "", text.casefold())
 
 
+def _words(text: str) -> set[str]:
+    return set(re.findall(r"[a-z0-9]+", text.casefold()))
+
+
 def _table_fields(table: dict[str, Any]) -> set[str]:
     available = {
         _normalize(str(header)) for header in list(table.get("headers") or [])
@@ -132,34 +136,29 @@ def _authoritative_empty_table(table: dict[str, Any]) -> bool:
 
 
 def _match_table(requirement: DataRequirement, tables: list[dict[str, Any]]) -> dict[str, Any] | None:
-    wanted = _normalize(requirement.target_label or requirement.description)
-    ranked: list[tuple[int, dict[str, Any]]] = []
+    target = _normalize(requirement.target_label)
+    wanted_words = _words(requirement.target_label or requirement.description)
+    required_sources = {
+        _normalize(requirement.field_sources.get(field, field))
+        for field in (requirement.row_schema.get("properties") or {})
+    }
+    ranked: list[tuple[tuple[bool, bool, int, int], dict[str, Any]]] = []
     for table in tables:
         caption = _normalize(str(table.get("caption") or ""))
-        score = 100 if wanted and (wanted == caption or wanted in caption or caption in wanted) else 0
-        if score == 0:
-            wanted_words = set(re.findall(r"[a-z0-9]+", (requirement.target_label or requirement.description).casefold()))
-            caption_words = set(re.findall(r"[a-z0-9]+", str(table.get("caption") or "").casefold()))
-            score = len(wanted_words.intersection(caption_words))
+        caption_words = _words(str(table.get("caption") or ""))
         available = _table_fields(table)
-        required_sources = {
-            _normalize(requirement.field_sources.get(field, field))
-            for field in (requirement.row_schema.get("properties") or {})
-        }
         field_matches = len(required_sources.intersection(available))
-        if required_sources and field_matches == len(required_sources):
-            score += 50 + field_matches
-        elif required_sources:
-            # A collection/list surface can be the correct acquisition surface
-            # even when some required fields live only on linked detail pages.
-            # Keep it eligible as a cardinality and navigation hint; the separate
-            # support check still prevents incomplete rows entering DataStore.
-            score += field_matches
-        ranked.append((score, table))
+        rank = (
+            bool(target and (target == caption or target in caption or caption in target)),
+            bool(required_sources) and field_matches == len(required_sources),
+            field_matches,
+            len(wanted_words.intersection(caption_words)),
+        )
+        ranked.append((rank, table))
     if not ranked:
         return None
-    score, table = max(ranked, key=lambda item: item[0])
-    return table if score > 0 else None
+    rank, table = max(ranked, key=lambda item: item[0])
+    return table if any(rank) else None
 
 
 def _structured_rows(
@@ -398,22 +397,30 @@ def _scope_descriptor(
     }
 
 
+def _fingerprint(value: Any) -> str:
+    return hashlib.sha256(
+        json.dumps(value, ensure_ascii=False, sort_keys=True).encode()
+    ).hexdigest()[:16]
+
+
+def _surface_marker(table: dict[str, Any] | None) -> Any:
+    return [] if table is None else (
+        table.get("path") or table.get("caption") or table.get("headers") or []
+    )
+
+
 def _collection_key(
     table: dict[str, Any],
     requirement: DataRequirement,
     scope: dict[str, Any],
     url: str,
 ) -> str:
-    payload = {
-        "surface": table.get("path") or table.get("caption") or table.get("headers") or [],
+    return "surface:" + _fingerprint({
+        "surface": _surface_marker(table),
         "route": url,
         "schema": requirement.row_schema,
         "filters": scope.get("applied_filters") or scope.get("requested_filters") or {},
-    }
-    digest = hashlib.sha256(
-        json.dumps(payload, ensure_ascii=False, sort_keys=True).encode()
-    ).hexdigest()[:16]
-    return f"surface:{digest}"
+    })
 
 
 def _structured_coverage(
@@ -633,29 +640,48 @@ class PerceptionMaterializer:
                         requirement,
                         raw_visual_rows,
                     )
+                    surface = (
+                        _structured_coverage(
+                            table, requirement, scope=scope, url=url
+                        )
+                        if table is not None and rows
+                        else {}
+                    )
+                    surface_complete = bool(
+                        surface
+                        and (
+                            table.get("in_viewport") is True
+                            or table.get("viewport_pos") == "in"
+                        )
+                        and len(table.get("rows") or []) == len(rows)
+                        and surface.get("at_end") is True
+                        and surface.get("partial") is False
+                    )
                     coverage = {
                         "scope": requirement.scope,
                         "scope_status": scope["status"],
                         "requested_filters": scope["requested_filters"],
                         "applied_filters": scope["applied_filters"],
-                        "collection_key": (
-                            "visual:"
-                            + hashlib.sha256(
-                                json.dumps(
-                                    {
-                                        "requirement": requirement.id,
-                                        "filters": scope["requested_filters"],
-                                    },
-                                    ensure_ascii=False,
-                                    sort_keys=True,
-                                ).encode()
-                            ).hexdigest()[:16]
-                        ),
+                        "collection_key": "visual:" + _fingerprint({
+                            "requirement": requirement.id,
+                            "filters": scope["requested_filters"],
+                        }),
                         "source_scope": "visual_viewport",
+                        "window_context": _fingerprint({
+                            "route": url,
+                            "surface": _surface_marker(table),
+                        }),
                         "end_visible": end_visible,
-                        "at_end": end_visible,
-                        "partial": not end_visible,
+                        "at_end": end_visible or surface_complete,
+                        "partial": not (end_visible or surface_complete),
                     }
+                    if surface_complete:
+                        coverage.update({
+                            "total_records": len(rows),
+                            "traversal_type": surface.get("traversal_type"),
+                            "movement": surface.get("movement") or {},
+                            "coverage_evidence": "structured_surface_cardinality",
+                        })
                     collection_found = bool(
                         scope["status"] == "met"
                         and (

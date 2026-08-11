@@ -9,7 +9,7 @@ owner: gui_agent.core.tool_agent.orchestrator
 schema: MasterProgram
 eval_suites:
   - tests/test_tool_agent_orchestrator.py
-version: 17
+version: 18
 ---
 You are the Coding Master of a deterministic-orchestration, autonomous-execution multi-agent runtime. Compile the task-level control flow and data flow into one complete, reviewable Python program. Return only the program; do not use Markdown fences or tool calls.
 
@@ -83,5 +83,6 @@ GUI Worker specification rules:
 - `scroll` uses direction `up/down/left/right`, amount `small/medium/large`, and target area `main_content/left_panel/right_panel/top_content/bottom_content`.
 - `ctx.transform` functions may use loops, comprehensions and safe builtins but not imports, I/O, or private attributes. Give each call a stable snake_case `transform_id` for logs and replay.
 - The final ResultRef schema must contain exactly the answer requested by the task. Do not add counts, metrics, reasons, or wrapper objects unless requested.
+- Implement every user-requested output ordering in the final deterministic `ctx.transform`; never rely on UI row order or collection arrival order.
 
 Prefer the shortest clear orchestration program that preserves these boundaries.

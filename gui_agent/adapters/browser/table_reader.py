@@ -472,15 +472,22 @@ def table_snapshot_js() -> str:
   for (const table of Array.from(document.querySelectorAll("table"))) {{
     if (snapshots.length >= MAX_TABLES) break;
     if (!visible(table) || (table.parentElement && table.parentElement.closest("table"))) continue;
-    const allRows = Array.from(table.querySelectorAll("tr")).filter(visible);
+    // A data cell may contain a layout/detail table. Descendant selectors would
+    // otherwise promote its rows and cells into the outer table, shifting columns
+    // and creating synthetic records. Keep only nodes owned by this table/row.
+    const ownedRows = (selector) => Array.from(table.querySelectorAll(selector))
+      .filter((row) => row.closest("table") === table && visible(row));
+    const ownedCells = (row) => Array.from(row.querySelectorAll("th,td"))
+      .filter((cell) => cell.closest("tr") === row && visible(cell));
+    const allRows = ownedRows("tr");
     if (!allRows.length) continue;
-    let headerRow = Array.from(table.querySelectorAll("thead tr")).find((r) => cellsOf(r, "th,td").some(Boolean));
-    if (!headerRow) headerRow = allRows.find((r) => Array.from(r.querySelectorAll("th")).some(visible));
-    const headerCells = headerRow ? cellsOf(headerRow, "th,td") : [];
-    const bodyRows = Array.from(table.querySelectorAll("tbody tr")).filter(visible);
+    let headerRow = ownedRows("thead tr").find((r) => ownedCells(r).some((cell) => text(cell)));
+    if (!headerRow) headerRow = allRows.find((r) => ownedCells(r).some((cell) => cell.matches("th")));
+    const headerCells = headerRow ? ownedCells(headerRow).slice(0, MAX_CELLS).map(text) : [];
+    const bodyRows = ownedRows("tbody tr");
     const dataRows = (bodyRows.length ? bodyRows : allRows.filter((r) => r !== headerRow));
     const built = dataRows.map((r) => {{
-      const cells = Array.from(r.querySelectorAll("th,td")).filter(visible);
+      const cells = ownedCells(r);
       const only = cells.length === 1 ? cells[0] : null;
       const span = only
         ? Math.max(Number(only.colSpan || 1), Number(only.getAttribute("aria-colspan") || 1))

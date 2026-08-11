@@ -20,6 +20,14 @@ def _canonical(value: Any) -> str:
     return json.dumps(value, ensure_ascii=False, sort_keys=True, separators=(",", ":"))
 
 
+def _boundary_overlap(left: list[Any], right: list[Any]) -> int:
+    """Longest exact suffix/prefix overlap between consecutive visual windows."""
+    for size in range(min(len(left), len(right)), 0, -1):
+        if left[-size:] == right[:size]:
+            return size
+    return 0
+
+
 class RuntimeDataStore:
     def __init__(self) -> None:
         self._values: dict[str, Any] = {}
@@ -47,7 +55,11 @@ class RuntimeDataStore:
         )
         bucket = (requirement_id, collection_key)
         window_key = str(coverage.get("window_key") or "")
-        transport_key = window_key or digest
+        window_context = str(coverage.get("window_context") or "")
+        window_state = "end" if coverage.get(
+            "at_end", coverage.get("end_visible")
+        ) else "partial"
+        transport_key = window_key or f"{window_context}:{window_state}"
         key = (requirement_id, collection_key, provider, transport_key, digest)
         existing = self._dedupe.get(key)
         created = existing is None
@@ -71,8 +83,30 @@ class RuntimeDataStore:
 
         chunk_ids = list(self._requirement_chunks[bucket])
         collection_id = f"collection:{requirement_id}"
-        row_count = sum(len(self._values[item]) for item in chunk_ids)
         chunk_coverage = [self._chunks[item].coverage for item in chunk_ids]
+        structured = any(
+            item.get("source_scope") == "structured_surface" for item in chunk_coverage
+        )
+        collection_rows: list[dict[str, Any]] = []
+        previous_ref = ""
+        for chunk_ref in chunk_ids:
+            current_rows = self._values[chunk_ref]
+            overlap = 0
+            if previous_ref:
+                previous = self._chunks[previous_ref]
+                current = self._chunks[chunk_ref]
+                previous_context = str(previous.coverage.get("window_context") or "")
+                current_context = str(current.coverage.get("window_context") or "")
+                if (
+                    previous.provider == current.provider == "vision"
+                    and previous_context
+                    and previous_context == current_context
+                    and previous.coverage.get("partial") is True
+                ):
+                    overlap = _boundary_overlap(self._values[previous_ref], current_rows)
+            collection_rows.extend(current_rows[overlap:])
+            previous_ref = chunk_ref
+        row_count = len(collection_rows)
         totals = {
             int(value)
             for item in chunk_coverage
@@ -91,14 +125,13 @@ class RuntimeDataStore:
         }
         page_count = next(iter(page_counts)) if len(page_counts) == 1 else None
         last_coverage = chunk_coverage[-1] if chunk_coverage else {}
-        structured = any(
-            item.get("source_scope") == "structured_surface" for item in chunk_coverage
-        )
         all_pages = bool(
             page_count is not None
             and pages_seen == list(range(1, page_count + 1))
         )
-        at_end = bool(last_coverage.get("at_end"))
+        at_end = bool(
+            last_coverage.get("at_end", last_coverage.get("end_visible"))
+        )
         scope_status = str(last_coverage.get("scope_status") or "met")
         contiguous_to_end = bool(
             at_end
@@ -128,10 +161,8 @@ class RuntimeDataStore:
             or static_complete
         ):
             coverage_status = "complete"
-        elif (
-            not structured
-            and any(item.get("end_visible") for item in chunk_coverage)
-            and (known_total is None or row_count >= known_total)
+        elif not structured and at_end and (
+            known_total is None or row_count >= known_total
         ):
             coverage_status = "complete"
         elif (
@@ -175,9 +206,7 @@ class RuntimeDataStore:
             coverage=combined_coverage,
         )
         self._collections[collection_id] = collection
-        self._values[collection_id] = [
-            row for chunk_ref in chunk_ids for row in self._values[chunk_ref]
-        ]
+        self._values[collection_id] = collection_rows
         return chunk, collection, created
 
     def collection_chunks(self, ref: str) -> list[list[dict[str, Any]]]:
