@@ -1,4 +1,8 @@
-from llm.provider_config import dashscope_extra_body, enable_thinking_for_model
+from llm.provider_config import (
+    dashscope_extra_body,
+    enable_thinking_for_model,
+    resolve_chat_provider_config,
+)
 
 
 def test_enable_thinking_is_off_for_all_models():
@@ -11,3 +15,16 @@ def test_enable_thinking_is_off_for_all_models():
     assert enable_thinking_for_model(None) is False
     assert dashscope_extra_body("qwen3.7-plus") == {"enable_thinking": False}
     assert dashscope_extra_body(None) == {"enable_thinking": False}
+
+
+def test_standard_provider_reads_standard_environment(monkeypatch):
+    monkeypatch.setenv("STANDARD_MODEL", "qwen3.7-plus")
+    monkeypatch.setenv("STANDARD_API_KEY", "sk-test-standard")
+    monkeypatch.setenv("STANDARD_BASE_URL", "http://standard.example/v1")
+
+    cfg = resolve_chat_provider_config(provider="standard")
+
+    assert cfg.provider == "standard"
+    assert cfg.model == "qwen3.7-plus"
+    assert cfg.api_key == "sk-test-standard"
+    assert cfg.base_url == "http://standard.example/v1"
