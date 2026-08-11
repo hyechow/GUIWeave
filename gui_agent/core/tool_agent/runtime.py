@@ -41,6 +41,7 @@ from gui_agent.core.tool_agent.perception import PerceptionMaterializer, Percept
 from gui_agent.core.tool_agent.protocol import (
     CompleteReadyWorkerArgs,
     FailWorkerArgs,
+    MAX_ORDERED_ACTIONS,
     ProtocolError,
     RequestActionPatchArgs,
     cacheable_system_message,
@@ -1367,7 +1368,7 @@ class ToolAgentRuntime:
         if getattr(self, "allow_multi_action", False):
             prompt += (
                 "\n\n## Ordered multi-action mode\n"
-                "Continue through `continue_with_actions`. Use 2–3 actions when all targets "
+                f"Continue through `continue_with_actions`. Use 2–{MAX_ORDERED_ACTIONS} actions when all targets "
                 "are already visible and no later action depends on newly revealed UI; "
                 "otherwise use one. Runtime executes serially and may discard a stale suffix. "
                 "Type, clear_text and select_option may be non-final. A tap may be non-final "
@@ -1491,8 +1492,8 @@ class ToolAgentRuntime:
         calls: list[dict[str, Any]],
         actions: list[DynamicActionSpec],
     ) -> None:
-        if not 1 <= len(calls) <= 3:
-            raise ProtocolError("action envelope must contain 1–3 actions")
+        if not 1 <= len(calls) <= MAX_ORDERED_ACTIONS:
+            raise ProtocolError(f"action envelope must contain 1–{MAX_ORDERED_ACTIONS} actions")
         action_names = {action.name for action in actions}
         unknown = [call["name"] for call in calls if call["name"] not in action_names]
         if unknown:

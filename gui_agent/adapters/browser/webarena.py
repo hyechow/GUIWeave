@@ -1270,7 +1270,7 @@ def main() -> int:
         action="store_true",
         help=(
             "experimental: let one fused Worker decision return an ordered "
-            "1–3 action envelope"
+            "1–5 action envelope"
         ),
     )
     parser.add_argument(

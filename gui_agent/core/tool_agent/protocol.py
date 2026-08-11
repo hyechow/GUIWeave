@@ -18,6 +18,9 @@ from gui_agent.core.tool_agent.contracts import (
 )
 
 
+MAX_ORDERED_ACTIONS = 5
+
+
 class ProtocolError(RuntimeError):
     pass
 
@@ -362,7 +365,7 @@ def dynamic_action_envelope_tool(
     return function_tool(
         "continue_with_actions",
         (
-            "Continue with one to three ordered actions on already-visible targets. "
+            f"Continue with one to {MAX_ORDERED_ACTIONS} ordered actions on already-visible targets. "
             "Later actions must not depend on newly revealed UI. Put surface-changing "
             "actions last, except a tap that focuses the input used by following "
             "clear/type actions. Runtime may discard a stale suffix."
@@ -374,7 +377,7 @@ def dynamic_action_envelope_tool(
                     "type": "array",
                     "items": {"oneOf": variants},
                     "minItems": 1,
-                    "maxItems": 3,
+                    "maxItems": MAX_ORDERED_ACTIONS,
                 },
             },
             "required": ["actions"],
