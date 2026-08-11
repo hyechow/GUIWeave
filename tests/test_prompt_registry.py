@@ -121,6 +121,14 @@ def test_tool_agent_worker_changes_strategy_after_empty_ui_search():
     assert "shorter distinctive substring" in prompt
 
 
+def test_tool_agent_worker_disambiguates_related_navigation_targets():
+    prompt = load_prompt_text("task.tool_agent.worker")
+
+    assert "matching their exact visible labels" in prompt
+    assert "Complete only when the page title" in prompt
+    assert "selected value" in prompt
+
+
 def test_tool_agent_prompts_preserve_exact_pending_selection_sets():
     worker = load_prompt_text("task.tool_agent.worker")
     master = load_prompt_text("task.tool_agent.master")
@@ -158,6 +166,7 @@ def test_tool_agent_master_separates_candidate_coverage_from_result_selection() 
     assert "apply the predicate or calculation afterward in `ctx.transform`" in prompt
     assert "query must never exist only as prose" in prompt
     assert "Observer can verify the queried scope" in prompt
+    assert "never rely on UI row order or collection arrival order" in prompt
 
     transcription = load_prompt_text("task.tool_agent.visual_transcription")
     assert "must never make you omit a readable row" in transcription

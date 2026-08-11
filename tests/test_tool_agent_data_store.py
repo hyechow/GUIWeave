@@ -1,5 +1,7 @@
 from __future__ import annotations
 
+import pytest
+
 from gui_agent.core.tool_agent.data_store import RuntimeDataStore
 
 
@@ -12,6 +14,28 @@ ROW_SCHEMA = {
     "required": ["label", "metric"],
     "additionalProperties": False,
 }
+
+
+def _put_visual_window(
+    store: RuntimeDataStore,
+    frame_id: str,
+    rows: list[dict],
+    *,
+    context: str,
+    partial: bool,
+):
+    return store.put_chunk(
+        requirement_id="records",
+        frame_id=frame_id,
+        provider="vision",
+        rows=rows,
+        row_schema=ROW_SCHEMA,
+        coverage={
+            "window_context": context,
+            "partial": partial,
+            "at_end": not partial,
+        },
+    )
 
 
 def test_data_store_exposes_refs_but_resolves_values_only_at_runtime() -> None:
@@ -52,33 +76,56 @@ def test_data_store_deduplicates_same_rows_across_observations() -> None:
     assert collection.chunk_refs == [first.ref]
 
 
-def test_collection_rows_preserve_overlap_between_visual_windows() -> None:
+def test_collection_rows_remove_overlap_between_visual_windows() -> None:
     store = RuntimeDataStore()
-    common = dict(
-        requirement_id="records",
-        provider="vision",
-        row_schema=ROW_SCHEMA,
-        coverage={"end_visible": False},
+    _put_visual_window(
+        store,
+        "frame:1",
+        [{"label": "alpha", "metric": 3}, {"label": "beta", "metric": 2}],
+        context="surface",
+        partial=True,
     )
-    store.put_chunk(
-        frame_id="frame:1",
-        rows=[{"label": "alpha", "metric": 3}, {"label": "beta", "metric": 2}],
-        **common,
-    )
-    _, collection, _ = store.put_chunk(
-        frame_id="frame:2",
-        rows=[{"label": "beta", "metric": 2}, {"label": "gamma", "metric": 1}],
-        **common,
+    _, collection, _ = _put_visual_window(
+        store,
+        "frame:2",
+        [{"label": "beta", "metric": 2}, {"label": "gamma", "metric": 1}],
+        context="surface",
+        partial=False,
     )
 
-    assert collection.row_count == 4
+    assert collection.row_count == 3
     assert store.collection_rows(collection.ref) == [
         {"label": "alpha", "metric": 3},
-        {"label": "beta", "metric": 2},
         {"label": "beta", "metric": 2},
         {"label": "gamma", "metric": 1},
     ]
     assert collection.coverage["may_contain_duplicates"] is True
+
+
+@pytest.mark.parametrize(
+    ("contexts", "expected_count"),
+    [
+        (("detail:1", "detail:2"), 2),
+        (("surface", "surface"), 1),
+    ],
+    ids=("distinct-contexts", "advancing-window"),
+)
+def test_visual_collection_merges_identical_rows_by_window_context(
+    contexts: tuple[str, str],
+    expected_count: int,
+) -> None:
+    store = RuntimeDataStore()
+    rows = [{"label": "same", "metric": 1}]
+    _put_visual_window(
+        store, "frame:1", rows, context=contexts[0], partial=True
+    )
+    _, collection, _ = _put_visual_window(
+        store, "frame:2", rows, context=contexts[1], partial=False
+    )
+
+    assert collection.row_count == expected_count
+    assert store.collection_rows(collection.ref) == rows * expected_count
+    assert collection.coverage["status"] == "complete"
 
 
 def test_structured_collection_preserves_identical_business_rows_on_distinct_pages() -> None:

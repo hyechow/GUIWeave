@@ -14,6 +14,7 @@ from gui_agent.core.tool_agent.contracts import (
     WorkerState,
 )
 from gui_agent.core.tool_agent.protocol import (
+    MAX_ORDERED_ACTIONS,
     RequestActionPatchArgs,
     cacheable_system_message,
     diagnostic_prompt_reports,
@@ -67,9 +68,13 @@ def test_action_envelope_preserves_dynamic_atomic_schemas() -> None:
         },
     ]
     validate(instance={"state": state, "actions": actions}, schema=parameters)
+    assert parameters["properties"]["actions"]["maxItems"] == MAX_ORDERED_ACTIONS
     with pytest.raises(ValidationError):
         validate(
-            instance={"state": state, "actions": actions * 2},
+            instance={
+                "state": state,
+                "actions": [actions[0]] * (MAX_ORDERED_ACTIONS + 1),
+            },
             schema=parameters,
         )
 

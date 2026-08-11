@@ -13,6 +13,7 @@ from gui_agent.core.tool_agent.contracts import (
     WorkerSpec,
 )
 from gui_agent.core.tool_agent.data_store import RuntimeDataStore
+from gui_agent.core.tool_agent.protocol import MAX_ORDERED_ACTIONS, ProtocolError
 from gui_agent.core.tool_agent.runtime import ToolAgentRuntime
 from gui_agent.adapters.browser.control_grounding import ground_action_to_nearest_control
 
@@ -561,6 +562,19 @@ def test_multi_action_suffix_requires_stable_visible_targets() -> None:
         remaining=[type_call],
         action_by_name=specs,
     )
+
+
+def test_multi_action_runtime_accepts_five_and_rejects_six_calls() -> None:
+    actions = [DynamicActionSpec(
+        name="tap",
+        capability="tap",
+        description="Tap a target",
+    )]
+    calls = [{"name": "tap", "args": {}}] * MAX_ORDERED_ACTIONS
+
+    ToolAgentRuntime._validate_multi_action_calls(calls, actions)
+    with pytest.raises(ProtocolError, match=f"1–{MAX_ORDERED_ACTIONS} actions"):
+        ToolAgentRuntime._validate_multi_action_calls([*calls, calls[0]], actions)
 
 
 def test_worker_patches_action_space_and_acts_on_same_frame(monkeypatch) -> None:

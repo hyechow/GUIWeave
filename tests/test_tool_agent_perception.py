@@ -264,6 +264,61 @@ def test_incomplete_visual_candidates_keep_detail_collection_open(
     assert frame.missing_requirements == ["review_details"]
 
 
+def test_visual_values_use_complete_enhanced_surface_as_coverage_evidence(
+    tmp_path: Path,
+) -> None:
+    requirement = _requirement().model_copy(update={
+        "target_label": "",
+        "description": "Terms in the target order",
+        "field_sources": {"term": "Term Name", "uses": "Uses"},
+    })
+    materializer = _materializer(tmp_path, "enhanced")
+    materializer._vision_extract = lambda *_args, **_kwargs: {  # type: ignore[method-assign]
+        "found": True,
+        "rows": [{"term": "first", "uses": 4}, {"term": "second", "uses": 2}],
+        "end_visible": False,
+        "scope_satisfied": True,
+    }
+    distractor = {
+        "caption": "Order Summary",
+        "headers": ["Order Date", "Order Status"],
+        "rows": [
+            {"Order Date": str(index), "Order Status": "Complete"}
+            for index in range(3)
+        ],
+        "partial": False,
+        "in_viewport": True,
+        "traversal": {"type": "static"},
+    }
+    table = {
+        "caption": "Entries",
+        "headers": ["Term", "Uses"],
+        "rows": [{"Term": "first", "Uses": "4"}, {"Term": "second", "Uses": "2"}],
+        "partial": False,
+        "in_viewport": True,
+        "traversal": {
+            "type": "paged",
+            "page_index": 1,
+            "page_count": 1,
+            "has_next_page": False,
+        },
+    }
+    frame, _ = materializer.observe(
+        bundle=FakeBundle([distractor, table]),
+        platform=FakePlatform(),
+        requirements=[requirement],
+        frame_no=1,
+    )
+
+    assert frame.chunks[0].provider == "vision"
+    assert frame.chunks[0].coverage["coverage_evidence"] == (
+        "structured_surface_cardinality"
+    )
+    assert frame.chunks[0].coverage["end_visible"] is False
+    assert frame.collections[0].row_count == 2
+    assert frame.collections[0].coverage["status"] == "complete"
+
+
 def test_detail_collection_keeps_candidate_total_and_survives_list_navigation(
     tmp_path: Path,
 ) -> None:

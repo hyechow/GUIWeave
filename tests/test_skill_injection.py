@@ -213,6 +213,20 @@ def test_shopping_admin_material_query_receives_goal_matched_product_facts() -> 
     assert "nonempty resolved Material values" in context
 
 
+def test_shopping_admin_theme_settings_receives_theme_interface_facts() -> None:
+    knowledge = app_summary.load_knowledge_for_app("shopping_admin", "browser")
+    assert knowledge is not None
+
+    goal = "Go to the Magento Luma theme settings page"
+    sections = knowledge.orchestrator_sections(goal)
+    context = knowledge.orchestrator_context(goal)
+
+    assert sections == ["Themes_interface"]
+    assert "Content > Design > Themes" in context
+    assert "/admin/system_design_theme/edit/id/3" in context
+    assert "**Design Configuration** edits a store scope" in context
+
+
 def test_shopping_admin_review_context_includes_direct_same_origin_route() -> None:
     knowledge = app_summary.load_knowledge_for_app("shopping_admin", "browser")
     assert knowledge is not None
