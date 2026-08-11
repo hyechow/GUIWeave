@@ -15,6 +15,7 @@ import json
 import math
 import re
 from typing import Optional
+from urllib.parse import urljoin
 
 from gui_agent.adapters.browser.actions import BrowserAction
 from gui_agent.adapters.browser.control_grounding import ground_action_to_nearest_control
@@ -103,6 +104,9 @@ class BrowserExecutor(VisionExecutor):
         self._cur_action = decision.action
         self._cur_target_control = target_control
         self._prepare_scroll_anchor(decision.action)
+        begin_feedback = getattr(self._client(), "begin_action_feedback", None)
+        if callable(begin_feedback):
+            begin_feedback()
         return super().execute(
             decision,
             app_name,
@@ -144,12 +148,20 @@ class BrowserExecutor(VisionExecutor):
             return
         try:
             width, height = client.viewport_size
-            preferred_x = width * 0.5
-            preferred_y = height * 0.5
+            target_area = getattr(action, "target_area", "main_content") or "main_content"
+            area_anchors = {
+                "left_panel": (0.25, 0.5),
+                "right_panel": (0.75, 0.5),
+                "top_content": (0.5, 0.25),
+                "bottom_content": (0.5, 0.75),
+            }
+            x_fraction, y_fraction = area_anchors.get(target_area, (0.5, 0.5))
+            preferred_x = width * x_fraction
+            preferred_y = height * y_fraction
             resolved = resolver(
                 preferred_x,
                 preferred_y,
-                getattr(action, "target_area", "main_content") or "main_content",
+                target_area,
             )
             if resolved is None:
                 return
@@ -273,7 +285,7 @@ class BrowserExecutor(VisionExecutor):
     def _dispatch_extra(self, action: BrowserAction, client) -> Optional[bool]:
         at = action.action_type
         if at == "navigate":
-            url = _normalize_url(action.url)
+            url = _normalize_url(action.url, _current_url(client))
             if not url:
                 print("导航失败：缺少 url")
                 return False
@@ -287,7 +299,11 @@ class BrowserExecutor(VisionExecutor):
             print(f"  结果: {result}")
             return self._result_succeeded(result, "浏览器后退")
         if at == "new_tab":
-            url = _normalize_url(action.url) if action.url else None
+            url = (
+                _normalize_url(action.url, _current_url(client))
+                if action.url
+                else None
+            )
             print(f"新建标签页{('，导航到 ' + url) if url else ''}")
             result = client.new_tab(url)
             print(f"  结果: {result}")
@@ -360,14 +376,28 @@ def _focused_kind(client) -> str:
     return kind if isinstance(kind, str) and kind else "input"
 
 
-def _normalize_url(url: str | None) -> str:
+def _current_url(client: object) -> str:
+    page_info = getattr(client, "page_info", None)
+    if not callable(page_info):
+        return ""
+    try:
+        current_url, _title = page_info()
+    except Exception:  # noqa: BLE001 - URL normalization can use legacy fallback
+        return ""
+    return str(current_url or "")
+
+
+def _normalize_url(url: str | None, current_url: str = "") -> str:
     """Prepend https:// when the model gives a bare host (e.g. 'feishu.cn').
-    Anything already carrying a scheme — or an about:/chrome:/file: URL — passes through."""
+    Resolve explicit same-origin relative routes against the current page. Anything
+    already carrying a scheme — or an about:/chrome:/file: URL — passes through."""
     if not url:
         return ""
     u = url.strip()
     if not u:
         return ""
+    if current_url and u.startswith(("/", "./", "../", "?", "#")):
+        return urljoin(current_url, u)
     if "://" in u or u.startswith("about:") or u.startswith("chrome:"):
         return u
     return f"https://{u}"

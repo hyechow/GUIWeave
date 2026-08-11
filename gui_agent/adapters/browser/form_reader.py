@@ -69,6 +69,27 @@ def form_controls_js() -> str:
     }
     return '';
   };
+  const rowSemanticLabelOf = (el) => {
+    const inputType = clean(el.getAttribute('type') || el.type || '').toLowerCase();
+    if (!['checkbox', 'radio'].includes(inputType)) return '';
+    const row = el.closest('tr,[role="row"],[data-role="row"]');
+    if (!row) return '';
+    const texts = Array.from(row.querySelectorAll('td,[role="gridcell"]'))
+      .filter(cell => !cell.contains(el))
+      .map(cell => clean(cell.innerText || cell.textContent || cell.getAttribute('data-label')))
+      .filter(Boolean);
+    const semantic = [];
+    const seen = new Set();
+    for (const text of texts) {
+      const key = text.toLowerCase();
+      if (seen.has(key)) continue;
+      seen.add(key);
+      semantic.push(text);
+      // The leading identity cells are more useful than trailing Yes/No metadata.
+      if (semantic.length >= 2) break;
+    }
+    return cut(semantic.join(' '), 80);
+  };
   const labelOf = (el) => {
     if (el.labels && el.labels.length) {
       const text = clean(Array.from(el.labels).map(l => l.innerText || l.textContent).join(' '));
@@ -82,6 +103,11 @@ def form_controls_js() -> str:
     }
     const direct = clean(el.getAttribute('aria-label') || el.getAttribute('title'));
     if (direct) return direct;
+    // Grid selection controls often have only generated IDs (for example idscheck144), while
+    // the record identity lives in sibling cells.  Surface that row text as the control's visual
+    // name so generic enhanced grounding can distinguish adjacent checkboxes.
+    const rowSemantic = rowSemanticLabelOf(el);
+    if (rowSemantic) return rowSemantic;
     const role = clean(el.getAttribute('role')).toLowerCase();
     if (el.tagName === 'BUTTON' || el.tagName === 'A' || ['button', 'link'].includes(role)) {
       const ownText = clean(el.innerText || el.textContent);
@@ -176,6 +202,7 @@ def form_controls_js() -> str:
   };
   const controls = [];
   const sectionControls = [];
+  const statusControls = [];
   const rawControlLimit = 500;
   let totalRendered = 0;
   let rawLimitHit = false;
@@ -188,6 +215,51 @@ def form_controls_js() -> str:
     seenKeys.add(key);
     bucket.push(item);
   };
+  // Page-level feedback is part of the post-action state even when it sits above the current
+  // viewport.  Expose common ARIA and notification widgets as read-only controls so an agent
+  // cannot mistake a dispatched submit for a successful mutation while an off-screen error is
+  // present.  Keep this browser-widget based; no application vocabulary is encoded here.
+  const statusSelector = [
+    '[role="alert"]',
+    '[role="status"]',
+    '[data-ui-id^="message-"]',
+    '.message-error',
+    '.message-success',
+    '.message-warning',
+    '.message-notice',
+    '.alert-error',
+    '.alert-success',
+    '.alert-warning',
+    '.notification-error',
+    '.notification-success',
+  ].join(',');
+  const statusCandidates = Array.from(document.querySelectorAll(statusSelector));
+  for (const el of statusCandidates) {
+    if (!rendered(el)) continue;
+    // Prefer the innermost matching message to avoid emitting the same text for a wrapper and
+    // its child notification element.
+    if (Array.from(el.children || []).some(child => child.matches && child.matches(statusSelector))) {
+      continue;
+    }
+    const text = cut(el.innerText || el.textContent || el.getAttribute('aria-label'), 120);
+    if (!text) continue;
+    const cls = clean(el.className || '').toLowerCase();
+    const severity = (
+      cls.includes('error') ? 'error'
+      : cls.includes('success') ? 'success'
+      : cls.includes('warning') ? 'warning'
+      : 'status'
+    );
+    totalRendered += 1;
+    pushControl({
+      label: cut(`${severity}: ${text}`, 120),
+      kind: 'status_message',
+      value: text,
+      rect: rectOf(el),
+      in_viewport: inViewport(el),
+      viewport_pos: viewportPos(el),
+    }, statusControls);
+  }
   const expandedState = (el) => {
     if (el.tagName === 'SUMMARY' && el.parentElement && el.parentElement.tagName === 'DETAILS') {
       return el.parentElement.open ? 'true' : 'false';
@@ -416,7 +488,7 @@ def form_controls_js() -> str:
     });
   }
   return JSON.stringify({
-    controls: sectionControls.concat(controls),
+    controls: statusControls.concat(sectionControls, controls),
     total_rendered: totalRendered,
     raw_limit_hit: rawLimitHit,
   });
@@ -526,7 +598,9 @@ def normalize_form_control_snapshot(
             vp = item.get("viewport_pos")
             if vp in ("above", "below"):
                 norm["viewport_pos"] = vp
-        if kind == "section_toggle":
+        if kind == "status_message":
+            priority = -1
+        elif kind == "section_toggle":
             priority = 0
         elif kind == "rich_textarea":
             priority = 1
@@ -565,6 +639,8 @@ def normalize_form_control_snapshot(
         focused = any(item[2].get("focused") is True for item in unit)
         grouped = any(item[2].get("group_id") for item in unit)
         in_view = any(item[2].get("in_viewport") is not False for item in unit)
+        if "status_message" in kinds:
+            return (-1, first_index)
         if "section_toggle" in kinds:
             return (0, first_index)
         if "rich_textarea" in kinds:

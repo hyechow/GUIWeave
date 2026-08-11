@@ -9,6 +9,7 @@ import time
 from datetime import datetime
 from pathlib import Path
 from typing import Any, Callable, Literal
+from urllib.parse import unquote, urlsplit
 
 from jsonschema import Draft202012Validator, validate
 from langchain_core.messages import HumanMessage, SystemMessage
@@ -38,7 +39,6 @@ from gui_agent.core.tool_agent.orchestrator import (
 from gui_agent.core.tool_agent.perception import PerceptionMaterializer, PerceptionMode
 from gui_agent.core.tool_agent.protocol import (
     CompleteReadyWorkerArgs,
-    capability_parameters,
     FailWorkerArgs,
     ProtocolError,
     RequestActionPatchArgs,
@@ -51,6 +51,7 @@ from gui_agent.core.tool_agent.protocol import (
     normalize_action_arguments,
     parse_json_object,
     response_usage,
+    validate_dynamic_action_spec,
     worker_action_floor,
 )
 from gui_agent.core.tool_agent.replay import write_replay_artifact
@@ -65,6 +66,8 @@ _MASTER_REDELEGATE_SYSTEM = load_prompt_text("task.tool_agent.master_redelegate"
 _WORKER_SYSTEM = load_prompt_text("task.tool_agent.worker")
 _MAX_ACTION_PATCHES_PER_FRAME = 3
 _MAX_ACTION_GUARD_REPAIRS_PER_FRAME = 1
+_MAX_LOGICAL_WORKER_STEPS = 40
+_LOCAL_REPLAN_EXTRA_STEPS = 28
 _RUNTIME_WORKER_TOOL_NAMES = {"request_action_patch", "complete", "fail"}
 _SPATIAL_CAPABILITIES = {"tap", "type", "scroll", "select_option"}
 _EXECUTABLE_CAPABILITIES = {
@@ -139,6 +142,7 @@ class ToolAgentRuntime:
         platform: Any,
         log_dir: Path,
         perception_mode: PerceptionMode,
+        max_turns: int = 64,
         max_subgoal_replans: int = 2,
         max_compile_attempts: int = 5,
         status_cb: Callable[[str], None] | None = None,
@@ -149,10 +153,13 @@ class ToolAgentRuntime:
         self.platform = platform
         self.log_dir = log_dir
         self.perception_mode = perception_mode
+        if max_turns < 1:
+            raise ValueError("max_turns must be positive")
         if max_subgoal_replans < 0:
             raise ValueError("max_subgoal_replans cannot be negative")
         if max_compile_attempts < 1:
             raise ValueError("max_compile_attempts must be positive")
+        self.max_turns = max_turns
         self.max_subgoal_replans = max_subgoal_replans
         self.max_compile_attempts = max_compile_attempts
         self.data_store = RuntimeDataStore()
@@ -175,6 +182,7 @@ class ToolAgentRuntime:
         self._access_log_redactions: tuple[str, ...] = ()
         self._worker_journals: dict[str, WorkerJournal] = {}
         self._worker_last_frames: dict[str, MaterializedFrame] = {}
+        self._worker_platform_rejections: dict[str, dict[str, Any]] = {}
         self._master_knowledge = ""
         self._executor = bundle.make_executor(platform)
         try:
@@ -195,6 +203,8 @@ class ToolAgentRuntime:
     ) -> ToolAgentRun:
         self._worker_access_context = access_context.strip()
         self._master_knowledge = knowledge
+        self._task_goal = goal
+        self._task_page_url = page_url
         self._access_log_redactions = _access_log_redactions(access_context)
         executor = getattr(self, "_executor", None)
         if executor is not None:
@@ -214,6 +224,8 @@ class ToolAgentRuntime:
             self._clear_action_visualizer()
             self._worker_access_context = ""
             self._master_knowledge = ""
+            self._task_goal = ""
+            self._task_page_url = ""
             self._access_log_redactions = ()
             if executor is not None:
                 setattr(executor, "sensitive_text_values", ())
@@ -223,12 +235,16 @@ class ToolAgentRuntime:
             last_frames = getattr(self, "_worker_last_frames", None)
             if last_frames is not None:
                 last_frames.clear()
+            platform_rejections = getattr(self, "_worker_platform_rejections", None)
+            if platform_rejections is not None:
+                platform_rejections.clear()
 
     def _run(self, goal: str, *, knowledge: str = "", page_url: str = "", page_title: str = "") -> ToolAgentRun:
         self._trace(
             "runtime_started",
             goal=goal,
             perception_mode=self.perception_mode,
+            max_turns=int(getattr(self, "max_turns", 64)),
             master_model=self.master_cfg.model,
             worker_model=self.worker_cfg.model,
         )
@@ -239,6 +255,7 @@ class ToolAgentRuntime:
         }
         final_ref = None
         final_summary = ""
+        final_effect: Literal["mutation", "data", "ui_state", "none"] = "none"
         phase: Literal["completed", "failed"] = "failed"
         orchestration = WorkerOrchestrationContext(
             data_store=self.data_store,
@@ -284,10 +301,12 @@ class ToolAgentRuntime:
                     phase=terminal.phase,
                     summary=terminal.summary,
                     result_ref=terminal.result_ref,
+                    effect=terminal.effect,
                 )
                 final_summary = terminal.summary
                 if terminal.phase == "completed":
                     final_ref = self.data_store.result_descriptor(terminal.result_ref)
+                    final_effect = terminal.effect
                     phase = "completed"
         except KeyboardInterrupt:
             final_summary = "Tool Agent interrupted before reaching a terminal result."
@@ -306,12 +325,16 @@ class ToolAgentRuntime:
             "runtime_finished",
             phase=phase,
             summary=final_summary,
+            effect=final_effect,
             result_ref=final_ref.ref if final_ref is not None else "",
+            turns_used=int(getattr(self, "_frame_no", 0)),
+            max_turns=int(getattr(self, "max_turns", 64)),
         )
         output = self.data_store.result_value(final_ref.ref) if final_ref is not None else None
         run = ToolAgentRun(
             phase=phase,
             summary=final_summary,
+            effect=final_effect,
             output=output,
             result_ref=final_ref,
             trace=self.trace,
@@ -343,6 +366,8 @@ class ToolAgentRuntime:
     def _worker_replan_reason(outcome: WorkerOutcome) -> str:
         if ToolAgentRuntime._is_verified_empty(outcome):
             return "The prior Worker established the requested scope but produced no result."
+        if outcome.failure_kind == "platform_rejected":
+            return ""
         if outcome.phase == "failed":
             return f"The prior Worker failed to satisfy the subgoal: {outcome.summary}"
         return ""
@@ -375,6 +400,8 @@ class ToolAgentRuntime:
             issues.append("goal is immutable across runtime redelegation")
         if revised.success_criteria != original.success_criteria:
             issues.append("success_criteria are immutable across runtime redelegation")
+        if revised.input_refs != original.input_refs:
+            issues.append("input_refs are immutable across runtime redelegation")
         if len(revised.data_requirements) != len(original.data_requirements):
             issues.append("data requirement count is immutable across runtime redelegation")
             return issues
@@ -508,6 +535,7 @@ class ToolAgentRuntime:
                     "profile": original_spec.profile,
                     "goal": original_spec.goal,
                     "success_criteria": original_spec.success_criteria,
+                    "input_refs": original_spec.input_refs,
                     "data_requirements": [
                         {
                             "id": item.id,
@@ -590,12 +618,46 @@ class ToolAgentRuntime:
         worker_id: str,
         spec: WorkerSpec,
     ) -> WorkerOutcome:
+        if self._turn_budget_exhausted():
+            return self._turn_budget_failure(worker_id=worker_id, steps=0)
         current_id = worker_id
         current_spec = spec
         prior_revisions: list[WorkerSpec] = [spec]
         max_replans = max(0, int(getattr(self, "max_subgoal_replans", 0)))
+        breakers = getattr(self, "_logical_action_breakers", None)
+        if breakers is None:
+            self._logical_action_breakers = {}
+            breakers = self._logical_action_breakers
+        breakers[worker_id] = WorkerActionCircuitBreaker()
+        logical_step_budget = min(
+            _MAX_LOGICAL_WORKER_STEPS,
+            spec.max_steps + _LOCAL_REPLAN_EXTRA_STEPS,
+        )
+        consumed_steps = 0
         for replan_no in range(max_replans + 1):
+            remaining_steps = logical_step_budget - consumed_steps
+            if remaining_steps <= 0:
+                return WorkerOutcome(
+                    phase="failed",
+                    summary=(
+                        "The logical Worker exhausted its shared execution budget "
+                        f"after {consumed_steps} steps."
+                    ),
+                    steps=consumed_steps,
+                )
+            if current_spec.max_steps > remaining_steps:
+                current_spec = current_spec.model_copy(
+                    update={"max_steps": remaining_steps}
+                )
             outcome = self._run_worker(current_id, current_spec)
+            consumed_steps += outcome.steps
+            if self._turn_budget_exhausted() and outcome.phase == "failed":
+                if outcome.summary.startswith("Worker exceeded "):
+                    return self._turn_budget_failure(
+                        worker_id=current_id,
+                        steps=outcome.steps,
+                    )
+                return outcome
             replan_reason = self._worker_replan_reason(outcome)
             if not replan_reason:
                 return outcome
@@ -615,7 +677,23 @@ class ToolAgentRuntime:
                         "The Worker subgoal remained unsatisfied after the Master "
                         f"exhausted its local strategy budget. Last outcome: {outcome.summary}"
                     ),
-                    steps=outcome.steps,
+                    steps=consumed_steps,
+                )
+            if consumed_steps >= logical_step_budget:
+                self._trace(
+                    "master_worker_budget_exhausted",
+                    logical_worker_id=worker_id,
+                    worker_id=current_id,
+                    consumed_steps=consumed_steps,
+                    step_budget=logical_step_budget,
+                )
+                return WorkerOutcome(
+                    phase="failed",
+                    summary=(
+                        "The logical Worker exhausted its shared execution budget "
+                        f"after {consumed_steps} steps."
+                    ),
+                    steps=consumed_steps,
                 )
             try:
                 revised = self._revise_worker_spec(
@@ -631,7 +709,7 @@ class ToolAgentRuntime:
                 return WorkerOutcome(
                     phase="failed",
                     summary=f"Master worker redelegation failed: {type(exc).__name__}: {exc}",
-                    steps=outcome.steps,
+                    steps=consumed_steps,
                 )
             prior_revisions.append(revised)
             next_id = self._replanned_worker_id(worker_id, replan_no + 1)
@@ -697,8 +775,21 @@ class ToolAgentRuntime:
             max_steps=spec.max_steps,
         )
         active_actions = self._initial_worker_actions(spec)
-        circuit_breaker = WorkerActionCircuitBreaker()
+        logical_worker_id = re.sub(r"_replan_\d+$", "", worker_id)
+        breakers = getattr(self, "_logical_action_breakers", None)
+        if breakers is None:
+            self._logical_action_breakers = {}
+            breakers = self._logical_action_breakers
+        circuit_breaker = breakers.setdefault(
+            logical_worker_id,
+            WorkerActionCircuitBreaker(),
+        )
         for step in range(1, spec.max_steps + 1):
+            if self._turn_budget_exhausted():
+                return self._turn_budget_failure(
+                    worker_id=worker_id,
+                    steps=step - 1,
+                )
             frame, png = self._observe(spec)
             last_frames = getattr(self, "_worker_last_frames", None)
             if last_frames is None:
@@ -1001,10 +1092,51 @@ class ToolAgentRuntime:
             if terminal == "fail":
                 reason = FailWorkerArgs.model_validate(call["args"]).reason
                 return WorkerOutcome(phase="failed", summary=reason, steps=step)
+            if terminal == "platform_rejected":
+                reason = str(
+                    result_payload.get("reason")
+                    or "The platform rejected the requested action."
+                )
+                self._trace(
+                    "worker_platform_rejected",
+                    step=step,
+                    profile=spec.profile,
+                    reason=reason,
+                    platform_feedback=result_payload.get("platform_feedback") or [],
+                )
+                return WorkerOutcome(
+                    phase="failed",
+                    summary=reason,
+                    failure_kind="platform_rejected",
+                    steps=step,
+                )
         return WorkerOutcome(
             phase="failed",
             summary=f"Worker exceeded {spec.max_steps} steps",
             steps=spec.max_steps,
+        )
+
+    def _turn_budget_exhausted(self) -> bool:
+        limit = getattr(self, "max_turns", None)
+        return bool(
+            isinstance(limit, int)
+            and limit > 0
+            and int(getattr(self, "_frame_no", 0)) >= limit
+        )
+
+    def _turn_budget_failure(self, *, worker_id: str, steps: int) -> WorkerOutcome:
+        used = int(getattr(self, "_frame_no", 0))
+        limit = int(getattr(self, "max_turns", used))
+        self._trace(
+            "runtime_turn_budget_exhausted",
+            worker_id=worker_id,
+            turns_used=used,
+            max_turns=limit,
+        )
+        return WorkerOutcome(
+            phase="failed",
+            summary=f"Task exhausted its global turn budget ({used}/{limit}).",
+            steps=steps,
         )
 
     @staticmethod
@@ -1117,6 +1249,9 @@ class ToolAgentRuntime:
             missing_requirements=frame.missing_requirements,
             requirement_scopes=frame.requirement_scopes,
             applied_filters=frame.applied_filters,
+            url=frame.url,
+            title=frame.title,
+            structured_surfaces=frame.structured_surfaces,
             control_count=len(frame.controls),
         )
         (self.log_dir / f"observation_tool_agent_{self._frame_no}.json").write_text(
@@ -1216,6 +1351,14 @@ class ToolAgentRuntime:
             completion_mode = "unavailable"
         return dynamic_worker_tools(actions, completion_mode=completion_mode)
 
+    def _active_platform_rejection(self) -> dict[str, Any] | None:
+        worker_id = str(getattr(self, "_active_worker_id", "") or "")
+        rejections = getattr(self, "_worker_platform_rejections", None)
+        if not worker_id or not isinstance(rejections, dict):
+            return None
+        item = rejections.get(worker_id)
+        return item if isinstance(item, dict) else None
+
     def _execute_worker_tool(
         self,
         spec: WorkerSpec,
@@ -1226,6 +1369,14 @@ class ToolAgentRuntime:
     ) -> tuple[dict[str, Any], str | None]:
         if call["name"] == "complete":
             CompleteReadyWorkerArgs.model_validate(call["args"])
+            rejection = self._active_platform_rejection()
+            if rejection is not None:
+                reason = str(rejection.get("message") or "The platform rejected the action.")
+                return {
+                    "status": "failed",
+                    "reason": reason,
+                    "platform_feedback": [rejection],
+                }, "platform_rejected"
             if spec.profile == "collector":
                 if frame is None:
                     raise ValueError("collector complete requires a current frame")
@@ -1254,12 +1405,26 @@ class ToolAgentRuntime:
             return {"status": "completed"}, "complete"
         if call["name"] == "fail":
             parsed = FailWorkerArgs.model_validate(call["args"])
+            rejection = self._active_platform_rejection()
+            if rejection is not None:
+                reason = str(rejection.get("message") or parsed.reason)
+                return {
+                    "status": "failed",
+                    "reason": reason,
+                    "platform_feedback": [rejection],
+                }, "platform_rejected"
             return {"status": "failed", "reason": parsed.reason}, "fail"
         action_by_name = {item.name: item for item in actions}
         action_spec = action_by_name.get(call["name"])
         if action_spec is None:
             raise ProtocolError(f"unknown Worker tool {call['name']!r}")
         full_args = {**action_spec.fixed_args, **call["args"]}
+        if call["name"] == "runtime_open_url":
+            self._validate_runtime_open_url(
+                str(full_args.get("url") or ""),
+                spec=spec,
+                frame=frame,
+            )
         parameters = dynamic_action_tool(action_spec)["function"]["parameters"]
         validate(instance=call["args"], schema=parameters)
         if action_spec.capability in _EXECUTABLE_CAPABILITIES:
@@ -1312,59 +1477,207 @@ class ToolAgentRuntime:
                 png,
                 action_type=action.action_type,
             )
+            platform_feedback: list[dict[str, Any]] = []
+            feedback_reader = getattr(
+                getattr(self.platform, "client", None),
+                "consume_action_feedback",
+                None,
+            )
+            if callable(feedback_reader):
+                for item in feedback_reader():
+                    if not isinstance(item, dict):
+                        continue
+                    status_code = item.get("status")
+                    body = str(item.get("body") or "").strip()
+                    decoded: Any = None
+                    try:
+                        decoded = json.loads(body) if body else None
+                    except json.JSONDecodeError:
+                        decoded = None
+                    if isinstance(decoded, dict):
+                        message = decoded.get("message") or decoded.get("error_message")
+                        rejected = decoded.get("error") is True or decoded.get("success") is False
+                        if rejected or message:
+                            platform_feedback.append({
+                                "status": int(status_code or 0),
+                                "url": str(item.get("url") or ""),
+                                "rejected": rejected,
+                                "message": str(message or "").strip(),
+                            })
+                    elif isinstance(status_code, (int, float)) and int(status_code) >= 400:
+                        platform_feedback.append({
+                            "status": int(status_code),
+                            "url": str(item.get("url") or ""),
+                            "rejected": True,
+                            "message": body[:500],
+                        })
+            rejected_feedback = any(
+                item.get("rejected") is True for item in platform_feedback
+            )
+            if rejected_feedback:
+                worker_id = str(getattr(self, "_active_worker_id", "") or "")
+                if worker_id:
+                    rejections = getattr(self, "_worker_platform_rejections", None)
+                    if not isinstance(rejections, dict):
+                        self._worker_platform_rejections = {}
+                        rejections = self._worker_platform_rejections
+                    rejection = dict(next(
+                        item for item in reversed(platform_feedback)
+                        if item.get("rejected") is True
+                    ))
+                    prior = rejections.get(worker_id)
+                    same_rejection = bool(
+                        isinstance(prior, dict)
+                        and prior.get("message") == rejection.get("message")
+                        and prior.get("url") == rejection.get("url")
+                    )
+                    rejection["occurrences"] = (
+                        int(prior.get("occurrences") or 1) + 1
+                        if same_rejection
+                        else 1
+                    )
+                    rejections[worker_id] = rejection
+            elif executed:
+                worker_id = str(getattr(self, "_active_worker_id", "") or "")
+                rejections = getattr(self, "_worker_platform_rejections", None)
+                if worker_id and isinstance(rejections, dict):
+                    rejections.pop(worker_id, None)
             payload = {
-                "status": "executed" if executed else "failed",
+                "status": "executed" if executed and not rejected_feedback else "failed",
                 "action_type": action.action_type,
                 "settle_seconds": round(elapsed, 3),
                 "no_effect": no_effect,
                 "grounding": getattr(decision.action, "snap", None),
             }
+            if platform_feedback:
+                payload["platform_feedback"] = platform_feedback
+            terminal = None
+            rejection = self._active_platform_rejection()
+            if (
+                rejected_feedback
+                and rejection is not None
+                and int(rejection.get("occurrences") or 1) >= 2
+            ):
+                payload["reason"] = str(
+                    rejection.get("message") or "The platform rejected the action."
+                )
+                terminal = "platform_rejected"
             self._trace(
                 "runtime_action",
                 tool=call["name"],
                 profile=spec.profile,
                 **payload,
             )
-            return payload, None
+            return payload, terminal
         raise ProtocolError(f"unsupported capability {action_spec.capability!r}")
+
+    def _validate_runtime_open_url(
+        self,
+        candidate: str,
+        *,
+        spec: WorkerSpec,
+        frame: MaterializedFrame | None,
+    ) -> None:
+        """Require baseline direct navigation to copy an externally supplied route."""
+
+        candidate = candidate.strip()
+        if not candidate:
+            raise ValueError("runtime_open_url requires a non-empty URL")
+        sources = [
+            str(getattr(self, "_task_goal", "") or ""),
+            str(getattr(self, "_task_page_url", "") or ""),
+            str(getattr(self, "_master_knowledge", "") or ""),
+            spec.goal,
+            *spec.success_criteria,
+            str(frame.url if frame is not None else ""),
+        ]
+        if any(candidate in source for source in sources if source):
+            return
+
+        candidate_parts = urlsplit(candidate)
+        candidate_route = unquote(candidate_parts.path or "")
+        if candidate_parts.query:
+            candidate_route += f"?{candidate_parts.query}"
+        supplied_routes: set[str] = set()
+        for source in sources:
+            for token in re.findall(r"https?://[^\s`'\"<>]+|/[A-Za-z0-9_./?=&%+-]+", source):
+                clean = token.rstrip(".,;:)]}")
+                parts = urlsplit(clean)
+                route = unquote(parts.path or "")
+                if parts.query:
+                    route += f"?{parts.query}"
+                if route:
+                    supplied_routes.add(route)
+        if candidate_route and candidate_route in supplied_routes:
+            return
+        raise ValueError(
+            "runtime_open_url rejected an inferred URL/route. Use only an exact URL "
+            "present in the task or application knowledge; otherwise navigate visually."
+        )
 
     @staticmethod
     def _validate_worker_spec(spec: WorkerSpec) -> None:
+        consumed_inputs: set[str] = set()
         for requirement in spec.data_requirements:
             Draft202012Validator.check_schema(requirement.row_schema)
         for action in spec.actions:
             ToolAgentRuntime._validate_action_spec(action)
+            consumed_inputs.update(binding.input for binding in action.input_args.values())
+            unknown_inputs = {
+                binding.input for binding in action.input_args.values()
+            }.difference(spec.input_refs)
+            if unknown_inputs:
+                raise ValueError(
+                    f"{action.name}: input_args reference unknown input_refs "
+                    f"{sorted(unknown_inputs)}"
+                )
+        unused_inputs = set(spec.input_refs).difference(consumed_inputs)
+        if unused_inputs:
+            raise ValueError(
+                "input_refs must be consumed by deterministic action input_args: "
+                f"{sorted(unused_inputs)}"
+            )
 
     @staticmethod
     def _validate_action_spec(action: DynamicActionSpec) -> None:
-        parameters = capability_parameters(action.capability)
-        properties = parameters.get("properties") or {}
-        unknown_fixed = set(action.fixed_args).difference(properties)
-        if unknown_fixed:
-            raise ValueError(f"{action.name}: unknown fixed args {sorted(unknown_fixed)}")
-        for name, value in action.fixed_args.items():
-            if name in properties:
-                validate(instance=value, schema=properties[name])
-        missing_required = (
-            set(parameters.get("required") or [])
-            .difference(action.fixed_args)
-            .difference(action.exposed_args)
-        )
-        if missing_required:
-            raise ValueError(
-                f"{action.name}: required args are neither fixed nor exposed: "
-                f"{sorted(missing_required)}"
-            )
-        dynamic_action_tool(action)
+        validate_dynamic_action_spec(action)
 
-    @staticmethod
-    def _initial_worker_actions(spec: WorkerSpec) -> list[DynamicActionSpec]:
+    def _materialize_action_inputs(
+        self,
+        spec: WorkerSpec,
+        action: DynamicActionSpec,
+    ) -> DynamicActionSpec:
+        if not action.input_args:
+            return action
+        resolved = dict(action.fixed_args)
+        for argument, binding in action.input_args.items():
+            try:
+                value = self.data_store.result_value(spec.input_refs[binding.input])
+                for part in binding.path:
+                    value = value[part]
+            except (KeyError, IndexError, TypeError) as exc:
+                raise ValueError(
+                    f"{action.name}: cannot resolve input binding for {argument!r} "
+                    f"from {binding.input!r} path {binding.path!r}"
+                ) from exc
+            resolved[argument] = value
+        materialized = action.model_copy(update={
+            "fixed_args": resolved,
+            "input_args": {},
+        })
+        self._validate_action_spec(materialized)
+        return materialized
+
+    def _initial_worker_actions(self, spec: WorkerSpec) -> list[DynamicActionSpec]:
         floor = worker_action_floor()
         reserved = _RUNTIME_WORKER_TOOL_NAMES.union(item.name for item in floor)
         collisions = reserved.intersection(item.name for item in spec.actions)
         if collisions:
             raise ValueError(f"WorkerSpec uses reserved runtime action names: {sorted(collisions)}")
-        return [*spec.actions, *floor]
+        task_actions = [
+            self._materialize_action_inputs(spec, action) for action in spec.actions
+        ]
+        return [*task_actions, *floor]
 
     @staticmethod
     def _event_layer(event: str) -> str:
@@ -1487,6 +1800,11 @@ class ToolAgentRuntime:
             return f"Retry failed GUI subgoal using retained experience: {payload.get('reason', '')}"
         if event == "master_program_completed":
             return f"Master program terminal: {payload.get('phase', '?')}"
+        if event == "runtime_turn_budget_exhausted":
+            return (
+                "Task turn budget exhausted: "
+                f"{payload.get('turns_used', '?')}/{payload.get('max_turns', '?')}"
+            )
         if event == "runtime_finished":
             return f"Tool Agent finished: {payload.get('phase', '?')} · {payload.get('summary', '')}"
         return str(
@@ -1502,7 +1820,8 @@ class ToolAgentRuntime:
             return (
                 f"Goal    : {entry.get('goal', '')}\n"
                 f"Runtime : Coding Master → Agentic Workers · "
-                f"perception={entry.get('perception_mode', '?')}\n"
+                f"perception={entry.get('perception_mode', '?')} · "
+                f"max_turns={entry.get('max_turns', '?')}\n"
                 f"Models  : master={entry.get('master_model', '?')} · "
                 f"worker={entry.get('worker_model', '?')}"
             )
@@ -1595,13 +1914,22 @@ class ToolAgentRuntime:
             frame_id = str(entry.get("frame_id") or "?")
             turn_no = frame_id.rsplit(":", 1)[-1]
             screenshot = str(entry.get("screenshot_path") or "")
+            page = str(entry.get("title") or entry.get("url") or "")
+            surfaces = "; ".join(
+                f"{item.get('kind', 'surface')} {item.get('caption') or '(untitled)'} "
+                f"({item.get('row_count', '?')} rows)"
+                for item in entry.get("structured_surfaces") or []
+                if isinstance(item, dict)
+            )
             return (
                 f"\n--- Turn {turn_no} ---\n"
                 + (f"Screenshot : {screenshot}\n" if screenshot else "")
                 + f"Observation: {entry.get('mode', '?')} perception · "
                 f"{entry.get('control_count', 0)} controls\n"
-                f"Scope      : {scope_text}\n"
-                f"Collection : {collection_text}"
+                + (f"Page       : {page}\n" if page else "")
+                + (f"Surfaces   : {surfaces}\n" if surfaces else "")
+                + f"Scope      : {scope_text}\n"
+                + f"Collection : {collection_text}"
             )
         if event == "worker_decision":
             state = entry.get("state") if isinstance(entry.get("state"), dict) else {}
@@ -1730,12 +2058,18 @@ class ToolAgentRuntime:
             "runtime_interrupted",
         }:
             return f"ERROR   {entry.get('message', '')}"
+        if event == "runtime_turn_budget_exhausted":
+            return (
+                "BUDGET  task turn limit reached · "
+                f"{entry.get('turns_used', '?')}/{entry.get('max_turns', '?')}"
+            )
         if event == "runtime_finished":
             return (
                 "\n--- Final Result ---\n"
                 f"Status  : {entry.get('phase', '?')}\n"
                 f"Summary : {entry.get('summary', '')}\n"
                 f"ResultRef: {entry.get('result_ref', '') or '—'}\n"
+                f"Turns   : {entry.get('turns_used', '?')}/{entry.get('max_turns', '?')}\n"
                 f"Elapsed : {float(entry.get('elapsed_s') or 0):.1f}s"
             )
         return ""

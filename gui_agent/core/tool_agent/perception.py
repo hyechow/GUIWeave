@@ -71,6 +71,33 @@ def _table_fields(table: dict[str, Any]) -> set[str]:
     return available
 
 
+def _structured_surface_descriptor(table: dict[str, Any]) -> dict[str, Any]:
+    """Project page-wide table presence without exposing its row values.
+
+    Operator Workers need to know when an apply/query action materialized a result
+    below the screenshot fold even when they have no data requirement. Rows remain
+    private to RuntimeDataStore; this descriptor carries only structure and coverage.
+    """
+
+    rows = list(table.get("rows") or [])
+    traversal = table.get("traversal")
+    descriptor: dict[str, Any] = {
+        "kind": "rendered_data_surface",
+        "rendered": True,
+        "caption": str(table.get("caption") or "").strip(),
+        "fields": [str(field) for field in list(table.get("headers") or [])],
+        "row_count": len(rows),
+        "partial": bool(table.get("partial")),
+    }
+    if table.get("viewport_pos") not in (None, ""):
+        descriptor["viewport_position"] = table["viewport_pos"]
+    if table.get("total_records") not in (None, ""):
+        descriptor["total_records"] = table["total_records"]
+    if isinstance(traversal, dict):
+        descriptor["traversal"] = dict(traversal)
+    return descriptor
+
+
 def _table_supports_requirement(
     requirement: DataRequirement,
     table: dict[str, Any],
@@ -715,6 +742,11 @@ class PerceptionMaterializer:
             url=url or "",
             title=title or "",
             controls=controls,
+            structured_surfaces=[
+                _structured_surface_descriptor(table)
+                for table in tables
+                if isinstance(table, dict)
+            ],
             applied_filters=applied_filters,
             requirement_scopes=requirement_scopes,
             chunks=chunks,

@@ -41,9 +41,9 @@ def action_signature(
     capability: str,
     args: dict[str, Any],
 ) -> str:
-    """Return a semantic signature tolerant of a few pixels of coordinate jitter."""
+    """Return a semantic signature tolerant of aliases and coordinate jitter."""
+    del tool  # Task action aliases must not bypass the logical-action fuse.
     payload: dict[str, Any] = {
-        "tool": tool,
         "capability": capability,
     }
     for field_name in _SIGNATURE_FIELDS:
@@ -77,6 +77,18 @@ def progress_signature(frame: MaterializedFrame) -> str:
                 "pages_seen": item.coverage.get("pages_seen"),
             }
             for item in frame.collections
+        ],
+        "controls": [
+            {
+                key: control.get(key)
+                for key in ("kind", "label", "value", "focused", "checked", "selected")
+                if control.get(key) not in (None, "")
+            }
+            for control in frame.controls
+            if any(
+                control.get(key) not in (None, "")
+                for key in ("value", "focused", "checked", "selected")
+            )
         ],
     }
     rendered = json.dumps(payload, ensure_ascii=False, sort_keys=True, default=str)

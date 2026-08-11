@@ -8,6 +8,7 @@ import re
 from copy import deepcopy
 from typing import Any, Literal
 
+from jsonschema import validate
 from langchain_core.messages import HumanMessage
 from pydantic import BaseModel, ConfigDict, Field
 
@@ -245,7 +246,10 @@ def worker_action_floor() -> list[DynamicActionSpec]:
         DynamicActionSpec(
             name="runtime_open_url",
             capability="open_url",
-            description="Open a task- or knowledge-provided URL in the current browser tab.",
+            description=(
+                "Open an exact absolute URL or route copied from the task or application "
+                "knowledge in the current browser tab. Runtime rejects inferred routes."
+            ),
         ),
         DynamicActionSpec(
             name="runtime_browser_back",
@@ -380,6 +384,39 @@ def capability_parameters(capability: str) -> dict[str, Any]:
         return deepcopy(_CAPABILITY_SCHEMAS[capability])
     except KeyError as exc:
         raise ValueError(f"unknown capability {capability!r}") from exc
+
+
+def validate_dynamic_action_spec(action: DynamicActionSpec) -> None:
+    """Validate that one business action can satisfy its capability contract.
+
+    This check is shared by static Master review and live Worker dispatch so an
+    impossible dynamic tool schema is rejected before any GUI execution begins.
+    """
+
+    parameters = capability_parameters(action.capability)
+    properties = parameters.get("properties") or {}
+    unknown_fixed = set(action.fixed_args).difference(properties)
+    if unknown_fixed:
+        raise ValueError(f"{action.name}: unknown fixed args {sorted(unknown_fixed)}")
+    unknown_bound = set(action.input_args).difference(properties)
+    if unknown_bound:
+        raise ValueError(
+            f"{action.name}: unknown runtime-bound args {sorted(unknown_bound)}"
+        )
+    for name, value in action.fixed_args.items():
+        validate(instance=value, schema=properties[name])
+    missing_required = (
+        set(parameters.get("required") or [])
+        .difference(action.fixed_args)
+        .difference(action.input_args)
+        .difference(action.exposed_args)
+    )
+    if missing_required:
+        raise ValueError(
+            f"{action.name}: required args are neither fixed, runtime-bound, nor exposed: "
+            f"{sorted(missing_required)}"
+        )
+    dynamic_action_tool(action)
 
 
 def image_message(text: str, png: bytes) -> HumanMessage:

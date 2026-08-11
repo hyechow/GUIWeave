@@ -6,6 +6,7 @@ from gui_agent.core.tool_agent.contracts import (
     DataRequirement,
     DynamicActionSpec,
     ResultRef,
+    RuntimeInputBinding,
     WorkerSpec,
     WorkerState,
 )
@@ -35,6 +36,7 @@ __all__ = [
     "MasterProgram",
     "PresentationResult",
     "ResultRef",
+    "RuntimeInputBinding",
     "RecordedContext",
     "ReplayResult",
     "ToolAgentRun",

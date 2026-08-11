@@ -392,6 +392,30 @@ def _compatible_with_action(control: dict, action_type: str) -> bool:
     return action_type in {"tap", "click"}
 
 
+def _matches_described_control_type(description: str, control: dict) -> bool:
+    """Keep semantic snapping from changing the Worker's requested control family.
+
+    A correct visual point may target a data-row link that is absent from the form
+    control inventory.  In that case a nearby filter input is not a valid fallback,
+    even if its column label also appears in the action description.  Explicit type
+    words are treated as constraints; with no type word, geometry remains unchanged.
+    """
+
+    words = set(re.findall(r"[a-z0-9]+", (description or "").casefold()))
+    kind = str(control.get("kind") or "").casefold()
+    if "link" in words:
+        return kind in {"a", "link"}
+    if "button" in words:
+        return kind in {"button", "input_button", "submit", "section_toggle"}
+    if words.intersection({"checkbox", "radio"}):
+        return any(token in kind for token in ("checkbox", "radio"))
+    if words.intersection({"input", "textbox", "textarea", "field"}):
+        return any(token in kind for token in ("input", "textbox", "textarea", "editor"))
+    if words.intersection({"select", "dropdown", "combobox", "listbox"}):
+        return kind in {"native_select", "select", "selectmenu", "listbox", "combobox"}
+    return True
+
+
 def _contains_visible_name(description: str, visible_name: object) -> bool:
     """Return whether prose names one visible label as a complete phrase."""
     name = str(visible_name or "").strip()
@@ -429,6 +453,53 @@ def _description_names_control(description: str, control: dict) -> bool:
     return any(_contains_visible_name(description, name) for name in names if name)
 
 
+def _explicit_target_position(description: str, control: dict) -> int | None:
+    """Return the first ``visible-name + control-type`` target phrase position.
+
+    Relative descriptions often name neighboring controls (for example, "the Filters button
+    beside Default View dropdown").  The first explicit name/type phrase is the atomic target;
+    later names are layout context.  This stronger signal may safely repair a large coordinate
+    miss, while ordinary name mentions remain subject to bounded nearby grounding.
+    """
+
+    description_tokens = re.findall(r"[a-z0-9]+", (description or "").casefold())
+    kind = str(control.get("kind") or "").casefold()
+    allowed_types: set[str]
+    if kind in {"a", "link"}:
+        allowed_types = {"link", "option", "item"}
+    elif kind in {"button", "input_button", "submit", "section_toggle"}:
+        allowed_types = {"button", "option", "item", "toggle"}
+    elif any(token in kind for token in ("checkbox", "radio")):
+        allowed_types = {"checkbox", "radio", "option", "row", "control"}
+    elif any(token in kind for token in ("input", "textbox", "textarea", "editor")):
+        allowed_types = {"input", "field", "textbox", "textarea", "editor"}
+    elif kind in {"native_select", "select", "selectmenu", "listbox", "combobox"}:
+        allowed_types = {"select", "dropdown", "combobox", "listbox", "field"}
+    else:
+        return None
+    names = {
+        str(control.get("label") or "").strip(),
+        str(control.get("group_field") or "").strip(),
+    }
+    if kind in {"a", "button", "link", "section_toggle"}:
+        names.add(str(control.get("value") or "").strip())
+    positions: list[int] = []
+    for name in names:
+        name_tokens = re.findall(r"[a-z0-9]+", name.casefold())
+        if not name_tokens:
+            continue
+        width = len(name_tokens)
+        for index in range(len(description_tokens) - width):
+            if description_tokens[index:index + width] != name_tokens:
+                continue
+            following = description_tokens[index + width:index + width + 3]
+            # Natural descriptions commonly say "Password text input" or "Status native
+            # select".  The optional adjective does not change the named control family.
+            if any(token in allowed_types for token in following):
+                positions.append(index)
+    return min(positions) if positions else None
+
+
 def ground_action_to_nearest_control(
     decision: BrowserActionDecision,
     controls: list[dict] | None,
@@ -456,8 +527,14 @@ def ground_action_to_nearest_control(
 
     nearby: list[tuple[int, float, float, float, dict, float, float]] = []
     candidates: list[tuple[int, float, float, float, dict, float, float]] = []
+    explicit_semantic: list[tuple[int, dict, float, float]] = []
     for control in controls or []:
         if not isinstance(control, dict) or not _compatible_with_action(control, action_type):
+            continue
+        if action_type in {"tap", "click"} and not _matches_described_control_type(
+            action.description,
+            control,
+        ):
             continue
         if control.get("in_viewport") is False:
             continue
@@ -471,6 +548,9 @@ def ground_action_to_nearest_control(
         height_px = max(0.0, float(rect.get("h") or 0.0))
         if width_px > viewport_width * 0.9 or height_px > viewport_height * 0.6:
             continue
+        target_position = _explicit_target_position(action.description, control)
+        if target_position is not None:
+            explicit_semantic.append((target_position, control, cx, cy))
         half_width = width_px / viewport_width * 500.0
         half_height = height_px / viewport_height * 500.0
         dx = max(abs(float(action.x) - cx) - half_width, 0.0)
@@ -507,7 +587,18 @@ def ground_action_to_nearest_control(
             ):
                 geometric_best = None
 
-    if len(semantic) == 1 and (
+    explicit_best = None
+    if explicit_semantic:
+        explicit_semantic.sort(key=lambda item: item[0])
+        if len(explicit_semantic) == 1 or explicit_semantic[0][0] < explicit_semantic[1][0]:
+            explicit_best = explicit_semantic[0]
+
+    if explicit_best is not None and (
+        geometric_best is None or explicit_best[1] is not geometric_best[4]
+    ):
+        best = (0, 0.0, 0.0, 0.0, explicit_best[1], explicit_best[2], explicit_best[3])
+        method = "control_semantic_geometry"
+    elif len(semantic) == 1 and (
         geometric_best is None or semantic[0][4] is not geometric_best[4]
     ):
         best = semantic[0]

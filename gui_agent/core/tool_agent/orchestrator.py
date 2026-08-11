@@ -30,6 +30,7 @@ from gui_agent.core.tool_agent.protocol import (
     diagnostic_prompt_reports,
     message_text,
     response_usage,
+    validate_dynamic_action_spec,
 )
 from gui_agent.core.tool_agent.sandbox import (
     execute_transform,
@@ -153,6 +154,7 @@ class MasterTerminal:
     phase: Literal["completed", "failed", "replan"]
     summary: str
     result_ref: str = ""
+    effect: Literal["mutation", "data", "ui_state", "none"] = "none"
 
 
 @dataclass(frozen=True)
@@ -209,7 +211,6 @@ def _validate_gui_worker_call(call: ast.Call) -> list[MasterDiagnostic]:
     required = {
         "goal",
         "success_criteria",
-        "data_requirements",
         "actions",
     }
     values: dict[str, Any] = {}
@@ -220,7 +221,27 @@ def _validate_gui_worker_call(call: ast.Call) -> list[MasterDiagnostic]:
             diagnostics.append(_diagnostic("GUI_WORKER_LITERAL", str(exc), call))
     if diagnostics:
         return diagnostics
-    max_steps = 8
+    if any(item.arg == "data_requirements" for item in call.keywords):
+        try:
+            values["data_requirements"] = _literal_keyword(call, "data_requirements")
+        except ValueError as exc:
+            diagnostics.append(_diagnostic("GUI_WORKER_LITERAL", str(exc), call))
+    else:
+        try:
+            explicit_profile = _literal_keyword(call, "profile")
+        except ValueError:
+            explicit_profile = None
+        if explicit_profile == "operator":
+            values["data_requirements"] = []
+        else:
+            diagnostics.append(_diagnostic(
+                "GUI_WORKER_LITERAL",
+                "missing required keyword 'data_requirements' unless profile='operator'",
+                call,
+            ))
+    if diagnostics:
+        return diagnostics
+    max_steps = 12
     if any(item.arg == "max_steps" for item in call.keywords):
         try:
             max_steps = _literal_keyword(call, "max_steps")
@@ -237,14 +258,69 @@ def _validate_gui_worker_call(call: ast.Call) -> list[MasterDiagnostic]:
             {
                 **values,
                 "profile": profile,
+                "input_refs": {},
                 "acquisition_filters": acquisition_filters,
                 "max_steps": max_steps,
             }
         )
         for requirement in spec.data_requirements:
             Draft202012Validator.check_schema(requirement.row_schema)
+        for action in spec.actions:
+            validate_dynamic_action_spec(action)
     except Exception as exc:  # noqa: BLE001 - surfaced as a compile diagnostic
         diagnostics.append(_diagnostic("GUI_WORKER_SPEC", str(exc), call))
+    input_keyword = next((item for item in call.keywords if item.arg == "input_refs"), None)
+    input_names: set[str] = set()
+    if input_keyword is not None:
+        if isinstance(input_keyword.value, ast.Constant) and input_keyword.value.value is None:
+            pass
+        elif not isinstance(input_keyword.value, ast.Dict):
+            diagnostics.append(_diagnostic(
+                "GUI_WORKER_INPUT_REFS",
+                "input_refs must be an inline dict of name: result_descriptor['ref']",
+                input_keyword.value,
+            ))
+        else:
+            for key, value in zip(
+                input_keyword.value.keys,
+                input_keyword.value.values,
+                strict=True,
+            ):
+                if not isinstance(key, ast.Constant) or not isinstance(key.value, str):
+                    diagnostics.append(_diagnostic(
+                        "GUI_WORKER_INPUT_REFS",
+                        "input_refs names must be literal strings",
+                        key,
+                    ))
+                    continue
+                input_names.add(key.value)
+                if _subscript_key(value) != "ref":
+                    diagnostics.append(_diagnostic(
+                        "REF_VALUE_REQUIRED",
+                        "gui_worker input_refs require ResultRef descriptor['ref'] values",
+                        value,
+                    ))
+    action_input_names = {
+        str(binding.get("input") or "")
+        for action in values.get("actions") or []
+        if isinstance(action, dict)
+        for binding in (action.get("input_args") or {}).values()
+        if isinstance(binding, dict)
+    }
+    unknown_inputs = action_input_names.difference(input_names)
+    if unknown_inputs:
+        diagnostics.append(_diagnostic(
+            "GUI_WORKER_INPUT_BINDING",
+            f"action input_args reference undeclared input_refs: {sorted(unknown_inputs)}",
+            call,
+        ))
+    unused_inputs = input_names.difference(action_input_names)
+    if unused_inputs:
+        diagnostics.append(_diagnostic(
+            "GUI_WORKER_INPUT_BINDING",
+            f"input_refs must be consumed by deterministic action input_args: {sorted(unused_inputs)}",
+            call,
+        ))
     return diagnostics
 
 
@@ -295,6 +371,21 @@ def _base_name(node: ast.AST) -> str:
     return node.id if isinstance(node, ast.Name) else ""
 
 
+def _subscript_path(node: ast.AST) -> tuple[str, tuple[str, ...]]:
+    """Return the root name and literal string-key path for a reviewed expression."""
+
+    keys: list[str] = []
+    while isinstance(node, ast.Subscript):
+        key = _subscript_key(node)
+        if not key:
+            return "", ()
+        keys.append(key)
+        node = node.value
+    if not isinstance(node, ast.Name):
+        return "", ()
+    return node.id, tuple(reversed(keys))
+
+
 def _ctx_call(node: ast.AST, method: str) -> ast.Call | None:
     if not isinstance(node, ast.Call) or not isinstance(node.func, ast.Attribute):
         return None
@@ -311,6 +402,10 @@ def _static_transform_input_diagnostics(tree: ast.AST) -> list[MasterDiagnostic]
     """Review transform row fields against statically routed Worker schemas."""
 
     row_schemas: dict[str, dict[str, Any]] = {}
+    # The value represented by each row schema is reached through this exact path.
+    # A local alias such as ``rows_ref = outcome["collection_ref"]["ref"]`` has
+    # already resolved the descriptor path, so its expected path is empty.
+    ref_paths: dict[str, tuple[str, ...]] = {}
     transform_calls: list[ast.Call] = []
     assignments = sorted(
         (node for node in ast.walk(tree) if isinstance(node, ast.Assign)),
@@ -338,12 +433,24 @@ def _static_transform_input_diagnostics(tree: ast.AST) -> list[MasterDiagnostic]
                     row_schemas[name] = DataRequirement.model_validate(
                         requirement
                     ).row_schema
+                    ref_paths[name] = ("collection_ref", "ref")
             except Exception:
                 # The ordinary WorkerSpec review reports malformed requirements.
                 continue
             continue
         transform_call = _ctx_call(assignment.value, "transform")
         if transform_call is None:
+            base, path = _subscript_path(assignment.value)
+            if base in row_schemas and path == ref_paths.get(base):
+                row_schemas[name] = row_schemas[base]
+                ref_paths[name] = ()
+            elif (
+                isinstance(assignment.value, ast.Name)
+                and assignment.value.id in row_schemas
+                and ref_paths.get(assignment.value.id) == ()
+            ):
+                row_schemas[name] = row_schemas[assignment.value.id]
+                ref_paths[name] = ()
             continue
         transform_calls.append(transform_call)
         try:
@@ -355,6 +462,7 @@ def _static_transform_input_diagnostics(tree: ast.AST) -> list[MasterDiagnostic]
         items = result_schema.get("items")
         if result_schema.get("type") == "array" and isinstance(items, dict):
             row_schemas[name] = items
+            ref_paths[name] = ("ref",)
 
     diagnostics: list[MasterDiagnostic] = []
     for call in transform_calls:
@@ -364,11 +472,11 @@ def _static_transform_input_diagnostics(tree: ast.AST) -> list[MasterDiagnostic]
         )
         if not isinstance(inputs_node, (ast.List, ast.Tuple)):
             continue
-        schemas = [
-            row_schemas[name]
-            for item in inputs_node.elts
-            if (name := _base_name(item)) in row_schemas
-        ]
+        schemas = []
+        for item in inputs_node.elts:
+            name, path = _subscript_path(item)
+            if name in row_schemas and path == ref_paths.get(name):
+                schemas.append(row_schemas[name])
         if not schemas:
             continue
         combined = {
@@ -389,20 +497,259 @@ def _static_transform_input_diagnostics(tree: ast.AST) -> list[MasterDiagnostic]
     return diagnostics
 
 
+def _static_collector_consumption_diagnostics(tree: ast.AST) -> list[MasterDiagnostic]:
+    """Require every collector to feed observed rows into deterministic data flow.
+
+    A collector is not a navigation primitive.  If its CollectionRef is never consumed by a
+    transform, splitting it from a later operator only forces visual navigation state through an
+    unrepresentable data handle.  The cohesive operator should own that branch instead.
+    """
+
+    collectors: dict[str, ast.Call] = {}
+    ref_aliases: dict[str, str] = {}
+    consumed: set[str] = set()
+    assignments = sorted(
+        (node for node in ast.walk(tree) if isinstance(node, ast.Assign)),
+        key=lambda node: getattr(node, "lineno", 0),
+    )
+    for assignment in assignments:
+        if (
+            len(assignment.targets) != 1
+            or not isinstance(assignment.targets[0], ast.Name)
+        ):
+            continue
+        call = _ctx_call(assignment.value, "gui_worker")
+        if call is None:
+            continue
+        try:
+            requirements = _literal_keyword(call, "data_requirements")
+            profile = (
+                _literal_keyword(call, "profile")
+                if any(item.arg == "profile" for item in call.keywords)
+                else None
+            )
+        except ValueError:
+            continue
+        if profile == "collector" or (profile is None and requirements):
+            collectors[assignment.targets[0].id] = call
+
+    for assignment in assignments:
+        if len(assignment.targets) != 1 or not isinstance(assignment.targets[0], ast.Name):
+            continue
+        alias = assignment.targets[0].id
+        base, path = _subscript_path(assignment.value)
+        if base in collectors and path == ("collection_ref", "ref"):
+            ref_aliases[alias] = base
+        elif (
+            isinstance(assignment.value, ast.Name)
+            and assignment.value.id in ref_aliases
+        ):
+            ref_aliases[alias] = ref_aliases[assignment.value.id]
+
+    for node in ast.walk(tree):
+        call = _ctx_call(node, "transform")
+        if call is None:
+            continue
+        inputs = next((item.value for item in call.keywords if item.arg == "inputs"), None)
+        if not isinstance(inputs, (ast.List, ast.Tuple)):
+            continue
+        for item in inputs.elts:
+            base, path = _subscript_path(item)
+            if base in collectors and path == ("collection_ref", "ref"):
+                consumed.add(base)
+            elif base in ref_aliases and not path:
+                consumed.add(ref_aliases[base])
+
+    return [
+        _diagnostic(
+            "COLLECTOR_RESULT_UNUSED",
+            f"collector {name!r} must route its collection_ref into ctx.transform; "
+            "use one cohesive operator when the Worker only locates/navigates to a record",
+            call,
+        )
+        for name, call in collectors.items()
+        if name not in consumed
+    ]
+
+
+def _static_result_routing_diagnostics(tree: ast.AST) -> list[MasterDiagnostic]:
+    """Require computed ResultRefs to reach the next physical-effect Worker explicitly."""
+
+    pending_results: set[str] = set()
+    diagnostics: list[MasterDiagnostic] = []
+    assignments = sorted(
+        (node for node in ast.walk(tree) if isinstance(node, ast.Assign)),
+        key=lambda node: getattr(node, "lineno", 0),
+    )
+    for assignment in assignments:
+        if len(assignment.targets) != 1 or not isinstance(assignment.targets[0], ast.Name):
+            continue
+        assigned_name = assignment.targets[0].id
+        transform_call = _ctx_call(assignment.value, "transform")
+        if transform_call is not None:
+            inputs = next(
+                (item.value for item in transform_call.keywords if item.arg == "inputs"),
+                None,
+            )
+            if isinstance(inputs, (ast.List, ast.Tuple)):
+                pending_results.difference_update(
+                    _base_name(value) for value in inputs.elts
+                )
+            pending_results.add(assigned_name)
+            continue
+        worker_call = _ctx_call(assignment.value, "gui_worker")
+        if worker_call is None or not pending_results:
+            continue
+        keyword = next(
+            (item for item in worker_call.keywords if item.arg == "input_refs"),
+            None,
+        )
+        routed = {
+            _base_name(value)
+            for value in keyword.value.values
+            if keyword is not None and isinstance(keyword.value, ast.Dict)
+        } if keyword is not None and isinstance(keyword.value, ast.Dict) else set()
+        missing = pending_results.difference(routed)
+        if missing:
+            diagnostics.append(_diagnostic(
+                "RESULT_REF_UNROUTED",
+                "ResultRefs computed before a GUI Worker must be routed through "
+                f"that call's input_refs: {sorted(missing)}",
+                worker_call,
+            ))
+        pending_results.difference_update(routed)
+    return diagnostics
+
+
+def _static_worker_array_input_diagnostics(tree: ast.AST) -> list[MasterDiagnostic]:
+    """Reject private arrays routed directly into one visual Worker.
+
+    ResultRefs deliberately hide their values from the model. The runtime can bind one scalar
+    value into one selected action, but it has no implicit map/foreach operation that expands a
+    private array into repeated GUI actions. The Master must compute one scalar/object target or
+    delegate the cohesive mutation to the application's own bulk/group editor.
+    """
+
+    array_results: dict[str, ast.Call] = {}
+    for assignment in ast.walk(tree):
+        if (
+            not isinstance(assignment, ast.Assign)
+            or len(assignment.targets) != 1
+            or not isinstance(assignment.targets[0], ast.Name)
+        ):
+            continue
+        call = _ctx_call(assignment.value, "transform")
+        if call is None:
+            continue
+        try:
+            schema = _literal_keyword(call, "result_schema")
+        except ValueError:
+            continue
+        if isinstance(schema, dict) and schema.get("type") == "array":
+            array_results[assignment.targets[0].id] = call
+
+    diagnostics: list[MasterDiagnostic] = []
+    for node in ast.walk(tree):
+        worker_call = _ctx_call(node, "gui_worker")
+        if worker_call is None:
+            continue
+        keyword = next(
+            (item for item in worker_call.keywords if item.arg == "input_refs"),
+            None,
+        )
+        if keyword is None or not isinstance(keyword.value, ast.Dict):
+            continue
+        routed_arrays = sorted({
+            name
+            for value in keyword.value.values
+            if (name := _base_name(value)) in array_results
+        })
+        if routed_arrays:
+            diagnostics.append(_diagnostic(
+                "WORKER_ARRAY_INPUT_UNSUPPORTED",
+                "GUI Worker input_refs cannot expand private array ResultRefs into repeated "
+                f"actions: {routed_arrays}; compute one scalar/object target, or use one "
+                "cohesive Worker over the application's bulk/group editor",
+                worker_call,
+            ))
+    return diagnostics
+
+
+def _static_finish_ref_diagnostics(tree: ast.AST) -> list[MasterDiagnostic]:
+    """Reject transform descriptor objects passed where finish requires their ref string."""
+
+    transform_descriptors = {
+        assignment.targets[0].id
+        for assignment in ast.walk(tree)
+        if isinstance(assignment, ast.Assign)
+        and len(assignment.targets) == 1
+        and isinstance(assignment.targets[0], ast.Name)
+        and _ctx_call(assignment.value, "transform") is not None
+    }
+    diagnostics: list[MasterDiagnostic] = []
+    for node in ast.walk(tree):
+        call = _ctx_call(node, "finish")
+        if call is None:
+            continue
+        value: ast.AST | None = call.args[0] if call.args else None
+        keyword = next((item for item in call.keywords if item.arg == "result_ref"), None)
+        if keyword is not None:
+            value = keyword.value
+        if isinstance(value, ast.Name) and value.id in transform_descriptors:
+            diagnostics.append(_diagnostic(
+                "REF_VALUE_REQUIRED",
+                f"ctx.finish requires {value.id}['ref'], not the ResultRef descriptor",
+                value,
+            ))
+    return diagnostics
+
+
 def _validate_finish_call(call: ast.Call) -> list[MasterDiagnostic]:
+    diagnostics: list[MasterDiagnostic] = []
+    unknown_keywords = {
+        item.arg for item in call.keywords if item.arg not in {"result_ref", "effect"}
+    }
+    if unknown_keywords:
+        diagnostics.append(_diagnostic(
+            "FINISH_SIGNATURE",
+            f"ctx.finish received unknown keyword arguments: {sorted(unknown_keywords)}",
+            call,
+        ))
+    if len(call.args) > 1:
+        diagnostics.append(_diagnostic(
+            "FINISH_SIGNATURE",
+            "ctx.finish accepts one positional result ref; effect must be a keyword",
+            call,
+        ))
     value: ast.AST | None = call.args[0] if call.args else None
     keyword = next((item for item in call.keywords if item.arg == "result_ref"), None)
     if keyword is not None:
         value = keyword.value
     if value is None:
-        return [_diagnostic("FINISH_SIGNATURE", "ctx.finish requires a result ref string", call)]
+        diagnostics.append(_diagnostic(
+            "FINISH_SIGNATURE", "ctx.finish requires a result ref string", call
+        ))
     if _subscript_key(value) in {"collection_ref", "result_ref"}:
-        return [_diagnostic(
+        diagnostics.append(_diagnostic(
             "REF_VALUE_REQUIRED",
             "ctx.finish requires result_ref['ref'], not the result_ref descriptor",
             value,
-        )]
-    return []
+        ))
+    effect_keyword = next((item for item in call.keywords if item.arg == "effect"), None)
+    effect = (
+        effect_keyword.value.value
+        if effect_keyword is not None
+        and isinstance(effect_keyword.value, ast.Constant)
+        and isinstance(effect_keyword.value.value, str)
+        else None
+    )
+    if effect not in {"mutation", "data", "ui_state"}:
+        diagnostics.append(_diagnostic(
+            "FINISH_EFFECT",
+            "ctx.finish requires literal effect='mutation', 'data', or 'ui_state'",
+            call,
+        ))
+    return diagnostics
 
 
 def validate_master_source(source: str) -> list[MasterDiagnostic]:
@@ -480,6 +827,10 @@ def validate_master_source(source: str) -> list[MasterDiagnostic]:
     if terminal_calls == 0:
         diagnostics.append(_diagnostic("TERMINAL_REQUIRED", "program must call ctx.finish or ctx.fail"))
     diagnostics.extend(_static_transform_input_diagnostics(tree))
+    diagnostics.extend(_static_collector_consumption_diagnostics(tree))
+    diagnostics.extend(_static_result_routing_diagnostics(tree))
+    diagnostics.extend(_static_worker_array_input_diagnostics(tree))
+    diagnostics.extend(_static_finish_ref_diagnostics(tree))
     unique: list[MasterDiagnostic] = []
     seen: set[tuple[str, str, int]] = set()
     for item in diagnostics:
@@ -614,19 +965,24 @@ class WorkerOrchestrationContext:
         profile: Literal["operator", "collector"] | None = None,
         goal: str,
         success_criteria: list[str],
-        data_requirements: list[dict[str, Any]],
+        input_refs: dict[str, str] | None = None,
+        data_requirements: list[dict[str, Any]] | None = None,
         actions: list[dict[str, Any]],
         acquisition_filters: dict[str, Any] | None = None,
-        max_steps: int = 8,
+        max_steps: int = 12,
     ) -> dict[str, Any]:
         if _WORKER_ID_PATTERN.fullmatch(worker_id) is None:
             raise ValueError("worker_id must be a stable snake_case identifier")
+        routed_inputs = dict(input_refs or {})
+        for ref in routed_inputs.values():
+            self._data_store.result_descriptor(ref)
         spec = WorkerSpec.model_validate(
             {
                 "profile": profile,
                 "goal": goal,
                 "success_criteria": success_criteria,
-                "data_requirements": data_requirements,
+                "input_refs": routed_inputs,
+                "data_requirements": data_requirements or [],
                 "acquisition_filters": acquisition_filters,
                 "actions": actions,
                 "max_steps": max_steps,
@@ -738,12 +1094,23 @@ class WorkerOrchestrationContext:
         record = self._records.get(worker_id)
         return record.outcome.model_dump(mode="json") if record is not None else None
 
-    def finish(self, result_ref: str) -> None:
+    def finish(
+        self,
+        result_ref: str,
+        *,
+        effect: Literal["mutation", "data", "ui_state"],
+    ) -> None:
+        if not isinstance(result_ref, str):
+            raise ValueError(
+                "finish requires a ResultRef string such as result['ref'], "
+                f"got {type(result_ref).__name__}"
+            )
         descriptor = self._data_store.result_descriptor(result_ref)
         self._terminal = MasterTerminal(
             phase="completed",
             summary=descriptor.summary or "Coding Master accepted the ResultRef.",
             result_ref=descriptor.ref,
+            effect=effect,
         )
         raise _ProgramHalt
 

@@ -36,11 +36,13 @@ import json
 import os
 import re
 import shutil
+import subprocess
 import sys
 import time
 from pathlib import Path
 from typing import Optional
 from urllib.parse import parse_qsl, urlencode, urlsplit, urlunsplit
+from urllib.request import ProxyHandler, build_opener
 
 if __package__ is None or __package__ == "":
     sys.path.insert(0, str(Path(__file__).resolve().parents[3]))
@@ -59,6 +61,13 @@ _STATUSES = (
     "PERMISSION_DENIED_ERROR", "DATA_VALIDATION_ERROR", "UNKNOWN_ERROR",
 )
 _EVAL_COMPAT_ENV = "WEBARENA_EVAL_COMPAT"
+_REVIEWED_PYTHON_MAX_TURNS = 25
+_TOOL_AGENT_MAX_TURNS = 64
+_RESETTABLE_CONTAINERS = {
+    "shopping_admin": "webarena_verified_shopping_admin",
+}
+_SAFE_REMOTE_HOST = re.compile(r"^[A-Za-z0-9][A-Za-z0-9.:-]*$")
+_SAFE_REMOTE_TOKEN = re.compile(r"^[A-Za-z0-9._/:=@-]+$")
 
 # Response-synthesis prompts, loaded from the registry. The system prompt is RAW:
 # its body carries literal JSON examples ({"min":..}) that forbid str.format(), so
@@ -243,12 +252,12 @@ def _guess_webarena_task_type(intent: str) -> str:
         "mark", "rename", "notify", "send",
     )
     navigate_markers = ("open ", "go to", "navigate", "visit")
-    if any(marker in text for marker in retrieve_markers):
-        return "RETRIEVE"
     if any(marker in text for marker in mutate_markers):
         return "MUTATE"
     if any(marker in text for marker in navigate_markers):
         return "NAVIGATE"
+    if any(marker in text for marker in retrieve_markers):
+        return "RETRIEVE"
     return "RETRIEVE"
 
 
@@ -316,22 +325,46 @@ def _tool_agent_result_and_context(
 
     phase = str(getattr(run, "phase", "failed"))
     output_value = getattr(run, "output", None)
+    effect = str(getattr(run, "effect", "") or "").strip()
+    if effect not in {"mutation", "data", "ui_state"}:
+        effect = {
+            "MUTATE": "mutation",
+            "NAVIGATE": "ui_state",
+            "RETRIEVE": "data",
+        }[_guess_webarena_task_type(intent)]
+    task_type = {
+        "mutation": "MUTATE",
+        "data": "RETRIEVE",
+        "ui_state": "NAVIGATE",
+    }[effect]
+    platform_rejections = [
+        {
+            "status": feedback.get("status"),
+            "url": feedback.get("url"),
+            "message": feedback.get("message"),
+        }
+        for event in (getattr(run, "trace", None) or [])
+        if isinstance(event, dict) and event.get("event") == "runtime_action"
+        for feedback in (event.get("platform_feedback") or [])
+        if isinstance(feedback, dict) and feedback.get("rejected") is True
+    ]
     result = AgentResult(
         goal=intent,
         output=json.dumps(output_value, ensure_ascii=False),
         summary=str(getattr(run, "summary", "tool-agent ended")),
         phase="completed" if phase == "completed" else "failed",
         verification="confirmed" if phase == "completed" else None,
-        task_type="RETRIEVE",
+        task_type=task_type,
         orchestrator={
             "kind": "tool_agent",
-            "effect": "data",
+            "effect": effect,
             "perception_mode": getattr(run, "perception_mode", ""),
             "result_ref": (
                 getattr(run, "result_ref").model_dump(mode="json")
                 if getattr(run, "result_ref", None) is not None
                 else None
             ),
+            "platform_rejections": platform_rejections,
             "models": {
                 "master": getattr(run, "master_model", ""),
                 "worker": getattr(run, "worker_model", ""),
@@ -385,6 +418,142 @@ def _rewrite_url_host(url: str, host_override: str) -> str:
     else:
         new_netloc = f"{host_override}:{parts.port}"
     return urlunsplit(parts._replace(netloc=new_netloc))
+
+
+def _run_reset_ssh(host: str, port: int, *remote_args: str) -> str:
+    """Run one fixed-shape Docker command on the explicitly configured reset host."""
+
+    if not _SAFE_REMOTE_HOST.fullmatch(host):
+        raise ValueError(f"invalid reset SSH host: {host!r}")
+    if not 1 <= port <= 65535:
+        raise ValueError(f"invalid reset SSH port: {port}")
+    for value in remote_args:
+        if not _SAFE_REMOTE_TOKEN.fullmatch(value):
+            raise ValueError(f"unsafe remote reset argument: {value!r}")
+    completed = subprocess.run(
+        [
+            "ssh",
+            "-o",
+            "BatchMode=yes",
+            "-o",
+            "ConnectTimeout=10",
+            "-p",
+            str(port),
+            f"root@{host}",
+            *remote_args,
+        ],
+        check=True,
+        capture_output=True,
+        text=True,
+        timeout=60,
+    )
+    return completed.stdout.strip()
+
+
+def _wait_for_env_ctrl_ready(url: str, *, timeout: float) -> None:
+    """Wait until the recreated container reports all services healthy."""
+
+    opener = build_opener(ProxyHandler({}))
+    deadline = time.monotonic() + timeout
+    last_error = "environment control endpoint did not respond"
+    while time.monotonic() < deadline:
+        try:
+            with opener.open(url, timeout=5) as response:
+                payload = json.loads(response.read().decode("utf-8"))
+            if payload.get("success") is True:
+                return
+            last_error = str(payload.get("error") or payload.get("message") or payload)
+        except Exception as exc:  # noqa: BLE001 - readiness polling records the last cause
+            last_error = f"{type(exc).__name__}: {exc}"
+        time.sleep(2)
+    raise TimeoutError(
+        f"reset instance did not become ready within {timeout:.0f}s: {last_error}"
+    )
+
+
+def _wait_for_site_ready(url: str, *, timeout: float) -> None:
+    """Warm the real application endpoint after process-level health succeeds."""
+
+    opener = build_opener(ProxyHandler({}))
+    deadline = time.monotonic() + timeout
+    last_error = "site did not respond"
+    while time.monotonic() < deadline:
+        try:
+            with opener.open(url, timeout=10) as response:
+                response.read(1)
+                if 200 <= response.status < 500:
+                    return
+                last_error = f"HTTP {response.status}"
+        except Exception as exc:  # noqa: BLE001 - readiness polling records the last cause
+            last_error = f"{type(exc).__name__}: {exc}"
+        time.sleep(2)
+    raise TimeoutError(
+        f"reset site did not become ready within {timeout:.0f}s: {last_error}"
+    )
+
+
+def _reset_webarena_instance(
+    *,
+    site: str,
+    start_url: str,
+    ssh_host: str | None = None,
+    ssh_port: int = 2222,
+    timeout: float = 180,
+) -> dict[str, object]:
+    """Recreate a supported instance from WebArena's canonical container config."""
+
+    container = _RESETTABLE_CONTAINERS.get(site)
+    if container is None:
+        raise ValueError(f"instance reset is not configured for site {site!r}")
+    parts = urlsplit(start_url)
+    host = ssh_host or parts.hostname
+    if not host or not parts.scheme or not parts.netloc:
+        raise ValueError(f"cannot derive reset host/origin from start_url {start_url!r}")
+    origin = f"{parts.scheme}://{parts.netloc}/"
+
+    from webarena_verified.environments.container.config import get_container_config
+    from webarena_verified.types.task import WebArenaSite
+
+    reset_config = get_container_config(site=WebArenaSite(site))
+    site_port = parts.port or reset_config.host_port
+    env_ctrl_host_port = reset_config.host_env_ctrl_port
+    if site_port is None or env_ctrl_host_port is None:
+        raise ValueError(f"canonical reset ports are unavailable for site {site!r}")
+    _run_reset_ssh(host, ssh_port, "docker", "rm", "-f", container)
+    run_args = [
+        "docker",
+        "run",
+        "-d",
+        "--name",
+        container,
+        "-p",
+        f"{site_port}:{reset_config.container_port}",
+        "-p",
+        f"{env_ctrl_host_port}:{reset_config.env_ctrl_port}",
+    ]
+    for volume_name, mount_path in reset_config.volumes.items():
+        run_args.extend(("-v", f"{volume_name}:{mount_path}"))
+    run_args.extend(
+        (
+            "-e",
+            f"WA_ENV_CTRL_EXTERNAL_SITE_URL={origin}",
+            reset_config.docker_img,
+        )
+    )
+    container_id = _run_reset_ssh(host, ssh_port, *run_args)
+    ready_url = f"http://{host}:{env_ctrl_host_port}/status"
+    _wait_for_env_ctrl_ready(ready_url, timeout=timeout)
+    _wait_for_site_ready(start_url, timeout=timeout)
+    return {
+        "site": site,
+        "host": host,
+        "container": container,
+        "image": reset_config.docker_img,
+        "container_id": container_id,
+        "strategy": "webarena_canonical_config",
+        "ready_url": ready_url,
+        "site_url": start_url,
+    }
 
 
 def _rebase_deployment_origin(navigation: str, start_url: str | None) -> str:
@@ -726,6 +895,25 @@ def _synthesize_response(
     completed_mutate = _completed_mutate_response(intent, result)
     if completed_mutate is not None:
         return completed_mutate
+    orchestrator = result.orchestrator or {}
+    platform_rejections = orchestrator.get("platform_rejections") or []
+    if (
+        result.phase != "completed"
+        and orchestrator.get("kind") == "tool_agent"
+        and platform_rejections
+    ):
+        latest = platform_rejections[-1]
+        message = (
+            str(latest.get("message") or "").strip()
+            if isinstance(latest, dict)
+            else ""
+        )
+        return WAResponse(
+            task_type=_webarena_task_type_from_result(intent, result),
+            status="ACTION_NOT_ALLOWED_ERROR",
+            retrieved_data=None,
+            error_details=message or "The platform rejected the requested action.",
+        )
     if (
         result.phase == "completed"
         and _webarena_task_type_from_result(intent, result) == "NAVIGATE"
@@ -796,6 +984,8 @@ def _write_webarena_report_context(
     eval_result_path: Path | None = None,
     eval_result_payload: dict | None = None,
     eval_compat_reports: list[dict] | None = None,
+    reset_requested: bool = False,
+    reset_details: dict[str, object] | None = None,
 ) -> None:
     """Patch context.json with the exact WebArena response shown in report.html."""
     if not context_path.exists():
@@ -810,6 +1000,15 @@ def _write_webarena_report_context(
         "har_path": str(har_path),
         "agent_response_path": str(resp_path),
         "agent_response": response_payload,
+        "instance_reset": {
+            "requested": reset_requested,
+            "completed": reset_details is not None,
+            **{
+                key: reset_details[key]
+                for key in ("site", "host", "container", "image", "ready_url", "site_url")
+                if reset_details is not None and key in reset_details
+            },
+        },
     }
     if eval_result_path is not None:
         raw["webarena"]["eval_result_path"] = str(eval_result_path)
@@ -1026,7 +1225,33 @@ def main() -> int:
         default=None,
         help="persistent Chromium profile for --headless (default: output/.headless_profiles/<site_run>)",
     )
-    parser.add_argument("--max-turns", type=int, default=25)
+    parser.add_argument("--max-turns", type=int, default=None)
+    parser.add_argument(
+        "--reset-instance",
+        action="store_true",
+        help=(
+            "recreate the task's remote WebArena container over SSH before opening "
+            "the browser; currently supported for shopping_admin"
+        ),
+    )
+    parser.add_argument(
+        "--reset-ssh-host",
+        type=str,
+        default=None,
+        help="SSH host used by --reset-instance (default: start_url host)",
+    )
+    parser.add_argument(
+        "--reset-ssh-port",
+        type=int,
+        default=2222,
+        help="SSH port used by --reset-instance (default: 2222)",
+    )
+    parser.add_argument(
+        "--reset-timeout",
+        type=float,
+        default=180,
+        help="seconds to wait for the recreated instance to become healthy",
+    )
     parser.add_argument(
         "--runtime",
         choices=("reviewed-python", "tool-agent"),
@@ -1062,9 +1287,17 @@ def main() -> int:
              "Also read from env WA_HOST / .env (lower precedence than --host).",
     )
     args = parser.parse_args()
+    if args.max_turns is None:
+        args.max_turns = (
+            _TOOL_AGENT_MAX_TURNS
+            if args.runtime == "tool-agent"
+            else _REVIEWED_PYTHON_MAX_TURNS
+        )
     is_resume = args.resume_log_dir is not None
     if is_resume and args.runtime == "tool-agent":
         parser.error("--resume-log-dir is not supported by the tool-agent experiment")
+    if is_resume and args.reset_instance:
+        parser.error("--reset-instance cannot be combined with --resume-log-dir")
     if is_resume and args.headless:
         parser.error("--resume-log-dir requires the retained headed browser session")
     if not is_resume and None in (
@@ -1183,7 +1416,31 @@ def main() -> int:
 
     # Tee everything below to log_dir/stdout.log (same as the runner) so a WebArena run leaves an
     # inspectable log — the knowledge-binding line and every turn included.
+    reset_details: dict[str, object] | None = None
     with tee_stdio(log_dir):
+        if args.reset_instance:
+            sites = [str(site).strip() for site in (task.get("sites") or []) if str(site).strip()]
+            if len(sites) != 1 or start_url is None:
+                raise ValueError(
+                    "--reset-instance requires exactly one task site and one start_url"
+                )
+            print(
+                "[webarena] resetting remote instance "
+                f"site={sites[0]} ssh={args.reset_ssh_host or urlsplit(start_url).hostname}:"
+                f"{args.reset_ssh_port}"
+            )
+            reset_details = _reset_webarena_instance(
+                site=sites[0],
+                start_url=start_url,
+                ssh_host=args.reset_ssh_host,
+                ssh_port=args.reset_ssh_port,
+                timeout=args.reset_timeout,
+            )
+            print(
+                "[webarena] remote instance ready "
+                f"container={reset_details['container']} image={reset_details['image']}"
+            )
+
         # Bind app knowledge by the task's `sites` tag. The runner discovers knowledge by matching
         # the app name as a substring of the goal, but a WebArena intent never names its site — so
         # we bind directly on the site tag (site -> knowledge/browser/<site>/ when a base exists).
@@ -1314,6 +1571,7 @@ def main() -> int:
                                 platform=platform,
                                 log_dir=log_dir,
                                 perception_mode=args.perception,
+                                max_turns=args.max_turns,
                                 status_cb=hud.update if hud else None,
                             )
                             if hud:
@@ -1682,6 +1940,8 @@ def main() -> int:
                     eval_result_path=eval_path,
                     eval_result_payload=eval_payload,
                     eval_compat_reports=eval_compat_reports,
+                    reset_requested=args.reset_instance,
+                    reset_details=reset_details,
                 )
                 _print_webarena_outputs(
                     resp_path=resp_path,
@@ -1721,6 +1981,8 @@ def main() -> int:
                     eval_result_path=eval_path,
                     eval_result_payload=eval_payload,
                     eval_compat_reports=eval_compat_reports,
+                    reset_requested=args.reset_instance,
+                    reset_details=reset_details,
                 )
                 print(f"[webarena] response synthesis failed ({exc}); wrote fallback -> {resp_path}")
                 _print_webarena_outputs(

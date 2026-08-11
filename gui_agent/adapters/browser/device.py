@@ -80,6 +80,73 @@ _SETTLE_PROBE = (
     + "return [document.readyState, Math.round(performance.now()-window.__q.t)];})()"
 )
 
+# Same-origin XHR/fetch feedback belongs to the executed GUI action's observable outcome.  Some
+# web widgets return a structured rejection without rendering its message into the current
+# viewport.  Install a page-local, bounded monitor immediately before dispatch and consume it
+# after settle; it observes existing application requests without issuing any request itself.
+_ACTION_FEEDBACK_INSTALL_JS = r"""
+(() => {
+  window.__guiAgentActionFeedback = [];
+  const record = (kind, url, status, body) => {
+    let text = '';
+    try {
+      text = typeof body === 'string' ? body : JSON.stringify(body ?? '');
+    } catch (e) {
+      text = String(body ?? '');
+    }
+    if (!text.trim()) return;
+    window.__guiAgentActionFeedback.push({
+      kind: String(kind || ''),
+      url: String(url || ''),
+      status: Number(status || 0),
+      body: text.slice(0, 2000),
+    });
+    if (window.__guiAgentActionFeedback.length > 10) {
+      window.__guiAgentActionFeedback.shift();
+    }
+  };
+  if (!window.__guiAgentXhrFeedbackInstalled) {
+    window.__guiAgentXhrFeedbackInstalled = true;
+    const originalOpen = XMLHttpRequest.prototype.open;
+    XMLHttpRequest.prototype.open = function(method, url) {
+      this.__guiAgentUrl = url;
+      this.addEventListener('loadend', () => {
+        let body = '';
+        try {
+          body = this.responseType === '' || this.responseType === 'text'
+            ? this.responseText
+            : this.response;
+        } catch (e) {}
+        record('xhr', this.responseURL || this.__guiAgentUrl || '', this.status, body);
+      }, {once: true});
+      return originalOpen.apply(this, arguments);
+    };
+  }
+  if (!window.__guiAgentFetchFeedbackInstalled && typeof window.fetch === 'function') {
+    window.__guiAgentFetchFeedbackInstalled = true;
+    const originalFetch = window.fetch;
+    window.fetch = async function() {
+      const response = await originalFetch.apply(this, arguments);
+      try {
+        const body = await response.clone().text();
+        record('fetch', response.url, response.status, body);
+      } catch (e) {}
+      return response;
+    };
+  }
+  return true;
+})()
+"""
+_ACTION_FEEDBACK_CONSUME_JS = r"""
+(() => {
+  const rows = Array.isArray(window.__guiAgentActionFeedback)
+    ? window.__guiAgentActionFeedback.slice(-10)
+    : [];
+  window.__guiAgentActionFeedback = [];
+  return rows;
+})()
+"""
+
 
 class _CDPTimeout(Exception):
     """A raw-CDP send exceeded _CDP_SEND_TIMEOUT_S (Chrome did not respond)."""
@@ -693,6 +760,30 @@ class PlaywrightDevice:
             return None
 
     # ----- input primitives ------------------------------------------------
+    def begin_action_feedback(self) -> None:
+        """Start a bounded same-origin response monitor for the next GUI action."""
+        try:
+            self._follow_active_tab()
+            self._cdp_send(
+                "Runtime.evaluate",
+                {"expression": _ACTION_FEEDBACK_INSTALL_JS, "returnByValue": True},
+            )
+        except Exception:
+            return
+
+    def consume_action_feedback(self) -> list[dict]:
+        """Return response payloads caused since :meth:`begin_action_feedback`."""
+        try:
+            self._follow_active_tab()
+            result = self._cdp_send(
+                "Runtime.evaluate",
+                {"expression": _ACTION_FEEDBACK_CONSUME_JS, "returnByValue": True},
+            )
+            value = (result.get("result", {}) or {}).get("value")
+            return [item for item in value if isinstance(item, dict)] if isinstance(value, list) else []
+        except Exception:
+            return []
+
     def tap(self, x: float, y: float) -> str:
         self._follow_active_tab()
         try:
@@ -1060,7 +1151,11 @@ class PlaywrightDevice:
                     '[role="slider"]', '[role="spinbutton"]', '[role="switch"]',
                     '[role="tab"]', '[role="textbox"]'
                   ].join(',');
-                  const candidates = [[preferredX, preferredY]];
+                  const preferredInside = (
+                    preferredX >= innerWidth * x0 && preferredX <= innerWidth * x1 &&
+                    preferredY >= innerHeight * y0 && preferredY <= innerHeight * y1
+                  );
+                  const candidates = preferredInside ? [[preferredX, preferredY]] : [];
                   for (const yf of [0.5, 0.35, 0.65, 0.2, 0.8]) {
                     for (const xf of [0.82, 0.68, 0.54, 0.40, 0.26]) {
                       const px = innerWidth * (x0 + (x1 - x0) * xf);

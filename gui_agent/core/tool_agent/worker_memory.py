@@ -108,7 +108,18 @@ class WorkerJournal:
                 f"tool={tool}; failure={_bounded_json(result, limit=420)}"
             )
         elif is_no_effect:
-            durable_text = f"tool={tool}; runtime reported no_effect"
+            action_type = (
+                str(result.get("action_type") or "")
+                if isinstance(result, dict)
+                else ""
+            )
+            if action_type in {"type", "select_option", "clear_text"}:
+                durable_text = (
+                    f"tool={tool}; effect unconfirmed; inspect the current control value "
+                    "before deciding whether any retry is needed"
+                )
+            else:
+                durable_text = f"tool={tool}; runtime reported no_effect"
         elif is_result_ref:
             durable_text = f"tool={tool}; result={_bounded_json(result, limit=420)}"
         self.events.append(WorkerJournalEvent(
@@ -240,6 +251,7 @@ def _frame_payload(frame: MaterializedFrame, *, compact: bool) -> dict[str, Any]
         "url": frame.url,
         "title": frame.title,
         "controls": frame.controls,
+        "structured_surfaces": frame.structured_surfaces,
         "applied_filters": frame.applied_filters,
         "requirement_scopes": frame.requirement_scopes,
         "chunks": [

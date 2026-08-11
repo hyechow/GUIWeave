@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import re
 from copy import deepcopy
 from typing import Any, Literal, TypeAlias
 
@@ -51,9 +52,10 @@ class DataRequirement(StrictModel):
     @model_validator(mode="before")
     @classmethod
     def _expand_row_schema_shorthand(cls, data: object) -> object:
-        """Repair the common ``{field: type}`` shorthand into real JSON Schema."""
+        """Expand the lossless ``{field: JSON-type}`` schema shorthand."""
         if not isinstance(data, dict):
             return data
+        data = dict(data)
         schema = data.get("row_schema")
         if (
             isinstance(schema, dict)
@@ -62,7 +64,6 @@ class DataRequirement(StrictModel):
             and schema
             and all(value in {"string", "number", "integer", "boolean"} for value in schema.values())
         ):
-            data = dict(data)
             data["row_schema"] = {
                 "type": "object",
                 "properties": {key: {"type": value} for key, value in schema.items()},
@@ -125,6 +126,13 @@ ToolActionCapability: TypeAlias = Literal[
 ]
 
 
+class RuntimeInputBinding(StrictModel):
+    """Bind one action argument to a value inside a Runtime-owned ResultRef."""
+
+    input: str = Field(pattern=r"^[a-z][a-z0-9_]{0,63}$")
+    path: list[str | int] = Field(default_factory=list)
+
+
 class DynamicActionSpec(StrictModel):
     """One business-named action bound to a small runtime capability."""
 
@@ -132,6 +140,13 @@ class DynamicActionSpec(StrictModel):
     capability: ToolActionCapability
     description: str
     fixed_args: dict[str, Any] = Field(default_factory=dict)
+    input_args: dict[str, RuntimeInputBinding] = Field(
+        default_factory=dict,
+        description=(
+            "Action arguments resolved deterministically from Worker input_refs. "
+            "The visual Worker chooses the action but never copies these values."
+        ),
+    )
     exposed_args: list[str] = Field(default_factory=list)
 
     @model_validator(mode="before")
@@ -149,6 +164,7 @@ class DynamicActionSpec(StrictModel):
             return data
         normalized = dict(data)
         fixed_args = dict(normalized.get("fixed_args") or {})
+        input_args = dict(normalized.get("input_args") or {})
         exposed_args = list(normalized.get("exposed_args") or [])
         capability = normalized.get("capability")
         if capability in {"tap", "type", "scroll", "select_option"}:
@@ -160,6 +176,7 @@ class DynamicActionSpec(StrictModel):
             # Enhanced adapters may ground the visual point after the Worker decides
             # an action; vision-only execution uses the point unchanged.
             fixed_args.pop("target_ref", None)
+            input_args.pop("target_ref", None)
             exposed_args = [name for name in exposed_args if name != "target_ref"]
         if (
             capability == "select_option"
@@ -174,6 +191,7 @@ class DynamicActionSpec(StrictModel):
         ):
             exposed_args.append("url")
         normalized["fixed_args"] = fixed_args
+        normalized["input_args"] = input_args
         normalized["exposed_args"] = exposed_args
         return normalized
 
@@ -181,9 +199,24 @@ class DynamicActionSpec(StrictModel):
     def _no_duplicate_exposed_args(self) -> "DynamicActionSpec":
         if len(set(self.exposed_args)) != len(self.exposed_args):
             raise ValueError("exposed_args must be unique")
-        overlap = set(self.fixed_args).intersection(self.exposed_args)
+        spatial_bound = {"x", "y", "to_x", "to_y"}.intersection(self.input_args)
+        if spatial_bound:
+            raise ValueError(
+                "spatial arguments are visual Worker decisions and cannot be runtime-bound: "
+                f"{sorted(spatial_bound)}. To locate a record by a ResultRef value, bind that "
+                "value to type.text for a visible search/filter action, then navigate visually."
+            )
+        bound = set(self.fixed_args).union(self.input_args)
+        overlap = bound.intersection(self.exposed_args)
         if overlap:
-            raise ValueError(f"arguments cannot be fixed and exposed: {sorted(overlap)}")
+            raise ValueError(
+                f"arguments cannot be runtime-bound/fixed and exposed: {sorted(overlap)}"
+            )
+        duplicate_bound = set(self.fixed_args).intersection(self.input_args)
+        if duplicate_bound:
+            raise ValueError(
+                f"arguments cannot be both fixed and runtime-bound: {sorted(duplicate_bound)}"
+            )
         return self
 
 
@@ -199,6 +232,13 @@ class WorkerSpec(StrictModel):
     )
     goal: str
     success_criteria: list[str] = Field(min_length=1)
+    input_refs: dict[str, str] = Field(
+        default_factory=dict,
+        description=(
+            "Named ResultRefs routed by the reviewed Master. Runtime resolves them "
+            "for bound action arguments without exposing collection data."
+        ),
+    )
     data_requirements: list[DataRequirement] = Field(default_factory=list)
     acquisition_filters: dict[str, Any] | None = Field(
         default=None,
@@ -208,7 +248,25 @@ class WorkerSpec(StrictModel):
         ),
     )
     actions: list[DynamicActionSpec] = Field(min_length=1)
-    max_steps: int = Field(default=8, ge=1, le=20)
+    max_steps: int = Field(default=12, ge=1, le=20)
+
+    @model_validator(mode="before")
+    @classmethod
+    def _normalize_unambiguous_model_shapes(cls, data: object) -> object:
+        """Accept common provider formatting variants without weakening semantics."""
+        if not isinstance(data, dict):
+            return data
+        normalized = dict(data)
+        success_criteria = normalized.get("success_criteria")
+        if isinstance(success_criteria, str) and success_criteria.strip():
+            normalized["success_criteria"] = [success_criteria.strip()]
+        if normalized.get("input_refs") is None:
+            normalized["input_refs"] = {}
+        max_steps = normalized.get("max_steps")
+        if isinstance(max_steps, (int, float)) and not isinstance(max_steps, bool):
+            normalized["max_steps"] = min(int(max_steps), 20)
+
+        return normalized
 
     @model_validator(mode="after")
     def _unique_ids(self) -> "WorkerSpec":
@@ -220,6 +278,18 @@ class WorkerSpec(StrictModel):
             raise ValueError("worker action names must be unique")
         if len(set(requirement_ids)) != len(requirement_ids):
             raise ValueError("data requirement ids must be unique")
+        invalid_input_names = [
+            name
+            for name in self.input_refs
+            if re.fullmatch(r"[a-z][a-z0-9_]{0,63}", name) is None
+        ]
+        if invalid_input_names:
+            raise ValueError(f"invalid input_refs names: {sorted(invalid_input_names)}")
+        invalid_refs = [
+            ref for ref in self.input_refs.values() if not ref.startswith("result:")
+        ]
+        if invalid_refs:
+            raise ValueError("input_refs must contain ResultRef strings")
         if self.profile == "collector" and len(self.data_requirements) != 1:
             raise ValueError("collector profile requires exactly one logical data requirement")
         if self.profile == "operator" and self.data_requirements:
@@ -289,6 +359,7 @@ class MaterializedFrame(StrictModel):
     url: str = ""
     title: str = ""
     controls: list[dict[str, Any]] = Field(default_factory=list)
+    structured_surfaces: list[dict[str, Any]] = Field(default_factory=list)
     applied_filters: dict[str, Any] = Field(default_factory=dict)
     requirement_scopes: dict[str, dict[str, Any]] = Field(default_factory=dict)
     chunks: list[DataChunkRef] = Field(default_factory=list)
@@ -300,12 +371,14 @@ class WorkerOutcome(StrictModel):
     phase: Literal["completed", "failed"]
     summary: str
     collection_ref: CollectionRef | None = None
+    failure_kind: Literal["platform_rejected"] | None = None
     steps: int
 
 
 class ToolAgentRun(StrictModel):
     phase: Literal["completed", "failed"]
     summary: str
+    effect: Literal["mutation", "data", "ui_state", "none"] = "none"
     output: Any = None
     result_ref: ResultRef | None = None
     trace: list[dict[str, Any]] = Field(default_factory=list)

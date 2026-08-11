@@ -3,7 +3,8 @@
 # 用法: bin/webarena [--headless] <task-id> [额外参数...]
 #   例: bin/webarena 11                       # 跑 task 11(默认带状态 HUD)
 #       bin/webarena --headless 11            # 后台/CI 跑 task 11(不需要手动打开 Chrome)
-#       bin/webarena 15 --max-turns 30        # 透传给 webarena.py
+#       bin/webarena 15 --max-turns 40        # 透传给 webarena.py
+#       bin/webarena 15 --reset-instance      # SSH 重建远端实例后，从登录页开始
 #       bin/webarena 185 --confirm            # 先打印 reviewed Python，按回车才开始执行（Ctrl-C 取消）
 #       bin/webarena 679 --eval-compat        # 显式启用 WebArena evaluator 兼容 probe（默认关闭）
 #       bin/webarena 549 --include-skills     # 实验性启用 _skill.md；默认仅使用功能说明
