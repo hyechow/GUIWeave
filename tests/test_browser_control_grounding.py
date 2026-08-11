@@ -157,6 +157,105 @@ def test_coordinate_grounding_does_not_cross_large_control_to_distant_center() -
     assert decision.action.snap is None
 
 
+def test_explicit_target_phrase_repairs_large_coordinate_miss_despite_neighbor_name() -> None:
+    visual = BrowserActionDecision(action=BrowserAction(
+        action_type="tap",
+        x=919,
+        y=270,
+        description=(
+            "Tap the Filters button in the toolbar between the search field and "
+            "Default View dropdown"
+        ),
+    ))
+    controls = [
+        {
+            "kind": "button",
+            "label": "Filters",
+            "rect": {"x": 608, "y": 277, "w": 101, "h": 34},
+        },
+        {
+            "kind": "button",
+            "label": "Default View",
+            "rect": {"x": 733, "y": 277, "w": 146, "h": 34},
+        },
+    ]
+
+    decision = ground_action_to_nearest_control(
+        visual,
+        controls,
+        viewport_size=(1280, 963),
+    )
+
+    assert (decision.action.x, decision.action.y) == (608.0, 277.0)
+    assert decision.action.snap == {
+        "method": "control_semantic_geometry",
+        "original": [919.0, 270.0],
+        "snapped": [608.0, 277.0],
+        "info": "Filters",
+    }
+
+
+def test_explicit_text_input_phrase_disambiguates_login_fields() -> None:
+    visual = BrowserActionDecision(action=BrowserAction(
+        action_type="type",
+        x=500,
+        y=490,
+        text="secret",
+        description="Password text input field below the Username field",
+    ))
+    controls = [
+        {
+            "kind": "text_input",
+            "label": "Username",
+            "rect": {"x": 500, "y": 490, "w": 400, "h": 40},
+        },
+        {
+            "kind": "password_input",
+            "label": "Password",
+            "rect": {"x": 500, "y": 580, "w": 400, "h": 40},
+        },
+    ]
+
+    decision = ground_action_to_nearest_control(
+        visual,
+        controls,
+        viewport_size=(1280, 963),
+    )
+
+    assert (decision.action.x, decision.action.y) == (500.0, 580.0)
+    assert decision.action.snap["info"] == "Password"
+
+
+def test_semantic_grid_checkbox_label_repairs_adjacent_row_miss() -> None:
+    visual = BrowserActionDecision(action=BrowserAction(
+        action_type="tap",
+        x=156,
+        y=696,
+        description="Select the size row checkbox in the Select Attribute grid",
+    ))
+    controls = [
+        {
+            "kind": "checkbox_input",
+            "label": "sale",
+            "rect": {"x": 156, "y": 696, "w": 13, "h": 13},
+        },
+        {
+            "kind": "checkbox_input",
+            "label": "size",
+            "rect": {"x": 156, "y": 740, "w": 13, "h": 13},
+        },
+    ]
+
+    decision = ground_action_to_nearest_control(
+        visual,
+        controls,
+        viewport_size=(1280, 963),
+    )
+
+    assert (decision.action.x, decision.action.y) == (156.0, 740.0)
+    assert decision.action.snap["info"] == "size"
+
+
 def _description_controls() -> list[dict]:
     return [
         {

@@ -409,6 +409,40 @@ def test_enhanced_prefers_complete_control_state_for_exact_grounding(tmp_path: P
     }
 
 
+def test_enhanced_exposes_page_wide_surface_summary_without_row_values(tmp_path: Path) -> None:
+    tables = [{
+        "caption": "Results",
+        "headers": ["Date", "Orders", "Total"],
+        "rows": [
+            {"Date": "private-date", "Orders": "3", "Total": "$12.00"},
+            {"Date": "another-private-date", "Orders": "1", "Total": "$4.00"},
+        ],
+        "total_records": 2,
+        "partial": False,
+        "traversal": {"type": "static"},
+    }]
+    materializer = _materializer(tmp_path, "enhanced")
+
+    frame, _ = materializer.observe(
+        bundle=FakeBundle(tables),
+        platform=FakePlatform(),
+        requirements=[],
+        frame_no=1,
+    )
+
+    assert frame.structured_surfaces == [{
+        "kind": "rendered_data_surface",
+        "rendered": True,
+        "caption": "Results",
+        "fields": ["Date", "Orders", "Total"],
+        "row_count": 2,
+        "partial": False,
+        "total_records": 2,
+        "traversal": {"type": "static"},
+    }]
+    assert "private-date" not in frame.model_dump_json()
+
+
 def test_enhanced_materializes_partial_dom_table_with_incomplete_coverage(tmp_path: Path) -> None:
     tables = [{
         "caption": "Top Terms",

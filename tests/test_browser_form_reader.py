@@ -27,8 +27,12 @@ def test_form_controls_js_is_serialized_expression():
     assert "a[href]" in js
     assert "query_action" in js
     assert "form_action" in js
+    assert "status_message" in js
+    assert "[role=\"alert\"]" in js
     assert "data-form-role" in js
     assert "data-action" in js
+    assert "rowSemanticLabelOf" in js
+    assert "cell.contains(el)" in js
     assert "filter[-_].*(apply|submit)" in js
     assert "effect_kind" not in js
 
@@ -139,6 +143,28 @@ def test_normalize_form_controls_keeps_section_toggle_affordance():
         "label": "Content",
         "value": "false",
         "rect": {"x": 525, "y": 786, "w": 1000, "h": 40},
+    }]
+
+
+def test_normalize_form_controls_keeps_offscreen_status_message():
+    controls = normalize_form_controls({
+        "controls": [{
+            "label": "error: The requested change was rejected",
+            "kind": "status_message",
+            "value": "The requested change was rejected",
+            "rect": {"x": 500.0, "y": -1200.0, "w": 600, "h": 40},
+            "in_viewport": False,
+            "viewport_pos": "above",
+        }]
+    })
+
+    assert controls == [{
+        "kind": "status_message",
+        "label": "error: The requested change was rejected",
+        "value": "The requested change was rejected",
+        "rect": {"x": 500, "y": -1200, "w": 600, "h": 40},
+        "in_viewport": False,
+        "viewport_pos": "above",
     }]
 
 

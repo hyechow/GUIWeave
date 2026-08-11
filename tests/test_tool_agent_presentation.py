@@ -3,6 +3,8 @@ from __future__ import annotations
 import json
 from types import SimpleNamespace
 
+import pytest
+
 from gui_agent.adapters.browser.webarena import (
     _synthesize_response,
     _tool_agent_result_and_context,
@@ -122,6 +124,7 @@ def test_presentation_artifact_and_context_keep_result_and_reply_separate(tmp_pa
     write_presentation_artifact(tmp_path, presentation)
     run = SimpleNamespace(
         phase="completed",
+        effect="data",
         output=value,
         summary="computed",
         result_ref=None,
@@ -155,3 +158,58 @@ def test_presentation_artifact_and_context_keep_result_and_reply_separate(tmp_pa
         tmp_path / "context.json",
     )
     assert response.retrieved_data == value
+
+
+@pytest.mark.parametrize(
+    ("task_id", "intent", "effect", "expected_type"),
+    [
+        (
+            709,
+            "Show the orders report from May 1, 2021 to March 31, 2022.",
+            "ui_state",
+            "NAVIGATE",
+        ),
+        (
+            488,
+            'Change the page title of "Home Page".',
+            "mutation",
+            "MUTATE",
+        ),
+        (
+            701,
+            "Create a new marketing price rule.",
+            "mutation",
+            "MUTATE",
+        ),
+    ],
+)
+def test_live_task_effect_replay_preserves_original_task_semantics(
+    tmp_path,
+    task_id: int,
+    intent: str,
+    effect: str,
+    expected_type: str,
+) -> None:
+    run = SimpleNamespace(
+        phase="completed",
+        effect=effect,
+        output=True,
+        summary=f"task {task_id} completed",
+        result_ref=None,
+        perception_mode="enhanced",
+        master_model="master",
+        worker_model="worker",
+        perception_model="perception",
+    )
+
+    result = _tool_agent_result_and_context(
+        intent=intent,
+        run=run,
+        log_dir=tmp_path,
+        knowledge_summary=None,
+    )
+    response = _synthesize_response(intent, result, tmp_path / "context.json")
+
+    assert result.task_type == expected_type
+    assert result.orchestrator["effect"] == effect
+    assert response.task_type == expected_type

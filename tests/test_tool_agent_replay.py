@@ -59,7 +59,7 @@ def _source(spec: WorkerSpec) -> str:
         source="def transform(inputs):\\n    return sum(row['value'] for row in inputs[0])",
         result_schema={{"type": "integer"}},
     )
-    ctx.finish(computed["ref"])
+    ctx.finish(computed["ref"], effect="data")
 '''
 
 

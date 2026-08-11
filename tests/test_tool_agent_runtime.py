@@ -76,6 +76,128 @@ def test_private_access_context_reaches_worker_but_is_redacted_from_trace() -> N
     assert "session access value redacted" in rendered_trace
 
 
+def test_runtime_materializes_result_ref_into_fixed_action_argument() -> None:
+    runtime = object.__new__(ToolAgentRuntime)
+    runtime.data_store = RuntimeDataStore()
+    descriptor = runtime.data_store.put_result(
+        {"description": "3 customer(s) love it!"},
+        {
+            "type": "object",
+            "properties": {"description": {"type": "string"}},
+            "required": ["description"],
+        },
+    )
+    spec = WorkerSpec.model_validate({
+        "profile": "operator",
+        "goal": "Apply the computed description",
+        "success_criteria": ["The computed description is saved"],
+        "input_refs": {"computed": descriptor.ref},
+        "actions": [{
+            "name": "enter_computed_description",
+            "capability": "type",
+            "description": "Enter the Runtime-bound description",
+            "input_args": {
+                "text": {"input": "computed", "path": ["description"]},
+            },
+        }],
+    })
+
+    actions = runtime._initial_worker_actions(spec)
+    bound = next(item for item in actions if item.name == "enter_computed_description")
+
+    assert bound.fixed_args == {"text": "3 customer(s) love it!"}
+    assert bound.input_args == {}
+    assert "text" not in bound.exposed_args
+
+
+def test_global_turn_budget_is_shared_across_logical_workers() -> None:
+    runtime = object.__new__(ToolAgentRuntime)
+    runtime.max_turns = 2
+    runtime.max_subgoal_replans = 2
+    runtime._frame_no = 0
+    runtime.trace = []
+    events = []
+    runtime._trace = lambda event, **payload: events.append({"event": event, **payload})
+    calls = []
+
+    def run_worker(worker_id, _spec):
+        calls.append(worker_id)
+        runtime._frame_no += 1
+        return WorkerOutcome(
+            phase="completed",
+            summary=f"Completed {worker_id}",
+            steps=1,
+        )
+
+    runtime._run_worker = run_worker
+    spec = WorkerSpec.model_validate({
+        "profile": "operator",
+        "goal": "Complete one UI subgoal",
+        "success_criteria": ["The subgoal is complete"],
+        "actions": [{
+            "name": "advance_subgoal",
+            "capability": "tap",
+            "description": "Advance the visible subgoal",
+        }],
+    })
+
+    first = runtime._run_worker_with_local_replanning("first_worker", spec)
+    second = runtime._run_worker_with_local_replanning("second_worker", spec)
+    blocked = runtime._run_worker_with_local_replanning("third_worker", spec)
+
+    assert first.phase == second.phase == "completed"
+    assert blocked.phase == "failed"
+    assert blocked.steps == 0
+    assert "global turn budget (2/2)" in blocked.summary
+    assert calls == ["first_worker", "second_worker"]
+    assert events == [{
+        "event": "runtime_turn_budget_exhausted",
+        "worker_id": "third_worker",
+        "turns_used": 2,
+        "max_turns": 2,
+    }]
+
+
+def test_redelegation_failure_reports_all_consumed_worker_steps() -> None:
+    runtime = object.__new__(ToolAgentRuntime)
+    runtime.max_turns = 64
+    runtime.max_subgoal_replans = 2
+    runtime._frame_no = 0
+    runtime._trace = lambda *_args, **_kwargs: None
+    attempts = iter((3, 4))
+    runtime._run_worker = lambda _worker_id, _spec: WorkerOutcome(
+        phase="failed",
+        summary="Try another local strategy",
+        steps=next(attempts),
+    )
+    revisions = 0
+
+    def revise(**_kwargs):
+        nonlocal revisions
+        revisions += 1
+        if revisions == 1:
+            return spec
+        raise ValueError("replacement is invalid")
+
+    runtime._revise_worker_spec = revise
+    spec = WorkerSpec.model_validate({
+        "profile": "operator",
+        "goal": "Complete one UI subgoal",
+        "success_criteria": ["The subgoal is complete"],
+        "actions": [{
+            "name": "advance_subgoal",
+            "capability": "tap",
+            "description": "Advance the visible subgoal",
+        }],
+    })
+
+    outcome = runtime._run_worker_with_local_replanning("logical_worker", spec)
+
+    assert outcome.phase == "failed"
+    assert outcome.steps == 7
+    assert "redelegation failed" in outcome.summary
+
+
 class _Worker:
     def __init__(self) -> None:
         self.responses = [
@@ -673,6 +795,154 @@ def test_runtime_executes_nonspatial_browser_capabilities_through_adapter_action
     assert terminal is None
 
 
+def test_runtime_surfaces_same_origin_platform_rejection(monkeypatch) -> None:
+    runtime = object.__new__(ToolAgentRuntime)
+    runtime.bundle = SimpleNamespace(
+        make_action=lambda payload: BrowserAction.model_validate(payload)
+    )
+    runtime.perception_mode = "enhanced"
+    runtime._executor = _Executor()
+    runtime._visualizer = None
+    runtime._active_worker_id = "submit_worker"
+    runtime._worker_platform_rejections = {}
+    rejection_feedback = [{
+        "kind": "xhr",
+        "url": "https://example.test/action",
+        "status": 200,
+        "body": '{"error":true,"message":"The action is not allowed."}',
+    }]
+    feedback = iter((rejection_feedback, rejection_feedback, []))
+    runtime.platform = SimpleNamespace(client=SimpleNamespace(
+        consume_action_feedback=lambda: next(feedback)
+    ))
+    runtime._trace = lambda *_args, **_kwargs: None
+    monkeypatch.setattr(
+        "gui_agent.core.tool_agent.runtime.settle_after_action",
+        lambda platform, png, *, action_type: (0.0, False),
+    )
+    action = DynamicActionSpec(
+        name="submit_change",
+        capability="tap",
+        description="Submit the requested change",
+    )
+    spec = WorkerSpec(
+        goal="Submit the requested change",
+        success_criteria=["The change is accepted"],
+        actions=[action],
+    )
+
+    payload, terminal = runtime._execute_worker_tool(
+        spec,
+        [action],
+        {"name": action.name, "args": {"x": 500, "y": 500}},
+        b"png",
+        MaterializedFrame(frame_id="frame:1", screenshot_path="frame.png"),
+    )
+
+    assert payload["status"] == "failed"
+    assert payload["platform_feedback"] == [{
+        "status": 200,
+        "url": "https://example.test/action",
+        "rejected": True,
+        "message": "The action is not allowed.",
+    }]
+    assert terminal is None
+
+    completed_payload, completed_terminal = runtime._execute_worker_tool(
+        spec,
+        [action],
+        {"name": "complete", "args": {}},
+        b"png",
+        MaterializedFrame(frame_id="frame:2", screenshot_path="frame.png"),
+    )
+
+    assert completed_terminal == "platform_rejected"
+    assert completed_payload["reason"] == "The action is not allowed."
+
+    repeated_payload, repeated_terminal = runtime._execute_worker_tool(
+        spec,
+        [action],
+        {"name": action.name, "args": {"x": 500, "y": 500}},
+        b"png",
+        MaterializedFrame(frame_id="frame:3", screenshot_path="frame.png"),
+    )
+
+    assert repeated_terminal == "platform_rejected"
+    assert repeated_payload["reason"] == "The action is not allowed."
+
+    recovered_payload, recovered_terminal = runtime._execute_worker_tool(
+        spec,
+        [action],
+        {"name": action.name, "args": {"x": 500, "y": 500}},
+        b"png",
+        MaterializedFrame(frame_id="frame:4", screenshot_path="frame.png"),
+    )
+    completed_payload, completed_terminal = runtime._execute_worker_tool(
+        spec,
+        [action],
+        {"name": "complete", "args": {}},
+        b"png",
+        MaterializedFrame(frame_id="frame:5", screenshot_path="frame.png"),
+    )
+
+    assert recovered_payload["status"] == "executed"
+    assert recovered_terminal is None
+    assert completed_payload == {"status": "completed"}
+    assert completed_terminal == "complete"
+    assert runtime._worker_platform_rejections == {}
+
+
+def test_runtime_open_url_rejects_task549_inferred_route_before_navigation() -> None:
+    runtime = object.__new__(ToolAgentRuntime)
+    runtime._task_goal = "Add a new size option to a product"
+    runtime._task_page_url = "http://example.test/admin"
+    runtime._master_knowledge = "Product Attributes are under Stores > Attributes > Product."
+    action = DynamicActionSpec(
+        name="runtime_open_url",
+        capability="open_url",
+        description="Open a sourced URL",
+    )
+    spec = WorkerSpec(
+        goal="Open Product Attributes",
+        success_criteria=["The Product Attributes grid is visible"],
+        actions=[action],
+    )
+
+    with pytest.raises(ValueError, match="rejected an inferred URL"):
+        runtime._validate_runtime_open_url(
+            "http://example.test/admin/catalog/product/attribute/",
+            spec=spec,
+            frame=MaterializedFrame(
+                frame_id="frame:6",
+                screenshot_path="frame.png",
+                url="http://example.test/admin/catalog/product/",
+            ),
+        )
+
+
+def test_runtime_open_url_accepts_exact_knowledge_route_with_replaced_host() -> None:
+    runtime = object.__new__(ToolAgentRuntime)
+    runtime._task_goal = "Open the review page"
+    runtime._task_page_url = "http://new-host.test/admin"
+    runtime._master_knowledge = "Exact route: http://old-host.test/admin/reviews/pending/"
+    action = DynamicActionSpec(
+        name="runtime_open_url",
+        capability="open_url",
+        description="Open a sourced URL",
+    )
+    spec = WorkerSpec(
+        goal="Open pending reviews",
+        success_criteria=["Pending reviews are visible"],
+        actions=[action],
+    )
+
+    runtime._validate_runtime_open_url(
+        "http://new-host.test/admin/reviews/pending/",
+        spec=spec,
+        frame=None,
+    )
+
+
 def test_collector_completion_is_unavailable_until_collection_is_ready() -> None:
     runtime = object.__new__(ToolAgentRuntime)
     runtime.data_store = RuntimeDataStore()
@@ -916,7 +1186,7 @@ def _coding_program() -> str:
         source="def transform(inputs):\\n    return len(inputs[0])",
         result_schema={"type": "integer"},
     )
-    ctx.finish(computed["ref"])
+    ctx.finish(computed["ref"], effect="data")
 '''
 
 

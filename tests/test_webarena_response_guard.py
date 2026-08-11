@@ -1,3 +1,4 @@
+import json
 import sys
 import types
 
@@ -302,6 +303,33 @@ def test_completed_tool_agent_retrieve_uses_result_ref_json_without_output_llm()
     assert resp.retrieved_data == ["alpha", "beta"]
 
 
+def test_failed_tool_agent_platform_rejection_is_action_not_allowed_without_output_llm():
+    resp = _synthesize_response(
+        "Add a comment and notify the customer",
+        _result(
+            task_type="MUTATE",
+            phase="failed",
+            summary="Failed to submit the comment",
+            orchestrator={
+                "kind": "tool_agent",
+                "effect": "mutation",
+                "platform_rejections": [{
+                    "status": 200,
+                    "url": "https://example.test/action",
+                    "message": "We cannot add order history.",
+                }],
+            },
+        ),
+    )
+
+    assert resp == WAResponse(
+        task_type="MUTATE",
+        status="ACTION_NOT_ALLOWED_ERROR",
+        retrieved_data=None,
+        error_details="We cannot add order history.",
+    )
+
+
 def test_completed_coding_retrieve_wraps_scalar_for_webarena_protocol():
     resp = _synthesize_response(
         "Return the total as a number only",
@@ -395,6 +423,12 @@ def test_completed_mutate_response_ignores_non_webarena_task_type_field():
 
 def test_mark_intent_is_classified_as_mutate():
     assert _guess_webarena_task_type("Mark all Aeon capri as out of stock") == "MUTATE"
+
+
+def test_mutation_marker_wins_over_embedded_retrieval_language():
+    assert _guess_webarena_task_type(
+        "Update the description using the number of matching reviews"
+    ) == "MUTATE"
 
 
 def test_retrieve_success_without_confirmed_completion_is_not_found():
@@ -571,11 +605,53 @@ def test_report_context_includes_official_eval(tmp_path):
         response_payload={"task_type": "RETRIEVE", "status": "SUCCESS", "retrieved_data": [2]},
         eval_result_path=eval_path,
         eval_result_payload={"status": "success", "score": 1.0},
+        reset_requested=True,
+        reset_details={
+            "site": "shopping_admin",
+            "host": "192.168.1.103",
+            "container": "webarena_verified_shopping_admin",
+            "image": "shopping_admin:committed",
+            "container_id": "not-needed-in-report",
+            "ready_url": "http://192.168.1.103:8877/status",
+            "site_url": "http://192.168.1.103:7780/admin",
+        },
     )
 
-    data = context_path.read_text(encoding="utf-8")
-    assert '"eval_result_path"' in data
-    assert '"score": 1.0' in data
+    data = json.loads(context_path.read_text(encoding="utf-8"))
+    assert data["webarena"]["eval_result_path"] == str(eval_path)
+    assert data["webarena"]["eval_result"]["score"] == 1.0
+    assert data["webarena"]["instance_reset"] == {
+        "requested": True,
+        "completed": True,
+        "site": "shopping_admin",
+        "host": "192.168.1.103",
+        "container": "webarena_verified_shopping_admin",
+        "image": "shopping_admin:committed",
+        "ready_url": "http://192.168.1.103:8877/status",
+        "site_url": "http://192.168.1.103:7780/admin",
+    }
+
+
+def test_report_context_marks_non_reset_run_explicitly(tmp_path):
+    context_path = tmp_path / "context.json"
+    context_path.write_text('{"goal":"x"}', encoding="utf-8")
+
+    _write_webarena_report_context(
+        context_path,
+        task={"sites": ["shopping_admin"], "intent": "count reviews"},
+        task_id=15,
+        start_url="http://localhost/admin",
+        out_dir=tmp_path,
+        har_path=tmp_path / "network.har",
+        resp_path=tmp_path / "agent_response.json",
+        response_payload={"task_type": "RETRIEVE", "status": "SUCCESS"},
+    )
+
+    data = json.loads(context_path.read_text(encoding="utf-8"))
+    assert data["webarena"]["instance_reset"] == {
+        "requested": False,
+        "completed": False,
+    }
 
 
 def test_run_official_eval_writes_eval_result(monkeypatch, tmp_path):

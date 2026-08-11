@@ -99,6 +99,35 @@ def test_worker_context_uses_semantic_frame_variant_before_exceeding_budget() ->
     assert "x" * 100 not in projection.text
 
 
+def test_worker_context_keeps_structured_surface_completion_evidence() -> None:
+    frame = MaterializedFrame(
+        frame_id="frame:2",
+        screenshot_path="frame.png",
+        url="https://example.test/report/filter/encoded/",
+        title="Orders Report",
+        applied_filters={"From": "5/1/21", "To": "3/31/22"},
+        structured_surfaces=[{
+            "kind": "rendered_data_surface",
+            "rendered": True,
+            "caption": "Results",
+            "fields": ["Interval", "Orders", "Sales Total"],
+            "row_count": 33,
+            "total_records": 33,
+            "partial": False,
+        }],
+    )
+
+    projection = project_worker_context(
+        memory=build_worker_memory_view(WorkerJournal(worker_id="operator")),
+        frame=frame,
+        max_chars=4_000,
+    )
+
+    assert '"structured_surfaces"' in projection.text
+    assert '"row_count": 33' in projection.text
+    assert '"From": "5/1/21"' in projection.text
+
+
 def test_worker_context_projects_extra_filter_as_authoritative_scope_blocker() -> None:
     frame = MaterializedFrame(
         frame_id="frame:3",

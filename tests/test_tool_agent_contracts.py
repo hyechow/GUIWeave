@@ -173,6 +173,20 @@ def test_runtime_action_floor_and_patch_tool_are_always_available() -> None:
     assert set(runtime_open_url["function"]["parameters"]["required"]) == {
         "state", "url"
     }
+    assert "Runtime rejects inferred routes" in (
+        runtime_open_url["function"]["description"]
+    )
+    validate(
+        instance={
+            "state": {
+                "status": "exploring",
+                "summary": "The exact target route is known.",
+                "next_instruction": "Open it directly.",
+            },
+            "url": "/admin/review/product/index/",
+        },
+        schema=runtime_open_url["function"]["parameters"],
+    )
 
 
 def test_collector_completion_tool_is_frame_gated_and_runtime_bound() -> None:
@@ -414,7 +428,7 @@ def test_worker_profile_is_inferred_without_creating_distinct_worker_types() -> 
     assert collector.profile == "collector"
 
 
-def test_data_requirement_filter_must_be_observable_in_row_schema() -> None:
+def test_data_requirement_rejects_filter_missing_from_observable_row_schema() -> None:
     with pytest.raises(ValueError, match="filter fields must be present"):
         DataRequirement(
             id="records",
@@ -422,3 +436,94 @@ def test_data_requirement_filter_must_be_observable_in_row_schema() -> None:
             row_schema={"record_id": "string"},
             filters={"status": "Complete"},
         )
+
+
+def test_data_requirement_rejects_declared_fields_missing_from_row_schema() -> None:
+    with pytest.raises(ValueError, match="filter fields must be present"):
+        DataRequirement(
+            id="reviews",
+            description="Reviews for one product",
+            row_schema={
+                "type": "object",
+                "properties": {"rating": {"type": "number"}},
+                "required": ["rating"],
+            },
+            field_sources={"rating": "Detailed Rating", "product_name": "Product"},
+            field_types={"rating": "number", "product_name": "text"},
+            filters={"product_name": "Selene Yoga Hoodie"},
+        )
+
+
+def test_worker_repairs_string_success_criteria_to_single_item_list() -> None:
+    spec = WorkerSpec.model_validate({
+        "profile": "operator",
+        "goal": "Save the target",
+        "success_criteria": "The target is saved successfully.",
+        "data_requirements": [],
+        "actions": [{
+            "name": "save_target",
+            "capability": "tap",
+            "description": "Save the target",
+        }],
+    })
+
+    assert spec.success_criteria == ["The target is saved successfully."]
+
+
+def test_worker_normalizes_explicit_null_input_refs_to_empty_mapping() -> None:
+    spec = WorkerSpec.model_validate({
+        "profile": "operator",
+        "goal": "Save the target",
+        "success_criteria": ["The target is saved"],
+        "input_refs": None,
+        "data_requirements": [],
+        "actions": [{
+            "name": "save_target",
+            "capability": "tap",
+            "description": "Save the target",
+        }],
+    })
+
+    assert spec.input_refs == {}
+
+
+def test_worker_clamps_model_requested_steps_to_protocol_limit() -> None:
+    spec = WorkerSpec.model_validate({
+        "profile": "operator",
+        "goal": "Complete a multi-page workflow",
+        "success_criteria": ["The workflow is saved"],
+        "data_requirements": [],
+        "actions": [{
+            "name": "advance",
+            "capability": "tap",
+            "description": "Advance the workflow",
+        }],
+        "max_steps": 30,
+    })
+
+    assert spec.max_steps == 20
+
+
+def test_operator_rejects_acquisition_filters_even_when_action_has_same_value() -> None:
+    common = {
+        "profile": "operator",
+        "goal": "Open one product",
+        "success_criteria": ["The product editor is open"],
+        "data_requirements": [],
+        "actions": [{
+            "name": "search_product",
+            "capability": "type",
+            "description": "Search the product grid",
+            "fixed_args": {"text": "Selene Yoga Hoodie"},
+        }],
+    }
+
+    for acquisition_filters in (
+        {"Name": "Selene Yoga Hoodie"},
+        {"Type": "Configurable Product"},
+    ):
+        with pytest.raises(ValueError, match="operator profile cannot declare"):
+            WorkerSpec.model_validate({
+                **common,
+                "acquisition_filters": acquisition_filters,
+            })

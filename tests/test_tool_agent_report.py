@@ -155,7 +155,7 @@ def test_tool_agent_report_exposes_coding_master_and_worker_boundaries(tmp_path:
         "def run(ctx):\n"
         "    collected = ctx.worker_result('collect')\n"
         "    result = ctx.transform(transform_id='shape', inputs=[collected['collection_ref']['ref']], source='def transform(inputs):\\n    return 1', result_schema={'type': 'integer'})\n"
-        "    ctx.finish(result['ref'])"
+        "    ctx.finish(result['ref'], effect='data')"
     )
     (tmp_path / "tool_agent_trace.json").write_text(json.dumps({
         "phase": "completed",

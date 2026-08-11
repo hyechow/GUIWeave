@@ -1,0 +1,50 @@
+{
+  "source_run": "webarena shopping_admin task 544, interrupted after turn 54",
+  "transform_result": {
+    "value": {
+      "description": "3 customer(s) love it!"
+    },
+    "schema": {
+      "type": "object",
+      "properties": {
+        "description": {
+          "type": "string"
+        }
+      },
+      "required": [
+        "description"
+      ]
+    }
+  },
+  "worker_spec": {
+    "profile": "operator",
+    "goal": "Update the product description to the computed text.",
+    "success_criteria": [
+      "The computed product description is saved."
+    ],
+    "input_refs": {
+      "computed_description": "result:1"
+    },
+    "actions": [
+      {
+        "name": "enter_computed_description",
+        "capability": "type",
+        "description": "Enter the Runtime-bound computed description in the visible description editor.",
+        "input_args": {
+          "text": {
+            "input": "computed_description",
+            "path": [
+              "description"
+            ]
+          }
+        }
+      }
+    ],
+    "max_steps": 8
+  },
+  "recorded_editor_state_after_clear": {
+    "kind": "rich_textarea",
+    "label": "Short Description",
+    "focused": true
+  }
+}

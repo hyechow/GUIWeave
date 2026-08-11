@@ -47,3 +47,22 @@ def test_wrapper_leaves_default_max_turns_to_python_cli(tmp_path: Path) -> None:
     args = _wrapper_args(tmp_path)
 
     assert "--max-turns" not in args
+
+
+def test_tool_agent_runtime_receives_python_cli_max_turns() -> None:
+    source = (
+        PROJECT_ROOT / "gui_agent" / "adapters" / "browser" / "webarena.py"
+    ).read_text(encoding="utf-8")
+
+    assert "max_turns=args.max_turns" in source
+
+
+def test_python_cli_uses_runtime_specific_default_max_turns() -> None:
+    source = (
+        PROJECT_ROOT / "gui_agent" / "adapters" / "browser" / "webarena.py"
+    ).read_text(encoding="utf-8")
+
+    assert '_REVIEWED_PYTHON_MAX_TURNS = 25' in source
+    assert '_TOOL_AGENT_MAX_TURNS = 64' in source
+    assert 'default=None' in source
+    assert 'if args.runtime == "tool-agent"' in source

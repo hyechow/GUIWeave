@@ -244,6 +244,55 @@ def test_failed_operator_replans_only_its_local_execution_strategy() -> None:
     assert "direct settings entry" in requested["reason"]
 
 
+def test_redelegation_shares_one_bounded_logical_step_budget() -> None:
+    original = WorkerSpec.model_validate({
+        "profile": "operator",
+        "goal": "Apply a target UI state.",
+        "success_criteria": ["The target UI state is saved."],
+        "actions": [{
+            "name": "apply_target",
+            "capability": "tap",
+            "description": "Apply the visible target state.",
+        }],
+        "max_steps": 15,
+    })
+    revised = original.model_copy(update={
+        "actions": [
+            original.actions[0].model_copy(update={
+                "name": "apply_target_alternatively",
+            })
+        ],
+        "max_steps": 15,
+    })
+    runtime = object.__new__(ToolAgentRuntime)
+    runtime.max_subgoal_replans = 2
+    runtime.trace = []
+    runtime._status_cb = None
+    calls: list[tuple[str, int]] = []
+
+    def run_worker(worker_id: str, spec: WorkerSpec) -> WorkerOutcome:
+        calls.append((worker_id, spec.max_steps))
+        return WorkerOutcome(
+            phase="failed",
+            summary="No progress",
+            steps=spec.max_steps,
+        )
+
+    runtime._run_worker = run_worker
+    runtime._revise_worker_spec = lambda **_kwargs: revised
+
+    outcome = runtime._run_worker_with_local_replanning("apply_target", original)
+
+    assert calls == [
+        ("apply_target", 15),
+        ("apply_target_replan_1", 15),
+        ("apply_target_replan_2", 10),
+    ]
+    assert outcome.phase == "failed"
+    assert outcome.steps == 40
+    assert "local strategy budget" in outcome.summary
+
+
 def test_worker_returns_verified_empty_without_another_policy_call() -> None:
     case = _case()
     spec = WorkerSpec.model_validate(case["original_spec"])

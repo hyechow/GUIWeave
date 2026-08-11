@@ -132,6 +132,36 @@ def test_task108_orders_near_miss_replays_through_semantic_disambiguation() -> N
     }
 
 
+def test_task549_correct_row_link_point_is_not_snapped_to_filter_input() -> None:
+    """Replay turn 19 where the model point was right but DOM assistance moved it."""
+
+    original = BrowserActionDecision(action=BrowserAction(
+        action_type="tap",
+        x=109,
+        y=438,
+        description=(
+            "Tap the 'size' text link in the Attribute Code column of the filtered "
+            "grid row to open the edit form"
+        ),
+    ))
+    controls = [{
+        "kind": "text_input",
+        "label": "Attribute Code",
+        "group_field": "Attribute Code",
+        "value": "size",
+        "rect": {"x": 167, "y": 393, "w": 170, "h": 28},
+    }]
+
+    grounded = ground_action_to_nearest_control(
+        original,
+        controls,
+        viewport_size=(1280, 963),
+    )
+
+    assert (grounded.action.x, grounded.action.y) == (109, 438)
+    assert grounded.action.snap is None
+
+
 def test_task108_replay_blocks_third_equivalent_action_until_target_progresses() -> None:
     case = _case()
     attempt = case["attempt"]
@@ -172,3 +202,70 @@ def test_task108_replay_blocks_third_equivalent_action_until_target_progresses()
     )
     assert progressed.blocked is False
     assert progressed.progress != third.progress
+
+
+def test_action_alias_cannot_bypass_repeated_action_fuse() -> None:
+    case = _case()
+    attempt = case["attempt"]
+    frame = _frame(case)
+    breaker = WorkerActionCircuitBreaker()
+
+    for tool in ("search_by_date", "search_by_date"):
+        decision = breaker.inspect(
+            tool=tool,
+            capability=attempt["capability"],
+            args=attempt["args"],
+            frame=frame,
+        )
+        assert decision.blocked is False
+        breaker.record(decision)
+
+    aliased = breaker.inspect(
+        tool="runtime_type_visible",
+        capability=attempt["capability"],
+        args=attempt["args"],
+        frame=frame,
+    )
+
+    assert aliased.blocked is True
+    assert aliased.prior_attempts == 2
+
+
+def test_control_value_change_counts_as_task_progress() -> None:
+    case = _case()
+    attempt = case["attempt"]
+    initial = _frame(case).model_copy(update={
+        "controls": [{
+            "kind": "rich_textarea",
+            "label": "Description",
+            "value": "old value",
+            "focused": True,
+        }],
+    })
+    cleared = initial.model_copy(update={
+        "controls": [{
+            "kind": "rich_textarea",
+            "label": "Description",
+            "value": "",
+            "focused": True,
+        }],
+    })
+    breaker = WorkerActionCircuitBreaker()
+
+    for _ in range(2):
+        decision = breaker.inspect(
+            tool=attempt["tool"],
+            capability=attempt["capability"],
+            args=attempt["args"],
+            frame=initial,
+        )
+        breaker.record(decision)
+
+    progressed = breaker.inspect(
+        tool=attempt["tool"],
+        capability=attempt["capability"],
+        args=attempt["args"],
+        frame=cleared,
+    )
+
+    assert progressed.blocked is False

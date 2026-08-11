@@ -213,6 +213,38 @@ def test_shopping_admin_material_query_receives_goal_matched_product_facts() -> 
     assert "nonempty resolved Material values" in context
 
 
+def test_shopping_admin_review_context_includes_direct_same_origin_route() -> None:
+    knowledge = app_summary.load_knowledge_for_app("shopping_admin", "browser")
+    assert knowledge is not None
+
+    goal = "Get the rating for all reviews of a named product"
+    assert knowledge.orchestrator_sections(goal) == ["Reviews_interface"]
+    context = knowledge.orchestrator_context(goal)
+
+    assert "/admin/review/product/index/" in context
+    assert "prefer this exact route" in context
+    assert "one cohesive operator" in context
+    assert "ID filter is a range control" in context
+
+
+def test_shopping_admin_size_configuration_context_includes_both_durable_workflows() -> None:
+    knowledge = app_summary.load_knowledge_for_app("shopping_admin", "browser")
+    assert knowledge is not None
+
+    goal = "Add a new size XXXL to green Minerva LumaTech V-Tee"
+    sections = knowledge.orchestrator_sections(goal)
+    context = knowledge.orchestrator_context(goal)
+
+    assert "Product_attributes_interface" in sections
+    assert "Product_workspace_interface" in sections
+    assert "/admin/catalog/product_attribute/" in context
+    assert "Stores > Attributes > Product" in context
+    assert "Admin Description" in context
+    assert "Admin Swatch" in context
+    assert "Edit Configurations" in context
+    assert "Generate Products" in context
+
+
 def test_app_knowledge_block_marks_facts_as_authoritative() -> None:
     from gui_agent.context.runtime import knowledge_block
 

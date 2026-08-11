@@ -120,6 +120,16 @@ def test_statement_transition_separates_commit_boundary_from_action_family():
     assert "不要求存在名为 Save/Submit 的独立按钮" in prompt
 
 
+def test_tool_agent_master_budgets_complete_cohesive_workers() -> None:
+    prompt = load_prompt_text("task.tool_agent.master")
+
+    assert "including possible authentication" in prompt
+    assert "Use the full value `20` for a multi-surface mutation" in prompt
+    assert "not a reason to split one cohesive subgoal" in prompt
+    assert "Never evade the private-array boundary by joining" in prompt
+    assert "not a serialized collection or hidden foreach plan" in prompt
+
+
 def test_coding_prompt_separates_projection_fields_from_source_filters():
     prompt = load_prompt_text("task.orchestrator.coding")
 
