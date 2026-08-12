@@ -178,6 +178,7 @@ async function selectRun(runId, rerender = true) {
   $("run-summary").textContent = detail.reply || detail.summary || "—";
   const models = Object.values(detail.models || {}).filter(Boolean);
   $("run-model").textContent = models.length ? [...new Set(models)].join(" · ") : "按本地配置";
+  const frameLayout = ["android", "iphone"].includes(run.platform) ? "portrait" : "wide";
   $("event-list").innerHTML = events.events.length
     ? events.events.slice().reverse().map((event) => {
       const frameName = event.screenshot?.name;
@@ -194,13 +195,14 @@ async function selectRun(runId, rerender = true) {
       const actionBadge = !isAction ? "" : {
         started: "▶ 准备执行", success: "✓ 执行成功", warning: "! 未确认效果", failed: "× 执行失败",
       }[actionState];
-      return `<div class="event ${isAction ? `action-event action-${actionState}` : ""}"><time>${escapeHtml(event.elapsed_s ?? "—")}s</time><span class="layer">${escapeHtml(event.layer || event.event || "event")}</span><span class="message">${actionBadge ? `<b class="action-badge">${escapeHtml(actionBadge)}</b>` : ""}${escapeHtml(event.message || event.event || "")}</span><span class="worker">${escapeHtml(event.worker_id || "")}</span>${frameUrl ? `<button type="button" class="event-frame" data-frame-url="${escapeHtml(frameUrl)}" data-frame-label="${escapeHtml(frameLabel)}"><img src="${escapeHtml(frameUrl)}" loading="lazy" alt="${escapeHtml(frameLabel)}"><span><b>${escapeHtml(frameLabel)}</b><small>点击查看完整截图</small></span></button>` : ""}</div>`;
+      return `<div class="event ${isAction ? `action-event action-${actionState}` : ""}"><time>${escapeHtml(event.elapsed_s ?? "—")}s</time><span class="layer">${escapeHtml(event.layer || event.event || "event")}</span><span class="message">${actionBadge ? `<b class="action-badge">${escapeHtml(actionBadge)}</b>` : ""}${escapeHtml(event.message || event.event || "")}</span><span class="worker">${escapeHtml(event.worker_id || "")}</span>${frameUrl ? `<button type="button" class="event-frame frame-${frameLayout}" data-frame-layout="${frameLayout}" data-frame-url="${escapeHtml(frameUrl)}" data-frame-label="${escapeHtml(frameLabel)}"><img src="${escapeHtml(frameUrl)}" loading="lazy" alt="${escapeHtml(frameLabel)}"><span><b>${escapeHtml(frameLabel)}</b><small>点击查看完整截图</small></span></button>` : ""}</div>`;
     }).join("")
     : '<p class="empty">暂无结构化事件</p>';
   document.querySelectorAll(".event-frame").forEach((button) => {
     button.onclick = () => {
       $("frame-image").src = button.dataset.frameUrl;
       $("frame-title").textContent = button.dataset.frameLabel;
+      frameDialog.classList.toggle("frame-portrait", button.dataset.frameLayout === "portrait");
       $("frame-dialog").showModal();
     };
   });

@@ -122,10 +122,28 @@ dialog .platform-field {
 .event-frame img {
   width: min(280px, 42%);
   height: 150px;
-  object-fit: cover;
+  object-fit: contain;
   object-position: top left;
   border-right: 1px solid var(--line);
   background: #e5e1d7;
+}
+
+.event-frame.frame-wide img {
+  width: min(360px, 55%);
+  height: auto;
+  max-height: 240px;
+}
+
+.event-frame.frame-portrait {
+  width: min(520px, 100%);
+  justify-self: start;
+}
+
+.event-frame.frame-portrait img {
+  width: auto;
+  max-width: 55%;
+  height: 320px;
+  object-position: top center;
 }
 
 .event-frame span {
@@ -151,7 +169,7 @@ dialog.frame-dialog {
   max-height: calc(100vh - 32px);
   padding: 0;
   overflow: auto;
-  background: #111;
+  background: #fff;
 }
 
 .frame-dialog header {
@@ -162,8 +180,9 @@ dialog.frame-dialog {
   align-items: center;
   justify-content: space-between;
   padding: 10px 14px;
-  color: #fff;
-  background: #111;
+  color: var(--ink);
+  background: #f8f6ef;
+  border-bottom: 1px solid var(--line);
 }
 
 .frame-dialog header strong {
@@ -172,7 +191,7 @@ dialog.frame-dialog {
 
 .frame-dialog header button {
   border: 0;
-  color: #fff;
+  color: var(--ink);
   background: transparent;
   font-size: 24px;
   cursor: pointer;
@@ -184,6 +203,17 @@ dialog.frame-dialog {
   height: auto;
 }
 
+dialog.frame-dialog.frame-portrait {
+  width: min(352px, calc(100% - 32px));
+}
+
+.frame-dialog.frame-portrait img {
+  width: 100%;
+  max-width: none;
+  max-height: none;
+  margin: 0;
+}
+
 @media (max-width: 800px) {
   .event-frame {
     grid-column: 1 / 4;
@@ -192,5 +222,11 @@ dialog.frame-dialog {
   .event-frame img {
     width: 45%;
     height: 120px;
+  }
+
+  .event-frame.frame-portrait img {
+    width: auto;
+    max-width: 52%;
+    height: min(320px, 55vh);
   }
 }
