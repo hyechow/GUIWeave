@@ -412,6 +412,8 @@ def _execute_android(action, *, target_control="", **statuses):
         "press_home",
         "back",
         "app_switch",
+        "long_press",
+        "launch_app",
     ):
         getattr(client, name).return_value = statuses.get(name, f"OK {name}")
     ok = AndroidExecutor(types.SimpleNamespace(client=client)).execute(
@@ -475,6 +477,25 @@ def _execute_android(action, *, target_control="", **statuses):
             "app_switch",
             "paused",
         ),
+        (
+            {
+                "action_type": "long_press",
+                "x": 500,
+                "y": 500,
+                "description": "长按项目",
+            },
+            "long_press",
+            "failed: offline",
+        ),
+        (
+            {
+                "action_type": "launch_app",
+                "app": "Calendar",
+                "description": "启动日历",
+            },
+            "launch_app",
+            "failed: unavailable",
+        ),
     ],
 )
 def test_executor_propagates_device_action_failures(action_kwargs, status_name, status):
@@ -507,6 +528,27 @@ def test_slider_endpoint_normalization(target_control, expected_x):
     assert client.drag.call_args.args == pytest.approx(
         (541.62, 225.12, expected_x, 225.12, 1000)
     )
+
+
+def test_executor_denormalizes_long_press_and_launches_semantic_app():
+    from gui_agent.adapters.android.actions import AndroidAction
+
+    pressed, press_client = _execute_android(AndroidAction(
+        action_type="long_press",
+        x=250,
+        y=750,
+        duration_ms=800,
+        description="长按文件",
+    ))
+    launched, launch_client = _execute_android(AndroidAction(
+        action_type="launch_app",
+        app="Calendar",
+        description="启动日历",
+    ))
+
+    assert pressed is launched is True
+    press_client.long_press.assert_called_once_with(270, 1800, 800)
+    launch_client.launch_app.assert_called_once_with("Calendar")
 
 
 def test_type_stops_when_clear_fails_and_propagates_type_failure():

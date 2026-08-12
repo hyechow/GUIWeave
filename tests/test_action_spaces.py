@@ -52,7 +52,7 @@ def test_browser_vocabulary():
 
 def test_android_vocabulary():
     v = _action_type_values(AndroidAction)
-    assert {"home", "back", "app_switch"} <= v
+    assert {"long_press", "home", "back", "app_switch", "launch_app"} <= v
     assert "navigate" not in v
 
 
@@ -118,6 +118,15 @@ def test_positive_construction():
     BrowserAction(action_type="scroll_to_ref", target_ref=42, description="把目标移入视口")
     AndroidAction(action_type="back", description="返回")
     AndroidAction(action_type="app_switch", description="切换应用")
+    AndroidAction(action_type="long_press", x=500, y=500, description="长按")
+    AndroidAction(action_type="launch_app", app="Calendar", description="启动日历")
+
+
+def test_android_launch_and_long_press_require_arguments():
+    with pytest.raises(Exception, match="app"):
+        AndroidAction(action_type="launch_app", description="启动应用")
+    with pytest.raises(Exception, match="x/y"):
+        AndroidAction(action_type="long_press", description="长按")
 
 
 def test_select_tab_requires_match():

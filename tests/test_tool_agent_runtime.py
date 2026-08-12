@@ -6,6 +6,7 @@ from types import SimpleNamespace
 import pytest
 
 from gui_agent.adapters.browser.actions import BrowserAction
+from gui_agent.adapters.android.actions import AndroidAction
 from gui_agent.core.tool_agent.contracts import (
     DynamicActionSpec,
     MaterializedFrame,
@@ -13,7 +14,11 @@ from gui_agent.core.tool_agent.contracts import (
     WorkerSpec,
 )
 from gui_agent.core.tool_agent.data_store import RuntimeDataStore
-from gui_agent.core.tool_agent.protocol import MAX_ORDERED_ACTIONS, ProtocolError
+from gui_agent.core.tool_agent.protocol import (
+    MAX_ORDERED_ACTIONS,
+    ProtocolError,
+    capability_parameters,
+)
 from gui_agent.core.tool_agent.runtime import ToolAgentRuntime
 from gui_agent.adapters.browser.control_grounding import ground_action_to_nearest_control
 
@@ -62,6 +67,70 @@ def test_android_runtime_rejects_browser_only_worker_action() -> None:
 
     with pytest.raises(ProtocolError, match="unavailable on the android adapter"):
         runtime._initial_worker_actions(spec)
+
+
+def test_android_runtime_discovers_installed_apps_for_worker_prompt() -> None:
+    runtime = object.__new__(ToolAgentRuntime)
+    runtime._platform_capabilities = frozenset({"tap", "launch_app"})
+    runtime.platform = SimpleNamespace(list_apps=lambda: ["Settings", "Calendar"])
+    runtime._master_knowledge = ""
+    runtime._worker_access_context = ""
+    spec = WorkerSpec(
+        goal="Open Calendar",
+        success_criteria=["Calendar is visible"],
+        actions=[DynamicActionSpec(
+            name="open_calendar",
+            capability="launch_app",
+            description="Open the Calendar application",
+            fixed_args={"app": "Calendar"},
+        )],
+    )
+
+    prompt = runtime._worker_system_prompt(spec, runtime._initial_worker_actions(spec))
+
+    assert '"Calendar"' in prompt
+    assert '"Settings"' in prompt
+
+
+@pytest.mark.parametrize(
+    ("platform_name", "capabilities", "applications", "expected", "excluded"),
+    [
+        (
+            "android",
+            {"tap", "drag", "launch_app"},
+            ["Settings", "Calendar"],
+            {"tap", "drag", "launch_app"},
+            {"open_url", "select_option"},
+        ),
+        (
+            "browser",
+            {"tap", "open_url", "select_option"},
+            [],
+            {"tap", "open_url", "select_option"},
+            {"drag", "launch_app"},
+        ),
+    ],
+)
+def test_platform_prompt_context_contains_only_active_adapter_contracts(
+    platform_name: str,
+    capabilities: set[str],
+    applications: list[str],
+    expected: set[str],
+    excluded: set[str],
+) -> None:
+    runtime = object.__new__(ToolAgentRuntime)
+    runtime.bundle = SimpleNamespace(platform=platform_name)
+    runtime._platform_capabilities = frozenset(capabilities)
+    runtime._installed_app_names = tuple(applications)
+
+    context = runtime._platform_prompt_context()
+
+    assert context["name"] == platform_name
+    assert set(context["action_contracts"]) == expected
+    assert excluded.isdisjoint(context["action_contracts"])
+    assert context["applications"] == applications
+    for capability, schema in context["action_contracts"].items():
+        assert schema == capability_parameters(capability)
 
 
 def test_private_access_context_reaches_worker_but_is_redacted_from_trace() -> None:
@@ -1101,6 +1170,113 @@ def test_runtime_executes_nonspatial_browser_capabilities_through_adapter_action
     assert getattr(executed, "url", None) == args.get("url")
     assert payload["status"] == "executed"
     assert terminal is None
+
+
+@pytest.mark.parametrize(
+    ("capability", "args"),
+    [
+        ("home", {}),
+        ("app_switch", {}),
+        ("launch_app", {"app": "Calendar"}),
+        (
+            "drag",
+            {
+                "x": 200,
+                "y": 500,
+                "to_x": 800,
+                "to_y": 500,
+                "description": "Drag the visible slider to the right edge",
+            },
+        ),
+        (
+            "long_press",
+            {
+                "x": 400,
+                "y": 600,
+                "duration_ms": 700,
+                "description": "Long-press the visible file row",
+            },
+        ),
+    ],
+)
+def test_runtime_executes_android_device_capabilities(
+    monkeypatch,
+    capability: str,
+    args: dict[str, object],
+) -> None:
+    runtime = object.__new__(ToolAgentRuntime)
+    runtime.bundle = SimpleNamespace(
+        platform="android",
+        make_action=lambda payload: AndroidAction.model_validate(payload),
+    )
+    runtime._installed_app_names = ("Calendar", "Settings")
+    runtime.perception_mode = "enhanced"
+    runtime._executor = _Executor()
+    runtime._visualizer = None
+    runtime.platform = SimpleNamespace(client=SimpleNamespace())
+    runtime._trace = lambda *_args, **_kwargs: None
+    monkeypatch.setattr(
+        "gui_agent.core.tool_agent.runtime.settle_after_action",
+        lambda platform, png, *, action_type: (0.0, False),
+    )
+    action = DynamicActionSpec(
+        name=f"do_{capability}",
+        capability=capability,
+        description=f"Execute {capability} for the current Android subgoal",
+        exposed_args=list(args),
+    )
+    spec = WorkerSpec(
+        goal="Advance the Android subgoal",
+        success_criteria=["The Android state advances"],
+        actions=[action],
+    )
+
+    payload, terminal = runtime._execute_worker_tool(
+        spec,
+        [action],
+        {"name": action.name, "args": args},
+        b"png",
+        MaterializedFrame(frame_id="frame:1", screenshot_path="frame.png"),
+    )
+
+    executed = runtime._executor.actions[-1]
+    assert isinstance(executed, AndroidAction)
+    assert executed.action_type == capability
+    assert getattr(executed, "app", None) == args.get("app")
+    assert payload["status"] == "executed"
+    assert terminal is None
+
+
+def test_runtime_rejects_launching_an_unlisted_android_app() -> None:
+    runtime = object.__new__(ToolAgentRuntime)
+    runtime.bundle = SimpleNamespace(
+        platform="android",
+        make_action=lambda payload: AndroidAction.model_validate(payload),
+    )
+    runtime._installed_app_names = ("Calendar",)
+    runtime._executor = _Executor()
+    runtime._visualizer = None
+    runtime.platform = SimpleNamespace(client=SimpleNamespace())
+    action = DynamicActionSpec(
+        name="open_settings",
+        capability="launch_app",
+        description="Open the Settings application",
+        fixed_args={"app": "Settings"},
+    )
+    spec = WorkerSpec(
+        goal="Open Settings",
+        success_criteria=["Settings is visible"],
+        actions=[action],
+    )
+
+    with pytest.raises(ValueError, match="Runtime-provided application name"):
+        runtime._execute_worker_tool(
+            spec,
+            [action],
+            {"name": action.name, "args": {}},
+            b"png",
+            MaterializedFrame(frame_id="frame:1", screenshot_path="frame.png"),
+        )
 
 
 def test_runtime_surfaces_same_origin_platform_rejection(monkeypatch) -> None:

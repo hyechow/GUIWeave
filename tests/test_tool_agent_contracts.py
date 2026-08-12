@@ -324,17 +324,27 @@ def test_android_runtime_action_floor_excludes_browser_only_capabilities() -> No
         "clear_text",
         "press_enter",
         "scroll",
+        "drag",
+        "long_press",
         "back",
+        "home",
+        "app_switch",
+        "launch_app",
     })
     actions = {action.name: action.capability for action in floor}
 
     assert actions == {
         "runtime_tap_visible": "tap",
         "runtime_scroll_visible": "scroll",
+        "runtime_drag_visible": "drag",
+        "runtime_long_press_visible": "long_press",
         "runtime_type_visible": "type",
         "runtime_clear_focused": "clear_text",
         "runtime_press_enter": "press_enter",
         "runtime_back": "back",
+        "runtime_home": "home",
+        "runtime_app_switch": "app_switch",
+        "runtime_launch_app": "launch_app",
     }
     assert "runtime_open_url" not in actions
     assert "runtime_select_visible" not in actions

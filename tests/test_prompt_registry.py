@@ -125,11 +125,48 @@ def test_tool_agent_worker_disambiguates_related_navigation_targets():
     prompt = load_prompt_text("task.tool_agent.worker")
 
     assert "matching their exact visible labels" in prompt
-    assert "Complete only when the page title" in prompt
+    assert "Complete only when current surface identity" in prompt
     assert "selected value" in prompt
     assert "`detail_resolution.status = active`" in prompt
     assert "`pending_candidate_ordinal`" in prompt
     assert "never add lookup rows as candidates" in prompt
+
+
+def test_shared_tool_agent_prompts_do_not_embed_platform_contracts() -> None:
+    prompt_ids = (
+        "task.tool_agent.master",
+        "task.tool_agent.master_redelegate",
+        "task.tool_agent.worker",
+        "task.tool_agent.presentation",
+        "task.tool_agent.visual_transcription",
+    )
+    banned = (
+        "android",
+        "browser",
+        "iphone",
+        "runtime_open_url",
+        "select_option",
+        "open_url",
+        "launch_app",
+        "app_switch",
+        "long_press",
+        "clear_text",
+        "press_enter",
+        "same-origin",
+        "combobox",
+        "dropdown",
+        "pagination",
+        "dom",
+    )
+
+    for prompt_id in prompt_ids:
+        prompt = load_prompt(prompt_id)
+        assert prompt.platform == "shared"
+        body = prompt.body.casefold()
+        for term in banned:
+            assert term.casefold() not in body, (
+                f"{prompt_id} embeds platform contract {term!r}; inject it from the adapter"
+            )
 
 
 def test_tool_agent_prompts_preserve_exact_pending_selection_sets():
