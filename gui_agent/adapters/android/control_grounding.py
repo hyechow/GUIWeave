@@ -10,6 +10,10 @@ from gui_agent.core.schemas import BaseActionDecision
 
 
 _TAP_KINDS = {"button", "checkbox", "radio", "switch", "select", "text_input"}
+_SHORT_LABEL_ANCHORS = {
+    "button", "control", "field", "icon", "label", "link", "option",
+    "row", "switch", "tab", "toggle",
+}
 
 
 def _words(value: object) -> list[str]:
@@ -23,7 +27,7 @@ def _described_kind_matches(description: str, kind: str) -> bool:
     if words & {"checkbox", "multiselect"} or {"multi", "select"} <= words:
         return kind == "checkbox"
     if words & {"switch", "toggle"}:
-        return kind == "switch"
+        return kind in {"button", "switch"}
     return "button" not in words or kind in {"button", "checkbox", "radio", "switch"}
 
 
@@ -32,12 +36,18 @@ def _label_position(description: str, label: str) -> int | None:
         return None
     if label.isascii():
         needle, haystack = _words(label), _words(description)
-        if sum(map(len, needle)) < 3:
+        short = sum(map(len, needle)) < 3
+        if not needle or (short and not (label.isupper() or label.isdigit())):
             return None
         width = len(needle)
         return next((
             index for index in range(len(haystack) - width + 1)
             if haystack[index:index + width] == needle
+            and (
+                not short
+                or set(haystack[max(0, index - 2):index + width + 2])
+                & _SHORT_LABEL_ANCHORS
+            )
         ), None)
     needle = "".join(char.casefold() for char in label if char.isalnum())
     haystack = "".join(char.casefold() for char in description if char.isalnum())
