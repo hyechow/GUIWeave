@@ -70,6 +70,26 @@ def test_master_exposes_only_tool_agent_runtime_api() -> None:
         assert method in prompt
     for retired in ("ctx.reach", "ctx.query", "ctx.read", "ctx.commit"):
         assert retired not in prompt
+    assert "Keep each collector schema minimal" in prompt
+    assert "merely useful supplemental metrics" in prompt
+    assert "never require perception to invent a missing year" in prompt
+    assert "When success criteria guarantee exactly one target record" in prompt
+    assert "Source layout order is not a data contract" in prompt
+
+
+def test_visual_transcription_uses_runtime_time_without_inventing_dates() -> None:
+    prompt = load_prompt_text("task.tool_agent.visual_transcription")
+
+    assert "provenance-bearing platform clock" in prompt
+    assert "explicitly relative visible labels" in prompt
+    assert "omit it instead of returning null" in prompt
+
+
+def test_presentation_requires_user_facing_prose() -> None:
+    prompt = load_prompt_text("task.tool_agent.presentation")
+
+    assert "user-facing prose" in prompt
+    assert "not serialized JSON" in prompt
 
 
 def test_worker_keeps_data_private_and_coordinates_normalized() -> None:

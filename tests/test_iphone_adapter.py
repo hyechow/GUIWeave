@@ -3,7 +3,8 @@ from __future__ import annotations
 from types import SimpleNamespace
 
 from gui_agent.adapters.iphone.actions import IPhoneAction
-from gui_agent.adapters.iphone.client import MirrorDaemonClient
+from gui_agent.adapters.iphone.client import MirrorDaemonClient, _helper_path
+from gui_agent.adapters.iphone import factory as iphone_factory
 from gui_agent.adapters.iphone.executor import IPhoneExecutor
 from gui_agent.adapters.iphone.perception import IPhoneSession
 from gui_agent.core.runtime.factory import build_platform
@@ -55,6 +56,123 @@ def test_iphone_backend_roles_cannot_be_overridden() -> None:
         assert "sck_server screenshots and mirror_daemon input" in str(exc)
     else:  # pragma: no cover - protects the fixed helper boundary
         raise AssertionError("iPhone backend override should be rejected")
+
+
+def test_iphone_helpers_accept_plugin_asset_overrides(
+    tmp_path,
+    monkeypatch,
+) -> None:
+    helper = tmp_path / "plugin-cache" / "sck_server"
+    monkeypatch.setenv("GUIWEAVE_TEST_HELPER", str(helper))
+
+    assert _helper_path("GUIWEAVE_TEST_HELPER", "fallback") == helper.resolve()
+
+
+def test_iphone_apple_silicon_detection_handles_native_and_rosetta(
+    monkeypatch,
+) -> None:
+    monkeypatch.setattr(iphone_factory.platform_module, "machine", lambda: "arm64")
+    assert iphone_factory._is_apple_silicon()
+
+    monkeypatch.setattr(iphone_factory.platform_module, "machine", lambda: "x86_64")
+    monkeypatch.setattr(
+        iphone_factory.subprocess,
+        "run",
+        lambda *_args, **_kwargs: SimpleNamespace(
+            returncode=0,
+            stdout="1\n",
+        ),
+    )
+    assert iphone_factory._is_apple_silicon()
+
+    monkeypatch.setattr(
+        iphone_factory.subprocess,
+        "run",
+        lambda *_args, **_kwargs: SimpleNamespace(
+            returncode=0,
+            stdout="0\n",
+        ),
+    )
+    assert not iphone_factory._is_apple_silicon()
+
+
+def test_iphone_gatekeeper_assessment_blocks_quarantined_helper(
+    tmp_path,
+    monkeypatch,
+) -> None:
+    helper = tmp_path / "sck_server"
+    helper.write_bytes(b"helper")
+
+    def run(command, **_kwargs):
+        if command[0] == "spctl":
+            return SimpleNamespace(returncode=3, stdout="", stderr="rejected")
+        assert command[:3] == ["xattr", "-p", "com.apple.quarantine"]
+        return SimpleNamespace(returncode=0, stdout="0081;...", stderr="")
+
+    monkeypatch.setattr(iphone_factory.subprocess, "run", run)
+
+    status, detail = iphone_factory._gatekeeper_assessment(helper)
+
+    assert status == "blocked"
+    assert "签名并公证" in detail
+
+
+def test_iphone_gatekeeper_assessment_marks_unquarantined_adhoc_helper_preview_only(
+    tmp_path,
+    monkeypatch,
+) -> None:
+    helper = tmp_path / "mirror_daemon"
+    helper.write_bytes(b"helper")
+
+    def run(command, **_kwargs):
+        return SimpleNamespace(
+            returncode=3 if command[0] == "spctl" else 1,
+            stdout="",
+            stderr="rejected",
+        )
+
+    monkeypatch.setattr(iphone_factory.subprocess, "run", run)
+
+    status, detail = iphone_factory._gatekeeper_assessment(helper)
+
+    assert status == "preview"
+    assert "Developer ID" in detail
+
+
+def test_iphone_preflight_blocks_helper_rejected_by_gatekeeper(
+    tmp_path,
+    monkeypatch,
+) -> None:
+    from gui_agent.adapters.iphone import client as iphone_client
+
+    sck = tmp_path / "sck_server"
+    daemon = tmp_path / "mirror_daemon"
+    for helper in (sck, daemon):
+        helper.write_bytes(b"helper")
+        helper.chmod(0o755)
+    monkeypatch.setattr(iphone_client, "SCK_SERVER", sck)
+    monkeypatch.setattr(iphone_client, "MIRROR_DAEMON", daemon)
+    monkeypatch.setattr(iphone_factory, "_is_apple_silicon", lambda: True)
+    monkeypatch.setattr(
+        iphone_factory,
+        "mirroring_window_bounds",
+        lambda: (0.0, 0.0, 318.0, 701.0),
+    )
+    monkeypatch.setattr(
+        iphone_factory,
+        "_gatekeeper_assessment",
+        lambda path: (
+            ("blocked", "quarantined helper rejected")
+            if path == sck
+            else ("accepted", "accepted")
+        ),
+    )
+
+    result = iphone_factory._setup_check()
+
+    assert not result.ok
+    assert result.summary == "iPhone helper 被 macOS Gatekeeper 阻止"
+    assert any("quarantined helper rejected" in line for line in result.lines)
 
 
 def test_iphone_session_always_uses_sck_for_screenshots() -> None:

@@ -133,6 +133,16 @@ def test_load_recorded_run_replays_normal_runtime_artifacts(tmp_path, monkeypatc
     (tmp_path / "tool_agent_trace.json").write_text(json.dumps({
         "phase": "completed",
         "output": 7,
+        "platform_time": {
+            "platform": "browser",
+            "local_datetime": "2026-08-12T19:10:27+08:00",
+            "timezone": "Asia/Shanghai",
+            "utc_offset": "+08:00",
+            "source": "browser_cdp",
+            "confidence": "authoritative",
+            "captured_at": "2026-08-12T11:10:27.000+00:00",
+            "fallback_reason": "",
+        },
         "trace": [
             {
                 "event": "master_program_generated",
@@ -177,3 +187,4 @@ def test_load_recorded_run_replays_normal_runtime_artifacts(tmp_path, monkeypatc
     assert len(recorded.programs) == 1
     assert result.ok, result.error
     assert result.output == 7
+    assert result.platform_time["source"] == "browser_cdp"

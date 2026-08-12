@@ -5,6 +5,8 @@ from pathlib import Path
 
 import pytest
 
+from gui_agent.core.config.preflight import ModelPreflightResult
+from gui_agent.core.runtime.factory import SetupCheckResult
 from gui_agent.core.runtime.io import get_log_root
 from gui_agent.core.tool_agent.service import (
     ToolAgentService,
@@ -99,6 +101,26 @@ def test_run_events_and_artifacts_are_bounded_and_allowlisted(tmp_path: Path) ->
         service.get_artifact_path(run_id, "../../.env")
 
 
+def test_run_frames_are_image_only_and_must_be_referenced(tmp_path: Path) -> None:
+    service = ToolAgentService(log_root=tmp_path)
+    run_id = "tool_agent/browser/20260812_120000"
+    run_dir = tmp_path / run_id
+    run_dir.mkdir(parents=True)
+    frame = run_dir / "screenshot_tool_agent_1.png"
+    frame.write_bytes(b"\x89PNG\r\n\x1a\n")
+    (run_dir / "not-referenced.png").write_bytes(b"\x89PNG\r\n\x1a\n")
+    (run_dir / "tool_agent_events.jsonl").write_text(
+        json.dumps({"event": "observe", "screenshot_path": str(frame)}) + "\n",
+        encoding="utf-8",
+    )
+
+    assert service.get_run_frame_path(run_id, frame.name) == frame
+    with pytest.raises(ValueError, match="not referenced"):
+        service.get_run_frame_path(run_id, "not-referenced.png")
+    with pytest.raises(ValueError, match="unsupported"):
+        service.get_run_frame_path(run_id, "../private.png")
+
+
 def test_get_run_reads_incremental_jsonl_before_final_trace(tmp_path: Path) -> None:
     service = ToolAgentService(log_root=tmp_path)
     run_id = "tool_agent/browser/20260812_120000"
@@ -137,3 +159,63 @@ def test_service_resolves_log_root_after_environment_is_loaded(
 
     assert get_log_root() == configured.resolve()
     assert ToolAgentService().log_root == configured.resolve()
+
+
+def test_check_environment_combines_model_and_platform_results(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    service = ToolAgentService(log_root=tmp_path)
+    monkeypatch.setattr(
+        service,
+        "check_model_environment",
+        lambda: ModelPreflightResult(
+            ok=True,
+            summary="模型配置已就绪",
+            lines=("  ✓ models ready",),
+            config_path="/tmp/config.yaml",
+        ),
+    )
+    monkeypatch.setattr(
+        service,
+        "check_platform_environment",
+        lambda _platform, **_options: SetupCheckResult(
+            ok=True,
+            summary="android 环境就绪",
+            lines=("  ✓ adb connected", "  ⚠ scrcpy optional"),
+        ),
+    )
+
+    result = service.check_environment("android")
+
+    assert result.ok
+    assert result.summary == "GUIWeave 运行环境已就绪"
+    assert result.lines == (
+        "  ✓ models ready",
+        "  ✓ adb connected",
+        "  ⚠ scrcpy optional",
+    )
+
+
+def test_run_blocks_before_building_platform_when_model_is_missing(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    service = ToolAgentService(log_root=tmp_path)
+    monkeypatch.setattr(
+        service,
+        "check_model_environment",
+        lambda: ModelPreflightResult(
+            ok=False,
+            summary="模型配置未就绪",
+            lines=("  ✗ STANDARD_API_KEY 未配置",),
+            config_path="/tmp/config.yaml",
+        ),
+    )
+    monkeypatch.setattr(
+        "gui_agent.core.tool_agent.service.build_platform",
+        lambda *_args, **_kwargs: pytest.fail("platform must not be built"),
+    )
+
+    with pytest.raises(RuntimeError, match="STANDARD_API_KEY"):
+        service.run("inspect account", platform="browser")

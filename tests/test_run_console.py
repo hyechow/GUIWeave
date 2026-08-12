@@ -9,6 +9,8 @@ from types import SimpleNamespace
 from fastapi.testclient import TestClient
 
 from gui_agent.console import RunConsole, RunRequest, create_app
+from gui_agent.core.config.preflight import ModelPreflightResult
+from gui_agent.core.runtime.factory import SetupCheckResult
 from gui_agent.core.tool_agent.service import ToolAgentService
 
 
@@ -86,12 +88,169 @@ def test_console_home_explains_model_gateway_boundary(tmp_path: Path) -> None:
     assert "模型网关" in response.text
     assert "API_KEY" in response.text
     assert "LOCAL RUNTIME" in response.text
+    assert "platform-notice" in response.text
+    assert "start-task" in response.text
+    assert "结果 / 当前摘要" in response.text
+    assert "NEW GUI RUN" in response.text
+    assert "新建 GUI 任务" in response.text
+    assert "Android 设备地址" in response.text
+    assert 'name="adb_serial"' in response.text
+    assert "新建 Tool Agent 任务" not in response.text
+
+
+def test_console_frontend_auto_selects_and_prioritizes_final_reply() -> None:
+    source = (
+        Path(__file__).resolve().parents[1]
+        / "gui_agent"
+        / "console_assets"
+        / "console.js"
+    ).read_text(encoding="utf-8")
+
+    assert "state.active = state.runs[0]?.run_id || null" in source
+    assert "detail.reply || detail.summary" in source
+    assert "await selectRun(result.task_id)" not in source
+    assert "state.active !== runId" in source
+    assert 'class="event-frame"' in source
+    assert 'loading="lazy"' in source
+    assert 'String(event.frame_id || "").split(":").at(-1)' in source
+    assert 'action-event action-${actionState}' in source
+    assert '✓ 执行成功' in source
+    assert '! 未确认效果' in source
+    assert 'query.set("adb_serial", androidAddress)' in source
+    assert 'platform !== "android"' in source
+    assert 'ANDROID_DEVICE_STORAGE_KEY = "guiweave.android.device"' in source
+    assert "result.ok && platform === \"android\" && androidAddress" in source
+    assert 'localStorage.setItem(ANDROID_DEVICE_STORAGE_KEY, address)' in source
+    assert 'localStorage.removeItem(ANDROID_DEVICE_STORAGE_KEY)' in source
+
+
+def test_console_hidden_state_overrides_component_display_rules() -> None:
+    source = (
+        Path(__file__).resolve().parents[1]
+        / "gui_agent"
+        / "console_assets"
+        / "environment.css"
+    ).read_text(encoding="utf-8")
+
+    assert ".hidden" in source
+    assert "display: none !important" in source
+
+
+def test_console_projects_and_serves_referenced_event_screenshots(tmp_path: Path) -> None:
+    run_id = "tool_agent/browser/20260812_120001"
+    run_dir = tmp_path / run_id
+    run_dir.mkdir(parents=True)
+    frame = run_dir / "screenshot_tool_agent_1.png"
+    frame.write_bytes(b"\x89PNG\r\n\x1a\n")
+    (run_dir / "tool_agent_events.jsonl").write_text(
+        json.dumps(
+            {
+                "index": 1,
+                "event": "observe",
+                "screenshot_path": str(frame),
+            }
+        )
+        + "\n",
+        encoding="utf-8",
+    )
+    client = _client(tmp_path)
+
+    events = client.get(f"/api/runs/{run_id}/events")
+    image = client.get(
+        "/api/run-frame",
+        params={"run_id": run_id, "frame": frame.name},
+    )
+    report_relative_image = client.get(
+        f"/api/runs/{run_id}/artifacts/{frame.name}"
+    )
+
+    assert events.status_code == 200
+    assert events.json()["events"][0]["screenshot"] == {"name": frame.name}
+    assert "screenshot_path" not in events.text
+    assert image.status_code == 200
+    assert image.headers["content-type"] == "image/png"
+    assert report_relative_image.status_code == 200
+    assert report_relative_image.headers["content-type"] == "image/png"
+
+
+def test_console_model_environment_does_not_return_secret(
+    tmp_path: Path,
+    monkeypatch,
+) -> None:
+    service = ToolAgentService(log_root=tmp_path)
+    result = ModelPreflightResult(
+        ok=False,
+        summary="模型配置未就绪",
+        lines=("  ✗ STANDARD_API_KEY 未配置",),
+        config_path="/private/config.standard.yaml",
+    )
+    monkeypatch.setattr(service, "check_model_environment", lambda: result)
+
+    response = TestClient(create_app(service)).get("/api/environment/model")
+
+    assert response.status_code == 200
+    assert response.json()["ok"] is False
+    assert "secret-value" not in response.text
+
+
+def test_console_platform_environment_passes_normalized_android_address(
+    tmp_path: Path,
+    monkeypatch,
+) -> None:
+    service = ToolAgentService(log_root=tmp_path)
+    captured: dict[str, object] = {}
+
+    def check(platform: str, **options: object) -> SetupCheckResult:
+        captured.update(platform=platform, **options)
+        return SetupCheckResult(
+            ok=False,
+            summary=f"{platform} dependency missing",
+            lines=("  ✗ adb unavailable",),
+        )
+
+    monkeypatch.setattr(
+        service,
+        "check_platform_environment",
+        check,
+    )
+
+    response = TestClient(create_app(service)).get(
+        "/api/environment/android",
+        params={"adb_serial": " 192.168.1.50 "},
+    )
+
+    assert response.status_code == 200
+    assert response.json() == {
+        "ok": False,
+        "summary": "android dependency missing",
+        "details": ["  ✗ adb unavailable"],
+    }
+    assert captured == {"platform": "android", "serial": "192.168.1.50:5555"}
+
+
+def test_console_run_request_normalizes_android_address() -> None:
+    request = RunRequest(
+        goal="打开设置",
+        platform="android",
+        adb_serial=" 192.168.1.88 ",
+    )
+
+    assert request.adb_serial == "192.168.1.88:5555"
+    assert RunRequest(goal="打开设置", platform="android", adb_serial=" ").adb_serial is None
+    assert RunRequest(
+        goal="打开设置",
+        platform="android",
+        adb_serial="emulator-5554",
+    ).adb_serial == "emulator-5554"
 
 
 class _BlockingService:
     def __init__(self, log_root: Path) -> None:
         self.log_root = log_root
         self.started = threading.Event()
+
+    def check_environment(self, _platform: str, **_options: object):
+        return SetupCheckResult(ok=True, summary="ready")
 
     def run(self, _goal: str, **options: object):
         callback = options["on_run_created"]
@@ -106,6 +265,38 @@ class _BlockingService:
             phase="failed",
             to_dict=lambda: {"run_id": run_id, "phase": "failed"},
         )
+
+
+class _NoDuplicatePreflightService:
+    def __init__(self, log_root: Path) -> None:
+        self.log_root = log_root
+
+    def check_environment(self, _platform: str, **_options: object):
+        raise AssertionError("RunConsole.submit repeated the platform preflight")
+
+    def run(self, _goal: str, **options: object):
+        run_id = "tool_agent/browser/20260812_140000"
+        options["on_run_created"](run_id, self.log_root / run_id)  # type: ignore[operator]
+        return SimpleNamespace(
+            run_id=run_id,
+            phase="completed",
+            to_dict=lambda: {"run_id": run_id, "phase": "completed"},
+        )
+
+
+def test_console_submit_does_not_repeat_platform_preflight(tmp_path: Path) -> None:
+    client = TestClient(create_app(_NoDuplicatePreflightService(tmp_path)))  # type: ignore[arg-type]
+
+    response = client.post(
+        "/api/tasks",
+        json={
+            "goal": "inspect example",
+            "platform": "browser",
+            "headless": True,
+        },
+    )
+
+    assert response.status_code == 202
 
 
 def test_console_promotes_run_id_blocks_platform_conflict_and_cancels(

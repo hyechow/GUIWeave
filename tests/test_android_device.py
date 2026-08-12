@@ -85,6 +85,8 @@ def test_wireless_connect_and_wake(calls):
     assert ("connect", "192.168.31.240:5555") in calls  # host:port -> adb connect
     assert ("get_state",) in calls  # real transport probe, not just a device handle
     assert ("key", 224) in calls  # KEYCODE_WAKEUP on connect
+    assert ("shell", "svc power stayon true") in calls
+    assert dev._stay_awake_enabled is True
     assert (dev.win_w, dev.win_h) == (1080, 2400)  # cached from window_size()
 
 
@@ -180,6 +182,55 @@ def test_screenshot_returns_png_bytes(calls):
     png = dev.screenshot()
     assert png[:8] == b"\x89PNG\r\n\x1a\n"  # PNG magic
     assert len(png) > 100
+
+
+def test_screenshot_reconnects_once_after_wireless_transport_goes_offline() -> None:
+    from gui_agent.adapters.android.device import AndroidDevice
+
+    class _OfflineDev:
+        def screenshot(self):
+            raise RuntimeError("device offline")
+
+        def shell(self, _command):
+            raise RuntimeError("device offline")
+
+    class _OnlineDev:
+        def screenshot(self):
+            return Image.new("RGB", (32, 64), "white")
+
+    device = AndroidDevice(serial="192.168.1.102:5555")
+    device._dev = _OfflineDev()
+    reconnects = []
+
+    def reconnect():
+        reconnects.append(device.serial)
+        device._dev = _OnlineDev()
+        return device
+
+    device._reconnect_transport = reconnect  # type: ignore[method-assign]
+
+    assert device.screenshot().startswith(b"\x89PNG")
+    assert reconnects == ["192.168.1.102:5555"]
+
+
+def test_screenshot_does_not_reconnect_for_non_transport_failures() -> None:
+    from gui_agent.adapters.android.device import AndroidDevice
+
+    class _DeniedDev:
+        def screenshot(self):
+            raise PermissionError("screencap permission denied")
+
+        def shell(self, _command):
+            raise PermissionError("screencap permission denied")
+
+    device = AndroidDevice(serial="192.168.1.102:5555")
+    device._dev = _DeniedDev()
+    reconnects = []
+    device._reconnect_transport = lambda: reconnects.append(True)  # type: ignore[method-assign]
+
+    with pytest.raises(RuntimeError, match="permission denied"):
+        device.screenshot()
+    assert reconnects == []
 
 
 def test_dump_ui_hierarchy_reads_direct_xml_without_a_remote_file() -> None:
@@ -335,6 +386,77 @@ def test_android_grounding_fails_open_for_ambiguous_named_controls() -> None:
         {
             "kind": "button",
             "label": "Continue",
+            "rect": {"x": 550, "y": 500, "w": 80, "h": 40},
+        },
+    ]
+
+    grounded = executor.ground_coordinates(original, controls)
+
+    assert grounded is original
+    assert grounded.action.snap is None
+
+
+def test_android_grounding_prefers_nested_switch_widget_center() -> None:
+    """A same-label switch row + child widget is one target, not ambiguity."""
+
+    from gui_agent.adapters.android.actions import AndroidAction, AndroidActionDecision
+    from gui_agent.adapters.android.executor import AndroidExecutor
+
+    executor = AndroidExecutor(types.SimpleNamespace(client=None))
+    original = AndroidActionDecision(action=AndroidAction(
+        action_type="tap",
+        x=950,
+        y=175,
+        description="Tap the visible Bluetooth toggle switch labeled 蓝牙",
+    ))
+    controls = [
+        {
+            "kind": "switch",
+            "label": "蓝牙",
+            "ref": "android:0.1",
+            "rect": {"x": 500, "y": 145, "w": 1000, "h": 60},
+        },
+        {
+            "kind": "switch",
+            "label": "蓝牙",
+            "ref": "android:0.1.0.1",
+            "rect": {"x": 883, "y": 145, "w": 133, "h": 60},
+        },
+    ]
+
+    grounded = executor.ground_coordinates(original, controls)
+
+    assert (grounded.action.x, grounded.action.y) == (883, 145)
+    assert grounded.action.snap == {
+        "method": "android_control_semantic_nested_geometry",
+        "original": [950.0, 175.0],
+        "snapped": [883.0, 145.0],
+        "info": "蓝牙",
+    }
+
+
+def test_android_grounding_keeps_same_label_sibling_switches_ambiguous() -> None:
+    from gui_agent.adapters.android.actions import AndroidAction, AndroidActionDecision
+    from gui_agent.adapters.android.executor import AndroidExecutor
+
+    executor = AndroidExecutor(types.SimpleNamespace(client=None))
+    original = AndroidActionDecision(action=AndroidAction(
+        action_type="tap",
+        x=500,
+        y=500,
+        description="Tap Notifications toggle switch",
+    ))
+    controls = [
+        {
+            "kind": "switch",
+            "label": "Notifications",
+            "ref": "android:0.1",
+            "rect": {"x": 450, "y": 500, "w": 80, "h": 40},
+        },
+        {
+            "kind": "switch",
+            "label": "Notifications",
+            "ref": "android:0.2",
             "rect": {"x": 550, "y": 500, "w": 80, "h": 40},
         },
     ]

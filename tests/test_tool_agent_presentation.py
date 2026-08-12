@@ -74,7 +74,101 @@ def test_presenter_falls_back_when_natural_reply_omits_a_result_literal() -> Non
     )
 
     assert presentation.status == "fallback"
-    assert json.loads(presentation.reply) == value
+    assert presentation.reply == "Result: a@example.com, b@example.com."
+    assert "omitted canonical result" in presentation.error
+
+
+def test_presenter_replaces_serialized_json_with_natural_language_fallback() -> None:
+    value = {
+        "date": "13日（明天）",
+        "weather_condition": "多云转雷阵雨",
+        "high_temperature": "33℃",
+        "low_temperature": "26℃",
+    }
+
+    def invoke(_llm, _messages, schema, **_kwargs):
+        return schema(
+            reply=json.dumps(value, ensure_ascii=False),
+            result_digest=result_digest(value),
+        )
+
+    presentation = present_result(
+        goal="查一下明天的天气",
+        phase="completed",
+        result=value,
+        summary="computed",
+        replay={"status": "passed"},
+        llm=object(),
+        invoke=invoke,
+    )
+
+    assert presentation.status == "fallback"
+    assert presentation.reply.startswith("查询结果：")
+    assert "13日（明天）" in presentation.reply
+    assert "多云转雷阵雨" in presentation.reply
+    assert not presentation.reply.startswith("{")
+    assert "serialized structured data" in presentation.error
+
+
+def test_presenter_accepts_natural_reordering_and_verbalized_comparison() -> None:
+    value = {
+        "date": "13日（明天）",
+        "weather": "多云转雷阵雨",
+        "high_temperature": "33℃",
+        "low_temperature": "26℃",
+        "wind": "<3级",
+    }
+
+    def invoke(_llm, _messages, schema, **_kwargs):
+        return schema(
+            reply="明天（13日）天气为多云转雷阵雨，气温在26℃到33℃之间，风力小于3级。",
+            result_digest=result_digest(value),
+        )
+
+    presentation = present_result(
+        goal="查一下明天的天气",
+        phase="completed",
+        result=value,
+        summary="computed",
+        replay={"status": "passed"},
+        llm=object(),
+        invoke=invoke,
+    )
+
+    assert presentation.status == "generated"
+    assert presentation.reply.startswith("明天（13日）")
+    assert presentation.error == ""
+
+
+@pytest.mark.parametrize(
+    ("result", "reply"),
+    [
+        ({"temperature": 3}, "温度为33℃。"),
+        ({"wind": "<3级"}, "风力小于13级。"),
+        ({"count": 20}, "共有120条。"),
+    ],
+)
+def test_presenter_rejects_numeric_substrings_as_canonical_values(
+    result: dict[str, object],
+    reply: str,
+) -> None:
+    def invoke(_llm, _messages, schema, **_kwargs):
+        return schema(
+            reply=reply,
+            result_digest=result_digest(result),
+        )
+
+    presentation = present_result(
+        goal="请返回准确结果",
+        phase="completed",
+        result=result,
+        summary="computed",
+        replay={"status": "passed"},
+        llm=object(),
+        invoke=invoke,
+    )
+
+    assert presentation.status == "fallback"
     assert "omitted canonical result" in presentation.error
 
 
@@ -98,7 +192,7 @@ def test_completed_result_is_not_sent_to_llm_until_replay_passes() -> None:
 
     assert called is False
     assert presentation.status == "fallback"
-    assert json.loads(presentation.reply) == {"answer": 42}
+    assert presentation.reply == "Result: answer is 42."
     assert "replay status" in presentation.error
 
 
@@ -132,6 +226,16 @@ def test_presentation_artifact_and_context_keep_result_and_reply_separate(tmp_pa
         master_model="master",
         worker_model="worker",
         perception_model="perception",
+        platform_time={
+            "platform": "browser",
+            "local_datetime": "2026-08-12T19:10:27+08:00",
+            "timezone": "Asia/Shanghai",
+            "utc_offset": "+08:00",
+            "source": "browser_cdp",
+            "confidence": "authoritative",
+            "captured_at": "2026-08-12T11:10:27.000+00:00",
+            "fallback_reason": "",
+        },
     )
 
     result = project_tool_agent_result(
@@ -153,6 +257,8 @@ def test_presentation_artifact_and_context_keep_result_and_reply_separate(tmp_pa
     assert context["reply"] == "The matching email is a@example.com."
     assert artifact["reply"] == context["reply"]
     assert context["models"]["tool_agent.presentation"] == "presenter-model"
+    assert context["platform_time"]["source"] == "browser_cdp"
+    assert result.orchestrator["platform_time"]["timezone"] == "Asia/Shanghai"
 
     response = _synthesize_response(
         "Return the matching email",
