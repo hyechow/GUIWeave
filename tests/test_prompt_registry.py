@@ -74,9 +74,18 @@ def test_master_exposes_only_tool_agent_runtime_api() -> None:
 
 def test_worker_keeps_data_private_and_coordinates_normalized() -> None:
     prompt = load_prompt_text("task.tool_agent.worker")
-    assert "Raw data values are private runtime data" in prompt
+    assert "Runtime data-reference values are private" in prompt
+    assert "Values visibly read during this Worker's own cohesive GUI branch" in prompt
     assert "Coordinates are normalized 0..999" in prompt
     assert "request_action_patch" in prompt
+
+
+def test_master_keeps_visual_conditional_dependencies_in_one_worker() -> None:
+    prompt = load_prompt_text("task.tool_agent.master")
+
+    assert "drive a later conditional GUI mutation" in prompt
+    assert "including across application switches" in prompt
+    assert "ResultRefs cannot serve as hidden Worker memory" in prompt
 
 
 def test_worker_handles_exhausted_candidate_sets_and_row_targets() -> None:

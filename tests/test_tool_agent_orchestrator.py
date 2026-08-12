@@ -103,6 +103,44 @@ def test_master_review_requires_ref_strings_from_descriptors() -> None:
     assert any(item.code == "ATTRIBUTE_ACCESS" for item in attribute_access)
 
 
+def test_master_review_explains_visual_only_worker_dependencies() -> None:
+    source = _program(
+        '''
+result = ctx.worker_result("collect")
+target_ref = result["collection_ref"]["ref"]
+outcome = ctx.gui_worker(
+    worker_id="continue_visual_branch",
+    profile="operator",
+    goal="Continue the visual branch",
+    success_criteria=["The visual branch is complete"],
+    input_refs={"target": target_ref},
+    data_requirements=[],
+    actions=[{
+        "name": "continue_branch",
+        "capability": "tap",
+        "description": "Continue the visual branch",
+    }],
+)
+if outcome["phase"] != "completed":
+    ctx.fail(outcome["summary"])
+ctx.fail("invalid program")
+'''.strip()
+    )
+
+    diagnostics = validate_master_source(source)
+
+    assert any(
+        item.code == "REF_VALUE_REQUIRED"
+        and "must stay inside one cohesive operator" in item.message
+        for item in diagnostics
+    )
+    assert any(
+        item.code == "GUI_WORKER_INPUT_BINDING"
+        and "merge visual-only or conditional dependencies" in item.message
+        for item in diagnostics
+    )
+
+
 def test_master_review_requires_explicit_terminal_effect() -> None:
     diagnostics = validate_master_source(
         "def run(ctx):\n"
