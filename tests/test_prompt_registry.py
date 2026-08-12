@@ -121,6 +121,17 @@ def test_tool_agent_worker_changes_strategy_after_empty_ui_search():
     assert "shorter distinctive substring" in prompt
 
 
+def test_tool_agent_worker_recognizes_exhausted_unfiltered_candidate_sets():
+    prompt = load_prompt_text("task.tool_agent.worker")
+
+    assert "an exhausted candidate set is direct" in prompt
+    assert "the same unfiltered selector" in prompt
+    assert "previously showed" in prompt
+    assert "latest selected batch's commit produced a confirmed transition" in prompt
+    assert "normal candidate region is visible" in prompt
+    assert "An initially empty selector, a filtered zero-result view" in prompt
+
+
 def test_tool_agent_worker_disambiguates_related_navigation_targets():
     prompt = load_prompt_text("task.tool_agent.worker")
 
@@ -130,6 +141,10 @@ def test_tool_agent_worker_disambiguates_related_navigation_targets():
     assert "`detail_resolution.status = active`" in prompt
     assert "`pending_candidate_ordinal`" in prompt
     assert "never add lookup rows as candidates" in prompt
+    assert "`target_signal.status=off_target`" in prompt
+    assert "authoritative flash-model feedback" in prompt
+    assert "describe the row/button itself" in prompt
+    assert "adjacent child icon or decoration" in prompt
 
 
 def test_shared_tool_agent_prompts_do_not_embed_platform_contracts() -> None:
@@ -410,6 +425,13 @@ def test_non_webarena_prompts_do_not_embed_benchmark_examples():
             continue
         for term in banned:
             assert term not in prompt.body, f"{prompt.id} embeds benchmark example {term!r}"
+
+
+def test_shared_target_verifier_is_platform_neutral():
+    prompt = load_prompt_text("task.vision.target_verify")
+
+    for term in ("底部 Tab", "世界时钟", "闹钟", "WebArena", "Android", "iOS"):
+        assert term not in prompt
 
 
 def test_adapter_prompts_do_not_embed_specific_app_ui_facts():

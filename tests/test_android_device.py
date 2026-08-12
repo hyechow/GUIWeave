@@ -14,6 +14,9 @@ from unittest.mock import Mock
 import pytest
 from PIL import Image
 
+from gui_agent.adapters.android.actions import AndroidAction, AndroidActionDecision
+from gui_agent.adapters.android.executor import AndroidExecutor
+
 
 class _FakeDev:
     """Records the adb calls the device makes (one per adbutils convenience method)."""
@@ -276,6 +279,27 @@ def test_executor_denorm_maps_normalized_to_device_pixels(calls):
 
     px2, py2 = executor._denorm(1000, 1000)
     assert (round(px2), round(py2)) == (1079, 2399)  # clamped to w-1, h-1
+
+
+def test_android_sensitive_typed_value_is_not_printed(capsys) -> None:
+    secret = "runtime-secret-73"
+    client = types.SimpleNamespace(
+        viewport_size=(1080, 2400),
+        tap=lambda _x, _y: "OK tap",
+        clear_text=lambda: "OK clear",
+        type_text=lambda text: f"OK type {text!r}",
+    )
+    executor = AndroidExecutor(types.SimpleNamespace(client=client))
+    executor.sensitive_text_values = (secret,)
+    decision = AndroidActionDecision(action=AndroidAction(
+        action_type="type", x=500, y=500, text=secret,
+        description="Enter the private session value",
+    ))
+
+    assert executor.execute(decision) is True
+    output = capsys.readouterr().out
+    assert secret not in output
+    assert "session access value redacted" in output
 
 
 # --------------------------------------------------------------------------- #

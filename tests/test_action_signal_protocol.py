@@ -65,7 +65,7 @@ def test_commit_role_follows_adapter_declared_control_geometry():
             "kind": "button",
             "label": "Persist form",
             "form_action": "commit",
-            "rect": {"x": 800, "y": 20, "w": 100, "h": 40},
+            "rect": {"x": 850, "y": 40, "w": 100, "h": 40},
         }],
     )
 
@@ -85,6 +85,11 @@ def test_commit_role_follows_adapter_declared_control_geometry():
         BaseAction(action_type="tap", x=500, y=500, description="Apply child changes"),
         observation,
     ) == "write"
+    assert effective_action_role(
+        _step("prepare"),
+        BaseAction(action_type="tap", x=901, y=40, description="near Persist form"),
+        observation,
+    ) == "prepare"
 
 
 _SAVE_CONTROL = {

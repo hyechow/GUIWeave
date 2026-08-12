@@ -3,9 +3,16 @@ from __future__ import annotations
 import json
 from pathlib import Path
 
+import pytest
+
+from gui_agent.adapters.android.actions import AndroidAction, AndroidActionDecision
+from gui_agent.adapters.android.control_grounding import ground_action_to_android_control
 from gui_agent.adapters.browser.actions import BrowserAction, BrowserActionDecision
 from gui_agent.adapters.browser.control_grounding import ground_action_to_nearest_control
-from gui_agent.core.tool_agent.action_guard import WorkerActionCircuitBreaker
+from gui_agent.core.tool_agent.action_guard import (
+    WorkerActionCircuitBreaker,
+    progress_signature,
+)
 from gui_agent.core.tool_agent.contracts import MaterializedFrame
 from manager_protocol.state_action_run import score_action
 
@@ -27,6 +34,12 @@ _ORDERS_FIXTURE = (
     / "fixtures"
     / "tool_agent"
     / "task108_orders_submenu_grounding.json"
+)
+_MATTERMOST_CHECKBOX_FIXTURE = (
+    Path(__file__).parent
+    / "fixtures"
+    / "tool_agent"
+    / "mattermost_member_checkbox_grounding.json"
 )
 
 
@@ -50,6 +63,112 @@ def _frame(case: dict, *, scope_status: str = "unmet") -> MaterializedFrame:
         },
         missing_requirements=["completed_orders"],
     )
+
+
+@pytest.mark.parametrize("case_index", [0, 1, 2])
+def test_mattermost_member_checkbox_points_replay_to_named_rows(
+    case_index: int,
+) -> None:
+    """Replay real member-list misses at row boundaries and near the commit button."""
+
+    fixture = json.loads(_MATTERMOST_CHECKBOX_FIXTURE.read_text(encoding="utf-8"))
+    case = fixture["cases"][case_index]
+    controls = [
+        {"label": label, **fixture["controls"][label]}
+        for label in case["visible_controls"]
+    ]
+    x, y = case["point"]
+    original = AndroidActionDecision(action=AndroidAction(
+        action_type="tap",
+        x=x,
+        y=y,
+        description=case["description"],
+    ))
+
+    grounded = ground_action_to_android_control(original, controls)
+    target_control = fixture["controls"][case["target"]]
+    target = target_control["rect"]
+    action_point = target_control["action_point"]
+    expected = {
+        "action_type": "tap",
+        "point": [action_point["x"], action_point["y"]],
+        "target_box": [850.0, 999.0, target["y"] - target["h"] / 2,
+                       target["y"] + target["h"] / 2],
+    }
+    score = score_action(grounded.action, expected)
+
+    assert score["ok"] is True
+    assert score["distance_to_recorded_point"] == 0.0
+    assert grounded.action.snap is not None
+    assert grounded.action.snap["method"] == "android_control_semantic_action_point"
+    assert grounded.action.snap["info"] == case["target"]
+    assert grounded.action.snap["snapped"] != [500.0, 925.8333333333]
+
+
+def test_mattermost_commit_button_edge_replays_to_semantic_center() -> None:
+    """Replay the live edge tap that selected nothing until it moved to center."""
+
+    fixture = json.loads(_MATTERMOST_CHECKBOX_FIXTURE.read_text(encoding="utf-8"))
+    commit = {"label": "Add Members", **fixture["controls"]["Add Members"]}
+    original = AndroidActionDecision(action=AndroidAction(
+        action_type="tap",
+        x=949,
+        y=926,
+        description="The blue Add Members commit button at the bottom",
+    ))
+
+    grounded = ground_action_to_android_control(original, [commit])
+
+    assert (grounded.action.x, grounded.action.y) == pytest.approx((500, 925.8333))
+    assert grounded.action.snap == pytest.approx({
+        "method": "android_control_semantic_geometry",
+        "original": [949, 926],
+        "snapped": [500, 925.8333333333],
+        "info": "Add Members",
+    })
+
+
+def test_android_semantic_name_does_not_snap_a_distant_point() -> None:
+    original = AndroidActionDecision(action=AndroidAction(
+        action_type="tap",
+        x=100,
+        y=100,
+        description="Tap the Save button",
+    ))
+    controls = [{
+        "kind": "button",
+        "label": "Save",
+        "rect": {"x": 900, "y": 900, "w": 100, "h": 50},
+    }]
+
+    grounded = ground_action_to_android_control(original, controls)
+
+    assert grounded == original
+
+
+def test_android_ignores_action_point_outside_its_control() -> None:
+    original = AndroidActionDecision(action=AndroidAction(
+        action_type="tap",
+        x=500,
+        y=400,
+        description="Checkbox for alex",
+    ))
+    controls = [{
+        "kind": "checkbox",
+        "label": "alex",
+        "action_point": {"x": 950, "y": 700},
+        "rect": {"x": 500, "y": 400, "w": 1000, "h": 60},
+    }]
+
+    grounded = ground_action_to_android_control(original, controls)
+
+    assert grounded == original
+
+    controls[0]["action_point"] = {"x": 900, "y": 400}
+    geometry_only = original.model_copy(update={"action": original.action.model_copy(
+        update={"y": 420, "description": "Tap the visible row"},
+    )})
+    assert ground_action_to_android_control(geometry_only, controls) == geometry_only
 
 
 def test_task108_failed_type_point_replays_through_coordinate_grounding() -> None:
@@ -349,6 +468,22 @@ def test_control_value_change_counts_as_task_progress() -> None:
     )
 
     assert progressed.blocked is False
+
+
+def test_visible_android_menu_controls_count_as_task_progress() -> None:
+    case = _case()
+    closed = _frame(case).model_copy(update={"controls": []})
+    opened = closed.model_copy(update={
+        "controls": [{
+            "kind": "button",
+            "label": "Create New Channel",
+            "value": "Create New Channel",
+            "in_viewport": True,
+            "rect": {"x": 500, "y": 900, "w": 1000, "h": 45},
+        }],
+    })
+
+    assert progress_signature(opened) != progress_signature(closed)
 
 
 def test_action_guard_rejects_control_capability_mismatches() -> None:

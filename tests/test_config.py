@@ -35,6 +35,7 @@ def test_default_config_has_dashscope_baseline(monkeypatch):
             "provider": "dashscope",
             "model": "qwen3.5-flash",
         }
+        assert llm["target_verify"]["model"] == "qwen3.5-flash"
     finally:
         config._load_raw.cache_clear()
 
@@ -113,6 +114,7 @@ def test_tokenplan_config_is_qwen37_token_plan(monkeypatch):
         assert llm["router"]["model"] == "qwen3.6-flash"
         assert llm["fingerprint"]["model"] == "qwen3.6-flash"
         assert llm["loading"]["model"] == "qwen3.6-flash"
+        assert llm["target_verify"]["model"] == "qwen3.6-flash"
         assert llm["supervisor"]["intent"]["model"] == "qwen3.7-plus"
         assert llm["observation"]["model"] == "qwen3.7-plus"
         # resolve 走 TOKENPLAN_* env

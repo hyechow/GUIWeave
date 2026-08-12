@@ -1,3 +1,5 @@
+import pytest
+
 from gui_agent.adapters.android.accessibility import (
     collection_regions_from_uiautomator,
     form_controls_from_semantic_tree,
@@ -72,6 +74,199 @@ def test_unlabeled_switch_uses_same_row_visible_text_as_its_label() -> None:
     assert controls is not None
     assert controls[0]["label"] == "Wi-Fi"
     assert controls[0]["value"] is True
+
+
+def test_clickable_bottom_sheet_rows_are_named_controls_with_center_rects() -> None:
+    xml = """<hierarchy>
+      <node class="android.widget.FrameLayout" bounds="[0,0][1080,2400]">
+        <node class="android.widget.LinearLayout" clickable="true"
+              bounds="[0,1944][1080,2056]">
+          <node class="android.widget.TextView" text="Browse Channels"
+                bounds="[72,1960][600,2040]"/>
+        </node>
+        <node class="android.widget.LinearLayout" clickable="true"
+              resource-id="plus_menu_item.create_new_channel"
+              bounds="[0,2056][1080,2176]">
+          <node class="android.widget.TextView" text="unrelated background text"
+                bounds="[72,2072][650,2160]"/>
+        </node>
+        <node class="android.widget.LinearLayout" clickable="true"
+              bounds="[0,2176][1080,2296]">
+          <node class="android.widget.TextView" text="Open Direct Message"
+                bounds="[72,2192][700,2280]"/>
+        </node>
+        <node class="android.widget.EditText"
+              resource-id="channel_info_form.display_name.input"
+              text="Bugs, Marketing" bounds="[100,678][980,741]"/>
+        <node class="android.widget.EditText" resource-id="password"
+              text="private value" bounds="[100,760][980,820]"/>
+        <node class="android.widget.Spinner" content-desc="Reminder interval"
+              clickable="true" bounds="[100,900][980,1020]"/>
+      </node>
+    </hierarchy>"""
+
+    tree = semantic_tree_from_uiautomator(xml, viewport_size=(1080, 2400))
+    controls = form_controls_from_semantic_tree(tree)
+
+    assert controls is not None
+    by_label = {control["label"]: control for control in controls}
+    assert set(by_label) == {
+        "Browse Channels", "create new channel", "Open Direct Message", "name",
+        "password", "Reminder interval",
+    }
+    create = by_label["create new channel"]
+    assert create["kind"] == "button"
+    assert create["bounds"] == pytest.approx((0, 856.6667, 1000, 906.6667))
+    assert create["rect"] == pytest.approx({
+        "x": 500,
+        "y": 881.6667,
+        "w": 1000,
+        "h": 50,
+    })
+    assert (by_label["name"]["kind"], by_label["name"]["value"]) == (
+        "text_input", "Bugs, Marketing",
+    )
+    assert by_label["Reminder interval"]["kind"] == "select"
+
+
+def test_glyph_backed_multiselect_rows_expose_selected_state_and_coordinates() -> None:
+    xml = """<hierarchy>
+      <node class="android.widget.FrameLayout" bounds="[0,0][1080,2400]">
+        <node class="android.widget.LinearLayout" content-desc="alex, \U000F05E0"
+              clickable="true" selected="false" bounds="[0,510][1080,657]">
+          <node class="android.widget.TextView" text="alex"
+                bounds="[145,540][260,610]"/>
+          <node class="android.widget.TextView" text="\U000F05E0"
+                bounds="[950,540][1032,613]"/>
+        </node>
+        <node class="android.widget.LinearLayout" content-desc="arjun, \U000F0766"
+              clickable="true" selected="false" bounds="[0,657][1080,804]">
+          <node class="android.widget.TextView" text="arjun"
+                bounds="[145,687][280,757]"/>
+          <node class="android.widget.TextView" text="\U000F0766"
+                bounds="[950,687][1032,760]"/>
+        </node>
+        <node class="android.widget.Button" content-desc="\U000F0610, Add Members"
+              resource-id="add_members.selected.start.button" clickable="true"
+              bounds="[55,2159][1025,2285]">
+          <node class="android.widget.TextView" text="\U000F0610"
+                bounds="[350,2190][420,2250]"/>
+          <node class="android.widget.TextView" text="Add Members"
+                bounds="[440,2190][720,2250]"/>
+        </node>
+        <node class="android.widget.Button" content-desc="Set Header, \U000F0130"
+              clickable="true" bounds="[350,1800][660,1984]">
+          <node class="android.widget.TextView" text="\U000F0130"
+                bounds="[455,1830][525,1900]"/>
+        </node>
+        <node class="android.widget.LinearLayout" content-desc="Wi-Fi, \U000F0142"
+              clickable="true" bounds="[0,1200][1080,1350]">
+          <node class="android.widget.TextView" text="Wi-Fi"
+                bounds="[100,1230][400,1320]"/>
+          <node class="android.widget.TextView" text="\U000F0142"
+                bounds="[950,1230][1030,1320]"/>
+        </node>
+        <node class="android.view.ViewGroup" bounds="[80,2050][360,2140]">
+          <node class="android.widget.TextView" text="alex"
+                bounds="[90,2060][250,2130]"/>
+          <node class="android.widget.Button" content-desc="\U000F0159"
+                resource-id="add_members.selected.user.remove.button"
+                clickable="true" bounds="[250,2060][340,2130]"/>
+        </node>
+      </node>
+    </hierarchy>"""
+
+    tree = semantic_tree_from_uiautomator(xml, viewport_size=(1080, 2400))
+    controls = form_controls_from_semantic_tree(tree)
+
+    assert controls is not None
+    rows = {
+        control["label"]: control
+        for control in controls
+        if control["kind"] == "checkbox"
+    }
+    assert rows["alex"]["selected"] is True
+    assert rows["arjun"]["selected"] is False
+    assert rows["alex"]["selection_mode"] == "multiple"
+    assert rows["alex"]["bounds"] == pytest.approx((0, 212.5, 1000, 273.75))
+    assert rows["arjun"]["rect"]["y"] == pytest.approx(304.375)
+    assert rows["alex"]["action_point"] == pytest.approx({
+        "x": 917.5926,
+        "y": 240.2083,
+    })
+    by_label = {control["label"]: control for control in controls}
+    assert by_label["Add Members"]["kind"] == "button"
+    assert "form_action" not in by_label["Add Members"]
+    assert by_label["Set Header"]["kind"] == "button"
+    assert "form_action" not in by_label["Set Header"]
+    assert by_label["Wi-Fi"]["kind"] == "button"
+    assert "action_point" not in by_label["Wi-Fi"]
+    assert by_label["remove"]["kind"] == "button"
+
+
+def test_android_commit_metadata_requires_explicit_submission_semantics() -> None:
+    xml = """<hierarchy>
+      <node class="android.widget.FrameLayout" bounds="[0,0][1080,2400]">
+        <node class="android.widget.Button" text="Add members"
+              resource-id="channel_post_list.intro_options.add_members.action"
+              clickable="true" bounds="[50,1500][360,1680]"/>
+        <node class="android.widget.EditText" text="Write a message"
+              resource-id="channel.post_draft.post.input"
+              bounds="[50,1800][1030,1900]"/>
+        <node class="android.widget.Button" content-desc="Camera"
+              resource-id="channel.post_draft.quick_actions.camera_action"
+              clickable="true" bounds="[400,1950][520,2070]"/>
+        <node class="android.widget.Button" content-desc="Send"
+              resource-id="channel.post_draft.send_action.send.button"
+              clickable="true" bounds="[850,1950][1030,2070]"/>
+        <node class="android.widget.Button" text="CREATE" clickable="true"
+              bounds="[850,100][1030,220]"/>
+        <node class="android.widget.Button" text="Save changes" clickable="true"
+              bounds="[600,250][1030,370]"/>
+        <node class="android.widget.Button" text="Create New Channel" clickable="true"
+              bounds="[50,250][550,370]"/>
+      </node>
+    </hierarchy>"""
+
+    controls = form_controls_from_semantic_tree(
+        semantic_tree_from_uiautomator(xml, viewport_size=(1080, 2400))
+    )
+
+    assert controls is not None
+    by_label = {item["label"]: item for item in controls}
+    assert "form_action" not in by_label["Add members"]
+    assert "form_action" not in by_label["Write a message"]
+    assert "form_action" not in by_label["Camera"]
+    assert by_label["Send"]["form_action"] == "commit"
+    assert by_label["CREATE"]["form_action"] == "commit"
+    assert by_label["Save changes"]["form_action"] == "commit"
+    assert "form_action" not in by_label["Create New Channel"]
+
+
+def test_clickable_composite_form_wrapper_is_not_projected_as_a_button() -> None:
+    xml = """<hierarchy>
+      <node class="android.widget.FrameLayout" bounds="[0,0][1080,2400]">
+        <node class="android.view.ViewGroup" clickable="true"
+              bounds="[53,360][1028,1570]">
+          <node class="android.widget.Switch" content-desc="Make Private"
+                checkable="true" checked="false" bounds="[906,425][1028,496]"/>
+          <node class="android.widget.EditText" content-desc="Name"
+                text="Bugs, Marketing" bounds="[100,678][980,741]"/>
+          <node class="android.widget.EditText" content-desc="Purpose"
+                text="A channel purpose" bounds="[100,875][980,938]"/>
+        </node>
+      </node>
+    </hierarchy>"""
+
+    tree = semantic_tree_from_uiautomator(xml, viewport_size=(1080, 2400))
+    controls = form_controls_from_semantic_tree(tree)
+
+    assert controls is not None
+    assert [(item["kind"], item["label"]) for item in controls] == [
+        ("switch", "Make Private"),
+        ("text_input", "Name"),
+        ("text_input", "Purpose"),
+    ]
 
 
 def test_uiautomator_projects_clickable_text_selection_state() -> None:

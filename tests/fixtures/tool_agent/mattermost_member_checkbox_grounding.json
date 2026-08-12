@@ -1,0 +1,36 @@
+{
+  "source_run": "logs/gui_agent/mobileworld/android/20260812_121154",
+  "source_frames": [15, 16, 20],
+  "controls": {
+    "alex": {"kind": "checkbox", "action_point": {"x": 917.5925925926, "y": 241.0416666667}, "rect": {"x": 500.0, "y": 243.125, "w": 1000.0, "h": 61.25}},
+    "arjun": {"kind": "checkbox", "action_point": {"x": 917.5925925926, "y": 302.2916666667}, "rect": {"x": 500.0, "y": 304.375, "w": 1000.0, "h": 61.25}},
+    "chen": {"kind": "checkbox", "action_point": {"x": 917.5925925926, "y": 328.5416666667}, "rect": {"x": 500.0, "y": 330.625, "w": 1000.0, "h": 61.25}},
+    "Add Members": {
+      "kind": "button",
+      "rect": {"x": 500.0, "y": 925.8333333333, "w": 898.1481481482, "h": 52.5}
+    }
+  },
+  "cases": [
+    {
+      "frame_id": "frame:15",
+      "target": "alex",
+      "visible_controls": ["alex", "arjun"],
+      "point": [916, 273],
+      "description": "The selection circle next to 'alex' user entry in the Add members list"
+    },
+    {
+      "frame_id": "frame:16",
+      "target": "arjun",
+      "visible_controls": ["alex", "arjun", "Add Members"],
+      "point": [900, 325],
+      "description": "The selection circle on the right side of the 'arjun' user entry row in the Add members list"
+    },
+    {
+      "frame_id": "frame:20",
+      "target": "chen",
+      "visible_controls": ["arjun", "chen", "Add Members"],
+      "point": [920, 361],
+      "description": "The selection circle on the right side of the 'chen' user entry row in the Add members list"
+    }
+  ]
+}

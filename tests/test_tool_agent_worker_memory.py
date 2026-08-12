@@ -77,6 +77,10 @@ def test_worker_memory_omits_spatial_and_execution_metadata() -> None:
             "settle_seconds": 1.2,
             "no_effect": False,
             "grounding": {"x": 421, "y": 532, "source": "dom"},
+            "target_signal": {
+                "status": "off_target",
+                "actual_element": "Status label",
+            },
         },
     )
 
@@ -89,6 +93,9 @@ def test_worker_memory_omits_spatial_and_execution_metadata() -> None:
     assert "grounding" not in rendered
     assert "Complete" in rendered
     assert "select_option" in rendered
+    assert "flash verifier reported off_target" in rendered
+    assert "Status label" in rendered
+    assert "do not repeat the same point" in rendered
 
 
 def test_worker_context_always_uses_compact_semantic_frame() -> None:
@@ -174,6 +181,16 @@ def test_worker_context_hides_offscreen_inventory_but_keeps_choice_state() -> No
                 "in_viewport": False,
                 "viewport_pos": "below",
             },
+            {
+                "kind": "checkbox",
+                "label": "alex",
+                "value": False,
+                "selected": False,
+                "selection_mode": "multiple",
+                "in_viewport": True,
+                "rect": {"x": 500, "y": 243, "w": 1000, "h": 61},
+                "action_point": {"x": 918, "y": 241},
+            },
         ],
     )
 
@@ -190,6 +207,9 @@ def test_worker_context_hides_offscreen_inventory_but_keeps_choice_state() -> No
     assert '"in_viewport"' not in observed.split('"structured_surfaces"', 1)[0]
     controls = projection.text.split('"controls"', 1)[1]
     assert '"label": "Material"' not in controls
+    assert '"label": "alex"' in controls
+    assert '"selected": false' in controls
+    assert '"action_point"' not in controls
     assert projection.text.index('"requirement_scopes"') < projection.text.index('"controls"')
     assert len(projection.text) < 5_000
 

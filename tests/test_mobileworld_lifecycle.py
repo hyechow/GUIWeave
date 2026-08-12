@@ -44,7 +44,8 @@ def test_mobileworld_package_manager_uses_internal_package_names():
 
 
 def test_mobileworld_cli_accepts_tool_agent_runtime_options():
-    args = _build_parser().parse_args([
+    parser = _build_parser()
+    args = parser.parse_args([
         "OpenFlightModeTask",
         "--runtime",
         "tool-agent",
@@ -57,6 +58,15 @@ def test_mobileworld_cli_accepts_tool_agent_runtime_options():
     assert args.runtime == "tool-agent"
     assert args.perception == "vision-only"
     assert args.tool_agent_multi_action is True
+    defaults = parser.parse_args(["OpenFlightModeTask"])
+    disabled = parser.parse_args([
+        "OpenFlightModeTask",
+        "--no-tool-agent-multi-action",
+    ])
+
+    assert defaults.runtime == "tool-agent"
+    assert defaults.tool_agent_multi_action is True
+    assert disabled.tool_agent_multi_action is False
 
 
 def test_mobileworld_task_type_fallback_handles_state_mutations():
@@ -179,6 +189,7 @@ def test_tool_agent_execution_persists_android_mobileworld_context(
     tmp_path,
     monkeypatch,
 ):
+    runtime_run_kwargs = {}
     run = SimpleNamespace(
         phase="completed",
         effect="mutation",
@@ -203,6 +214,7 @@ def test_tool_agent_execution_persists_android_mobileworld_context(
             self.log_dir = kwargs["log_dir"]
 
         def run(self, _intent, **_kwargs):
+            runtime_run_kwargs.update(_kwargs)
             (self.log_dir / "tool_agent_replay.json").write_text(
                 '{"status":"passed"}', encoding="utf-8"
             )
@@ -225,6 +237,7 @@ def test_tool_agent_execution_persists_android_mobileworld_context(
         allow_multi_action=False,
         fallback_task_type="MUTATE",
         knowledge_summary=None,
+        access_context="Account `private-user` / password `private-secret`",
         raw_input="Turn on device flight mode",
         router={"goal": "Turn on device flight mode"},
     )
@@ -236,3 +249,8 @@ def test_tool_agent_execution_persists_android_mobileworld_context(
     assert context["platform"] == "android"
     assert context["orchestrator"]["kind"] == "tool_agent"
     assert context["reply"] == "Flight mode is enabled."
+    assert runtime_run_kwargs["access_context"] == (
+        "Account `private-user` / password `private-secret`"
+    )
+    assert "private-user" not in json.dumps(context)
+    assert "private-secret" not in json.dumps(context)

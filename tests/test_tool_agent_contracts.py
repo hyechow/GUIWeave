@@ -45,6 +45,10 @@ def test_action_envelope_preserves_dynamic_atomic_schemas() -> None:
         tool for tool in tools
         if tool["function"]["name"] == "continue_with_actions"
     )
+    description = envelope["function"]["description"]
+    assert "tap" not in description
+    assert "clear_text" not in description
+    assert "select_option" not in description
     parameters = envelope["function"]["parameters"]
     state = {
         "status": "exploring",

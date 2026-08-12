@@ -4,6 +4,8 @@ import os
 import subprocess
 from pathlib import Path
 
+from gui_agent.adapters.browser.webarena import _build_parser
+
 
 PROJECT_ROOT = Path(__file__).resolve().parents[1]
 
@@ -67,3 +69,12 @@ def test_python_cli_uses_runtime_specific_default_max_turns() -> None:
     assert '_MAX_TURNS = 50' in source
     assert 'default=None' in source
     assert 'if args.runtime == "tool-agent"' in source
+
+
+def test_webarena_enables_tool_agent_multi_action_by_default() -> None:
+    parser = _build_parser()
+
+    assert parser.parse_args([]).tool_agent_multi_action is True
+    assert parser.parse_args([
+        "--no-tool-agent-multi-action",
+    ]).tool_agent_multi_action is False

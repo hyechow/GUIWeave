@@ -20,6 +20,7 @@ from gui_agent.core.tool_agent.protocol import (
     capability_parameters,
 )
 from gui_agent.core.tool_agent.runtime import ToolAgentRuntime
+from gui_agent.core.schemas import TargetVerify
 from gui_agent.adapters.browser.control_grounding import ground_action_to_nearest_control
 
 
@@ -138,7 +139,8 @@ def test_private_access_context_reaches_worker_but_is_redacted_from_trace() -> N
 
     access_context = (
         "# Deployment\n"
-        "Account `runtime-user-73` / password `runtime-secret-73`"
+        "Username: `runtime-user-73`\n"
+        "Password: `runtime-secret-73`"
     )
     runtime = object.__new__(ToolAgentRuntime)
     runtime._worker_access_context = access_context
@@ -397,6 +399,27 @@ class _GroundingExecutor(_Executor):
         )
 
 
+class _ImmediateVerifyPool:
+    def __init__(self, *values: TargetVerify) -> None:
+        self.values = list(values)
+        self.submitted = []
+
+    def submit(self, function, *args):
+        self.submitted.append((function, args))
+        value = self.values.pop(0)
+        return SimpleNamespace(result=lambda timeout=None: value)
+
+
+class _BrowserSnapExecutor(_Executor):
+    def execute(self, decision, **kwargs):
+        decision.action.snap = {
+            "method": "dom",
+            "snapped": [525.0, 540.0],
+            "info": "Create Channel",
+        }
+        return super().execute(decision, **kwargs)
+
+
 class _Visualizer:
     def __init__(self) -> None:
         self.points = []
@@ -592,6 +615,7 @@ def _run_fused_worker(
     actions: list[DynamicActionSpec] | None = None,
     controls: list[dict] | None = None,
     requirement_scopes: dict[str, dict] | None = None,
+    target_verify: TargetVerify | None = None,
 ) -> ToolAgentRuntime:
     runtime = object.__new__(ToolAgentRuntime)
     runtime.trace = []
@@ -604,6 +628,9 @@ def _run_fused_worker(
         client=SimpleNamespace(page_info=lambda: (current_url, "Login")),
     )
     runtime.allow_multi_action = True
+    runtime._target_verify_pool = (
+        _ImmediateVerifyPool(target_verify) if target_verify else None
+    )
     runtime.observe_calls = 0
 
     def observe(_spec):
@@ -696,7 +723,8 @@ def test_multi_action_suffix_requires_stable_visible_targets() -> None:
     specs = {
         name: DynamicActionSpec(name=name, capability=capability, description=name)
         for name, capability in {
-            "tap": "tap", "clear": "clear_text", "type": "type", "scroll": "scroll"
+            "tap": "tap", "clear": "clear_text", "type": "type",
+            "select": "select_option", "scroll": "scroll",
         }.items()
     }
     type_call = {"name": "type", "args": {"x": 500, "y": 400}}
@@ -704,15 +732,92 @@ def test_multi_action_suffix_requires_stable_visible_targets() -> None:
     assert runtime._suffix_requires_reobservation(
         call={"name": "tap", "args": {"x": 500, "y": 400}},
         action=specs["tap"],
-        remaining=[{"name": "clear", "args": {}}, type_call],
+        remaining=[
+            {"name": "clear", "args": {}},
+            type_call,
+        ],
         action_by_name=specs,
     ) == ""
+    assert "invalidate coordinates" in runtime._suffix_requires_reobservation(
+        call={"name": "tap", "args": {"x": 500, "y": 400}},
+        action=specs["tap"],
+        remaining=[type_call, {"name": "tap", "args": {"x": 500, "y": 600}}],
+        action_by_name=specs,
+    )
     assert "invalidate coordinates" in runtime._suffix_requires_reobservation(
         call={"name": "scroll", "args": {}},
         action=specs["scroll"],
         remaining=[type_call],
         action_by_name=specs,
     )
+    assert "invalidate coordinates" in runtime._suffix_requires_reobservation(
+        call={"name": "select", "args": {"text": "Complete"}},
+        action=specs["select"],
+        remaining=[type_call],
+        action_by_name=specs,
+    )
+
+
+def test_android_focus_requires_reobservation_before_type() -> None:
+    runtime = object.__new__(ToolAgentRuntime)
+    runtime._executor = type("AndroidExecutorStub", (), {
+        "tap_type_suffix_safe": False,
+    })()
+    tap = DynamicActionSpec(name="tap", capability="tap", description="focus")
+    type_action = DynamicActionSpec(name="type", capability="type", description="type")
+
+    reason = runtime._suffix_requires_reobservation(
+        call={"name": "tap", "args": {"x": 500, "y": 900}},
+        action=tap,
+        remaining=[{"name": "type", "args": {"x": 500, "y": 900}}],
+        action_by_name={"tap": tap, "type": type_action},
+    )
+
+    assert "invalidate coordinates" in reason
+
+    runtime._executor.type_suffix_safe = False
+    reason = runtime._suffix_requires_reobservation(
+        call={"name": "type", "args": {"x": 500, "y": 900}},
+        action=type_action,
+        remaining=[{"name": "tap", "args": {"x": 500, "y": 700}}],
+        action_by_name={"tap": tap, "type": type_action},
+    )
+    assert "reflow" in reason
+
+
+def test_multi_action_suffix_allows_distinct_visible_noncommit_taps() -> None:
+    runtime = object.__new__(ToolAgentRuntime)
+    tap = DynamicActionSpec(name="tap", capability="tap", description="tap")
+    actions = {"tap": tap}
+    frame = MaterializedFrame(
+        frame_id="frame:members",
+        screenshot_path="frame.png",
+        controls=[{
+            "kind": "button" if label == "Add Members" else "checkbox",
+            "label": label, "ref": f"row:{label}",
+            "selection_mode": "multiple",
+            "rect": {"x": 500, "y": y, "w": 1000, "h": 60},
+            **({"form_action": "commit"} if label == "Add Members" else {}),
+        } for label, y in (("alex", 240), ("arjun", 320), ("Add Members", 900))],
+    )
+
+    stable = runtime._suffix_requires_reobservation(
+        call={"name": "tap", "args": {"x": 900, "y": 240}},
+        action=tap,
+        remaining=[{"name": "tap", "args": {"x": 900, "y": 320}}],
+        action_by_name=actions,
+        frame=frame,
+    )
+    commit = runtime._suffix_requires_reobservation(
+        call={"name": "tap", "args": {"x": 900, "y": 320}},
+        action=tap,
+        remaining=[{"name": "tap", "args": {"x": 500, "y": 900}}],
+        action_by_name=actions,
+        frame=frame,
+    )
+
+    assert stable == ""
+    assert "invalidate coordinates" in commit
 
 
 def test_multi_action_runtime_accepts_five_and_rejects_six_calls() -> None:
@@ -1075,6 +1180,84 @@ def test_vision_only_execution_does_not_use_enhanced_control_geometry(
     executed = runtime._executor.actions[-1]
     assert (executed.x, executed.y) == (207, 448)
     assert executed.snap is None
+
+
+@pytest.mark.parametrize(
+    ("action_type", "executor", "expected_point"),
+    [
+        (AndroidAction, _Executor(), (480.0, 500.0)),
+        (BrowserAction, _BrowserSnapExecutor(), (525.0, 540.0)),
+    ],
+)
+def test_worker_target_verify_uses_final_platform_point(
+    monkeypatch, action_type, executor, expected_point,
+) -> None:
+    runtime = object.__new__(ToolAgentRuntime)
+    runtime.bundle = SimpleNamespace(
+        make_action=lambda payload: action_type.model_validate(payload)
+    )
+    runtime.perception_mode = "enhanced"
+    runtime._executor = executor
+    runtime._visualizer = None
+    runtime.platform = object()
+    runtime.trace = []
+    runtime._target_verify_pool = _ImmediateVerifyPool(TargetVerify(
+        on_target=False,
+        actual_element="Create Channel",
+        reason="The marker is on the adjacent control.",
+    ))
+    monkeypatch.setattr(
+        "gui_agent.core.tool_agent.runtime.settle_after_action",
+        lambda platform, png, *, action_type: (0.0, False),
+    )
+    action = DynamicActionSpec(
+        name="activate_visible_control",
+        capability="tap",
+        description="Activate a visible control",
+    )
+    spec = WorkerSpec(
+        goal="Open the channel form",
+        success_criteria=["The channel form opens"],
+        actions=[action],
+    )
+
+    payload, terminal = runtime._execute_worker_tool(
+        spec,
+        [action],
+        {
+            "name": action.name,
+            "args": {
+                "x": 480,
+                "y": 500,
+                "description": "Activate Create Channel",
+            },
+        },
+        b"png",
+        MaterializedFrame(frame_id="frame:1", screenshot_path="frame.png"),
+    )
+
+    assert terminal is None
+    assert payload["target_signal"]["status"] == "off_target"
+    assert runtime._target_verify_pool.submitted[0][1][1:3] == expected_point
+
+
+def test_multi_action_aborts_suffix_after_flash_off_target(monkeypatch) -> None:
+    runtime = _run_fused_worker(
+        monkeypatch,
+        current_url="https://example.test/login",
+        target_verify=TargetVerify(
+        on_target=False,
+        actual_element="Username",
+        reason="The marker missed the Password field.",
+        ),
+    )
+
+    assert len(runtime._executor.actions) == 1
+    aborted = next(
+        event for event in runtime.trace
+        if event["event"] == "worker_multi_action_aborted"
+    )
+    assert "flash verifier reported off_target" in aborted["reason"]
 
 
 def test_runtime_recovers_missing_exposed_action_description(monkeypatch) -> None:
@@ -1567,12 +1750,14 @@ def test_runtime_streams_live_logs_and_observation_artifacts(tmp_path) -> None:
     runtime._frame_no = 0
     runtime.bundle = object()
     runtime.platform = object()
+    runtime._access_log_redactions = ("runtime-secret-73",)
     runtime.materializer = SimpleNamespace(
         model="observer-model",
         observe=lambda **_kwargs: (
             MaterializedFrame(
                 frame_id="frame:1",
                 screenshot_path=str(tmp_path / "screenshot_tool_agent_1.png"),
+                title="Signed in as runtime-secret-73",
             ),
             b"png",
         ),
@@ -1610,6 +1795,11 @@ def test_runtime_streams_live_logs_and_observation_artifacts(tmp_path) -> None:
     assert events[0]["timestamp"]
     assert statuses == ["Observer · Observe frame:1 for ?: no collection refs"]
     assert (tmp_path / "observation_tool_agent_1.json").is_file()
+    observation = (tmp_path / "observation_tool_agent_1.json").read_text(
+        encoding="utf-8"
+    )
+    assert "runtime-secret-73" not in observation
+    assert "session access value redacted" in observation
     assert (tmp_path / "tool_agent_data_store.json").is_file()
 
 
