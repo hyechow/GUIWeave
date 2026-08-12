@@ -191,7 +191,14 @@ def semantic_tree_from_uiautomator(
         attrs = node.attrib
         clickable = attrs.get("clickable") == "true"
         scrollable = attrs.get("scrollable") == "true"
-        key = _label(node)
+        visible_label = str(
+            attrs.get("content-desc") or attrs.get("text") or ""
+        ).strip()
+        if clickable and not visible_label:
+            descendant_labels = _texts(node)
+            visible_label = descendant_labels[0] if descendant_labels else ""
+        resource = _short_resource(node)
+        key = visible_label or resource
         match = _BOUNDS.fullmatch(str(attrs.get("bounds") or "").strip())
         if not key and not clickable and not scrollable:
             continue
@@ -205,8 +212,8 @@ def semantic_tree_from_uiautomator(
             "ref": "android:" + ".".join(str(index) for index in path),
             "depth": depth,
             "scrollable": scrollable,
+            "clickable": clickable,
         }
-        resource = _short_resource(node)
         if resource:
             item["resource"] = resource
         if match is not None:
@@ -308,7 +315,14 @@ def _nearby_control_label(
 def form_controls_from_semantic_tree(
     nodes: list[dict[str, Any]] | None,
 ) -> list[dict[str, Any]] | None:
-    """Project stable Android fields without parsing the hierarchy twice."""
+    """Project current actionable Android controls with normalized geometry.
+
+    UIAutomator commonly puts a menu row's visible text on a child TextView and
+    ``clickable=true`` on its parent layout.  The semantic tree carries that
+    parent identity, so expose it to enhanced workers just like text fields and
+    switches.  ``rect.x/y`` are always the center in the shared 0-1000 space;
+    ``bounds`` retains edge coordinates for consumers that need them.
+    """
     if nodes is None:
         return None
     controls: list[dict[str, Any]] = []
@@ -324,7 +338,9 @@ def form_controls_from_semantic_tree(
             "text_input" if role == "textbox"
             else "switch" if role in {"checkbox", "radio", "switch"}
             else "select" if role == "button" and identity_words & {"date", "time"}
-            else "button" if persistence
+            else "button" if role == "button" and (
+                persistence or node.get("clickable") is True
+            )
             else ""
         )
         if not kind:
@@ -350,14 +366,55 @@ def form_controls_from_semantic_tree(
         if isinstance(rect, dict):
             x, y = float(rect["x"]), float(rect["y"])
             width, height = float(rect["width"]), float(rect["height"])
+            if kind == "button" and width >= 950 and height >= 600:
+                # Ignore page-sized clickable wrappers. Full-width menu rows
+                # remain useful because their height is small.
+                continue
             item["bounds"] = (x - width / 2, y - height / 2,
                               x + width / 2, y + height / 2)
             item["rect"] = {
-                "x": x - width / 2, "y": y - height / 2,
+                "x": x, "y": y,
                 "w": width, "h": height,
             }
         controls.append(item)
-    return controls
+
+    # Some UI toolkits mark both a row and its immediate child clickable. Keep
+    # the smaller rendered target when they expose the same visible identity.
+    deduplicated: list[dict[str, Any]] = []
+    for control in controls:
+        label = "".join(
+            character.casefold()
+            for character in str(control.get("label") or "")
+            if character.isalnum()
+        )
+        rect = control.get("rect")
+        duplicate_index: int | None = None
+        if label and isinstance(rect, dict):
+            for index, existing in enumerate(deduplicated):
+                existing_rect = existing.get("rect")
+                if (
+                    existing.get("kind") == control.get("kind")
+                    and "".join(
+                        character.casefold()
+                        for character in str(existing.get("label") or "")
+                        if character.isalnum()
+                    ) == label
+                    and isinstance(existing_rect, dict)
+                    and abs(float(existing_rect["x"]) - float(rect["x"])) <= 8
+                    and abs(float(existing_rect["y"]) - float(rect["y"])) <= 8
+                ):
+                    duplicate_index = index
+                    break
+        if duplicate_index is None:
+            deduplicated.append(control)
+            continue
+        existing = deduplicated[duplicate_index]
+        existing_rect = existing["rect"]
+        if float(rect["w"]) * float(rect["h"]) < (
+            float(existing_rect["w"]) * float(existing_rect["h"])
+        ):
+            deduplicated[duplicate_index] = control
+    return deduplicated
 
 
 def collection_regions_from_uiautomator(

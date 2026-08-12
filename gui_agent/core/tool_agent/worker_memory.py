@@ -69,6 +69,7 @@ _RESULT_MEMORY_FIELDS = (
     "error",
     "recovery",
     "platform_feedback",
+    "target_signal",
 )
 
 
@@ -200,6 +201,12 @@ class WorkerJournal:
         )
         is_exception = isinstance(result, dict) and bool(result.get("error"))
         is_no_effect = isinstance(result, dict) and bool(result.get("no_effect"))
+        target_signal = (
+            result.get("target_signal")
+            if isinstance(result, dict)
+            and isinstance(result.get("target_signal"), dict)
+            else {}
+        )
         is_result_ref = result_kind == "result" or (
             isinstance(result, dict) and str(result.get("ref") or "").startswith("result:")
         )
@@ -207,6 +214,13 @@ class WorkerJournal:
         if is_exception or result_status in {"error", "failed"}:
             durable_text = (
                 f"tool={tool}; failure={_bounded_json(memory_result, limit=420)}"
+            )
+        elif target_signal.get("status") == "off_target":
+            actual = str(target_signal.get("actual_element") or "").strip()
+            actual_text = f"; marker landed on {actual!r}" if actual else ""
+            durable_text = (
+                f"tool={tool}; flash verifier reported off_target{actual_text}; "
+                "do not repeat the same point"
             )
         elif is_no_effect:
             action_type = (

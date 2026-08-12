@@ -30,6 +30,7 @@ from gui_agent.core.schemas import BaseActionDecision
 
 # Coarse ScrollAmount -> device ``scroll`` amount units (the device maps units->px).
 _AMOUNT_UNITS = {"small": 3, "medium": 5, "large": 9}
+_REDACTED_INPUT_VALUE = "[session access value redacted]"
 
 
 def amount_to_units(amount: str) -> int:
@@ -66,6 +67,15 @@ class VisionExecutor:
         neutral small/medium/large -> 3/5/9. A platform overrides this to widen the
         range when it needs both fine (wheel-picker, ~1 row) and coarse (list) steps."""
         return amount_to_units(amount)
+
+    def _display_value(self, value: object) -> str:
+        """Render executor output without persisting configured access values."""
+
+        rendered = str(value)
+        for secret in getattr(self, "sensitive_text_values", ()):
+            if secret:
+                rendered = rendered.replace(secret, _REDACTED_INPUT_VALUE)
+        return rendered
 
     def execute_scroll(self, action, *, ticks: int = 0, delta_px: int = 0) -> bool:
         """Scroll without execute()'s bool wrapper (runner scroll-cache path).
@@ -110,7 +120,7 @@ class VisionExecutor:
                 if not self._clear_before_type(client, action.text):
                     return False
                 result = client.type_text(action.text)
-                print(f"  结果: {result}")
+                print(f"  结果: {self._display_value(result)}")
                 return self._result_succeeded(result, "输入")
             return True
 
@@ -185,7 +195,7 @@ class VisionExecutor:
 
     def _clear_before_type(self, client, text: str) -> bool:
         """Clear the focused field before typing ``text`` (default: clear_text)."""
-        print(f"  清空并输入: {text!r}")
+        print(f"  清空并输入: {self._display_value(repr(text))}")
         result = client.clear_text()
         print(f"  结果: {result}")
         return self._result_succeeded(result, "输入前清空")

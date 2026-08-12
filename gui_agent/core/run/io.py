@@ -15,15 +15,16 @@ from pathlib import Path
 from typing import IO, Iterator
 
 ROOT = Path(__file__).resolve().parents[3]
-POLICY_LOG_ROOT = ROOT / "logs" / "gui_agent"
+LOG_ROOT = Path(
+    os.environ.get("GUIWEAVE_LOG_ROOT", ROOT / "logs" / "gui_agent")
+).expanduser()
 ESC_SEQUENCE_WINDOW_S = 0.04
 
 
 def create_run_dir(mode: str, platform: str = "") -> Path:
-    # logs/gui_agent/<mode>/<platform>/<ts>/ — the platform segment keeps iphone vs
-    # browser runs in separate trees. Omitted (legacy layout) when platform is "".
+    # logs/gui_agent/<mode>/<platform>/<ts>/ keeps platform runs separate.
     started_at = datetime.now().strftime("%Y%m%d_%H%M%S")
-    base = POLICY_LOG_ROOT / mode / platform if platform else POLICY_LOG_ROOT / mode
+    base = LOG_ROOT / mode / platform if platform else LOG_ROOT / mode
     path = base / started_at
     suffix = 2
     while path.exists():
@@ -80,6 +81,21 @@ def tee_stdio(log_dir: Path) -> Iterator[None]:
         except Exception:
             traceback.print_exc()
             raise SystemExit(1) from None
+
+
+@contextmanager
+def capture_stdio(log_dir: Path) -> Iterator[None]:
+    """Capture runtime output without touching stdout used by stdio MCP."""
+
+    stdout_path = log_dir / "stdout.log"
+    stderr_path = log_dir / "stderr.log"
+    with (
+        stdout_path.open("a", encoding="utf-8", buffering=1) as stdout_file,
+        stderr_path.open("a", encoding="utf-8", buffering=1) as stderr_file,
+        redirect_stdout(stdout_file),
+        redirect_stderr(stderr_file),
+    ):
+        yield
 
 
 class EscStopSignal:

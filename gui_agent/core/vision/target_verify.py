@@ -55,10 +55,18 @@ def render_marker(png: bytes, nx: float, ny: float) -> bytes:
 
 
 def _verify_llm() -> ChatOpenAI:
-    # Reuse the action_policy vision model (proven for this task). A dedicated
-    # cheaper "target_verify" model can be wired later via its own config key.
-    cfg = resolve_llm_config("action_policy")
-    return ChatOpenAI(model=cfg.model, api_key=cfg.api_key, base_url=cfg.base_url, temperature=0)
+    from llm.provider_config import dashscope_extra_body
+
+    cfg = resolve_llm_config("target_verify")
+    return ChatOpenAI(
+        model=cfg.model,
+        api_key=cfg.api_key,
+        base_url=cfg.base_url,
+        extra_body=dashscope_extra_body(cfg.model),
+        timeout=cfg.timeout_s,
+        max_retries=cfg.max_retries,
+        temperature=0,
+    )
 
 
 def _upscale(png: bytes, min_w: int = 900) -> bytes:

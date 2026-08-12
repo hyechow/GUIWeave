@@ -5,7 +5,6 @@
 #   例: bin/mobileworld <task-name>                  # 跑一条任务(默认带状态 HUD)
 #       bin/mobileworld --headless <task-name>       # 全后台(无 HUD/光标覆盖)
 #       bin/mobileworld <task-name> --max-turns 30   # 透传给 mobileworld.py
-#       bin/mobileworld <task-name> --runtime tool-agent
 # 前置(MobileWorld Docker 宿主上,容器端口需对本机可达):
 #   1) emulator adb: 容器 5556 经 adb relay + portproxy 暴露 → `adb connect <host>:5556`
 #   2) backend HTTP: 容器 6800 经 portproxy 暴露 → MW_BASE_URL=http://<host>:6800
@@ -32,9 +31,6 @@ else
 fi
 
 # headless 是唯一可见性开关:headed 模式默认显示状态 HUD + 光标覆盖,--headless 则全关。
-# "$@" 在后,额外参数可覆盖默认。AGENT_MODEL 默认 qwen35(与 bin/runner 一致)。
-exec env AGENT_PLATFORM="android" \
-         AGENT_MODE="${AGENT_MODE:-daemon}" \
-         AGENT_MODEL="${AGENT_MODEL:-qwen35}" \
-         uv run python -m gui_agent.adapters.android.mobileworld \
+# "$@" 在后，其余参数由 Tool Agent MobileWorld CLI 处理。
+exec uv run python -m gui_agent.adapters.android.mobileworld \
          "${headless_arg[@]}" "$@"

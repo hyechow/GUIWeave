@@ -6,6 +6,7 @@ import hashlib
 import json
 import re
 import time
+from concurrent.futures import ThreadPoolExecutor
 from datetime import datetime
 from math import hypot
 from pathlib import Path
@@ -18,8 +19,12 @@ from langchain_openai import ChatOpenAI
 
 from gui_agent.core.config import resolve_llm_config
 from gui_agent.prompts import load_prompt_text
-from gui_agent.core.run.action_exec import has_snapped_point, settle_after_action
-from gui_agent.core.schemas import BaseAction, BaseActionDecision
+from gui_agent.core.run.action_exec import (
+    VERIFY_TIMEOUT_S,
+    has_snapped_point,
+    settle_after_action,
+)
+from gui_agent.core.schemas import BaseAction, BaseActionDecision, TargetVerify
 from gui_agent.core.tool_agent.contracts import (
     CollectionRef,
     DynamicActionSpec,
@@ -64,6 +69,7 @@ from gui_agent.core.tool_agent.worker_memory import (
     build_worker_memory_view,
     project_worker_context,
 )
+from gui_agent.core.vision.target_verify import verify_target
 
 _MASTER_SYSTEM = load_prompt_text("task.tool_agent.master")
 _MASTER_REDELEGATE_SYSTEM = load_prompt_text("task.tool_agent.master_redelegate")
@@ -94,6 +100,13 @@ _EXECUTABLE_CAPABILITIES = {
 }
 _ACTION_TYPES = {"open_url": "navigate"}
 _REDACTED_ACCESS_VALUE = "[session access value redacted]"
+_WORKER_VERIFY_POOL = ThreadPoolExecutor(
+    max_workers=1,
+    thread_name_prefix="tool-worker-verify",
+)
+_TARGET_VERIFIED_ACTION_TYPES = {
+    "tap", "click", "type", "long_press", "select_option",
+}
 
 
 def _token_metric(
@@ -236,6 +249,7 @@ class ToolAgentRuntime:
         self._master_knowledge = ""
         self._installed_app_names: tuple[str, ...] | None = None
         self._executor = bundle.make_executor(platform)
+        self._target_verify_pool = _WORKER_VERIFY_POOL
         try:
             self._visualizer = bundle.make_action_visualizer(platform)
         except Exception:  # noqa: BLE001 - action visualization is cosmetic
@@ -1355,8 +1369,12 @@ class ToolAgentRuntime:
             structured_surfaces=frame.structured_surfaces,
             control_count=len(frame.controls),
         )
+        durable_frame = _redact_log_value(
+            frame.model_dump(mode="json"),
+            getattr(self, "_access_log_redactions", ()),
+        )
         (self.log_dir / f"observation_tool_agent_{self._frame_no}.json").write_text(
-            frame.model_dump_json(indent=2),
+            json.dumps(durable_frame, ensure_ascii=False, indent=2),
             encoding="utf-8",
         )
         return frame, png
@@ -1400,10 +1418,11 @@ class ToolAgentRuntime:
                 f"Continue through `continue_with_actions`. Use 2–{MAX_ORDERED_ACTIONS} actions when all targets "
                 "are already visible and no later action depends on newly revealed UI; "
                 "otherwise use one. Runtime executes serially and may discard a stale suffix. "
-                "Type, clear_text and select_option may be non-final. A tap may be non-final "
-                "only to focus the same input used by following clear/type actions. Put "
-                "submit taps, Enter, scroll, back and navigation last. Include all safe, "
-                "required steps of a fully visible form. Use patch/complete/fail separately."
+                "Chain only actions that preserve the current geometry, except that a focus "
+                "action may precede operations on the same already-visible control. Put "
+                "confirmation, traversal, and other surface-changing actions last. Include "
+                "all safe required operations on a fully visible form. Use patch, completion, "
+                "and failure tools separately."
             )
         spec_for_prompt = spec.model_dump(mode="json", exclude={"actions"})
         spec_for_prompt["action_contracts"] = [
@@ -1679,6 +1698,18 @@ class ToolAgentRuntime:
                 args=action_call["args"],
                 result=result,
             )
+            target_signal = result.get("target_signal")
+            if (
+                isinstance(target_signal, dict)
+                and target_signal.get("status") == "off_target"
+            ):
+                actual = str(target_signal.get("actual_element") or "").strip()
+                reason = (
+                    "flash verifier reported off_target"
+                    + (f" on {actual!r}" if actual else "")
+                    + "; reobserve before continuing"
+                )
+                break
             if terminal is not None or result.get("status") in {"error", "failed"}:
                 reason = str(
                     result.get("error")
@@ -1836,6 +1867,7 @@ class ToolAgentRuntime:
                     decision = ground(decision, frame.controls)
                 except Exception:  # noqa: BLE001 - optional enhancement fails open
                     pass
+            executed_action = decision.action
             # Grounding has already produced the best currently known point.
             # Show it before dispatch, then mirror the original runtime contract
             # by updating once more if the executor records a DOM snap.
@@ -1843,11 +1875,46 @@ class ToolAgentRuntime:
             executed = self._executor.execute(decision, png_bytes=png)
             if executed and has_snapped_point(decision):
                 self._show_action(decision.action)
+            verify_future = None
+            verify_pool = getattr(self, "_target_verify_pool", None)
+            if (
+                executed
+                and verify_pool is not None
+                and executed_action.action_type in _TARGET_VERIFIED_ACTION_TYPES
+                and executed_action.x is not None
+                and executed_action.y is not None
+            ):
+                verify_future = verify_pool.submit(
+                    verify_target,
+                    png,
+                    float(executed_action.x),
+                    float(executed_action.y),
+                    str(executed_action.description or ""),
+                )
             elapsed, no_effect = settle_after_action(
                 self.platform,
                 png,
-                action_type=action.action_type,
+                action_type=executed_action.action_type,
             )
+            target_signal: dict[str, Any] | None = None
+            if verify_future is not None:
+                try:
+                    verification = TargetVerify.model_validate(
+                        verify_future.result(timeout=VERIFY_TIMEOUT_S)
+                    )
+                    target_signal = {
+                        "status": (
+                            "on_target" if verification.on_target else "off_target"
+                        ),
+                        "actual_element": verification.actual_element,
+                        "reason": verification.reason,
+                    }
+                except Exception as exc:  # noqa: BLE001 - optional verifier fails open
+                    self._trace(
+                        "worker_target_verify_error",
+                        tool=call["name"],
+                        error=f"{type(exc).__name__}: {exc}",
+                    )
             platform_feedback: list[dict[str, Any]] = []
             feedback_reader = getattr(
                 getattr(self.platform, "client", None),
@@ -1915,11 +1982,13 @@ class ToolAgentRuntime:
                     rejections.pop(worker_id, None)
             payload = {
                 "status": "executed" if executed and not rejected_feedback else "failed",
-                "action_type": action.action_type,
+                "action_type": executed_action.action_type,
                 "settle_seconds": round(elapsed, 3),
                 "no_effect": no_effect,
                 "grounding": getattr(decision.action, "snap", None),
             }
+            if target_signal is not None:
+                payload["target_signal"] = target_signal
             if platform_feedback:
                 payload["platform_feedback"] = platform_feedback
             terminal = None
@@ -2454,9 +2523,24 @@ class ToolAgentRuntime:
                 else entry.get("status", "")
             )
             settle = float(entry.get("settle_seconds") or 0)
+            target_signal = entry.get("target_signal")
+            target_text = ""
+            if (
+                isinstance(target_signal, dict)
+                and target_signal.get("status") == "off_target"
+            ):
+                target_text = (
+                    " · off_target"
+                    + (
+                        f" on {target_signal.get('actual_element')!r}"
+                        if target_signal.get("actual_element")
+                        else ""
+                    )
+                )
             return (
                 f"Action     : {entry.get('action_type', '?')} via {entry.get('tool', '?')}\n"
                 f"Result     : {effect}"
+                + target_text
                 + (f" · settle={settle:.1f}s" if settle else "")
             )
         if event == "worker_tool_error":
@@ -2615,18 +2699,25 @@ class ToolAgentRuntime:
         temporary.replace(target)
         data_store = getattr(self, "data_store", None)
         if write_data and data_store is not None:
+            durable_data = _redact_log_value(
+                data_store.private_dump(),
+                getattr(self, "_access_log_redactions", ()),
+            )
             (self.log_dir / "tool_agent_data_store.json").write_text(
-                json.dumps(data_store.private_dump(), ensure_ascii=False, indent=2),
+                json.dumps(durable_data, ensure_ascii=False, indent=2),
                 encoding="utf-8",
             )
 
     def _write_artifacts(self, run: ToolAgentRun) -> None:
         self.log_dir.mkdir(parents=True, exist_ok=True)
+        redactions = getattr(self, "_access_log_redactions", ())
+        durable_run = _redact_log_value(run.model_dump(mode="json"), redactions)
+        durable_data = _redact_log_value(self.data_store.private_dump(), redactions)
         (self.log_dir / "tool_agent_trace.json").write_text(
-            run.model_dump_json(indent=2), encoding="utf-8"
+            json.dumps(durable_run, ensure_ascii=False, indent=2), encoding="utf-8"
         )
         (self.log_dir / "tool_agent_data_store.json").write_text(
-            json.dumps(self.data_store.private_dump(), ensure_ascii=False, indent=2),
+            json.dumps(durable_data, ensure_ascii=False, indent=2),
             encoding="utf-8",
         )
 

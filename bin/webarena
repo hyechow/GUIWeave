@@ -1,11 +1,10 @@
 #!/usr/bin/env bash
-# 跑一条 WebArena-Verified 任务（浏览器 agent，固定走 reviewed-Python orchestrator）。
+# 跑一条 WebArena-Verified 任务（固定走 Tool Agent Master）。
 # 用法: bin/webarena [--headless] <task-id> [额外参数...]
 #   例: bin/webarena 11                       # 跑 task 11(默认带状态 HUD)
 #       bin/webarena --headless 11            # 后台/CI 跑 task 11(不需要手动打开 Chrome)
 #       bin/webarena 15 --max-turns 40        # 透传给 webarena.py
 #       bin/webarena 15 --reset-instance      # SSH 重建远端实例后，从登录页开始
-#       bin/webarena 185 --confirm            # 先打印 reviewed Python，按回车才开始执行（Ctrl-C 取消）
 #       bin/webarena 679 --eval-compat        # 显式启用 WebArena evaluator 兼容 probe（默认关闭）
 #       bin/webarena 549 --include-skills     # 实验性启用 _skill.md；默认仅使用功能说明
 # 前置: headed 模式先 bin/launch_chrome_cdp 起带远程调试的 Chrome,并在弹窗里登录目标站点。
@@ -94,15 +93,10 @@ PY
 )"
 fi
 
-runtime_name="reviewed-python"
 perception_name="enhanced"
 scan_args=("$@")
 for ((i=0; i<${#scan_args[@]}; i++)); do
   case "${scan_args[$i]}" in
-    --runtime)
-      if (( i + 1 < ${#scan_args[@]} )); then runtime_name="${scan_args[$((i + 1))]}"; fi
-      ;;
-    --runtime=*) runtime_name="${scan_args[$i]#--runtime=}" ;;
     --perception)
       if (( i + 1 < ${#scan_args[@]} )); then perception_name="${scan_args[$((i + 1))]}"; fi
       ;;
@@ -110,11 +104,7 @@ for ((i=0; i<${#scan_args[@]}; i++)); do
   esac
 done
 
-if [[ "$runtime_name" == "tool-agent" ]]; then
-  out_dir="${output_root}/tool_agent/${perception_name}/${run_dir_name}/${task_id}"
-else
-  out_dir="${output_root}/${run_dir_name}/${task_id}"
-fi
+out_dir="${output_root}/tool_agent/${perception_name}/${run_dir_name}/${task_id}"
 
 if [[ "$headless" == "1" ]]; then
   headless_arg=(--headless)

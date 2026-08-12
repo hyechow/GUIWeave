@@ -1,9 +1,8 @@
 """Browser adapter factory: the one place browser construction is wired together.
 
 Builds a :class:`gui_agent.core.runtime.factory.PlatformBundle` whose callables
-construct the browser session (Chrome over CDP), executor, perception, action
-policy and supervisor. Core orchestration receives the neutral bundle and never
-imports these classes directly. Mirrors ``adapters/iphone/factory.py``.
+construct the browser session (Chrome over CDP), executor and perception for
+Tool Agent's Master/Worker runtime.
 
 OBSERVATION MODEL
 -----------------
@@ -15,7 +14,7 @@ neutral core AgentHUD; macOS-host only), enabled by the --hud flag.
 ACTION VISUALIZATION
 --------------------
 ``make_action_visualizer`` provides ``BrowserCursorVisualizer``, which drives the
-iphone ``agent_cursor`` OS overlay over the real Chrome window at each action's
+shared ``agent_cursor`` OS overlay over the real Chrome window at each action's
 location, so a human watching the real Chrome sees where/what the agent clicks/
 types/scrolls. It is the browser implementation of the neutral ``ActionVisualizer``
 contract.
@@ -23,55 +22,9 @@ contract.
 
 from __future__ import annotations
 
-from typing import TYPE_CHECKING, Optional
+from typing import Optional
 
 from gui_agent.core.runtime.factory import PlatformBundle, SetupCheckResult
-
-if TYPE_CHECKING:
-    from gui_agent.core.runtime.contracts import ActionPolicy, SupervisorPolicy
-
-
-# Registries (mirror the iphone adapter shape). Browser is vision-only with a
-# single action policy today; the default supervisor is structure-neutral statement.
-_POLICY_NAMES: tuple[str, ...] = ("browser_vision",)
-_SUPERVISOR_NAMES: tuple[str, ...] = ("statement",)
-
-
-def _build_action_policy(name: str) -> "ActionPolicy":
-    from gui_agent.adapters.browser.policies import BrowserActionPolicy
-
-    registry: dict[str, type] = {BrowserActionPolicy.name: BrowserActionPolicy}
-    try:
-        return registry[name]()
-    except KeyError as exc:
-        choices = ", ".join(sorted(registry))
-        raise ValueError(f"未知策略 {name!r}，可选：{choices}") from exc
-
-
-def _build_supervisor(name: str) -> "SupervisorPolicy":
-    # Browser uses the structure-neutral statement supervisor FRAMEWORK with its OWN
-    # web-tuned prompts (adapters/browser/supervisor/statement/prompts.py) injected —
-    # it no longer borrows the iphone set. ⚠️ those prompts are a DRAFT and need real
-    # browser-task A/B tuning.
-    from gui_agent.core.supervisor.statement.policy import StatementSupervisorPolicy
-    from gui_agent.adapters.browser.supervisor.statement.prompts import BROWSER_STATEMENT_PROMPTS
-    from gui_agent.adapters.browser.target_binding import (
-        active_choice_controls,
-        active_surface_id,
-    )
-
-    if name == StatementSupervisorPolicy.name:
-        return StatementSupervisorPolicy(
-            prompts=BROWSER_STATEMENT_PROMPTS,
-            surface_resolver=active_surface_id,
-            mutation_control_resolver=active_choice_controls,
-        )
-    raise ValueError(f"未知监督者 {name!r}，可选：{StatementSupervisorPolicy.name}")
-
-
-def _prepare_vision_prompt_png(png_bytes: bytes) -> bytes:
-    return png_bytes
-
 
 def _find_chrome_window() -> "tuple[int, int, int, int] | None":
     """(x, y, w, h) screen rect of the largest on-screen Google Chrome window via
@@ -160,7 +113,7 @@ def _make_browser_hud() -> object:
 
 
 def _make_action_visualizer(session: object) -> object:
-    """The browser ActionVisualizer: ``BrowserCursorVisualizer`` — reuses the iphone
+    """The browser ActionVisualizer: ``BrowserCursorVisualizer`` — reuses the shared
     ``agent_cursor`` OS overlay (blue arrow over the real Chrome window). It draws OUTSIDE
     the page, so it never pollutes the agent's own screenshot perception, and it is immune
     to the connect_over_cdp binding that hangs ``page.evaluate``. macOS-host only.
@@ -186,13 +139,11 @@ def build_browser_bundle(
 ) -> PlatformBundle:
     """Construct the browser PlatformBundle.
 
-    ``backend`` is accepted for signature parity with the iphone factory (no
-    browser backends today). ``cdp_url`` / ``start_url`` / ``headless`` /
+    ``backend`` is reserved for future adapter backends. ``cdp_url`` / ``start_url`` / ``headless`` /
     ``user_data_dir`` flow through to the session. CDP defaults to
     http://localhost:9222, overridable via env CHROME_CDP_URL; headless mode
     launches Chromium directly and can keep login state in ``user_data_dir``.
     """
-    from gui_agent.adapters.browser.acquisition import move_collection, validate_collection_action
     from gui_agent.adapters.browser.actions import BrowserAction
     from gui_agent.adapters.browser.executor import BrowserExecutor
     from gui_agent.adapters.browser.perception import BrowserPerception, BrowserSession
@@ -209,17 +160,8 @@ def build_browser_bundle(
         make_executor=lambda session: BrowserExecutor(session),
         make_action=lambda payload: BrowserAction.model_validate(payload),
         make_perception=lambda session, png_path: BrowserPerception(session, png_path),
-        make_action_policy=_build_action_policy,
-        make_supervisor=_build_supervisor,
         make_status_reporter=lambda enabled: (_make_browser_hud() if enabled else None),
         make_action_visualizer=_make_action_visualizer,
-        prepare_vision_prompt_png=_prepare_vision_prompt_png,
-        move_collection=move_collection,
-        validate_collection_action=validate_collection_action,
-        default_action_policy="browser_vision",
-        default_supervisor="statement",
-        action_policy_choices=_POLICY_NAMES,
-        supervisor_choices=_SUPERVISOR_NAMES,
         tool_agent_capabilities=(
             "tap",
             "type",
@@ -238,7 +180,7 @@ def _resolve_headless(headless: bool | None) -> bool:
         return headless
     import os
 
-    # AGENT_HEADLESS is the unified cross-platform switch (set by --headless / bin/runner);
+    # AGENT_HEADLESS is the unified cross-platform switch (set by --headless);
     # BROWSER_HEADLESS / WEB_ARENA_HEADLESS remain as browser-specific aliases (bin/webarena).
     raw = (
         os.environ.get("AGENT_HEADLESS")

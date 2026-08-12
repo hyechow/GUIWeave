@@ -485,9 +485,9 @@ def dynamic_action_envelope_tool(
         "continue_with_actions",
         (
             f"Continue with one to {MAX_ORDERED_ACTIONS} ordered actions on already-visible targets. "
-            "Later actions must not depend on newly revealed UI. Put surface-changing "
-            "actions last, except a tap that focuses the input used by following "
-            "clear/type actions. Runtime may discard a stale suffix."
+            "Later actions must not depend on newly revealed UI. Put geometry- or "
+            "surface-changing actions last; only a focus action may precede operations "
+            "on that same already-visible control. Runtime may discard a stale suffix."
         ),
         {
             "type": "object",

@@ -50,6 +50,10 @@ llm:
     # Used only when platform signals and high-confidence heuristics are inconclusive.
     <<: *standard
     model: qwen3.6-flash
+  target_verify:
+    # Red-marker landing verification uses the lightweight multimodal judge.
+    <<: *standard
+    model: qwen3.6-flash
   tool_agent:
     # Master is text-only. Worker and perception receive screenshots.
     master:

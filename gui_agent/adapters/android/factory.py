@@ -1,9 +1,7 @@
 """Android adapter factory: the one place android construction is wired together.
 
 Builds a :class:`gui_agent.core.runtime.factory.PlatformBundle` whose callables construct
-the android session (phone over adb), executor, perception, action policy and
-supervisor. Core orchestration receives the neutral bundle and never imports these
-classes directly. Mirrors ``adapters/browser/factory.py``.
+the Android session (phone over adb), executor and perception for Tool Agent.
 
 OBSERVATION MODEL
 -----------------
@@ -14,46 +12,9 @@ The status reporter (HUD) is None: android has no on-screen agent HUD yet.
 
 from __future__ import annotations
 
-from typing import TYPE_CHECKING, Optional
+from typing import Optional
 
 from gui_agent.core.runtime.factory import PlatformBundle, SetupCheckResult
-
-if TYPE_CHECKING:
-    from gui_agent.core.runtime.contracts import ActionPolicy, SupervisorPolicy
-
-
-# Registries (mirror the browser adapter shape). Android is vision-only with a
-# single action policy today; the default supervisor is structure-neutral statement.
-_POLICY_NAMES: tuple[str, ...] = ("android_vision",)
-_SUPERVISOR_NAMES: tuple[str, ...] = ("statement",)
-
-
-def _build_action_policy(name: str) -> "ActionPolicy":
-    from gui_agent.adapters.android.policies import AndroidActionPolicy
-
-    registry: dict[str, type] = {AndroidActionPolicy.name: AndroidActionPolicy}
-    try:
-        return registry[name]()
-    except KeyError as exc:
-        choices = ", ".join(sorted(registry))
-        raise ValueError(f"未知策略 {name!r}，可选：{choices}") from exc
-
-
-def _build_supervisor(name: str) -> "SupervisorPolicy":
-    # Android uses the structure-neutral statement supervisor FRAMEWORK with its OWN
-    # mobile-tuned prompts injected (no longer the iphone-flavored default that called
-    # everything an "iOS 主屏").
-    from gui_agent.core.supervisor.statement.policy import StatementSupervisorPolicy
-    from gui_agent.adapters.android.supervisor.statement.prompts import ANDROID_STATEMENT_PROMPTS
-
-    if name == StatementSupervisorPolicy.name:
-        return StatementSupervisorPolicy(prompts=ANDROID_STATEMENT_PROMPTS)
-    raise ValueError(f"未知监督者 {name!r}，可选：{StatementSupervisorPolicy.name}")
-
-
-def _prepare_vision_prompt_png(png_bytes: bytes) -> bytes:
-    return png_bytes
-
 
 def _setup_check(serial: "Optional[str]") -> SetupCheckResult:
     """Pre-session environment check for android:
@@ -156,7 +117,7 @@ def _ensure_scrcpy_window(timeout_s: float = 6.0) -> None:
 
 
 def _make_android_hud() -> object:
-    """Status HUD positioned just BELOW the scrcpy mirror window (the iphone model —
+    """Status HUD positioned just below the narrow scrcpy mirror window —
     a narrow phone mirror with the HUD under it, NOT browser's over-the-wide-window
     placement). The neutral core ``AgentHUD`` draws its own OS window, so it never
     enters the agent's adb screenshot. Auto-opens the scrcpy mirror first (interactive
@@ -181,7 +142,7 @@ def _make_action_visualizer(session: object) -> object:
     """The android ActionVisualizer: the shared agent_cursor blue arrow glided over
     the scrcpy window (see adapters/android/visualizer.py). Runner-driven (pure
     visualization, decoupled from perception) because android has no snapping and a
-    single action path — unlike iphone, which drives at the device layer."""
+    single action path."""
     from gui_agent.adapters.android.visualizer import AndroidActionVisualizer
 
     return AndroidActionVisualizer(session)
@@ -195,11 +156,9 @@ def build_android_bundle(
 ) -> PlatformBundle:
     """Construct the android PlatformBundle.
 
-    ``backend`` is accepted for signature parity with the iphone factory (no android
-    backends today). ``serial`` flows through to the session (else the session falls
+    ``backend`` is reserved for future adapter backends. ``serial`` flows through to the session (else the session falls
     back to env ``ANDROID_SERIAL``, else auto-selects the sole adb device).
     """
-    from gui_agent.adapters.android.acquisition import move_collection
     from gui_agent.adapters.android.actions import AndroidAction
     from gui_agent.adapters.android.executor import AndroidExecutor
     from gui_agent.adapters.android.perception import AndroidPerception, AndroidSession
@@ -211,17 +170,8 @@ def build_android_bundle(
         make_executor=lambda session: AndroidExecutor(session),
         make_action=lambda payload: AndroidAction.model_validate(payload),
         make_perception=lambda session, png_path: AndroidPerception(session, png_path),
-        make_action_policy=_build_action_policy,
-        make_supervisor=_build_supervisor,
         make_status_reporter=lambda enabled: (_make_android_hud() if enabled else None),
         make_action_visualizer=_make_action_visualizer,
-        prepare_vision_prompt_png=_prepare_vision_prompt_png,
-        move_collection=move_collection,
-        validate_collection_action=None,
-        default_action_policy="android_vision",
-        default_supervisor="statement",
-        action_policy_choices=_POLICY_NAMES,
-        supervisor_choices=_SUPERVISOR_NAMES,
         tool_agent_capabilities=(
             "tap",
             "type",
