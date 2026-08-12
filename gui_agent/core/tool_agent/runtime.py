@@ -1447,8 +1447,9 @@ class ToolAgentRuntime:
                 "and failure tools separately."
             )
         spec_for_prompt = spec.model_dump(mode="json", exclude={"actions"})
+        private_actions = {action.name: action for action in spec.actions if action.input_args}
         spec_for_prompt["action_contracts"] = [
-            action.model_dump(
+            private_actions.get(action.name, action).model_dump(
                 mode="json",
                 include={"name", "fixed_args", "input_args"},
                 exclude_defaults=True,
@@ -1459,7 +1460,7 @@ class ToolAgentRuntime:
             "\n\n## Worker attempt contract\n"
             "The bound tools are the authoritative action descriptions and argument "
             "schemas. This compact contract supplies only the subgoal, acceptance/data "
-            "contract, and Runtime-bound action values.\n"
+            "contract, and Runtime-bound action descriptors.\n"
             + json.dumps(spec_for_prompt, ensure_ascii=False)
         )
         return prompt
