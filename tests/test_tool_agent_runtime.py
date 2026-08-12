@@ -598,6 +598,7 @@ class _MultiActionWorker:
         self.bound_names: set[str] = set()
         self.bound_schemas: list[str] = []
         self.action_batches = action_batches
+        self.messages = []
 
     def bind_tools(self, tools, **kwargs):
         assert kwargs.get("parallel_tool_calls") is False
@@ -606,7 +607,7 @@ class _MultiActionWorker:
         return self
 
     def invoke(self, messages):
-        del messages
+        self.messages = messages
         self.calls += 1
         actions = (
             self.action_batches[self.calls - 1]
@@ -687,7 +688,7 @@ def _run_fused_worker(
         )],
         max_steps=1,
     )
-    runtime._run_worker("fused-worker", spec)
+    runtime.outcome = runtime._run_worker("fused-worker", spec)
     return runtime
 
 
@@ -713,6 +714,30 @@ def test_fused_worker_executes_ordered_actions_and_discards_invalid_suffix(
     assert any(event["event"] == expected_event for event in runtime.trace)
     if expected_actions == 3:
         assert any(status.startswith("Action · 2/3 · type") for status in runtime.statuses)
+
+
+def test_fused_worker_returns_typed_failure_after_repeated_empty_action_envelope(
+    monkeypatch,
+) -> None:
+    worker = _MultiActionWorker([[], []])
+
+    runtime = _run_fused_worker(
+        monkeypatch,
+        current_url="https://example.test/items",
+        worker=worker,
+    )
+
+    assert runtime.outcome.phase == "failed"
+    assert runtime.outcome.steps == 0
+    assert "action envelope must contain" in runtime.outcome.summary
+    assert len(runtime._executor.actions) == 0
+    assert worker.calls == 2
+    assert any(
+        "between 1 and 5 executable actions" in str(message.content)
+        and "action envelope must contain" in str(message.content)
+        for message in worker.messages
+        if getattr(message, "type", "") == "human"
+    )
 
 
 def test_fused_worker_repairs_guarded_first_action_on_same_frame(monkeypatch) -> None:

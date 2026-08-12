@@ -968,6 +968,56 @@ def test_vision_only_never_invokes_platform_perception(tmp_path: Path) -> None:
     ]
 
 
+def test_explicit_visual_empty_state_materializes_complete_empty_collection(
+    tmp_path: Path,
+) -> None:
+    materializer = _materializer(tmp_path, "vision-only")
+    materializer._vision_extract = lambda *_args, **_kwargs: {  # type: ignore[method-assign]
+        "found": False,
+        "rows": [],
+        "empty_state_visible": True,
+        "empty_state_evidence": "No matching records",
+        "end_visible": True,
+        "scope_satisfied": True,
+    }
+
+    frame, _ = materializer.observe(
+        bundle=FakeBundle([]),
+        platform=FakePlatform(),
+        requirements=[_requirement()],
+        frame_no=1,
+    )
+
+    collection = frame.collections[0]
+    assert collection.row_count == 0
+    assert collection.coverage["status"] == "complete"
+    assert collection.coverage["coverage_evidence"] == "explicit_visual_empty_state"
+    assert collection.coverage["empty_state_evidence"] == "No matching records"
+    assert frame.missing_requirements == []
+
+
+def test_visual_empty_state_requires_explicit_evidence(tmp_path: Path) -> None:
+    materializer = _materializer(tmp_path, "vision-only")
+    materializer._vision_extract = lambda *_args, **_kwargs: {  # type: ignore[method-assign]
+        "found": False,
+        "rows": [],
+        "empty_state_visible": True,
+        "empty_state_evidence": "",
+        "end_visible": True,
+        "scope_satisfied": True,
+    }
+
+    frame, _ = materializer.observe(
+        bundle=FakeBundle([]),
+        platform=FakePlatform(),
+        requirements=[_requirement()],
+        frame_no=1,
+    )
+
+    assert frame.collections == []
+    assert frame.missing_requirements == ["terms"]
+
+
 def test_vision_only_normalizes_declared_datetime_before_storage(tmp_path: Path) -> None:
     requirement = DataRequirement(
         id="orders",

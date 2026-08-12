@@ -132,6 +132,24 @@ def test_authoritative_empty_result_requires_a_new_acquisition_scope() -> None:
     )
 
 
+def test_unfiltered_authoritative_empty_result_is_terminal_success() -> None:
+    case = _case()
+    filtered = WorkerOutcome.model_validate(case["empty_outcome"])
+    assert filtered.collection_ref is not None
+    unfiltered_collection = filtered.collection_ref.model_copy(update={
+        "coverage": {
+            **filtered.collection_ref.coverage,
+            "requested_filters": {},
+            "applied_filters": {},
+            "coverage_evidence": "explicit_visual_empty_state",
+        }
+    })
+    unfiltered = filtered.model_copy(update={"collection_ref": unfiltered_collection})
+
+    assert ToolAgentRuntime._is_verified_empty(unfiltered)
+    assert ToolAgentRuntime._worker_replan_reason(unfiltered) == ""
+
+
 def test_task214_empty_result_dispatches_a_new_physical_worker() -> None:
     case = _case()
     original = WorkerSpec.model_validate(case["original_spec"])
