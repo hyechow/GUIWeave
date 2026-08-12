@@ -1,0 +1,12 @@
+interface:
+  display_name: "GUIWeave Local Automation"
+  short_description: "Run authorized browser and Android tasks locally"
+  default_prompt: "Use $guiweave-local-automation to run an authorized task in my local browser."
+dependencies:
+  tools:
+    - type: "mcp"
+      value: "guiweave-automation"
+      description: "Local GUIWeave Tool Agent Master stdio server"
+      transport: "stdio"
+policy:
+  allow_implicit_invocation: true

@@ -1,0 +1,163 @@
+"""Local stdio MCP server for GUIWeave's Tool Agent runtime."""
+
+from __future__ import annotations
+
+from typing import Any, Literal
+
+from dotenv import load_dotenv
+from mcp.server.fastmcp import FastMCP
+from mcp.types import ToolAnnotations
+
+from gui_agent.core.tool_agent.service import ToolAgentService
+
+
+load_dotenv()
+
+server = FastMCP(
+    "guiweave-automation",
+    instructions=(
+        "Use check_environment before the first run on a platform. Browser and "
+        "Android tasks operate the user's local GUI and may change external state. "
+        "Preserve the user's exact goal and report the returned run_id and artifacts."
+    ),
+)
+service = ToolAgentService()
+
+
+def _options(
+    platform: Literal["browser", "android"],
+    *,
+    cdp_url: str | None = None,
+    adb_serial: str | None = None,
+    headless: bool = False,
+) -> dict[str, object]:
+    if platform == "browser":
+        return {"cdp_url": cdp_url, "headless": headless}
+    return {"serial": adb_serial}
+
+
+@server.tool(
+    title="Check GUI automation environment",
+    annotations=ToolAnnotations(
+        readOnlyHint=False,
+        destructiveHint=False,
+        openWorldHint=False,
+    ),
+)
+def check_environment(
+    platform: Literal["browser", "android"],
+    cdp_url: str | None = None,
+    adb_serial: str | None = None,
+    headless: bool = False,
+) -> dict[str, Any]:
+    """Check whether local Browser or Android automation is ready.
+
+    Android preflight may activate ADBKeyboard so non-ASCII text input works.
+    """
+
+    result = service.check_environment(
+        platform,
+        **_options(
+            platform,
+            cdp_url=cdp_url,
+            adb_serial=adb_serial,
+            headless=headless,
+        ),
+    )
+    return {
+        "ok": result.ok,
+        "summary": result.summary,
+        "details": list(result.lines),
+    }
+
+
+@server.tool(
+    title="Run a local browser task",
+    annotations=ToolAnnotations(
+        readOnlyHint=False,
+        destructiveHint=True,
+        openWorldHint=True,
+    ),
+)
+def run_browser_task(
+    goal: str,
+    cdp_url: str | None = None,
+    headless: bool = False,
+    perception: Literal["vision-only", "enhanced"] = "enhanced",
+    max_turns: int = 50,
+    multi_action: bool = True,
+    show_hud: bool = True,
+) -> dict[str, Any]:
+    """Run an exact user-authorized goal in local Chrome.
+
+    This broad tool may navigate, submit forms, send data or otherwise change
+    external state. Confirm consequential intent with the user before calling it.
+    """
+
+    return service.run(
+        goal,
+        platform="browser",
+        perception_mode=perception,
+        max_turns=max_turns,
+        allow_multi_action=multi_action,
+        show_hud=show_hud and not headless,
+        mirror_stdio=False,
+        cdp_url=cdp_url,
+        headless=headless,
+    ).to_dict()
+
+
+@server.tool(
+    title="Run a local Android task",
+    annotations=ToolAnnotations(
+        readOnlyHint=False,
+        destructiveHint=True,
+        openWorldHint=True,
+    ),
+)
+def run_android_task(
+    goal: str,
+    adb_serial: str | None = None,
+    perception: Literal["vision-only", "enhanced"] = "enhanced",
+    max_turns: int = 50,
+    multi_action: bool = True,
+    show_hud: bool = True,
+) -> dict[str, Any]:
+    """Run an exact user-authorized goal on a locally connected Android device.
+
+    This broad tool may send messages, alter settings or otherwise change external
+    state. Confirm consequential intent with the user before calling it.
+    """
+
+    return service.run(
+        goal,
+        platform="android",
+        perception_mode=perception,
+        max_turns=max_turns,
+        allow_multi_action=multi_action,
+        show_hud=show_hud,
+        mirror_stdio=False,
+        serial=adb_serial,
+    ).to_dict()
+
+
+@server.tool(
+    title="Get a GUIWeave run",
+    annotations=ToolAnnotations(
+        readOnlyHint=True,
+        destructiveHint=False,
+        openWorldHint=False,
+    ),
+)
+def get_run_result(run_id: str) -> dict[str, Any]:
+    """Read the summary and artifact paths for a previous GUIWeave run."""
+
+    return service.get_run(run_id)
+
+
+def main() -> None:
+    server.run(transport="stdio")
+
+
+if __name__ == "__main__":
+    main()

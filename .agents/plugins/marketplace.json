@@ -1,0 +1,20 @@
+{
+  "name": "guiweave-dev",
+  "interface": {
+    "displayName": "GUIWeave Developer Preview"
+  },
+  "plugins": [
+    {
+      "name": "guiweave-automation",
+      "source": {
+        "source": "local",
+        "path": "./plugins/guiweave-automation"
+      },
+      "policy": {
+        "installation": "AVAILABLE",
+        "authentication": "ON_INSTALL"
+      },
+      "category": "Productivity"
+    }
+  ]
+}
