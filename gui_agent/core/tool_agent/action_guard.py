@@ -34,7 +34,9 @@ _SIGNATURE_FIELDS = (
     "duration_ms",
     "target_area",
 )
-def _control_at_point(args: dict[str, Any], frame: MaterializedFrame) -> dict[str, Any] | None:
+def control_at_point(
+    args: dict[str, Any], frame: MaterializedFrame,
+) -> dict[str, Any] | None:
     """Return the smallest visible enhanced control containing the action point."""
 
     x, y = args.get("x"), args.get("y")
@@ -63,7 +65,7 @@ def _action_boundary_error(
 ) -> str:
     """Reject actions contradicted by authoritative enhanced observation."""
 
-    control = _control_at_point(args, frame)
+    control = control_at_point(args, frame)
     if control is not None:
         kind = str(control.get("kind") or "").casefold()
         label = str(control.get("label") or kind or "control")
@@ -237,5 +239,6 @@ __all__ = [
     "ActionCircuitDecision",
     "WorkerActionCircuitBreaker",
     "action_signature",
+    "control_at_point",
     "progress_signature",
 ]

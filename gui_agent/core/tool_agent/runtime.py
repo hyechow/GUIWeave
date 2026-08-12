@@ -6,6 +6,7 @@ import hashlib
 import json
 import re
 import time
+from concurrent.futures import ThreadPoolExecutor
 from datetime import datetime
 from math import hypot
 from pathlib import Path
@@ -18,7 +19,12 @@ from langchain_openai import ChatOpenAI
 
 from gui_agent.core.config import resolve_llm_config
 from gui_agent.prompts import load_prompt_text
-from gui_agent.core.run.action_exec import has_snapped_point, settle_after_action
+from gui_agent.core.run.action_exec import (
+    has_snapped_point,
+    resolve_target_verify,
+    settle_after_action,
+    submit_target_verify,
+)
 from gui_agent.core.schemas import BaseAction, BaseActionDecision
 from gui_agent.core.tool_agent.contracts import (
     CollectionRef,
@@ -29,7 +35,10 @@ from gui_agent.core.tool_agent.contracts import (
     WorkerSpec,
     WorkerState,
 )
-from gui_agent.core.tool_agent.action_guard import WorkerActionCircuitBreaker
+from gui_agent.core.tool_agent.action_guard import (
+    WorkerActionCircuitBreaker,
+    control_at_point,
+)
 from gui_agent.core.tool_agent.data_store import RuntimeDataStore
 from gui_agent.core.tool_agent.orchestrator import (
     MasterCompileError,
@@ -94,6 +103,13 @@ _EXECUTABLE_CAPABILITIES = {
 }
 _ACTION_TYPES = {"open_url": "navigate"}
 _REDACTED_ACCESS_VALUE = "[session access value redacted]"
+_WORKER_VERIFY_POOL = ThreadPoolExecutor(
+    max_workers=1,
+    thread_name_prefix="tool-worker-verify",
+)
+_TARGET_VERIFIED_ACTION_TYPES = {
+    "tap", "click", "type", "long_press", "select_option",
+}
 
 
 def _token_metric(
@@ -236,6 +252,7 @@ class ToolAgentRuntime:
         self._master_knowledge = ""
         self._installed_app_names: tuple[str, ...] | None = None
         self._executor = bundle.make_executor(platform)
+        self._target_verify_pool = _WORKER_VERIFY_POOL
         try:
             self._visualizer = bundle.make_action_visualizer(platform)
         except Exception:  # noqa: BLE001 - action visualization is cosmetic
@@ -1355,8 +1372,12 @@ class ToolAgentRuntime:
             structured_surfaces=frame.structured_surfaces,
             control_count=len(frame.controls),
         )
+        durable_frame = _redact_log_value(
+            frame.model_dump(mode="json"),
+            getattr(self, "_access_log_redactions", ()),
+        )
         (self.log_dir / f"observation_tool_agent_{self._frame_no}.json").write_text(
-            frame.model_dump_json(indent=2),
+            json.dumps(durable_frame, ensure_ascii=False, indent=2),
             encoding="utf-8",
         )
         return frame, png
@@ -1400,10 +1421,11 @@ class ToolAgentRuntime:
                 f"Continue through `continue_with_actions`. Use 2–{MAX_ORDERED_ACTIONS} actions when all targets "
                 "are already visible and no later action depends on newly revealed UI; "
                 "otherwise use one. Runtime executes serially and may discard a stale suffix. "
-                "Type, clear_text and select_option may be non-final. A tap may be non-final "
-                "only to focus the same input used by following clear/type actions. Put "
-                "submit taps, Enter, scroll, back and navigation last. Include all safe, "
-                "required steps of a fully visible form. Use patch/complete/fail separately."
+                "Chain only actions that preserve the current geometry, except that a focus "
+                "action may precede operations on the same already-visible control. Put "
+                "confirmation, traversal, and other surface-changing actions last. Include "
+                "all safe required operations on a fully visible form. Use patch, completion, "
+                "and failure tools separately."
             )
         spec_for_prompt = spec.model_dump(mode="json", exclude={"actions"})
         spec_for_prompt["action_contracts"] = [
@@ -1549,36 +1571,80 @@ class ToolAgentRuntime:
         action: DynamicActionSpec,
         remaining: list[dict[str, Any]],
         action_by_name: dict[str, DynamicActionSpec],
+        frame: MaterializedFrame | None = None,
     ) -> str:
         capability = action.capability
-        if capability in {"type", "clear_text", "select_option"}:
+        if capability == "type" and not bool(getattr(
+            getattr(self, "_executor", None), "type_suffix_safe", True,
+        )):
+            return "type can reflow this platform; reobserve before continuing"
+        if capability in {"type", "clear_text"}:
             return ""
         if capability == "tap":
             tap_args = {**action.fixed_args, **call["args"]}
+            if frame is not None and self._stable_distinct_tap_targets(
+                tap_args,
+                remaining,
+                action_by_name,
+                frame,
+            ):
+                return ""
             try:
-                tap_point = float(tap_args["x"]), float(tap_args["y"])
-                typed = False
-                for later_call in remaining:
-                    later = action_by_name[later_call["name"]]
-                    if later.capability == "clear_text":
-                        continue
-                    if later.capability != "type":
-                        break
-                    later_args = {**later.fixed_args, **later_call["args"]}
-                    typed = True
-                    if hypot(
-                        tap_point[0] - float(later_args["x"]),
-                        tap_point[1] - float(later_args["y"]),
-                    ) > _MULTI_ACTION_TARGET_TOLERANCE:
-                        break
-                else:
-                    if typed:
-                        return ""
+                later_actions = [
+                    (
+                        action_by_name[item["name"]],
+                        {**action_by_name[item["name"]].fixed_args, **item["args"]},
+                    )
+                    for item in remaining
+                    if action_by_name[item["name"]].capability != "clear_text"
+                ]
+                tap_type_suffix_safe = bool(getattr(
+                    getattr(self, "_executor", None),
+                    "tap_type_suffix_safe",
+                    True,
+                ))
+                if tap_type_suffix_safe and later_actions and all(
+                    later_action.capability == "type"
+                    and hypot(
+                        float(tap_args["x"]) - float(later_args["x"]),
+                        float(tap_args["y"]) - float(later_args["y"]),
+                    ) <= _MULTI_ACTION_TARGET_TOLERANCE
+                    for later_action, later_args in later_actions
+                ):
+                    return ""
             except (KeyError, TypeError, ValueError):
                 pass
         return (
             f"{capability} can invalidate coordinates for the remaining actions; "
             "reobserve before continuing"
+        )
+
+    @staticmethod
+    def _stable_distinct_tap_targets(
+        current_args: dict[str, Any],
+        remaining: list[dict[str, Any]],
+        action_by_name: dict[str, DynamicActionSpec],
+        frame: MaterializedFrame,
+    ) -> bool:
+        """Prove that a tap batch targets distinct, non-commit controls."""
+        if any(action_by_name[item["name"]].capability != "tap" for item in remaining):
+            return False
+        controls = [
+            control_at_point(args, frame)
+            for args in [current_args, *(item["args"] for item in remaining)]
+        ]
+        if any(
+            control is None
+            or str(control.get("kind") or "").casefold()
+            not in {"checkbox", "checkbox_input"}
+            or control.get("form_action") == "commit"
+            or control.get("query_action") not in (None, "")
+            for control in controls
+        ):
+            return False
+        return (
+            len({id(control) for control in controls}) == len(controls)
+            and all(control.get("selection_mode") == "multiple" for control in controls)
         )
 
     def _execute_multi_action_calls(
@@ -1616,6 +1682,7 @@ class ToolAgentRuntime:
                     action=action_spec,
                     remaining=remaining,
                     action_by_name=action_by_name,
+                    frame=frame,
                 )
                 if remaining
                 else ""
@@ -1684,6 +1751,18 @@ class ToolAgentRuntime:
                     result.get("error")
                     or result.get("reason")
                     or f"atomic action ended with {terminal or 'failure'}"
+                )
+                break
+            target_signal = result.get("target_signal")
+            if (
+                isinstance(target_signal, dict)
+                and target_signal.get("status") == "off_target"
+            ):
+                actual = str(target_signal.get("actual_element") or "").strip()
+                reason = (
+                    "flash verifier reported off_target"
+                    + (f" on {actual!r}" if actual else "")
+                    + "; reobserve before continuing"
                 )
                 break
             if not remaining:
@@ -1836,6 +1915,7 @@ class ToolAgentRuntime:
                     decision = ground(decision, frame.controls)
                 except Exception:  # noqa: BLE001 - optional enhancement fails open
                     pass
+            executed_action = decision.action
             # Grounding has already produced the best currently known point.
             # Show it before dispatch, then mirror the original runtime contract
             # by updating once more if the executor records a DOM snap.
@@ -1843,11 +1923,40 @@ class ToolAgentRuntime:
             executed = self._executor.execute(decision, png_bytes=png)
             if executed and has_snapped_point(decision):
                 self._show_action(decision.action)
+            verify_pool = getattr(self, "_target_verify_pool", None)
+            verify_future = (
+                submit_target_verify(
+                    action_decision=decision,
+                    executed=executed,
+                    observation_png=png,
+                    pool=verify_pool,
+                    description=str(executed_action.description or ""),
+                    action_types=_TARGET_VERIFIED_ACTION_TYPES,
+                )
+                if verify_pool is not None else None
+            )
             elapsed, no_effect = settle_after_action(
                 self.platform,
                 png,
-                action_type=action.action_type,
+                action_type=executed_action.action_type,
             )
+            target_signal: dict[str, Any] | None = None
+            if verify_future is not None:
+                try:
+                    verification = resolve_target_verify(verify_future)
+                    target_signal = {
+                        "status": (
+                            "on_target" if verification.on_target else "off_target"
+                        ),
+                        "actual_element": verification.actual_element,
+                        "reason": verification.reason,
+                    }
+                except Exception as exc:  # noqa: BLE001 - optional verifier fails open
+                    self._trace(
+                        "worker_target_verify_error",
+                        tool=call["name"],
+                        error=f"{type(exc).__name__}: {exc}",
+                    )
             platform_feedback: list[dict[str, Any]] = []
             feedback_reader = getattr(
                 getattr(self.platform, "client", None),
@@ -1915,11 +2024,13 @@ class ToolAgentRuntime:
                     rejections.pop(worker_id, None)
             payload = {
                 "status": "executed" if executed and not rejected_feedback else "failed",
-                "action_type": action.action_type,
+                "action_type": executed_action.action_type,
                 "settle_seconds": round(elapsed, 3),
                 "no_effect": no_effect,
                 "grounding": getattr(decision.action, "snap", None),
             }
+            if target_signal is not None:
+                payload["target_signal"] = target_signal
             if platform_feedback:
                 payload["platform_feedback"] = platform_feedback
             terminal = None
@@ -2454,9 +2565,24 @@ class ToolAgentRuntime:
                 else entry.get("status", "")
             )
             settle = float(entry.get("settle_seconds") or 0)
+            target_signal = entry.get("target_signal")
+            target_text = ""
+            if (
+                isinstance(target_signal, dict)
+                and target_signal.get("status") == "off_target"
+            ):
+                target_text = (
+                    " · off_target"
+                    + (
+                        f" on {target_signal.get('actual_element')!r}"
+                        if target_signal.get("actual_element")
+                        else ""
+                    )
+                )
             return (
                 f"Action     : {entry.get('action_type', '?')} via {entry.get('tool', '?')}\n"
                 f"Result     : {effect}"
+                + target_text
                 + (f" · settle={settle:.1f}s" if settle else "")
             )
         if event == "worker_tool_error":
@@ -2615,18 +2741,25 @@ class ToolAgentRuntime:
         temporary.replace(target)
         data_store = getattr(self, "data_store", None)
         if write_data and data_store is not None:
+            durable_data = _redact_log_value(
+                data_store.private_dump(),
+                getattr(self, "_access_log_redactions", ()),
+            )
             (self.log_dir / "tool_agent_data_store.json").write_text(
-                json.dumps(data_store.private_dump(), ensure_ascii=False, indent=2),
+                json.dumps(durable_data, ensure_ascii=False, indent=2),
                 encoding="utf-8",
             )
 
     def _write_artifacts(self, run: ToolAgentRun) -> None:
         self.log_dir.mkdir(parents=True, exist_ok=True)
+        redactions = getattr(self, "_access_log_redactions", ())
+        durable_run = _redact_log_value(run.model_dump(mode="json"), redactions)
+        durable_data = _redact_log_value(self.data_store.private_dump(), redactions)
         (self.log_dir / "tool_agent_trace.json").write_text(
-            run.model_dump_json(indent=2), encoding="utf-8"
+            json.dumps(durable_run, ensure_ascii=False, indent=2), encoding="utf-8"
         )
         (self.log_dir / "tool_agent_data_store.json").write_text(
-            json.dumps(self.data_store.private_dump(), ensure_ascii=False, indent=2),
+            json.dumps(durable_data, ensure_ascii=False, indent=2),
             encoding="utf-8",
         )
 

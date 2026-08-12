@@ -16,6 +16,7 @@ from gui_agent.core.schemas import (
     Observation,
     SupervisorStep,
     TargetBinding,
+    TargetVerify,
     action_label,
 )
 from gui_agent.core.run.action_signals import (
@@ -428,22 +429,43 @@ def submit_target_verify(
     *,
     action_decision: Any,
     executed: bool,
-    sv_step: SupervisorStep,
+    sv_step: SupervisorStep | None = None,
     observation_png: bytes,
     pool: ThreadPoolExecutor,
+    description: str = "",
+    action_types: set[str] | None = None,
 ) -> Future | None:
-    """Submit post-action target verification if this turn executed a tap/click."""
-    verify_point = snapped_point(action_decision) if executed else None
-    intent = sv_step.action_intent
-    if verify_point is None or intent is None:
+    """Submit target verification at the executor's final spatial point."""
+    intent = sv_step.action_intent if sv_step is not None else None
+    description = description or (intent.instruction if intent is not None else "")
+    action = getattr(action_decision, "action", None)
+    allowed_types = {"tap", "click"} if action_types is None else action_types
+    if (
+        not executed or action is None or not description
+        or action.action_type not in allowed_types
+    ):
+        return None
+    point = snapped_point(action_decision)
+    if point is None and action.action_type not in {"tap", "click"}:
+        snap = action.snap.get("snapped") if isinstance(action.snap, dict) else None
+        point = snap if isinstance(snap, (list, tuple)) and len(snap) >= 2 else (
+            (action.x, action.y)
+            if action.x is not None and action.y is not None else None
+        )
+    if point is None:
         return None
     return pool.submit(
         verify_target,
         observation_png,
-        verify_point[0],
-        verify_point[1],
-        intent.instruction,
+        float(point[0]),
+        float(point[1]),
+        description,
     )
+
+
+def resolve_target_verify(future: Future) -> TargetVerify:
+    """Resolve and validate one optional target-verification result."""
+    return TargetVerify.model_validate(future.result(timeout=VERIFY_TIMEOUT_S))
 
 
 def finalize_auto_continue_turn(
@@ -490,7 +512,7 @@ def finalize_auto_continue_turn(
         )
         return
     try:
-        tv = verify_future.result(timeout=VERIFY_TIMEOUT_S)
+        tv = resolve_target_verify(verify_future)
         record_target_verification(turn, tv)
         if tv is not None and not tv.on_target:
             say(f"  [TargetVerify] off_target：标记落在「{tv.actual_element}」")

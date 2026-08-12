@@ -5,7 +5,7 @@
 #   例: bin/mobileworld <task-name>                  # 跑一条任务(默认带状态 HUD)
 #       bin/mobileworld --headless <task-name>       # 全后台(无 HUD/光标覆盖)
 #       bin/mobileworld <task-name> --max-turns 30   # 透传给 mobileworld.py
-#       bin/mobileworld <task-name> --runtime tool-agent
+#       bin/mobileworld <task-name> --runtime reviewed-python  # 显式切回 Coding Orchestrator
 # 前置(MobileWorld Docker 宿主上,容器端口需对本机可达):
 #   1) emulator adb: 容器 5556 经 adb relay + portproxy 暴露 → `adb connect <host>:5556`
 #   2) backend HTTP: 容器 6800 经 portproxy 暴露 → MW_BASE_URL=http://<host>:6800

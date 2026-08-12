@@ -48,6 +48,10 @@ llm:
     # 只处理平台信号和高置信启发式都无法裁决的稀疏帧。
     <<: *token_plan
     model: qwen3.6-flash
+  target_verify:
+    # Red-marker landing verification uses the lightweight multimodal judge.
+    <<: *token_plan
+    model: qwen3.6-flash
   tool_agent:
     # Experimental dynamic Master/Worker runtime. Master is text-only; Worker and
     # perception receive screenshots and therefore use the multimodal plus model.

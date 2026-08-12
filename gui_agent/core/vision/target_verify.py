@@ -1,13 +1,13 @@
 """Post-action targeting verify.
 
-After a tap is dispatched, render the snapped tap point as a marker on the
+After a spatial action is dispatched, render its final point as a marker on the
 pre-action frame and ask a light vision LLM whether it landed on the element
 the instruction intended. Runs concurrently with the post-action settle, so it
 adds ~no silent latency; the result is carried to the next turn where off_target
 routes straight into replan (see runner + StatementSupervisorPolicy).
 
 It catches the "screen changed but to the wrong element" failure that SimStuck
-(screen-frozen) cannot — e.g. a 搜索框 tap that mis-hit the 转账 tab.
+(screen-frozen) cannot detect.
 """
 
 from __future__ import annotations
@@ -30,11 +30,7 @@ _SYSTEM = load_prompt_text("task.vision.target_verify")
 def render_marker(png: bytes, nx: float, ny: float) -> bytes:
     """Draw a hollow ring + center-gapped crosshair at normalized (0-1000) point.
 
-    The crosshair has a GAP at the center so a small, low-contrast element under
-    the exact point stays visible to the verifier. A solid crosshair through the
-    center occludes small targets (e.g. the home-screen search capsule), which
-    forced the judge to fall back on the bottom-Tab rule and reject correct hits
-    (false off_target). The four inward stubs + ring still pinpoint the center.
+    Leave the center clear so a small, low-contrast target remains visible.
     """
     img = Image.open(io.BytesIO(png)).convert("RGB")
     w, h = img.size
@@ -55,19 +51,22 @@ def render_marker(png: bytes, nx: float, ny: float) -> bytes:
 
 
 def _verify_llm() -> ChatOpenAI:
-    # Reuse the action_policy vision model (proven for this task). A dedicated
-    # cheaper "target_verify" model can be wired later via its own config key.
-    cfg = resolve_llm_config("action_policy")
-    return ChatOpenAI(model=cfg.model, api_key=cfg.api_key, base_url=cfg.base_url, temperature=0)
+    from llm.provider_config import dashscope_extra_body
+
+    cfg = resolve_llm_config("target_verify")
+    return ChatOpenAI(
+        model=cfg.model,
+        api_key=cfg.api_key,
+        base_url=cfg.base_url,
+        extra_body=dashscope_extra_body(cfg.model),
+        timeout=cfg.timeout_s,
+        max_retries=cfg.max_retries,
+        temperature=0,
+    )
 
 
 def _upscale(png: bytes, min_w: int = 900) -> bytes:
-    """Upscale a small frame so tiny labels (bottom-Tab text) are legible to the verifier.
-
-    The agent's observation is downscaled (~320px wide) to save tokens; at that size the
-    bottom-Tab labels are barely legible, and the marker ring can cover the target's own
-    label — so the judge falls back on page context and misreads the Tab. Upscaling with a
-    smooth filter gives the model bigger glyphs to OCR. No-op when already large enough."""
+    """Upscale a small frame so tiny target labels remain legible."""
     img = Image.open(io.BytesIO(png)).convert("RGB")
     if img.width >= min_w:
         return png

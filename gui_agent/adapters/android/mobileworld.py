@@ -322,8 +322,8 @@ def _build_parser() -> argparse.ArgumentParser:
     parser.add_argument(
         "--runtime",
         choices=("reviewed-python", "tool-agent"),
-        default="reviewed-python",
-        help="execution runtime (default reviewed-python)",
+        default="tool-agent",
+        help="execution runtime (default tool-agent)",
     )
     parser.add_argument(
         "--perception",
@@ -333,8 +333,12 @@ def _build_parser() -> argparse.ArgumentParser:
     )
     parser.add_argument(
         "--tool-agent-multi-action",
-        action="store_true",
-        help="experimental ordered 1-5 action envelopes for Tool Agent Workers",
+        action=argparse.BooleanOptionalAction,
+        default=True,
+        help=(
+            "allow ordered 1-5 action envelopes for Tool Agent Workers "
+            "(default: enabled)"
+        ),
     )
     parser.add_argument(
         "--adb-ready-timeout",
@@ -409,6 +413,7 @@ def main() -> int:
 
         app_knowledges = []
         orchestrator_knowledge = ""
+        access_context = ""
         knowledge_summary: Optional[dict] = None
         try:
             declared_apps = env.metadata(args.task).get("apps") or []
@@ -423,6 +428,11 @@ def main() -> int:
             app_names = " + ".join(item.app_name for item in app_knowledges)
             orchestrator_knowledge = "\n\n".join(
                 item.orchestrator_context(goal) for item in app_knowledges
+            )
+            access_context = "\n\n".join(
+                deployment
+                for item in app_knowledges
+                if (deployment := str(item.deployment or "").strip())
             )
             if hasattr(supervisor, "set_app_knowledge"):
                 supervisor.set_app_knowledge(
@@ -505,6 +515,7 @@ def main() -> int:
                             fallback_task_type=_guess_task_type(intent),
                             knowledge_summary=knowledge_summary,
                             knowledge=orchestrator_knowledge,
+                            access_context=access_context,
                             hud=hud,
                             raw_input=goal,
                             router=router_payload,

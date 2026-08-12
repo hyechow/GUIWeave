@@ -1109,7 +1109,7 @@ def _merge_har_segment(base_path: Path, segment_path: Path) -> tuple[int, int]:
     return before, len(segment_entries)
 
 
-def main() -> int:
+def _build_parser() -> argparse.ArgumentParser:
     parser = argparse.ArgumentParser(description="Run a WebArena-Verified task on the browser agent")
     parser.add_argument("--tasks-file", type=Path, help="agent-input-get output JSON")
     parser.add_argument("--task-id", type=int)
@@ -1174,10 +1174,11 @@ def main() -> int:
     )
     parser.add_argument(
         "--tool-agent-multi-action",
-        action="store_true",
+        action=argparse.BooleanOptionalAction,
+        default=True,
         help=(
-            "experimental: let one fused Worker decision return an ordered "
-            "1–5 action envelope"
+            "allow one fused Worker decision to return an ordered 1–5 action "
+            "envelope (default: enabled)"
         ),
     )
     parser.add_argument(
@@ -1202,6 +1203,11 @@ def main() -> int:
         help="override the start_url host (IP-only keeps the per-site port; host:port replaces the netloc). "
              "Also read from env WA_HOST / .env (lower precedence than --host).",
     )
+    return parser
+
+
+def main() -> int:
+    parser = _build_parser()
     args = parser.parse_args()
     if args.max_turns is not None and not 1 <= args.max_turns <= _MAX_TURNS:
         parser.error(f"--max-turns must be between 1 and {_MAX_TURNS}")
