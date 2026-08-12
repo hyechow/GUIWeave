@@ -36,7 +36,7 @@ MODULE_CACHE="${TMPDIR:-/tmp}/guiweave-swift-module-cache"
 trap 'rm -f "$TMP_OUT"' EXIT
 mkdir -p "$MODULE_CACHE"
 
-echo "构建 agent_cursor → $OUT"
+echo "构建 agent_cursor -> $OUT"
 env \
   SWIFT_MODULECACHE_PATH="$MODULE_CACHE" \
   CLANG_MODULE_CACHE_PATH="$MODULE_CACHE" \

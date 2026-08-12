@@ -1,8 +1,0 @@
-{
-  "observation": "evals/android/action_feedback/plus_observation.json",
-  "plus_ref": "android:0.0.0.0.0.0.0.0.0.0.0.0.0.0.0.0.0.1.0.0.1",
-  "plus_label": "plus",
-  "off_target_controls": ["plus 按钮", "plus 按钮", "plus 按钮"],
-  "small_offset": { "x": 20.0, "y": -15.0 },
-  "wrong_icon_point": { "x": 311.1, "y": 157.9 }
-}

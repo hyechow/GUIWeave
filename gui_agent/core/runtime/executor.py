@@ -1,24 +1,17 @@
-"""VisionExecutor — shared dispatch for vision-only platforms (browser + android).
+"""Shared action dispatch for browser, Android, and iPhone adapters.
 
 Both drive a ``Device`` (tap/type/scroll/drag/clear_text/press_enter) with normalized
 0-1000 coords denormalized against the device's ``viewport_size``. Their dispatch of
 the 7 shared actions was ~identical; this base factors it out. A platform subclass
 overrides only:
   - ``_dispatch_extra`` — its platform-specific actions (browser: navigate/back/tabs;
-    android: home/back/app_switch). Returns a bool when handled, None otherwise.
+    mobile: home/back/app_switch). Returns a bool when handled, None otherwise.
   - ``_clear_before_type`` — how the focused field is cleared before a ``type``
     (default: ``clear_text``; browser overrides for contenteditable safety).
 
-Every device primitive returns a status string.  Dispatch treats ``failed``,
-``interrupted`` and ``paused`` uniformly for every action so the runner never
-records an unsuccessful device call as executed.
-
-iPhone does NOT use this base — its executor is genuinely different (YOLO/OCR snap,
-2x-retina ``logical_xy``, picker gesture computation, daemon/mirroir text paths).
-
-``execute`` matches the iphone ``ActionExecutor.execute`` signature exactly
-(``decision, app_name='', png_bytes=None, is_home_screen=False`` — the trailing
-iphone-only args are accepted and ignored) so the generic runner drives it the same.
+Every device primitive returns a status string. Dispatch treats ``failed``,
+``interrupted`` and ``paused`` uniformly so Tool Agent never records an unsuccessful
+device call as executed.
 """
 
 from __future__ import annotations
@@ -78,8 +71,10 @@ class VisionExecutor:
         return rendered
 
     def execute_scroll(self, action, *, ticks: int = 0, delta_px: int = 0) -> bool:
-        """Scroll without execute()'s bool wrapper (runner scroll-cache path).
-        ``ticks`` / ``delta_px`` are iphone scroll-probe params and are ignored."""
+        """Scroll without ``execute``'s bool wrapper.
+
+        ``ticks`` and ``delta_px`` remain accepted for adapter-call compatibility.
+        """
         client = self._client()
         ax = action.x if action.x is not None else 500
         ay = action.y if action.y is not None else 500

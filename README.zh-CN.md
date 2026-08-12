@@ -1,258 +1,210 @@
 # GUIWeave
 
-[English](README.md) | 中文
+GUIWeave 是一个以 **Tool Agent Master** 为核心的本地 GUI 自动化运行时。当前仓库
+对应 macOS Developer Preview：采用「Codex Skill + 本地 stdio MCP」发布，同时保留
+WebArena 和 MobileWorld 的评测体系。
 
-> **关于名称：** 项目从 iPhone 单端起步，现已面向浏览器、iPhone 和 Android，因此演进为 **GUIWeave**。Python 包名仍保留 `gui_agent`；已有本地 checkout 可能仍使用旧目录名。
+开发者预览版支持：
 
-**面向 GUI Agent 的可编程 Runtime：生成并审查 Python 计划，再在真实界面上执行语义调用。**
+- macOS 上的 Chrome，通过 Playwright 或现有 Chrome CDP 会话运行；
+- 通过 ADB 操作 Android 真机或模拟器；
+- 通过 macOS iPhone 镜像操作 iPhone；截图固定走 `bin/sck_server`，输入固定走
+  `bin/mirror_daemon`；
+- 每次运行的日志、事件轨迹、截图、动作可视化、HTML 报告和确定性 replay；
+- Tool Agent、WebArena、MobileWorld 的单元测试和 evals。
 
-## 第一性原理：GUI 任务不等于全程 GUI 交互
+这个版本只有一条正式运行路径。旧的 reviewed-Python、policy、router、supervisor
+agent loop 不再属于本发行版。
 
-GUIWeave 从一个简单前提出发：**GUI 任务不等于连续的 GUI 交互。** 任务还包含控制流、变量绑定、读取、查询、计算、汇总和恢复——这些归 Runtime；只有真正依赖界面的操作才进入 Agent 环。
+## 架构
 
 ```text
-典型：目标 ─► [ 观察 → 推理 → 动作 → 做完了？ ] × N ─► 结果
-                    计划 · 记忆 · 恢复也都在环里
+Codex Skill
+    └─ 本地 stdio MCP (`guiweave-mcp`)
+         └─ ToolAgentService
+              └─ Tool Agent Master / visual Workers
+                   ├─ Browser adapter → Chrome / Playwright
+                   ├─ Android adapter → ADB
+                   └─ iPhone adapter → sck_server + mirror_daemon
 
-GUIWeave：目标 ─► 审查后的 Python ─► CodingProgramRuntime ─► ProgramOutcome
-                                               ├─ Python：控制流 · 数据处理
-                                               └─ ctx.*：GUI / 查询语义调用
-                                                          └─ StatementOutcome
+每次运行 → context + trace + screenshots + replay + HTML report
 ```
 
-**你会得到什么**
+MCP 进程完全在本机运行，不开放网络端口；Codex 通过 stdin/stdout 与它通信。
 
-- **分支、循环、汇总写在 Program 里** —— 不靠模型在连续点击中「记住」整份计划。
-- **简单的终态语义** —— Statement 只有完成或失败；Runtime 不会根据文本 gate 信号重写剩余程序。
-- **诚实的完成态** —— `phase` + `verification`（`confirmed` vs `accepted_unverified`），reads 与证据作返回值 —— 而不是一个成功布尔。
+## 环境要求
 
-**程序长什么样：**
+- Browser/Android 需要 macOS 13 或更高版本；当前随仓库发布的 iPhone helper
+  预览二进制以 macOS 26 为目标
+- Python 3.11+
+- [`uv`](https://docs.astral.sh/uv/)
+- 在 `.env` 或 shell 中配置的 OpenAI-compatible 模型
+- headed browser 任务需要 Chrome；headless 任务可使用 Playwright Chromium
+- Android 任务需要 Android Platform Tools；`scrcpy` 仅用于可选镜像和动作覆盖层
+- iPhone 任务需要 macOS iPhone 镜像应用，以及仓库内的 `bin/sck_server` 和
+  `bin/mirror_daemon`
 
-```python
-def run(ctx):
-    state = ctx.reach(
-        "打开订单",
-        success={"entity": "Orders", "fields": ["Status", "Purchase Date"]},
-    )
-    rows = ctx.query(
-        state,
-        entity="Orders",
-        fields=["Status", "Purchase Date", "Grand Total"],
-        filters={"Status": "Complete"},
-    )
-    return summarize(rows)
-```
-
-只有 `ctx.*` 调用进入 Statement 执行；普通 Python 控制流和数据处理留在审查后的程序中。
-
-- **任务变成可执行程序：** 审查后的 Python 程序显式表达控制流和数据依赖。
-- **Agent 环变成有界 I/O：** `ctx.*` 调度类型化 Statement，环只做局部 GUI 战术。
-- **结果变成显式返回值：** `StatementOutcome` 携带 phase、verification、outputs、evidence；`ProgramOutcome.output` 保留原始程序结果。
-
-浏览器、iPhone 和 Android 是可替换的 I/O 后端。Program 编排保持确定性；LLM 根据 statement 内的 Journal 记忆决定下一步 GUI 战术，合同与证据保留终态否决权。这种切分**减轻任务级规划负担**，使 Qwen3.5-35B-A3B 等较小多模态模型也能承载更长流程（含私有化 OpenAI 兼容接口）。这**不能消除**视觉与 grounding 误差——感知质量仍然关键。
-
-Planner-Executor 与 Multi-Agent 若仍用文本计划和文本 / bool 返回值，并没有改变这个边界；RPA 在另一端把每一步都脚本化。GUIWeave 介于两者之间：**工作流显式，GUI 不确定性有界。**
-
----
-
-## Benchmark
-
-在 **WebArena-Verified**（浏览器）和 **MobileWorld** GUI-only（Android）上评估。分数将连同 commit SHA、模型 profile、任务集版本、尝试策略与产物链接一并发布。**在产物齐备前不声称任何分数。**
-
-| Benchmark | 范围 | 主指标 | 状态 |
-|-----------|------|--------|------|
-| **WebArena-Verified** | Shopping Admin、Shopping、Reddit、GitLab（单站点） | 任务成功率 | 待可复现运行 |
-| **MobileWorld** | Android **GUI-only**（无特权 API / 任务捷径） | 基于状态的成功率 | 待可复现运行 |
-
-Harness：`./bin/webarena <id>`、`bin/mobileworld <task>`。
-
----
-
-## Runtime 架构
-
-```mermaid
-flowchart TD
-    Goal([自然语言目标]) --> Planner[Python Planner + Review]
-    Planner --> Prog[Reviewed CodingProgram]
-    Prog --> RT[CodingProgramRuntime]
-
-    RT --> API[ctx.reach / ctx.query / ctx.read / ctx.commit / ctx.command]
-    API --> SE[Statement 执行器]
-    SE --> SO
-    SO --> RT
-
-    SE --> Loop[Journal 记忆 + 当前观察<br/>→ LLM transition<br/>→ 证据 Guard → act / outcome]
-    Loop --> SE
-    Loop --> Journal[(EventJournal)]
-    RT --> Journal
-
-    RT --> PO[ProgramOutcome]
-    PO --> AR[AgentResult]
-    AR --> Out([回复 / 报告 / API])
-
-    Plat[平台 adapter] --> Loop
-```
-
-| 层 | 拥有 | 不得拥有 |
-|----|------|----------|
-| Planner + Review | Python 程序与 `ctx.*` 语义调用 | 像素或页内战术 |
-| CodingProgramRuntime | 协程状态、值和 Statement 顺序 | 页内点击目标 |
-| Run loop | observe/dispatch 生命周期与 Journal 持久化 | Program 游标、语义战术或变量绑定 |
-| Statement 执行器 | Journal 记忆投影、LLM 战术与单个 statement 终态 | Program 改写或任务终态 |
-| Action policy | 一次 grounding 后的动作建议 | Statement 或任务完成 |
-| Adapter | 观察与设备 I/O | 目标语义 |
-
-有序 Journal 记录 Statement 执行与证据；未完成 Statement 内的实时 UI 状态故意不回放。
-使用 `bin/replay_run logs/<运行目录>` 可在不连接浏览器、设备、网络或 LLM 的情况下校验 checkpoint；
-追加 `--json` 输出机器可读结果。
-
-深读：[`docs/coding_orchestrator_experiment.md`](docs/coding_orchestrator_experiment.md)。
-
----
-
-## 一次运行长什么样
-
-各平台共用同一套 Runtime。HTML 报告展示审查后的 Python 源码、`ctx.*` 调用分区、Statement
-卡片、截图、耗时、原始程序输出和最终 Reply。
-
-![执行报告](gui_agent/assets/report.png)
-
-### 运行面演示（iPhone adapter）
-
-以下视频使用 **iPhone** I/O 后端（中文 App；任务形态通用）。浏览器侧同一 Runtime，经 CDP；见 WebArena harness 与上方报告。
-
-**查询类 + 非抢占**（动作投递给镜像窗口，Mac 光标不被抢走）：
-
-> 「我上个月 21 号到 28 号用微信支付花多少钱了？」
-
-https://github.com/user-attachments/assets/6805dd78-fd8c-4b23-9f85-4409851882e7
-
-*原速 1x。* · 抢占式对照（旧输入路径，2x）：https://github.com/user-attachments/assets/2deb4026-97e9-4689-bfa7-30472544d3df
-
-**跨 App 操作**（2x）：
-
-https://github.com/user-attachments/assets/3b10c74a-99ae-4bbb-a983-767857b62136
-
-**应用侦察 → 知识库**（2x）：
-
-https://github.com/user-attachments/assets/183b80fd-ba0f-4f14-b599-b7ef3efc4a79
-
----
-
-## 平台（I/O 后端）
-
-| 平台 | 驱动方式 | 说明 |
-|------|----------|------|
-| **Browser** | Chrome CDP + Playwright | 后台、长表单、WebArena harness |
-| **iPhone** | macOS 镜像 + mirroir / `mirror_daemon` | 真机 App；可选 **非抢占** 输入 |
-| **Android** | adb + scrcpy | USB / 无线 |
+安装运行时：
 
 ```bash
-bin/runner browser "…"
-bin/runner iphone "…"
-bin/runner android "…"
-```
-
-默认 `AGENT_PLATFORM` 仍是 `iphone`（历史默认）；脚本中请显式传入平台。
-
----
-
-## 能力边界
-
-**适合**
-
-- 需要结构的多步 UI：筛选、表单、列表、详情、汇总
-- 浏览器后台 / 评测向任务（`./bin/webarena <id>`）
-- 用顺序 / 循环 statement 表达的跨页、跨 App 流程
-- 合同承担编排与验收负载时的私有小模型部署
-
-**不适合**
-
-- 验证码 / 生物识别、强实时游戏、DRM 空白帧
-- 没有界面证据却要求编造业务结论
-
-**当前限制：** Android 尚未实现滚动到边界的全量采集；目前主要支持直接操作与单屏 MobileWorld 任务。
-
----
-
-## 快速开始
-
-> **项目状态：** 正在活跃开发。不可逆操作的安全门控尚未完成；请使用测试账号，并人工监督涉及支付、删除、发布或发送数据的任务。
-
-```bash
+git submodule update --init --recursive webarena-verified
 uv sync
-
-# 浏览器
-bin/launch_chrome_cdp
-bin/runner browser "打开订单页并列出最近已支付订单"
-
-# iPhone（需 Mirroring；mirroir 模式可装 mirroir-mcp）
-brew tap jfarcand/tap && npx -y mirroir-mcp install
-bin/runner iphone "打开微信并进入通讯录"
-
-# Android
-ANDROID_SERIAL=<序列号|host:port> bin/runner android "打开设置"
+uv run playwright install chromium
 ```
 
-`.env` 示例：
+模型密钥只应放在本地 `.env` 或 shell 中，不要提交进仓库。
 
-```env
-API_PROVIDER=modelscope
-MODELSCOPE_API_KEY=your_api_key
-```
+## 安装 Codex 插件
 
-| 变量 | 取值 | 默认 |
-|------|------|------|
-| `AGENT_PLATFORM` | `iphone` / `browser` / `android` | `iphone`（历史默认） |
-| `AGENT_MODE` | `daemon` / `mirroir`（`silent` / `standard` 为别名） | `bin/runner` 中为 `daemon` |
-| `AGENT_MODEL` | config profile | `qwen35` |
-| `AGENT_HEADLESS` | `1` 关 HUD | 关 |
-
-- 模型 profile：`gui_agent/core/config/config.yaml`
-- 对话：`bin/chat` / `bin/chat browser`
-- 测试：`uv run pytest tests/ -q`（无需真机）
+repo marketplace 插件位于 `plugins/guiweave-automation/`，需要从完整仓库 clone
+安装。在仓库根目录执行：
 
 ```bash
-./bin/webarena <task_id>
-./bin/webarena --headless <task_id>
-bin/mobileworld --list
-bin/mobileworld <task_name>
-bin/iphone_recon --app 微信 --depth 2
-bin/report logs/…
-bin/replay_run logs/… [--json]
+codex plugin marketplace add .
+codex plugin add guiweave-automation@guiweave-dev
 ```
 
-iPhone 截图服务 `bin/sck_server`（ScreenCaptureKit）避免每帧触发录屏指示灯。重编译：`swiftc sck/sck_stream_server.swift -o bin/sck_server`。
+安装后重启 Codex。插件提供 `$guiweave-local-automation` Skill，以及以下本地 MCP
+工具：
 
----
+- `check_environment`
+- `run_browser_task`
+- `run_android_task`
+- `run_iphone_task`
+- `get_run_result`
+- `preview_knowledge_document` / `get_knowledge_draft`
+- `commit_knowledge_draft`
+- `list_user_knowledge` / `get_user_knowledge`
 
-## 仓库结构
+Skill 会要求 Codex 先做环境检查、严格保持用户任务边界，并在执行发送、购买、发布、
+删除或账户设置修改等高影响动作前确认。更多说明见
+[`plugins/guiweave-automation/README.md`](plugins/guiweave-automation/README.md)。
+
+## 本地 CLI
+
+首次运行前检查环境：
+
+```bash
+uv run guiweave check browser
+uv run guiweave check android --adb-serial emulator-5554
+```
+
+使用可见 Chrome 时，先启动独立 CDP profile：
+
+```bash
+bin/launch_chrome_cdp
+uv run guiweave run browser "打开账户页面并报告当前套餐"
+```
+
+headless browser 和 Android 示例：
+
+```bash
+uv run guiweave run browser "打开 example.com" --headless
+uv run guiweave run android "打开设置并进入 Wi-Fi 页面" \
+  --adb-serial emulator-5554
+```
+
+打开 iPhone 镜像后，iPhone 使用相同的 Tool Agent 入口：
+
+```bash
+uv run guiweave check iphone
+uv run guiweave run iphone "打开设置并返回当前可见的 Apple ID 名称"
+```
+
+任务会操作当前已登录的本地界面。建议优先使用测试账户或独立 profile，并明确复核可能
+发送、购买、发布、删除或修改账户设置的目标。
+
+## 本地 Run Console
+
+启动本地任务管理界面：
+
+```bash
+uv run guiweave console
+```
+
+然后访问 `http://127.0.0.1:7468`。Console 支持按平台启动任务、查看实时结构化事件、
+请求安全取消，以及打开本地报告、trace、replay 和 stdout/stderr 日志。同一平台同一时间
+只允许一个活跃任务，服务只监听本机 loopback 地址。
+
+运行环境和产物在本机，但模型推理不一定离线：任务会使用 `.env` 或 shell 中配置的模型
+网关与 API key。
+
+## 导入用户文档
+
+插件可以把本地 PDF、Markdown 或 UTF-8 文本文档转换为私有 knowledge 草稿。Codex
+会先展示生成的 `_app.md` 和功能章节；只有用户在后续消息中明确确认，草稿才会生效。
+扫描版 PDF 需要先进行 OCR。
+
+macOS 上提交后的用户知识默认存放于
+`~/Library/Application Support/GUIWeave/knowledge/`，不写入仓库。可通过
+`GUIWEAVE_KNOWLEDGE_ROOT` 指定其他私有目录。同平台、同应用名称发生冲突时，用户知识
+优先于内置知识。
+
+## 日志、报告与 replay
+
+普通运行默认写入：
 
 ```text
-gui_agent/
-├── core/
-│   ├── orchestrator/   # Python planner、review、sandbox protocol、runtime、replay
-│   ├── run/            # statement 分派、loop、AgentResult、journal
-│   ├── supervisor/     # 交互 statement 执行器
-│   ├── runtime/        # 平台契约 + 工厂
-│   ├── chat/ · llm/ · schemas/ · config/ · self_learning/
-├── adapters/           # browser · iphone · android
-└── reports/            # HTML 轨迹
-bin/                    # runner、chat、webarena、mobileworld、report …
-knowledge/              # 应用/站点事实（不进 core prompt）
-tests/                  # 确定性 + 契约套件
-evals/                  # LLM 向评测
-docs/                   # Runtime 架构
+logs/gui_agent/tool_agent/<platform>/<timestamp>/
 ```
 
-**知识库** 在 `knowledge/{browser|iphone|android}/`，只放领域事实。  
-**用户记忆** 可把对话偏好落到 `data/user_preferences.json`。
+目录通常包含 `context.json`、`tool_agent_trace.json`、`tool_agent_replay.json`、截图、
+stdout/stderr 日志以及 `report.html`。可通过 `GUIWEAVE_LOG_ROOT` 修改日志根目录。
 
-## 技术栈
+无需设备、浏览器、网络或模型即可 replay 已记录运行：
 
-Python 3.11+、`uv`、`pydantic` · OpenAI 兼容 LLM · Playwright/CDP · iPhone mirroir/`mirror_daemon`/SCK · Android adbutils/scrcpy · pillow/imagehash · rich/prompt-toolkit
+```bash
+bin/replay_run logs/gui_agent/tool_agent/browser/<timestamp>
+```
 
-## TODO
+打开或重新生成 HTML 报告：
 
-- 不可逆操作（支付 / 删除 / 发送）前的安全门控
-- 在 [Benchmark](#benchmark) 下发布可复现的 WebArena-Verified 与 MobileWorld 快照
+```bash
+bin/report logs/gui_agent/tool_agent/browser/<timestamp>
+```
+
+## WebArena 与 MobileWorld
+
+两个 benchmark 都使用同一套 Tool Agent 运行时：
+
+```bash
+bin/webarena 11
+bin/webarena --headless 11
+
+bin/mobileworld --list
+bin/mobileworld OpenFlightModeTask
+```
+
+WebArena 资产和输出位于 `webarena-verified/`；MobileWorld 参考资产位于
+`benchmark/mobileworld/`。benchmark 专属事实只放在对应 knowledge 或 harness 中，
+不会写入 core prompt。
+
+如果 clone 时没有初始化 WebArena，请运行：
+
+```bash
+git submodule update --init --recursive webarena-verified
+```
+
+## 开发与验证
+
+```bash
+uv run pytest
+uv run pytest tests/test_tool_agent_runtime.py
+uv run pytest evals/browser/webarena_response/test_response_replay.py
+```
+
+核心运行时位于 `gui_agent/core/`，平台适配器位于 `gui_agent/adapters/`，报告位于
+`gui_agent/reports/`，知识文件位于 `knowledge/`，确定性测试位于 `tests/`，评测用例
+位于 `evals/`。
+
+## 当前限制
+
+- 当前只把 macOS 作为已测试宿主；Linux 和 Windows 打包尚未支持。
+- 三个平台分别依赖本机 Chrome/CDP、ADB，或 macOS iPhone 镜像窗口与仓库内 helper。
+- repo marketplace 插件通过 `uv` 启动本地 MCP server，并依赖完整 GUIWeave
+  checkout；不能只复制插件目录作为独立安装包。
+- GUI 自动化具有概率性；失败时应结合 HTML 报告和 replay 产物排查。
+
+## License
+
+见 [LICENSE](LICENSE)。

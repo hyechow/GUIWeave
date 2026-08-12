@@ -1,4 +1,4 @@
-"""MobileWorld entry — runs a MobileWorld task on the existing android agent loop.
+"""MobileWorld harness for GUIWeave Tool Agent Master.
 
 MobileWorld (Tongyi/Alibaba, the Android analog of webarena-verified) ships a Docker
 env: a headless rooted emulator + a FastAPI backend (default port 6800) that owns task
@@ -6,8 +6,8 @@ lifecycle and **state-based grading** (``/task/eval`` → ``task.is_successful(c
 inspects the emulator via adb; it does NOT replay or inspect the agent's action trace).
 
 Because grading is pure system state, HOW the actions reach the emulator is irrelevant
-to the score. So this entry is THIN and reuses the real android agent (perception +
-statement supervisor + executor + visualizer) by driving the emulator over **adb**
+to the score. This entry reuses the Android Tool Agent adapter (perception, executor,
+and visualizer) by driving the emulator over **adb**
 (the existing :class:`AndroidDevice`, e.g. ``adb connect <host>:5556``) — which is more
 capable than the backend's ``/step`` (it has clear_text / keycodes / amount-aware
 scroll). MobileWorld's HTTP API is used ONLY for the task lifecycle:
@@ -15,8 +15,7 @@ scroll). MobileWorld's HTTP API is used ONLY for the task lifecycle:
   pre-run  : POST /init (controller) + POST /task/init (reset the app to the task's
              start state), wait for external adb to recover, then open a fresh
              Android session; GET /task/goal supplies the intent.
-  run      : execute either a reviewed Python program or Tool Agent's reviewed
-             Master + autonomous visual Workers; both drive Android over adb.
+  run      : execute Tool Agent's Master + autonomous visual Workers over adb.
   post-run : (optional) POST /step answer to set the backend's interaction_cache for
              answer-style tasks + GET /task/eval (score, reason) + POST /task/tear_down.
 
@@ -49,7 +48,7 @@ from typing import Callable, Optional
 if __package__ is None or __package__ == "":
     sys.path.insert(0, str(Path(__file__).resolve().parents[3]))
 
-from gui_agent.core.run.result import AgentResult, failed_result
+from gui_agent.core.runtime.result import AgentResult, failed_result
 
 # Tags that mark non-GUI-only task subsets; excluded from the default task list (the
 # GUI-only subset is the integration target — see the MobileWorld paper).
@@ -73,6 +72,16 @@ MOBILEWORLD_PACKAGE_MANAGER: dict[str, str] = {
     "Settings": "com.android.settings",
     "Taodian": "com.testmall.app",
 }
+
+
+def _mobileworld_access_context(app_knowledges: list[object]) -> str:
+    """Combine bound apps' private deployment facts for autonomous Workers."""
+
+    return "\n\n".join(
+        deployment
+        for item in app_knowledges
+        if (deployment := str(getattr(item, "deployment", "") or "").strip())
+    )
 
 
 class MobileWorldEnv:
@@ -220,47 +229,8 @@ def _init_task_then_wait_for_android(
 
 
 def _final_answer(result: AgentResult) -> str:
-    """Return the Program's exact output for MobileWorld answer-style grading."""
+    """Return Tool Agent's exact output for MobileWorld answer-style grading."""
     return result.output.strip()
-
-
-def _route_mobileworld_goal(
-    goal: str,
-    *,
-    route: Callable[..., object] | None = None,
-) -> tuple[str, dict]:
-    """Normalize one backend goal while preserving it as the raw evaluator input."""
-    if route is None:
-        from gui_agent.core.chat.session import route_message
-
-        route = route_message
-    result = route(goal, session=[], platform="android")
-    routed_goal = str(getattr(result, "goal", "") or "").strip()
-    payload = result.model_dump(mode="json")
-    return routed_goal or goal, payload
-
-
-def _android_platform_contract(app_names: list[str]) -> str:
-    """Render Android capabilities against exact semantic application names."""
-    from gui_agent.prompts import load_prompt
-
-    return load_prompt("task.orchestrator.android").render(
-        app_list=json.dumps(app_names, ensure_ascii=False)
-    )
-
-
-def _generate_and_persist_reply(
-    context_path: Path,
-    goal: str,
-    result: AgentResult,
-) -> str:
-    """Generate the frontend reply without changing the evaluator-facing output."""
-    from gui_agent.core.llm.output import generate_reply
-    from gui_agent.core.run.state import write_final_reply
-
-    reply = generate_reply(goal, result.model_dump(mode="json"))
-    write_final_reply(context_path, reply)
-    return reply
 
 
 def _write_mobileworld_context(
@@ -306,7 +276,7 @@ def _guess_task_type(goal: str) -> str:
 
 
 def _build_parser() -> argparse.ArgumentParser:
-    parser = argparse.ArgumentParser(description="Run a MobileWorld task on the android agent loop")
+    parser = argparse.ArgumentParser(description="Run a MobileWorld task with Tool Agent Master")
     parser.add_argument("task", nargs="?", help="MobileWorld task name (omit with --list)")
     parser.add_argument("--base-url", default=os.environ.get("MW_BASE_URL", "http://192.168.1.103:6800"),
                         help="MobileWorld backend URL (env MW_BASE_URL; default :6800)")
@@ -320,23 +290,19 @@ def _build_parser() -> argparse.ArgumentParser:
     parser.add_argument("--max-turns", type=int, default=30,
                         help="maximum interactive turns (default 30)")
     parser.add_argument(
-        "--runtime",
-        choices=("reviewed-python", "tool-agent"),
-        default="tool-agent",
-        help="execution runtime (default tool-agent)",
-    )
-    parser.add_argument(
         "--perception",
         choices=("vision-only", "enhanced"),
         default="enhanced",
-        help="tool-agent perception provider (default enhanced)",
+        help="perception provider (default enhanced)",
     )
     parser.add_argument(
+        "--multi-action",
         "--tool-agent-multi-action",
+        dest="multi_action",
         action=argparse.BooleanOptionalAction,
         default=True,
         help=(
-            "allow ordered 1-5 action envelopes for Tool Agent Workers "
+            "allow ordered 1-5 action envelopes for Workers "
             "(default: enabled)"
         ),
     )
@@ -380,8 +346,8 @@ def main() -> int:
     load_dotenv()
 
     from gui_agent.core.runtime.factory import build_platform
-    from gui_agent.core.run.io import EscStopSignal, create_run_dir, tee_stdio
-    from gui_agent.core.runner import run_agent_loop, build_policy, build_supervisor
+    from gui_agent.core.runtime.io import create_run_dir, tee_stdio
+    from gui_agent.core.tool_agent.result import execute_tool_agent
 
     if not env.health():
         print(f"[mobileworld] WARN backend /health not ok at {args.base_url} (continuing)")
@@ -390,9 +356,6 @@ def main() -> int:
     print(f"[mobileworld] goal: {goal}")
     print(f"[mobileworld] backend: {args.base_url}   adb: {args.adb_serial}")
 
-    intent = goal
-    action_policy = build_policy("android_vision")
-    supervisor = build_supervisor("statement")
     # Task initialization may restart the emulator.  Defer HUD/scrcpy construction
     # until after it finishes for the same reason we defer AndroidSession: neither
     # should retain a pre-reset adb transport.
@@ -401,13 +364,6 @@ def main() -> int:
     print(f"[mobileworld] agent logs: {log_dir}")
 
     with tee_stdio(log_dir):
-        router_payload: dict | None = None
-        try:
-            intent, router_payload = _route_mobileworld_goal(goal)
-            print(f"[mobileworld] route: {goal!r} -> {intent!r}")
-        except Exception as exc:  # noqa: BLE001 - preserve direct-run fallback
-            print(f"[mobileworld] route unavailable; using raw goal ({exc})")
-
         # Bind app knowledge by the task's declared apps (best-effort; none → run bare).
         from gui_agent.core.self_learning.app_summary import load_knowledge_for_app
 
@@ -429,23 +385,7 @@ def main() -> int:
             orchestrator_knowledge = "\n\n".join(
                 item.orchestrator_context(goal) for item in app_knowledges
             )
-            access_context = "\n\n".join(
-                deployment
-                for item in app_knowledges
-                if (deployment := str(item.deployment or "").strip())
-            )
-            if hasattr(supervisor, "set_app_knowledge"):
-                supervisor.set_app_knowledge(
-                    "\n\n".join(item.navigation for item in app_knowledges),
-                    app_name=app_names,
-                    elements="\n\n".join(item.elements for item in app_knowledges),
-                    sections={
-                        f"{item.app_name}:{stem}": text
-                        for item in app_knowledges
-                        for stem, text in item.sections.items()
-                    },
-                    check="\n\n".join(item.check for item in app_knowledges),
-                )
+            access_context = _mobileworld_access_context(app_knowledges)
             summaries = [item.summary() for item in app_knowledges]
             knowledge_summary = {"app_name": app_names, "apps": summaries}
             print(f"[mobileworld] knowledge: bound apps={app_names}")
@@ -468,7 +408,7 @@ def main() -> int:
             except Exception as exc:  # noqa: BLE001
                 setup = None
                 result = failed_result(
-                    intent,
+                    goal,
                     f"MobileWorld 任务初始化失败：{exc}",
                     task_type="RETRIEVE",
                     failure_kind="environment",
@@ -480,131 +420,42 @@ def main() -> int:
                     print(line)
             if result is None and setup is not None and not setup.ok:
                 result = failed_result(
-                    intent,
+                    goal,
                     f"任务初始化完成，但外部 adb 未恢复：{setup.summary}",
                     task_type="RETRIEVE",
                     failure_kind="environment",
                 )
             elif result is None and setup is not None:
-                orchestrator_context_reports: list[dict] = []
                 hud = bundle.make_status_reporter(not args.headless)
                 with bundle.open_session() as platform:
                     platform.client.package_manager = MOBILEWORLD_PACKAGE_MANAGER
                     app_list = platform.list_apps()
-                    task_apps = [app for app in declared_apps if app in app_list]
                     print(f"[mobileworld] installed apps: {len(app_list)}")
-
-                    if args.runtime == "tool-agent":
-                        from gui_agent.core.tool_agent.result import (
-                            execute_tool_agent,
-                        )
-
-                        print(
-                            "[mobileworld][tool-agent] "
-                            f"perception={args.perception} "
-                            f"multi_action={args.tool_agent_multi_action}"
-                        )
-                        result, tool_presentation = execute_tool_agent(
-                            intent=intent,
-                            bundle=bundle,
-                            session=platform,
-                            log_dir=log_dir,
-                            perception_mode=args.perception,
-                            max_turns=args.max_turns,
-                            allow_multi_action=args.tool_agent_multi_action,
-                            fallback_task_type=_guess_task_type(intent),
-                            knowledge_summary=knowledge_summary,
-                            knowledge=orchestrator_knowledge,
-                            access_context=access_context,
-                            hud=hud,
-                            raw_input=goal,
-                            router=router_payload,
-                        )
-                    else:
-                        def _compile_program():
-                            run_max_turns = args.max_turns
-                            cur_site = app_names if app_knowledges else ""
-
-                            from gui_agent.core.orchestrator import (
-                                generate_code,
-                                program_from_plan,
-                            )
-                            from gui_agent.core.supervisor.statement.model_io import resolve_file_refs
-                            from gui_agent.core.router import resolve_intent
-
-                            # File references and orchestration stay anchored to the source task;
-                            # the Router may add one semantic clarification.
-                            file_section = resolve_file_refs(goal)
-                            resolution = resolve_intent(goal)
-                            if resolution.semantic_supplement:
-                                print(
-                                    "[mobileworld] semantic supplement: "
-                                    f"{resolution.semantic_supplement}"
-                                )
-                            plan = generate_code(
-                                goal,
-                                knowledge=orchestrator_knowledge,
-                                platform_contract=_android_platform_contract(task_apps),
-                                file_section=file_section,
-                                current_url="",
-                                current_title="",
-                                current_site=cur_site,
-                                resolution=resolution,
-                            )
-                            orchestrator_context_reports.append({
-                                "kind": "coding_compile",
-                                "source": plan.source,
-                                "repaired": plan.repaired,
-                                "events": [
-                                    event.to_dict() for event in plan.events
-                                ],
-                            })
-                            program = program_from_plan(plan)
-                            if file_section:
-                                cap = 3000
-                                supervisor.add_static_constraint(
-                                    file_section if len(file_section) <= cap
-                                    else file_section[:cap] + "\n…（配置过长已截断，其余以分解结果为准）"
-                                )
-                            print("[mobileworld] orchestrator: reviewed Python ready")
-                            return program, run_max_turns
-
-                        program, run_max_turns = _compile_program()
-                        with EscStopSignal(enabled=True) as esc_stop:
-                            if esc_stop.enabled:
-                                print("[mobileworld] Interrupt: 按 ESC 将在当前 turn 收尾后停止")
-                            result = run_agent_loop(
-                                intent,
-                                action_policy,
-                                supervisor,
-                                None,
-                                log_dir,
-                                log_dir / "context.json",
-                                max_turns=run_max_turns,
-                                auto_continue=True,
-                                hud=hud,
-                                raw_input=goal,
-                                router=router_payload,
-                                knowledge=knowledge_summary,
-                                program=program,
-                                orchestrator_context_reports=orchestrator_context_reports,
-                                stop_requested=esc_stop.requested if esc_stop.enabled else None,
-                                platform=platform,
-                            )
+                    print(
+                        "[mobileworld][tool-agent] "
+                        f"perception={args.perception} multi_action={args.multi_action}"
+                    )
+                    result, tool_presentation = execute_tool_agent(
+                        intent=goal,
+                        bundle=bundle,
+                        session=platform,
+                        log_dir=log_dir,
+                        perception_mode=args.perception,
+                        max_turns=args.max_turns,
+                        allow_multi_action=args.multi_action,
+                        fallback_task_type=_guess_task_type(goal),
+                        knowledge_summary=knowledge_summary,
+                        knowledge=orchestrator_knowledge,
+                        access_context=access_context,
+                        hud=hud,
+                        raw_input=goal,
+                    )
 
             # ----- post-run: answer bridge + official state-based eval -----
             if result is None:
                 raise RuntimeError("MobileWorld run ended without AgentResult")
             try:
-                reply = (
-                    str(getattr(tool_presentation, "reply", ""))
-                    if tool_presentation is not None
-                    else _generate_and_persist_reply(
-                        log_dir / "context.json",
-                        intent,
-                        result,
-                    )
-                )
+                reply = str(getattr(tool_presentation, "reply", ""))
                 print("[mobileworld] FINAL_REPLY")
                 print(reply)
             except Exception as exc:  # noqa: BLE001 - reply is not evaluator input

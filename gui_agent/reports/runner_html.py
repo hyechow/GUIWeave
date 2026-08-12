@@ -1356,7 +1356,7 @@ def _render_provenance(raw_input: str, goal: str, router: dict) -> str:
 
     Always rendered (when raw_input is known) so every report states the router
     status explicitly — router goal, a clarification request, a deterministic
-    temporal rewrite, or '未经 router' for bin/runner direct runs. The <h1> title
+    temporal rewrite, or direct Tool Agent input. The <h1> title
     is the raw input; this row shows what it resolved to and how.
     """
     if not raw_input:

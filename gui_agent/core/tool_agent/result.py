@@ -3,9 +3,10 @@
 from __future__ import annotations
 
 import json
+from collections.abc import Callable
 from pathlib import Path
 
-from gui_agent.core.run.result import AgentResult
+from gui_agent.core.runtime.result import AgentResult
 from gui_agent.core.schemas import PolicyContext
 from gui_agent.core.tool_agent.presentation import (
     PresentationResult,
@@ -132,6 +133,7 @@ def execute_tool_agent(
     hud: object | None = None,
     raw_input: str | None = None,
     router: dict | None = None,
+    stop_requested: Callable[[], bool] | None = None,
 ) -> tuple[AgentResult, PresentationResult]:
     """Run Tool Agent and persist its replay, presentation, and stable context."""
 
@@ -143,6 +145,7 @@ def execute_tool_agent(
         max_turns=max_turns,
         allow_multi_action=allow_multi_action,
         status_cb=hud.update if hud else None,
+        stop_requested=stop_requested,
     )
     if hud:
         hud.set_goal(intent)

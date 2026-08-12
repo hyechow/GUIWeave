@@ -1,9 +1,0 @@
-{
-  "turn": 29,
-  "reject_target_controls": [
-    "Next"
-  ],
-  "action": {
-    "action_type": "tap"
-  }
-}

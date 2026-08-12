@@ -1,22 +1,35 @@
-"""Prompt registry invariants for Markdown-backed prompt assets."""
+"""Prompt registry invariants for the Tool Agent release surface."""
 
 from __future__ import annotations
 
 import ast
-import json
-import re
+import string
 from pathlib import Path
 
+import pytest
+
 from gui_agent.prompts import iter_prompt_templates, load_prompt, load_prompt_text
+from gui_agent.prompts.loader import PromptRegistryError
 
 ROOT = Path(__file__).resolve().parents[1]
 
 
-def test_prompt_registry_loads_all_assets():
+def test_prompt_registry_loads_all_assets() -> None:
     prompts = iter_prompt_templates()
     assert prompts
-    ids = [p.id for p in prompts]
-    assert len(ids) == len(set(ids))
+    assert len({prompt.id for prompt in prompts}) == len(prompts)
+    assert {prompt.id for prompt in prompts} == {
+        "task.tool_agent.master",
+        "task.tool_agent.master_redelegate",
+        "task.tool_agent.presentation",
+        "task.tool_agent.visual_transcription",
+        "task.tool_agent.worker",
+        "task.knowledge.document_ingest",
+        "task.vision.loading",
+        "task.vision.target_verify",
+        "task.webarena.synthesize_human",
+        "task.webarena.synthesize_system",
+    }
     for prompt in prompts:
         assert prompt.path.exists()
         assert prompt.source_type
@@ -26,432 +39,76 @@ def test_prompt_registry_loads_all_assets():
         assert prompt.body.strip()
 
 
-def test_rendered_flag_governs_brace_scanning():
-    # The rendered/raw split is authoritative (frontmatter `rendered: true`), not inferred by
-    # auto-scanning braces — that misread JSON examples in raw prompts. Contract:
-    #   - raw prompts are never brace-scanned (.placeholders == ()), so JSON {...} is safe;
-    #   - rendered prompts are consumed via str.format(), so their braces must all be valid
-    #     NAMED placeholders (balanced, escaped JSON, no positional {}), else .format() raises.
-    import string
-
-    for p in iter_prompt_templates():
-        if not p.rendered:
-            assert p.placeholders == (), f"raw prompt {p.id} should not expose placeholders"
+def test_rendered_flag_governs_brace_scanning() -> None:
+    for prompt in iter_prompt_templates():
+        if not prompt.rendered:
+            assert prompt.placeholders == ()
             continue
-        try:
-            fields = [fn for _, fn, _, _ in string.Formatter().parse(p.body)]
-        except ValueError as exc:
-            raise AssertionError(f"rendered prompt {p.id} has malformed/unescaped braces: {exc}")
-        assert "" not in fields, f"rendered prompt {p.id} has a positional/empty {{}} placeholder"
-        assert p.placeholders, f"rendered prompt {p.id} is marked rendered but has no placeholders"
+        fields = [
+            name
+            for _, name, _, _ in string.Formatter().parse(prompt.body)
+            if name is not None
+        ]
+        assert "" not in fields
+        assert prompt.placeholders
 
 
-def test_render_rejects_raw_prompts():
-    from gui_agent.prompts import load_prompt
-    from gui_agent.prompts.loader import PromptRegistryError
-
-    raw = load_prompt("task.orchestrator.coding")
-    assert raw.rendered is False
-    try:
-        raw.render(anything="x")
-    except PromptRegistryError:
-        pass
-    else:
-        raise AssertionError("render() must refuse a raw prompt")
+def test_render_rejects_raw_prompts() -> None:
+    with pytest.raises(PromptRegistryError):
+        load_prompt("task.tool_agent.master").render(anything="x")
 
 
-def test_coding_contract_exposes_only_public_ctx_api():
-    prompt = load_prompt_text("task.orchestrator.coding")
-
-    for method in ("ctx.reach", "ctx.query", "ctx.read", "ctx.commit"):
-        assert method in prompt
-    assert "filters={}" in prompt
-    assert "match={" not in prompt
-    assert "match_mode" not in prompt
-    for retired in (
-        "ctx.gui",
-        "ctx.write",
-        "ctx.lookup",
-        "ctx.constrain",
-        "ctx.interact",
-        "redecompose",
+def test_master_exposes_only_tool_agent_runtime_api() -> None:
+    prompt = load_prompt_text("task.tool_agent.master")
+    for method in (
+        "ctx.gui_worker",
+        "ctx.transform",
+        "ctx.worker_result",
+        "ctx.finish",
+        "ctx.fail",
     ):
+        assert method in prompt
+    for retired in ("ctx.reach", "ctx.query", "ctx.read", "ctx.commit"):
         assert retired not in prompt
 
 
-def test_coding_contract_keeps_settings_atomic_and_visual_retrieval_on_source():
-    from gui_agent.core.orchestrator.planner import _unstructured_visual_block
-
-    prompt = load_prompt_text("task.orchestrator.coding")
-    visual_contract = _unstructured_visual_block().content
-
-    assert "emit exactly one `commit` with all requested setting" in prompt
-    assert "Do not precede it with `reach` or `read`" in prompt
-    assert "Never replace a requested" in prompt
-    assert "in-application search or visible-page lookup with an API" in prompt
-    assert "every requested field must already" in prompt
-    assert 'literal `success["fields"]` list' in prompt
-    assert "must be an inline dictionary literal at every call" in prompt
-    assert "never translate it into an inverse mutation" in prompt
-    assert "one semantic result/view `ctx.reach`" in visual_contract
-    assert "same requested fields" in visual_contract
-    assert "Generic whole-page fields" in visual_contract
-    assert "schema-free" in prompt
-    assert "embed the exact observed source" in prompt
-    assert "Do not parse it with host code" in prompt
-    assert "declares structured mutation fields" in prompt
-    assert '"<start_field>": detail["<start_field>"]' in prompt
-    assert '"<end_field>": detail["<end_field>"]' in prompt
-    assert 'fields={"<content_field>": "text", "<semantic_field>": "boolean"}' in prompt
-    assert 'if detail["<semantic_field>"]:' in prompt
-    assert "replace every angle-bracket placeholder" in prompt
-    assert "The two commit branches are alternatives" in prompt
-    assert "Every selected application fact is an authoritative interface constraint" in prompt
-    assert "named month without a year remains month-only" in prompt
-    assert "do not inspect `.year`" in prompt
-
-
-def test_tool_agent_worker_changes_strategy_after_empty_ui_search():
+def test_worker_keeps_data_private_and_coordinates_normalized() -> None:
     prompt = load_prompt_text("task.tool_agent.worker")
-
-    assert "returns zero rows as evidence against that exact query" in prompt
-    assert "do not call the old fixed-input action" in prompt
-    assert "matching baseline tool with the new exact value" in prompt
-    assert "same query again after clearing" in prompt
-    assert "shorter distinctive substring" in prompt
+    assert "Raw data values are private runtime data" in prompt
+    assert "Coordinates are normalized 0..999" in prompt
+    assert "request_action_patch" in prompt
 
 
-def test_tool_agent_worker_recognizes_exhausted_unfiltered_candidate_sets():
+def test_worker_handles_exhausted_candidate_sets_and_row_targets() -> None:
     prompt = load_prompt_text("task.tool_agent.worker")
 
     assert "an exhausted candidate set is direct" in prompt
     assert "the same unfiltered selector" in prompt
-    assert "previously showed" in prompt
     assert "latest selected batch's commit produced a confirmed transition" in prompt
-    assert "normal candidate region is visible" in prompt
     assert "An initially empty selector, a filtered zero-result view" in prompt
-
-
-def test_tool_agent_worker_disambiguates_related_navigation_targets():
-    prompt = load_prompt_text("task.tool_agent.worker")
-
-    assert "matching their exact visible labels" in prompt
-    assert "Complete only when current surface identity" in prompt
-    assert "selected value" in prompt
-    assert "`detail_resolution.status = active`" in prompt
-    assert "`pending_candidate_ordinal`" in prompt
-    assert "never add lookup rows as candidates" in prompt
-    assert "`target_signal.status=off_target`" in prompt
-    assert "authoritative flash-model feedback" in prompt
     assert "describe the row/button itself" in prompt
     assert "adjacent child icon or decoration" in prompt
 
 
-def test_shared_tool_agent_prompts_do_not_embed_platform_contracts() -> None:
-    prompt_ids = (
-        "task.tool_agent.master",
-        "task.tool_agent.master_redelegate",
-        "task.tool_agent.worker",
-        "task.tool_agent.presentation",
-        "task.tool_agent.visual_transcription",
-    )
-    banned = (
-        "android",
-        "browser",
-        "iphone",
-        "runtime_open_url",
-        "select_option",
-        "open_url",
-        "launch_app",
-        "app_switch",
-        "long_press",
-        "clear_text",
-        "press_enter",
-        "same-origin",
-        "combobox",
-        "dropdown",
-        "pagination",
-        "dom",
-    )
-
-    for prompt_id in prompt_ids:
-        prompt = load_prompt(prompt_id)
-        assert prompt.platform == "shared"
-        body = prompt.body.casefold()
-        for term in banned:
-            assert term.casefold() not in body, (
-                f"{prompt_id} embeds platform contract {term!r}; inject it from the adapter"
-            )
-
-
-def test_tool_agent_prompts_preserve_exact_pending_selection_sets():
-    worker = load_prompt_text("task.tool_agent.worker")
-    master = load_prompt_text("task.tool_agent.master")
-
-    assert "selection goals as set constraints" in worker
-    assert "verify set equality" in worker
-    assert "review contains extra" in worker
-    assert "exact-set semantics" in master
-    assert "alongside extra newly-created members" in master
-
-
-def test_statement_transition_separates_commit_boundary_from_action_family():
-    prompt = load_prompt_text("task.statement.transition")
-
-    assert "write-through 控件" in prompt
-    assert "`activate + commit`" in prompt
-    assert "`activate + write`" in prompt
-    assert "不要求存在名为 Save/Submit 的独立按钮" in prompt
-
-
-def test_tool_agent_master_budgets_complete_cohesive_workers() -> None:
-    prompt = load_prompt_text("task.tool_agent.master")
-
-    assert "including possible authentication" in prompt
-    assert "Use the full value `20` for a multi-surface mutation" in prompt
-    assert "not a reason to split one cohesive subgoal" in prompt
-    assert "Never evade the private-array boundary by joining" in prompt
-    assert "not a serialized collection or hidden foreach plan" in prompt
-
-
-def test_tool_agent_master_separates_candidate_coverage_from_result_selection() -> None:
-    prompt = load_prompt_text("task.tool_agent.master")
-
-    assert "acquire that field for every candidate" in prompt
-    assert "apply the predicate or calculation afterward in `ctx.transform`" in prompt
-    assert "query must never exist only as prose" in prompt
-    assert "Observer can verify the queried scope" in prompt
-    assert "never rely on UI row order or collection arrival order" in prompt
-    assert "Linked-detail resolution remains source acquisition" in prompt
-    assert "Never finish or transform a partial candidate collection" in prompt
-    assert "Observation is automatic" in prompt
-    assert "pseudo-actions" in prompt
-
-    transcription = load_prompt_text("task.tool_agent.visual_transcription")
-    assert "must never make you omit a readable row" in transcription
-
-
-def test_coding_prompt_separates_projection_fields_from_source_filters():
-    prompt = load_prompt_text("task.orchestrator.coding")
-
-    assert "projected field is not automatically source-filterable" in prompt.lower()
-    assert "completely acquired rows in Python" in prompt
-
-
-def test_coding_prompt_is_principle_led_with_boundary_cases() -> None:
-    prompt = load_prompt_text("task.orchestrator.coding")
-
-    for heading in (
-        "## Principle 1: Preserve the requested business outcome",
-        "## Principle 2: Treat the supplied interface as an exact contract",
-        "## Principle 3: Thread UI state explicitly",
-        "## Principle 4: Acquire authoritative data before deciding",
-        "## Principle 5: Use typed evidence for selection and computation",
-        "## Principle 6: Separate semantic interpretation from data identity",
-        "## Principle 7: Preserve source data across operations and applications",
-        "## Principle 8: Make durable changes only at the correct target boundary",
-        "## Principle 9: Defer to application facts and user method constraints",
-        "## Final emission checklist",
-    ):
-        assert heading in prompt
-    assert prompt.count("Case:") >= 8
-
-
-def test_prompt_eval_suites_point_to_existing_paths():
-    for prompt in iter_prompt_templates():
-        for suite in prompt.eval_suites:
-            assert (ROOT / suite).exists(), f"{prompt.id} references missing suite {suite}"
-
-
-def test_migrated_prompt_constants_load_from_registry():
-    from gui_agent.adapters.android.router_prompt import ANDROID_ROUTER_SYSTEM
-    from gui_agent.adapters.browser.router_prompt import BROWSER_ROUTER_SYSTEM
-    from gui_agent.adapters.iphone.policies.structured_output import SYSTEM_PROMPT
-    from gui_agent.core.self_learning.app_summary import (
-        _ELEMENTS_SYSTEM as ELEMENTS_SYS,
-        _NAV_SYSTEM as NAV_SYS,
-    )
-    from gui_agent.core.self_learning.manual_pdf import _SECTION_SYSTEM as SECTION_SYS
-
-    assert SYSTEM_PROMPT == load_prompt_text("task.action_policy.iphone")
-    assert ANDROID_ROUTER_SYSTEM == load_prompt_text("task.router.android")
-    assert BROWSER_ROUTER_SYSTEM == load_prompt_text("task.router.browser")
-    assert NAV_SYS == load_prompt_text("task.self_learning.app_summary.nav_system")
-    assert ELEMENTS_SYS == load_prompt_text("task.self_learning.app_summary.elements_system")
-    assert SECTION_SYS == load_prompt_text("task.self_learning.manual_pdf.section_system")
-
-
-def test_every_platform_router_includes_shared_goal_semantics():
-    from gui_agent.core.chat.session import _router_system_for
-
-    shared = load_prompt_text("context.router.shared_goal")
-    for platform in ("android", "browser", "iphone"):
-        system, _known_apps_rule = _router_system_for(platform)
-        assert shared in system
-
-    assert "Router host's current date" in shared
-    assert "fixed number of days" in shared
-    assert "optional implementation alternatives" in shared
-    assert "original language and spelling" in shared
-
-
-def test_android_router_preserves_input_language_and_literals():
-    prompt = load_prompt_text("task.router.android")
-    normalized = " ".join(prompt.split())
-
-    assert "same language as the current user instruction" in prompt
-    assert "Do not translate an English request into Chinese" in normalized
-    assert "quoted reply text" in load_prompt_text("context.router.shared_goal")
-
-
-def test_android_orchestrator_declares_launch_app_as_platform_capability():
-    template = load_prompt("task.orchestrator.android")
-    prompt = template.render(app_list='["Alpha", "Beta"]')
-
-    assert 'ctx.command("launch_app", app=<application name>)' in prompt
-    assert "only changes the foreground application" in prompt
-    assert '["Alpha", "Beta"]' in prompt
-    assert "never use an Android package" in prompt
-    assert "Calendar" not in prompt
-
-
-def test_large_inline_prompt_constants_are_explicitly_allowlisted():
-    """Default-deny guardrail: inline LLM prompt strings live in gui_agent/prompts/,
-    not in code — except for an explicit, shrinking legacy allowlist.
-
-    FAILS when a MODULE-LEVEL assignment whose name ends in *_PROMPT / *_SYSTEM /
-    *_RULE holds a string literal of >= MIN_CHARS, unless that (file, name) pair is
-    in LEGACY_INLINE_PROMPTS. Scans ALL of gui_agent/ and fails by default, so an
-    un-migrated or freshly-added inline prompt is caught — the old migrated-allowlist
-    check only guarded files it already knew about and let new violations slip in.
-
-    RATCHET: exceptions are pinned to specific constants. Migrate one to
-    gui_agent/prompts/ and delete its line, or the test fails "stale". You also
-    cannot silently add a new inline prompt to an already-allowlisted file.
-
-    Necessary, not sufficient — a content scan has too many false positives
-    (HTML/CSS/JS templates, schema prose), so the guard keys on the naming
-    convention. Deliberate gaps:
-      - Naming blind spot: only *_PROMPT/*_SYSTEM/*_RULE names are scanned. The
-        largest LIVE blind spot is adapters/browser/webarena.py (_synthesize_response
-        assigns ~1k-char system/human blocks to LOCALS sys_msg/human — no suffix AND
-        function-local). Migrate those to close it (top should_migrate_soon item).
-      - Function-local: HumanMessage/SystemMessage built from inline f-strings inside
-        functions (core/llm/output.py, core/chat/*) are out of scope by design.
-      - BinOp/JoinedStr concatenations are excluded, so a registry-backed
-        `_COMMON + load_prompt_text(...)` (self_learning/knowledge.py) is not flagged.
-      - Schema Field(description=...) prose is intentionally allowed in code (205
-        today, longest 174 — all under threshold, none *_PROMPT/*_SYSTEM/*_RULE).
-    See memory: prompts-isolation-remaining-inline.
-    """
-    SUFFIXES = ("PROMPT", "SYSTEM", "RULE")
-    MIN_CHARS = 200
-    # (repo-relative file, constant name): the ONLY module-level *_PROMPT/
-    # *_SYSTEM/*_RULE string literals >= MIN_CHARS allowed in code. Migrate one
-    # -> delete its line -> the ratchet tightens. All three are the iphone recon
-    # pipeline (dormant since the package rename; see the audit's should_migrate_soon).
-    LEGACY_INLINE_PROMPTS = {
-        ("gui_agent/adapters/iphone/recon/back_nav.py", "BACK_PROMPT"),
-        ("gui_agent/adapters/iphone/recon/cascade_matcher.py", "SEMANTIC_PROMPT"),
-        ("gui_agent/adapters/iphone/recon/page_parser.py", "SYSTEM_PROMPT"),
-    }
-
-    actual = set()
+def test_large_inline_prompt_constants_are_not_added() -> None:
+    suffixes = ("PROMPT", "SYSTEM", "RULE")
+    violations = []
     for path in (ROOT / "gui_agent").rglob("*.py"):
         if "__pycache__" in path.parts:
             continue
-        rel = str(path.relative_to(ROOT))
         tree = ast.parse(path.read_text(encoding="utf-8"))
         for node in tree.body:
             if not isinstance(node, ast.Assign):
                 continue
-            if not isinstance(node.value, ast.Constant) or not isinstance(node.value.value, str):
+            if not isinstance(node.value, ast.Constant) or not isinstance(
+                node.value.value, str
+            ):
                 continue
-            matched = [n for n in (t.id for t in node.targets if isinstance(t, ast.Name))
-                       if n.endswith(SUFFIXES)]
-            if not matched:
-                continue
-            if len(node.value.value) >= MIN_CHARS:
-                for name in matched:
-                    actual.add((rel, name))
-
-    new_violations = actual - LEGACY_INLINE_PROMPTS
-    stale = LEGACY_INLINE_PROMPTS - actual
-    assert not new_violations, (
-        f"unallowlisted large inline prompt constant(s): {sorted(new_violations)} — "
-        "move the prompt into gui_agent/prompts/ and load via load_prompt_text(), "
-        "or add an explicit (file, name) entry to LEGACY_INLINE_PROMPTS if it is genuine legacy."
-    )
-    assert not stale, (
-        f"stale allowlist entr(ies): {sorted(stale)} — the inline prompt no longer "
-        "exists (migrated/renamed); delete the line from LEGACY_INLINE_PROMPTS."
-    )
-
-
-def test_shared_prompts_do_not_embed_app_or_site_facts():
-    banned = [
-        "微信",
-        "WeChat",
-        "拼多多",
-        "支付宝",
-        "美团",
-        "Magento",
-        "shopping_admin",
-        "RoboTeam",
-        "WebArena",
-        "Olivia",
-        "zip jacket",
-        "tanks products",
-        "customer nickname(s)",
-    ]
-    for prompt in iter_prompt_templates():
-        if prompt.platform != "shared":
-            continue
-        for term in banned:
-            assert term not in prompt.body, f"{prompt.id} embeds app/site fact {term!r}"
-
-
-def test_non_webarena_prompts_do_not_embed_benchmark_examples():
-    banned = [
-        "WebArena",
-        "Olivia",
-        "zip jacket",
-        "tanks products",
-        "customer nickname(s)",
-        "rating of 3 stars or below",
-    ]
-    for prompt in iter_prompt_templates():
-        if prompt.id.startswith("task.webarena."):
-            continue
-        for term in banned:
-            assert term not in prompt.body, f"{prompt.id} embeds benchmark example {term!r}"
-
-
-def test_shared_target_verifier_is_platform_neutral():
-    prompt = load_prompt_text("task.vision.target_verify")
-
-    for term in ("底部 Tab", "世界时钟", "闹钟", "WebArena", "Android", "iOS"):
-        assert term not in prompt
-
-
-def test_adapter_prompts_do_not_embed_specific_app_ui_facts():
-    # Adapter prompts may describe platform mechanisms (iPhone app switching, browser DOM,
-    # Android back/home), but concrete app/site UI facts belong in knowledge/*.md.
-    banned_ui_facts = [
-        re.compile(r"(?:微信|WeChat).{0,16}(?:聊天列表|通讯录|发现|底部\s*Tab|tab\s*名)", re.I),
-        re.compile(r"(?:拼多多|支付宝|美团).{0,16}(?:底部\s*Tab|tab\s*名|分享面板)", re.I),
-        re.compile(r"(?:Magento|shopping_admin).{0,24}(?:Admin|Orders|Products|Customers|Sales|Reports)", re.I),
-        re.compile(r"(?:RoboTeam).{0,24}(?:机器人列表|设备列表|控制台)", re.I),
-    ]
-    allowlist: set[tuple[str, str]] = set()
-
-    for prompt in iter_prompt_templates():
-        if prompt.platform in {"", "shared"}:
-            continue
-        for pattern in banned_ui_facts:
-            match = pattern.search(prompt.body)
-            if match and (prompt.id, pattern.pattern) not in allowlist:
-                raise AssertionError(
-                    f"{prompt.id} embeds concrete app UI fact {match.group(0)!r}; "
-                    "move it to knowledge or add a narrow allowlist entry"
-                )
+            names = [
+                target.id
+                for target in node.targets
+                if isinstance(target, ast.Name) and target.id.endswith(suffixes)
+            ]
+            if names and len(node.value.value) >= 200:
+                violations.extend((str(path.relative_to(ROOT)), name) for name in names)
+    assert violations == []

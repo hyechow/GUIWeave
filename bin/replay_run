@@ -1,5 +1,5 @@
 #!/usr/bin/env bash
-# 重放一个 Statement 决策；会调用 LLM，但不会连接设备、浏览器或派发动作。
+# 确定性重放 Tool Agent Master 程序；不连接设备、浏览器、网络或 LLM。
 set -e
 cd "$(dirname "$0")/.."
 exec uv run python -m replay "$@"

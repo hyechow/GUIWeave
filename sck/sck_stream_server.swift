@@ -105,21 +105,18 @@ Task {
         }
 
         // Find iPhone Mirroring main window (318×701 logical points)
-        let win = content.windows.first(where: {
+        guard let win = content.windows.first(where: {
             $0.owningApplication?.applicationName.contains("iPhone") == true &&
             Int($0.frame.width) == 318 && Int($0.frame.height) == 701
-        })
-        if let win {
-            fputs("Window: \(win.frame)\n", stderr)
-        } else {
-            fputs("iPhone window not found, capturing full display\n", stderr)
+        }) else {
+            fputs("iPhone Mirroring window not found; refusing full-display capture\n", stderr)
+            exit(1)
         }
+        fputs("Window: \(win.frame)\n", stderr)
 
         let filter = SCContentFilter(display: display, excludingWindows: [])
         let config = SCStreamConfiguration()
-        if let win {
-            config.sourceRect = win.frame
-        }
+        config.sourceRect = win.frame
         config.width = 636   // 318 * 2 Retina
         config.height = 1402 // 701 * 2 Retina
         config.minimumFrameInterval = CMTime(value: 1, timescale: 1) // 1fps — low CPU
@@ -144,7 +141,7 @@ Task {
         // Background task: re-query iPhone window position every 500ms and update
         // sourceRect so the capture follows the window if it moves.
         Task {
-            var lastRect = win?.frame ?? .zero
+            var lastRect = win.frame
             while true {
                 try await Task.sleep(nanoseconds: 500_000_000)
                 guard let content = try? await SCShareableContent.current,

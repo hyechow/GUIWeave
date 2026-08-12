@@ -8,28 +8,13 @@ from gui_agent.adapters.browser.webarena import (
     _eval_compat_probe_urls_for_task,
     _finalize_response,
     _guess_webarena_task_type,
-    _compile_failure_response,
     _run_official_eval,
     _synthesize_response,
     _official_eval_summary,
-    _print_program,
     _task_for_eval_compat,
-    _warn_if_pre_loop_page_changed,
     _write_webarena_report_context,
 )
-from gui_agent.core.orchestrator import CodingProgram
-from gui_agent.core.run.result import AgentResult
-
-
-def test_print_program_renders_reviewed_python(capsys):
-    _print_program(CodingProgram(
-        goal="read material",
-        source="def run(ctx):\n    return 'Cotton'",
-    ))
-
-    output = capsys.readouterr().out
-    assert "coding orchestrator program" in output
-    assert "def run(ctx)" in output
+from gui_agent.core.runtime.result import AgentResult
 
 
 def _result(**updates) -> AgentResult:
@@ -251,42 +236,6 @@ def test_live_180142_terminal_save_bypasses_second_llm_judgement():
     assert resp.retrieved_data is None
 
 
-def test_completed_coding_retrieve_uses_json_return_without_output_llm():
-    returned = [{"month": "April", "count": 9}]
-    resp = _synthesize_response(
-        "Return monthly completed order counts",
-        _result(
-            task_type="RETRIEVE",
-            phase="completed",
-            verification="confirmed",
-            output='[{"month": "April", "count": 9}]',
-            orchestrator={"kind": "coding", "run_log": []},
-        ),
-    )
-    assert resp == WAResponse(
-        task_type="RETRIEVE",
-        status="SUCCESS",
-        retrieved_data=returned,
-        error_details=None,
-    )
-
-
-def test_completed_coding_retrieve_accepts_unverified_read_evidence():
-    resp = _synthesize_response(
-        "Return matching customer nicknames",
-        _result(
-            task_type="RETRIEVE",
-            phase="completed",
-            verification="accepted_unverified",
-            output='["Emma", "seam miller"]',
-            orchestrator={"kind": "coding", "run_log": []},
-        ),
-    )
-
-    assert resp.status == "SUCCESS"
-    assert resp.retrieved_data == ["Emma", "seam miller"]
-
-
 def test_completed_tool_agent_retrieve_uses_result_ref_json_without_output_llm():
     resp = _synthesize_response(
         "Return the requested labels",
@@ -327,46 +276,6 @@ def test_failed_tool_agent_platform_rejection_is_action_not_allowed_without_outp
         status="ACTION_NOT_ALLOWED_ERROR",
         retrieved_data=None,
         error_details="We cannot add order history.",
-    )
-
-
-def test_completed_coding_retrieve_wraps_scalar_for_webarena_protocol():
-    resp = _synthesize_response(
-        "Return the total as a number only",
-        _result(
-            task_type="RETRIEVE",
-            phase="completed",
-            verification="confirmed",
-            output="182.4",
-            orchestrator={"kind": "coding", "run_log": []},
-        ),
-    )
-
-    assert resp.status == "SUCCESS"
-    assert resp.retrieved_data == [182.4]
-
-
-def test_completed_coding_ui_state_uses_program_effect_not_intent_guess():
-    resp = _synthesize_response(
-        "Show the orders report from May 1, 2021 to March 31, 2022.",
-        _result(
-            task_type="browser",
-            phase="completed",
-            verification="confirmed",
-            output='{"token":"c1:state","postcondition":{"rendered":true}}',
-            orchestrator={
-                "kind": "coding",
-                "effect": "ui_state",
-                "run_log": [{"coding_op": "reach"}],
-            },
-        ),
-    )
-
-    assert resp == WAResponse(
-        task_type="NAVIGATE",
-        status="SUCCESS",
-        retrieved_data=None,
-        error_details=None,
     )
 
 
@@ -541,52 +450,6 @@ def test_multi_key_rows_are_left_as_objects():
         intent="List each product name and its count",
     )
     assert resp.retrieved_data == rows
-
-
-def test_compile_failure_response_is_deterministic_error():
-    resp = _compile_failure_response(
-        "Tell me the top search terms",
-        _result(
-            summary="orchestrator compile failed: REF_NOT_IN_SCOPE",
-            output="orchestrator compile failed: REF_NOT_IN_SCOPE",
-        ),
-    )
-
-    assert resp.task_type == "RETRIEVE"
-    assert resp.status == "DATA_VALIDATION_ERROR"
-    assert resp.retrieved_data is None
-    assert "REF_NOT_IN_SCOPE" in (resp.error_details or "")
-
-
-def test_pre_loop_page_drift_warns(capsys):
-    class _Device:
-        def page_info(self):
-            return "http://localhost/admin/review/product/index/", "Reviews"
-
-    _warn_if_pre_loop_page_changed(
-        _Device(),
-        initial_url="http://localhost/admin/admin/dashboard/",
-        initial_title="Dashboard",
-    )
-
-    out = capsys.readouterr().out
-    assert "pre-loop page changed after initial observe" in out
-    assert "/admin/admin/dashboard/" in out
-    assert "/admin/review/product/index/" in out
-
-
-def test_pre_loop_page_drift_ignores_same_url(capsys):
-    class _Device:
-        def page_info(self):
-            return "http://localhost/admin/admin/dashboard", "Dashboard"
-
-    _warn_if_pre_loop_page_changed(
-        _Device(),
-        initial_url="http://localhost/admin/admin/dashboard/",
-        initial_title="Dashboard",
-    )
-
-    assert capsys.readouterr().out == ""
 
 
 def test_report_context_includes_official_eval(tmp_path):

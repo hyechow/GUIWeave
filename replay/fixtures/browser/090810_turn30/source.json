@@ -1,8 +1,0 @@
-{
-  "task": "WebArena 549",
-  "history_source": "logs/gui_agent/webarena/browser/20260713_090810/context.json",
-  "history_through_turn": 29,
-  "observation_source": "read-only Chrome CDP capture of the retained final product-editor state",
-  "observation_captured_on": "2026-07-13",
-  "purpose": "Negative provenance replay: the legacy history lacks adjacent structured observations, so incomplete evidence must not authorize a guessed Save."
-}

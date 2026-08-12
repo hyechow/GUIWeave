@@ -519,7 +519,43 @@ def form_controls_from_semantic_tree(
             }
         controls.append(item)
 
-    return controls
+    # Some UI toolkits mark both a row and its immediate child clickable. Keep
+    # the smaller rendered target when they expose the same visible identity.
+    deduplicated: list[dict[str, Any]] = []
+    for control in controls:
+        label = "".join(
+            character.casefold()
+            for character in str(control.get("label") or "")
+            if character.isalnum()
+        )
+        rect = control.get("rect")
+        duplicate_index: int | None = None
+        if label and isinstance(rect, dict):
+            for index, existing in enumerate(deduplicated):
+                existing_rect = existing.get("rect")
+                if (
+                    existing.get("kind") == control.get("kind")
+                    and "".join(
+                        character.casefold()
+                        for character in str(existing.get("label") or "")
+                        if character.isalnum()
+                    ) == label
+                    and isinstance(existing_rect, dict)
+                    and abs(float(existing_rect["x"]) - float(rect["x"])) <= 8
+                    and abs(float(existing_rect["y"]) - float(rect["y"])) <= 8
+                ):
+                    duplicate_index = index
+                    break
+        if duplicate_index is None:
+            deduplicated.append(control)
+            continue
+        existing = deduplicated[duplicate_index]
+        existing_rect = existing["rect"]
+        if float(rect["w"]) * float(rect["h"]) < (
+            float(existing_rect["w"]) * float(existing_rect["h"])
+        ):
+            deduplicated[duplicate_index] = control
+    return deduplicated
 
 
 def collection_regions_from_uiautomator(

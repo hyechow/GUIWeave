@@ -12,7 +12,9 @@ from gui_agent.core.tool_agent.contracts import (
     MaterializedFrame,
     WorkerOutcome,
     WorkerSpec,
+    WorkerState,
 )
+from gui_agent.core.tool_agent.action_guard import WorkerActionCircuitBreaker
 from gui_agent.core.tool_agent.data_store import RuntimeDataStore
 from gui_agent.core.tool_agent.protocol import (
     MAX_ORDERED_ACTIONS,
@@ -21,6 +23,7 @@ from gui_agent.core.tool_agent.protocol import (
 )
 from gui_agent.core.tool_agent.runtime import ToolAgentRuntime
 from gui_agent.core.schemas import TargetVerify
+from gui_agent.core.tool_agent.worker_memory import WorkerJournal
 from gui_agent.adapters.browser.control_grounding import ground_action_to_nearest_control
 
 
@@ -93,6 +96,39 @@ def test_android_runtime_discovers_installed_apps_for_worker_prompt() -> None:
     assert '"Settings"' in prompt
 
 
+def test_multi_action_worker_prompt_is_platform_neutral() -> None:
+    runtime = object.__new__(ToolAgentRuntime)
+    runtime.allow_multi_action = True
+    runtime._platform_capabilities = frozenset({"tap"})
+    runtime._installed_app_names = ()
+    runtime._master_knowledge = ""
+    runtime._worker_access_context = ""
+
+    prompt = runtime._worker_system_prompt(
+        WorkerSpec(
+            goal="Complete the visible operation",
+            success_criteria=["The requested state is visible"],
+            actions=[DynamicActionSpec(
+                name="activate_visible_control",
+                capability="tap",
+                description="Activate the visible control",
+            )],
+        ),
+        [],
+    )
+
+    for capability in (
+        "clear_text",
+        "press_enter",
+        "select_option",
+        "open_url",
+        "launch_app",
+        "app_switch",
+        "long_press",
+    ):
+        assert capability not in prompt
+
+
 @pytest.mark.parametrize(
     ("platform_name", "capabilities", "applications", "expected", "excluded"),
     [
@@ -139,8 +175,7 @@ def test_private_access_context_reaches_worker_but_is_redacted_from_trace() -> N
 
     access_context = (
         "# Deployment\n"
-        "Username: `runtime-user-73`\n"
-        "Password: `runtime-secret-73`"
+        "Account `runtime-user-73` / password `runtime-secret-73`"
     )
     runtime = object.__new__(ToolAgentRuntime)
     runtime._worker_access_context = access_context
@@ -399,6 +434,15 @@ class _GroundingExecutor(_Executor):
         )
 
 
+class _ImmediateVerifyFuture:
+    def __init__(self, value: TargetVerify) -> None:
+        self.value = value
+
+    def result(self, *, timeout=None):
+        del timeout
+        return self.value
+
+
 class _ImmediateVerifyPool:
     def __init__(self, *values: TargetVerify) -> None:
         self.values = list(values)
@@ -406,18 +450,7 @@ class _ImmediateVerifyPool:
 
     def submit(self, function, *args):
         self.submitted.append((function, args))
-        value = self.values.pop(0)
-        return SimpleNamespace(result=lambda timeout=None: value)
-
-
-class _BrowserSnapExecutor(_Executor):
-    def execute(self, decision, **kwargs):
-        decision.action.snap = {
-            "method": "dom",
-            "snapped": [525.0, 540.0],
-            "info": "Create Channel",
-        }
-        return super().execute(decision, **kwargs)
+        return _ImmediateVerifyFuture(self.values.pop(0))
 
 
 class _Visualizer:
@@ -615,7 +648,6 @@ def _run_fused_worker(
     actions: list[DynamicActionSpec] | None = None,
     controls: list[dict] | None = None,
     requirement_scopes: dict[str, dict] | None = None,
-    target_verify: TargetVerify | None = None,
 ) -> ToolAgentRuntime:
     runtime = object.__new__(ToolAgentRuntime)
     runtime.trace = []
@@ -628,9 +660,6 @@ def _run_fused_worker(
         client=SimpleNamespace(page_info=lambda: (current_url, "Login")),
     )
     runtime.allow_multi_action = True
-    runtime._target_verify_pool = (
-        _ImmediateVerifyPool(target_verify) if target_verify else None
-    )
     runtime.observe_calls = 0
 
     def observe(_spec):
@@ -723,8 +752,7 @@ def test_multi_action_suffix_requires_stable_visible_targets() -> None:
     specs = {
         name: DynamicActionSpec(name=name, capability=capability, description=name)
         for name, capability in {
-            "tap": "tap", "clear": "clear_text", "type": "type",
-            "select": "select_option", "scroll": "scroll",
+            "tap": "tap", "clear": "clear_text", "type": "type", "scroll": "scroll"
         }.items()
     }
     type_call = {"name": "type", "args": {"x": 500, "y": 400}}
@@ -732,27 +760,12 @@ def test_multi_action_suffix_requires_stable_visible_targets() -> None:
     assert runtime._suffix_requires_reobservation(
         call={"name": "tap", "args": {"x": 500, "y": 400}},
         action=specs["tap"],
-        remaining=[
-            {"name": "clear", "args": {}},
-            type_call,
-        ],
+        remaining=[{"name": "clear", "args": {}}, type_call],
         action_by_name=specs,
     ) == ""
     assert "invalidate coordinates" in runtime._suffix_requires_reobservation(
-        call={"name": "tap", "args": {"x": 500, "y": 400}},
-        action=specs["tap"],
-        remaining=[type_call, {"name": "tap", "args": {"x": 500, "y": 600}}],
-        action_by_name=specs,
-    )
-    assert "invalidate coordinates" in runtime._suffix_requires_reobservation(
         call={"name": "scroll", "args": {}},
         action=specs["scroll"],
-        remaining=[type_call],
-        action_by_name=specs,
-    )
-    assert "invalidate coordinates" in runtime._suffix_requires_reobservation(
-        call={"name": "select", "args": {"text": "Complete"}},
-        action=specs["select"],
         remaining=[type_call],
         action_by_name=specs,
     )
@@ -762,39 +775,37 @@ def test_android_focus_requires_reobservation_before_type() -> None:
     runtime = object.__new__(ToolAgentRuntime)
     runtime._executor = type("AndroidExecutorStub", (), {
         "tap_type_suffix_safe": False,
+        "type_suffix_safe": False,
     })()
     tap = DynamicActionSpec(name="tap", capability="tap", description="focus")
     type_action = DynamicActionSpec(name="type", capability="type", description="type")
 
-    reason = runtime._suffix_requires_reobservation(
+    focus_reason = runtime._suffix_requires_reobservation(
         call={"name": "tap", "args": {"x": 500, "y": 900}},
         action=tap,
         remaining=[{"name": "type", "args": {"x": 500, "y": 900}}],
         action_by_name={"tap": tap, "type": type_action},
     )
-
-    assert "invalidate coordinates" in reason
-
-    runtime._executor.type_suffix_safe = False
-    reason = runtime._suffix_requires_reobservation(
+    type_reason = runtime._suffix_requires_reobservation(
         call={"name": "type", "args": {"x": 500, "y": 900}},
         action=type_action,
         remaining=[{"name": "tap", "args": {"x": 500, "y": 700}}],
         action_by_name={"tap": tap, "type": type_action},
     )
-    assert "reflow" in reason
+
+    assert "invalidate coordinates" in focus_reason
+    assert "reflow" in type_reason
 
 
 def test_multi_action_suffix_allows_distinct_visible_noncommit_taps() -> None:
     runtime = object.__new__(ToolAgentRuntime)
     tap = DynamicActionSpec(name="tap", capability="tap", description="tap")
-    actions = {"tap": tap}
     frame = MaterializedFrame(
         frame_id="frame:members",
         screenshot_path="frame.png",
         controls=[{
             "kind": "button" if label == "Add Members" else "checkbox",
-            "label": label, "ref": f"row:{label}",
+            "label": label,
             "selection_mode": "multiple",
             "rect": {"x": 500, "y": y, "w": 1000, "h": 60},
             **({"form_action": "commit"} if label == "Add Members" else {}),
@@ -805,14 +816,14 @@ def test_multi_action_suffix_allows_distinct_visible_noncommit_taps() -> None:
         call={"name": "tap", "args": {"x": 900, "y": 240}},
         action=tap,
         remaining=[{"name": "tap", "args": {"x": 900, "y": 320}}],
-        action_by_name=actions,
+        action_by_name={"tap": tap},
         frame=frame,
     )
     commit = runtime._suffix_requires_reobservation(
         call={"name": "tap", "args": {"x": 900, "y": 320}},
         action=tap,
         remaining=[{"name": "tap", "args": {"x": 500, "y": 900}}],
-        action_by_name=actions,
+        action_by_name={"tap": tap},
         frame=frame,
     )
 
@@ -1182,42 +1193,33 @@ def test_vision_only_execution_does_not_use_enhanced_control_geometry(
     assert executed.snap is None
 
 
-@pytest.mark.parametrize(
-    ("action_type", "executor", "expected_point"),
-    [
-        (AndroidAction, _Executor(), (480.0, 500.0)),
-        (BrowserAction, _BrowserSnapExecutor(), (525.0, 540.0)),
-    ],
-)
-def test_worker_target_verify_uses_final_platform_point(
-    monkeypatch, action_type, executor, expected_point,
-) -> None:
+def test_worker_action_returns_flash_off_target_signal(monkeypatch) -> None:
     runtime = object.__new__(ToolAgentRuntime)
     runtime.bundle = SimpleNamespace(
-        make_action=lambda payload: action_type.model_validate(payload)
+        make_action=lambda payload: AndroidAction.model_validate(payload)
     )
     runtime.perception_mode = "enhanced"
-    runtime._executor = executor
+    runtime._executor = _Executor()
     runtime._visualizer = None
     runtime.platform = object()
     runtime.trace = []
     runtime._target_verify_pool = _ImmediateVerifyPool(TargetVerify(
         on_target=False,
-        actual_element="Create Channel",
-        reason="The marker is on the adjacent control.",
+        actual_element="Browse Channels",
+        reason="The marker is on the adjacent row.",
     ))
     monkeypatch.setattr(
         "gui_agent.core.tool_agent.runtime.settle_after_action",
         lambda platform, png, *, action_type: (0.0, False),
     )
     action = DynamicActionSpec(
-        name="activate_visible_control",
+        name="runtime_tap_visible",
         capability="tap",
-        description="Activate a visible control",
+        description="Tap a visible control",
     )
     spec = WorkerSpec(
-        goal="Open the channel form",
-        success_criteria=["The channel form opens"],
+        goal="Open the named menu item",
+        success_criteria=["The named menu item opens"],
         actions=[action],
     )
 
@@ -1227,9 +1229,9 @@ def test_worker_target_verify_uses_final_platform_point(
         {
             "name": action.name,
             "args": {
-                "x": 480,
-                "y": 500,
-                "description": "Activate Create Channel",
+                "x": 500,
+                "y": 870,
+                "description": "Tap Create New Channel",
             },
         },
         b"png",
@@ -1237,27 +1239,99 @@ def test_worker_target_verify_uses_final_platform_point(
     )
 
     assert terminal is None
-    assert payload["target_signal"]["status"] == "off_target"
-    assert runtime._target_verify_pool.submitted[0][1][1:3] == expected_point
+    assert payload["target_signal"] == {
+        "status": "off_target",
+        "actual_element": "Browse Channels",
+        "reason": "The marker is on the adjacent row.",
+    }
+    submitted = runtime._target_verify_pool.submitted
+    assert len(submitted) == 1
+    assert submitted[0][1] == (
+        b"png", 500.0, 870.0, "Tap Create New Channel",
+    )
 
 
 def test_multi_action_aborts_suffix_after_flash_off_target(monkeypatch) -> None:
-    runtime = _run_fused_worker(
-        monkeypatch,
-        current_url="https://example.test/login",
-        target_verify=TargetVerify(
+    runtime = object.__new__(ToolAgentRuntime)
+    runtime.bundle = SimpleNamespace(
+        make_action=lambda payload: AndroidAction.model_validate(payload)
+    )
+    runtime.perception_mode = "enhanced"
+    runtime._executor = _Executor()
+    runtime._visualizer = None
+    runtime.platform = SimpleNamespace(
+        screenshot=lambda: b"latest",
+        client=SimpleNamespace(page_info=lambda: ("", "")),
+    )
+    runtime.trace = []
+    runtime._target_verify_pool = _ImmediateVerifyPool(TargetVerify(
         on_target=False,
         actual_element="Username",
         reason="The marker missed the Password field.",
+    ))
+    monkeypatch.setattr(
+        "gui_agent.core.tool_agent.runtime.settle_after_action",
+        lambda platform, png, *, action_type: (0.0, False),
+    )
+    type_action = DynamicActionSpec(
+        name="runtime_type_visible",
+        capability="type",
+        description="Type into a visible input",
+        exposed_args=["text"],
+    )
+    tap_action = DynamicActionSpec(
+        name="runtime_tap_visible",
+        capability="tap",
+        description="Tap a visible button",
+    )
+    spec = WorkerSpec(
+        goal="Complete the login form",
+        success_criteria=["The login form is submitted"],
+        actions=[type_action, tap_action],
+    )
+    journal = WorkerJournal(worker_id="login")
+    calls = [
+        {
+            "name": type_action.name,
+            "args": {
+                "x": 500,
+                "y": 600,
+                "text": "secret",
+                "description": "Password text input",
+            },
+        },
+        {
+            "name": tap_action.name,
+            "args": {
+                "x": 500,
+                "y": 750,
+                "description": "Log In button",
+            },
+        },
+    ]
+
+    payload, terminal = runtime._execute_multi_action_calls(
+        worker_id="login",
+        spec=spec,
+        actions=[type_action, tap_action],
+        calls=calls,
+        state=WorkerState(
+            status="exploring",
+            summary="The login form is visible.",
+            next_instruction="Fill and submit it.",
         ),
+        step=1,
+        frame=MaterializedFrame(frame_id="frame:1", screenshot_path="frame.png"),
+        png=b"png",
+        journal=journal,
+        circuit_breaker=WorkerActionCircuitBreaker(),
     )
 
+    assert terminal is None
+    assert payload["status"] == "aborted"
+    assert payload["executed_actions"] == 1
+    assert "flash verifier reported off_target" in payload["reason"]
     assert len(runtime._executor.actions) == 1
-    aborted = next(
-        event for event in runtime.trace
-        if event["event"] == "worker_multi_action_aborted"
-    )
-    assert "flash verifier reported off_target" in aborted["reason"]
 
 
 def test_runtime_recovers_missing_exposed_action_description(monkeypatch) -> None:

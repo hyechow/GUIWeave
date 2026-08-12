@@ -1,16 +1,14 @@
-"""WebArena-Verified entry — runs a task on the existing browser agent loop.
+"""WebArena-Verified harness for GUIWeave Tool Agent Master.
 
 WebArena is framework-agnostic: it hands the agent a minimal task JSON (intent +
 start_urls) and grades two artifacts it writes back — ``agent_response.json`` (the
 final answer, judged by AgentResponseEvaluator) and ``network.har`` (the recorded
-requests, judged by NetworkEventEvaluator). So this entry is THIN: it reuses the
-real browser agent (perception + statement supervisor + executor + visualizer) via
-``run_agent_loop`` and only adds the WebArena plumbing around it —
+requests, judged by NetworkEventEvaluator). This entry reuses the browser Tool Agent
+adapter and adds the WebArena plumbing around it:
 
   pre-run  : inject auth cookies (raw CDP) + start HAR capture + navigate start_url
-             — all in the ``on_session_open`` hook, on the just-connected session.
-  run      : compile intent into reviewed Python, then run_agent_loop
-             drives each linear statement.
+             on the just-connected session.
+  run      : execute the task intent with Tool Agent Master and visual Workers.
   post-run : dump network.har + synthesize agent_response.json from the run result.
 
 Headed mode attaches to the user's CDP Chrome (bin/launch_chrome_cdp). Headless
@@ -35,7 +33,6 @@ import argparse
 import json
 import os
 import re
-import shutil
 import subprocess
 import sys
 import time
@@ -49,9 +46,8 @@ if __package__ is None or __package__ == "":
 
 from pydantic import BaseModel
 
-from gui_agent.core.run.result import AgentResult, failed_result
+from gui_agent.core.runtime.result import AgentResult, failed_result
 from gui_agent.prompts import load_prompt, load_prompt_text
-from llm.structured import get_llm_call_count, get_llm_token_usage
 
 # WebArena's required response schema (mirrors the base_template "Final Response
 # Format"); the AgentResponseEvaluator normalizes case, so plain str fields are fine.
@@ -61,7 +57,6 @@ _STATUSES = (
     "PERMISSION_DENIED_ERROR", "DATA_VALIDATION_ERROR", "UNKNOWN_ERROR",
 )
 _EVAL_COMPAT_ENV = "WEBARENA_EVAL_COMPAT"
-_REVIEWED_PYTHON_MAX_TURNS = 25
 _TOOL_AGENT_MAX_TURNS = 50
 _MAX_TURNS = 50
 _RESETTABLE_CONTAINERS = {
@@ -260,57 +255,6 @@ def _guess_webarena_task_type(intent: str) -> str:
     if any(marker in text for marker in retrieve_markers):
         return "RETRIEVE"
     return "RETRIEVE"
-
-
-def _compile_failure_response(intent: str, result: AgentResult) -> WAResponse:
-    details = result.output or result.summary or "orchestrator compile failed"
-    return WAResponse(
-        task_type=_guess_webarena_task_type(intent),
-        status="DATA_VALIDATION_ERROR",
-        retrieved_data=None,
-        error_details=details,
-    )
-
-
-def _write_compile_failure_context(
-    context_path: Path,
-    *,
-    intent: str,
-    action_policy: object,
-    supervisor: object,
-    knowledge_summary: dict | None,
-    program: object,
-    max_turns: int,
-    orchestrator_context_reports: list[dict],
-    orchestrator_metrics: dict,
-    compile_issues: object,
-    result: AgentResult,
-) -> None:
-    from gui_agent.core.schemas import PolicyContext
-
-    context = PolicyContext(
-        goal=intent,
-        supervisor_policy_name=str(getattr(supervisor, "name", "statement")),
-        action_policy_name=str(getattr(action_policy, "name", "browser_vision")),
-        platform="browser",
-        raw_input=intent,
-    )
-    context.knowledge = knowledge_summary
-    context.outcome = result.to_program_outcome()
-    context.orchestrator = {
-        "program": program.model_dump(mode="json") if hasattr(program, "model_dump") else None,
-        "max_turns": max_turns,
-        "context_reports": orchestrator_context_reports,
-        "timings": dict(orchestrator_metrics.get("timings") or {}),
-        "token_usage": dict(orchestrator_metrics.get("token_usage") or {}),
-        "llm_calls": int(orchestrator_metrics.get("llm_calls") or 0),
-        "compile_issues": (
-            compile_issues.model_dump(mode="json")
-            if hasattr(compile_issues, "model_dump")
-            else compile_issues
-        ),
-    }
-    context_path.write_text(context.model_dump_json(indent=2), encoding="utf-8")
 
 
 def _rewrite_url_host(url: str, host_override: str) -> str:
@@ -743,55 +687,22 @@ def _site_profile_name(task: dict, out_dir: Path) -> str:
 
 
 def _run_evidence_text(context_path: Path | None) -> str:
-    """Small, lower-confidence trace for response synthesis diagnostics.
-
-    Collected notes remain the primary data source. This trace mainly prevents a
-    silent NOT_FOUND when the loop visibly reached a final read state but the
-    note bridge failed, and makes those failures easier to inspect.
-    """
+    """Return a compact tail of Tool Agent trace events for synthesis diagnostics."""
     if context_path is None or not context_path.exists():
         return "(unavailable)"
+    trace_path = context_path.parent / "tool_agent_trace.json"
+    if not trace_path.exists():
+        return "(none)"
     try:
-        data = json.loads(context_path.read_text())
+        data = json.loads(trace_path.read_text(encoding="utf-8"))
     except Exception as exc:  # noqa: BLE001 - best-effort diagnostic context
         return f"(unavailable: {exc})"
-
-    lines: list[str] = []
-    turns = [
-        event
-        for event in ((data.get("journal") or {}).get("events") or [])
-        if event.get("event_type") == "turn"
-    ]
-    for turn in turns[-6:]:
-        supervisor = turn.get("supervisor") or {}
-        transition = turn.get("transition") or {}
-        proposal = transition.get("proposal") or {}
-        info = turn.get("statement") or {}
-        parts = [
-            f"turn={turn.get('index')}",
-            f"statement={supervisor.get('statement_id') or '?'}"
-            + (f":{info.get('executor')}" if info.get("executor") else ""),
-        ]
-        if supervisor.get("summary"):
-            parts.append(f"supervisor_summary={supervisor.get('summary')}")
-        if proposal:
-            parts.append(
-                "transition="
-                f"{proposal.get('kind')}: "
-                f"{(proposal.get('assessment') or {}).get('summary') or proposal.get('reason') or ''}"
-            )
-            evidence = [
-                item.get("claim")
-                for item in (proposal.get("evidence") or [])
-                if isinstance(item, dict) and item.get("claim")
-            ]
-            if evidence:
-                parts.append("visible_evidence=" + "; ".join(map(str, evidence[:4])))
-            validation_error = str(transition.get("validation_error") or "")
-            if validation_error:
-                parts.append("validation_error=" + validation_error)
-        lines.append(" | ".join(parts))
-    return "\n".join(lines) if lines else "(none)"
+    events = data if isinstance(data, list) else data.get("trace") or data.get("events") or []
+    return "\n".join(
+        json.dumps(event, ensure_ascii=False, default=str)
+        for event in events[-6:]
+        if isinstance(event, dict)
+    ) or "(none)"
 
 
 def _synthesize_response(
@@ -799,7 +710,7 @@ def _synthesize_response(
     result: AgentResult,
     context_path: Path | None = None,
 ) -> WAResponse:
-    """Map typed results to WebArena, preserving reviewed coding returns."""
+    """Map Tool Agent's typed result to WebArena's response schema."""
     completed_mutate = _completed_mutate_response(intent, result)
     if completed_mutate is not None:
         return completed_mutate
@@ -834,7 +745,7 @@ def _synthesize_response(
         )
     if (
         result.phase == "completed"
-        and (result.orchestrator or {}).get("kind") in {"coding", "tool_agent"}
+        and (result.orchestrator or {}).get("kind") == "tool_agent"
         and _webarena_task_type_from_result(intent, result) == "RETRIEVE"
     ):
         try:
@@ -1008,307 +919,141 @@ def _print_webarena_outputs(
         print(json.dumps(summary, indent=2, ensure_ascii=False))
 
 
-def _print_program(program) -> None:
-    """Print the reviewed Python program before execution."""
-    if getattr(program, "kind", "") != "coding":
-        raise TypeError("WebArena requires a coding program")
-    print("[webarena] ── coding orchestrator program ──────────────────")
-    print(program.source)
-    print("[webarena] ─────────────────────────────────────────────────")
-
-
-def _confirm_to_run(enabled: bool) -> bool:
-    """When --confirm and stdin is a TTY: wait for Enter before executing. Returns False if the user
-    cancels (Ctrl-C / EOF). No-op (returns True) otherwise so headless/CI runs are unaffected."""
-    if not enabled or not sys.stdin.isatty():
-        return True
-    try:
-        input("[webarena] 按回车开始执行编排器程序（Ctrl-C 取消）…")
-        return True
-    except (EOFError, KeyboardInterrupt):
-        print("\n[webarena] 已取消，不执行。")
-        return False
-
-
-def _canonical_page_url(url: str) -> str:
-    url = (url or "").strip()
-    if not url:
-        return ""
-    try:
-        parts = urlsplit(url)
-    except ValueError:
-        return url.rstrip("/")
-    path = parts.path.rstrip("/") or "/"
-    return urlunsplit((parts.scheme, parts.netloc, path, parts.query, ""))
-
-
-def _warn_if_pre_loop_page_changed(device, *, initial_url: str, initial_title: str = "") -> None:
-    """Surface out-of-band browser changes between initial observe and the first agent turn."""
-    if not initial_url or device is None or not hasattr(device, "page_info"):
-        return
-    try:
-        current_url, current_title = device.page_info()
-    except Exception:  # noqa: BLE001 - diagnostic only; never block a run
-        return
-    if not current_url:
-        return
-    if _canonical_page_url(current_url) == _canonical_page_url(initial_url):
-        return
-    initial_label = f" ({initial_title})" if initial_title else ""
-    current_label = f" ({current_title})" if current_title else ""
-    print(
-        "[webarena] pre-loop page changed after initial observe: "
-        f"{initial_url}{initial_label} -> {current_url}{current_label}"
-    )
-    print("[webarena] 这通常表示人工点击或外部 CDP 控制在编排后改动了页面；本次将以当前页继续执行。")
-
-
-def _resume_inputs(log_dir: Path) -> tuple[dict, Path, Path, object]:
-    raw = json.loads((log_dir / "context.json").read_text(encoding="utf-8"))
-    metadata = raw.get("webarena")
-    if not isinstance(metadata, dict):
-        raise ValueError("resume context does not contain WebArena metadata")
-    program_data = (raw.get("orchestrator") or {}).get("program")
-    from gui_agent.core.orchestrator import CodingProgram
-
-    task_output_dir = Path(str(metadata["task_output_dir"]))
-    task = {
-        "task_id": int(metadata["task_id"]),
-        "intent": str(metadata.get("intent") or raw.get("goal") or ""),
-        "sites": list(metadata.get("sites") or []),
-        "start_urls": [metadata["start_url"]] if metadata.get("start_url") else [],
-    }
-    return (
-        task,
-        task_output_dir,
-        Path(str(metadata.get("har_path") or task_output_dir / "network.har")),
-        CodingProgram.model_validate(program_data),
-    )
-
-
-def _stage_resume_assets(source: Path, target: Path) -> None:
-    """Copy report-facing history into a self-contained derived run."""
-    prefixes = ("screenshot_", "observation_", "structured_output_")
-    for path in source.iterdir():
-        if path.is_file() and path.name.startswith(prefixes):
-            shutil.copy2(path, target / path.name)
-
-
-def _merge_har_segment(base_path: Path, segment_path: Path) -> tuple[int, int]:
-    """Append one resumed capture to the original task HAR."""
-    segment = json.loads(segment_path.read_text(encoding="utf-8"))
-    segment_entries = list((segment.get("log") or {}).get("entries") or [])
-    if not base_path.is_file():
-        shutil.copy2(segment_path, base_path)
-        return 0, len(segment_entries)
-    base = json.loads(base_path.read_text(encoding="utf-8"))
-    entries = (base.setdefault("log", {})).setdefault("entries", [])
-    before = len(entries)
-    entries.extend(segment_entries)
-    base_path.write_text(json.dumps(base), encoding="utf-8")
-    return before, len(segment_entries)
-
-
 def _build_parser() -> argparse.ArgumentParser:
-    parser = argparse.ArgumentParser(description="Run a WebArena-Verified task on the browser agent")
-    parser.add_argument("--tasks-file", type=Path, help="agent-input-get output JSON")
-    parser.add_argument("--task-id", type=int)
-    parser.add_argument("--task-output-dir", type=Path, help="where agent_response.json + network.har go")
-    parser.add_argument(
-        "--resume-log-dir",
-        type=Path,
-        help=(
-            "fork a failed run from its context.json; the source log remains immutable, "
-            "the current browser page is preserved, and --max-turns is additional"
-        ),
+    parser = argparse.ArgumentParser(
+        description="Run a WebArena-Verified task with Tool Agent Master"
     )
-    parser.add_argument("--storage-state", type=Path, default=None, help="Playwright storage_state JSON for auth cookies (optional)")
-    parser.add_argument("--cdp-url", type=str, default=None, help="Chrome CDP url (default env CHROME_CDP_URL or :9222)")
-    parser.add_argument("--headless", action="store_true", help="launch an isolated headless Chromium instead of attaching to Chrome CDP")
+    parser.add_argument("--tasks-file", type=Path, required=True)
+    parser.add_argument("--task-id", type=int, required=True)
+    parser.add_argument("--task-output-dir", type=Path, required=True)
+    parser.add_argument(
+        "--storage-state",
+        type=Path,
+        default=None,
+        help="Playwright storage_state JSON for auth cookies",
+    )
+    parser.add_argument("--cdp-url", default=None, help="Chrome CDP URL")
+    parser.add_argument(
+        "--headless",
+        action="store_true",
+        help="launch isolated Chromium instead of attaching over CDP",
+    )
     parser.add_argument(
         "--user-data-dir",
         "--headless-profile-dir",
         dest="user_data_dir",
         type=Path,
         default=None,
-        help="persistent Chromium profile for --headless (default: output/.headless_profiles/<site_run>)",
+        help="persistent Chromium profile for --headless",
     )
-    parser.add_argument("--max-turns", type=int, default=None)
-    parser.add_argument(
-        "--reset-instance",
-        action="store_true",
-        help=(
-            "recreate the task's remote WebArena container over SSH before opening "
-            "the browser; currently supported for shopping_admin"
-        ),
-    )
-    parser.add_argument(
-        "--reset-ssh-host",
-        type=str,
-        default=None,
-        help="SSH host used by --reset-instance (default: start_url host)",
-    )
-    parser.add_argument(
-        "--reset-ssh-port",
-        type=int,
-        default=2222,
-        help="SSH port used by --reset-instance (default: 2222)",
-    )
-    parser.add_argument(
-        "--reset-timeout",
-        type=float,
-        default=180,
-        help="seconds to wait for the recreated instance to become healthy",
-    )
-    parser.add_argument(
-        "--runtime",
-        choices=("reviewed-python", "tool-agent"),
-        default="reviewed-python",
-        help="execution runtime; default keeps the existing reviewed-Python path",
-    )
+    parser.add_argument("--max-turns", type=int, default=_TOOL_AGENT_MAX_TURNS)
     parser.add_argument(
         "--perception",
         choices=("vision-only", "enhanced"),
         default="enhanced",
-        help="tool-agent perception provider (the WorkerSpec and actions remain identical)",
     )
     parser.add_argument(
+        "--multi-action",
         "--tool-agent-multi-action",
+        dest="multi_action",
         action=argparse.BooleanOptionalAction,
         default=True,
-        help=(
-            "allow one fused Worker decision to return an ordered 1–5 action "
-            "envelope (default: enabled)"
-        ),
+        help="allow an ordered 1-5 action envelope from a Worker decision",
     )
     parser.add_argument(
         "--include-skills",
         action="store_true",
-        help="explicitly include optional _skill.md orchestration hints; default: functional docs only",
+        help="include optional site _skill.md hints",
     )
     parser.add_argument(
         "--eval-compat",
         action="store_true",
-        help=(
-            "explicitly enable WebArena evaluator compatibility probes. "
-            f"Can also be enabled with {_EVAL_COMPAT_ENV}=1. Default: off."
-        ),
+        help=f"enable evaluator compatibility probes (or {_EVAL_COMPAT_ENV}=1)",
     )
-    parser.add_argument("--confirm", action="store_true",
-                        help="print reviewed Python and WAIT for Enter before executing (inspect the program first; Ctrl-C cancels). No-op when stdin is not a TTY.")
+    parser.add_argument(
+        "--reset-instance",
+        action="store_true",
+        help="recreate the supported remote task container before the run",
+    )
+    parser.add_argument("--reset-ssh-host", default=None)
+    parser.add_argument("--reset-ssh-port", type=int, default=2222)
+    parser.add_argument("--reset-timeout", type=float, default=180)
     parser.add_argument(
         "--host",
-        type=str,
         default=None,
-        help="override the start_url host (IP-only keeps the per-site port; host:port replaces the netloc). "
-             "Also read from env WA_HOST / .env (lower precedence than --host).",
+        help="override the start_url host; IP-only preserves the original port",
     )
     return parser
+
+
+def _write_tool_agent_failure_context(
+    context_path: Path,
+    *,
+    intent: str,
+    result: AgentResult,
+    knowledge_summary: dict | None,
+) -> None:
+    """Persist an inspectable context when setup or execution raises early."""
+    from gui_agent.core.schemas import PolicyContext
+
+    context = PolicyContext(
+        goal=intent,
+        supervisor_policy_name="tool_agent.master",
+        action_policy_name="tool_agent.worker",
+        platform="browser",
+        raw_input=intent,
+    )
+    context.knowledge = knowledge_summary
+    context.outcome = result.to_program_outcome()
+    context.orchestrator = {
+        "kind": "tool_agent",
+        "effect": {
+            "MUTATE": "mutation",
+            "NAVIGATE": "ui_state",
+        }.get(result.task_type or "", "data"),
+    }
+    context_path.write_text(context.model_dump_json(indent=2), encoding="utf-8")
 
 
 def main() -> int:
     parser = _build_parser()
     args = parser.parse_args()
-    if args.max_turns is not None and not 1 <= args.max_turns <= _MAX_TURNS:
+    if not 1 <= args.max_turns <= _MAX_TURNS:
         parser.error(f"--max-turns must be between 1 and {_MAX_TURNS}")
-    if args.max_turns is None:
-        args.max_turns = (
-            _TOOL_AGENT_MAX_TURNS
-            if args.runtime == "tool-agent"
-            else _REVIEWED_PYTHON_MAX_TURNS
-        )
-    is_resume = args.resume_log_dir is not None
-    if is_resume and args.runtime == "tool-agent":
-        parser.error("--resume-log-dir is not supported by the tool-agent experiment")
-    if is_resume and args.reset_instance:
-        parser.error("--reset-instance cannot be combined with --resume-log-dir")
-    if is_resume and args.headless:
-        parser.error("--resume-log-dir requires the retained headed browser session")
-    if not is_resume and None in (
-        args.tasks_file,
-        args.task_id,
-        args.task_output_dir,
-    ):
-        parser.error("--tasks-file, --task-id and --task-output-dir are required")
 
-    # Force the browser platform for build_platform() (here and inside run_agent_loop).
     os.environ["AGENT_PLATFORM"] = "browser"
     if args.headless:
         os.environ["BROWSER_HEADLESS"] = "1"
         os.environ["WEB_ARENA_HEADLESS"] = "1"
-        # headless is the unified switch: it also drops the OS cursor/HUD overlay
-        # (factory _resolve_headless / loop both honor it). No separate viz toggle.
-    if args.cdp_url and not args.headless:
+    elif args.cdp_url:
         os.environ["CHROME_CDP_URL"] = args.cdp_url
-    elif args.cdp_url and args.headless:
-        print("[webarena] --cdp-url ignored because --headless launches its own browser")
 
     from dotenv import load_dotenv
-    load_dotenv()
 
-    # Host override for start_urls: --host > WA_HOST env/.env > none. Lets a new LAN
-    # IP be configured in one place without editing the baked tasks-file.
+    load_dotenv()
     host_override = args.host or os.environ.get("WA_HOST") or None
     eval_compat_enabled = bool(args.eval_compat or _truthy_env(_EVAL_COMPAT_ENV))
-    if eval_compat_enabled:
-        print(f"[webarena] eval_compat: enabled ({_EVAL_COMPAT_ENV}=1 or --eval-compat)")
 
-    from gui_agent.core.runtime.factory import build_platform
-    from gui_agent.core.run.io import EscStopSignal, create_run_dir
-    from gui_agent.core.runner import run_agent_loop, build_policy, build_supervisor
     from gui_agent.adapters.browser.har_recorder import HarRecorder
+    from gui_agent.core.runtime.io import create_run_dir, tee_stdio
+    from gui_agent.core.runtime.factory import build_platform
+    from gui_agent.core.tool_agent.result import execute_tool_agent
 
-    resume_program = None
-    resume_source_dir: Path | None = None
-    resume_source_har: Path | None = None
-    if is_resume:
-        resume_source_dir = args.resume_log_dir.expanduser().resolve()
-        try:
-            task, resume_output_base, resume_source_har, resume_program = (
-                _resume_inputs(resume_source_dir)
-            )
-        except (KeyError, OSError, TypeError, ValueError, json.JSONDecodeError) as exc:
-            parser.error(str(exc))
-        args.task_id = int(task["task_id"])
-    else:
-        assert args.tasks_file is not None
-        assert args.task_id is not None
-        assert args.task_output_dir is not None
-        task = _load_task(args.tasks_file, args.task_id)
-        out_dir = args.task_output_dir
-    log_dir = create_run_dir(
-        "tool_agent" if args.runtime == "tool-agent" else "webarena",
-        (
-            f"webarena/browser/{args.perception}"
-            if args.runtime == "tool-agent"
-            else "browser/resume" if is_resume else "browser"
-        ),
-    )
-    if is_resume:
-        assert resume_source_dir is not None
-        out_dir = resume_output_base / f"resume_{log_dir.name}"
-        _stage_resume_assets(resume_source_dir, log_dir)
-        print(f"[webarena] resume source (read-only): {resume_source_dir}")
-        print(f"[webarena] resume derived run: {log_dir}")
-    intent = task["intent"]
-    start_urls = task.get("start_urls") or []
-    if host_override and start_urls and not is_resume:
-        rewritten = [_rewrite_url_host(u, host_override) for u in start_urls]
+    task = _load_task(args.tasks_file, args.task_id)
+    intent = str(task["intent"])
+    start_urls = list(task.get("start_urls") or [])
+    if host_override:
+        rewritten = [_rewrite_url_host(url, host_override) for url in start_urls]
         for old, new in zip(start_urls, rewritten):
             if old != new:
                 print(f"[webarena] start_url host override: {old} -> {new}")
         start_urls = rewritten
     start_url = start_urls[0] if start_urls else None
-    print(f"[webarena] task {args.task_id}  sites={task.get('sites')}")
-    print(f"[webarena] intent: {intent}")
-    print(f"[webarena] start_url: {start_url}")
 
-    out_dir = Path(out_dir)
+    out_dir = args.task_output_dir
     out_dir.mkdir(parents=True, exist_ok=True)
     har_path = out_dir / "network.har"
     resp_path = out_dir / "agent_response.json"
-    if resume_source_har is not None and resume_source_har.is_file():
-        shutil.copy2(resume_source_har, har_path)
     if args.headless:
         raw_profile = (
             args.user_data_dir
@@ -1318,135 +1063,73 @@ def main() -> int:
         profile_dir = (
             Path(raw_profile).expanduser()
             if raw_profile
-            else out_dir.parent.parent / ".headless_profiles" / _site_profile_name(task, out_dir)
+            else out_dir.parent.parent
+            / ".headless_profiles"
+            / _site_profile_name(task, out_dir)
         )
         profile_dir.mkdir(parents=True, exist_ok=True)
         os.environ["BROWSER_USER_DATA_DIR"] = str(profile_dir)
-        print(f"[webarena] headless profile: {profile_dir}")
 
-    action_policy = (
-        None if args.runtime == "tool-agent" else build_policy("browser_vision")
-    )
-    supervisor = (
-        None if args.runtime == "tool-agent" else build_supervisor("statement")
-    )
-    # Translucent status HUD over the Chrome window — on in headed mode, off when headless
-    # (the unified visibility switch). The agent loop repositions it onto the exact CDP
-    # window rect once connected.
-    hud = build_platform().make_status_reporter(not args.headless)
+    log_dir = create_run_dir("tool_agent", f"webarena/browser/{args.perception}")
+    bundle = build_platform("browser")
+    hud = bundle.make_status_reporter(not args.headless)
+    reset_details: dict[str, object] | None = None
+
+    print(f"[webarena] task {args.task_id} sites={task.get('sites')}")
+    print(f"[webarena] intent: {intent}")
+    print(f"[webarena] start_url: {start_url}")
     print(f"[webarena] agent logs: {log_dir}")
 
-    from gui_agent.core.run.io import tee_stdio
-
-    # Tee everything below to log_dir/stdout.log (same as the runner) so a WebArena run leaves an
-    # inspectable log — the knowledge-binding line and every turn included.
-    reset_details: dict[str, object] | None = None
     with tee_stdio(log_dir):
-        if args.reset_instance:
-            sites = [str(site).strip() for site in (task.get("sites") or []) if str(site).strip()]
-            if len(sites) != 1 or start_url is None:
-                raise ValueError(
-                    "--reset-instance requires exactly one task site and one start_url"
+        try:
+            if args.reset_instance:
+                sites = [
+                    str(site).strip()
+                    for site in (task.get("sites") or [])
+                    if str(site).strip()
+                ]
+                if len(sites) != 1 or start_url is None:
+                    raise ValueError(
+                        "--reset-instance requires exactly one site and one start_url"
+                    )
+                reset_details = _reset_webarena_instance(
+                    site=sites[0],
+                    start_url=start_url,
+                    ssh_host=args.reset_ssh_host,
+                    ssh_port=args.reset_ssh_port,
+                    timeout=args.reset_timeout,
                 )
-            print(
-                "[webarena] resetting remote instance "
-                f"site={sites[0]} ssh={args.reset_ssh_host or urlsplit(start_url).hostname}:"
-                f"{args.reset_ssh_port}"
-            )
-            reset_details = _reset_webarena_instance(
-                site=sites[0],
-                start_url=start_url,
-                ssh_host=args.reset_ssh_host,
-                ssh_port=args.reset_ssh_port,
-                timeout=args.reset_timeout,
-            )
-            print(
-                "[webarena] remote instance ready "
-                f"container={reset_details['container']} image={reset_details['image']}"
-            )
 
-        # Bind app knowledge by the task's `sites` tag. The runner discovers knowledge by matching
-        # the app name as a substring of the goal, but a WebArena intent never names its site — so
-        # we bind directly on the site tag (site -> knowledge/browser/<site>/ when a base exists).
-        from gui_agent.core.self_learning.app_summary import load_knowledge_for_app
+            from gui_agent.core.self_learning.app_summary import load_knowledge_for_app
 
-        knowledge = None
-        knowledge_summary: Optional[dict] = None  # persisted to context.json so the report renders it
-        for site in (task.get("sites") or []):
-            knowledge = load_knowledge_for_app(
-                site,
-                "browser",
-                include_skills=args.include_skills,
-            )
-            if (
-                knowledge
-                and host_override
-                and start_url
-                and "_deploy" in knowledge.overlays
-            ):
-                rebased = _rebase_deployment_origin(knowledge.navigation, start_url)
-                if rebased != knowledge.navigation:
-                    knowledge.navigation = rebased
+            knowledge = None
+            knowledge_summary: dict | None = None
+            for site in task.get("sites") or []:
+                candidate = load_knowledge_for_app(
+                    site,
+                    "browser",
+                    include_skills=args.include_skills,
+                )
+                if candidate is None or not candidate.navigation:
+                    continue
+                knowledge = candidate
+                if host_override and start_url and "_deploy" in knowledge.overlays:
+                    knowledge.navigation = _rebase_deployment_origin(
+                        knowledge.navigation, start_url
+                    )
                     knowledge.deployment = _rebase_deployment_origin(
-                        knowledge.deployment,
-                        start_url,
-                    )
-                    print(
-                        "[webarena] knowledge: deployment origin rebased to "
-                        f"{urlsplit(start_url).scheme}://{urlsplit(start_url).netloc}"
-                    )
-            if knowledge and knowledge.navigation:
-                if supervisor is not None and hasattr(supervisor, "set_app_knowledge"):
-                    supervisor.set_app_knowledge(
-                        knowledge.navigation,
-                        app_name=knowledge.app_name,
-                        elements=knowledge.elements,
-                        sections=knowledge.sections,
-                        check=knowledge.check,
+                        knowledge.deployment, start_url
                     )
                 knowledge_summary = knowledge.summary()
-                print(f"[webarena] knowledge: bound site={site} "
-                      f"(nav={knowledge_summary['nav_chars']} chars, "
-                      f"sections={knowledge_summary['section_count']}, "
-                      f"profile={knowledge_summary['profile']})")
-                selected = knowledge.orchestrator_sections(intent)
-                knowledge_summary["orchestrator_sections"] = selected
-                print(
-                    "[webarena] knowledge: orchestrator sections="
-                    f"{selected or ['<app-overview-only>']}"
+                knowledge_summary["orchestrator_sections"] = (
+                    knowledge.orchestrator_sections(intent)
                 )
+                print(f"[webarena] knowledge: bound site={site}")
                 break
-        else:
-            if task.get("sites"):
-                print(f"[webarena] knowledge: none for sites={task.get('sites')} — running bare")
 
-        recorder_holder: dict = {}
-
-        def _prime(platform) -> None:
-            device = platform.client
-            if is_resume:
-                recorder_holder["rec"] = HarRecorder(device).start()
-                print("[webarena] resume: keeping current page; start_url navigation skipped")
-                return
-            # 1) auth: inject cookies (raw CDP) — no headless ui_login.
-            if args.storage_state:
-                print("[webarena]", device.load_cookies(str(args.storage_state)))
-            # 2) start HAR capture BEFORE navigating, so the start_url load is recorded.
-            recorder_holder["rec"] = HarRecorder(device).start()
-            # 3) land on the task start_url (raw-CDP fallback handles the flaky binding).
-            if start_url:
-                print("[webarena]", device.navigate(start_url))
-                if args.runtime == "tool-agent" and hasattr(device, "eval_js"):
-                    try:
-                        device.eval_js("window.scrollTo(0, 0); true")
-                        print("[webarena][tool-agent] reset initial viewport to page top")
-                    except Exception as exc:  # noqa: BLE001 - visual worker can still recover
-                        print(f"[webarena][tool-agent] initial viewport reset skipped ({exc})")
-
-        try:
             result: AgentResult | None = None
             eval_compat_reports: list[dict] = []
-            bundle = build_platform()
+            recorder = None
             setup = bundle.setup_check()
             for line in setup.lines:
                 print(line)
@@ -1454,295 +1137,74 @@ def main() -> int:
                 result = failed_result(
                     intent,
                     f"环境检查未通过：{setup.summary}",
-                    task_type="RETRIEVE",
+                    task_type=_guess_webarena_task_type(intent),
                     failure_kind="environment",
                 )
+                _write_tool_agent_failure_context(
+                    log_dir / "context.json",
+                    intent=intent,
+                    result=result,
+                    knowledge_summary=knowledge_summary,
+                )
             else:
-                orchestrator_context_reports: list[dict] = []
-                with bundle.open_session() as platform:
-                    _prime(platform)
-                    device = getattr(platform, "client", None)
-                    if device is not None and hasattr(device, "wait_settled"):
-                        try:
+                try:
+                    with bundle.open_session() as platform:
+                        device = platform.client
+                        if args.storage_state:
+                            print(
+                                "[webarena]",
+                                device.load_cookies(str(args.storage_state)),
+                            )
+                        recorder = HarRecorder(device).start()
+                        if start_url:
+                            print("[webarena]", device.navigate(start_url))
+                            if hasattr(device, "eval_js"):
+                                try:
+                                    device.eval_js("window.scrollTo(0, 0); true")
+                                except Exception as exc:  # noqa: BLE001
+                                    print(f"[webarena] viewport reset skipped ({exc})")
+                        if hasattr(device, "wait_settled"):
                             device.wait_settled("navigate")
-                        except Exception as exc:  # noqa: BLE001 - best-effort start-url settle
-                            print(f"[webarena] start_url settle skipped ({exc})")
-                    if hud is not None and hasattr(hud, "reposition"):
-                        bounds = (
-                            device.window_bounds()
-                            if device is not None and hasattr(device, "window_bounds")
-                            else None
+                        if hud is not None and hasattr(hud, "reposition"):
+                            bounds = (
+                                device.window_bounds()
+                                if hasattr(device, "window_bounds")
+                                else None
+                            )
+                            if bounds:
+                                from gui_agent.core.ui.hud import dock_rect
+
+                                hud.reposition(*dock_rect(*bounds))
+                        page_url = page_title = ""
+                        if hasattr(device, "page_info"):
+                            page_url, page_title = device.page_info()
+                        print(
+                            "[webarena][tool-agent] "
+                            f"perception={args.perception} multi_action={args.multi_action}"
                         )
-                        if bounds:
-                            from gui_agent.core.ui.hud import dock_rect
-
-                            hud.reposition(*dock_rect(*bounds))
-
-                    def _compile_program():
-                        if args.runtime == "tool-agent":
-                            from gui_agent.core.tool_agent.result import (
-                                execute_tool_agent,
-                            )
-
-                            page_url = page_title = ""
-                            if device is not None and hasattr(device, "page_info"):
-                                page_url, page_title = device.page_info()
-                            print(
-                                "[webarena][tool-agent] "
-                                f"master=qwen3.7-max worker=qwen3.7-plus "
-                                f"perception={args.perception} "
-                                f"multi_action={args.tool_agent_multi_action}"
-                            )
-                            tool_result, _ = execute_tool_agent(
-                                intent=intent,
-                                bundle=bundle,
-                                session=platform,
-                                log_dir=log_dir,
-                                perception_mode=args.perception,
-                                max_turns=args.max_turns,
-                                allow_multi_action=args.tool_agent_multi_action,
-                                fallback_task_type=_guess_webarena_task_type(intent),
-                                knowledge_summary=knowledge_summary,
-                                knowledge=(
-                                    knowledge.orchestrator_context(intent)
-                                    if knowledge is not None
-                                    else ""
-                                ),
-                                access_context=(
-                                    knowledge.deployment
-                                    if knowledge is not None
-                                    else ""
-                                ),
-                                page_url=page_url,
-                                page_title=page_title,
-                                hud=hud,
-                            )
-                            return (
-                                None,
-                                {},
-                                args.max_turns,
-                                True,
-                                page_url,
-                                page_title,
-                                tool_result,
-                            )
-                        orchestrator_metrics: dict = {}
-                        run_max_turns = args.max_turns
-                        compile_blocked = False
-                        compile_result = None
-                        initial_observed_url = ""
-                        initial_observed_title = ""
-                        cur_url = ""
-                        cur_title = ""
-                        cur_site = knowledge.app_name if knowledge is not None else ""
-                        initial_obs = None
-                        if resume_program is not None:
-                            print("[webarena] resume: reusing persisted reviewed Python")
-                            _print_program(resume_program)
-                            return (
-                                resume_program,
-                                orchestrator_metrics,
-                                run_max_turns,
-                                compile_blocked,
-                                initial_observed_url,
-                                initial_observed_title,
-                                compile_result,
-                            )
-                        try:
-                            initial_obs = bundle.make_perception(
-                                platform, log_dir / "screenshot_initial.png"
-                            ).observe()
-                            cur_url = initial_obs.url or ""
-                            cur_title = initial_obs.title or ""
-                            initial_observed_url = cur_url
-                            initial_observed_title = cur_title
-                            if not cur_site and cur_url:
-                                from gui_agent.core.self_learning.app_summary import match_app_by_url
-                                cur_site = match_app_by_url(cur_url, "browser") or ""
-                            if cur_url or cur_site:
-                                shown = cur_site or cur_url
-                                print(f"[webarena] current page: {shown}" + (f" ({cur_title})" if cur_title else ""))
-                        except Exception as exc:  # noqa: BLE001
-                            print(f"[webarena] initial observe failed; compile without screenshot ({exc})")
-
-                        from gui_agent.core.orchestrator import (
-                            CodingCompileError,
-                            CodingProgram,
-                            CodingTerminalRenderer,
-                            generate_code,
-                            program_from_plan,
+                        result, _presentation = execute_tool_agent(
+                            intent=intent,
+                            bundle=bundle,
+                            session=platform,
+                            log_dir=log_dir,
+                            perception_mode=args.perception,
+                            max_turns=args.max_turns,
+                            allow_multi_action=args.multi_action,
+                            fallback_task_type=_guess_webarena_task_type(intent),
+                            knowledge_summary=knowledge_summary,
+                            knowledge=(
+                                knowledge.orchestrator_context(intent)
+                                if knowledge is not None
+                                else ""
+                            ),
+                            access_context=(
+                                knowledge.deployment if knowledge is not None else ""
+                            ),
+                            page_url=page_url,
+                            page_title=page_title,
+                            hud=hud,
+                            raw_input=intent,
                         )
-                        from gui_agent.core.supervisor.statement.model_io import resolve_file_refs
-                        from gui_agent.core.router import resolve_intent
-
-                        file_section = resolve_file_refs(intent)
-                        # Preserve the source task and add only genuinely implicit meaning.
-                        resolution = resolve_intent(intent)
-                        if resolution.semantic_supplement:
-                            print(
-                                "[webarena] semantic supplement: "
-                                f"{resolution.semantic_supplement}"
-                            )
-                        orch_started = time.perf_counter()
-                        orch_calls_before = get_llm_call_count()
-                        orch_tokens_before = get_llm_token_usage()
-                        compile_error: Exception | None = None
-                        try:
-                            plan = generate_code(
-                                intent,
-                                knowledge=(
-                                    knowledge.orchestrator_context(intent)
-                                    if knowledge else ""
-                                ),
-                                file_section=file_section,
-                                current_url=cur_url,
-                                current_title=cur_title,
-                                current_site=cur_site,
-                                current_observation=initial_obs,
-                                resolution=resolution,
-                                on_event=CodingTerminalRenderer(
-                                    prefix="[webarena][coding]",
-                                ),
-                            )
-                            orchestrator_context_reports.append({
-                                "kind": "coding_compile",
-                                "source": plan.source,
-                                "repaired": plan.repaired,
-                                "events": [
-                                    event.to_dict() for event in plan.events
-                                ],
-                            })
-                            program = program_from_plan(plan)
-                        except CodingCompileError as exc:
-                            compile_error = exc
-                            program = CodingProgram(
-                                goal=intent,
-                                source=exc.plan.source,
-                            )
-                        orch_tokens_after = get_llm_token_usage()
-                        metric_name = "orchestrator.coding"
-                        orchestrator_metrics = {
-                            "timings": {
-                                metric_name: time.perf_counter() - orch_started
-                            },
-                            "token_usage": {
-                                metric_name: {
-                                    "input": orch_tokens_after[0] - orch_tokens_before[0],
-                                    "output": orch_tokens_after[1] - orch_tokens_before[1],
-                                }
-                            },
-                            "llm_calls": get_llm_call_count() - orch_calls_before,
-                        }
-                        if compile_error is not None:
-                            issue_payloads = [{
-                                "code": "CODING_COMPILE_ERROR",
-                                "severity": "error",
-                                "message": str(compile_error),
-                                "evidence": [],
-                            }]
-                            summary = "; ".join(
-                                issue["message"] for issue in issue_payloads[:3]
-                            )
-                            print(f"[webarena] orchestrator compile failed: {summary}")
-                            orchestrator_context_reports.append({
-                                "kind": "orchestrator_compile_error",
-                                "issues": issue_payloads,
-                            })
-                            compile_blocked = True
-                            compile_result = failed_result(
-                                intent,
-                                f"orchestrator compile failed: {summary}",
-                                task_type=_guess_webarena_task_type(intent),
-                                failure_kind="compile",
-                            )
-                            _write_compile_failure_context(
-                                log_dir / "context.json",
-                                intent=intent,
-                                action_policy=action_policy,
-                                supervisor=supervisor,
-                                knowledge_summary=knowledge_summary,
-                                program=program,
-                                max_turns=run_max_turns,
-                                orchestrator_context_reports=[*orchestrator_context_reports, {
-                                    "kind": "orchestrator_metrics",
-                                    **orchestrator_metrics,
-                                }],
-                                orchestrator_metrics=orchestrator_metrics,
-                                compile_issues={
-                                    "ok": False,
-                                    "issues": issue_payloads,
-                                },
-                                result=compile_result,
-                            )
-                        else:
-                            if file_section:
-                                cap = 3000
-                                supervisor.add_static_constraint(
-                                    file_section if len(file_section) <= cap
-                                    else file_section[:cap] + "\n…（配置过长已截断，其余以分解结果为准）"
-                                )
-                            print("[webarena] orchestrator: reviewed Python ready")
-                            _print_program(program)
-                        return (
-                            program,
-                            orchestrator_metrics,
-                            run_max_turns,
-                            compile_blocked,
-                            initial_observed_url,
-                            initial_observed_title,
-                            compile_result,
-                        )
-
-                    (
-                        program,
-                        orchestrator_metrics,
-                        run_max_turns,
-                        compile_blocked,
-                        initial_observed_url,
-                        initial_observed_title,
-                        compile_result,
-                    ) = _compile_program()
-                    if compile_result is not None:
-                        result = compile_result
-                    if not compile_blocked:
-                        if not _confirm_to_run(args.confirm):
-                            return 1
-                        _warn_if_pre_loop_page_changed(
-                            device,
-                            initial_url=initial_observed_url,
-                            initial_title=initial_observed_title,
-                        )
-                        with EscStopSignal(enabled=True) as esc_stop:
-                            if esc_stop.enabled:
-                                print("[webarena] Interrupt: 按 ESC 将在当前 turn 收尾后停止")
-                            else:
-                                print("[webarena] Interrupt: stdin 不是 TTY，ESC 停止未启用")
-                            result = run_agent_loop(
-                                intent,
-                                action_policy,
-                                supervisor,
-                                (
-                                    resume_source_dir / "context.json"
-                                    if resume_source_dir is not None
-                                    else None
-                                ),
-                                log_dir,
-                                log_dir / "context.json",
-                                max_turns=run_max_turns,
-                                auto_continue=True,
-                                hud=hud,
-                                raw_input=intent,
-                                router=None,
-                                knowledge=knowledge_summary,
-                                program=program,
-                                orchestrator_context_reports=[*orchestrator_context_reports, {
-                                    "kind": "orchestrator_metrics",
-                                    **orchestrator_metrics,
-                                }] if orchestrator_metrics else orchestrator_context_reports,
-                                stop_requested=esc_stop.requested if esc_stop.enabled else None,
-                                platform=platform,
-                                resume=is_resume,
-                            )
                         eval_compat_reports = _run_eval_compat_probes(
                             enabled=eval_compat_enabled,
                             task_id=args.task_id,
@@ -1751,149 +1213,99 @@ def main() -> int:
                             result=result,
                             device=device,
                         )
+                except Exception as exc:  # noqa: BLE001
+                    print(f"[webarena] Tool Agent run failed: {exc}")
+                    result = failed_result(
+                        intent,
+                        f"Tool Agent execution failed: {exc}",
+                        task_type=_guess_webarena_task_type(intent),
+                        failure_kind="runtime",
+                    )
+                    _write_tool_agent_failure_context(
+                        log_dir / "context.json",
+                        intent=intent,
+                        result=result,
+                        knowledge_summary=knowledge_summary,
+                    )
 
-            # ----- post-run artifacts -----
+            if recorder is not None:
+                print("[webarena]", recorder.dump(str(har_path)))
+            else:
+                har_path.write_text(
+                    '{"log":{"version":"1.2","creator":{"name":"guiweave"},"entries":[]}}',
+                    encoding="utf-8",
+                )
             if result is None:
                 raise RuntimeError("WebArena run ended without AgentResult")
-            if args.runtime != "tool-agent":
-                try:
-                    from gui_agent.core.llm.output import generate_reply
-                    from gui_agent.core.run.state import write_final_reply
-
-                    reply = generate_reply(intent, result.model_dump(mode="json"))
-                    write_final_reply(log_dir / "context.json", reply)
-                except Exception as exc:  # noqa: BLE001 - reply is report-facing, not evaluator input
-                    print(f"[webarena] reply generation failed ({exc})")
-            rec = recorder_holder.get("rec")
-            if rec is not None:
-                capture_path = (
-                    log_dir / "network_resume.har"
-                    if is_resume
-                    else har_path
-                )
-                print("[webarena]", rec.dump(str(capture_path)))
-                if is_resume:
-                    before, added = _merge_har_segment(har_path, capture_path)
-                    print(
-                        "[webarena] "
-                        f"OK merged resumed HAR ({before}+{added} entries) -> {har_path}"
-                    )
-            else:
-                if is_resume and har_path.is_file():
-                    print(
-                        "[webarena] resume HAR recorder unavailable; "
-                        f"preserving existing {har_path}"
-                    )
-                else:
-                    har_path.write_text('{"log":{"version":"1.2","creator":{"name":"gui_agent"},"entries":[]}}')
-                    print(f"[webarena] OK har 0 entries (recorder unavailable) -> {har_path}")
 
             try:
-                if result.failure_kind == "compile":
-                    resp = _compile_failure_response(intent, result)
-                else:
-                    resp = _synthesize_response(intent, result, log_dir / "context.json")
-                response_payload = _finalize_response(
-                    resp,
+                response = _finalize_response(
+                    _synthesize_response(intent, result, log_dir / "context.json"),
                     phase=result.phase,
                     verification=result.verification,
                     intent=intent,
-                ).model_dump()
-                resp_path.write_text(json.dumps(response_payload, indent=2))
-                eval_path = None
-                eval_payload = None
-                try:
-                    eval_path, eval_payload = _run_official_eval(
-                        task_id=args.task_id,
-                        out_dir=out_dir,
-                        resp_path=resp_path,
-                        har_path=har_path,
-                    )
-                    print(
-                        "[webarena] OK eval_result (official) -> "
-                        f"{eval_path} "
-                        f"(status={eval_payload.get('status')}, score={eval_payload.get('score')})"
-                    )
-                except Exception as eval_exc:  # noqa: BLE001 - official eval is best-effort
-                    print(f"[webarena] official eval skipped/failed ({eval_exc})")
-                _write_webarena_report_context(
-                    log_dir / "context.json",
-                    task=task,
-                    task_id=args.task_id,
-                    start_url=start_url,
-                    out_dir=out_dir,
-                    har_path=har_path,
-                    resp_path=resp_path,
-                    response_payload=response_payload,
-                    eval_result_path=eval_path,
-                    eval_result_payload=eval_payload,
-                    eval_compat_reports=eval_compat_reports,
-                    reset_requested=args.reset_instance,
-                    reset_details=reset_details,
                 )
-                _print_webarena_outputs(
-                    resp_path=resp_path,
-                    response_payload=response_payload,
-                    eval_path=eval_path,
-                    eval_payload=eval_payload,
-                )
-            except Exception as exc:  # noqa: BLE001 — still leave a valid response file
-                fallback = {"task_type": result.task_type or "RETRIEVE", "status": "UNKNOWN_ERROR",
-                            "retrieved_data": None, "error_details": f"response synthesis failed: {exc}"}
-                resp_path.write_text(json.dumps(fallback, indent=2))
-                eval_path = None
-                eval_payload = None
-                try:
-                    eval_path, eval_payload = _run_official_eval(
-                        task_id=args.task_id,
-                        out_dir=out_dir,
-                        resp_path=resp_path,
-                        har_path=har_path,
-                    )
-                    print(
-                        "[webarena] OK eval_result (official) -> "
-                        f"{eval_path} "
-                        f"(status={eval_payload.get('status')}, score={eval_payload.get('score')})"
-                    )
-                except Exception as eval_exc:  # noqa: BLE001 - official eval is best-effort
-                    print(f"[webarena] official eval skipped/failed ({eval_exc})")
-                _write_webarena_report_context(
-                    log_dir / "context.json",
-                    task=task,
-                    task_id=args.task_id,
-                    start_url=start_url,
-                    out_dir=out_dir,
-                    har_path=har_path,
-                    resp_path=resp_path,
-                    response_payload=fallback,
-                    eval_result_path=eval_path,
-                    eval_result_payload=eval_payload,
-                    eval_compat_reports=eval_compat_reports,
-                    reset_requested=args.reset_instance,
-                    reset_details=reset_details,
-                )
-                print(f"[webarena] response synthesis failed ({exc}); wrote fallback -> {resp_path}")
-                _print_webarena_outputs(
-                    resp_path=resp_path,
-                    response_payload=fallback,
-                    eval_path=eval_path,
-                    eval_payload=eval_payload,
-                )
+                response_payload = response.model_dump()
+            except Exception as exc:  # noqa: BLE001
+                response_payload = {
+                    "task_type": result.task_type or "RETRIEVE",
+                    "status": "UNKNOWN_ERROR",
+                    "retrieved_data": None,
+                    "error_details": f"response synthesis failed: {exc}",
+                }
+            resp_path.write_text(
+                json.dumps(response_payload, ensure_ascii=False, indent=2),
+                encoding="utf-8",
+            )
 
-            # Auto-generate the HTML run report from context.json (same builder as the runner),
-            # so a WebArena run is as inspectable as a normal agent run.
+            eval_path = None
+            eval_payload = None
+            try:
+                eval_path, eval_payload = _run_official_eval(
+                    task_id=args.task_id,
+                    out_dir=out_dir,
+                    resp_path=resp_path,
+                    har_path=har_path,
+                )
+            except Exception as exc:  # noqa: BLE001
+                print(f"[webarena] official eval skipped/failed ({exc})")
+
+            _write_webarena_report_context(
+                log_dir / "context.json",
+                task=task,
+                task_id=args.task_id,
+                start_url=start_url,
+                out_dir=out_dir,
+                har_path=har_path,
+                resp_path=resp_path,
+                response_payload=response_payload,
+                eval_result_path=eval_path,
+                eval_result_payload=eval_payload,
+                eval_compat_reports=eval_compat_reports,
+                reset_requested=args.reset_instance,
+                reset_details=reset_details,
+            )
+            _print_webarena_outputs(
+                resp_path=resp_path,
+                response_payload=response_payload,
+                eval_path=eval_path,
+                eval_payload=eval_payload,
+            )
+
             if (log_dir / "context.json").exists():
                 try:
                     from gui_agent.reports import RunnerReportBuilder, save_report
-                    report_data = RunnerReportBuilder().build(log_dir)
-                    report_path = save_report(report_data, log_dir / "report.html")
+
+                    report_path = save_report(
+                        RunnerReportBuilder().build(log_dir),
+                        log_dir / "report.html",
+                    )
                     print(f"[webarena] OK report -> {report_path}")
-                except Exception as exc:  # noqa: BLE001 — report is best-effort
+                except Exception as exc:  # noqa: BLE001
                     print(f"[webarena] report generation failed ({exc})")
         finally:
-            if hud:
+            if hud is not None:
                 hud.close()
-
     return 0
 
 

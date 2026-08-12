@@ -14,7 +14,7 @@ from pydantic import (
     model_validator,
 )
 
-from gui_agent.core.filter_contract import (
+from gui_agent.core.tool_agent.filter_state import (
     AppliedFilterState,
     FilterPredicateSet,
 )

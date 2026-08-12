@@ -5,16 +5,13 @@ from types import SimpleNamespace
 
 from gui_agent.adapters.android.mobileworld import (
     MOBILEWORLD_PACKAGE_MANAGER,
-    _android_platform_contract,
     _build_parser,
     _final_answer,
-    _generate_and_persist_reply,
     _guess_task_type,
     _init_task_then_wait_for_android,
-    _route_mobileworld_goal,
+    _mobileworld_access_context,
 )
-from gui_agent.core.chat.session import RouterResult
-from gui_agent.core.run.result import AgentResult
+from gui_agent.core.runtime.result import AgentResult
 from gui_agent.core.runtime.factory import SetupCheckResult
 from gui_agent.core.tool_agent.presentation import PresentationResult
 from gui_agent.core.tool_agent.result import execute_tool_agent
@@ -28,70 +25,48 @@ class _FakeEnv:
         self.events.append(f"init:{task_name}")
 
 
-def test_android_platform_contract_uses_semantic_app_names():
-    app_names = ["Calendar", "Messages"]
-
-    contract = _android_platform_contract(app_names)
-
-    assert "Available application names" in contract
-    assert '["Calendar", "Messages"]' in contract
-    assert "org.fossify.calendar" not in contract
-
-
 def test_mobileworld_package_manager_uses_internal_package_names():
     assert MOBILEWORLD_PACKAGE_MANAGER["Calendar"] == "org.fossify.calendar"
     assert MOBILEWORLD_PACKAGE_MANAGER["Messages"] == "com.google.android.apps.messaging"
 
 
-def test_mobileworld_cli_accepts_tool_agent_runtime_options():
-    parser = _build_parser()
-    args = parser.parse_args([
+def test_mobileworld_combines_private_deployment_context_for_bound_apps() -> None:
+    context = _mobileworld_access_context([
+        SimpleNamespace(deployment="Service A access facts"),
+        SimpleNamespace(deployment=""),
+        SimpleNamespace(deployment="  Service B access facts  "),
+    ])
+
+    assert context == "Service A access facts\n\nService B access facts"
+
+
+def test_mobileworld_cli_accepts_tool_agent_options():
+    args = _build_parser().parse_args([
         "OpenFlightModeTask",
-        "--runtime",
-        "tool-agent",
         "--perception",
         "vision-only",
-        "--tool-agent-multi-action",
+        "--multi-action",
     ])
 
     assert args.task == "OpenFlightModeTask"
-    assert args.runtime == "tool-agent"
     assert args.perception == "vision-only"
-    assert args.tool_agent_multi_action is True
-    defaults = parser.parse_args(["OpenFlightModeTask"])
-    disabled = parser.parse_args([
+    assert args.multi_action is True
+
+
+def test_mobileworld_enables_tool_agent_multi_action_by_default() -> None:
+    enabled = _build_parser().parse_args(["OpenFlightModeTask"])
+    disabled = _build_parser().parse_args([
         "OpenFlightModeTask",
-        "--no-tool-agent-multi-action",
+        "--no-multi-action",
     ])
 
-    assert defaults.runtime == "tool-agent"
-    assert defaults.tool_agent_multi_action is True
-    assert disabled.tool_agent_multi_action is False
+    assert enabled.multi_action is True
+    assert disabled.multi_action is False
 
 
 def test_mobileworld_task_type_fallback_handles_state_mutations():
     assert _guess_task_type("Turn on device flight mode") == "MUTATE"
     assert _guess_task_type("How many alarms are configured?") == "RETRIEVE"
-
-
-def test_mobileworld_routes_backend_goal_as_android_and_preserves_raw_separately():
-    calls = []
-
-    def route(goal, *, session, platform):
-        calls.append((goal, session, platform))
-        return RouterResult(goal="明确后的任务目标")
-
-    routed, payload = _route_mobileworld_goal("raw goal", route=route)
-    fallback, empty_payload = _route_mobileworld_goal(
-        "raw goal",
-        route=lambda *_args, **_kwargs: RouterResult(),
-    )
-
-    assert routed == "明确后的任务目标"
-    assert payload["goal"] == routed
-    assert calls == [("raw goal", [], "android")]
-    assert fallback == "raw goal"
-    assert empty_payload["goal"] == ""
 
 
 def test_mobileworld_initializes_before_adb_probe_and_session_open():
@@ -147,23 +122,7 @@ def test_mobileworld_returns_last_failed_probe_at_ready_timeout():
     assert events == ["init:CloseFlightModeTask", "probe"]
 
 
-def test_mobileworld_reply_is_separate_from_exact_evaluator_answer(
-    monkeypatch,
-    tmp_path,
-):
-    context_path = tmp_path / "context.json"
-    context_path.write_text(
-        json.dumps({
-            "outcome": {
-                "phase": "completed",
-                "summary": "raw",
-                "verification": "confirmed",
-                "output": "42",
-            },
-            "reply": None,
-        }),
-        encoding="utf-8",
-    )
+def test_mobileworld_preserves_exact_evaluator_answer():
     result = AgentResult(
         goal="Return the exact number",
         output="42",
@@ -171,18 +130,7 @@ def test_mobileworld_reply_is_separate_from_exact_evaluator_answer(
         phase="completed",
         verification="confirmed",
     )
-    monkeypatch.setattr(
-        "gui_agent.core.llm.output.generate_reply",
-        lambda goal, payload: f"reply for {goal}: {payload['output']}",
-    )
-
-    reply = _generate_and_persist_reply(context_path, result.goal, result)
-
     assert _final_answer(result) == "42"
-    assert reply == "reply for Return the exact number: 42"
-    persisted = json.loads(context_path.read_text(encoding="utf-8"))
-    assert persisted["outcome"]["output"] == "42"
-    assert persisted["reply"] == reply
 
 
 def test_tool_agent_execution_persists_android_mobileworld_context(

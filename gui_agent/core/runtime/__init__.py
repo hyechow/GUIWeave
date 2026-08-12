@@ -1,1 +1,1 @@
-"""Runtime platform contracts, factories, and tracing helpers."""
+"""Tool Agent execution contracts, platform wiring, results, and run support."""

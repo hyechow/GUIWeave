@@ -1,8 +1,0 @@
-{
-  "task": "WebArena 550",
-  "history_source": "logs/gui_agent/webarena/browser/20260714_151422/context.json",
-  "history_through_turn": 42,
-  "observation_source": "recorded observation_turn_41..42.json and matching screenshots",
-  "observation_captured_on": "2026-07-14",
-  "purpose": "A root Save dispatch left the editor showing a loading state without a persistence response. Dispatch is an attempt, not acknowledgement; the supervisor must observe rather than complete or submit again."
-}

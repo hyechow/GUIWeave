@@ -70,13 +70,13 @@ class ReportData:
     models: dict[str, str] = field(default_factory=dict)  # config_key → model used this run
     raw_input: str = ""  # original human input (title); empty for old logs
     goal: str = ""       # resolved goal that drove the run
-    router: dict = field(default_factory=dict)  # RouterResult dict; empty for bin/runner path
+    router: dict = field(default_factory=dict)  # optional input-resolution metadata
     program_output: str = ""
     reply: str = ""
     summary: str = ""      # ProgramOutcome.summary
     phase: str = ""        # ProgramOutcome.phase
     verification: str = ""
-    platform: str = ""   # run platform (iphone/browser); empty for old logs
+    platform: str = ""   # run platform (browser/android/iphone); empty for old logs
     wall_clock_s: float = 0.0    # true end-to-end runner elapsed (context.wall_clock_s); 0 for old logs
     settle_s_total: float = 0.0  # Σ per-turn settle waits (post-action screen-settle)
     knowledge: dict = field(default_factory=dict)  # injected app-knowledge summary {app_name, nav_chars, elements_chars, section_count}

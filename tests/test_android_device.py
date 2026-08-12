@@ -14,9 +14,6 @@ from unittest.mock import Mock
 import pytest
 from PIL import Image
 
-from gui_agent.adapters.android.actions import AndroidAction, AndroidActionDecision
-from gui_agent.adapters.android.executor import AndroidExecutor
-
 
 class _FakeDev:
     """Records the adb calls the device makes (one per adbutils convenience method)."""
@@ -281,25 +278,95 @@ def test_executor_denorm_maps_normalized_to_device_pixels(calls):
     assert (round(px2), round(py2)) == (1079, 2399)  # clamped to w-1, h-1
 
 
-def test_android_sensitive_typed_value_is_not_printed(capsys) -> None:
-    secret = "runtime-secret-73"
-    client = types.SimpleNamespace(
-        viewport_size=(1080, 2400),
-        tap=lambda _x, _y: "OK tap",
-        clear_text=lambda: "OK clear",
-        type_text=lambda text: f"OK type {text!r}",
-    )
-    executor = AndroidExecutor(types.SimpleNamespace(client=client))
-    executor.sensitive_text_values = (secret,)
-    decision = AndroidActionDecision(action=AndroidAction(
-        action_type="type", x=500, y=500, text=secret,
-        description="Enter the private session value",
-    ))
+def test_executor_grounds_named_android_menu_row_before_dispatch() -> None:
+    from gui_agent.adapters.android.actions import AndroidAction, AndroidActionDecision
+    from gui_agent.adapters.android.executor import AndroidExecutor
 
-    assert executor.execute(decision) is True
-    output = capsys.readouterr().out
-    assert secret not in output
-    assert "session access value redacted" in output
+    executor = AndroidExecutor(types.SimpleNamespace(client=None))
+    original = AndroidActionDecision(action=AndroidAction(
+        action_type="tap",
+        x=500,
+        y=870,
+        description="Tap the Create New Channel option in the bottom sheet",
+    ))
+    controls = [
+        {
+            "kind": "button",
+            "label": "Browse Channels",
+            "in_viewport": True,
+            "rect": {"x": 500, "y": 850, "w": 1000, "h": 45},
+        },
+        {
+            "kind": "button",
+            "label": "Create New Channel",
+            "in_viewport": True,
+            "rect": {"x": 500, "y": 900, "w": 1000, "h": 45},
+        },
+    ]
+
+    grounded = executor.ground_coordinates(original, controls)
+
+    assert (grounded.action.x, grounded.action.y) == (500, 900)
+    assert grounded.action.snap == {
+        "method": "android_control_semantic_geometry",
+        "original": [500.0, 870.0],
+        "snapped": [500.0, 900.0],
+        "info": "Create New Channel",
+    }
+
+
+def test_android_grounding_fails_open_for_ambiguous_named_controls() -> None:
+    from gui_agent.adapters.android.actions import AndroidAction, AndroidActionDecision
+    from gui_agent.adapters.android.executor import AndroidExecutor
+
+    executor = AndroidExecutor(types.SimpleNamespace(client=None))
+    original = AndroidActionDecision(action=AndroidAction(
+        action_type="tap",
+        x=500,
+        y=500,
+        description="Tap Continue",
+    ))
+    controls = [
+        {
+            "kind": "button",
+            "label": "Continue",
+            "rect": {"x": 450, "y": 500, "w": 80, "h": 40},
+        },
+        {
+            "kind": "button",
+            "label": "Continue",
+            "rect": {"x": 550, "y": 500, "w": 80, "h": 40},
+        },
+    ]
+
+    grounded = executor.ground_coordinates(original, controls)
+
+    assert grounded is original
+    assert grounded.action.snap is None
+
+
+def test_android_grounding_snaps_wide_input_edge_to_center() -> None:
+    from gui_agent.adapters.android.actions import AndroidAction, AndroidActionDecision
+    from gui_agent.adapters.android.executor import AndroidExecutor
+
+    executor = AndroidExecutor(types.SimpleNamespace(client=None))
+    original = AndroidActionDecision(action=AndroidAction(
+        action_type="type",
+        x=911,
+        y=294,
+        text="reading",
+        description="Type reading in the Name text input field",
+    ))
+    controls = [{
+        "kind": "text_input",
+        "label": "Bugs, Marketing",
+        "rect": {"x": 501, "y": 294, "w": 820, "h": 27},
+    }]
+
+    grounded = executor.ground_coordinates(original, controls)
+
+    assert (grounded.action.x, grounded.action.y) == (501, 294)
+    assert grounded.action.snap["method"] == "android_control_geometry"
 
 
 # --------------------------------------------------------------------------- #

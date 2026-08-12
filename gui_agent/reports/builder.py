@@ -133,7 +133,7 @@ def _tool_agent_report_steps(
     """Project a Tool Agent run into Master, GUI Worker and transform layers.
 
     The persisted JSONL remains event-oriented.  The report is task-oriented: the
-    reviewed Master program is rendered as the plan, each autonomous GUI Worker is
+    Master program is rendered as the plan, each autonomous GUI Worker is
     one statement card, and one visual frame becomes one Turn.  Runtime diagnostics
     stay nested inside their owning Turn instead of becoming timeline cards.
     """

@@ -865,7 +865,7 @@ class PlaywrightDevice:
             except Exception:
                 pass
             result = page.evaluate(
-                """({x, y, target}) => {
+                r"""({x, y, target}) => {
                     const norm = (v) => String(v ?? '')
                         .replace(/\s+/g, ' ')
                         .trim()

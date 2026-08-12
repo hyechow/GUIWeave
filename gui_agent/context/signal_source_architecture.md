@@ -53,5 +53,5 @@ Action Policy grounding rejection follows the same same-frame re-decision path.
 - EventJournal is the only historical fact stream.
 - StatementMemory is a read-only bounded projection, never a mutable phase.
 - Core prompts contain no site, benchmark or platform-specific UI recipe.
-- Optional DOM/AX facts remain optional across browser, iOS and Android.
+- Optional DOM/AX facts remain optional across Browser, Android, and iPhone.
 - Program control flow is not inferred from observation signals.

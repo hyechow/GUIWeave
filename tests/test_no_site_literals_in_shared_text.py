@@ -52,9 +52,7 @@ def _scanned_files() -> list[Path]:
     files += sorted((_ROOT / "gui_agent" / "context").rglob("*.py"))
     # 2. core schema field descriptions (can reach the LLM tool schema / reports)
     files.append(_ROOT / "gui_agent" / "core" / "schemas" / "__init__.py")
-    # 3. reviewed-Python planner and review schema descriptions
-    files.append(_ROOT / "gui_agent" / "core" / "orchestrator" / "planner.py")
-    # 4. shared statement/orchestrator/router prompts — the WebArena namespace is allowlisted
+    # 3. shared Tool Agent prompts — the WebArena namespace is allowlisted
     for md in sorted((_ROOT / "gui_agent" / "prompts").rglob("*.md")):
         if "webarena" in md.parts:
             continue
