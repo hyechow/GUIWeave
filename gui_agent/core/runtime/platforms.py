@@ -10,4 +10,3 @@ PLATFORMS: tuple[PlatformName, ...] = get_args(PlatformName)
 
 
 __all__ = ["PLATFORMS", "PlatformName"]
-
