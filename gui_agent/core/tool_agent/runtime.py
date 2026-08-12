@@ -37,6 +37,7 @@ from gui_agent.core.tool_agent.contracts import (
 from gui_agent.core.tool_agent.action_guard import (
     WorkerActionCircuitBreaker,
     control_at_point,
+    is_candidate_commit,
 )
 from gui_agent.core.tool_agent.data_store import RuntimeDataStore
 from gui_agent.core.tool_agent.orchestrator import (
@@ -1547,6 +1548,9 @@ class ToolAgentRuntime:
         action: DynamicActionSpec | None,
         result: dict[str, Any],
     ) -> None:
+        if result.get("candidate_commit"):
+            breaker.reset()
+            return
         effective_scroll = bool(
             action
             and action.capability == "scroll"
@@ -1555,6 +1559,53 @@ class ToolAgentRuntime:
         )
         if not effective_scroll:
             breaker.record(decision)
+
+    def _refreshable_action_suffix(
+        self,
+        capability: str,
+        remaining: list[dict[str, Any]],
+        action_by_name: dict[str, DynamicActionSpec],
+    ) -> bool:
+        refresh_controls = getattr(getattr(self, "_executor", None), "refresh_controls", None)
+        capabilities = [capability, *(action_by_name[item["name"]].capability for item in remaining)]
+        return bool(
+            getattr(self, "perception_mode", "enhanced") == "enhanced"
+            and callable(refresh_controls)
+            and all(item in {"tap", "type", "clear_text", "press_enter"} for item in capabilities)
+            and any(item != "tap" for item in capabilities)
+            and all(
+                action_by_name[call["name"]].capability not in {"tap", "type"}
+                or call.get("_control_ref")
+                for call in remaining
+            )
+        )
+
+    def _refresh_next_action(
+        self,
+        call: dict[str, Any],
+        action: DynamicActionSpec,
+        frame: MaterializedFrame,
+    ) -> bool:
+        if action.capability not in {"tap", "type"}:
+            return True
+        try:
+            controls = self._executor.refresh_controls()
+        except Exception:  # noqa: BLE001 - stale coordinates must never continue
+            return False
+        if not isinstance(controls, list):
+            return False
+        ref = str(call.pop("_control_ref", "") or "")
+        control = next((item for item in controls if item.get("ref") == ref), None)
+        point = control.get("action_point") if control is not None else None
+        if not isinstance(point, dict):
+            point = control.get("rect") if control is not None else None
+        if not isinstance(point, dict) or not all(
+            isinstance(point.get(key), (int, float)) for key in ("x", "y")
+        ):
+            return False
+        call["args"].update(x=float(point["x"]), y=float(point["y"]))
+        frame.controls = controls
+        return True
 
     @staticmethod
     def _validate_multi_action_calls(
@@ -1592,9 +1643,12 @@ class ToolAgentRuntime:
         frame: MaterializedFrame | None = None,
     ) -> str:
         capability = action.capability
+        refreshable = self._refreshable_action_suffix(
+            capability, remaining, action_by_name,
+        )
         if capability == "type" and not bool(getattr(
             getattr(self, "_executor", None), "type_suffix_safe", True,
-        )):
+        )) and not refreshable:
             return "type can reflow this platform; reobserve before continuing"
         if capability in {"type", "clear_text"}:
             return ""
@@ -1606,6 +1660,8 @@ class ToolAgentRuntime:
                 action_by_name,
                 frame,
             ):
+                return ""
+            if refreshable:
                 return ""
             try:
                 later_actions = [
@@ -1692,6 +1748,14 @@ class ToolAgentRuntime:
         """Execute one fused Worker decision as interruptible atomic actions."""
 
         action_by_name = {action.name: action for action in actions}
+        if callable(getattr(getattr(self, "_executor", None), "refresh_controls", None)):
+            for call in calls:
+                action = action_by_name[call["name"]]
+                if action.capability in {"tap", "type"}:
+                    args = {**action.fixed_args, **call["args"]}
+                    call["_control_ref"] = str(
+                        (control_at_point(args, frame) or {}).get("ref") or ""
+                    )
         current_png = png
         live_identity = self._page_identity()
         page_identity = (
@@ -1714,6 +1778,11 @@ class ToolAgentRuntime:
                 )
                 if remaining
                 else ""
+            )
+            refresh_suffix = bool(
+                remaining and self._refreshable_action_suffix(
+                    action_spec.capability, remaining, action_by_name,
+                )
             )
             circuit_decision = circuit_breaker.inspect(
                 tool=action_call["name"],
@@ -1797,6 +1866,11 @@ class ToolAgentRuntime:
                 continue
             if suffix_reason:
                 reason = suffix_reason
+                break
+            if refresh_suffix and not self._refresh_next_action(
+                remaining[0], action_by_name[remaining[0]["name"]], frame,
+            ):
+                reason = "current controls could not rebind the action suffix"
                 break
             try:
                 current_png = self.platform.screenshot()
@@ -2078,6 +2152,14 @@ class ToolAgentRuntime:
                     rejection.get("message") or "The platform rejected the action."
                 )
                 terminal = "platform_rejected"
+            if frame is not None and payload["status"] == "executed" and (
+                payload["no_effect"] is False
+                and is_candidate_commit(
+                    executed_action.model_dump(mode="python", exclude_none=True),
+                    frame,
+                )
+            ):
+                payload["candidate_commit"] = True
             self._trace(
                 "runtime_action",
                 tool=call["name"],

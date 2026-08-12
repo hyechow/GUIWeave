@@ -65,7 +65,8 @@ Protocol contract:
   candidates, the latest selected batch's commit produced a confirmed transition or related success
   feedback (not `no_effect`, rejection, or error), the settled selector was then reopened without a
   query, its normal candidate region is visible, and it now has no candidate rows, loading state, or
-  related error. Do not keep scrolling or retry solely because an indirect summary/count outside
+  related error. `candidate_set_state.status = exhausted` is authoritative evidence that these
+  safeguards hold. Do not keep scrolling or retry solely because an indirect summary/count outside
   that selector has not refreshed. An initially empty selector, a filtered zero-result view, or an
   uncommitted batch does not satisfy this rule.
 - Before a generate/commit action, validate any visible review or summary surface against the

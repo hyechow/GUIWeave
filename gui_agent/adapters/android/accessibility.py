@@ -432,6 +432,10 @@ def _is_commit_control(*, role: str, key: str, resource: str) -> bool:
     return bool(
         explicit_label
         or (
+            "selected" in resource_words
+            and resource_words & {"action", "button"}
+        )
+        or (
             resource_words & commit_words
             and resource_words & {"action", "button"}
         )
@@ -503,6 +507,8 @@ def form_controls_from_semantic_tree(
         for field in ("selected", "selection_mode", "action_point"):
             if field in node:
                 item[field] = node[field]
+        if kind == "text_input" and identity_words & {"search", "filter", "query"}:
+            item["is_filter"] = True
         if persistence:
             item["form_action"] = "commit"
         if "in_viewport" in node:

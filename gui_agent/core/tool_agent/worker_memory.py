@@ -203,6 +203,7 @@ class WorkerJournal:
         )
         is_exception = isinstance(result, dict) and bool(result.get("error"))
         is_no_effect = isinstance(result, dict) and bool(result.get("no_effect"))
+        candidate_commit = isinstance(result, dict) and bool(result.get("candidate_commit"))
         target_signal = (
             result.get("target_signal")
             if isinstance(result, dict)
@@ -213,7 +214,9 @@ class WorkerJournal:
             isinstance(result, dict) and str(result.get("ref") or "").startswith("result:")
         )
         durable_text = ""
-        if is_exception or result_status in {"error", "failed"}:
+        if candidate_commit:
+            durable_text = "candidate selection commit produced a confirmed transition"
+        elif is_exception or result_status in {"error", "failed"}:
             durable_text = (
                 f"tool={tool}; failure={_bounded_json(memory_result, limit=420)}"
             )
@@ -250,7 +253,7 @@ class WorkerJournal:
                 if substep is not None
                 else f"step:{step}"
             ),
-            kind="action_result",
+            kind="candidate_commit" if candidate_commit else "action_result",
             durable_text=durable_text,
             narrative_text=(
                 f"state={state.status}; tool={tool}{args_text}; "
@@ -346,7 +349,9 @@ def build_worker_memory_view(
     )
 
 
-def _frame_payload(frame: MaterializedFrame) -> dict[str, Any]:
+def _frame_payload(
+    frame: MaterializedFrame, *, candidate_committed: bool,
+) -> dict[str, Any]:
     scope_blockers: dict[str, dict[str, Any]] = {}
     for requirement_id, scope in frame.requirement_scopes.items():
         if str(scope.get("status") or "") != "unmet":
@@ -374,6 +379,23 @@ def _frame_payload(frame: MaterializedFrame) -> dict[str, Any]:
                 "the visible UI before collecting or completing."
             ),
         }
+    candidate_state: dict[str, Any] = {}
+    if candidate_committed:
+        filters = [
+            item for item in frame.controls
+            if item.get("in_viewport") is not False
+            and str(item.get("kind") or "").casefold() in {"text_input", "textbox"}
+            and item.get("is_filter") is True
+        ]
+        if len(filters) == 1 and not any(
+            item.get("in_viewport") is not False
+            and item.get("selection_mode") == "multiple"
+            for item in frame.controls
+        ):
+            anchor = filters[0]
+            value = str(anchor.get("value") or "").strip().casefold()
+            if value in {"", str(anchor.get("label") or "").casefold()}:
+                candidate_state = {"status": "exhausted"}
     return {
         "frame_id": frame.frame_id,
         "url": frame.url,
@@ -382,6 +404,7 @@ def _frame_payload(frame: MaterializedFrame) -> dict[str, Any]:
         "requirement_scopes": frame.requirement_scopes,
         "scope_blockers": scope_blockers,
         "observed_choice_state": _observed_choice_state(frame.controls),
+        "candidate_set_state": candidate_state,
         "structured_surfaces": frame.structured_surfaces,
         "chunks": [
             {
@@ -422,7 +445,12 @@ def project_worker_context(
 ) -> WorkerContextProjection:
     """Build one capacity-managed context; the screenshot is supplied separately."""
     memory_text = memory.render_prompt_section()
-    compact_frame = json.dumps(_frame_payload(frame), ensure_ascii=False)
+    compact_frame = json.dumps(_frame_payload(
+        frame,
+        candidate_committed=any(
+            event.kind == "candidate_commit" for event in memory.durable_facts
+        ),
+    ), ensure_ascii=False)
     blocks = [
         ContextBlock(
             id="tool_agent.worker.memory",

@@ -15,6 +15,10 @@ import re
 from typing import Optional
 
 from gui_agent.adapters.android.actions import AndroidAction
+from gui_agent.adapters.android.accessibility import (
+    form_controls_from_semantic_tree,
+    semantic_tree_from_uiautomator,
+)
 from gui_agent.adapters.android.control_grounding import (
     ground_action_to_android_control,
 )
@@ -46,6 +50,14 @@ class AndroidExecutor(VisionExecutor):
     # Typing or focusing can reflow the viewport, invalidating a spatial suffix.
     tap_type_suffix_safe = False
     type_suffix_safe = False
+
+    def refresh_controls(self) -> list[dict] | None:
+        """Refresh UIAutomator controls for safe in-batch coordinate rebinding."""
+        client = self._client()
+        return form_controls_from_semantic_tree(semantic_tree_from_uiautomator(
+            client.dump_ui_hierarchy(),
+            viewport_size=client.viewport_size,
+        ))
 
     def ground_coordinates(self, decision, controls):
         """Use current UIAutomator identity to correct a bounded visual miss."""

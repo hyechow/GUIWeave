@@ -58,6 +58,25 @@ def control_at_point(
     return min(matches, key=lambda item: item[0])[1] if matches else None
 
 
+def is_candidate_commit(
+    args: dict[str, Any], frame: MaterializedFrame,
+) -> bool:
+    """Identify a confirmed selection commit from its pre-action frame."""
+    target = control_at_point(args, frame)
+    candidates = [
+        item for item in frame.controls
+        if item.get("in_viewport") is not False
+        and item.get("selection_mode") == "multiple"
+    ]
+    return bool(
+        target
+        and target.get("form_action") == "commit"
+        and any(item.get("is_filter") is True for item in frame.controls)
+        and candidates
+        and all(bool(item.get("selected")) for item in candidates)
+    )
+
+
 def _action_boundary_error(
     capability: str,
     args: dict[str, Any],
@@ -234,11 +253,15 @@ class WorkerActionCircuitBreaker:
         key = (decision.signature, decision.progress)
         self._attempts[key] = self._attempts.get(key, 0) + 1
 
+    def reset(self) -> None:
+        self._attempts.clear()
+
 
 __all__ = [
     "ActionCircuitDecision",
     "WorkerActionCircuitBreaker",
     "action_signature",
+    "is_candidate_commit",
     "control_at_point",
     "progress_signature",
 ]
