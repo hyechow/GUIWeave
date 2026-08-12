@@ -14,7 +14,7 @@ from gui_agent.adapters.browser.webarena import (
     _task_for_eval_compat,
     _write_webarena_report_context,
 )
-from gui_agent.core.run.result import AgentResult
+from gui_agent.core.runtime.result import AgentResult
 
 
 def _result(**updates) -> AgentResult:

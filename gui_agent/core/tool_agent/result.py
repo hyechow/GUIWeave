@@ -5,7 +5,7 @@ from __future__ import annotations
 import json
 from pathlib import Path
 
-from gui_agent.core.run.result import AgentResult
+from gui_agent.core.runtime.result import AgentResult
 from gui_agent.core.schemas import PolicyContext
 from gui_agent.core.tool_agent.presentation import (
     PresentationResult,

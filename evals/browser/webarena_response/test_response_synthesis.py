@@ -32,7 +32,7 @@ from dotenv import load_dotenv
 load_dotenv(PROJECT_ROOT / ".env")
 
 from gui_agent.adapters.browser.webarena import _synthesize_response
-from gui_agent.core.run.result import AgentResult
+from gui_agent.core.runtime.result import AgentResult
 
 CASES_FILE = Path(__file__).parent / "cases.json"
 

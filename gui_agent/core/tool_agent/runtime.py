@@ -19,7 +19,7 @@ from langchain_openai import ChatOpenAI
 
 from gui_agent.core.config import resolve_llm_config
 from gui_agent.prompts import load_prompt_text
-from gui_agent.core.run.action_exec import (
+from gui_agent.core.runtime.action_settle import (
     VERIFY_TIMEOUT_S,
     has_snapped_point,
     settle_after_action,

@@ -6,7 +6,7 @@ import json
 from pathlib import Path
 
 from gui_agent.adapters.browser.webarena import _synthesize_response
-from gui_agent.core.run.result import AgentResult
+from gui_agent.core.runtime.result import AgentResult
 
 
 REPLAYS = Path(__file__).parent / "replays"

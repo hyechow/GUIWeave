@@ -46,7 +46,7 @@ if __package__ is None or __package__ == "":
 
 from pydantic import BaseModel
 
-from gui_agent.core.run.result import AgentResult, failed_result
+from gui_agent.core.runtime.result import AgentResult, failed_result
 from gui_agent.prompts import load_prompt, load_prompt_text
 
 # WebArena's required response schema (mirrors the base_template "Final Response
@@ -1035,7 +1035,7 @@ def main() -> int:
     eval_compat_enabled = bool(args.eval_compat or _truthy_env(_EVAL_COMPAT_ENV))
 
     from gui_agent.adapters.browser.har_recorder import HarRecorder
-    from gui_agent.core.run.io import create_run_dir, tee_stdio
+    from gui_agent.core.runtime.io import create_run_dir, tee_stdio
     from gui_agent.core.runtime.factory import build_platform
     from gui_agent.core.tool_agent.result import execute_tool_agent
 

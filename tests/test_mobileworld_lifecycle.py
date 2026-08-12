@@ -11,7 +11,7 @@ from gui_agent.adapters.android.mobileworld import (
     _init_task_then_wait_for_android,
     _mobileworld_access_context,
 )
-from gui_agent.core.run.result import AgentResult
+from gui_agent.core.runtime.result import AgentResult
 from gui_agent.core.runtime.factory import SetupCheckResult
 from gui_agent.core.tool_agent.presentation import PresentationResult
 from gui_agent.core.tool_agent.result import execute_tool_agent

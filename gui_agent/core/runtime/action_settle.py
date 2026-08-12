@@ -1,4 +1,4 @@
-"""Tool Agent action-settle and grounded-point helpers."""
+"""Post-action settling and grounded-point helpers."""
 
 from __future__ import annotations
 

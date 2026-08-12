@@ -48,7 +48,7 @@ from typing import Callable, Optional
 if __package__ is None or __package__ == "":
     sys.path.insert(0, str(Path(__file__).resolve().parents[3]))
 
-from gui_agent.core.run.result import AgentResult, failed_result
+from gui_agent.core.runtime.result import AgentResult, failed_result
 
 # Tags that mark non-GUI-only task subsets; excluded from the default task list (the
 # GUI-only subset is the integration target — see the MobileWorld paper).
@@ -346,7 +346,7 @@ def main() -> int:
     load_dotenv()
 
     from gui_agent.core.runtime.factory import build_platform
-    from gui_agent.core.run.io import create_run_dir, tee_stdio
+    from gui_agent.core.runtime.io import create_run_dir, tee_stdio
     from gui_agent.core.tool_agent.result import execute_tool_agent
 
     if not env.health():

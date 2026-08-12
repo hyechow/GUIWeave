@@ -1,4 +1,4 @@
-"""Run directory, stdio tee, and interactive stop handling for runners."""
+"""Run directories, stdio capture, and interactive stop handling."""
 
 from __future__ import annotations
 
