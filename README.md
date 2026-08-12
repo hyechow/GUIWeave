@@ -8,6 +8,8 @@ The preview supports:
 
 - Chrome on macOS, through Playwright or an existing Chrome CDP session;
 - Android devices and emulators, through ADB;
+- iPhone through macOS iPhone Mirroring, with `bin/sck_server` for screenshots
+  and `bin/mirror_daemon` for input;
 - per-run logs, event traces, screenshots, action visualization, HTML reports, and
   deterministic replay;
 - focused unit tests and evals for Tool Agent, WebArena, and MobileWorld.
@@ -23,7 +25,8 @@ Codex Skill
          └─ ToolAgentService
               └─ Tool Agent Master / visual Workers
                    ├─ Browser adapter → Chrome / Playwright
-                   └─ Android adapter → ADB
+                   ├─ Android adapter → ADB
+                   └─ iPhone adapter → sck_server + mirror_daemon
 
 Each run → context + trace + screenshots + replay + HTML report
 ```
@@ -33,13 +36,16 @@ the plugin and communicates with Codex over stdin/stdout.
 
 ## Requirements
 
-- macOS 13 or later (Developer Preview target)
+- macOS 13 or later for Browser/Android; the bundled iPhone helper preview currently
+  targets macOS 26
 - Python 3.11+
 - [`uv`](https://docs.astral.sh/uv/)
 - an OpenAI-compatible model configured in `.env` or the shell
 - Chrome for headed browser tasks, or Playwright Chromium for headless tasks
 - Android Platform Tools for Android tasks; `scrcpy` is optional for the mirror and
   action overlay
+- the macOS iPhone Mirroring app plus bundled `bin/sck_server` and
+  `bin/mirror_daemon` for iPhone tasks
 
 Install the runtime:
 
@@ -68,6 +74,7 @@ Restart Codex after installation. The plugin contributes the
 - `check_environment`
 - `run_browser_task`
 - `run_android_task`
+- `run_iphone_task`
 - `get_run_result`
 - `preview_knowledge_document` / `get_knowledge_draft`
 - `commit_knowledge_draft`
@@ -100,6 +107,13 @@ Headless browser and Android examples:
 uv run guiweave run browser "Open example.com" --headless
 uv run guiweave run android "Open Settings and show the Wi-Fi page" \
   --adb-serial emulator-5554
+```
+
+iPhone uses the same Tool Agent entrypoint after opening iPhone Mirroring:
+
+```bash
+uv run guiweave check iphone
+uv run guiweave run iphone "Open Settings and report the visible Apple ID name"
 ```
 
 Tasks operate the current signed-in UI. Use a disposable profile or test account when
@@ -194,7 +208,8 @@ evaluation cases in `evals/`.
 ## Preview limitations
 
 - macOS is the tested host; Linux and Windows packaging are not yet supported.
-- Browser and Android availability depends on local Chrome/CDP or ADB state.
+- Platform availability depends on local Chrome/CDP, ADB, or the macOS iPhone
+  Mirroring window and bundled helpers.
 - The repo-marketplace plugin uses `uv` to run the local MCP server and requires a
   complete GUIWeave checkout; the plugin directory is not a standalone archive.
 - GUI automation is probabilistic. Use reports and replay artifacts to inspect failures.

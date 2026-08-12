@@ -15,6 +15,8 @@ test("ships the GUIWeave introduction page", async () => {
   assert.match(page, /让 AI 真正/);
   assert.match(page, /macOS Developer Preview/);
   assert.match(page, /preview_knowledge_document/);
+  assert.match(page, /run_iphone_task/);
+  assert.match(page, /sck_server|SCK 截图/);
   assert.match(page, /Robo Team 使用说明书\.pdf/);
   assert.match(page, /模型网关/);
   assert.match(page, /API_KEY/);

@@ -13,6 +13,12 @@ const capabilities = [
   },
   {
     index: "03",
+    title: "iPhone Agent",
+    copy: "通过 macOS iPhone 镜像运行：SCK 截图，mirror daemon 输入。",
+    tag: "iPhone · SCK",
+  },
+  {
+    index: "04",
     title: "Private Knowledge",
     copy: "将 PDF、Markdown 和文本手册提炼为应用知识；预览确认后才启用。",
     tag: "PDF → Knowledge",
@@ -23,6 +29,7 @@ const tools = [
   "check_environment",
   "run_browser_task",
   "run_android_task",
+  "run_iphone_task",
   "get_run_result",
   "preview_knowledge_document",
   "get_knowledge_draft",
@@ -66,7 +73,7 @@ export default function Home() {
           <h1>让 AI 真正<br />使用你的界面。</h1>
           <p className="hero-lead">
             GUIWeave 把 <strong>Skill + 本地 stdio MCP</strong> 组合成一个可安装的
-            GUI Agent 插件。在你的 Mac 上运行，理解浏览器与 Android 界面，完成任务，留下证据。
+            GUI Agent 插件。在你的 Mac 上运行，统一理解浏览器、Android 与 iPhone 界面，完成任务，留下证据。
           </p>
           <div className="hero-actions">
             <a className="button primary" href="#install">查看安装方式 <ArrowIcon /></a>
@@ -114,13 +121,13 @@ export default function Home() {
       </section>
 
       <section className="marquee" aria-label="支持能力">
-        <div>TOOL AGENT <span>✦</span> BROWSER <span>✦</span> ANDROID <span>✦</span> KNOWLEDGE <span>✦</span> EVALS <span>✦</span> REPLAY</div>
+        <div>TOOL AGENT <span>✦</span> BROWSER <span>✦</span> ANDROID <span>✦</span> IPHONE <span>✦</span> KNOWLEDGE <span>✦</span> EVALS <span>✦</span> REPLAY</div>
       </section>
 
       <section className="section shell" id="capabilities">
         <header className="section-head">
           <p className="eyebrow"><span /> What it does</p>
-          <h2>一个插件，三种核心能力。</h2>
+          <h2>一个插件，三平台统一运行。</h2>
           <p>从执行，到学习，再到验证——共用同一套本地运行时与安全边界。</p>
         </header>
         <div className="capability-grid">
@@ -130,7 +137,8 @@ export default function Home() {
                 <span className="card-number">{item.index}</span>
                 {item.index === "01" && <div className="browser-glyph"><i /><i /><i /><b /></div>}
                 {item.index === "02" && <div className="phone-glyph"><span /><i>◎</i><b /></div>}
-                {item.index === "03" && <div className="doc-glyph"><span>PDF</span><i>→</i><b>KN</b></div>}
+                {item.index === "03" && <div className="phone-glyph"><span /><i>◎</i><b /></div>}
+                {item.index === "04" && <div className="doc-glyph"><span>PDF</span><i>→</i><b>KN</b></div>}
               </div>
               <div className="card-copy">
                 <span className="tag">{item.tag}</span>
@@ -192,7 +200,7 @@ export default function Home() {
       <section className="tool-section shell">
         <div className="tool-heading">
           <p className="eyebrow"><span /> MCP surface</p>
-          <h2>9 个清晰、可审查的工具。</h2>
+          <h2>10 个清晰、可审查的工具。</h2>
         </div>
         <div className="tool-grid">
           {tools.map((tool, i) => <code key={tool}><span>{String(i + 1).padStart(2, "0")}</span>{tool}</code>)}
@@ -207,9 +215,9 @@ export default function Home() {
             <p>开发者预览版面向本地源码安装。保留 Tool Agent Master、WebArena、MobileWorld、日志、可视化与 Evals。使用前需选择模型提供商，配置模型网关地址与对应 API_KEY。</p>
           </div>
           <div className="install-card">
-            <div className="terminal-bar"><span>INSTALL.sh</span><i>macOS 13+</i></div>
+            <div className="terminal-bar"><span>INSTALL.sh</span><i>macOS</i></div>
             <pre><span>$</span> git clone &lt;guiweave-repository&gt;{`\n`}<span>$</span> cd guiweave{`\n`}<span>$</span> uv sync{`\n`}<span>$</span> codex plugin marketplace add .{`\n`}<span>$</span> codex plugin add guiweave-automation@guiweave-dev</pre>
-            <p>需要 Python 3.11+、uv、Codex，以及可访问的模型网关与对应 API_KEY。浏览器能力需要 Chrome；Android 能力需要 ADB。</p>
+            <p>需要 Python 3.11+、uv、Codex，以及可访问的模型网关与对应 API_KEY。Browser/Android 支持 macOS 13+；当前 iPhone helper 预览二进制以 macOS 26 为目标。</p>
           </div>
         </div>
       </section>

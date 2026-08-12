@@ -60,10 +60,10 @@ a { color: inherit; text-decoration: none; }
 .section-head { display: grid; grid-template-columns: 1fr 1.3fr .75fr; align-items: end; gap: 30px; margin-bottom: 52px; }
 .section-head .eyebrow { align-self: start; }.section-head h2, .knowledge h2, .tool-heading h2, .install h2, .architecture h2 { margin: 0; font-size: clamp(42px, 5vw, 68px); line-height: 1.04; letter-spacing: -.055em; }
 .section-head > p:last-child { color: var(--muted); line-height: 1.7; font-size: 14px; }
-.capability-grid { display: grid; grid-template-columns: repeat(3, 1fr); border: 1px solid var(--line); }
+.capability-grid { display: grid; grid-template-columns: repeat(4, 1fr); border: 1px solid var(--line); }
 .capability-card + .capability-card { border-left: 1px solid var(--line); }
 .card-visual { height: 250px; position: relative; display: grid; place-items: center; overflow: hidden; background: #ded9cc; }
-.visual-02 { background: var(--blue); }.visual-03 { background: #d8ff68; }
+.visual-02 { background: var(--blue); }.visual-03 { background: #ffd3e4; }.visual-04 { background: #d8ff68; }
 .card-number { position: absolute; top: 16px; left: 16px; font: 800 11px ui-monospace; }
 .browser-glyph { width: 180px; height: 120px; border: 3px solid var(--ink); background: var(--paper); position: relative; box-shadow: 9px 9px 0 var(--ink); }
 .browser-glyph i { width: 7px; height: 7px; background: var(--ink); border-radius: 50%; display: inline-block; margin: 10px 0 0 8px; }.browser-glyph b { position: absolute; left: 20px; right: 20px; top: 42px; bottom: 18px; border: 2px solid var(--blue); }

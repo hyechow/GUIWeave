@@ -8,6 +8,8 @@ WebArena 和 MobileWorld 的评测体系。
 
 - macOS 上的 Chrome，通过 Playwright 或现有 Chrome CDP 会话运行；
 - 通过 ADB 操作 Android 真机或模拟器；
+- 通过 macOS iPhone 镜像操作 iPhone；截图固定走 `bin/sck_server`，输入固定走
+  `bin/mirror_daemon`；
 - 每次运行的日志、事件轨迹、截图、动作可视化、HTML 报告和确定性 replay；
 - Tool Agent、WebArena、MobileWorld 的单元测试和 evals。
 
@@ -22,7 +24,8 @@ Codex Skill
          └─ ToolAgentService
               └─ Tool Agent Master / visual Workers
                    ├─ Browser adapter → Chrome / Playwright
-                   └─ Android adapter → ADB
+                   ├─ Android adapter → ADB
+                   └─ iPhone adapter → sck_server + mirror_daemon
 
 每次运行 → context + trace + screenshots + replay + HTML report
 ```
@@ -31,12 +34,15 @@ MCP 进程完全在本机运行，不开放网络端口；Codex 通过 stdin/std
 
 ## 环境要求
 
-- macOS 13 或更高版本（首个 Developer Preview 的目标平台）
+- Browser/Android 需要 macOS 13 或更高版本；当前随仓库发布的 iPhone helper
+  预览二进制以 macOS 26 为目标
 - Python 3.11+
 - [`uv`](https://docs.astral.sh/uv/)
 - 在 `.env` 或 shell 中配置的 OpenAI-compatible 模型
 - headed browser 任务需要 Chrome；headless 任务可使用 Playwright Chromium
 - Android 任务需要 Android Platform Tools；`scrcpy` 仅用于可选镜像和动作覆盖层
+- iPhone 任务需要 macOS iPhone 镜像应用，以及仓库内的 `bin/sck_server` 和
+  `bin/mirror_daemon`
 
 安装运行时：
 
@@ -64,6 +70,7 @@ codex plugin add guiweave-automation@guiweave-dev
 - `check_environment`
 - `run_browser_task`
 - `run_android_task`
+- `run_iphone_task`
 - `get_run_result`
 - `preview_knowledge_document` / `get_knowledge_draft`
 - `commit_knowledge_draft`
@@ -95,6 +102,13 @@ headless browser 和 Android 示例：
 uv run guiweave run browser "打开 example.com" --headless
 uv run guiweave run android "打开设置并进入 Wi-Fi 页面" \
   --adb-serial emulator-5554
+```
+
+打开 iPhone 镜像后，iPhone 使用相同的 Tool Agent 入口：
+
+```bash
+uv run guiweave check iphone
+uv run guiweave run iphone "打开设置并返回当前可见的 Apple ID 名称"
 ```
 
 任务会操作当前已登录的本地界面。建议优先使用测试账户或独立 profile，并明确复核可能
@@ -186,7 +200,7 @@ uv run pytest evals/browser/webarena_response/test_response_replay.py
 ## 当前限制
 
 - 当前只把 macOS 作为已测试宿主；Linux 和 Windows 打包尚未支持。
-- Browser 和 Android 可用性依赖本机 Chrome/CDP 或 ADB 状态。
+- 三个平台分别依赖本机 Chrome/CDP、ADB，或 macOS iPhone 镜像窗口与仓库内 helper。
 - repo marketplace 插件通过 `uv` 启动本地 MCP server，并依赖完整 GUIWeave
   checkout；不能只复制插件目录作为独立安装包。
 - GUI 自动化具有概率性；失败时应结合 HTML 报告和 replay 产物排查。
