@@ -91,6 +91,37 @@ def test_worker_memory_omits_spatial_and_execution_metadata() -> None:
     assert "select_option" in rendered
 
 
+def test_worker_memory_preserves_flash_off_target_signal() -> None:
+    journal = WorkerJournal(worker_id="target_feedback")
+    journal.record_turn(
+        step=1,
+        frame_id="frame:1",
+        state=_state(1),
+        tool="runtime_tap_visible",
+        args={
+            "x": 500,
+            "y": 870,
+            "description": "Tap Create New Channel",
+        },
+        result={
+            "status": "executed",
+            "action_type": "tap",
+            "no_effect": False,
+            "target_signal": {
+                "status": "off_target",
+                "actual_element": "Browse Channels",
+                "reason": "The marker is on the adjacent row.",
+            },
+        },
+    )
+
+    rendered = build_worker_memory_view(journal).render_prompt_section()
+
+    assert "flash verifier reported off_target" in rendered
+    assert "Browse Channels" in rendered
+    assert "do not repeat the same point" in rendered
+
+
 def test_worker_context_always_uses_compact_semantic_frame() -> None:
     journal = WorkerJournal(worker_id="collector")
     frame = MaterializedFrame.model_validate({

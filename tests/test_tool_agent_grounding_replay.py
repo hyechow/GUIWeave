@@ -1,13 +1,14 @@
 from __future__ import annotations
 
 import json
+import math
 from pathlib import Path
+from typing import Any
 
 from gui_agent.adapters.browser.actions import BrowserAction, BrowserActionDecision
 from gui_agent.adapters.browser.control_grounding import ground_action_to_nearest_control
 from gui_agent.core.tool_agent.action_guard import WorkerActionCircuitBreaker
 from gui_agent.core.tool_agent.contracts import MaterializedFrame
-from manager_protocol.state_action_run import score_action
 
 
 _FIXTURE = (
@@ -28,6 +29,56 @@ _ORDERS_FIXTURE = (
     / "tool_agent"
     / "task108_orders_submenu_grounding.json"
 )
+
+
+def _field_failures(actual: dict[str, Any], expected: dict[str, Any]) -> list[str]:
+    failures: list[str] = []
+    for key, wanted in (expected.get("fields") or {}).items():
+        value = actual.get(key)
+        if value != wanted:
+            failures.append(f"{key}: expected {wanted!r}, got {value!r}")
+    for key, wanted in (expected.get("fields_casefold") or {}).items():
+        value = actual.get(key)
+        if str(value or "").casefold() != str(wanted).casefold():
+            failures.append(
+                f"{key}: expected case-insensitive {wanted!r}, got {value!r}"
+            )
+    if needle := expected.get("url_contains"):
+        value = str(actual.get("url") or "")
+        if str(needle) not in value:
+            failures.append(f"url: expected to contain {needle!r}, got {value!r}")
+    return failures
+
+
+def score_action(action: Any, expected: dict[str, Any]) -> dict[str, Any]:
+    """Score a replayed action without importing the removed protocol experiment."""
+
+    action_type_correct = action.action_type == expected["action_type"]
+    actual_fields = action.model_dump(mode="python")
+    field_failures = _field_failures(actual_fields, expected)
+    x = getattr(action, "x", None)
+    y = getattr(action, "y", None)
+    target_hit: bool | None = None
+    if "target_box" in expected:
+        left, right, top, bottom = map(float, expected["target_box"])
+        target_hit = (
+            x is not None
+            and y is not None
+            and left <= float(x) <= right
+            and top <= float(y) <= bottom
+        )
+    distance = None
+    if "point" in expected and x is not None and y is not None:
+        point_x, point_y = map(float, expected["point"])
+        distance = round(math.hypot(float(x) - point_x, float(y) - point_y), 3)
+    return {
+        "action_type_correct": action_type_correct,
+        "target_hit": target_hit,
+        "field_failures": field_failures,
+        "fields_correct": not field_failures,
+        "distance_to_recorded_point": distance,
+        "ok": action_type_correct and not field_failures and target_hit is not False,
+    }
 
 
 def _case() -> dict:
@@ -346,6 +397,40 @@ def test_control_value_change_counts_as_task_progress() -> None:
         capability=attempt["capability"],
         args=attempt["args"],
         frame=cleared,
+    )
+
+    assert progressed.blocked is False
+
+
+def test_visible_android_menu_controls_count_as_task_progress() -> None:
+    case = _case()
+    attempt = case["attempt"]
+    closed = _frame(case).model_copy(update={"controls": []})
+    opened = closed.model_copy(update={
+        "controls": [{
+            "kind": "button",
+            "label": "Create New Channel",
+            "value": "Create New Channel",
+            "in_viewport": True,
+            "rect": {"x": 500, "y": 900, "w": 1000, "h": 45},
+        }],
+    })
+    breaker = WorkerActionCircuitBreaker()
+
+    for _ in range(2):
+        decision = breaker.inspect(
+            tool=attempt["tool"],
+            capability=attempt["capability"],
+            args=attempt["args"],
+            frame=closed,
+        )
+        breaker.record(decision)
+
+    progressed = breaker.inspect(
+        tool=attempt["tool"],
+        capability=attempt["capability"],
+        args=attempt["args"],
+        frame=opened,
     )
 
     assert progressed.blocked is False

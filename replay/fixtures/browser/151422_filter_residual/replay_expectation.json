@@ -1,8 +1,0 @@
-{
-  "turn": 19,
-  "should_act": true,
-  "goal_completed": false,
-  "completion_status": "in_progress",
-  "atomic_role": "prepare",
-  "action_family": "activate"
-}

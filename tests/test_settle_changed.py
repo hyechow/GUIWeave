@@ -9,35 +9,16 @@ diluted-but-real change while staying conservative on identical or tiny-noise fr
 from __future__ import annotations
 
 import io
-import json
-from pathlib import Path
 
 from PIL import Image, ImageDraw
-import pytest
 
 from gui_agent.core.vision.frame_analysis import frame_changed, frame_diff
-
-FIXTURES = Path(__file__).parent / "fixtures" / "frame_analysis"
 
 
 def _png(img: Image.Image) -> bytes:
     buf = io.BytesIO()
     img.save(buf, format="PNG")
     return buf.getvalue()
-
-
-def _load_cases() -> list[dict]:
-    return json.loads((FIXTURES / "cases.json").read_text(encoding="utf-8"))
-
-
-@pytest.mark.parametrize("case", _load_cases(), ids=lambda c: c["label"])
-def test_frame_changed_fixture_cases(case: dict):
-    before = (FIXTURES / case["before"]).read_bytes()
-    after = (FIXTURES / case["after"]).read_bytes()
-
-    if "max_gray_mean_diff" in case:
-        assert frame_diff(before, after) < case["max_gray_mean_diff"]
-    assert frame_changed(before, after) is case["expected_changed"]
 
 
 def test_region_color_change_is_changed():

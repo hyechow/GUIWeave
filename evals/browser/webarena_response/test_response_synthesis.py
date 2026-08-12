@@ -32,6 +32,7 @@ from dotenv import load_dotenv
 load_dotenv(PROJECT_ROOT / ".env")
 
 from gui_agent.adapters.browser.webarena import _synthesize_response
+from gui_agent.core.run.result import AgentResult
 
 CASES_FILE = Path(__file__).parent / "cases.json"
 
@@ -52,14 +53,12 @@ def main() -> None:
     for case in cases:
         intent = case["intent"]
         expected = case["expected_task_type"].upper()
-        result = {
-            "task_type": None,
-            "phase": "completed",
-            "verification": "confirmed",
-            "stop_reason": "program completed",
-            "result_summary": "Agent reached a terminal state and reported the goal complete.",
-            "content_notes": [],
-        }
+        result = AgentResult(
+            goal=intent,
+            output="",
+            summary="The run ended without a deterministic response mapping.",
+            phase="failed",
+        )
         resp = _synthesize_response(intent, result)
         got = (resp.task_type or "").upper()
         ok = got == expected

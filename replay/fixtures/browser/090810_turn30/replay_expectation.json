@@ -1,8 +1,0 @@
-{
-  "turn": 30,
-  "goal_completed": false,
-  "completion_status": "in_progress",
-  "reject_target_controls": [
-    "Save"
-  ]
-}

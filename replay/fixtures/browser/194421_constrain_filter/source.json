@@ -1,8 +1,0 @@
-{
-  "task": "WebArena 108 (monthly completed-order counts, Jan–May 2023)",
-  "history_source": "logs/gui_agent/webarena/browser/20260724_194421/context.json",
-  "turn": 5,
-  "observation_source": "structured adapter evidence for turn 5 (Filters panel open, Status=Complete selected, Apply Filters visible)",
-  "purpose": "Deterministic constrain-gate replay: the ctx.query(filters=...) narrowing step must be able to submit 'Apply Filters'. Under the old lookup lowering this frame was rejected with 'query-only lookup cannot commit business state'; under the constrain statement it is in-contract.",
-  "screenshot_excluded": "replay/**/*.png is gitignored; the deterministic gate test reconstructs the Observation from the JSON payload with placeholder png bytes and never needs the frame image."
-}

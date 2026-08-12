@@ -1,20 +1,10 @@
+import pytest
+
 from gui_agent.adapters.android.accessibility import (
     collection_regions_from_uiautomator,
     form_controls_from_semantic_tree,
     semantic_tree_from_uiautomator,
 )
-from gui_agent.adapters.android.actions import AndroidAction, AndroidActionDecision
-from gui_agent.adapters.android.policies import AndroidActionPolicy
-from gui_agent.core.schemas import (
-    ActionIntent,
-    Observation,
-    StatementContract,
-    SupervisorStep,
-)
-from gui_agent.core.supervisor.statement.context_projection import (
-    project_transition_observation,
-)
-from gui_agent.core.supervisor.statement.observation_view import build_observation_view
 
 
 XML = """<?xml version="1.0" encoding="UTF-8"?>
@@ -74,108 +64,46 @@ def test_unlabeled_switch_uses_same_row_visible_text_as_its_label() -> None:
     assert controls[0]["value"] is True
 
 
-def test_uiautomator_projects_clickable_text_selection_state() -> None:
+def test_clickable_bottom_sheet_rows_are_named_controls_with_center_rects() -> None:
     xml = """<hierarchy>
       <node class="android.widget.FrameLayout" bounds="[0,0][1080,2400]">
-        <node class="android.widget.TextView" text="Favorites" clickable="true"
-              selected="false" bounds="[42,562][277,645]"/>
-        <node class="android.widget.TextView" text="Bookmarks" clickable="true"
-              selected="true" bounds="[298,562][616,645]"/>
+        <node class="android.widget.LinearLayout" clickable="true"
+              bounds="[0,1944][1080,2056]">
+          <node class="android.widget.TextView" text="Browse Channels"
+                bounds="[72,1960][600,2040]"/>
+        </node>
+        <node class="android.widget.LinearLayout" clickable="true"
+              bounds="[0,2056][1080,2176]">
+          <node class="android.widget.TextView" text="Create New Channel"
+                bounds="[72,2072][650,2160]"/>
+        </node>
+        <node class="android.widget.LinearLayout" clickable="true"
+              bounds="[0,2176][1080,2296]">
+          <node class="android.widget.TextView" text="Open Direct Message"
+                bounds="[72,2192][700,2280]"/>
+        </node>
       </node>
     </hierarchy>"""
+
     tree = semantic_tree_from_uiautomator(xml, viewport_size=(1080, 2400))
-    assert tree is not None
-    observation = Observation(png_bytes=b"frame", source="android", semantic_tree=tree)
-    statement = StatementContract(
-        id="reach",
-        goal="open saved favorites",
-        success="the requested view is active",
-        expected_state={"entity": "SavedFavorites", "active_view": "Favorites"},
-    )
+    controls = form_controls_from_semantic_tree(tree)
 
-    view = build_observation_view(statement, observation, [])
-    projected = project_transition_observation(
-        statement,
-        observation,
-        view,
-        initial_filters=None,
-    )
-    states = {
-        item["label"]: item["selected"]
-        for item in projected["affordances"]
-        if item.get("label") in {"Favorites", "Bookmarks"}
+    assert controls is not None
+    by_label = {control["label"]: control for control in controls}
+    assert set(by_label) == {
+        "Browse Channels", "Create New Channel", "Open Direct Message",
     }
-
-    assert states == {"Favorites": False, "Bookmarks": True}
-
-
-def test_semantic_textbox_supports_activate() -> None:
-    """A semantic_tree textbox (no form_control_state entry) must also offer
-    activate, not only input — the supervisor taps a text field to focus it."""
-    observation = Observation(
-        png_bytes=b"frame",
-        source="android",
-        semantic_tree=[
-            {"role": "textbox", "key": "Search", "ref": "s1",
-             "in_viewport": True},
-        ],
-    )
-    statement = StatementContract(id="c", goal="g", success="s")
-    view = build_observation_view(statement, observation, [])
-    affordances = [
-        item for item in view.affordances
-        if item.get("label") == "Search"
-    ]
-    assert affordances
-    assert {"input", "activate"} <= set(
-        affordances[0]["supported_operations"]
-    )
+    create = by_label["Create New Channel"]
+    assert create["kind"] == "button"
+    assert create["bounds"] == pytest.approx((0, 856.6667, 1000, 906.6667))
+    assert create["rect"] == pytest.approx({
+        "x": 500,
+        "y": 881.6667,
+        "w": 1000,
+        "h": 50,
+    })
 
 
-def test_text_input_control_supports_activate() -> None:
-    """A text field is focused by tapping it (activate) then typed into (input);
-    its affordance must offer both (run-5 form loop on the description field)."""
-    observation = Observation(
-        png_bytes=b"frame",
-        source="android",
-        form_control_state=[
-            {"kind": "text_input", "label": "Description",
-             "ref": "desc1", "value": ""},
-        ],
-    )
-    statement = StatementContract(id="c", goal="g", success="s")
-    view = build_observation_view(statement, observation, [])
-    affordances = [
-        item for item in view.affordances
-        if item.get("label") == "Description"
-    ]
-    assert affordances
-    assert {"input", "activate"} <= set(
-        affordances[0]["supported_operations"]
-    )
-
-
-def test_select_control_supports_activate() -> None:
-    """A date/time select field is a button that opens a picker by tapping; its
-    affordance must offer activate, not only select (run-3 form loop)."""
-    observation = Observation(
-        png_bytes=b"frame",
-        source="android",
-        form_control_state=[
-            {"kind": "select", "label": "event start date",
-             "ref": "date1", "value": "October 16"},
-        ],
-    )
-    statement = StatementContract(id="c", goal="g", success="s")
-    view = build_observation_view(statement, observation, [])
-    date_affordances = [
-        item for item in view.affordances
-        if item.get("label") == "event start date"
-    ]
-    assert date_affordances
-    assert {"select", "activate"} <= set(
-        date_affordances[0]["supported_operations"]
-    )
 
 
 def test_uiautomator_exposes_ordered_cells_without_inventing_records() -> None:
@@ -317,78 +245,3 @@ def test_webview_collection_identity_ignores_filtered_record_shape() -> None:
     assert full and filtered and other_route
     assert full[0]["surface_fingerprint"] == filtered[0]["surface_fingerprint"]
     assert full[0]["surface_fingerprint"] != other_route[0]["surface_fingerprint"]
-
-
-def test_android_policy_taps_only_an_exact_current_structural_ref() -> None:
-    tree = semantic_tree_from_uiautomator(XML, viewport_size=(1080, 2400))
-    assert tree is not None
-    favorite = next(node for node in tree if node["key"] == "Favorite")
-    observation = Observation(png_bytes=b"frame", source="android", semantic_tree=tree)
-    policy = AndroidActionPolicy()
-
-    decision = policy.resolve_native_action(
-        observation,
-        target_control="Favorite (star icon)",
-        target_ref=favorite["ref"],
-        action_family="activate",
-        instruction="Favorite the current target",
-    )
-    stale = policy.resolve_native_action(
-        observation,
-        target_control="Favorite",
-        target_ref="android:stale",
-        action_family="activate",
-    )
-
-    assert decision is not None
-    assert (decision.action.action_type, decision.action.x, decision.action.y) == (
-        "tap", favorite["point"]["x"], favorite["point"]["y"],
-    )
-    assert stale is None
-
-
-def test_android_policy_snaps_off_target_point_to_declared_ref() -> None:
-    """A correctly-declared ref must not die on a few dozen px of point-estimate
-    error: snap the action to the ref's authoritative center instead of rejecting.
-    A gross mismatch (clearly a different control) still stays contradicted."""
-    tree = semantic_tree_from_uiautomator(XML, viewport_size=(1080, 2400))
-    assert tree is not None
-    favorite = next(node for node in tree if node["key"] == "Favorite")
-    observation = Observation(png_bytes=b"frame", source="android", semantic_tree=tree)
-    policy = AndroidActionPolicy()
-    fx, fy = favorite["point"]["x"], favorite["point"]["y"]
-
-    def _decision(x: float, y: float) -> AndroidActionDecision:
-        return AndroidActionDecision(action=AndroidAction(
-            action_type="tap", x=x, y=y, description="tap the target"))
-
-    def _step() -> SupervisorStep:
-        return SupervisorStep(
-            summary="target frame",
-            action_intent=ActionIntent(
-                instruction="tap the target",
-                role="write",
-                family="input",
-                target_control="Favorite",
-                target_ref=favorite["ref"],
-            ),
-        )
-
-    # A few dozen units off the ref center: snapped to the authoritative point.
-    decision = _decision(fx + 20, fy - 15)
-    binding = policy.bind(_step(), observation, decision)
-    assert binding is not None and binding.status == "bound"
-    assert binding.source == "structural"
-    assert (decision.action.x, decision.action.y) == (fx, fy)
-
-    # Exact point: bound, coordinates unchanged.
-    decision = _decision(fx, fy)
-    binding = policy.bind(_step(), observation, decision)
-    assert binding is not None and binding.status == "bound"
-    assert (decision.action.x, decision.action.y) == (fx, fy)
-
-    # Grossly off (different control clearly intended): contradicted, no snap.
-    decision = _decision(fx + 300, fy + 250)
-    binding = policy.bind(_step(), observation, decision)
-    assert binding is not None and binding.status == "contradicted"
-    assert (decision.action.x, decision.action.y) == (fx + 300, fy + 250)

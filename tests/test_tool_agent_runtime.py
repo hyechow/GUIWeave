@@ -12,7 +12,9 @@ from gui_agent.core.tool_agent.contracts import (
     MaterializedFrame,
     WorkerOutcome,
     WorkerSpec,
+    WorkerState,
 )
+from gui_agent.core.tool_agent.action_guard import WorkerActionCircuitBreaker
 from gui_agent.core.tool_agent.data_store import RuntimeDataStore
 from gui_agent.core.tool_agent.protocol import (
     MAX_ORDERED_ACTIONS,
@@ -20,6 +22,8 @@ from gui_agent.core.tool_agent.protocol import (
     capability_parameters,
 )
 from gui_agent.core.tool_agent.runtime import ToolAgentRuntime
+from gui_agent.core.schemas import TargetVerify
+from gui_agent.core.tool_agent.worker_memory import WorkerJournal
 from gui_agent.adapters.browser.control_grounding import ground_action_to_nearest_control
 
 
@@ -90,6 +94,39 @@ def test_android_runtime_discovers_installed_apps_for_worker_prompt() -> None:
 
     assert '"Calendar"' in prompt
     assert '"Settings"' in prompt
+
+
+def test_multi_action_worker_prompt_is_platform_neutral() -> None:
+    runtime = object.__new__(ToolAgentRuntime)
+    runtime.allow_multi_action = True
+    runtime._platform_capabilities = frozenset({"tap"})
+    runtime._installed_app_names = ()
+    runtime._master_knowledge = ""
+    runtime._worker_access_context = ""
+
+    prompt = runtime._worker_system_prompt(
+        WorkerSpec(
+            goal="Complete the visible operation",
+            success_criteria=["The requested state is visible"],
+            actions=[DynamicActionSpec(
+                name="activate_visible_control",
+                capability="tap",
+                description="Activate the visible control",
+            )],
+        ),
+        [],
+    )
+
+    for capability in (
+        "clear_text",
+        "press_enter",
+        "select_option",
+        "open_url",
+        "launch_app",
+        "app_switch",
+        "long_press",
+    ):
+        assert capability not in prompt
 
 
 @pytest.mark.parametrize(
@@ -395,6 +432,25 @@ class _GroundingExecutor(_Executor):
             controls,
             viewport_size=(1281, 963),
         )
+
+
+class _ImmediateVerifyFuture:
+    def __init__(self, value: TargetVerify) -> None:
+        self.value = value
+
+    def result(self, *, timeout=None):
+        del timeout
+        return self.value
+
+
+class _ImmediateVerifyPool:
+    def __init__(self, *values: TargetVerify) -> None:
+        self.values = list(values)
+        self.submitted = []
+
+    def submit(self, function, *args):
+        self.submitted.append((function, args))
+        return _ImmediateVerifyFuture(self.values.pop(0))
 
 
 class _Visualizer:
@@ -1077,6 +1133,147 @@ def test_vision_only_execution_does_not_use_enhanced_control_geometry(
     assert executed.snap is None
 
 
+def test_worker_action_returns_flash_off_target_signal(monkeypatch) -> None:
+    runtime = object.__new__(ToolAgentRuntime)
+    runtime.bundle = SimpleNamespace(
+        make_action=lambda payload: AndroidAction.model_validate(payload)
+    )
+    runtime.perception_mode = "enhanced"
+    runtime._executor = _Executor()
+    runtime._visualizer = None
+    runtime.platform = object()
+    runtime.trace = []
+    runtime._target_verify_pool = _ImmediateVerifyPool(TargetVerify(
+        on_target=False,
+        actual_element="Browse Channels",
+        reason="The marker is on the adjacent row.",
+    ))
+    monkeypatch.setattr(
+        "gui_agent.core.tool_agent.runtime.settle_after_action",
+        lambda platform, png, *, action_type: (0.0, False),
+    )
+    action = DynamicActionSpec(
+        name="runtime_tap_visible",
+        capability="tap",
+        description="Tap a visible control",
+    )
+    spec = WorkerSpec(
+        goal="Open the named menu item",
+        success_criteria=["The named menu item opens"],
+        actions=[action],
+    )
+
+    payload, terminal = runtime._execute_worker_tool(
+        spec,
+        [action],
+        {
+            "name": action.name,
+            "args": {
+                "x": 500,
+                "y": 870,
+                "description": "Tap Create New Channel",
+            },
+        },
+        b"png",
+        MaterializedFrame(frame_id="frame:1", screenshot_path="frame.png"),
+    )
+
+    assert terminal is None
+    assert payload["target_signal"] == {
+        "status": "off_target",
+        "actual_element": "Browse Channels",
+        "reason": "The marker is on the adjacent row.",
+    }
+    submitted = runtime._target_verify_pool.submitted
+    assert len(submitted) == 1
+    assert submitted[0][1] == (
+        b"png", 500.0, 870.0, "Tap Create New Channel",
+    )
+
+
+def test_multi_action_aborts_suffix_after_flash_off_target(monkeypatch) -> None:
+    runtime = object.__new__(ToolAgentRuntime)
+    runtime.bundle = SimpleNamespace(
+        make_action=lambda payload: AndroidAction.model_validate(payload)
+    )
+    runtime.perception_mode = "enhanced"
+    runtime._executor = _Executor()
+    runtime._visualizer = None
+    runtime.platform = SimpleNamespace(
+        screenshot=lambda: b"latest",
+        client=SimpleNamespace(page_info=lambda: ("", "")),
+    )
+    runtime.trace = []
+    runtime._target_verify_pool = _ImmediateVerifyPool(TargetVerify(
+        on_target=False,
+        actual_element="Username",
+        reason="The marker missed the Password field.",
+    ))
+    monkeypatch.setattr(
+        "gui_agent.core.tool_agent.runtime.settle_after_action",
+        lambda platform, png, *, action_type: (0.0, False),
+    )
+    type_action = DynamicActionSpec(
+        name="runtime_type_visible",
+        capability="type",
+        description="Type into a visible input",
+        exposed_args=["text"],
+    )
+    tap_action = DynamicActionSpec(
+        name="runtime_tap_visible",
+        capability="tap",
+        description="Tap a visible button",
+    )
+    spec = WorkerSpec(
+        goal="Complete the login form",
+        success_criteria=["The login form is submitted"],
+        actions=[type_action, tap_action],
+    )
+    journal = WorkerJournal(worker_id="login")
+    calls = [
+        {
+            "name": type_action.name,
+            "args": {
+                "x": 500,
+                "y": 600,
+                "text": "secret",
+                "description": "Password text input",
+            },
+        },
+        {
+            "name": tap_action.name,
+            "args": {
+                "x": 500,
+                "y": 750,
+                "description": "Log In button",
+            },
+        },
+    ]
+
+    payload, terminal = runtime._execute_multi_action_calls(
+        worker_id="login",
+        spec=spec,
+        actions=[type_action, tap_action],
+        calls=calls,
+        state=WorkerState(
+            status="exploring",
+            summary="The login form is visible.",
+            next_instruction="Fill and submit it.",
+        ),
+        step=1,
+        frame=MaterializedFrame(frame_id="frame:1", screenshot_path="frame.png"),
+        png=b"png",
+        journal=journal,
+        circuit_breaker=WorkerActionCircuitBreaker(),
+    )
+
+    assert terminal is None
+    assert payload["status"] == "aborted"
+    assert payload["executed_actions"] == 1
+    assert "flash verifier reported off_target" in payload["reason"]
+    assert len(runtime._executor.actions) == 1
+
+
 def test_runtime_recovers_missing_exposed_action_description(monkeypatch) -> None:
     runtime = object.__new__(ToolAgentRuntime)
     runtime.bundle = SimpleNamespace(
@@ -1567,12 +1764,14 @@ def test_runtime_streams_live_logs_and_observation_artifacts(tmp_path) -> None:
     runtime._frame_no = 0
     runtime.bundle = object()
     runtime.platform = object()
+    runtime._access_log_redactions = ("runtime-secret-73",)
     runtime.materializer = SimpleNamespace(
         model="observer-model",
         observe=lambda **_kwargs: (
             MaterializedFrame(
                 frame_id="frame:1",
                 screenshot_path=str(tmp_path / "screenshot_tool_agent_1.png"),
+                title="Signed in as runtime-secret-73",
             ),
             b"png",
         ),
@@ -1610,6 +1809,11 @@ def test_runtime_streams_live_logs_and_observation_artifacts(tmp_path) -> None:
     assert events[0]["timestamp"]
     assert statuses == ["Observer · Observe frame:1 for ?: no collection refs"]
     assert (tmp_path / "observation_tool_agent_1.json").is_file()
+    observation = (tmp_path / "observation_tool_agent_1.json").read_text(
+        encoding="utf-8"
+    )
+    assert "runtime-secret-73" not in observation
+    assert "session access value redacted" in observation
     assert (tmp_path / "tool_agent_data_store.json").is_file()
 
 
