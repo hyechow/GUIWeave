@@ -29,7 +29,7 @@ from gui_agent.core.schemas import BaseAction
 
 # Action types with a screen location worth a cursor. press_enter / home /
 # clear_text are non-spatial and skipped (no misleading center flash).
-_SPATIAL = {"tap", "click", "type", "scroll", "drag"}
+_SPATIAL = {"tap", "click", "type", "scroll", "drag", "long_press"}
 
 # Content direction -> agent_cursor arrow mode (same convention as the browser cursor).
 _SCROLL_MODE = {

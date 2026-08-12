@@ -45,6 +45,7 @@ from gui_agent.core.tool_agent.protocol import (
     ProtocolError,
     RequestActionPatchArgs,
     cacheable_system_message,
+    capability_parameters,
     diagnostic_prompt_reports,
     dynamic_worker_tools,
     dynamic_action_tool,
@@ -78,13 +79,18 @@ _RUNTIME_WORKER_TOOL_NAMES = {
     "complete",
     "fail",
 }
-_SPATIAL_CAPABILITIES = {"tap", "type", "scroll", "select_option"}
+_SPATIAL_CAPABILITIES = {
+    "tap", "type", "scroll", "drag", "long_press", "select_option",
+}
 _EXECUTABLE_CAPABILITIES = {
     *_SPATIAL_CAPABILITIES,
     "clear_text",
     "press_enter",
     "open_url",
     "back",
+    "home",
+    "app_switch",
+    "launch_app",
 }
 _ACTION_TYPES = {"open_url": "navigate"}
 _REDACTED_ACCESS_VALUE = "[session access value redacted]"
@@ -228,6 +234,7 @@ class ToolAgentRuntime:
         self._worker_last_frames: dict[str, MaterializedFrame] = {}
         self._worker_platform_rejections: dict[str, dict[str, Any]] = {}
         self._master_knowledge = ""
+        self._installed_app_names: tuple[str, ...] | None = None
         self._executor = bundle.make_executor(platform)
         try:
             self._visualizer = bundle.make_action_visualizer(platform)
@@ -296,10 +303,7 @@ class ToolAgentRuntime:
         task_context = {
             "goal": goal,
             "page": {"url": page_url, "title": page_title},
-            "platform": {
-                "name": self._platform_name(),
-                "action_capabilities": sorted(self._supported_capabilities()),
-            },
+            "platform": self._platform_prompt_context(),
             "application_knowledge": knowledge or "(none)",
         }
         final_ref = None
@@ -606,6 +610,7 @@ class ToolAgentRuntime:
                     ],
                 },
                 "application_knowledge": getattr(self, "_master_knowledge", "") or "(none)",
+                "platform": self._platform_prompt_context(),
                 "execution_experience": self._worker_recovery_experience(
                     prior_worker_id,
                     logical_worker_id=logical_worker_id,
@@ -1373,6 +1378,13 @@ class ToolAgentRuntime:
                 "state as authoritative for what is presently visible.\n"
                 + application_knowledge
             )
+        installed_apps = self._installed_applications()
+        if installed_apps:
+            prompt += (
+                "\n\n## Installed applications\n"
+                "Use only these exact Runtime-provided names with launch_app: "
+                + json.dumps(installed_apps, ensure_ascii=False)
+            )
         access_context = getattr(self, "_worker_access_context", "")
         if access_context:
             prompt += (
@@ -1784,6 +1796,8 @@ class ToolAgentRuntime:
                 spec=spec,
                 frame=frame,
             )
+        if action_spec.capability == "launch_app":
+            self._validate_runtime_launch_app(str(full_args.get("app") or ""))
         if action_spec.capability in _EXECUTABLE_CAPABILITIES:
             spatial = action_spec.capability in _SPATIAL_CAPABILITIES
             for coordinate in ("x", "y"):
@@ -2002,6 +2016,45 @@ class ToolAgentRuntime:
     def _platform_name(self) -> str:
         bundle = getattr(self, "bundle", None)
         return str(getattr(bundle, "platform", "browser") or "browser")
+
+    def _platform_prompt_context(self) -> dict[str, Any]:
+        capabilities = sorted(self._supported_capabilities())
+        return {
+            "name": self._platform_name(),
+            "action_contracts": {
+                capability: capability_parameters(capability)
+                for capability in capabilities
+            },
+            "applications": list(self._installed_applications()),
+        }
+
+    def _installed_applications(self) -> tuple[str, ...]:
+        cached = getattr(self, "_installed_app_names", None)
+        if cached is not None:
+            return cached
+        if "launch_app" not in self._supported_capabilities():
+            names: tuple[str, ...] = ()
+        else:
+            platform = getattr(self, "platform", None)
+            lister = getattr(platform, "list_apps", None)
+            if not callable(lister):
+                lister = getattr(getattr(platform, "client", None), "list_apps", None)
+            try:
+                names = tuple(sorted({str(item).strip() for item in lister() if str(item).strip()}))
+            except Exception:  # noqa: BLE001 - unavailable discovery disables launch safely
+                names = ()
+        self._installed_app_names = names
+        return names
+
+    def _validate_runtime_launch_app(self, candidate: str) -> None:
+        candidate = candidate.strip()
+        installed = self._installed_applications()
+        if candidate and candidate in installed:
+            return
+        raise ValueError(
+            "launch_app requires an exact Runtime-provided application name; "
+            f"available: {list(installed)}"
+        )
 
     def _supported_capabilities(self) -> frozenset[str]:
         capabilities = getattr(self, "_platform_capabilities", None)

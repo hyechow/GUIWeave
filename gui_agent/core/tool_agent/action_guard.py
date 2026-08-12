@@ -17,14 +17,21 @@ _GUARDED_CAPABILITIES = {
     "press_enter",
     "select_option",
     "scroll",
+    "drag",
+    "long_press",
     "open_url",
     "back",
+    "home",
+    "app_switch",
+    "launch_app",
 }
 _SIGNATURE_FIELDS = (
     "text",
     "url",
+    "app",
     "direction",
     "amount",
+    "duration_ms",
     "target_area",
 )
 def _control_at_point(args: dict[str, Any], frame: MaterializedFrame) -> dict[str, Any] | None:
@@ -124,7 +131,7 @@ def action_signature(
         value = args.get(field_name)
         if value not in (None, ""):
             payload[field_name] = value
-    for coordinate in ("x", "y"):
+    for coordinate in ("x", "y", "to_x", "to_y"):
         bucket = _coordinate_bucket(args.get(coordinate))
         if bucket is not None:
             payload[coordinate] = bucket

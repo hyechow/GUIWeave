@@ -157,6 +157,40 @@ _CAPABILITY_SCHEMAS: dict[str, dict[str, Any]] = {
         "required": ["direction"],
         "additionalProperties": False,
     },
+    "drag": {
+        "type": "object",
+        "properties": {
+            "x": {"type": "number", "minimum": 0, "maximum": 999},
+            "y": {"type": "number", "minimum": 0, "maximum": 999},
+            "to_x": {"type": "number", "minimum": 0, "maximum": 999},
+            "to_y": {"type": "number", "minimum": 0, "maximum": 999},
+            "duration_ms": {"type": "integer", "minimum": 50, "maximum": 5000},
+            "description": {
+                "type": "string",
+                "minLength": 5,
+                "maxLength": 240,
+                "description": "Describe the visible object and its exact drag destination.",
+            },
+        },
+        "required": ["x", "y", "to_x", "to_y"],
+        "additionalProperties": False,
+    },
+    "long_press": {
+        "type": "object",
+        "properties": {
+            "x": {"type": "number", "minimum": 0, "maximum": 999},
+            "y": {"type": "number", "minimum": 0, "maximum": 999},
+            "duration_ms": {"type": "integer", "minimum": 300, "maximum": 3000},
+            "description": {
+                "type": "string",
+                "minLength": 5,
+                "maxLength": 240,
+                "description": "Describe the one visible control or item to hold.",
+            },
+        },
+        "required": ["x", "y"],
+        "additionalProperties": False,
+    },
     "select_option": {
         "type": "object",
         "properties": {
@@ -196,6 +230,36 @@ _CAPABILITY_SCHEMAS: dict[str, dict[str, Any]] = {
         "required": [],
         "additionalProperties": False,
     },
+    "home": {
+        "type": "object",
+        "properties": {},
+        "required": [],
+        "additionalProperties": False,
+    },
+    "app_switch": {
+        "type": "object",
+        "properties": {},
+        "required": [],
+        "additionalProperties": False,
+    },
+    "launch_app": {
+        "type": "object",
+        "properties": {
+            "app": {
+                "type": "string",
+                "minLength": 1,
+                "maxLength": 120,
+                "description": "Exact installed application name exposed by Runtime.",
+            },
+        },
+        "required": ["app"],
+        "additionalProperties": False,
+    },
+}
+
+_DEFAULT_WORKER_CAPABILITIES = {
+    "tap", "type", "clear_text", "press_enter", "scroll",
+    "select_option", "open_url", "back",
 }
 
 
@@ -219,7 +283,11 @@ def worker_action_floor(
     validate the protocol in isolation.  Live runtimes pass the exact capability
     set declared by their :class:`PlatformBundle`.
     """
-    supported = set(capabilities) if capabilities is not None else set(_CAPABILITY_SCHEMAS)
+    supported = (
+        set(capabilities)
+        if capabilities is not None
+        else set(_DEFAULT_WORKER_CAPABILITIES)
+    )
     unknown = supported.difference(_CAPABILITY_SCHEMAS)
     if unknown:
         raise ValueError(f"unknown Tool Agent capabilities: {sorted(unknown)}")
@@ -235,6 +303,18 @@ def worker_action_floor(
             capability="scroll",
             description="Scroll a visible region to reveal content needed by the current Worker goal.",
             exposed_args=["direction", "amount", "target_area", "description"],
+        ),
+        DynamicActionSpec(
+            name="runtime_drag_visible",
+            capability="drag",
+            description="Drag one visible object to an exact visible destination.",
+            exposed_args=["duration_ms", "description"],
+        ),
+        DynamicActionSpec(
+            name="runtime_long_press_visible",
+            capability="long_press",
+            description="Long-press one visible control or item.",
+            exposed_args=["duration_ms", "description"],
         ),
         DynamicActionSpec(
             name="runtime_type_visible",
@@ -273,6 +353,21 @@ def worker_action_floor(
             name="runtime_browser_back",
             capability="back",
             description="Go back once in the current browser tab's history.",
+        ),
+        DynamicActionSpec(
+            name="runtime_home",
+            capability="home",
+            description="Go to the Android launcher home screen.",
+        ),
+        DynamicActionSpec(
+            name="runtime_app_switch",
+            capability="app_switch",
+            description="Open Android's recent-apps switcher.",
+        ),
+        DynamicActionSpec(
+            name="runtime_launch_app",
+            capability="launch_app",
+            description="Launch one exact installed application by its Runtime-provided name.",
         ),
     ]
     filtered = [action for action in actions if action.capability in supported]

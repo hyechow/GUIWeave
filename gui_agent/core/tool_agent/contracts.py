@@ -131,9 +131,14 @@ ToolActionCapability: TypeAlias = Literal[
     "clear_text",
     "press_enter",
     "scroll",
+    "drag",
+    "long_press",
     "select_option",
     "open_url",
     "back",
+    "home",
+    "app_switch",
+    "launch_app",
 ]
 
 
@@ -178,7 +183,9 @@ class DynamicActionSpec(StrictModel):
         input_args = dict(normalized.get("input_args") or {})
         exposed_args = list(normalized.get("exposed_args") or [])
         capability = normalized.get("capability")
-        if capability in {"tap", "type", "scroll", "select_option"}:
+        if capability in {
+            "tap", "type", "scroll", "drag", "long_press", "select_option",
+        }:
             # The screenshot-owning Worker supplies both the point and the
             # frame-specific target description used by enhanced grounding.
             for name in ("x", "y", "description"):
@@ -191,6 +198,11 @@ class DynamicActionSpec(StrictModel):
             fixed_args.pop("target_ref", None)
             input_args.pop("target_ref", None)
             exposed_args = [name for name in exposed_args if name != "target_ref"]
+        if capability == "drag":
+            for name in ("to_x", "to_y"):
+                fixed_args.pop(name, None)
+                if name not in exposed_args:
+                    exposed_args.append(name)
         if (
             capability == "select_option"
             and "text" not in fixed_args
@@ -203,6 +215,12 @@ class DynamicActionSpec(StrictModel):
             and "url" not in exposed_args
         ):
             exposed_args.append("url")
+        if (
+            capability == "launch_app"
+            and "app" not in fixed_args
+            and "app" not in exposed_args
+        ):
+            exposed_args.append("app")
         normalized["fixed_args"] = fixed_args
         normalized["input_args"] = input_args
         normalized["exposed_args"] = exposed_args

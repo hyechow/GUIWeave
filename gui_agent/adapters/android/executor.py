@@ -1,8 +1,8 @@
 """Android action executor: dispatch one ActionDecision onto the device.
 
-Reuses the shared ``gui_agent.core.runtime.executor.VisionExecutor`` (the 7 shared actions +
-denorm + _tap; default _clear_before_type = clear_text suits android). Only android's
-nav keys live here, in ``_dispatch_extra``: home / back / app_switch.
+Reuses the shared ``gui_agent.core.runtime.executor.VisionExecutor`` (the shared actions +
+denorm + _tap; default _clear_before_type = clear_text suits android). Android-specific
+long-press, semantic app launch, and navigation keys live in ``_dispatch_extra``.
 
 Coordinates: adb screencap is device pixels and ``input`` consumes the same space, so
 the inherited ``_denorm`` (normalized 0-1000 -> ``viewport_size`` px) goes straight to
@@ -106,6 +106,13 @@ class AndroidExecutor(VisionExecutor):
 
     def _dispatch_extra(self, action: AndroidAction, client) -> Optional[bool]:
         at = action.action_type
+        if at == "long_press":
+            px, py = self._denorm(action.x, action.y)
+            duration_ms = action.duration_ms or 600
+            print(f"长按: ({px:.0f}, {py:.0f}), {duration_ms}ms")
+            result = client.long_press(px, py, duration_ms)
+            print(f"  结果: {result}")
+            return self._result_succeeded(result, "长按")
         if at == "home":
             print("回到主屏幕")
             result = client.press_home()
@@ -121,4 +128,9 @@ class AndroidExecutor(VisionExecutor):
             result = client.app_switch()
             print(f"  结果: {result}")
             return self._result_succeeded(result, "打开 App 切换器")
+        if at == "launch_app":
+            print(f"启动应用: {action.app}")
+            result = client.launch_app(action.app)
+            print(f"  结果: {result}")
+            return self._result_succeeded(result, "启动应用")
         return None

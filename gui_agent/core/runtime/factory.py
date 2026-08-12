@@ -92,7 +92,7 @@ class PlatformBundle:
     default_supervisor: str
     action_policy_choices: tuple[str, ...]
     supervisor_choices: tuple[str, ...]
-    # Dynamic GUI capabilities that Tool Agent may expose on this adapter.  An
+    # Dynamic action capabilities that Tool Agent may expose on this adapter.  An
     # empty tuple means the adapter has not opted in to Tool Agent execution.
     # Keeping this declaration adapter-owned prevents core prompts from assuming
     # browser mechanics on mobile platforms.

@@ -228,6 +228,11 @@ def build_android_bundle(
             "clear_text",
             "press_enter",
             "scroll",
+            "drag",
+            "long_press",
             "back",
+            "home",
+            "app_switch",
+            "launch_app",
         ),
     )
