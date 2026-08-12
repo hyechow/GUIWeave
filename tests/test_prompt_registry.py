@@ -85,6 +85,7 @@ def test_worker_handles_exhausted_candidate_sets_and_row_targets() -> None:
     assert "an exhausted candidate set is direct" in prompt
     assert "the same unfiltered selector" in prompt
     assert "latest selected batch's commit produced a confirmed transition" in prompt
+    assert "candidate_set_state.status = exhausted" in prompt
     assert "An initially empty selector, a filtered zero-result view" in prompt
     assert "describe the row/button itself" in prompt
     assert "adjacent child icon or decoration" in prompt

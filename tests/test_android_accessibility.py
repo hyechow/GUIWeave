@@ -143,9 +143,14 @@ def test_glyph_backed_multiselect_rows_expose_selection_action_points() -> None:
 def test_android_commit_metadata_requires_explicit_submission_semantics() -> None:
     xml = """<hierarchy>
       <node class="android.widget.FrameLayout" bounds="[0,0][1080,2400]">
+        <node class="android.widget.EditText" text="Search"
+              resource-id="member_search_input" bounds="[50,100][1030,240]"/>
         <node class="android.widget.Button" text="Add members"
               resource-id="channel_post_list.intro_options.add_members.action"
               clickable="true" bounds="[50,1500][360,1680]"/>
+        <node class="android.widget.Button" text="Add Members"
+              resource-id="add_members.selected.start.button"
+              clickable="true" bounds="[50,1700][1030,1850]"/>
         <node class="android.widget.Button" content-desc="Send"
               resource-id="channel.post_draft.send_action.send.button"
               clickable="true" bounds="[850,1950][1030,2070]"/>
@@ -160,7 +165,9 @@ def test_android_commit_metadata_requires_explicit_submission_semantics() -> Non
 
     assert controls is not None
     by_label = {item["label"]: item for item in controls}
+    assert next(item for item in controls if item["kind"] == "text_input")["is_filter"] is True
     assert "form_action" not in by_label["Add members"]
+    assert by_label["Add Members"]["form_action"] == "commit"
     assert by_label["Send"]["form_action"] == "commit"
     assert "form_action" not in by_label["Create New Channel"]
 

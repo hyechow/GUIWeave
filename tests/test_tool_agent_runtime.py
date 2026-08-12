@@ -14,7 +14,10 @@ from gui_agent.core.tool_agent.contracts import (
     WorkerSpec,
     WorkerState,
 )
-from gui_agent.core.tool_agent.action_guard import WorkerActionCircuitBreaker
+from gui_agent.core.tool_agent.action_guard import (
+    WorkerActionCircuitBreaker,
+    is_candidate_commit,
+)
 from gui_agent.core.tool_agent.data_store import RuntimeDataStore
 from gui_agent.core.tool_agent.protocol import (
     MAX_ORDERED_ACTIONS,
@@ -23,7 +26,12 @@ from gui_agent.core.tool_agent.protocol import (
 )
 from gui_agent.core.tool_agent.runtime import ToolAgentRuntime
 from gui_agent.core.schemas import TargetVerify
-from gui_agent.core.tool_agent.worker_memory import WorkerJournal
+from gui_agent.core.tool_agent.worker_memory import (
+    WorkerJournal,
+    WorkerJournalEvent,
+    build_worker_memory_view,
+    project_worker_context,
+)
 from gui_agent.adapters.browser.control_grounding import ground_action_to_nearest_control
 
 
@@ -829,6 +837,86 @@ def test_multi_action_suffix_allows_distinct_visible_noncommit_taps() -> None:
 
     assert stable == ""
     assert "invalidate coordinates" in commit
+
+
+def test_android_form_suffix_rebinds_after_keyboard_reflow() -> None:
+    controls = [
+        {"kind": kind, "ref": ref, "rect": {"x": 500, "y": y, "w": 500, "h": 60}}
+        for kind, ref, y in (
+            ("text_input", "username", 400), ("button", "submit", 600),
+        )
+    ]
+    shifted = [
+        {**item, "rect": {**item["rect"], "y": item["rect"]["y"] - 50}}
+        for item in controls
+    ]
+    runtime = object.__new__(ToolAgentRuntime)
+    runtime._executor = SimpleNamespace(
+        tap_type_suffix_safe=False,
+        type_suffix_safe=False,
+        refresh_controls=lambda: shifted,
+    )
+    tap = DynamicActionSpec(name="tap", capability="tap", description="Tap")
+    type_action = DynamicActionSpec(
+        name="type", capability="type", description="Type", exposed_args=["text"],
+    )
+    actions = {"tap": tap, "type": type_action}
+    remaining = [
+        {"name": "type", "args": {"x": 500, "y": 400, "text": "user"}},
+        {"name": "tap", "args": {"x": 500, "y": 600}},
+    ]
+    frame = MaterializedFrame(
+        frame_id="frame:login", screenshot_path="login.png", controls=controls,
+    )
+    for call, ref in zip(remaining, ("username", "submit"), strict=True):
+        call["_control_ref"] = ref
+
+    runtime.perception_mode = "enhanced"
+    assert runtime._refreshable_action_suffix("tap", remaining, actions)
+    assert runtime._refresh_next_action(remaining[0], type_action, frame)
+    assert runtime._refresh_next_action(remaining[1], tap, frame)
+    assert [call["args"]["y"] for call in remaining] == [350, 550]
+
+
+def _candidate_frame(
+    frame_id: str, *, selected: bool = False, value: str = "Search",
+) -> MaterializedFrame:
+    controls = [{
+        "kind": "text_input", "label": "Search", "is_filter": True, "value": value,
+    }]
+    if selected:
+        controls += [
+            {"kind": "checkbox", "selection_mode": "multiple", "selected": True,
+             "rect": {"x": 500, "y": 250, "w": 900, "h": 60}},
+            {"kind": "button", "form_action": "commit",
+             "rect": {"x": 500, "y": 900, "w": 800, "h": 60}},
+        ]
+    return MaterializedFrame(
+        frame_id=frame_id,
+        screenshot_path=f"{frame_id}.png",
+        controls=controls,
+    )
+
+
+def test_confirmed_candidate_commit_marks_matching_unfiltered_reopen_exhausted() -> None:
+    selected = _candidate_frame("selected", selected=True)
+    committed = is_candidate_commit({"x": 500, "y": 900}, selected)
+    journal = WorkerJournal(worker_id="select-all", events=[WorkerJournalEvent(
+        event_ref="commit", kind="candidate_commit", durable_text="confirmed",
+    )])
+
+    def context(frame: MaterializedFrame) -> str:
+        return project_worker_context(
+            memory=build_worker_memory_view(journal), frame=frame,
+        ).text
+
+    assert committed is True
+    assert '"status": "exhausted"' in context(_candidate_frame("empty"))
+    assert '"status": "exhausted"' not in context(
+        _candidate_frame("filtered", value="query"))
+    initial = build_worker_memory_view(WorkerJournal(worker_id="select-all"))
+    assert '"status": "exhausted"' not in project_worker_context(
+        memory=initial, frame=_candidate_frame("initial-empty")).text
 
 
 def test_multi_action_runtime_accepts_five_and_rejects_six_calls() -> None:
