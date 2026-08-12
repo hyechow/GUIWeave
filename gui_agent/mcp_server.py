@@ -9,6 +9,7 @@ from mcp.server.fastmcp import FastMCP
 from mcp.types import ToolAnnotations
 
 from gui_agent.core.tool_agent.service import ToolAgentService
+from gui_agent.core.runtime.platforms import PlatformName
 from gui_agent.core.self_learning.document_ingest import KnowledgeImportService
 
 
@@ -17,8 +18,8 @@ load_dotenv()
 server = FastMCP(
     "guiweave-automation",
     instructions=(
-        "Use check_environment before the first run on a platform. Browser and "
-        "Android tasks operate the user's local GUI and may change external state. "
+        "Use check_environment before the first run on a platform. Browser, Android, "
+        "and iPhone tasks operate the user's local GUI and may change external state. "
         "Preserve the user's exact goal and report the returned run_id and artifacts. "
         "Document import must be previewed and explicitly confirmed in a later user "
         "turn before committing private knowledge."
@@ -29,7 +30,7 @@ knowledge_service = KnowledgeImportService()
 
 
 def _options(
-    platform: Literal["browser", "android"],
+    platform: PlatformName,
     *,
     cdp_url: str | None = None,
     adb_serial: str | None = None,
@@ -37,7 +38,9 @@ def _options(
 ) -> dict[str, object]:
     if platform == "browser":
         return {"cdp_url": cdp_url, "headless": headless}
-    return {"serial": adb_serial}
+    if platform == "android":
+        return {"serial": adb_serial}
+    return {}
 
 
 @server.tool(
@@ -49,12 +52,12 @@ def _options(
     ),
 )
 def check_environment(
-    platform: Literal["browser", "android"],
+    platform: PlatformName,
     cdp_url: str | None = None,
     adb_serial: str | None = None,
     headless: bool = False,
 ) -> dict[str, Any]:
-    """Check whether local Browser or Android automation is ready.
+    """Check whether local Browser, Android, or iPhone automation is ready.
 
     Android preflight may activate ADBKeyboard so non-ASCII text input works.
     """
@@ -146,6 +149,37 @@ def run_android_task(
 
 
 @server.tool(
+    title="Run a local iPhone task",
+    annotations=ToolAnnotations(
+        readOnlyHint=False,
+        destructiveHint=True,
+        openWorldHint=True,
+    ),
+)
+def run_iphone_task(
+    goal: str,
+    perception: Literal["vision-only", "enhanced"] = "enhanced",
+    max_turns: int = 50,
+    multi_action: bool = True,
+) -> dict[str, Any]:
+    """Run an exact user-authorized goal through macOS iPhone Mirroring.
+
+    Screenshots come only from bin/sck_server. Input is sent only through
+    bin/mirror_daemon. Confirm consequential intent before calling this tool.
+    """
+
+    return service.run(
+        goal,
+        platform="iphone",
+        perception_mode=perception,
+        max_turns=max_turns,
+        allow_multi_action=multi_action,
+        show_hud=False,
+        mirror_stdio=False,
+    ).to_dict()
+
+
+@server.tool(
     title="Get a GUIWeave run",
     annotations=ToolAnnotations(
         readOnlyHint=True,
@@ -169,7 +203,7 @@ def get_run_result(run_id: str) -> dict[str, Any]:
 )
 def preview_knowledge_document(
     file_path: str,
-    platform: Literal["browser", "android"],
+    platform: PlatformName,
     app_name: str | None = None,
 ) -> dict[str, Any]:
     """Convert a local PDF, Markdown or text manual into a reviewable draft.
@@ -235,7 +269,7 @@ def commit_knowledge_draft(
     ),
 )
 def list_user_knowledge(
-    platform: Literal["browser", "android"] | None = None,
+    platform: PlatformName | None = None,
 ) -> dict[str, Any]:
     """List private knowledge committed from user documents."""
 
@@ -251,7 +285,7 @@ def list_user_knowledge(
     ),
 )
 def get_user_knowledge(
-    platform: Literal["browser", "android"],
+    platform: PlatformName,
     app_slug: str,
 ) -> dict[str, Any]:
     """Read the active private knowledge files for one application."""

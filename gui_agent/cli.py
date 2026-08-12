@@ -9,6 +9,7 @@ from pathlib import Path
 from dotenv import load_dotenv
 
 from gui_agent.core.tool_agent.service import ToolAgentService
+from gui_agent.core.runtime.platforms import PLATFORMS
 
 
 def _build_parser() -> argparse.ArgumentParser:
@@ -16,13 +17,13 @@ def _build_parser() -> argparse.ArgumentParser:
     subparsers = parser.add_subparsers(dest="command", required=True)
 
     check = subparsers.add_parser("check", help="check one platform environment")
-    check.add_argument("platform", choices=("browser", "android"))
+    check.add_argument("platform", choices=PLATFORMS)
     check.add_argument("--cdp-url")
     check.add_argument("--adb-serial")
     check.add_argument("--headless", action="store_true")
 
     run = subparsers.add_parser("run", help="run a Tool Agent task")
-    run.add_argument("platform", choices=("browser", "android"))
+    run.add_argument("platform", choices=PLATFORMS)
     run.add_argument("goal")
     run.add_argument("--perception", choices=("vision-only", "enhanced"), default="enhanced")
     run.add_argument("--max-turns", type=int, default=50)
@@ -46,7 +47,9 @@ def _build_parser() -> argparse.ArgumentParser:
 def _platform_options(args: argparse.Namespace) -> dict[str, object]:
     if args.platform == "browser":
         return {"cdp_url": args.cdp_url, "headless": args.headless}
-    return {"serial": args.adb_serial}
+    if args.platform == "android":
+        return {"serial": args.adb_serial}
+    return {}
 
 
 def main() -> int:

@@ -1,6 +1,6 @@
 {
   "name": "guiweave-automation",
-  "version": "0.1.0+codex.20260812044717",
+  "version": "0.1.0+codex.20260812081557",
   "description": "macOS Developer Preview for local GUI automation and private document knowledge with GUIWeave Tool Agent Master",
   "author": {
     "name": "hyde"
@@ -8,13 +8,14 @@
   "skills": "./skills/",
   "interface": {
     "displayName": "GUIWeave Automation",
-    "shortDescription": "Run local browser and Android tasks with Tool Agent.",
-    "longDescription": "A macOS Developer Preview that gives Codex a local stdio MCP server and Skill for authorized Chrome and Android GUI automation, private document-to-knowledge previews, logs, screenshots, traces, HTML reports, and replay artifacts.",
+    "shortDescription": "Run local browser, Android, and iPhone tasks with Tool Agent.",
+    "longDescription": "A macOS Developer Preview that gives Codex a local stdio MCP server and Skill for authorized Chrome, Android, and iPhone Mirroring automation, private document-to-knowledge previews, logs, screenshots, traces, HTML reports, and replay artifacts.",
     "developerName": "hyde",
     "category": "Productivity",
     "capabilities": [
       "Local browser automation",
       "Android automation",
+      "iPhone Mirroring automation",
       "Private document knowledge",
       "Run reports and replay"
     ],
@@ -23,7 +24,7 @@
   "mcpServers": {
     "guiweave-automation": {
       "title": "GUIWeave Automation",
-      "description": "Run GUIWeave Tool Agent Master against local Chrome or Android",
+      "description": "Run GUIWeave Tool Agent Master against local Chrome, Android, or iPhone Mirroring",
       "cwd": ".",
       "command": "bash",
       "args": [

@@ -357,12 +357,12 @@ def worker_action_floor(
         DynamicActionSpec(
             name="runtime_home",
             capability="home",
-            description="Go to the Android launcher home screen.",
+            description="Go to the active mobile platform's home screen.",
         ),
         DynamicActionSpec(
             name="runtime_app_switch",
             capability="app_switch",
-            description="Open Android's recent-apps switcher.",
+            description="Open the active mobile platform's app switcher.",
         ),
         DynamicActionSpec(
             name="runtime_launch_app",

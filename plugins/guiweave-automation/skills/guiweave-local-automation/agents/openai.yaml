@@ -1,7 +1,7 @@
 interface:
   display_name: "GUIWeave Local Automation"
-  short_description: "Run authorized browser and Android tasks locally"
-  default_prompt: "Use $guiweave-local-automation to run an authorized task in my local browser."
+  short_description: "Run authorized browser, Android, and iPhone tasks locally"
+  default_prompt: "Use $guiweave-local-automation to run an authorized task on my local Browser, Android, or iPhone surface."
 dependencies:
   tools:
     - type: "mcp"

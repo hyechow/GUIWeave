@@ -16,6 +16,7 @@ from dotenv import load_dotenv
 from pydantic import BaseModel, ConfigDict, Field
 
 from gui_agent.core.tool_agent.service import ToolAgentService
+from gui_agent.core.runtime.platforms import PlatformName
 
 
 ASSET_ROOT = Path(__file__).resolve().parent / "console_assets"
@@ -25,7 +26,7 @@ class RunRequest(BaseModel):
     model_config = ConfigDict(extra="forbid")
 
     goal: str = Field(min_length=1, max_length=4000)
-    platform: Literal["browser", "android"]
+    platform: PlatformName
     perception: Literal["vision-only", "enhanced"] = "enhanced"
     max_turns: int = Field(default=50, ge=1, le=50)
     cdp_url: str | None = Field(default=None, max_length=500)
@@ -86,8 +87,10 @@ class RunConsole:
         options: dict[str, object]
         if request.platform == "browser":
             options = {"cdp_url": request.cdp_url, "headless": request.headless}
-        else:
+        elif request.platform == "android":
             options = {"serial": request.adb_serial}
+        else:
+            options = {}
         try:
             result = self.service.run(
                 request.goal,
@@ -170,7 +173,10 @@ def create_app(service: ToolAgentService | None = None) -> FastAPI:
         return FileResponse(ASSET_ROOT / name)
 
     @app.get("/api/runs")
-    def list_runs(platform: Literal["browser", "android"] | None = None, limit: int = 100):
+    def list_runs(
+        platform: PlatformName | None = None,
+        limit: int = 100,
+    ):
         try:
             return {"runs": console.service.list_runs(platform=platform, limit=limit)}
         except Exception as exc:  # noqa: BLE001

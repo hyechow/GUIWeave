@@ -1,1 +1,1 @@
-"""GUIWeave Tool Agent runtime for browser and Android automation."""
+"""GUIWeave Tool Agent runtime for browser, Android, and iPhone automation."""

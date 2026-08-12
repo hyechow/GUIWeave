@@ -10,19 +10,19 @@ import shutil
 from collections.abc import Callable
 from datetime import datetime, timezone
 from pathlib import Path
-from typing import Any, Literal
+from typing import Any
 
 from langchain_core.messages import HumanMessage, SystemMessage
 from langchain_openai import ChatOpenAI
 from pydantic import BaseModel, ConfigDict, Field, model_validator
 
 from gui_agent.core.config import resolve_llm_config
+from gui_agent.core.runtime.platforms import PLATFORMS, PlatformName
 from gui_agent.core.self_learning.paths import get_user_knowledge_root
 from gui_agent.prompts import load_prompt_text
 from llm.structured import invoke_structured
 
 
-PlatformName = Literal["browser", "android"]
 SUPPORTED_SUFFIXES = {".pdf", ".md", ".txt"}
 MAX_SOURCE_BYTES = 50 * 1024 * 1024
 MAX_DOCUMENT_CHARS = 180_000
@@ -561,7 +561,7 @@ class KnowledgeImportService:
         }
 
     def list_knowledge(self, platform: PlatformName | None = None) -> dict[str, Any]:
-        platforms = [platform] if platform else ["browser", "android"]
+        platforms = [platform] if platform else list(PLATFORMS)
         entries: list[dict[str, Any]] = []
         for platform_name in platforms:
             platform_dir = self.knowledge_root / platform_name

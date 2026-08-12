@@ -1,11 +1,11 @@
-"""Shared action dispatch for browser and Android adapters.
+"""Shared action dispatch for browser, Android, and iPhone adapters.
 
 Both drive a ``Device`` (tap/type/scroll/drag/clear_text/press_enter) with normalized
 0-1000 coords denormalized against the device's ``viewport_size``. Their dispatch of
 the 7 shared actions was ~identical; this base factors it out. A platform subclass
 overrides only:
   - ``_dispatch_extra`` — its platform-specific actions (browser: navigate/back/tabs;
-    android: home/back/app_switch). Returns a bool when handled, None otherwise.
+    mobile: home/back/app_switch). Returns a bool when handled, None otherwise.
   - ``_clear_before_type`` — how the focused field is cleared before a ``type``
     (default: ``clear_text``; browser overrides for contenteditable safety).
 

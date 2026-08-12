@@ -43,6 +43,12 @@ It can also preview PDF, Markdown, and text application manuals as private knowl
 Generated files stay inactive until the user reviews and confirms the draft in a later
 turn.
 
+The task surface is uniform across Browser, Android, and iPhone. iPhone requires the
+macOS iPhone Mirroring app: `bin/sck_server` is the only screenshot source and
+`bin/mirror_daemon` is the only input backend. It does not use WDA, XCUITest,
+pymobiledevice, or usbmux. The bundled iPhone helper preview currently targets
+macOS 26; Browser and Android retain the broader macOS 13+ host target.
+
 ## Before publishing
 
 Run the repository tests and both validators:

@@ -1,7 +1,7 @@
 [project]
 name = "guiweave"
 version = "0.1.0"
-description = "Tool Agent Master runtime for local browser and Android automation"
+description = "Tool Agent Master runtime for local browser, Android, and iPhone automation"
 readme = "README.md"
 requires-python = ">=3.11"
 dependencies = [

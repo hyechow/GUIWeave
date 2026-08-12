@@ -16,6 +16,7 @@ from gui_agent.core.runtime.io import (
     tee_stdio,
 )
 from gui_agent.core.runtime.factory import SetupCheckResult, build_platform
+from gui_agent.core.runtime.platforms import PLATFORMS, PlatformName
 from gui_agent.core.self_learning.app_summary import (
     auto_discover_knowledge,
     load_knowledge_for_app,
@@ -24,7 +25,6 @@ from gui_agent.core.self_learning.app_summary import (
 from gui_agent.core.tool_agent.result import execute_tool_agent
 
 
-PlatformName = Literal["browser", "android"]
 PerceptionMode = Literal["vision-only", "enhanced"]
 
 
@@ -212,7 +212,7 @@ class ToolAgentService:
         if (
             len(relative.parts) != 3
             or relative.parts[0] != "tool_agent"
-            or relative.parts[1] not in {"browser", "android"}
+            or relative.parts[1] not in set(PLATFORMS)
         ):
             raise ValueError("run_id is not a Tool Agent run")
         return run_dir
@@ -319,7 +319,7 @@ class ToolAgentService:
 
         if not 1 <= limit <= 500:
             raise ValueError("limit must be between 1 and 500")
-        platforms = (platform,) if platform else ("browser", "android")
+        platforms = (platform,) if platform else PLATFORMS
         candidates: list[Path] = []
         for platform_name in platforms:
             base = self.log_root / "tool_agent" / platform_name

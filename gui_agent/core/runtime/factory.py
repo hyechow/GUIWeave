@@ -6,6 +6,8 @@ import os
 from dataclasses import dataclass
 from typing import TYPE_CHECKING, Callable, ContextManager, Optional
 
+from gui_agent.core.runtime.platforms import PLATFORMS
+
 if TYPE_CHECKING:
     from pathlib import Path
 
@@ -53,7 +55,7 @@ def build_platform(
     backend: Optional[str] = None,
     **kwargs: object,
 ) -> PlatformBundle:
-    """Return a Browser or Android Tool Agent adapter bundle."""
+    """Return a Browser, Android, or iPhone Tool Agent adapter bundle."""
 
     name = (platform or os.environ.get("AGENT_PLATFORM") or "browser").lower()
     if name == "browser":
@@ -64,7 +66,11 @@ def build_platform(
         from gui_agent.adapters.android.factory import build_android_bundle
 
         return build_android_bundle(backend=backend, **kwargs)
-    raise ValueError(f"unknown platform {name!r}; registered: browser, android")
+    if name == "iphone":
+        from gui_agent.adapters.iphone.factory import build_iphone_bundle
+
+        return build_iphone_bundle(backend=backend, **kwargs)
+    raise ValueError(f"unknown platform {name!r}; registered: {', '.join(PLATFORMS)}")
 
 
 __all__ = ["PlatformBundle", "SetupCheckResult", "build_platform"]

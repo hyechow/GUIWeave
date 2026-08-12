@@ -35,7 +35,7 @@
     <form id="task-form" method="dialog">
       <header><div><p class="kicker">NEW LOCAL RUN</p><h2>新建 Tool Agent 任务</h2></div><button type="button" id="close-dialog" aria-label="关闭">×</button></header>
       <label>任务目标<textarea name="goal" required maxlength="4000" placeholder="例如：打开订单列表，找到最新失败订单并返回订单号"></textarea></label>
-      <div class="form-row"><label>平台<select name="platform"><option value="browser">Browser</option><option value="android">Android</option></select></label><label>感知模式<select name="perception"><option value="enhanced">Enhanced</option><option value="vision-only">Vision only</option></select></label><label>最大轮次<input name="max_turns" type="number" min="1" max="50" value="50"></label></div>
+      <div class="form-row"><label>平台<select name="platform"><option value="browser">Browser</option><option value="android">Android</option><option value="iphone">iPhone</option></select></label><label>感知模式<select name="perception"><option value="enhanced">Enhanced</option><option value="vision-only">Vision only</option></select></label><label>最大轮次<input name="max_turns" type="number" min="1" max="50" value="50"></label></div>
       <p class="notice"><b>模型连接：</b>任务会访问本地配置的模型网关，并需要对应 API_KEY。执行环境与产物留在本机，但推理并非完全离线。</p>
       <footer><button type="button" id="cancel-dialog">取消</button><button class="primary" type="submit">检查环境并启动</button></footer>
     </form>
