@@ -65,3 +65,28 @@ def test_python_cli_uses_tool_agent_default_max_turns() -> None:
     assert '_TOOL_AGENT_MAX_TURNS = 50' in source
     assert '_MAX_TURNS = 50' in source
     assert 'default=_TOOL_AGENT_MAX_TURNS' in source
+
+
+def test_wrapper_explains_how_to_initialize_webarena_submodule(
+    tmp_path: Path,
+) -> None:
+    checkout = tmp_path / "checkout"
+    bin_dir = checkout / "bin"
+    bin_dir.mkdir(parents=True)
+    wrapper = bin_dir / "webarena"
+    wrapper.write_text(
+        (PROJECT_ROOT / "bin" / "webarena").read_text(encoding="utf-8"),
+        encoding="utf-8",
+    )
+    wrapper.chmod(0o755)
+
+    result = subprocess.run(
+        [str(wrapper), "11"],
+        env={**os.environ, "TASKS_FILE": "webarena-verified/missing.json"},
+        check=False,
+        capture_output=True,
+        text=True,
+    )
+
+    assert result.returncode == 1
+    assert "git submodule update --init --recursive webarena-verified" in result.stderr

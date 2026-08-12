@@ -24,6 +24,7 @@ def test_prompt_registry_loads_all_assets() -> None:
         "task.tool_agent.presentation",
         "task.tool_agent.visual_transcription",
         "task.tool_agent.worker",
+        "task.knowledge.document_ingest",
         "task.vision.loading",
         "task.vision.target_verify",
         "task.webarena.synthesize_human",
