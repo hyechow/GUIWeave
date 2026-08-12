@@ -44,6 +44,26 @@ def test_runtime_rejects_max_turns_above_50(tmp_path) -> None:
         )
 
 
+def test_android_runtime_rejects_browser_only_worker_action() -> None:
+    runtime = object.__new__(ToolAgentRuntime)
+    runtime.bundle = SimpleNamespace(platform="android")
+    runtime._platform_capabilities = frozenset({"tap", "scroll", "back"})
+    runtime.data_store = RuntimeDataStore()
+    spec = WorkerSpec(
+        goal="Choose the required visible option",
+        success_criteria=["The requested option is selected"],
+        actions=[DynamicActionSpec(
+            name="choose_option",
+            capability="select_option",
+            description="Choose the visible option required by the task",
+            fixed_args={"text": "Enabled"},
+        )],
+    )
+
+    with pytest.raises(ProtocolError, match="unavailable on the android adapter"):
+        runtime._initial_worker_actions(spec)
+
+
 def test_private_access_context_reaches_worker_but_is_redacted_from_trace() -> None:
     from gui_agent.core.tool_agent.runtime import _access_log_redactions
 

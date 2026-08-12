@@ -1,18 +1,23 @@
 from __future__ import annotations
 
 import json
+from types import SimpleNamespace
 
 from gui_agent.adapters.android.mobileworld import (
     MOBILEWORLD_PACKAGE_MANAGER,
     _android_platform_contract,
+    _build_parser,
     _final_answer,
     _generate_and_persist_reply,
+    _guess_task_type,
     _init_task_then_wait_for_android,
     _route_mobileworld_goal,
 )
 from gui_agent.core.chat.session import RouterResult
 from gui_agent.core.run.result import AgentResult
 from gui_agent.core.runtime.factory import SetupCheckResult
+from gui_agent.core.tool_agent.presentation import PresentationResult
+from gui_agent.core.tool_agent.result import execute_tool_agent
 
 
 class _FakeEnv:
@@ -36,6 +41,27 @@ def test_android_platform_contract_uses_semantic_app_names():
 def test_mobileworld_package_manager_uses_internal_package_names():
     assert MOBILEWORLD_PACKAGE_MANAGER["Calendar"] == "org.fossify.calendar"
     assert MOBILEWORLD_PACKAGE_MANAGER["Messages"] == "com.google.android.apps.messaging"
+
+
+def test_mobileworld_cli_accepts_tool_agent_runtime_options():
+    args = _build_parser().parse_args([
+        "OpenFlightModeTask",
+        "--runtime",
+        "tool-agent",
+        "--perception",
+        "vision-only",
+        "--tool-agent-multi-action",
+    ])
+
+    assert args.task == "OpenFlightModeTask"
+    assert args.runtime == "tool-agent"
+    assert args.perception == "vision-only"
+    assert args.tool_agent_multi_action is True
+
+
+def test_mobileworld_task_type_fallback_handles_state_mutations():
+    assert _guess_task_type("Turn on device flight mode") == "MUTATE"
+    assert _guess_task_type("How many alarms are configured?") == "RETRIEVE"
 
 
 def test_mobileworld_routes_backend_goal_as_android_and_preserves_raw_separately():
@@ -147,3 +173,66 @@ def test_mobileworld_reply_is_separate_from_exact_evaluator_answer(
     persisted = json.loads(context_path.read_text(encoding="utf-8"))
     assert persisted["outcome"]["output"] == "42"
     assert persisted["reply"] == reply
+
+
+def test_tool_agent_execution_persists_android_mobileworld_context(
+    tmp_path,
+    monkeypatch,
+):
+    run = SimpleNamespace(
+        phase="completed",
+        effect="mutation",
+        output=True,
+        summary="Flight mode is enabled",
+        result_ref=None,
+        trace=[],
+        perception_mode="enhanced",
+        master_model="master",
+        worker_model="worker",
+        perception_model="perception",
+    )
+    presentation = PresentationResult(
+        status="generated",
+        reply="Flight mode is enabled.",
+        result_digest="digest",
+        model="presenter",
+    )
+
+    class FakeRuntime:
+        def __init__(self, **kwargs):
+            self.log_dir = kwargs["log_dir"]
+
+        def run(self, _intent, **_kwargs):
+            (self.log_dir / "tool_agent_replay.json").write_text(
+                '{"status":"passed"}', encoding="utf-8"
+            )
+            return run
+
+    monkeypatch.setattr(
+        "gui_agent.core.tool_agent.result.ToolAgentRuntime", FakeRuntime
+    )
+    monkeypatch.setattr(
+        "gui_agent.core.tool_agent.result.present_result",
+        lambda **_kwargs: presentation,
+    )
+    result, rendered = execute_tool_agent(
+        intent="Turn on device flight mode",
+        bundle=SimpleNamespace(platform="android"),
+        session=object(),
+        log_dir=tmp_path,
+        perception_mode="enhanced",
+        max_turns=10,
+        allow_multi_action=False,
+        fallback_task_type="MUTATE",
+        knowledge_summary=None,
+        raw_input="Turn on device flight mode",
+        router={"goal": "Turn on device flight mode"},
+    )
+
+    context = json.loads((tmp_path / "context.json").read_text(encoding="utf-8"))
+    assert rendered is presentation
+    assert result.task_type == "MUTATE"
+    assert result.orchestrator["kind"] == "tool_agent"
+    assert context["platform"] == "android"
+    assert context["orchestrator"]["kind"] == "tool_agent"
+    assert context["reply"] == "Flight mode is enabled."

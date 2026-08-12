@@ -7,13 +7,13 @@ import pytest
 
 from gui_agent.adapters.browser.webarena import (
     _synthesize_response,
-    _tool_agent_result_and_context,
 )
 from gui_agent.core.tool_agent.presentation import (
     present_result,
     result_digest,
     write_presentation_artifact,
 )
+from gui_agent.core.tool_agent.result import project_tool_agent_result
 
 
 def test_presenter_turns_verified_result_into_natural_reply_without_capabilities() -> None:
@@ -134,11 +134,13 @@ def test_presentation_artifact_and_context_keep_result_and_reply_separate(tmp_pa
         perception_model="perception",
     )
 
-    result = _tool_agent_result_and_context(
+    result = project_tool_agent_result(
         intent="Return the matching email",
         run=run,
         log_dir=tmp_path,
         knowledge_summary=None,
+        platform="browser",
+        fallback_task_type="RETRIEVE",
         presentation=presentation,
     )
 
@@ -202,11 +204,13 @@ def test_live_task_effect_replay_preserves_original_task_semantics(
         perception_model="perception",
     )
 
-    result = _tool_agent_result_and_context(
+    result = project_tool_agent_result(
         intent=intent,
         run=run,
         log_dir=tmp_path,
         knowledge_summary=None,
+        platform="browser",
+        fallback_task_type=expected_type,
     )
     response = _synthesize_response(intent, result, tmp_path / "context.json")
 

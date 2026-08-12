@@ -1,5 +1,6 @@
 from gui_agent.adapters.android.accessibility import (
     collection_regions_from_uiautomator,
+    form_controls_from_semantic_tree,
     semantic_tree_from_uiautomator,
 )
 from gui_agent.adapters.android.actions import AndroidAction, AndroidActionDecision
@@ -49,6 +50,28 @@ def test_uiautomator_failure_is_an_optional_sensor_miss() -> None:
     assert semantic_tree_from_uiautomator(None, viewport_size=(1080, 2400)) is None
     assert semantic_tree_from_uiautomator("<broken", viewport_size=(1080, 2400)) is None
     assert semantic_tree_from_uiautomator(XML, viewport_size=(0, 0)) is None
+
+
+def test_unlabeled_switch_uses_same_row_visible_text_as_its_label() -> None:
+    xml = """<hierarchy>
+      <node class="android.widget.FrameLayout" bounds="[0,0][1080,2400]">
+        <node class="android.widget.LinearLayout" bounds="[0,500][1080,700]">
+          <node class="android.widget.TextView" text="Wi-Fi"
+                bounds="[48,540][500,660]"/>
+          <node class="android.widget.Switch" resource-id="com.android.settings:id/switch_widget"
+                checkable="true" checked="true" bounds="[890,550][1038,650]"/>
+        </node>
+        <node class="android.widget.TextView" text="Airplane mode"
+              bounds="[48,900][500,1020]"/>
+      </node>
+    </hierarchy>"""
+    tree = semantic_tree_from_uiautomator(xml, viewport_size=(1080, 2400))
+
+    controls = form_controls_from_semantic_tree(tree)
+
+    assert controls is not None
+    assert controls[0]["label"] == "Wi-Fi"
+    assert controls[0]["value"] is True
 
 
 def test_uiautomator_projects_clickable_text_selection_state() -> None:

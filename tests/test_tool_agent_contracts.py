@@ -317,6 +317,29 @@ def test_runtime_action_floor_and_patch_tool_are_always_available() -> None:
     )
 
 
+def test_android_runtime_action_floor_excludes_browser_only_capabilities() -> None:
+    floor = worker_action_floor({
+        "tap",
+        "type",
+        "clear_text",
+        "press_enter",
+        "scroll",
+        "back",
+    })
+    actions = {action.name: action.capability for action in floor}
+
+    assert actions == {
+        "runtime_tap_visible": "tap",
+        "runtime_scroll_visible": "scroll",
+        "runtime_type_visible": "type",
+        "runtime_clear_focused": "clear_text",
+        "runtime_press_enter": "press_enter",
+        "runtime_back": "back",
+    }
+    assert "runtime_open_url" not in actions
+    assert "runtime_select_visible" not in actions
+
+
 def test_collector_completion_tool_is_frame_gated_and_runtime_bound() -> None:
     floor = worker_action_floor()
 

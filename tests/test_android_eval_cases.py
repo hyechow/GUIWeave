@@ -132,3 +132,10 @@ def test_files_knowledge_uses_the_verified_archive_extraction_path() -> None:
     assert "`More options`, use `Select all`" in knowledge
     assert "choose `Extract to…`" in knowledge
     assert "activate `EXTRACT`" in knowledge
+
+
+def test_settings_knowledge_uses_the_direct_airplane_mode_path() -> None:
+    knowledge = (ROOT / "knowledge/android/Settings/_app.md").read_text(encoding="utf-8")
+
+    assert "Network & internet" in knowledge
+    assert "Internet** page does not contain that toggle" in knowledge
