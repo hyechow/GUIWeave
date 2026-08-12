@@ -110,9 +110,12 @@ def test_console_frontend_auto_selects_and_prioritizes_final_reply() -> None:
     assert "detail.reply || detail.summary" in source
     assert "await selectRun(result.task_id)" not in source
     assert "state.active !== runId" in source
-    assert 'class="event-frame"' in source
+    assert 'class="event-frame frame-${frameLayout}"' in source
     assert 'loading="lazy"' in source
     assert 'String(event.frame_id || "").split(":").at(-1)' in source
+    assert '["android", "iphone"].includes(run.platform) ? "portrait" : "wide"' in source
+    assert 'data-frame-layout="${frameLayout}"' in source
+    assert 'frameDialog.classList.toggle("frame-portrait"' in source
     assert 'action-event action-${actionState}' in source
     assert '✓ 执行成功' in source
     assert '! 未确认效果' in source
@@ -134,6 +137,13 @@ def test_console_hidden_state_overrides_component_display_rules() -> None:
 
     assert ".hidden" in source
     assert "display: none !important" in source
+    assert ".event-frame.frame-wide img" in source
+    assert ".event-frame.frame-portrait img" in source
+    assert "height: 320px" in source
+    assert "object-fit: contain" in source
+    assert "dialog.frame-dialog.frame-portrait" in source
+    assert "width: min(352px, calc(100% - 32px))" in source
+    assert "background: #fff" in source
 
 
 def test_console_projects_and_serves_referenced_event_screenshots(tmp_path: Path) -> None:
