@@ -57,9 +57,11 @@ def check_environment(
     adb_serial: str | None = None,
     headless: bool = False,
 ) -> dict[str, Any]:
-    """Check whether local Browser, Android, or iPhone automation is ready.
+    """Check whether model configuration and local GUI automation are ready.
 
-    Android preflight may activate ADBKeyboard so non-ASCII text input works.
+    Credential values are never returned. Browser checks CDP unless headless;
+    Android checks adb and may activate ADBKeyboard; iPhone checks the bundled
+    helpers and the visible macOS iPhone Mirroring window.
     """
 
     result = service.check_environment(
@@ -164,8 +166,9 @@ def run_iphone_task(
 ) -> dict[str, Any]:
     """Run an exact user-authorized goal through macOS iPhone Mirroring.
 
-    Screenshots come only from bin/sck_server. Input is sent only through
-    bin/mirror_daemon. Confirm consequential intent before calling this tool.
+    Screenshots come only from the bundled sck_server. Input is sent only through
+    the bundled mirror_daemon. This preview supports Apple Silicon (M-series)
+    Macs. Confirm consequential intent before calling this tool.
     """
 
     return service.run(

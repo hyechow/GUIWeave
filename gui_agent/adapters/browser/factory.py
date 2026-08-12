@@ -26,6 +26,20 @@ from typing import Optional
 
 from gui_agent.core.runtime.factory import PlatformBundle, SetupCheckResult
 
+
+def _probe_headless_chromium() -> str:
+    """Launch and close Chromium once so preflight covers installed browser assets."""
+
+    from playwright.sync_api import sync_playwright
+
+    with sync_playwright() as playwright:
+        browser = playwright.chromium.launch(headless=True)
+        try:
+            return playwright.chromium.executable_path
+        finally:
+            browser.close()
+
+
 def _find_chrome_window() -> "tuple[int, int, int, int] | None":
     """(x, y, w, h) screen rect of the largest on-screen Google Chrome window via
     CGWindowList — a pre-connect best-effort guess for HUD placement (refined to the
@@ -65,10 +79,24 @@ def _setup_check(cdp_url: "Optional[str]", *, headless: bool | None = None) -> S
     import urllib.request
 
     if _resolve_headless(headless):
+        try:
+            executable = _probe_headless_chromium()
+        except Exception as exc:  # noqa: BLE001 - return actionable setup failure
+            return SetupCheckResult(
+                ok=False,
+                summary="Playwright Chromium 不可用",
+                lines=(
+                    f"  ✗ headless Chromium 启动失败：{exc}",
+                    "    运行 `uv run playwright install chromium` 后重试",
+                ),
+            )
         return SetupCheckResult(
             ok=True,
-            summary="headless Chromium 将由 Playwright 启动",
-            lines=("  ✓ headless 模式：跳过外部 Chrome CDP 检查",),
+            summary="Playwright Chromium 已就绪",
+            lines=(
+                f"  ✓ headless Chromium 可启动: {executable}",
+                "  ✓ headless 模式：无需外部 Chrome CDP",
+            ),
         )
 
     url = cdp_url or os.environ.get("CHROME_CDP_URL") or "http://localhost:9222"
@@ -162,6 +190,7 @@ def build_browser_bundle(
         make_perception=lambda session, png_path: BrowserPerception(session, png_path),
         make_status_reporter=lambda enabled: (_make_browser_hud() if enabled else None),
         make_action_visualizer=_make_action_visualizer,
+        read_time=lambda session: session.platform_time(),
         tool_agent_capabilities=(
             "tap",
             "type",

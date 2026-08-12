@@ -398,6 +398,7 @@ def _frame_payload(
                 candidate_state = {"status": "exhausted"}
     return {
         "frame_id": frame.frame_id,
+        "task_reference_time": frame.platform_time,
         "url": frame.url,
         "title": frame.title,
         "applied_filters": frame.applied_filters,
@@ -472,7 +473,9 @@ def project_worker_context(
             coverage="complete",
             content=(
                 "## Current MaterializedFrame (compact semantic projection)\n"
-                "Values remain private; descriptors and controls only.\n"
+                "Values remain private; descriptors and controls only. "
+                "For every control rect, x/y are its normalized center coordinates; "
+                "never add half of w/h to derive the action point.\n"
                 + compact_frame
             ),
         ),

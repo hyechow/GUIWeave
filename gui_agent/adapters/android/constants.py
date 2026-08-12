@@ -16,10 +16,25 @@ from pathlib import Path
 # the browser adapter assumes for ROOT in perception.py).
 _REPO_ROOT = Path(__file__).resolve().parents[3]
 
-# Bundled standalone adb (downloaded into vendor/ — no brew). The adbutils wheel
-# ships NO adb binary, so adbutils is pointed at this via ADBUTILS_ADB_PATH (only
-# when that env var is unset AND the bundled binary exists; otherwise PATH wins).
-VENDORED_ADB = _REPO_ROOT / "vendor" / "scrcpy-macos-aarch64-v4.0" / "adb"
+# The plugin launcher injects its bundled standalone adb through
+# GUIWEAVE_ADB_PATH. A source-checkout Console does not pass through that
+# launcher, so it must also discover the exact same plugin asset directly.
+# Keep the former repository vendor location as a compatibility fallback.
+# The adbutils wheel itself ships no adb executable.
+_configured_adb = os.environ.get("GUIWEAVE_ADB_PATH", "").strip()
+_plugin_adb = (
+    _REPO_ROOT
+    / "plugins"
+    / "guiweave-automation"
+    / "assets"
+    / "android-arm64"
+    / "scrcpy-macos-aarch64-v4.0"
+    / "adb"
+)
+_legacy_vendor_adb = _REPO_ROOT / "vendor" / "scrcpy-macos-aarch64-v4.0" / "adb"
+VENDORED_ADB = Path(_configured_adb).expanduser().resolve() if _configured_adb else (
+    _plugin_adb if _plugin_adb.is_file() else _legacy_vendor_adb
+)
 
 # Target device serial: "host:port" for wireless adb (e.g. 192.168.31.240:5555)
 # or a USB serial. None -> auto-select the sole connected device.

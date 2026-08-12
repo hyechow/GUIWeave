@@ -76,6 +76,60 @@ def _action_point(control: dict[str, Any]) -> tuple[float, float] | None:
     return x, y
 
 
+def _rect_contains(
+    outer: dict[str, Any],
+    inner: dict[str, Any],
+    *,
+    tolerance: float = 2.0,
+) -> bool:
+    """Whether one center-based rect geometrically contains another."""
+
+    try:
+        ox, oy = float(outer["x"]), float(outer["y"])
+        ow, oh = max(0.0, float(outer["w"])), max(0.0, float(outer["h"]))
+        ix, iy = float(inner["x"]), float(inner["y"])
+        iw, ih = max(0.0, float(inner["w"])), max(0.0, float(inner["h"]))
+    except (KeyError, TypeError, ValueError):
+        return False
+    return (
+        ox - ow / 2 - tolerance <= ix - iw / 2
+        and oy - oh / 2 - tolerance <= iy - ih / 2
+        and ox + ow / 2 + tolerance >= ix + iw / 2
+        and oy + oh / 2 + tolerance >= iy + ih / 2
+    )
+
+
+def _nested_specific_match(matches: list[tuple]) -> tuple | None:
+    """Choose a unique descendant widget from same-label container controls.
+
+    UIAutomator commonly exposes both a clickable row and its child switch with
+    the same role and label. This is not a semantic ambiguity: the descendant is
+    the precise hit target. Real same-label siblings remain ambiguous.
+    """
+
+    if len(matches) < 2:
+        return matches[0] if matches else None
+    ranked = sorted(matches, key=lambda item: item[1][2])
+    candidate = ranked[0]
+    candidate_control = candidate[2]
+    candidate_ref = str(candidate_control.get("ref") or "")
+    candidate_rect = candidate_control.get("rect")
+    if not candidate_ref or not isinstance(candidate_rect, dict):
+        return None
+    for other in ranked[1:]:
+        other_control = other[2]
+        other_ref = str(other_control.get("ref") or "")
+        other_rect = other_control.get("rect")
+        if (
+            not other_ref
+            or not candidate_ref.startswith(other_ref + ".")
+            or not isinstance(other_rect, dict)
+            or not _rect_contains(other_rect, candidate_rect)
+        ):
+            return None
+    return candidate
+
+
 def ground_action_to_android_control(
     decision: BaseActionDecision,
     controls: list[dict[str, Any]] | None,
@@ -127,9 +181,15 @@ def ground_action_to_android_control(
     if semantic:
         best_score = max(item[0] for item in semantic)
         matches = [item for item in semantic if item[0] == best_score]
-        if len(matches) == 1:
-            _, geometry, control = matches[0]
-            chosen = geometry, control, "android_control_semantic_geometry"
+        match = matches[0] if len(matches) == 1 else _nested_specific_match(matches)
+        if match is not None:
+            _, geometry, control = match
+            method = (
+                "android_control_semantic_nested_geometry"
+                if len(matches) > 1
+                else "android_control_semantic_geometry"
+            )
+            chosen = geometry, control, method
     elif nearby:
         nearby.sort(key=lambda item: item[0][:3])
         geometry, control = nearby[0]
@@ -147,7 +207,7 @@ def ground_action_to_android_control(
     edge, _, _, x, y = geometry
     preferred = (
         _action_point(control)
-        if not typing and method == "android_control_semantic_geometry"
+        if not typing and method.startswith("android_control_semantic")
         else None
     )
     if preferred is not None:

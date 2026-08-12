@@ -12,9 +12,30 @@ The status reporter (HUD) is None: android has no on-screen agent HUD yet.
 
 from __future__ import annotations
 
+import platform as platform_module
+import subprocess
 from typing import Optional
 
 from gui_agent.core.runtime.factory import PlatformBundle, SetupCheckResult
+
+
+def _is_apple_silicon() -> bool:
+    """Return true on M-series hardware, including a process under Rosetta."""
+
+    if platform_module.machine().lower() in {"arm64", "aarch64"}:
+        return True
+    try:
+        result = subprocess.run(
+            ["sysctl", "-n", "hw.optional.arm64"],
+            check=False,
+            capture_output=True,
+            text=True,
+            timeout=2,
+        )
+    except (OSError, subprocess.SubprocessError):
+        return False
+    return result.returncode == 0 and result.stdout.strip() == "1"
+
 
 def _setup_check(serial: "Optional[str]") -> SetupCheckResult:
     """Pre-session environment check for android:
@@ -26,11 +47,40 @@ def _setup_check(serial: "Optional[str]") -> SetupCheckResult:
     The IME switch lives HERE, in setup (before the session opens, before any field is
     focused), not in the per-connect path. Uses a short-lived adb connection; the switch
     persists device-side, so the real session's connect() then detects ADBKeyboard."""
+    import os
     import shutil
+    from pathlib import Path
 
     from gui_agent.adapters.android.constants import VENDORED_ADB
     from gui_agent.adapters.android.device import AndroidDevice
 
+    configured_adb = os.environ.get("ADBUTILS_ADB_PATH", "").strip()
+    candidates = (
+        Path(configured_adb).expanduser() if configured_adb else None,
+        VENDORED_ADB,
+        Path(system_adb) if (system_adb := shutil.which("adb")) else None,
+    )
+    adb_path = next(
+        (
+            candidate
+            for candidate in candidates
+            if candidate is not None
+            and candidate.is_file()
+            and os.access(candidate, os.X_OK)
+        ),
+        None,
+    )
+    if adb_path is None:
+        return SetupCheckResult(
+            ok=False,
+            summary="adb 可执行文件不可用",
+            lines=(
+                "  ✗ 插件内未找到可执行 adb，PATH 中也没有 adb",
+                "    重新安装完整插件，或安装 Android Platform Tools",
+            ),
+        )
+
+    lines = [f"  ✓ adb 可执行文件: {adb_path}"]
     dev = AndroidDevice(serial=serial)
     try:
         dev.connect()
@@ -39,18 +89,58 @@ def _setup_check(serial: "Optional[str]") -> SetupCheckResult:
             ok=False,
             summary="adb 设备不可用",
             lines=(
+                *lines,
                 f"  ✗ 连不上 adb 设备：{exc}",
                 "    设 ANDROID_SERIAL，或 `adb connect <ip:port>`（无线）/ 插 USB",
             ),
         )
-    lines = [f"  ✓ adb 设备已连接 ({dev.win_w}x{dev.win_h})"]
+    lines.append(f"  ✓ adb 设备已连接 ({dev.win_w}x{dev.win_h})")
+    serial_label = dev.serial or serial or "<device>"
+    if dev.stay_awake_enabled:
+        lines.append("  ✓ 已启用充电时保持亮屏（svc power stayon true）")
+    else:
+        lines.append("  ⚠ 无法启用充电时保持亮屏——深度休眠可能断开无线 adb")
+    lines.extend((
+        "  ! stayon 不会解除锁屏；请关闭自动锁屏或延长休眠时间",
+        f"    恢复默认：adb -s {serial_label} shell svc power stayon false",
+    ))
     try:
-        scrcpy_ok = (VENDORED_ADB.parent / "scrcpy").exists() or bool(shutil.which("scrcpy"))
-        lines.append(
-            "  ✓ scrcpy 可用（镜像窗口 / 动作可视化）"
-            if scrcpy_ok
-            else "  ⚠ 未找到 scrcpy——镜像窗口 / 动作可视化不可用（agent 仍可无镜像运行）"
+        configured_scrcpy = os.environ.get("GUIWEAVE_SCRCPY_PATH", "").strip()
+        configured_scrcpy_path = (
+            Path(configured_scrcpy).expanduser() if configured_scrcpy else None
         )
+        bundled_scrcpy = VENDORED_ADB.parent / "scrcpy"
+        bundled_scrcpy_exists = (
+            bundled_scrcpy.is_file() and os.access(bundled_scrcpy, os.X_OK)
+        )
+        apple_silicon = _is_apple_silicon()
+        system_scrcpy = shutil.which("scrcpy")
+        scrcpy_path = next(
+            (
+                candidate
+                for candidate in (
+                    configured_scrcpy_path,
+                    bundled_scrcpy if apple_silicon else None,
+                    Path(system_scrcpy) if system_scrcpy else None,
+                )
+                if candidate is not None
+                and candidate.is_file()
+                and os.access(candidate, os.X_OK)
+            ),
+            None,
+        )
+        if scrcpy_path is not None:
+            lines.append(f"  ✓ scrcpy 可用（镜像窗口 / 动作可视化）：{scrcpy_path}")
+        elif bundled_scrcpy_exists and not apple_silicon:
+            lines.append(
+                "  ⚠ 插件内 scrcpy 仅支持 arm64；Intel Mac 请安装兼容版本到 PATH"
+                "（agent 仍可无镜像运行）"
+            )
+        else:
+            lines.append(
+                "  ⚠ 未找到 scrcpy——镜像窗口 / 动作可视化不可用"
+                "（agent 仍可无镜像运行）"
+            )
         installed, active = dev.ensure_adbkeyboard()
         if active:
             lines.append("  ✓ ADBKeyboard 已设为输入法（支持中文、无软键盘遮挡）")
@@ -101,7 +191,7 @@ def _ensure_scrcpy_window(timeout_s: float = 6.0) -> None:
         serial = (os.environ.get("ANDROID_SERIAL") or "").strip()
         if _scrcpy_running(serial) or scrcpy_window_rect() is not None:
             return  # already mirroring — never relaunch
-        script = VENDORED_ADB.parents[2] / "bin" / "scrcpy"  # repo_root/bin/scrcpy
+        script = Path(__file__).resolve().parents[3] / "bin" / "scrcpy"
         if not script.exists():
             return
         # No serial arg: bin/scrcpy reads ANDROID_SERIAL from the inherited env (works for both
@@ -172,6 +262,7 @@ def build_android_bundle(
         make_perception=lambda session, png_path: AndroidPerception(session, png_path),
         make_status_reporter=lambda enabled: (_make_android_hud() if enabled else None),
         make_action_visualizer=_make_action_visualizer,
+        read_time=lambda session: session.platform_time(),
         tool_agent_capabilities=(
             "tap",
             "type",

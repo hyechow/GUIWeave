@@ -12,6 +12,7 @@ import io
 
 from PIL import Image, ImageDraw
 
+from gui_agent.core.runtime.action_settle import settle_after_action
 from gui_agent.core.vision.frame_analysis import frame_changed, frame_diff
 
 
@@ -35,3 +36,29 @@ def test_tiny_change_stays_not_changed_conservative():
     mod = base.copy()
     ImageDraw.Draw(mod).rectangle([2, 2, 6, 6], fill="black")
     assert frame_changed(_png(base), _png(mod)) is False
+
+
+def test_settle_uses_adapter_lightweight_screenshot_probe(monkeypatch):
+    frame = _png(Image.new("RGB", (160, 320), "white"))
+
+    class _Platform:
+        def __init__(self):
+            self.probe_calls = 0
+            self.full_calls = 0
+
+        def settle_screenshot(self):
+            self.probe_calls += 1
+            return frame
+
+        def screenshot(self):
+            self.full_calls += 1
+            raise AssertionError("settle should not run the recovery-heavy capture")
+
+    platform = _Platform()
+    monkeypatch.setattr("gui_agent.core.runtime.action_settle.time.sleep", lambda _: None)
+
+    _, no_effect = settle_after_action(platform, frame, action_type="tap")
+
+    assert no_effect is True
+    assert platform.probe_calls == 6
+    assert platform.full_calls == 0

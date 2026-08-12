@@ -5,11 +5,12 @@
   <meta name="viewport" content="width=device-width, initial-scale=1">
   <title>GUIWeave Run Console</title>
   <link rel="stylesheet" href="/assets/console.css">
+  <link rel="stylesheet" href="/assets/environment.css">
 </head>
 <body>
   <header class="topbar">
     <a class="brand" href="/"><span class="mark"><i></i><i></i><i></i></span> GUIWEAVE <b>RUN CONSOLE</b></a>
-    <div class="runtime"><i></i><span>LOCAL RUNTIME</span><small>模型连接由用户配置</small></div>
+    <div id="model-runtime" class="runtime"><i></i><span id="model-status">检查模型配置…</span><small id="model-summary">LOCAL RUNTIME</small></div>
     <button id="new-task-button" class="primary">＋ 新建任务</button>
   </header>
   <main class="layout">
@@ -24,8 +25,8 @@
       <div id="empty-state" class="empty-state"><span>GW</span><h1>选择一个任务</h1><p>查看运行阶段、事件流、模型配置与本地产物。</p></div>
       <div id="run-view" class="run-view hidden">
         <header class="run-header"><div><p class="kicker" id="run-id"></p><h1 id="run-goal"></h1><div class="meta"><span id="run-platform"></span><span id="run-time"></span><span id="run-events"></span></div></div><div class="run-controls"><span id="run-status" class="status"></span><button id="cancel-run" class="danger hidden">请求安全取消</button></div></header>
-        <div class="summary-grid"><article><label>当前摘要</label><p id="run-summary">—</p></article><article><label>模型</label><p id="run-model">按本地配置</p></article><article><label>运行边界</label><p>高影响操作需在任务目标中明确授权</p></article></div>
-        <section class="panel"><header><div><span>LIVE TRACE</span><small>仅展示结构化事件，不暴露私有运行数据</small></div><button id="refresh-button">刷新</button></header><div id="event-list" class="event-list"></div></section>
+        <div class="summary-grid"><article><label>结果 / 当前摘要</label><p id="run-summary">—</p></article><article><label>模型</label><p id="run-model">按本地配置</p></article><article><label>运行边界</label><p>高影响操作需在任务目标中明确授权</p></article></div>
+        <section class="panel"><header><div><span>LIVE TRACE</span><small>结构化事件 + 本地运行截图；截图可能包含界面数据</small></div><button id="refresh-button">刷新</button></header><div id="event-list" class="event-list"></div></section>
         <section class="panel"><header><div><span>ARTIFACTS</span><small>产物保存在本机任务目录</small></div></header><div id="artifact-list" class="artifact-list"></div></section>
       </div>
     </section>
@@ -33,12 +34,21 @@
 
   <dialog id="task-dialog">
     <form id="task-form" method="dialog">
-      <header><div><p class="kicker">NEW LOCAL RUN</p><h2>新建 Tool Agent 任务</h2></div><button type="button" id="close-dialog" aria-label="关闭">×</button></header>
+      <header><div><p class="kicker">NEW GUI RUN</p><h2>新建 GUI 任务</h2></div><button type="button" id="close-dialog" aria-label="关闭">×</button></header>
       <label>任务目标<textarea name="goal" required maxlength="4000" placeholder="例如：打开订单列表，找到最新失败订单并返回订单号"></textarea></label>
-      <div class="form-row"><label>平台<select name="platform"><option value="browser">Browser</option><option value="android">Android</option><option value="iphone">iPhone</option></select></label><label>感知模式<select name="perception"><option value="enhanced">Enhanced</option><option value="vision-only">Vision only</option></select></label><label>最大轮次<input name="max_turns" type="number" min="1" max="50" value="50"></label></div>
-      <p class="notice"><b>模型连接：</b>任务会访问本地配置的模型网关，并需要对应 API_KEY。执行环境与产物留在本机，但推理并非完全离线。</p>
-      <footer><button type="button" id="cancel-dialog">取消</button><button class="primary" type="submit">检查环境并启动</button></footer>
+      <div class="form-row"><label>平台<select id="task-platform" name="platform"><option value="browser">Browser</option><option value="android">Android</option><option value="iphone">iPhone</option></select></label><label>感知模式<select name="perception"><option value="enhanced">Enhanced</option><option value="vision-only">Vision only</option></select></label><label>最大轮次<input name="max_turns" type="number" min="1" max="50" value="50"></label></div>
+      <label id="android-device-field" class="platform-field hidden">Android 设备地址
+        <input id="adb-serial" name="adb_serial" maxlength="200" autocomplete="off" spellcheck="false" placeholder="例如：192.168.1.50 或 192.168.1.50:5555">
+        <small>支持设备 IP、IP:端口或 adb serial；只填 IP 时默认使用 5555 端口。成功连接后会在本机记住；清空则自动选择唯一已连接设备。</small>
+      </label>
+      <p id="model-notice" class="notice"><b>模型连接：</b>正在检查 `.env` 中的模型网关、BASE_URL 和 API_KEY。任务推理并非完全离线。</p>
+      <p id="platform-notice" class="notice"><b>平台依赖：</b>打开此窗口后检查 CDP、adb 或 iPhone 本地 helper。</p>
+      <footer><button type="button" id="cancel-dialog">取消</button><button id="start-task" class="primary" type="submit" disabled>检查环境并启动</button></footer>
     </form>
+  </dialog>
+  <dialog id="frame-dialog" class="frame-dialog">
+    <header><strong id="frame-title">运行截图</strong><button type="button" id="close-frame" aria-label="关闭截图">×</button></header>
+    <img id="frame-image" alt="运行截图">
   </dialog>
   <script src="/assets/console.js" defer></script>
 </body>

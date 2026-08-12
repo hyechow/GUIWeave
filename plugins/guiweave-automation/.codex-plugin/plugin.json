@@ -1,7 +1,7 @@
 {
   "name": "guiweave-automation",
-  "version": "0.1.0+codex.20260812081557",
-  "description": "macOS Developer Preview for local GUI automation and private document knowledge with GUIWeave Tool Agent Master",
+  "version": "0.1.0+codex.20260812102223",
+  "description": "macOS Developer Preview for local GUI automation with bundled device helpers and Apple Silicon iPhone support",
   "author": {
     "name": "hyde"
   },
@@ -9,13 +9,14 @@
   "interface": {
     "displayName": "GUIWeave Automation",
     "shortDescription": "Run local browser, Android, and iPhone tasks with Tool Agent.",
-    "longDescription": "A macOS Developer Preview that gives Codex a local stdio MCP server and Skill for authorized Chrome, Android, and iPhone Mirroring automation, private document-to-knowledge previews, logs, screenshots, traces, HTML reports, and replay artifacts.",
+    "longDescription": "A macOS Developer Preview with bundled adb, scrcpy, and Apple Silicon iPhone helpers. It gives Codex a local stdio MCP server and Skill for authorized Chrome, Android, and iPhone Mirroring automation, private document knowledge, reports, and replay.",
     "developerName": "hyde",
     "category": "Productivity",
     "capabilities": [
       "Local browser automation",
       "Android automation",
       "iPhone Mirroring automation",
+      "Bundled adb, scrcpy, and iPhone helpers",
       "Private document knowledge",
       "Run reports and replay"
     ],

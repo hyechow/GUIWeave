@@ -271,6 +271,111 @@ def test_incomplete_visual_candidates_keep_detail_collection_open(
 
     assert frame.collections == []
     assert frame.missing_requirements == ["review_details"]
+    assert frame.requirement_scopes["review_details"]["schema_rejected_rows"] == 1
+    assert frame.requirement_scopes["review_details"]["collection_blockers"] == [
+        "visible rows did not satisfy the required row schema"
+    ]
+
+
+def test_vision_extract_preserves_schema_rejected_rows_for_empty_classification(
+    tmp_path: Path,
+) -> None:
+    requirement = DataRequirement(
+        id="forecast",
+        description="Requested forecast fields",
+        row_schema={
+            "type": "object",
+            "properties": {
+                "condition": {"type": "string"},
+                "temperature": {"type": "number"},
+                "optional_source_metric": {"type": "number"},
+            },
+            "required": ["condition", "temperature", "optional_source_metric"],
+        },
+        field_sources={
+            "condition": "Condition",
+            "temperature": "Temperature",
+            "optional_source_metric": "Supplemental Metric",
+        },
+        field_types={
+            "condition": "text",
+            "temperature": "number",
+            "optional_source_metric": "number",
+        },
+    )
+    response = SimpleNamespace(
+        content=json.dumps({
+            "found": True,
+            "rows": [{
+                "condition": "Cloudy",
+                "temperature": 28,
+                "optional_source_metric": None,
+            }],
+            "end_visible": True,
+            "scope_satisfied": True,
+            "evidence": "one visible row",
+        }),
+        usage_metadata={},
+        response_metadata={},
+    )
+    observed_messages = []
+    vision = SimpleNamespace()
+    vision.bind = lambda **_kwargs: SimpleNamespace(
+        invoke=lambda messages: observed_messages.extend(messages) or response
+    )
+    materializer = _materializer(tmp_path, "vision-only")
+    materializer._vision = vision
+
+    extracted = PerceptionMaterializer._vision_extract(
+        materializer,
+        requirement,
+        b"png",
+        acquisition_filters={},
+    )
+
+    assert len(extracted["rows"]) == 1
+    assert extracted["rows"][0]["optional_source_metric"] is None
+    human_text = observed_messages[-1].content[0]["text"]
+    assert "Task reference time (frozen platform clock):" in human_text
+
+
+def test_optional_visual_null_is_omitted_instead_of_rejecting_row(
+    tmp_path: Path,
+) -> None:
+    requirement = DataRequirement(
+        id="records",
+        description="Visible records with an optional source field",
+        row_schema={
+            "type": "object",
+            "properties": {
+                "name": {"type": "string"},
+                "optional_note": {"type": "string"},
+            },
+            "required": ["name"],
+            "additionalProperties": False,
+        },
+        field_sources={"name": "Name", "optional_note": "Note"},
+        field_types={"name": "text", "optional_note": "text"},
+    )
+    materializer = _materializer(tmp_path, "vision-only")
+    materializer._vision_extract = lambda *_args, **_kwargs: {  # type: ignore[method-assign]
+        "found": True,
+        "rows": [{"name": "visible", "optional_note": None}],
+        "end_visible": True,
+        "scope_satisfied": True,
+    }
+
+    frame, _ = materializer.observe(
+        bundle=FakeBundle([]),
+        platform=FakePlatform(),
+        requirements=[requirement],
+        frame_no=1,
+    )
+
+    assert frame.collections[0].row_count == 1
+    assert materializer.data_store.collection_rows(frame.collections[0].ref) == [
+        {"name": "visible"}
+    ]
 
 
 def test_visual_values_use_complete_enhanced_surface_as_coverage_evidence(

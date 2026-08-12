@@ -9,6 +9,10 @@ from pathlib import Path
 from collections.abc import Callable
 from typing import Any, Literal
 
+from gui_agent.core.config.preflight import (
+    ModelPreflightResult,
+    check_model_environment,
+)
 from gui_agent.core.runtime.io import (
     capture_stdio,
     create_run_dir,
@@ -77,12 +81,44 @@ class ToolAgentService:
     def __init__(self, *, log_root: Path | None = None) -> None:
         self.log_root = (log_root or get_log_root()).expanduser().resolve()
 
+    def check_model_environment(self) -> ModelPreflightResult:
+        """Validate every model slot required by a Tool Agent task."""
+
+        return check_model_environment()
+
+    def check_platform_environment(
+        self,
+        platform: PlatformName,
+        **platform_options: object,
+    ) -> SetupCheckResult:
+        """Validate the selected local GUI backend and its runtime dependencies."""
+
+        return build_platform(platform, **platform_options).setup_check()
+
     def check_environment(
         self,
         platform: PlatformName,
         **platform_options: object,
     ) -> SetupCheckResult:
-        return build_platform(platform, **platform_options).setup_check()
+        model = self.check_model_environment()
+        platform_setup = self.check_platform_environment(platform, **platform_options)
+        if not model.ok:
+            return SetupCheckResult(
+                ok=False,
+                summary=model.summary,
+                lines=(*model.lines, *platform_setup.lines),
+            )
+        if not platform_setup.ok:
+            return SetupCheckResult(
+                ok=False,
+                summary=platform_setup.summary,
+                lines=(*model.lines, *platform_setup.lines),
+            )
+        return SetupCheckResult(
+            ok=True,
+            summary="GUIWeave 运行环境已就绪",
+            lines=(*model.lines, *platform_setup.lines),
+        )
 
     def run(
         self,
@@ -104,6 +140,11 @@ class ToolAgentService:
             raise ValueError("goal must not be empty")
         if not 1 <= max_turns <= 50:
             raise ValueError("max_turns must be between 1 and 50")
+
+        model_setup = self.check_model_environment()
+        if not model_setup.ok:
+            detail = "\n".join(model_setup.lines)
+            raise RuntimeError(f"{model_setup.summary}\n{detail}".strip())
 
         bundle = build_platform(platform, **platform_options)
         setup = bundle.setup_check()
@@ -345,6 +386,30 @@ class ToolAgentService:
         run_dir = self._resolve_run_dir(run_id)
         events = self._read_events(run_dir)
         return events[-limit:]
+
+    def get_run_frame_path(self, run_id: str, frame_name: str) -> Path:
+        """Resolve a screenshot referenced by this run's structured event stream."""
+
+        run_dir = self._resolve_run_dir(run_id)
+        requested = Path(frame_name)
+        if requested.name != frame_name or requested.suffix.lower() not in {
+            ".png",
+            ".jpg",
+            ".jpeg",
+            ".webp",
+        }:
+            raise ValueError("unsupported run frame")
+        referenced = {
+            Path(str(event["screenshot_path"])).name
+            for event in self._read_events(run_dir)
+            if event.get("screenshot_path")
+        }
+        if frame_name not in referenced:
+            raise ValueError("run frame is not referenced by the event stream")
+        path = (run_dir / frame_name).resolve()
+        if path.parent != run_dir or not path.is_file():
+            raise FileNotFoundError(f"run frame not found: {frame_name}")
+        return path
 
     def get_artifact_path(self, run_id: str, artifact: str) -> Path:
         """Resolve one explicitly supported run artifact."""

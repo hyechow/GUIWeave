@@ -586,6 +586,51 @@ class PlaywrightDevice:
         except Exception:
             return "", ""
 
+    def platform_time(self):
+        """Read the browser environment's local clock and timezone through CDP."""
+
+        from gui_agent.core.runtime.clock import (
+            host_time_fallback,
+            platform_time_from_parts,
+        )
+
+        expression = """(() => {
+          const now = new Date();
+          const minutes = -now.getTimezoneOffset();
+          const sign = minutes >= 0 ? '+' : '-';
+          const pad = value => String(Math.abs(value)).padStart(2, '0');
+          const offset = sign + pad(Math.trunc(minutes / 60)) + ':' + pad(minutes % 60);
+          const local = [
+            now.getFullYear(), '-', pad(now.getMonth() + 1), '-', pad(now.getDate()), 'T',
+            pad(now.getHours()), ':', pad(now.getMinutes()), ':', pad(now.getSeconds()), offset
+          ].join('');
+          return {
+            local_datetime: local,
+            timezone: Intl.DateTimeFormat().resolvedOptions().timeZone || '',
+            utc_offset: offset
+          };
+        })()"""
+        try:
+            result = self._cdp_send(
+                "Runtime.evaluate",
+                {"expression": expression, "returnByValue": True},
+            )
+            value = (result.get("result") or {}).get("value") or {}
+            if not all(value.get(key) for key in ("local_datetime", "utc_offset")):
+                raise ValueError("CDP clock response is incomplete")
+            return platform_time_from_parts(
+                "browser",
+                local_datetime=str(value["local_datetime"]),
+                timezone_name=str(value.get("timezone") or value["utc_offset"]),
+                utc_offset=str(value["utc_offset"]),
+                source="browser_cdp",
+            )
+        except Exception as exc:  # noqa: BLE001 - clock has explicit fallback provenance
+            return host_time_fallback(
+                "browser",
+                reason=f"browser clock unavailable: {type(exc).__name__}",
+            )
+
     def form_state_fingerprint(self) -> str | None:
         """Hash form values and checked state, excluding transient focus.
 

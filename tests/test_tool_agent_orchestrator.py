@@ -783,6 +783,74 @@ def test_master_compiler_regenerates_only_during_static_review() -> None:
     assert events[1][1]["diagnostics"] == []
 
 
+def _launch_app_program(app: str) -> str:
+    return _program(
+        f'''\
+ctx.gui_worker(
+    worker_id="open_settings",
+    profile="operator",
+    goal="Open the requested application",
+    success_criteria=["The requested application is visible"],
+    data_requirements=[],
+    actions=[{{
+        "name": "launch_requested_app",
+        "capability": "launch_app",
+        "description": "Launch the requested application",
+        "fixed_args": {{"app": {app!r}}},
+    }}],
+)
+ctx.finish("result:ui_state", effect="ui_state")
+'''.strip()
+    )
+
+
+def test_master_review_rejects_non_runtime_launch_app_name() -> None:
+    diagnostics = validate_master_source(
+        _launch_app_program("Settings"),
+        platform_context={
+            "name": "android",
+            "applications": ["com.android.settings/.HWSettings"],
+        },
+    )
+
+    assert any(
+        item.code == "LAUNCH_APP_NAME" and "'Settings'" in item.message
+        for item in diagnostics
+    )
+    assert validate_master_source(
+        _launch_app_program("com.android.settings/.HWSettings"),
+        platform_context={
+            "name": "android",
+            "applications": ["com.android.settings/.HWSettings"],
+        },
+    ) == []
+
+
+def test_master_compiler_repairs_non_runtime_launch_app_name() -> None:
+    invalid = _launch_app_program("Settings")
+    valid = _launch_app_program("com.android.settings/.HWSettings")
+    llm = _SequenceLLM(invalid, valid)
+    events = []
+
+    program = compile_master_program(
+        llm=llm,
+        system_prompt="Compile a program.",
+        task_context={
+            "goal": "Open settings",
+            "platform": {
+                "name": "android",
+                "applications": ["com.android.settings/.HWSettings"],
+            },
+        },
+        on_event=lambda event, payload: events.append((event, payload)),
+    )
+
+    assert program.source == valid
+    assert program.attempts == 2
+    assert any("LAUNCH_APP_NAME" in item for item in events[0][1]["diagnostics"])
+    assert events[1][1]["diagnostics"] == []
+
+
 def test_coding_master_orchestrates_gui_then_runtime_transform() -> None:
     store = RuntimeDataStore()
     gui_calls = []

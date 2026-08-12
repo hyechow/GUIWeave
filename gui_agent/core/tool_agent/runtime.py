@@ -24,6 +24,7 @@ from gui_agent.core.runtime.action_settle import (
     has_snapped_point,
     settle_after_action,
 )
+from gui_agent.core.runtime.clock import PlatformTimeSnapshot, host_time_fallback
 from gui_agent.core.schemas import BaseAction, BaseActionDecision, TargetVerify
 from gui_agent.core.tool_agent.contracts import (
     CollectionRef,
@@ -80,6 +81,7 @@ _MASTER_REDELEGATE_SYSTEM = load_prompt_text("task.tool_agent.master_redelegate"
 _WORKER_SYSTEM = load_prompt_text("task.tool_agent.worker")
 _MAX_ACTION_PATCHES_PER_FRAME = 3
 _MAX_ACTION_GUARD_REPAIRS_PER_FRAME = 1
+_MAX_PREDISPATCH_REPAIRS_PER_FRAME = 1
 _MAX_LOGICAL_WORKER_STEPS = 40
 _LOCAL_REPLAN_EXTRA_STEPS = 28
 _MULTI_ACTION_TARGET_TOLERANCE = 80.0
@@ -106,6 +108,12 @@ _EXECUTABLE_CAPABILITIES = {
 
 class _RuntimeCancelled(Exception):
     """Internal cooperative stop raised only at safe runtime boundaries."""
+
+
+class _WorkerActionRejected(ValueError):
+    """An action contract was rejected before any platform input was dispatched."""
+
+
 _ACTION_TYPES = {"open_url": "navigate"}
 _REDACTED_ACCESS_VALUE = "[session access value redacted]"
 _WORKER_VERIFY_POOL = ThreadPoolExecutor(
@@ -115,6 +123,13 @@ _WORKER_VERIFY_POOL = ThreadPoolExecutor(
 _TARGET_VERIFIED_ACTION_TYPES = {
     "tap", "click", "type", "long_press", "select_option",
 }
+
+
+def _worker_action_error(exc: Exception) -> dict[str, Any]:
+    payload = {"status": "error", "error": f"{type(exc).__name__}: {exc}"}
+    if isinstance(exc, _WorkerActionRejected):
+        payload["reuse_current_frame"] = True
+    return payload
 
 
 def _token_metric(
@@ -232,6 +247,20 @@ class ToolAgentRuntime:
         self.max_subgoal_replans = max_subgoal_replans
         self.max_compile_attempts = max_compile_attempts
         self.allow_multi_action = allow_multi_action
+        read_time = getattr(bundle, "read_time", None)
+        try:
+            captured_time = read_time(platform) if callable(read_time) else None
+            self.platform_time = PlatformTimeSnapshot.model_validate(captured_time)
+        except Exception as exc:  # noqa: BLE001 - provenance makes fallback explicit
+            self.platform_time = host_time_fallback(
+                bundle.platform,
+                reason=f"platform adapter clock unavailable: {type(exc).__name__}",
+            )
+        if not callable(read_time):
+            self.platform_time = host_time_fallback(
+                bundle.platform,
+                reason="platform adapter does not expose a clock reader",
+            )
         self.data_store = RuntimeDataStore()
         self.master, self.master_cfg = _llm("tool_agent.master")
         self.worker, self.worker_cfg = _llm("tool_agent.worker")
@@ -241,6 +270,7 @@ class ToolAgentRuntime:
             mode=perception_mode,
             data_store=self.data_store,
             log_dir=log_dir,
+            platform_time=self.platform_time,
             on_event=self._trace,
         )
         self.trace: list[dict[str, Any]] = []
@@ -315,6 +345,16 @@ class ToolAgentRuntime:
                 platform_rejections.clear()
 
     def _run(self, goal: str, *, knowledge: str = "", page_url: str = "", page_title: str = "") -> ToolAgentRun:
+        if getattr(self, "platform_time", None) is None:
+            platform = getattr(self, "platform", None) or getattr(
+                getattr(self, "bundle", None),
+                "platform",
+                "browser",
+            )
+            self.platform_time = host_time_fallback(
+                platform,
+                reason="runtime restored without a captured platform clock",
+            )
         self._trace(
             "runtime_started",
             goal=goal,
@@ -323,10 +363,12 @@ class ToolAgentRuntime:
             multi_action=bool(getattr(self, "allow_multi_action", False)),
             master_model=self.master_cfg.model,
             worker_model=self.worker_cfg.model,
+            platform_time=self.platform_time.model_dump(mode="json"),
         )
         task_context = {
             "goal": goal,
             "page": {"url": page_url, "title": page_title},
+            "task_reference_time": self.platform_time.model_dump(mode="json"),
             "platform": self._platform_prompt_context(),
             "application_knowledge": knowledge or "(none)",
         }
@@ -430,6 +472,7 @@ class ToolAgentRuntime:
             worker_model=self.worker_cfg.model,
             perception_model=self.materializer.model,
             perception_mode=self.perception_mode,
+            platform_time=self.platform_time.model_dump(mode="json"),
         )
         self._write_artifacts(run)
         replay = write_replay_artifact(self.log_dir)
@@ -884,14 +927,28 @@ class ToolAgentRuntime:
             logical_worker_id,
             WorkerActionCircuitBreaker(),
         )
-        for step in range(1, spec.max_steps + 1):
+        step = 0
+        reusable_observation: tuple[
+            MaterializedFrame,
+            bytes,
+            dict[str, Any],
+        ] | None = None
+        predispatch_repair_turn = 0
+        while step < spec.max_steps or reusable_observation is not None:
             self._raise_if_cancelled()
-            if self._turn_budget_exhausted():
-                return self._turn_budget_failure(
-                    worker_id=worker_id,
-                    steps=step - 1,
-                )
-            frame, png = self._observe(spec)
+            if reusable_observation is None:
+                if self._turn_budget_exhausted():
+                    return self._turn_budget_failure(
+                        worker_id=worker_id,
+                        steps=step,
+                    )
+                step += 1
+                frame, png = self._observe(spec)
+                initial_same_frame_feedback = None
+                predispatch_repair_turn = 0
+            else:
+                frame, png, initial_same_frame_feedback = reusable_observation
+                reusable_observation = None
             last_frames = getattr(self, "_worker_last_frames", None)
             if last_frames is None:
                 self._worker_last_frames = {}
@@ -918,7 +975,7 @@ class ToolAgentRuntime:
             patch_turn = 0
             guard_repair_turn = 0
             circuit_decision = None
-            same_frame_feedback: dict[str, Any] | None = None
+            same_frame_feedback = initial_same_frame_feedback
             while True:
                 messages, context_reports = self._worker_messages(
                     spec=spec,
@@ -1183,14 +1240,7 @@ class ToolAgentRuntime:
                         frame,
                     )
             except Exception as exc:  # noqa: BLE001 - feed capability failure back into ReAct
-                result_payload = {
-                    "status": "error",
-                    "error": f"{type(exc).__name__}: {exc}",
-                    "recovery": (
-                        "Use the error and current frame to choose a materially different GUI "
-                        "action. Do not repeat the same failed call."
-                    ),
-                }
+                result_payload = _worker_action_error(exc)
                 terminal = None
                 self._trace("worker_tool_error", step=step, tool=call["name"], error=result_payload["error"])
             if circuit_decision is not None:
@@ -1206,6 +1256,38 @@ class ToolAgentRuntime:
                     args=call["args"],
                     result=result_payload,
                 )
+            if result_payload.get("reuse_current_frame") is True:
+                predispatch_repair_turn += 1
+                if predispatch_repair_turn > _MAX_PREDISPATCH_REPAIRS_PER_FRAME:
+                    return WorkerOutcome(
+                        phase="failed",
+                        summary=(
+                            "Worker repeated an action rejected before dispatch after "
+                            "same-frame corrective feedback."
+                        ),
+                        steps=step,
+                    )
+                error = str(
+                    result_payload.get("error")
+                    or result_payload.get("reason")
+                    or "The action contract was rejected before dispatch."
+                )
+                reusable_observation = (frame, png, {
+                    "status": "rejected_before_dispatch",
+                    "error": error,
+                    "instruction": (
+                        "No GUI action was executed. Correct the action using this same "
+                        "screenshot; do not request another observation."
+                    ),
+                })
+                self._trace(
+                    "worker_same_frame_action_repair",
+                    step=step,
+                    frame_id=frame.frame_id,
+                    repair_turn=predispatch_repair_turn,
+                    error=error,
+                )
+                continue
             if terminal == "complete":
                 descriptor = (
                     CollectionRef.model_validate(result_payload)
@@ -1367,6 +1449,7 @@ class ToolAgentRuntime:
 
     def _observe(self, spec: WorkerSpec) -> tuple[MaterializedFrame, bytes]:
         self._frame_no += 1
+        observe_started_at = time.perf_counter()
         frame, png = self.materializer.observe(
             bundle=self.bundle,
             platform=self.platform,
@@ -1389,7 +1472,10 @@ class ToolAgentRuntime:
             url=frame.url,
             title=frame.title,
             structured_surfaces=frame.structured_surfaces,
+            platform_time=frame.platform_time,
             control_count=len(frame.controls),
+            observe_seconds=round(time.perf_counter() - observe_started_at, 3),
+            capture_timing=getattr(self.platform, "last_capture_timing", None),
         )
         durable_frame = _redact_log_value(
             frame.model_dump(mode="json"),
@@ -1766,6 +1852,7 @@ class ToolAgentRuntime:
         executed = 0
         reason = ""
         terminal: str | None = None
+        rejected_before_dispatch = False
         for index, action_call in enumerate(calls, start=1):
             action_spec = action_by_name[action_call["name"]]
             remaining = calls[index:]
@@ -1825,16 +1912,18 @@ class ToolAgentRuntime:
                     current_png,
                     frame,
                 )
+            except _WorkerActionRejected as exc:
+                result = _worker_action_error(exc)
+                terminal = None
+                rejected_before_dispatch = True
             except Exception as exc:  # noqa: BLE001 - abort suffix and reobserve
-                result = {
-                    "status": "error",
-                    "error": f"{type(exc).__name__}: {exc}",
-                }
+                result = _worker_action_error(exc)
                 terminal = None
             self._record_action_attempt(
                 circuit_breaker, circuit_decision, action_spec, result
             )
-            executed += 1
+            if not rejected_before_dispatch:
+                executed += 1
             journal.record_turn(
                 step=step,
                 substep=index,
@@ -1844,6 +1933,9 @@ class ToolAgentRuntime:
                 args=action_call["args"],
                 result=result,
             )
+            if rejected_before_dispatch:
+                reason = str(result["error"])
+                break
             target_signal = result.get("target_signal")
             if (
                 isinstance(target_signal, dict)
@@ -1899,6 +1991,8 @@ class ToolAgentRuntime:
         )
         if reason:
             payload["reason"] = reason
+        if executed == 0 and rejected_before_dispatch:
+            payload["reuse_current_frame"] = True
         self._trace(event, worker_id=worker_id, step=step, **payload)
         return payload, terminal
 
@@ -2279,7 +2373,7 @@ class ToolAgentRuntime:
         installed = self._installed_applications()
         if candidate and candidate in installed:
             return
-        raise ValueError(
+        raise _WorkerActionRejected(
             "launch_app requires an exact Runtime-provided application name; "
             f"available: {list(installed)}"
         )
@@ -2596,11 +2690,26 @@ class ToolAgentRuntime:
                 for item in entry.get("structured_surfaces") or []
                 if isinstance(item, dict)
             )
+            capture_timing = (
+                entry.get("capture_timing")
+                if isinstance(entry.get("capture_timing"), dict)
+                else {}
+            )
+            timing_text = " · ".join(
+                f"{label}={float(value):.1f}s"
+                for label, value in {
+                    "total": entry.get("observe_seconds"),
+                    "hierarchy": capture_timing.get("hierarchy_seconds"),
+                    "pixels": capture_timing.get("screenshot_seconds"),
+                }.items()
+                if value is not None
+            )
             return (
                 f"\n--- Turn {turn_no} ---\n"
                 + (f"Screenshot : {screenshot}\n" if screenshot else "")
                 + f"Observation: {entry.get('mode', '?')} perception · "
                 f"{entry.get('control_count', 0)} controls\n"
+                + (f"Timing     : {timing_text}\n" if timing_text else "")
                 + (f"Page       : {page}\n" if page else "")
                 + (f"Surfaces   : {surfaces}\n" if surfaces else "")
                 + f"Scope      : {scope_text}\n"
@@ -2705,6 +2814,12 @@ class ToolAgentRuntime:
         if event == "worker_tool_error":
             error = str(entry.get("error") or "").splitlines()[0]
             return f"Result     : ERROR · {error}"
+        if event == "worker_same_frame_action_repair":
+            return (
+                "Recovery   : action rejected before dispatch · reuse current frame "
+                f"({entry.get('repair_turn', '?')}/"
+                f"{_MAX_PREDISPATCH_REPAIRS_PER_FRAME})"
+            )
         if event == "worker_action_patch":
             action = entry.get("action") if isinstance(entry.get("action"), dict) else {}
             return (
@@ -2848,6 +2963,9 @@ class ToolAgentRuntime:
             "worker_model": getattr(getattr(self, "worker_cfg", None), "model", ""),
             "perception_model": getattr(getattr(self, "materializer", None), "model", ""),
             "perception_mode": getattr(self, "perception_mode", "enhanced"),
+            "platform_time": getattr(self, "platform_time", None).model_dump(mode="json")
+            if getattr(self, "platform_time", None) is not None
+            else {},
         }
         target = self.log_dir / "tool_agent_trace.json"
         temporary = self.log_dir / "tool_agent_trace.json.tmp"

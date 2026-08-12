@@ -10,8 +10,8 @@ Use the GUIWeave MCP tools to execute a bounded natural-language goal against th
 ## Run a task
 
 1. Confirm the requested platform and turn the request into one exact goal. Do not broaden the goal or infer unrelated follow-up work.
-2. Call `check_environment` before the first run on a platform or when setup may have changed. Report actionable setup failures instead of repeatedly retrying.
-3. For Chrome, call `run_browser_task`. For Android, call `run_android_task`. For iPhone, call `run_iphone_task`; its screenshots come from `bin/sck_server` and input from `bin/mirror_daemon`. Start with the default perception mode and a conservative turn limit; increase the limit only when the task clearly needs it.
+2. Call `check_environment` before the first run on a platform or when setup may have changed. It checks the configured model slots and the platform's local dependencies: Chrome CDP for headed Browser, bundled `adb` for Android (`scrcpy` is optional), or an Apple Silicon Mac, executable bundled `sck_server` / `mirror_daemon` helpers including their macOS Gatekeeper assessment, and the Mirroring window for iPhone. Report missing environment variable names or local dependencies without exposing credential values, and do not repeatedly retry.
+3. For Chrome, call `run_browser_task`. For Android, call `run_android_task`. For iPhone, call `run_iphone_task`; this developer preview supports M-series Macs, with screenshots from bundled `sck_server` and input from bundled `mirror_daemon`. Start with the default perception mode and a conservative turn limit; increase the limit only when the task clearly needs it.
 4. Report the terminal phase, verification state, final answer, `run_id`, and artifact paths. If the outcome is incomplete or unclear, call `get_run_result` before proposing another run.
 
 ## Safety boundaries

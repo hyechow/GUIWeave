@@ -2,8 +2,8 @@
 
 from __future__ import annotations
 
-import asyncio
 import mimetypes
+import re
 import secrets
 import threading
 from dataclasses import dataclass, field
@@ -13,13 +13,24 @@ from typing import Any, Literal
 from fastapi import FastAPI, HTTPException, Request
 from fastapi.responses import FileResponse, HTMLResponse
 from dotenv import load_dotenv
-from pydantic import BaseModel, ConfigDict, Field
+from pydantic import BaseModel, ConfigDict, Field, field_validator
 
 from gui_agent.core.tool_agent.service import ToolAgentService
 from gui_agent.core.runtime.platforms import PlatformName
 
 
 ASSET_ROOT = Path(__file__).resolve().parent / "console_assets"
+
+
+def _normalize_android_serial(value: str | None) -> str | None:
+    """Accept a bare device IP while preserving ordinary adb serials."""
+
+    serial = (value or "").strip()
+    if not serial:
+        return None
+    if re.fullmatch(r"(?:\d{1,3}\.){3}\d{1,3}", serial):
+        return f"{serial}:5555"
+    return serial
 
 
 class RunRequest(BaseModel):
@@ -34,6 +45,11 @@ class RunRequest(BaseModel):
     headless: bool = False
     multi_action: bool = True
     show_hud: bool = False
+
+    @field_validator("adb_serial", mode="before")
+    @classmethod
+    def normalize_adb_serial(cls, value: object) -> str | None:
+        return _normalize_android_serial(None if value is None else str(value))
 
 
 @dataclass
@@ -168,7 +184,7 @@ def create_app(service: ToolAgentService | None = None) -> FastAPI:
 
     @app.get("/assets/{name}")
     def asset(name: str) -> FileResponse:
-        if name not in {"console.css", "console.js"}:
+        if name not in {"console.css", "environment.css", "console.js"}:
             raise HTTPException(status_code=404)
         return FileResponse(ASSET_ROOT / name)
 
@@ -185,14 +201,41 @@ def create_app(service: ToolAgentService | None = None) -> FastAPI:
     @app.get("/api/runs/{run_id:path}/events")
     def get_events(run_id: str, limit: int = 200):
         try:
-            return {"events": console.service.get_run_events(run_id, limit=limit)}
+            events = console.service.get_run_events(run_id, limit=limit)
+            projected = []
+            for event in events:
+                item = dict(event)
+                screenshot_path = item.pop("screenshot_path", None)
+                if screenshot_path:
+                    frame_name = Path(str(screenshot_path)).name
+                    try:
+                        console.service.get_run_frame_path(run_id, frame_name)
+                    except (FileNotFoundError, ValueError):
+                        pass
+                    else:
+                        item["screenshot"] = {"name": frame_name}
+                projected.append(item)
+            return {"events": projected}
         except Exception as exc:  # noqa: BLE001
             raise _http_error(exc) from exc
+
+    @app.get("/api/run-frame")
+    def get_run_frame(run_id: str, frame: str):
+        try:
+            path = console.service.get_run_frame_path(run_id, frame)
+        except Exception as exc:  # noqa: BLE001
+            raise _http_error(exc) from exc
+        media_type = mimetypes.guess_type(path.name)[0] or "application/octet-stream"
+        return FileResponse(path, media_type=media_type, filename=None)
 
     @app.get("/api/runs/{run_id:path}/artifacts/{artifact}")
     def get_artifact(run_id: str, artifact: str):
         try:
-            path = console.service.get_artifact_path(run_id, artifact)
+            path = (
+                console.service.get_run_frame_path(run_id, artifact)
+                if Path(artifact).suffix.lower() in {".png", ".jpg", ".jpeg", ".webp"}
+                else console.service.get_artifact_path(run_id, artifact)
+            )
         except Exception as exc:  # noqa: BLE001
             raise _http_error(exc) from exc
         media_type = mimetypes.guess_type(path.name)[0] or "application/octet-stream"
@@ -209,10 +252,39 @@ def create_app(service: ToolAgentService | None = None) -> FastAPI:
     def list_tasks():
         return {"tasks": console.tasks()}
 
+    @app.get("/api/environment/model")
+    def model_environment():
+        return console.service.check_model_environment().to_dict()
+
+    @app.get("/api/environment/{platform}")
+    def platform_environment(
+        platform: PlatformName,
+        cdp_url: str | None = None,
+        adb_serial: str | None = None,
+        headless: bool = False,
+    ):
+        android_serial = _normalize_android_serial(adb_serial)
+        result = console.service.check_platform_environment(
+            platform,
+            **(
+                {"cdp_url": cdp_url, "headless": headless}
+                if platform == "browser"
+                else {"serial": android_serial} if platform == "android"
+                else {}
+            ),
+        )
+        return {
+            "ok": result.ok,
+            "summary": result.summary,
+            "details": list(result.lines),
+        }
+
     @app.post("/api/tasks", status_code=202)
-    async def create_task(payload: RunRequest):
-        task = console.submit(payload)
-        await asyncio.sleep(0)
+    def create_task(payload: RunRequest):
+        try:
+            task = console.submit(payload)
+        except Exception as exc:  # noqa: BLE001
+            raise _http_error(exc) from exc
         return {"task_id": task.task_id, "status": task.status}
 
     @app.post("/api/tasks/{task_id}/cancel", status_code=202)

@@ -17,6 +17,7 @@ from langchain_core.messages import SystemMessage
 from langchain_openai import ChatOpenAI
 
 from gui_agent.core.config import resolve_llm_config
+from gui_agent.core.runtime.clock import PlatformTimeSnapshot, host_time_fallback
 from gui_agent.core.tool_agent.filter_state import (
     canonical_filter_value,
     compile_filter_predicates,
@@ -300,6 +301,21 @@ def _normalize_visual_rows(
                 )
             continue
         normalized = dict(row)
+        required_fields = set(requirement.row_schema.get("required") or [])
+        properties = requirement.row_schema.get("properties") or {}
+        for field, value in list(normalized.items()):
+            field_schema = properties.get(field)
+            allowed_type = (
+                field_schema.get("type") if isinstance(field_schema, dict) else None
+            )
+            allows_null = allowed_type == "null" or (
+                isinstance(allowed_type, list) and "null" in allowed_type
+            )
+            if value is None and field not in required_fields and not allows_null:
+                # Vision providers commonly return explicit null for an optional
+                # field that is absent on the surface. In JSON Schema that means
+                # "not observed", so omit it instead of rejecting the whole row.
+                normalized.pop(field)
         for field, declared_type in requirement.field_types.items():
             if field not in normalized or normalized[field] is None:
                 continue
@@ -565,11 +581,13 @@ class PerceptionMaterializer:
         mode: PerceptionMode,
         data_store: RuntimeDataStore,
         log_dir: Path,
+        platform_time: PlatformTimeSnapshot,
         on_event: Callable[..., None] | None = None,
     ) -> None:
         self.mode = mode
         self.data_store = data_store
         self.log_dir = log_dir
+        self.platform_time = platform_time
         self._on_event = on_event
         self._expected_totals: dict[tuple[str, str], int] = {}
         self._detail_collections: dict[str, _DetailCollectionState] = {}
@@ -804,6 +822,12 @@ class PerceptionMaterializer:
                         requirement,
                         raw_visual_rows,
                     )
+                    rejected_visual_rows = len(raw_visual_rows) - len(rows)
+                    if rejected_visual_rows:
+                        scope["collection_blockers"] = [
+                            "visible rows did not satisfy the required row schema"
+                        ]
+                        scope["schema_rejected_rows"] = rejected_visual_rows
                     surface = (
                         _structured_coverage(
                             table, requirement, scope=scope, url=url
@@ -978,6 +1002,13 @@ class PerceptionMaterializer:
         materialized = MaterializedFrame(
             frame_id=frame_id,
             screenshot_path=str(screenshot_path),
+            platform_time=(
+                getattr(self, "platform_time", None)
+                or host_time_fallback(
+                    "browser",
+                    reason="legacy materializer has no frozen platform clock",
+                )
+            ).model_dump(mode="json"),
             url=url or "",
             title=title or "",
             controls=controls,
@@ -1004,6 +1035,8 @@ class PerceptionMaterializer:
         prompt = (
             f"Data requirement: {requirement.description}\n"
             f"Visible target label: {requirement.target_label or '(not specified)'}\n"
+            "Task reference time (frozen platform clock): "
+            f"{json.dumps((getattr(self, 'platform_time', None) or host_time_fallback('browser', reason='legacy perception fallback')).model_dump(mode='json'), ensure_ascii=False)}\n"
             f"Logical row filters: {json.dumps(requirement.filters, ensure_ascii=False)}\n"
             f"Current UI acquisition filters: "
             f"{json.dumps(acquisition_filters, ensure_ascii=False)}\n"
@@ -1020,8 +1053,11 @@ class PerceptionMaterializer:
         rows = value.get("rows")
         if not isinstance(rows, list):
             value["rows"] = []
-        valid_rows = _normalize_visual_rows(requirement, value["rows"])
-        value["rows"] = valid_rows
+        # Preserve visibly transcribed rows until observe() classifies them. If
+        # schema validation drops a non-empty row here, the caller can no longer
+        # distinguish an incomplete record from an authoritative empty surface.
+        raw_rows = list(value["rows"])
+        valid_rows = _normalize_visual_rows(requirement, raw_rows)
         on_event = getattr(self, "_on_event", None)
         if on_event is not None:
             on_event(
@@ -1029,6 +1065,8 @@ class PerceptionMaterializer:
                 requirement_id=requirement.id,
                 found=bool(value.get("found")),
                 row_count=len(valid_rows),
+                observed_row_count=len(raw_rows),
+                schema_rejected_rows=len(raw_rows) - len(valid_rows),
                 end_visible=bool(value.get("end_visible")),
                 llm_elapsed_s=round(llm_elapsed_s, 3),
                 token_usage=response_usage(response),

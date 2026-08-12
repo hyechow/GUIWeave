@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import os
 import struct
 import subprocess
 import sys
@@ -10,8 +11,17 @@ from pathlib import Path
 
 
 ROOT = Path(__file__).resolve().parents[3]
-MIRROR_DAEMON = ROOT / "bin" / "mirror_daemon"
-SCK_SERVER = ROOT / "bin" / "sck_server"
+
+
+def _helper_path(environment_name: str, fallback_name: str) -> Path:
+    configured = os.environ.get(environment_name, "").strip()
+    if configured:
+        return Path(configured).expanduser().resolve()
+    return ROOT / "bin" / fallback_name
+
+
+MIRROR_DAEMON = _helper_path("GUIWEAVE_MIRROR_DAEMON", "mirror_daemon")
+SCK_SERVER = _helper_path("GUIWEAVE_SCK_SERVER", "sck_server")
 IPHONE_VIEWPORT = (318, 701)
 
 
@@ -72,7 +82,7 @@ class _FramedProcess:
 
 
 class SCKScreenshotClient:
-    """The sole iPhone screenshot source, using only ``bin/sck_server``."""
+    """The sole iPhone screenshot source, using only ``sck_server``."""
 
     def __init__(self, executable: Path = SCK_SERVER) -> None:
         self._transport = _FramedProcess(executable)
@@ -93,7 +103,7 @@ class SCKScreenshotClient:
 
 
 class MirrorDaemonClient:
-    """The sole iPhone input client, using only ``bin/mirror_daemon``."""
+    """The sole iPhone input client, using only ``mirror_daemon``."""
 
     viewport_size = IPHONE_VIEWPORT
 

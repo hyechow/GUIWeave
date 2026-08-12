@@ -12,6 +12,7 @@ Hierarchy failures degrade to the screenshot-only path.
 from __future__ import annotations
 
 import io
+import time
 from pathlib import Path
 from typing import Optional
 
@@ -58,6 +59,7 @@ class AndroidSession:
     def __init__(self, *, serial: Optional[str] = None):
         self.client = None  # AndroidDevice once connected
         self._serial = serial
+        self.last_capture_timing: dict[str, float | int | bool] = {}
 
     def __enter__(self) -> "AndroidSession":
         # Lazy import keeps the package import-light and core.runtime.factory adapter-free.
@@ -67,11 +69,6 @@ class AndroidSession:
         self.client = AndroidDevice(serial=self._serial)
         self.client.connect()
         print(f"设备连接成功 ({self.client.serial or 'auto'}), 分辨率 {self.client.win_w}x{self.client.win_h}")
-        # The scenario sets the emulator clock; use it as the authoritative date for
-        # relative-date reasoning ("tomorrow") instead of the host clock.
-        from gui_agent.context.runtime import set_provided_current_date
-
-        set_provided_current_date(self.client.device_date())
         return self
 
     def __exit__(self, *_):
@@ -84,6 +81,18 @@ class AndroidSession:
             raise RuntimeError("Android 设备尚未连接")
         return self.client.screenshot()
 
+    def settle_screenshot(self) -> bytes:
+        """Capture one lightweight frame for best-effort post-action settling."""
+
+        if self.client is None:
+            raise RuntimeError("Android 设备尚未连接")
+        return self.client.screenshot_once()
+
+    def platform_time(self):
+        if self.client is None:
+            raise RuntimeError("Android 设备尚未连接")
+        return self.client.platform_time()
+
     def capture(self) -> tuple[bytes, str | None]:
         """Capture a hierarchy followed by pixels from the same settled UI state."""
         if self.client is None:
@@ -91,10 +100,20 @@ class AndroidSession:
         # UIAutomator is slower than screencap. Taking them concurrently can pair an
         # old transition frame with a hierarchy from the destination screen. Finish
         # the optional structural sensor first, then capture the authoritative pixels.
-        xml_text = self.client.dump_ui_hierarchy()
-        if xml_text is None:
-            xml_text = self.client.dump_ui_hierarchy()
+        hierarchy_started_at = time.perf_counter()
+        # This sensor is optional. A failed/slow dump must not be repeated inside
+        # one observation; screenshot perception remains authoritative and the
+        # next real turn will try UIAutomator again.
+        xml_text = self.client.dump_ui_hierarchy(timeout_s=3.0)
+        hierarchy_seconds = time.perf_counter() - hierarchy_started_at
+        screenshot_started_at = time.perf_counter()
         png_bytes = self.client.screenshot()
+        screenshot_seconds = time.perf_counter() - screenshot_started_at
+        self.last_capture_timing = {
+            "hierarchy_seconds": round(hierarchy_seconds, 3),
+            "hierarchy_available": xml_text is not None,
+            "screenshot_seconds": round(screenshot_seconds, 3),
+        }
         return png_bytes, xml_text
 
     def list_apps(self) -> list[str]:

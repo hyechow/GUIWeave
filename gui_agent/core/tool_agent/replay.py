@@ -9,7 +9,7 @@ an LLM.
 from __future__ import annotations
 
 import json
-from dataclasses import dataclass
+from dataclasses import dataclass, replace
 from pathlib import Path
 from typing import Any, Literal
 
@@ -75,6 +75,7 @@ class RecordedContext:
 class RecordedRun:
     programs: tuple[RecordedProgram, ...]
     context: RecordedContext
+    platform_time: dict[str, Any] | None = None
 
 
 @dataclass(frozen=True)
@@ -89,6 +90,7 @@ class ReplayResult:
     gui_worker_count: int = 0
     trace: tuple[dict[str, Any], ...] = ()
     error: str = ""
+    platform_time: dict[str, Any] | None = None
 
     @property
     def ok(self) -> bool:
@@ -106,6 +108,7 @@ class ReplayResult:
             "gui_worker_count": self.gui_worker_count,
             "trace": list(self.trace),
             "error": self.error,
+            "platform_time": self.platform_time,
             "uses_browser": False,
             "uses_llm": False,
         }
@@ -205,6 +208,18 @@ def load_recorded_run(run_dir: Path) -> RecordedRun:
             gui_workers={key: tuple(items) for key, items in grouped_workers.items()},
             expected_phase=str(raw.get("phase") or ""),
             expected_output=raw.get("output"),
+        ),
+        platform_time=(
+            dict(raw.get("platform_time") or {})
+            or next(
+                (
+                    dict(event.get("platform_time") or {})
+                    for event in events
+                    if event.get("event") == "runtime_started"
+                    and event.get("platform_time")
+                ),
+                None,
+            )
         ),
     )
 
@@ -388,7 +403,10 @@ def replay_program(source: str, recording: RecordedContext) -> ReplayResult:
 
 def replay_recorded_run(recording: RecordedRun) -> ReplayResult:
     """Rerun all executions of the frozen reviewed program in original order."""
-    return _replay_programs(recording.programs, recording.context)
+    return replace(
+        _replay_programs(recording.programs, recording.context),
+        platform_time=recording.platform_time,
+    )
 
 
 def replay_run_directory(run_dir: Path) -> ReplayResult:

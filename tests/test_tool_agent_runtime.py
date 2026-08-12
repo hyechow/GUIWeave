@@ -763,6 +763,70 @@ def test_fused_worker_repairs_guarded_first_action_on_same_frame(monkeypatch) ->
     assert "runtime_scroll_visible" in worker.bound_schemas[1]
 
 
+def test_worker_repairs_rejected_launch_app_without_reobserving(monkeypatch) -> None:
+    exact_app = "com.android.settings/.HWSettings"
+    worker = _MultiActionWorker([
+        [{"name": "open_settings", "args": {"app": "Settings"}}],
+        [{"name": "open_settings", "args": {"app": exact_app}}],
+    ])
+    runtime = object.__new__(ToolAgentRuntime)
+    runtime.trace = []
+    runtime.statuses = []
+    runtime._status_cb = runtime.statuses.append
+    runtime.worker = worker
+    runtime._executor = _Executor()
+    runtime._visualizer = None
+    runtime._platform_capabilities = frozenset({"launch_app"})
+    runtime._installed_app_names = (exact_app,)
+    runtime._master_knowledge = ""
+    runtime._worker_access_context = ""
+    runtime.bundle = SimpleNamespace(
+        platform="android",
+        make_action=lambda payload: AndroidAction.model_validate(payload),
+    )
+    runtime.platform = SimpleNamespace(
+        screenshot=lambda: b"latest-png",
+        client=SimpleNamespace(),
+    )
+    runtime.perception_mode = "enhanced"
+    runtime.allow_multi_action = True
+    runtime.observe_calls = 0
+
+    def observe(_spec):
+        runtime.observe_calls += 1
+        return MaterializedFrame(
+            frame_id="frame:settings",
+            screenshot_path="frame.png",
+        ), b"initial-png"
+
+    runtime._observe = observe
+    monkeypatch.setattr(
+        "gui_agent.core.tool_agent.runtime.settle_after_action",
+        lambda platform, png, *, action_type: (0.0, False),
+    )
+    spec = WorkerSpec(
+        goal="Open system settings",
+        success_criteria=["System settings is visible"],
+        actions=[DynamicActionSpec(
+            name="open_settings",
+            capability="launch_app",
+            description="Open system settings",
+            exposed_args=["app"],
+        )],
+        max_steps=1,
+    )
+
+    runtime._run_worker("open-settings", spec)
+
+    assert runtime.observe_calls == 1
+    assert worker.calls == 2
+    assert [action.app for action in runtime._executor.actions] == [exact_app]
+    assert any(
+        event["event"] == "worker_same_frame_action_repair"
+        for event in runtime.trace
+    )
+
+
 def test_multi_action_suffix_requires_stable_visible_targets() -> None:
     runtime = object.__new__(ToolAgentRuntime)
     specs = {

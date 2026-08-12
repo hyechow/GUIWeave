@@ -13,21 +13,31 @@ class _Client:
         self.screenshot_calls += 1
         return b"png"
 
-    def dump_ui_hierarchy(self):
+    def screenshot_once(self):
+        self.screenshot_calls += 1
+        return b"settle-png"
+
+    def dump_ui_hierarchy(self, timeout_s=6.0):
+        self.hierarchy_timeout_s = timeout_s
         self.hierarchy_calls += 1
         return next(self.hierarchy_results)
 
 
-@pytest.mark.parametrize(("results", "calls"), [
-    ([None, "<hierarchy><node /></hierarchy>"], 2),
-    (["<hierarchy><node /></hierarchy>"], 1),
-])
-def test_android_capture_retries_only_a_missing_optional_hierarchy(
-    results, calls,
-) -> None:
+@pytest.mark.parametrize("result", [None, "<hierarchy><node /></hierarchy>"])
+def test_android_capture_bounds_optional_hierarchy_to_one_attempt(result) -> None:
     session = AndroidSession()
-    session.client = _Client(results)
+    session.client = _Client([result])
 
-    assert session.capture() == (b"png", "<hierarchy><node /></hierarchy>")
+    assert session.capture() == (b"png", result)
     assert session.client.screenshot_calls == 1
-    assert session.client.hierarchy_calls == calls
+    assert session.client.hierarchy_calls == 1
+    assert session.client.hierarchy_timeout_s == 3.0
+    assert session.last_capture_timing["hierarchy_available"] is (result is not None)
+
+
+def test_android_settle_screenshot_uses_one_primary_capture() -> None:
+    session = AndroidSession()
+    session.client = _Client(["<hierarchy />"])
+
+    assert session.settle_screenshot() == b"settle-png"
+    assert session.client.screenshot_calls == 1
