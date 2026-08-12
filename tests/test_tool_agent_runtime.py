@@ -263,6 +263,10 @@ def test_worker_prompt_keeps_stable_context_before_compact_attempt_contract() ->
 def test_runtime_materializes_result_ref_into_fixed_action_argument() -> None:
     runtime = object.__new__(ToolAgentRuntime)
     runtime.data_store = RuntimeDataStore()
+    runtime._installed_app_names = ()
+    runtime._master_knowledge = ""
+    runtime._worker_access_context = ""
+    runtime.allow_multi_action = False
     descriptor = runtime.data_store.put_result(
         {"description": "3 customer(s) love it!"},
         {
@@ -292,6 +296,10 @@ def test_runtime_materializes_result_ref_into_fixed_action_argument() -> None:
     assert bound.fixed_args == {"text": "3 customer(s) love it!"}
     assert bound.input_args == {}
     assert "text" not in bound.exposed_args
+    prompt = runtime._worker_system_prompt(spec, actions)
+    assert "3 customer(s) love it!" not in prompt
+    assert '"input": "computed"' in prompt
+    assert '"path": ["description"]' in prompt
 
 
 def test_global_turn_budget_is_shared_across_logical_workers() -> None:

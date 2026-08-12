@@ -113,6 +113,16 @@ def _frame(case: dict, *, scope_status: str = "unmet") -> MaterializedFrame:
     )
 
 
+def _android_button(
+    label: str, x: float, y: float, width: float = 60, height: float = 40,
+) -> dict[str, Any]:
+    return {
+        "kind": "button",
+        "label": label,
+        "rect": {"x": x, "y": y, "w": width, "h": height},
+    }
+
+
 @pytest.mark.parametrize("case_index", [0, 1, 2])
 def test_mattermost_member_checkbox_points_replay_to_named_rows(
     case_index: int,
@@ -140,6 +150,47 @@ def test_mattermost_member_checkbox_points_replay_to_named_rows(
     assert grounded.action.snap is not None
     assert grounded.action.snap["method"] == "android_control_semantic_action_point"
     assert grounded.action.snap["info"] == case["target"]
+
+
+def test_android_short_button_label_snaps_boundary_point_to_center() -> None:
+    controls = [
+        _android_button("AM", 777.3, 316.25, 126.85, 52.5),
+        _android_button("PM", 777.3, 367.5, 126.85, 52.5),
+    ]
+    original = AndroidActionDecision(action=AndroidAction(
+        action_type="tap",
+        x=840,
+        y=342,
+        description="AM button in the time picker to switch period from PM to AM",
+    ))
+
+    grounded = ground_action_to_android_control(original, controls)
+
+    assert (grounded.action.x, grounded.action.y) == (777.3, 316.25)
+    assert grounded.action.snap == {
+        "method": "android_control_semantic_geometry",
+        "original": [840.0, 342.0],
+        "snapped": [777.3, 316.25],
+        "info": "AM",
+    }
+
+
+def test_android_common_short_word_does_not_override_named_control() -> None:
+    controls = [
+        _android_button("to", 480, 500),
+        _android_button("Continue", 520, 500),
+    ]
+    original = AndroidActionDecision(action=AndroidAction(
+        action_type="tap",
+        x=500,
+        y=500,
+        description="Tap the button to continue",
+    ))
+
+    grounded = ground_action_to_android_control(original, controls)
+
+    assert (grounded.action.x, grounded.action.y) == (520, 500)
+    assert grounded.action.snap["info"] == "Continue"
 
 
 def test_task108_failed_type_point_replays_through_coordinate_grounding() -> None:
