@@ -197,6 +197,9 @@ class RuntimeDataStore:
                 )
             ),
         }
+        for key in ("coverage_evidence", "empty_state_evidence"):
+            if last_coverage.get(key) not in (None, ""):
+                combined_coverage[key] = last_coverage[key]
         collection = CollectionRef(
             ref=collection_id,
             requirement_id=requirement_id,

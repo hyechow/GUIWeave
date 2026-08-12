@@ -804,20 +804,29 @@ class PerceptionMaterializer:
                 )
                 visually_found = bool(extracted.get("found"))
                 end_visible = bool(extracted.get("end_visible"))
+                raw_visual_rows = list(extracted.get("rows") or [])
+                empty_state_evidence = str(
+                    extracted.get("empty_state_evidence") or ""
+                ).strip()
+                authoritative_visual_empty = bool(
+                    extracted.get("empty_state_visible")
+                    and not raw_visual_rows
+                    and end_visible
+                    and empty_state_evidence
+                )
                 visual_scope = extracted.get("scope_satisfied")
                 scope = _scope_descriptor(
                     requirement,
                     acquisition_filters=attempt_filters,
                     applied_filter_state=applied_filter_state,
                     applied_filters=applied_filters,
-                    rows=list(extracted.get("rows") or []),
+                    rows=raw_visual_rows,
                     visual_scope_satisfied=(
                         visual_scope if isinstance(visual_scope, bool) else None
                     ),
                 )
                 requirement_scopes[requirement.id] = scope
-                if visually_found:
-                    raw_visual_rows = list(extracted.get("rows") or [])
+                if visually_found or authoritative_visual_empty:
                     rows = _normalize_visual_rows(
                         requirement,
                         raw_visual_rows,
@@ -863,6 +872,12 @@ class PerceptionMaterializer:
                         "at_end": end_visible or surface_complete,
                         "partial": not (end_visible or surface_complete),
                     }
+                    if authoritative_visual_empty:
+                        coverage.update({
+                            "total_records": 0,
+                            "coverage_evidence": "explicit_visual_empty_state",
+                            "empty_state_evidence": empty_state_evidence,
+                        })
                     if surface_complete:
                         coverage.update({
                             "total_records": len(rows),
@@ -872,12 +887,7 @@ class PerceptionMaterializer:
                         })
                     collection_found = bool(
                         scope["status"] == "met"
-                        and (
-                            rows
-                            or visually_found
-                            and end_visible
-                            and not raw_visual_rows
-                        )
+                        and (rows or authoritative_visual_empty)
                     )
             requirement_scopes.setdefault(
                 requirement.id,
@@ -1067,6 +1077,10 @@ class PerceptionMaterializer:
                 row_count=len(valid_rows),
                 observed_row_count=len(raw_rows),
                 schema_rejected_rows=len(raw_rows) - len(valid_rows),
+                empty_state_visible=bool(value.get("empty_state_visible")),
+                empty_state_evidence=str(
+                    value.get("empty_state_evidence") or ""
+                ).strip(),
                 end_visible=bool(value.get("end_visible")),
                 llm_elapsed_s=round(llm_elapsed_s, 3),
                 token_usage=response_usage(response),

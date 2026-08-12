@@ -500,7 +500,16 @@ class ToolAgentRuntime:
     @staticmethod
     def _worker_replan_reason(outcome: WorkerOutcome) -> str:
         if ToolAgentRuntime._is_verified_empty(outcome):
-            return "The prior Worker established the requested scope but produced no result."
+            assert outcome.collection_ref is not None
+            coverage = outcome.collection_ref.coverage
+            if coverage.get("requested_filters") or coverage.get("applied_filters"):
+                return (
+                    "The prior Worker established the requested filtered scope but "
+                    "produced no result."
+                )
+            # A complete unfiltered collection is the requested answer. There is
+            # no alternate acquisition literal for the Master to broaden.
+            return ""
         if outcome.failure_kind == "platform_rejected":
             return ""
         if outcome.phase == "failed":
@@ -1048,10 +1057,20 @@ class ToolAgentRuntime:
                             ) + context_reports,
                         )
                         if attempt:
-                            raise
+                            return WorkerOutcome(
+                                phase="failed",
+                                summary=(
+                                    "Worker repeated an invalid action protocol on the same "
+                                    f"frame: {exc}"
+                                ),
+                                steps=step - 1,
+                            )
                         messages = [*messages, response, HumanMessage(content=(
                             "Protocol repair: the previous response was invalid. On this SAME frame, "
-                            "emit exactly one required tool call including its state field. "
+                            f"the Runtime reported: {exc}. Emit exactly one required tool call "
+                            "including its state field. If continue_with_actions is used, include "
+                            f"between 1 and {MAX_ORDERED_ACTIONS} executable actions. Only use a "
+                            "terminal tool when Runtime exposed that tool on this frame. "
                             "No action was executed."
                         ))]
                 assert response is not None and state is not None and call is not None
