@@ -23,7 +23,10 @@ from __future__ import annotations
 import json
 from typing import Any
 
-from gui_agent.core.filter_contract import AppliedFilterState, compile_filter_predicates
+from gui_agent.core.tool_agent.filter_state import (
+    AppliedFilterState,
+    compile_filter_predicates,
+)
 
 
 def applied_filters_js() -> str:

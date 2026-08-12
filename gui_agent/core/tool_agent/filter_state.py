@@ -1,4 +1,4 @@
-"""Platform-neutral filter postconditions."""
+"""Typed filter-state normalization used by Tool Agent perception."""
 
 from __future__ import annotations
 
@@ -9,10 +9,8 @@ from typing import Any, Literal
 
 from pydantic import BaseModel, ConfigDict, Field, JsonValue, model_validator
 
-from gui_agent.core.acceptance import AcceptanceMatcher, AcceptanceResult
-
-
 FilterOperator = Literal["eq", "gte", "lte", "range"]
+FilterMatchStatus = Literal["met", "unmet", "unknown"]
 _LOWER = {"from", "start", "min"}
 _UPPER = {"to", "end", "max"}
 _BOUND_SUFFIX = re.compile(
@@ -196,19 +194,8 @@ def compile_filter_predicates(
 def match_filter_state(
     requested: FilterPredicateSet,
     actual: AppliedFilterState | None,
-) -> AcceptanceResult[FilterPredicateSet]:
+) -> FilterMatchStatus:
     """Match canonical filter structures with tri-state evidence semantics."""
-    return AcceptanceMatcher.exact(
-        requested,
-        actual.predicates if actual is not None else None,
-        evidence_complete=actual is not None and actual.coverage == "complete",
-    )
-
-
-def compare_filter_state(
-    requested: FilterPredicateSet,
-    actual: AppliedFilterState | None,
-) -> bool | None:
-    """Compatibility projection for callers not yet migrated to AcceptanceMatcher."""
-    result = match_filter_state(requested, actual)
-    return True if result.status == "met" else False if result.status == "unmet" else None
+    if actual is None or actual.coverage != "complete":
+        return "unknown"
+    return "met" if requested == actual.predicates else "unmet"

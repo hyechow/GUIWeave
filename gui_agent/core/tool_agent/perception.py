@@ -17,13 +17,13 @@ from langchain_core.messages import SystemMessage
 from langchain_openai import ChatOpenAI
 
 from gui_agent.core.config import resolve_llm_config
-from gui_agent.core.filter_contract import (
+from gui_agent.core.tool_agent.filter_state import (
     canonical_filter_value,
     compile_filter_predicates,
     match_filter_state,
 )
-from gui_agent.core.run.statements.compute_kernel import (
-    ComputeKernelError,
+from gui_agent.core.tool_agent.data_normalization import (
+    ValueNormalizationError,
     json_value,
     normalize_table_value,
 )
@@ -191,7 +191,7 @@ def _structured_rows(
             if value is not None and declared_type is not None:
                 try:
                     value = _normalize_runtime_value(source, value, declared_type)
-                except ComputeKernelError as exc:
+                except ValueNormalizationError as exc:
                     raise DataNormalizationError(
                         f"row {row_index} field {field!r} cannot normalize as "
                         f"{declared_type}"
@@ -310,7 +310,7 @@ def _normalize_visual_rows(
                     normalized[field],
                     declared_type,
                 )
-            except ComputeKernelError as exc:
+            except ValueNormalizationError as exc:
                 raise DataNormalizationError(
                     f"visual row {row_index} field {field!r} cannot normalize as "
                     f"{declared_type}"
@@ -336,7 +336,7 @@ def _compare_values(
         try:
             left = _normalize_runtime_value(field_name, left, field_type)
             right = _normalize_runtime_value(field_name, right, field_type)
-        except ComputeKernelError as exc:
+        except ValueNormalizationError as exc:
             raise DataNormalizationError(
                 f"filter field {field_name!r} cannot normalize as {field_type}"
             ) from exc
@@ -449,9 +449,9 @@ def _scope_descriptor(
     requested = compile_filter_predicates(requested_ui_filters)
     if applied_filter_state is not None:
         match = match_filter_state(requested, applied_filter_state)
-        if match.status in {"met", "unmet"}:
+        if match in {"met", "unmet"}:
             return {
-                "status": match.status,
+                "status": match,
                 "requested_filters": requested_ui_filters,
                 "applied_filters": dict(applied_filters),
                 "evidence": "applied_filter_state",

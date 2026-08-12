@@ -4,7 +4,10 @@ import json
 from pathlib import Path
 from types import SimpleNamespace
 
-from gui_agent.core.filter_contract import AppliedFilterState, compile_filter_predicates
+from gui_agent.core.tool_agent.filter_state import (
+    AppliedFilterState,
+    compile_filter_predicates,
+)
 from gui_agent.core.tool_agent.contracts import DataRequirement
 from gui_agent.core.tool_agent.data_store import RuntimeDataStore
 from gui_agent.core.tool_agent.perception import PerceptionMaterializer
