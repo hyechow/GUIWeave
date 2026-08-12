@@ -15,6 +15,9 @@ import re
 from typing import Optional
 
 from gui_agent.adapters.android.actions import AndroidAction
+from gui_agent.adapters.android.control_grounding import (
+    ground_action_to_android_control,
+)
 from gui_agent.core.runtime.executor import VisionExecutor
 
 
@@ -38,6 +41,15 @@ _SLIDER_EDGE_THRESHOLD = 900.0
 
 class AndroidExecutor(VisionExecutor):
     """Execute normalized policy actions against the phone via AndroidDevice."""
+
+    # Focusing a field can open the keyboard and reflow the Android viewport.
+    # Typing or focusing can reflow the viewport, invalidating a spatial suffix.
+    tap_type_suffix_safe = False
+    type_suffix_safe = False
+
+    def ground_coordinates(self, decision, controls):
+        """Use current UIAutomator identity to correct a bounded visual miss."""
+        return ground_action_to_android_control(decision, controls)
 
     def _client(self):
         client = getattr(self.session, "client", None)

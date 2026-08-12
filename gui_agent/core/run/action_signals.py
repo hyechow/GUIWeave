@@ -175,10 +175,13 @@ def effective_action_role(
         return role
     x, y = point
     if any(
-        rect["x"] <= x <= rect["x"] + rect["w"]
-        and rect["y"] <= y <= rect["y"] + rect["h"]
+        abs(x - rect["x"]) <= rect["w"] / 2
+        and abs(y - rect["y"]) <= rect["h"] / 2
         for rect in commit_rects
-        if all(key in rect for key in ("x", "y", "w", "h"))
+        if all(
+            isinstance(rect.get(key), (int, float))
+            for key in ("x", "y", "w", "h")
+        )
     ):
         return "commit"
     return "write" if role == "commit" else role

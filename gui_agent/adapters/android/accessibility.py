@@ -19,10 +19,20 @@ _ROLES = {
     "imageview": "img",
 }
 _COLLECTION_CLASSES = {"recyclerview", "listview", "gridview"}
-_PERSISTENCE_WORDS = {"save", "send", "submit", "publish", "post"}
+_COMMIT_LABELS = {"apply", "confirm", "create", "done", "publish", "save", "send", "submit"}
+_PRIVATE_USE_SELECTION_STATES = {
+    "\U000F05E0": True,
+    "\U000F0766": False,
+}
 _GENERIC_CONTROL_WORDS = {
     "button", "checkbox", "control", "radio", "switch", "toggle", "widget",
 }
+_RESOURCE_NOISE = set("""
+    action actions active button checked collapsed container control disabled display
+    draft edittext enabled expanded false field form header input item layout list menu
+    options post quick row screen selected text toggled true unchecked view widget
+""".split())
+_ICON_GLYPH_RE = re.compile(r"[\uE000-\uF8FF\U000F0000-\U000FFFFD]")
 
 
 def _role(class_name: str, *, clickable: bool, scrollable: bool) -> str:
@@ -80,11 +90,44 @@ def _shape(node: ET.Element) -> list[Any]:
     ]
 
 
+def _visible_text(value: Any) -> str:
+    """Drop icon-font glyphs from textual labels, retaining icon-only labels."""
+    compact = " ".join(str(value or "").split())
+    if not _ICON_GLYPH_RE.search(compact):
+        return compact
+    textual = _ICON_GLYPH_RE.sub(" ", compact)
+    textual = re.sub(r"(?:\s*[,|·•]\s*)+", " ", textual).strip()
+    return textual if any(char.isalnum() for char in textual) else compact
+
+
+def _private_use_selection_state(value: Any) -> bool | None:
+    states = {
+        _PRIVATE_USE_SELECTION_STATES[character]
+        for character in str(value or "")
+        if character in _PRIVATE_USE_SELECTION_STATES
+    }
+    return states.pop() if len(states) == 1 else None
+
+
+def _resource_visible_label(resource: str, *, include_root: bool = True) -> str:
+    segments = str(resource or "").casefold().split(".")
+    for index, segment in enumerate(reversed(segments)):
+        meaningful = [
+            word for word in re.split(r"[_\W]+", segment)
+            if word and word not in _RESOURCE_NOISE
+        ]
+        if meaningful and (
+            include_root or len(segments) == 1 or index < len(segments) - 1
+        ):
+            return " ".join(meaningful)
+    return ""
+
+
 def _texts(node: ET.Element) -> list[str]:
     result: list[str] = []
     for child in node.iter("node"):
         for name in ("content-desc", "text"):
-            value = " ".join(str(child.attrib.get(name) or "").split())
+            value = _visible_text(child.attrib.get(name))
             if value and value not in result:
                 result.append(value)
     return result
@@ -191,7 +234,17 @@ def semantic_tree_from_uiautomator(
         attrs = node.attrib
         clickable = attrs.get("clickable") == "true"
         scrollable = attrs.get("scrollable") == "true"
-        key = _label(node)
+        raw_visible_label = attrs.get("content-desc") or attrs.get("text") or ""
+        visible_label = _visible_text(raw_visible_label)
+        glyph_selection_state = _private_use_selection_state(raw_visible_label)
+        resource = _short_resource(node)
+        if clickable and not visible_label:
+            descendant_labels = _texts(node)
+            visible_label = (
+                _resource_visible_label(resource)
+                or (descendant_labels[0] if descendant_labels else "")
+            )
+        key = visible_label or resource
         match = _BOUNDS.fullmatch(str(attrs.get("bounds") or "").strip())
         if not key and not clickable and not scrollable:
             continue
@@ -205,8 +258,12 @@ def semantic_tree_from_uiautomator(
             "ref": "android:" + ".".join(str(index) for index in path),
             "depth": depth,
             "scrollable": scrollable,
+            "clickable": clickable,
         }
-        resource = _short_resource(node)
+        if clickable and glyph_selection_state is not None:
+            # Some icon-font UIs expose multi-select state only through stable
+            # checked/unchecked glyphs in the clickable row's description.
+            item["glyph_selection_state"] = glyph_selection_state
         if resource:
             item["resource"] = resource
         if match is not None:
@@ -234,6 +291,7 @@ def semantic_tree_from_uiautomator(
         elif attrs.get("selected") == "true":
             item["selected"] = True
         result.append(item)
+    _infer_private_use_selection_states(result)
     return result
 
 
@@ -305,10 +363,85 @@ def _nearby_control_label(
     return max(candidates)[-1] if candidates else ""
 
 
+def _private_use_action_point(
+    control: dict[str, Any],
+    nodes: list[dict[str, Any]],
+) -> dict[str, float] | None:
+    """Locate a trailing icon affordance inside one wide clickable row."""
+
+    rect = control.get("rect")
+    ref = str(control.get("ref") or "")
+    if not isinstance(rect, dict) or not ref or float(rect.get("width") or 0) < 600:
+        return None
+    center_x = float(rect["x"])
+    center_y = float(rect["y"])
+    width = float(rect["width"])
+    height = float(rect["height"])
+    descendants: list[tuple[float, dict[str, float]]] = []
+    for node in nodes:
+        point = node.get("point")
+        if (
+            not str(node.get("ref") or "").startswith(ref + ".")
+            or node.get("in_viewport") is False
+            or any(char.isalnum() for char in str(node.get("key") or ""))
+            or _private_use_selection_state(node.get("key"))
+            != control.get("glyph_selection_state")
+            or not isinstance(point, dict)
+            or not all(isinstance(point.get(key), (int, float)) for key in ("x", "y"))
+        ):
+            continue
+        x, y = float(point["x"]), float(point["y"])
+        if x < center_x + width / 4 or abs(y - center_y) > max(35, height / 2):
+            continue
+        descendants.append((x, {"x": x, "y": y}))
+    return max(descendants, default=(0, None), key=lambda item: item[0])[1]
+
+
+def _infer_private_use_selection_states(nodes: list[dict[str, Any]]) -> None:
+    """Promote only verified glyph-backed rows to checkbox controls."""
+
+    for node in nodes:
+        selected = node.get("glyph_selection_state")
+        if selected is None:
+            continue
+        action_point = _private_use_action_point(node, nodes)
+        node.pop("glyph_selection_state", None)
+        if action_point is None:
+            continue
+        node.update(
+            role="checkbox", selection_mode="multiple",
+            action_point=action_point, selected=bool(selected), value=bool(selected),
+        )
+
+
+def _is_commit_control(*, role: str, key: str, resource: str) -> bool:
+    """Recognize explicit submission controls without matching container paths."""
+
+    if role != "button":
+        return False
+    label_words = tuple(filter(None, re.split(r"[_\W]+", key.casefold())))
+    resource_words = set(filter(None, re.split(r"[_\W]+", resource.casefold())))
+    explicit_label = bool(
+        label_words
+        and (
+            label_words == ("create",)
+            or label_words[0] in (_COMMIT_LABELS - {"create"})
+        )
+    )
+    commit_words = _COMMIT_LABELS - {"create"}
+    return bool(
+        explicit_label
+        or (
+            resource_words & commit_words
+            and resource_words & {"action", "button"}
+        )
+    )
+
+
 def form_controls_from_semantic_tree(
     nodes: list[dict[str, Any]] | None,
 ) -> list[dict[str, Any]] | None:
-    """Project stable Android fields without parsing the hierarchy twice."""
+    """Project actionable controls with center-based normalized geometry."""
     if nodes is None:
         return None
     controls: list[dict[str, Any]] = []
@@ -319,30 +452,58 @@ def form_controls_from_semantic_tree(
             None, re.split(r"[_\W]+", f"{resource} {key}".casefold()),
         ))
         role = str(node.get("role") or "")
-        persistence = bool(identity_words & _PERSISTENCE_WORDS)
+        persistence = _is_commit_control(
+            role=role,
+            key=key,
+            resource=resource,
+        )
         kind = (
             "text_input" if role == "textbox"
-            else "switch" if role in {"checkbox", "radio", "switch"}
+            else "select" if role == "combobox"
+            else "checkbox" if role == "checkbox"
+            else "radio" if role == "radio"
+            else "switch" if role == "switch"
             else "select" if role == "button" and identity_words & {"date", "time"}
-            else "button" if persistence
+            else "button" if role == "button" and (
+                persistence or (
+                    node.get("clickable") is True and key != "scrollable region"
+                )
+            )
             else ""
         )
-        if not kind:
+        ref = str(node.get("ref") or "")
+        if not kind or (
+            kind == "button"
+            and any(
+                str(child.get("ref") or "").startswith(ref + ".")
+                and child.get("role") in {"textbox", "checkbox", "radio", "switch"}
+                for child in nodes
+            )
+        ):
             continue
-        own_label = key if not _is_generic_control_label(key) else ""
+        resource_label = _resource_visible_label(resource, include_root=False)
+        own_label = (
+            resource_label
+            if resource_label and (
+                kind == "text_input" or not any(char.isalnum() for char in key)
+            )
+            else key if not _is_generic_control_label(key)
+            else ""
+        )
         label = own_label or _nearby_control_label(node, nodes)
         if not label:
             label = resource.replace("_", " ") or key
         item: dict[str, Any] = {
             "label": label,
-            "ref": str(node.get("ref") or ""),
+            "ref": ref,
             "kind": kind,
             "value": node.get("value", node.get("key", "")),
             "resource": resource,
         }
+        for field in ("selected", "selection_mode", "action_point"):
+            if field in node:
+                item[field] = node[field]
         if persistence:
-            node["role"] = "button"
-            node["form_action"] = "commit"
             item["form_action"] = "commit"
         if "in_viewport" in node:
             item["in_viewport"] = node["in_viewport"]
@@ -353,10 +514,11 @@ def form_controls_from_semantic_tree(
             item["bounds"] = (x - width / 2, y - height / 2,
                               x + width / 2, y + height / 2)
             item["rect"] = {
-                "x": x - width / 2, "y": y - height / 2,
+                "x": x, "y": y,
                 "w": width, "h": height,
             }
         controls.append(item)
+
     return controls
 
 
