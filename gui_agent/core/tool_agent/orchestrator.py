@@ -298,7 +298,9 @@ def _validate_gui_worker_call(call: ast.Call) -> list[MasterDiagnostic]:
                 if _subscript_key(value) != "ref":
                     diagnostics.append(_diagnostic(
                         "REF_VALUE_REQUIRED",
-                        "gui_worker input_refs require ResultRef descriptor['ref'] values",
+                        "gui_worker input_refs require direct ResultRef descriptor['ref'] "
+                        "values; a value used only for visual navigation or a conditional "
+                        "GUI branch must stay inside one cohesive operator",
                         value,
                     ))
     action_input_names = {
@@ -319,7 +321,9 @@ def _validate_gui_worker_call(call: ast.Call) -> list[MasterDiagnostic]:
     if unused_inputs:
         diagnostics.append(_diagnostic(
             "GUI_WORKER_INPUT_BINDING",
-            f"input_refs must be consumed by deterministic action input_args: {sorted(unused_inputs)}",
+            "input_refs must be consumed by deterministic action input_args: "
+            f"{sorted(unused_inputs)}; merge visual-only or conditional dependencies "
+            "into one cohesive operator",
             call,
         ))
     return diagnostics
