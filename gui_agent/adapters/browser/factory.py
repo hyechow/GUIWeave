@@ -220,6 +220,16 @@ def build_browser_bundle(
         default_supervisor="statement",
         action_policy_choices=_POLICY_NAMES,
         supervisor_choices=_SUPERVISOR_NAMES,
+        tool_agent_capabilities=(
+            "tap",
+            "type",
+            "clear_text",
+            "press_enter",
+            "scroll",
+            "select_option",
+            "open_url",
+            "back",
+        ),
     )
 
 

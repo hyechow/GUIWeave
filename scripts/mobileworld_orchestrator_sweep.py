@@ -139,7 +139,7 @@ def main() -> int:
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument(
         "--base-url",
-        default=__import__("os").environ.get("MW_BASE_URL", "http://192.168.1.101:6800"),
+        default=__import__("os").environ.get("MW_BASE_URL", "http://192.168.1.103:6800"),
     )
     parser.add_argument(
         "-j",

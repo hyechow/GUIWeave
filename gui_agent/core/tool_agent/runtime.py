@@ -180,16 +180,22 @@ class ToolAgentRuntime:
         allow_multi_action: bool = False,
         status_cb: Callable[[str], None] | None = None,
     ) -> None:
-        if bundle.platform != "browser":
-            raise ValueError("tool-agent experiment currently supports the browser adapter")
-        self.bundle = bundle
-        self.platform = platform
-        self.log_dir = log_dir
-        self.perception_mode = perception_mode
         if max_turns < 1:
             raise ValueError("max_turns must be positive")
         if max_turns > 50:
             raise ValueError("max_turns cannot exceed 50")
+        platform_capabilities = tuple(
+            getattr(bundle, "tool_agent_capabilities", ()) or ()
+        )
+        if not platform_capabilities:
+            raise ValueError(
+                f"tool-agent runtime is not enabled for the {bundle.platform} adapter"
+            )
+        self.bundle = bundle
+        self.platform = platform
+        self._platform_capabilities = frozenset(platform_capabilities)
+        self.log_dir = log_dir
+        self.perception_mode = perception_mode
         if max_subgoal_replans < 0:
             raise ValueError("max_subgoal_replans cannot be negative")
         if max_compile_attempts < 1:
@@ -290,6 +296,10 @@ class ToolAgentRuntime:
         task_context = {
             "goal": goal,
             "page": {"url": page_url, "title": page_title},
+            "platform": {
+                "name": self._platform_name(),
+                "action_capabilities": sorted(self._supported_capabilities()),
+            },
             "application_knowledge": knowledge or "(none)",
         }
         final_ref = None
@@ -983,6 +993,7 @@ class ToolAgentRuntime:
                         parsed_patch = RequestActionPatchArgs.model_validate(call["args"])
                         added_action = materialize_action_patch(parsed_patch)
                         self._validate_action_spec(added_action)
+                        self._validate_platform_action(added_action)
                         existing = next(
                             (item for item in active_actions if item.name == added_action.name),
                             None,
@@ -1988,6 +1999,26 @@ class ToolAgentRuntime:
     def _validate_action_spec(action: DynamicActionSpec) -> None:
         validate_dynamic_action_spec(action)
 
+    def _platform_name(self) -> str:
+        bundle = getattr(self, "bundle", None)
+        return str(getattr(bundle, "platform", "browser") or "browser")
+
+    def _supported_capabilities(self) -> frozenset[str]:
+        capabilities = getattr(self, "_platform_capabilities", None)
+        if capabilities is None:
+            # Compatibility for focused replay/unit harnesses that construct the
+            # runtime with object.__new__. Production instances always receive the
+            # adapter-owned set in __init__.
+            return frozenset(_EXECUTABLE_CAPABILITIES)
+        return frozenset(capabilities)
+
+    def _validate_platform_action(self, action: DynamicActionSpec) -> None:
+        if action.capability not in self._supported_capabilities():
+            raise ProtocolError(
+                f"capability {action.capability!r} is unavailable on the "
+                f"{self._platform_name()} adapter"
+            )
+
     def _materialize_action_inputs(
         self,
         spec: WorkerSpec,
@@ -2015,7 +2046,7 @@ class ToolAgentRuntime:
         return materialized
 
     def _initial_worker_actions(self, spec: WorkerSpec) -> list[DynamicActionSpec]:
-        floor = worker_action_floor()
+        floor = worker_action_floor(self._supported_capabilities())
         reserved = _RUNTIME_WORKER_TOOL_NAMES.union(item.name for item in floor)
         collisions = reserved.intersection(item.name for item in spec.actions)
         if collisions:
@@ -2023,6 +2054,8 @@ class ToolAgentRuntime:
         task_actions = [
             self._materialize_action_inputs(spec, action) for action in spec.actions
         ]
+        for action in task_actions:
+            self._validate_platform_action(action)
         return [*task_actions, *floor]
 
     @staticmethod

@@ -20,6 +20,9 @@ _ROLES = {
 }
 _COLLECTION_CLASSES = {"recyclerview", "listview", "gridview"}
 _PERSISTENCE_WORDS = {"save", "send", "submit", "publish", "post"}
+_GENERIC_CONTROL_WORDS = {
+    "button", "checkbox", "control", "radio", "switch", "toggle", "widget",
+}
 
 
 def _role(class_name: str, *, clickable: bool, scrollable: bool) -> str:
@@ -234,6 +237,74 @@ def semantic_tree_from_uiautomator(
     return result
 
 
+def _ref_parts(node: dict[str, Any]) -> tuple[str, ...]:
+    return tuple(str(node.get("ref") or "").removeprefix("android:").split("."))
+
+
+def _shared_ref_depth(left: dict[str, Any], right: dict[str, Any]) -> int:
+    depth = 0
+    for left_part, right_part in zip(_ref_parts(left), _ref_parts(right)):
+        if left_part != right_part:
+            break
+        depth += 1
+    return depth
+
+
+def _is_generic_control_label(value: str) -> bool:
+    words = set(filter(None, re.split(r"[_\W]+", value.casefold())))
+    return not words or words.issubset(_GENERIC_CONTROL_WORDS)
+
+
+def _nearby_control_label(
+    control: dict[str, Any],
+    nodes: list[dict[str, Any]],
+) -> str:
+    """Associate an unlabeled control with text in the same hierarchy row.
+
+    Android Settings and many Material layouts expose a Switch whose own only
+    identity is ``switch_widget`` while its visible label is a sibling TextView.
+    Prefer the closest vertically aligned text with the deepest shared hierarchy
+    ancestry; never borrow a label from another distant row.
+    """
+
+    target = control.get("rect")
+    if not isinstance(target, dict):
+        return ""
+    target_x = float(target["x"])
+    target_y = float(target["y"])
+    target_h = float(target["height"])
+    candidates: list[tuple[int, float, float, str]] = []
+    for node in nodes:
+        if node is control or node.get("in_viewport") is False:
+            continue
+        label = str(node.get("key") or "").strip()
+        rect = node.get("rect")
+        if (
+            not label
+            or _is_generic_control_label(label)
+            or not isinstance(rect, dict)
+            or node.get("role") not in {"text", "button"}
+        ):
+            continue
+        shared_depth = _shared_ref_depth(control, node)
+        if shared_depth < 2:
+            continue
+        label_x = float(rect["x"])
+        label_y = float(rect["y"])
+        label_h = float(rect["height"])
+        vertical_distance = abs(label_y - target_y)
+        row_tolerance = max(35.0, (target_h + label_h) * 0.75)
+        if vertical_distance > row_tolerance or label_x >= target_x:
+            continue
+        candidates.append((
+            shared_depth,
+            -vertical_distance,
+            -abs(target_x - label_x),
+            label,
+        ))
+    return max(candidates)[-1] if candidates else ""
+
+
 def form_controls_from_semantic_tree(
     nodes: list[dict[str, Any]] | None,
 ) -> list[dict[str, Any]] | None:
@@ -258,8 +329,12 @@ def form_controls_from_semantic_tree(
         )
         if not kind:
             continue
+        own_label = key if not _is_generic_control_label(key) else ""
+        label = own_label or _nearby_control_label(node, nodes)
+        if not label:
+            label = resource.replace("_", " ") or key
         item: dict[str, Any] = {
-            "label": resource.replace("_", " ") or key,
+            "label": label,
             "ref": str(node.get("ref") or ""),
             "kind": kind,
             "value": node.get("value", node.get("key", "")),

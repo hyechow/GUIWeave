@@ -5,6 +5,7 @@ from __future__ import annotations
 import base64
 import json
 import re
+from collections.abc import Collection
 from copy import deepcopy
 from typing import Any, Literal
 
@@ -209,9 +210,20 @@ def model_tool(name: str, description: str, model: type[BaseModel]) -> dict[str,
     return function_tool(name, description, model.model_json_schema())
 
 
-def worker_action_floor() -> list[DynamicActionSpec]:
-    """GUI affordances that remain available when the Master missed a frame detail."""
-    return [
+def worker_action_floor(
+    capabilities: Collection[ToolActionCapability] | None = None,
+) -> list[DynamicActionSpec]:
+    """Return baseline affordances supported by the active platform adapter.
+
+    ``None`` preserves the browser-complete historical floor for callers that
+    validate the protocol in isolation.  Live runtimes pass the exact capability
+    set declared by their :class:`PlatformBundle`.
+    """
+    supported = set(capabilities) if capabilities is not None else set(_CAPABILITY_SCHEMAS)
+    unknown = supported.difference(_CAPABILITY_SCHEMAS)
+    if unknown:
+        raise ValueError(f"unknown Tool Agent capabilities: {sorted(unknown)}")
+    actions = [
         DynamicActionSpec(
             name="runtime_tap_visible",
             capability="tap",
@@ -263,6 +275,18 @@ def worker_action_floor() -> list[DynamicActionSpec]:
             description="Go back once in the current browser tab's history.",
         ),
     ]
+    filtered = [action for action in actions if action.capability in supported]
+    if "back" in supported and "open_url" not in supported:
+        back_index = next(
+            index for index, action in enumerate(filtered)
+            if action.capability == "back"
+        )
+        filtered[back_index] = DynamicActionSpec(
+            name="runtime_back",
+            capability="back",
+            description="Go back once in the current platform navigation stack.",
+        )
+    return filtered
 
 
 _WORKER_STATE_SCHEMA: dict[str, Any] = {

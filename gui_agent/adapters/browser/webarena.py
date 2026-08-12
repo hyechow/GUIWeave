@@ -313,99 +313,6 @@ def _write_compile_failure_context(
     context_path.write_text(context.model_dump_json(indent=2), encoding="utf-8")
 
 
-def _tool_agent_result_and_context(
-    *,
-    intent: str,
-    run: object,
-    log_dir: Path,
-    knowledge_summary: dict | None,
-    presentation: object | None = None,
-) -> AgentResult:
-    """Project the experimental runtime onto stable AgentResult/PolicyContext contracts."""
-    from gui_agent.core.schemas import PolicyContext
-
-    phase = str(getattr(run, "phase", "failed"))
-    output_value = getattr(run, "output", None)
-    effect = str(getattr(run, "effect", "") or "").strip()
-    if effect not in {"mutation", "data", "ui_state"}:
-        effect = {
-            "MUTATE": "mutation",
-            "NAVIGATE": "ui_state",
-            "RETRIEVE": "data",
-        }[_guess_webarena_task_type(intent)]
-    task_type = {
-        "mutation": "MUTATE",
-        "data": "RETRIEVE",
-        "ui_state": "NAVIGATE",
-    }[effect]
-    platform_rejections = [
-        {
-            "status": feedback.get("status"),
-            "url": feedback.get("url"),
-            "message": feedback.get("message"),
-        }
-        for event in (getattr(run, "trace", None) or [])
-        if isinstance(event, dict) and event.get("event") == "runtime_action"
-        for feedback in (event.get("platform_feedback") or [])
-        if isinstance(feedback, dict) and feedback.get("rejected") is True
-    ]
-    result = AgentResult(
-        goal=intent,
-        output=json.dumps(output_value, ensure_ascii=False),
-        summary=str(getattr(run, "summary", "tool-agent ended")),
-        phase="completed" if phase == "completed" else "failed",
-        verification="confirmed" if phase == "completed" else None,
-        task_type=task_type,
-        orchestrator={
-            "kind": "tool_agent",
-            "effect": effect,
-            "perception_mode": getattr(run, "perception_mode", ""),
-            "result_ref": (
-                getattr(run, "result_ref").model_dump(mode="json")
-                if getattr(run, "result_ref", None) is not None
-                else None
-            ),
-            "platform_rejections": platform_rejections,
-            "models": {
-                "master": getattr(run, "master_model", ""),
-                "worker": getattr(run, "worker_model", ""),
-                "perception": getattr(run, "perception_model", ""),
-            },
-            "trace_path": str(log_dir / "tool_agent_trace.json"),
-            "replay_path": str(log_dir / "tool_agent_replay.json"),
-            "presentation_path": str(log_dir / "tool_agent_presentation.json"),
-            "presentation": (
-                {
-                    "status": getattr(presentation, "status", ""),
-                    "result_digest": getattr(presentation, "result_digest", ""),
-                    "model": getattr(presentation, "model", ""),
-                }
-                if presentation is not None
-                else None
-            ),
-        },
-    )
-    context = PolicyContext(
-        goal=intent,
-        supervisor_policy_name="tool_agent.master",
-        action_policy_name="tool_agent.worker",
-        platform="browser",
-        raw_input=intent,
-    )
-    context.knowledge = knowledge_summary
-    context.outcome = result.to_program_outcome()
-    context.models = {
-        "tool_agent.master": getattr(run, "master_model", ""),
-        "tool_agent.worker": getattr(run, "worker_model", ""),
-        "tool_agent.perception": getattr(run, "perception_model", ""),
-        "tool_agent.presentation": getattr(presentation, "model", ""),
-    }
-    context.orchestrator = dict(result.orchestrator or {})
-    context.reply = getattr(presentation, "reply", None)
-    (log_dir / "context.json").write_text(context.model_dump_json(indent=2), encoding="utf-8")
-    return result
-
-
 def _rewrite_url_host(url: str, host_override: str) -> str:
     """Replace a start_url's netloc with host_override.
 
@@ -1567,7 +1474,9 @@ def main() -> int:
 
                     def _compile_program():
                         if args.runtime == "tool-agent":
-                            from gui_agent.core.tool_agent import ToolAgentRuntime
+                            from gui_agent.core.tool_agent.result import (
+                                execute_tool_agent,
+                            )
 
                             page_url = page_title = ""
                             if device is not None and hasattr(device, "page_info"):
@@ -1578,20 +1487,16 @@ def main() -> int:
                                 f"perception={args.perception} "
                                 f"multi_action={args.tool_agent_multi_action}"
                             )
-                            runtime = ToolAgentRuntime(
+                            tool_result, _ = execute_tool_agent(
+                                intent=intent,
                                 bundle=bundle,
-                                platform=platform,
+                                session=platform,
                                 log_dir=log_dir,
                                 perception_mode=args.perception,
                                 max_turns=args.max_turns,
                                 allow_multi_action=args.tool_agent_multi_action,
-                                status_cb=hud.update if hud else None,
-                            )
-                            if hud:
-                                hud.set_goal(intent)
-                                hud.update("Tool Agent · preparing Master program")
-                            tool_run = runtime.run(
-                                intent,
+                                fallback_task_type=_guess_webarena_task_type(intent),
+                                knowledge_summary=knowledge_summary,
                                 knowledge=(
                                     knowledge.orchestrator_context(intent)
                                     if knowledge is not None
@@ -1604,43 +1509,7 @@ def main() -> int:
                                 ),
                                 page_url=page_url,
                                 page_title=page_title,
-                            )
-                            from gui_agent.core.tool_agent.presentation import (
-                                present_result,
-                                write_presentation_artifact,
-                            )
-
-                            replay_path = log_dir / "tool_agent_replay.json"
-                            try:
-                                replay_payload = json.loads(
-                                    replay_path.read_text(encoding="utf-8")
-                                )
-                            except (OSError, json.JSONDecodeError):
-                                replay_payload = {"status": "unavailable"}
-                            if hud:
-                                hud.update("Presentation · rendering verified result")
-                            presentation = present_result(
-                                goal=intent,
-                                phase=tool_run.phase,
-                                result=tool_run.output,
-                                summary=tool_run.summary,
-                                replay=replay_payload,
-                            )
-                            write_presentation_artifact(log_dir, presentation)
-                            with (log_dir / "tool_agent.log").open(
-                                "a", encoding="utf-8"
-                            ) as stream:
-                                stream.write(
-                                    "[Presentation] "
-                                    f"{presentation.status.upper()} · "
-                                    f"{presentation.reply}\n"
-                                )
-                            tool_result = _tool_agent_result_and_context(
-                                intent=intent,
-                                run=tool_run,
-                                log_dir=log_dir,
-                                knowledge_summary=knowledge_summary,
-                                presentation=presentation,
+                                hud=hud,
                             )
                             return (
                                 None,
