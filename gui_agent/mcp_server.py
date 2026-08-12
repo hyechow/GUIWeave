@@ -9,6 +9,7 @@ from mcp.server.fastmcp import FastMCP
 from mcp.types import ToolAnnotations
 
 from gui_agent.core.tool_agent.service import ToolAgentService
+from gui_agent.core.self_learning.document_ingest import KnowledgeImportService
 
 
 load_dotenv()
@@ -18,10 +19,13 @@ server = FastMCP(
     instructions=(
         "Use check_environment before the first run on a platform. Browser and "
         "Android tasks operate the user's local GUI and may change external state. "
-        "Preserve the user's exact goal and report the returned run_id and artifacts."
+        "Preserve the user's exact goal and report the returned run_id and artifacts. "
+        "Document import must be previewed and explicitly confirmed in a later user "
+        "turn before committing private knowledge."
     ),
 )
 service = ToolAgentService()
+knowledge_service = KnowledgeImportService()
 
 
 def _options(
@@ -153,6 +157,106 @@ def get_run_result(run_id: str) -> dict[str, Any]:
     """Read the summary and artifact paths for a previous GUIWeave run."""
 
     return service.get_run(run_id)
+
+
+@server.tool(
+    title="Preview a document as GUIWeave knowledge",
+    annotations=ToolAnnotations(
+        readOnlyHint=False,
+        destructiveHint=False,
+        openWorldHint=False,
+    ),
+)
+def preview_knowledge_document(
+    file_path: str,
+    platform: Literal["browser", "android"],
+    app_name: str | None = None,
+) -> dict[str, Any]:
+    """Convert a local PDF, Markdown or text manual into a reviewable draft.
+
+    The source document is treated as untrusted data. This creates only a private
+    draft; it does not make the knowledge active. Scanned PDFs require OCR first.
+    """
+
+    return knowledge_service.preview_document(
+        file_path,
+        platform=platform,
+        app_name=app_name,
+    )
+
+
+@server.tool(
+    title="Read a GUIWeave knowledge draft",
+    annotations=ToolAnnotations(
+        readOnlyHint=True,
+        destructiveHint=False,
+        openWorldHint=False,
+    ),
+)
+def get_knowledge_draft(draft_id: str) -> dict[str, Any]:
+    """Read the generated files for a pending or committed knowledge draft."""
+
+    return knowledge_service.get_draft(draft_id)
+
+
+@server.tool(
+    title="Commit a confirmed GUIWeave knowledge draft",
+    annotations=ToolAnnotations(
+        readOnlyHint=False,
+        destructiveHint=True,
+        openWorldHint=False,
+    ),
+)
+def commit_knowledge_draft(
+    draft_id: str,
+    confirmation_token: str,
+    overwrite_existing: bool = False,
+) -> dict[str, Any]:
+    """Activate a previewed knowledge draft after explicit user confirmation.
+
+    Never call this in the same turn that created the preview. Show the generated
+    files first and wait for a subsequent user message that explicitly approves them.
+    Overwriting existing knowledge requires separately explicit user authorization.
+    """
+
+    return knowledge_service.commit_draft(
+        draft_id,
+        confirmation_token,
+        overwrite_existing=overwrite_existing,
+    )
+
+
+@server.tool(
+    title="List user-installed GUIWeave knowledge",
+    annotations=ToolAnnotations(
+        readOnlyHint=True,
+        destructiveHint=False,
+        openWorldHint=False,
+    ),
+)
+def list_user_knowledge(
+    platform: Literal["browser", "android"] | None = None,
+) -> dict[str, Any]:
+    """List private knowledge committed from user documents."""
+
+    return knowledge_service.list_knowledge(platform)
+
+
+@server.tool(
+    title="Read user-installed GUIWeave knowledge",
+    annotations=ToolAnnotations(
+        readOnlyHint=True,
+        destructiveHint=False,
+        openWorldHint=False,
+    ),
+)
+def get_user_knowledge(
+    platform: Literal["browser", "android"],
+    app_slug: str,
+) -> dict[str, Any]:
+    """Read the active private knowledge files for one application."""
+
+    return knowledge_service.get_knowledge(platform, app_slug)
 
 
 def main() -> None:

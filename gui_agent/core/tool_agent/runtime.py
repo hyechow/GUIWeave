@@ -98,6 +98,10 @@ _EXECUTABLE_CAPABILITIES = {
     "app_switch",
     "launch_app",
 }
+
+
+class _RuntimeCancelled(Exception):
+    """Internal cooperative stop raised only at safe runtime boundaries."""
 _ACTION_TYPES = {"open_url": "navigate"}
 _REDACTED_ACCESS_VALUE = "[session access value redacted]"
 _WORKER_VERIFY_POOL = ThreadPoolExecutor(
@@ -198,6 +202,7 @@ class ToolAgentRuntime:
         max_compile_attempts: int = 5,
         allow_multi_action: bool = False,
         status_cb: Callable[[str], None] | None = None,
+        stop_requested: Callable[[], bool] | None = None,
     ) -> None:
         if max_turns < 1:
             raise ValueError("max_turns must be positive")
@@ -236,6 +241,7 @@ class ToolAgentRuntime:
         )
         self.trace: list[dict[str, Any]] = []
         self._status_cb = status_cb
+        self._stop_requested = stop_requested
         self._started_at = time.perf_counter()
         self.log_dir.mkdir(parents=True, exist_ok=True)
         (self.log_dir / "tool_agent_events.jsonl").write_text("", encoding="utf-8")
@@ -330,6 +336,7 @@ class ToolAgentRuntime:
             trace=self._trace,
         )
         try:
+            self._raise_if_cancelled()
             program = compile_master_program(
                 llm=self.master,
                 system_prompt=_MASTER_SYSTEM,
@@ -347,6 +354,7 @@ class ToolAgentRuntime:
                 compile_attempts=program.attempts,
                 source=program.source,
             )
+            self._raise_if_cancelled()
             execution_no = 1
             self._trace(
                 "master_program_execution_started",
@@ -354,6 +362,10 @@ class ToolAgentRuntime:
                 source=program.source,
             )
             execution = execute_master_program(program.source, orchestration)
+            # Worker exceptions may be projected into an execution error by the
+            # deterministic sandbox. Re-check the cooperative cancellation flag
+            # here so an interrupted run is still recorded unambiguously.
+            self._raise_if_cancelled()
             if execution.error:
                 self._trace(
                     "master_program_error",
@@ -380,7 +392,7 @@ class ToolAgentRuntime:
                     final_ref = self.data_store.result_descriptor(terminal.result_ref)
                     final_effect = terminal.effect
                     phase = "completed"
-        except KeyboardInterrupt:
+        except (KeyboardInterrupt, _RuntimeCancelled):
             final_summary = "Tool Agent interrupted before reaching a terminal result."
             self._trace(
                 "runtime_interrupted",
@@ -422,6 +434,11 @@ class ToolAgentRuntime:
                 f"\n[Replay] {replay.status.upper()} · {replay.summary}\n"
             )
         return run
+
+    def _raise_if_cancelled(self) -> None:
+        callback = getattr(self, "_stop_requested", None)
+        if callback is not None and callback():
+            raise _RuntimeCancelled
 
     @staticmethod
     def _is_verified_empty(outcome: WorkerOutcome) -> bool:
@@ -864,6 +881,7 @@ class ToolAgentRuntime:
             WorkerActionCircuitBreaker(),
         )
         for step in range(1, spec.max_steps + 1):
+            self._raise_if_cancelled()
             if self._turn_budget_exhausted():
                 return self._turn_budget_failure(
                     worker_id=worker_id,

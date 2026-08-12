@@ -15,16 +15,27 @@ from pathlib import Path
 from typing import IO, Iterator
 
 ROOT = Path(__file__).resolve().parents[3]
-LOG_ROOT = Path(
-    os.environ.get("GUIWEAVE_LOG_ROOT", ROOT / "logs" / "gui_agent")
-).expanduser()
 ESC_SEQUENCE_WINDOW_S = 0.04
 
 
-def create_run_dir(mode: str, platform: str = "") -> Path:
+def get_log_root() -> Path:
+    """Resolve the log root after callers have loaded their environment files."""
+
+    return Path(
+        os.environ.get("GUIWEAVE_LOG_ROOT", ROOT / "logs" / "gui_agent")
+    ).expanduser().resolve()
+
+
+def create_run_dir(
+    mode: str,
+    platform: str = "",
+    *,
+    log_root: Path | None = None,
+) -> Path:
     # logs/gui_agent/<mode>/<platform>/<ts>/ keeps platform runs separate.
     started_at = datetime.now().strftime("%Y%m%d_%H%M%S")
-    base = LOG_ROOT / mode / platform if platform else LOG_ROOT / mode
+    root = (log_root or get_log_root()).expanduser().resolve()
+    base = root / mode / platform if platform else root / mode
     path = base / started_at
     suffix = 2
     while path.exists():

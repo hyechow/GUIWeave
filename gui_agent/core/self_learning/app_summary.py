@@ -12,8 +12,34 @@ from gui_agent.core.self_learning.progressive import (
     ProgressiveKnowledge,
     split_frontmatter,
 )
+from gui_agent.core.self_learning.paths import (
+    BUILTIN_KNOWLEDGE_ROOT,
+    get_user_knowledge_root,
+)
 
-KNOWLEDGE_DIR = Path(__file__).resolve().parents[3] / "knowledge"
+KNOWLEDGE_DIR = BUILTIN_KNOWLEDGE_ROOT
+
+
+def _knowledge_roots() -> tuple[Path, ...]:
+    """Return user knowledge first, then repository knowledge."""
+
+    user = get_user_knowledge_root()
+    builtin = KNOWLEDGE_DIR.resolve()
+    return (user,) if user == builtin else (user, builtin)
+
+
+def _app_dirs(platform: str) -> list[Path]:
+    """Return one highest-precedence directory per app name."""
+
+    found: dict[str, Path] = {}
+    for root in _knowledge_roots():
+        platform_dir = root / platform
+        if not platform_dir.is_dir():
+            continue
+        for path in sorted(platform_dir.iterdir()):
+            if path.is_dir() and any(path.glob("*.md")):
+                found.setdefault(path.name.casefold(), path)
+    return list(found.values())
 
 
 @dataclass
@@ -102,14 +128,7 @@ def load_page_files(app_dir: Path) -> list[tuple[str, str]]:
 
 
 def list_known_apps(platform: str = "browser") -> list[str]:
-    platform_dir = KNOWLEDGE_DIR / platform
-    if not platform_dir.is_dir():
-        return []
-    return sorted(
-        path.name
-        for path in platform_dir.iterdir()
-        if path.is_dir() and any(path.glob("*.md"))
-    )
+    return sorted(path.name for path in _app_dirs(platform))
 
 
 def match_app_by_url(url: str, platform: str = "browser") -> str | None:
@@ -126,11 +145,8 @@ def match_app_by_url(url: str, platform: str = "browser") -> str | None:
         return None
     if not current_host:
         return None
-    platform_dir = KNOWLEDGE_DIR / platform
-    if not platform_dir.is_dir():
-        return None
     port_matches: list[str] = []
-    for app_dir in sorted(platform_dir.iterdir()):
+    for app_dir in _app_dirs(platform):
         deploy = app_dir / "_deploy.md"
         if not deploy.is_file():
             continue
@@ -231,12 +247,12 @@ def load_knowledge_for_app(
     *,
     include_skills: bool = False,
 ) -> AppKnowledge | None:
-    app_dir = KNOWLEDGE_DIR / platform / app
-    return (
-        load_app_dir(app_dir, include_skills=include_skills)
-        if app_dir.is_dir()
-        else None
+    requested = app.casefold()
+    app_dir = next(
+        (path for path in _app_dirs(platform) if path.name.casefold() == requested),
+        None,
     )
+    return load_app_dir(app_dir, include_skills=include_skills) if app_dir else None
 
 
 def auto_discover_knowledge(
@@ -246,14 +262,10 @@ def auto_discover_knowledge(
     include_skills: bool = False,
 ) -> AppKnowledge | None:
     goal_lower = goal.lower()
-    platform_dir = KNOWLEDGE_DIR / platform
-    if not platform_dir.is_dir():
-        return None
     candidates: dict[str, Path] = {}
-    for app_dir in platform_dir.iterdir():
-        if not app_dir.is_dir():
-            continue
+    for app_dir in _app_dirs(platform):
         candidates[app_dir.name.lower()] = app_dir
+        candidates.setdefault(app_dir.name.replace("_", " ").lower(), app_dir)
         for alias in _aliases(app_dir):
             candidates.setdefault(alias.lower(), app_dir)
     for name, app_dir in candidates.items():

@@ -1,0 +1,88 @@
+#!/usr/bin/env bash
+# Launch the repo-backed MCP server from a GUIWeave source checkout.
+set -euo pipefail
+
+PLUGIN_ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
+
+is_guiweave_root() {
+  [[ -f "$1/pyproject.toml" && -d "$1/gui_agent" ]]
+}
+
+find_checkout_parent() {
+  local candidate="$1"
+  while [[ "$candidate" != "/" ]]; do
+    if is_guiweave_root "$candidate"; then
+      printf '%s\n' "$candidate"
+      return 0
+    fi
+    candidate="$(dirname "$candidate")"
+  done
+  return 1
+}
+
+find_local_marketplace_checkout() {
+  local config_home="${CODEX_HOME:-$HOME/.codex}"
+  local config_file="$config_home/config.toml"
+  [[ -f "$config_file" ]] || return 1
+  local candidate
+  while IFS= read -r candidate; do
+    if is_guiweave_root "$candidate" \
+      && grep -q '"name"[[:space:]]*:[[:space:]]*"guiweave-automation"' \
+        "$candidate/.agents/plugins/marketplace.json" 2>/dev/null; then
+      (cd "$candidate" && pwd)
+      return 0
+    fi
+  done < <(
+    awk '
+      function emit() {
+        if (in_marketplace && source_type == "local" && source != "") print source
+      }
+      /^\[marketplaces\./ {
+        emit()
+        in_marketplace = 1
+        source_type = ""
+        source = ""
+        next
+      }
+      /^\[/ {
+        emit()
+        in_marketplace = 0
+        next
+      }
+      in_marketplace && /^[[:space:]]*source_type[[:space:]]*=/ {
+        value = $0
+        sub(/^[^=]*=[[:space:]]*/, "", value)
+        gsub(/^"|"$/, "", value)
+        source_type = value
+      }
+      in_marketplace && /^[[:space:]]*source[[:space:]]*=/ {
+        value = $0
+        sub(/^[^=]*=[[:space:]]*/, "", value)
+        gsub(/^"|"$/, "", value)
+        source = value
+      }
+      END { emit() }
+    ' "$config_file"
+  )
+  return 1
+}
+
+REPO_ROOT=""
+if [[ -n "${GUIWEAVE_REPO_ROOT:-}" ]] && is_guiweave_root "$GUIWEAVE_REPO_ROOT"; then
+  REPO_ROOT="$(cd "$GUIWEAVE_REPO_ROOT" && pwd)"
+elif repo_candidate="$(find_checkout_parent "$PLUGIN_ROOT" 2>/dev/null)"; then
+  REPO_ROOT="$repo_candidate"
+elif repo_candidate="$(find_checkout_parent "$PWD" 2>/dev/null)"; then
+  REPO_ROOT="$repo_candidate"
+elif repo_candidate="$(find_local_marketplace_checkout 2>/dev/null)"; then
+  REPO_ROOT="$repo_candidate"
+fi
+
+if [[ -z "$REPO_ROOT" ]]; then
+  echo "GUIWeave runtime not found next to the plugin." >&2
+  echo "Install from a complete local GUIWeave clone or set GUIWEAVE_REPO_ROOT." >&2
+  exit 1
+fi
+
+cd "$REPO_ROOT"
+exec uv run --project "$REPO_ROOT" guiweave-mcp

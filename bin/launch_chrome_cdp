@@ -14,7 +14,7 @@
 #   CHROME_BIN=/path/to/Chrome bin/launch_chrome_cdp  # 显式覆盖自动发现
 #
 # 启动后在弹出的 Chrome 窗口里登录/打开目标页,再到另一个终端跑:
-#   AGENT_PLATFORM=browser uv run python -m gui_agent.core.runner "你的指令" --auto-continue
+#   uv run guiweave run browser "你的指令"
 set -euo pipefail
 
 PORT="${PORT:-9222}"
@@ -68,7 +68,7 @@ fi
 # 该端口已经有一个调试 Chrome → 直接复用,不重复拉起。
 if curl -s --max-time 1 "http://localhost:$PORT/json/version" >/dev/null 2>&1; then
   echo "已有调试 Chrome 监听 :$PORT,直接复用。"
-  echo "  AGENT_PLATFORM=browser CHROME_CDP_URL=http://localhost:$PORT uv run python -m gui_agent.core.runner \"...\" --auto-continue"
+  echo "  uv run guiweave run browser \"...\" --cdp-url http://localhost:$PORT"
   exit 0
 fi
 

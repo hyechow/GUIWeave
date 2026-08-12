@@ -19,6 +19,7 @@ dependencies = [
     "adbutils>=2",
     "json-repair>=0.53.1",
     "pydantic>=2.12.0",
+    "pypdf>=5.0.0",
     "python-dotenv>=1.2.0",
     "pyyaml>=6.0.0",
     "requests>=2.32.0",
@@ -28,6 +29,7 @@ dependencies = [
 [project.scripts]
 guiweave = "gui_agent.cli:main"
 guiweave-mcp = "gui_agent.mcp_server:main"
+guiweave-console = "gui_agent.console:main"
 
 [build-system]
 requires = ["setuptools>=80"]
@@ -35,6 +37,9 @@ build-backend = "setuptools.build_meta"
 
 [tool.setuptools.packages.find]
 include = ["gui_agent*", "llm*", "replay*"]
+
+[tool.setuptools.package-data]
+gui_agent = ["console_assets/*"]
 
 [dependency-groups]
 dev = [

@@ -3,7 +3,10 @@
 `knowledge/` 只存放应用、站点或部署实例固有的事实。跨任务可复用的执行策略、校验规则和平台机制
 属于代码或 prompt，不应写进知识文件。
 
-本目录整体被 Git 忽略；只有本 README 入库。部署 URL、账号和其他敏感配置不得提交。
+本目录保存仓库内置知识。用户从文档导入的私有知识默认保存在 macOS 的
+`~/Library/Application Support/GUIWeave/knowledge/`，也可通过
+`GUIWEAVE_KNOWLEDGE_ROOT` 指定；同名用户知识优先于仓库内置知识。部署 URL、账号和
+其他敏感配置不得提交。
 
 ## 目录
 

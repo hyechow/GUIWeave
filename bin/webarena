@@ -47,6 +47,10 @@ python_bin="${PYTHON_BIN:-python3}"
 
 if [[ ! -f "$tasks_file" ]]; then
   echo "tasks 文件不存在: $tasks_file" >&2
+  if [[ "$tasks_file" == webarena-verified/* && ! -e webarena-verified/.git ]]; then
+    echo "WebArena 子模块尚未初始化，请先运行:" >&2
+    echo "  git submodule update --init --recursive webarena-verified" >&2
+  fi
   exit 1
 fi
 

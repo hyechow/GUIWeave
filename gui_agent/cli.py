@@ -36,6 +36,10 @@ def _build_parser() -> argparse.ArgumentParser:
         default=True,
     )
     run.add_argument("--log-root", type=Path)
+
+    console = subparsers.add_parser("console", help="start the local Run Console")
+    console.add_argument("--host", default="127.0.0.1")
+    console.add_argument("--port", type=int, default=7468)
     return parser
 
 
@@ -48,6 +52,18 @@ def _platform_options(args: argparse.Namespace) -> dict[str, object]:
 def main() -> int:
     load_dotenv()
     args = _build_parser().parse_args()
+    if args.command == "console":
+        import uvicorn
+
+        if args.host not in {"127.0.0.1", "localhost", "::1"}:
+            raise ValueError("Run Console is local-only; host must be a loopback address")
+        uvicorn.run(
+            "gui_agent.console:app",
+            host=args.host,
+            port=args.port,
+            log_level="warning",
+        )
+        return 0
     service = ToolAgentService(log_root=getattr(args, "log_root", None))
     options = _platform_options(args)
     if args.command == "check":
