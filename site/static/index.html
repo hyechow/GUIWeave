@@ -1,0 +1,71 @@
+<!doctype html>
+<html lang="zh-CN">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>GUIWeave — Local GUI Automation for Agents</title>
+  <meta name="description" content="GUIWeave macOS Developer Preview：本地 GUI Agent 运行时，通过用户配置的模型网关完成推理，需要对应 API_KEY。">
+  <meta property="og:title" content="GUIWeave — Local GUI Automation for Agents">
+  <meta property="og:description" content="让 AI 真正使用你的界面。">
+  <meta property="og:type" content="website">
+  <meta property="og:url" content="__ORIGIN__">
+  <meta property="og:image" content="__ORIGIN__/og.png">
+  <meta name="twitter:card" content="summary_large_image">
+  <meta name="twitter:image" content="__ORIGIN__/og.png">
+  <link rel="icon" href="/favicon.svg">
+  <link rel="stylesheet" href="/styles.css">
+</head>
+<body><main>
+  <nav class="nav shell" aria-label="主导航">
+    <a class="brand" href="#top"><span class="brand-mark"><i></i><i></i><i></i></span><span>GUIWEAVE</span></a>
+    <div class="nav-links"><a href="#capabilities">能力</a><a href="#architecture">架构</a><a href="#knowledge">Knowledge</a></div>
+    <a class="nav-cta" href="#install">开发者预览 <span>↗</span></a>
+  </nav>
+
+  <section class="hero shell" id="top">
+    <div class="hero-copy">
+      <p class="eyebrow"><span></span> macOS Developer Preview</p>
+      <h1>让 AI 真正<br>使用你的界面。</h1>
+      <p class="hero-lead">GUIWeave 把 <strong>Skill + 本地 stdio MCP</strong> 组合成一个可安装的 GUI Agent 插件。在你的 Mac 上运行，理解浏览器与 Android 界面，完成任务，留下证据。</p>
+      <div class="hero-actions"><a class="button primary" href="#install">查看安装方式 <span>↗</span></a><a class="button secondary" href="#architecture">了解工作原理</a></div>
+      <div class="trust-row"><span><b>LOCAL RUNTIME</b> 执行环境在本机</span><span><b>REVIEWED</b> 确认后写入</span><span><b>TRACEABLE</b> 全程可追溯</span></div>
+    </div>
+    <div class="agent-console" aria-label="GUIWeave 运行示意">
+      <div class="console-top"><span>tool-agent / live run</span><span class="live"><i></i> RUNNING</span></div>
+      <div class="viewport"><div class="fake-toolbar"><span>•••</span><span class="address">localhost:12000 / orders</span><span>⌘</span></div><div class="fake-app"><aside><b>R</b><i class="active"></i><i></i><i></i><i></i><i></i></aside><div class="fake-content"><div class="fake-heading"><span></span><span></span></div><div class="metric-row"><i></i><i></i><i></i></div><div class="table-head"></div><div class="table-row"><i></i><i></i><i></i><b></b></div><div class="table-row"><i></i><i></i><i></i><b></b></div><div class="table-row"><i></i><i></i><i></i><b></b></div><div class="table-row"><i></i><i></i><i></i><b></b></div><div class="target-ring"><span>07</span></div></div></div></div>
+      <div class="console-log"><p><span>00:14.2</span> observation <b>Orders / 24 records</b></p><p><span>00:15.0</span> action <b>open_order(id: #RT-2048)</b></p><p><span>00:15.8</span> verify <strong>✓ target state reached</strong></p></div>
+      <div class="console-foot"><span>RUN ID — 20260812_0446</span><span>VIEW REPORT ↗</span></div>
+    </div>
+  </section>
+
+  <section class="marquee"><div>TOOL AGENT <span>✦</span> BROWSER <span>✦</span> ANDROID <span>✦</span> KNOWLEDGE <span>✦</span> EVALS <span>✦</span> REPLAY</div></section>
+
+  <section class="section shell" id="capabilities">
+    <header class="section-head"><p class="eyebrow"><span></span> What it does</p><h2>一个插件，三种核心能力。</h2><p>从执行，到学习，再到验证——共用同一套本地运行时与安全边界。</p></header>
+    <div class="capability-grid">
+      <article class="capability-card"><div class="card-visual visual-01"><span class="card-number">01</span><div class="browser-glyph"><i></i><i></i><i></i><b></b></div></div><div class="card-copy"><span class="tag">Chrome · CDP</span><h3>Browser Agent</h3><p>连接本地 Chrome，理解页面、规划任务并执行完整浏览器工作流。</p></div></article>
+      <article class="capability-card"><div class="card-visual visual-02"><span class="card-number">02</span><div class="phone-glyph"><span></span><i>◎</i><b></b></div></div><div class="card-copy"><span class="tag">Android · ADB</span><h3>Android Agent</h3><p>通过 ADB 操作真实设备或模拟器，保留截图、轨迹与可复现报告。</p></div></article>
+      <article class="capability-card"><div class="card-visual visual-03"><span class="card-number">03</span><div class="doc-glyph"><span>PDF</span><i>→</i><b>KN</b></div></div><div class="card-copy"><span class="tag">PDF → Knowledge</span><h3>Private Knowledge</h3><p>将 PDF、Markdown 和文本手册提炼为应用知识；预览确认后才启用。</p></div></article>
+    </div>
+  </section>
+
+  <section class="architecture" id="architecture"><div class="shell architecture-inner"><div class="architecture-copy"><p class="eyebrow light"><span></span> Local by design</p><h2>运行时留在本机，<br>模型连接由你配置。</h2><p>Codex 通过 stdio 启动本地 GUIWeave，无需另行部署公网 Agent 服务，也不会复制浏览器会话。Agent 推理并非离线运行：它会访问用户配置的模型网关，需要配置对应的 API_KEY，并受该网关的网络与数据策略约束。</p><div class="architecture-note"><b>安全边界</b><span>涉及发送、发布、购买、删除或账户设置时，执行前需要明确授权。</span></div></div><div class="flow-list">
+    <div class="flow-item"><span>01</span><div><b>用户意图</b><p>用自然语言描述一个有边界的 GUI 目标</p></div><i>→</i></div>
+    <div class="flow-item"><span>02</span><div><b>Skill 路由</b><p>识别平台、检查环境与安全确认</p></div><i>→</i></div>
+    <div class="flow-item"><span>03</span><div><b>stdio MCP</b><p>本机进程内传递工具调用，不开放网络端口</p></div><i>→</i></div>
+    <div class="flow-item"><span>04</span><div><b>模型网关</b><p>连接用户配置的模型服务，需要对应 API_KEY</p></div><i>→</i></div>
+    <div class="flow-item"><span>05</span><div><b>Tool Agent</b><p>观察、规划、操作并验证最终状态</p></div><i>→</i></div>
+    <div class="flow-item"><span>06</span><div><b>可审计产物</b><p>日志、截图、Trace、HTML Report 与 Replay</p></div><i>→</i></div>
+  </div></div></section>
+
+  <section class="section knowledge shell" id="knowledge"><div class="knowledge-demo"><div class="file-card source-file"><span class="file-type">PDF</span><div><b>Robo Team 使用说明书.pdf</b><small>72 pages · private document</small></div></div><div class="transform-arrow"><span>PREVIEW</span>→</div><div class="knowledge-stack"><div class="file-card"><span>MD</span><b>_app.md</b></div><div class="file-card"><span>MD</span><b>order_management.md</b></div><div class="file-card"><span>MD</span><b>map_management.md</b></div><div class="more-files">+ 10 focused sections</div></div></div><div class="knowledge-copy"><p class="eyebrow"><span></span> Document → Knowledge</p><h2>让说明书变成<br>Agent 真正会用的知识。</h2><p>上传应用手册后，系统提取导航、字段、工作流、状态含义和业务约束。凭据会先脱敏，文档中的指令不会被执行。</p><ol><li><b>01</b><span><strong>生成草稿</strong> — 原始文档只作为不可信数据读取</span></li><li><b>02</b><span><strong>人工预览</strong> — 查看文件、警告与知识摘要</span></li><li><b>03</b><span><strong>确认启用</strong> — 必须在后续消息中明确确认</span></li></ol></div></section>
+
+  <section class="tool-section shell"><div class="tool-heading"><p class="eyebrow"><span></span> MCP surface</p><h2>9 个清晰、可审查的工具。</h2></div><div class="tool-grid"><code><span>01</span>check_environment</code><code><span>02</span>run_browser_task</code><code><span>03</span>run_android_task</code><code><span>04</span>get_run_result</code><code><span>05</span>preview_knowledge_document</code><code><span>06</span>get_knowledge_draft</code><code><span>07</span>commit_knowledge_draft</code><code><span>08</span>list_user_knowledge</code><code><span>09</span>get_user_knowledge</code></div></section>
+
+  <section class="install" id="install"><div class="shell install-inner"><div><p class="eyebrow light"><span></span> Get the preview</p><h2>从你的 Mac 开始。</h2><p>开发者预览版面向本地源码安装。保留 Tool Agent Master、WebArena、MobileWorld、日志、可视化与 Evals。使用前需选择模型提供商，配置模型网关地址与对应 API_KEY。</p></div><div class="install-card"><div class="terminal-bar"><span>INSTALL.sh</span><i>macOS 13+</i></div><pre><span>$</span> git clone &lt;guiweave-repository&gt;
+<span>$</span> cd guiweave
+<span>$</span> uv sync
+<span>$</span> codex plugin marketplace add .
+<span>$</span> codex plugin add guiweave-automation@guiweave-dev</pre><p>需要 Python 3.11+、uv、Codex，以及可访问的模型网关与对应 API_KEY。浏览器能力需要 Chrome；Android 能力需要 ADB。</p></div></div></section>
+  <footer class="shell"><a class="brand" href="#top"><span class="brand-mark"><i></i><i></i><i></i></span><span>GUIWEAVE</span></a><p>Local GUI automation for agents.</p><span>MACOS DEVELOPER PREVIEW · 2026</span></footer>
+</main></body></html>

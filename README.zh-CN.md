@@ -41,6 +41,7 @@ MCP 进程完全在本机运行，不开放网络端口；Codex 通过 stdin/std
 安装运行时：
 
 ```bash
+git submodule update --init --recursive webarena-verified
 uv sync
 uv run playwright install chromium
 ```
@@ -49,7 +50,8 @@ uv run playwright install chromium
 
 ## 安装 Codex 插件
 
-插件包位于 `plugins/guiweave-automation/`。在仓库根目录执行：
+repo marketplace 插件位于 `plugins/guiweave-automation/`，需要从完整仓库 clone
+安装。在仓库根目录执行：
 
 ```bash
 codex plugin marketplace add .
@@ -63,6 +65,9 @@ codex plugin add guiweave-automation@guiweave-dev
 - `run_browser_task`
 - `run_android_task`
 - `get_run_result`
+- `preview_knowledge_document` / `get_knowledge_draft`
+- `commit_knowledge_draft`
+- `list_user_knowledge` / `get_user_knowledge`
 
 Skill 会要求 Codex 先做环境检查、严格保持用户任务边界，并在执行发送、购买、发布、
 删除或账户设置修改等高影响动作前确认。更多说明见
@@ -94,6 +99,32 @@ uv run guiweave run android "打开设置并进入 Wi-Fi 页面" \
 
 任务会操作当前已登录的本地界面。建议优先使用测试账户或独立 profile，并明确复核可能
 发送、购买、发布、删除或修改账户设置的目标。
+
+## 本地 Run Console
+
+启动本地任务管理界面：
+
+```bash
+uv run guiweave console
+```
+
+然后访问 `http://127.0.0.1:7468`。Console 支持按平台启动任务、查看实时结构化事件、
+请求安全取消，以及打开本地报告、trace、replay 和 stdout/stderr 日志。同一平台同一时间
+只允许一个活跃任务，服务只监听本机 loopback 地址。
+
+运行环境和产物在本机，但模型推理不一定离线：任务会使用 `.env` 或 shell 中配置的模型
+网关与 API key。
+
+## 导入用户文档
+
+插件可以把本地 PDF、Markdown 或 UTF-8 文本文档转换为私有 knowledge 草稿。Codex
+会先展示生成的 `_app.md` 和功能章节；只有用户在后续消息中明确确认，草稿才会生效。
+扫描版 PDF 需要先进行 OCR。
+
+macOS 上提交后的用户知识默认存放于
+`~/Library/Application Support/GUIWeave/knowledge/`，不写入仓库。可通过
+`GUIWEAVE_KNOWLEDGE_ROOT` 指定其他私有目录。同平台、同应用名称发生冲突时，用户知识
+优先于内置知识。
 
 ## 日志、报告与 replay
 
@@ -134,6 +165,12 @@ WebArena 资产和输出位于 `webarena-verified/`；MobileWorld 参考资产�
 `benchmark/mobileworld/`。benchmark 专属事实只放在对应 knowledge 或 harness 中，
 不会写入 core prompt。
 
+如果 clone 时没有初始化 WebArena，请运行：
+
+```bash
+git submodule update --init --recursive webarena-verified
+```
+
 ## 开发与验证
 
 ```bash
@@ -150,7 +187,8 @@ uv run pytest evals/browser/webarena_response/test_response_replay.py
 
 - 当前只把 macOS 作为已测试宿主；Linux 和 Windows 打包尚未支持。
 - Browser 和 Android 可用性依赖本机 Chrome/CDP 或 ADB 状态。
-- 插件以源码形式分发，并通过 `uv` 启动本地 MCP server。
+- repo marketplace 插件通过 `uv` 启动本地 MCP server，并依赖完整 GUIWeave
+  checkout；不能只复制插件目录作为独立安装包。
 - GUI 自动化具有概率性；失败时应结合 HTML 报告和 replay 产物排查。
 
 ## License

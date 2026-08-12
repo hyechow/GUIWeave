@@ -44,6 +44,7 @@ the plugin and communicates with Codex over stdin/stdout.
 Install the runtime:
 
 ```bash
+git submodule update --init --recursive webarena-verified
 uv sync
 uv run playwright install chromium
 ```
@@ -53,7 +54,8 @@ your local model setup. Never commit provider keys.
 
 ## Codex plugin
 
-The distributable plugin lives in `plugins/guiweave-automation/`. From this repository:
+The repo-marketplace plugin lives in `plugins/guiweave-automation/`. Install it from a
+complete repository clone:
 
 ```bash
 codex plugin marketplace add .
@@ -67,6 +69,9 @@ Restart Codex after installation. The plugin contributes the
 - `run_browser_task`
 - `run_android_task`
 - `get_run_result`
+- `preview_knowledge_document` / `get_knowledge_draft`
+- `commit_knowledge_draft`
+- `list_user_knowledge` / `get_user_knowledge`
 
 The Skill asks Codex to preflight the platform, preserve the user's exact task, and
 confirm consequential actions before execution. See
@@ -100,6 +105,33 @@ uv run guiweave run android "Open Settings and show the Wi-Fi page" \
 Tasks operate the current signed-in UI. Use a disposable profile or test account when
 possible, and explicitly review goals that can send, purchase, publish, delete, or
 change account settings.
+
+## Local Run Console
+
+Start the local task manager:
+
+```bash
+uv run guiweave console
+```
+
+Then open `http://127.0.0.1:7468`. The Console can start one task per platform,
+show live structured events, request cooperative cancellation, and open local reports,
+traces, replay data, and stdio logs. It listens only on the loopback interface.
+
+The runtime is local, but inference is not necessarily offline: tasks use the model
+gateway and API key configured in your `.env` or shell.
+
+## Import user documentation
+
+The plugin can turn a local PDF, Markdown, or UTF-8 text application manual into a
+private knowledge draft. Codex shows the generated `_app.md` and focused sections;
+they become active only after the user explicitly confirms the draft in a later turn.
+Scanned PDFs need OCR before import.
+
+Committed user knowledge is stored outside the repository under
+`~/Library/Application Support/GUIWeave/knowledge/` on macOS. Set
+`GUIWEAVE_KNOWLEDGE_ROOT` to choose another private location. User knowledge takes
+precedence over built-in knowledge with the same platform and app name.
 
 ## Artifacts and replay
 
@@ -141,6 +173,12 @@ WebArena assets and output remain under `webarena-verified/`. MobileWorld refere
 assets remain under `benchmark/mobileworld/`. Benchmark-specific facts stay in their
 knowledge or harness directories and are not embedded into core prompts.
 
+If WebArena was not initialized during clone, run:
+
+```bash
+git submodule update --init --recursive webarena-verified
+```
+
 ## Development
 
 ```bash
@@ -157,7 +195,8 @@ evaluation cases in `evals/`.
 
 - macOS is the tested host; Linux and Windows packaging are not yet supported.
 - Browser and Android availability depends on local Chrome/CDP or ADB state.
-- The plugin is source-distributed and uses `uv` to run the local MCP server.
+- The repo-marketplace plugin uses `uv` to run the local MCP server and requires a
+  complete GUIWeave checkout; the plugin directory is not a standalone archive.
 - GUI automation is probabilistic. Use reports and replay artifacts to inspect failures.
 
 ## License
