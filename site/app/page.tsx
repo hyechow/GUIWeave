@@ -217,7 +217,7 @@ export default function Home() {
           <div className="install-card">
             <div className="terminal-bar"><span>INSTALL.sh</span><i>macOS</i></div>
             <pre><span>$</span> git clone &lt;guiweave-repository&gt;{`\n`}<span>$</span> cd guiweave{`\n`}<span>$</span> uv sync{`\n`}<span>$</span> codex plugin marketplace add .{`\n`}<span>$</span> codex plugin add guiweave-automation@guiweave-dev</pre>
-            <p>需要 Python 3.11+、uv、Codex，以及可访问的模型网关与对应 API_KEY。Browser/Android 支持 macOS 13+；当前 iPhone helper 预览二进制以 macOS 26 为目标。</p>
+            <p>需要 Python 3.11+、uv、Codex，以及可访问的模型网关与对应 API_KEY。插件已内置 adb、scrcpy 和 iPhone helper；Browser/Android 支持 macOS 13+，iPhone 仅支持 M 系列 Mac，并以 macOS 26 为目标。</p>
           </div>
         </div>
       </section>

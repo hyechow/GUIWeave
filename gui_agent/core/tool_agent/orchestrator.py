@@ -207,7 +207,11 @@ def _validate_worker_id(call: ast.Call) -> list[MasterDiagnostic]:
     return []
 
 
-def _validate_gui_worker_call(call: ast.Call) -> list[MasterDiagnostic]:
+def _validate_gui_worker_call(
+    call: ast.Call,
+    *,
+    platform_context: dict[str, Any] | None = None,
+) -> list[MasterDiagnostic]:
     diagnostics = _validate_worker_id(call)
     required = {
         "goal",
@@ -266,8 +270,30 @@ def _validate_gui_worker_call(call: ast.Call) -> list[MasterDiagnostic]:
         )
         for requirement in spec.data_requirements:
             Draft202012Validator.check_schema(requirement.row_schema)
+        runtime_applications = (
+            None
+            if platform_context is None or "applications" not in platform_context
+            else {
+                str(item).strip()
+                for item in (platform_context.get("applications") or [])
+                if str(item).strip()
+            }
+        )
         for action in spec.actions:
             validate_dynamic_action_spec(action)
+            if (
+                runtime_applications is not None
+                and action.capability == "launch_app"
+            ):
+                candidate = str(action.fixed_args.get("app") or "").strip()
+                if candidate and candidate not in runtime_applications:
+                    diagnostics.append(_diagnostic(
+                        "LAUNCH_APP_NAME",
+                        "launch_app fixed_args.app must exactly match a Runtime-provided "
+                        f"application; got {candidate!r}. Choose an exact value from "
+                        "task.platform.applications.",
+                        call,
+                    ))
     except Exception as exc:  # noqa: BLE001 - surfaced as a compile diagnostic
         diagnostics.append(_diagnostic("GUI_WORKER_SPEC", str(exc), call))
     input_keyword = next((item for item in call.keywords if item.arg == "input_refs"), None)
@@ -753,7 +779,11 @@ def _validate_finish_call(call: ast.Call) -> list[MasterDiagnostic]:
     return diagnostics
 
 
-def validate_master_source(source: str) -> list[MasterDiagnostic]:
+def validate_master_source(
+    source: str,
+    *,
+    platform_context: dict[str, Any] | None = None,
+) -> list[MasterDiagnostic]:
     """Validate one restricted Worker-orchestration program."""
     try:
         tree = ast.parse(source, mode="exec")
@@ -814,7 +844,10 @@ def validate_master_source(source: str) -> list[MasterDiagnostic]:
             if method in {"gui_worker", "transform"} and node.args:
                 diagnostics.append(_diagnostic("CALL_SIGNATURE", f"ctx.{method} accepts keyword arguments only", node))
             if method == "gui_worker":
-                diagnostics.extend(_validate_gui_worker_call(node))
+                diagnostics.extend(_validate_gui_worker_call(
+                    node,
+                    platform_context=platform_context,
+                ))
             elif method == "transform":
                 diagnostics.extend(_validate_transform_call(node))
             elif method in {"finish", "replan", "fail"}:
@@ -883,7 +916,13 @@ def compile_master_program(
         response = generator.invoke(messages)
         llm_elapsed_s = time.perf_counter() - started_at
         source = _extract_source(response.content)
-        diagnostics = validate_master_source(source)
+        platform_context = task_context.get("platform")
+        diagnostics = validate_master_source(
+            source,
+            platform_context=(
+                platform_context if isinstance(platform_context, dict) else None
+            ),
+        )
         if on_event is not None:
             on_event(
                 "master_compile_attempt",

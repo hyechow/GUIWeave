@@ -3,6 +3,40 @@
 set -euo pipefail
 
 PLUGIN_ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
+ASSET_ROOT="$PLUGIN_ROOT/assets"
+
+# Prefer executables shipped inside the installed plugin cache. Explicit user
+# overrides still win, and the runtime retains its repository/PATH fallbacks.
+ANDROID_ASSET_DIR="$ASSET_ROOT/android-arm64/scrcpy-macos-aarch64-v4.0"
+if [[ -x "$ANDROID_ASSET_DIR/adb" && -z "${GUIWEAVE_ADB_PATH:-}" ]]; then
+  export GUIWEAVE_ADB_PATH="$ANDROID_ASSET_DIR/adb"
+fi
+if [[ -x "${GUIWEAVE_ADB_PATH:-}" && -z "${ADBUTILS_ADB_PATH:-}" ]]; then
+  export ADBUTILS_ADB_PATH="$GUIWEAVE_ADB_PATH"
+fi
+
+APPLE_SILICON=0
+if [[ "$(uname -m)" == "arm64" ]] \
+  || [[ "$(sysctl -n hw.optional.arm64 2>/dev/null || true)" == "1" ]]; then
+  APPLE_SILICON=1
+fi
+if [[ "$APPLE_SILICON" == "1" \
+  && -x "$ANDROID_ASSET_DIR/scrcpy" \
+  && -z "${GUIWEAVE_SCRCPY_PATH:-}" ]]; then
+  export GUIWEAVE_SCRCPY_PATH="$ANDROID_ASSET_DIR/scrcpy"
+fi
+
+IPHONE_ASSET_DIR="$ASSET_ROOT/iphone-arm64"
+if [[ "$APPLE_SILICON" == "1" ]]; then
+  if [[ -x "$IPHONE_ASSET_DIR/sck_server" \
+    && -z "${GUIWEAVE_SCK_SERVER:-}" ]]; then
+    export GUIWEAVE_SCK_SERVER="$IPHONE_ASSET_DIR/sck_server"
+  fi
+  if [[ -x "$IPHONE_ASSET_DIR/mirror_daemon" \
+    && -z "${GUIWEAVE_MIRROR_DAEMON:-}" ]]; then
+    export GUIWEAVE_MIRROR_DAEMON="$IPHONE_ASSET_DIR/mirror_daemon"
+  fi
+fi
 
 is_guiweave_root() {
   [[ -f "$1/pyproject.toml" && -d "$1/gui_agent" ]]

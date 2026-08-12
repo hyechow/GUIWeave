@@ -75,6 +75,11 @@ class BrowserSession:
             raise RuntimeError("浏览器尚未连接")
         return self.client.screenshot()
 
+    def platform_time(self):
+        if self.client is None:
+            raise RuntimeError("浏览器尚未连接")
+        return self.client.platform_time()
+
     def pop_tab_switched(self) -> bool:
         """Delegate to PlaywrightDevice: True (and clear) if a tab switch occurred."""
         if self.client is None:

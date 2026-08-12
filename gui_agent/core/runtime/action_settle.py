@@ -27,13 +27,15 @@ def settle_after_action(
 ) -> tuple[float, bool]:
     """Wait until the surface changes and settles, or reaches the bounded cap."""
 
+    screenshot = getattr(platform, "settle_screenshot", platform.screenshot)
+
     if action_type not in ("drag", "scroll", "scroll_to_ref"):
         cdp_settle = getattr(platform, "wait_settled", None)
         if cdp_settle is not None:
             try:
                 elapsed, no_effect = cdp_settle(action_type)
                 if no_effect and pre_frame is not None:
-                    current = platform.screenshot()
+                    current = screenshot()
                     if frame_changed(pre_frame, current, focus_y, center=center):
                         no_effect = False
                 return elapsed, no_effect
@@ -46,7 +48,7 @@ def settle_after_action(
         for index in range(1, SETTLE_MAX_UNITS + 1):
             time.sleep(SETTLE_GESTURE_FIRST_S if index == 1 else SETTLE_UNIT_S)
             try:
-                current = platform.screenshot()
+                current = screenshot()
             except Exception:  # noqa: BLE001
                 return time.perf_counter() - started, False
             if previous is not None and frame_diff(previous, current) < STABLE_MEAN_THR:
@@ -70,7 +72,7 @@ def settle_after_action(
     for index in range(1, SETTLE_MAX_UNITS + 1):
         time.sleep(SETTLE_FIRST_S if index == 1 else SETTLE_UNIT_S)
         try:
-            current = platform.screenshot()
+            current = screenshot()
         except Exception:  # noqa: BLE001
             return time.perf_counter() - started, False
         tab_switched = bool(pop_tab and pop_tab())

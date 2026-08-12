@@ -413,6 +413,7 @@ class ResultRef(StrictModel):
 class MaterializedFrame(StrictModel):
     frame_id: str
     screenshot_path: str
+    platform_time: dict[str, Any] = Field(default_factory=dict)
     url: str = ""
     title: str = ""
     controls: list[dict[str, Any]] = Field(default_factory=list)
@@ -443,3 +444,4 @@ class ToolAgentRun(StrictModel):
     worker_model: str
     perception_model: str
     perception_mode: Literal["vision-only", "enhanced"]
+    platform_time: dict[str, Any] = Field(default_factory=dict)

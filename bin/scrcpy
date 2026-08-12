@@ -18,17 +18,42 @@
 set -e
 cd "$(dirname "$0")/.."
 
-# 定位 vendored scrcpy(版本无关 glob);找不到则回退 PATH 上的 scrcpy。
-SCRCPY_DIR=$(ls -d vendor/scrcpy-macos-*/ 2>/dev/null | head -1)
-if [ -n "$SCRCPY_DIR" ]; then
+# 优先使用显式配置；Apple Silicon 可使用插件和旧 vendor 中的 arm64 资产；
+# Intel Mac 跳过这些资产并回退 PATH 中的本机兼容版本。
+APPLE_SILICON=0
+if [ "$(uname -m)" = "arm64" ] \
+  || [ "$(sysctl -n hw.optional.arm64 2>/dev/null || true)" = "1" ]; then
+  APPLE_SILICON=1
+fi
+if [ -x "${GUIWEAVE_SCRCPY_PATH:-}" ]; then
+  SCRCPY="$GUIWEAVE_SCRCPY_PATH"
+  ADB="${GUIWEAVE_ADB_PATH:-$(dirname "$SCRCPY")/adb}"
+elif [ "$APPLE_SILICON" = "1" ] \
+  && [ -x "plugins/guiweave-automation/assets/android-arm64/scrcpy-macos-aarch64-v4.0/scrcpy" ]; then
+  SCRCPY="plugins/guiweave-automation/assets/android-arm64/scrcpy-macos-aarch64-v4.0/scrcpy"
+  ADB="${GUIWEAVE_ADB_PATH:-plugins/guiweave-automation/assets/android-arm64/scrcpy-macos-aarch64-v4.0/adb}"
+fi
+if [ -z "${SCRCPY:-}" ] && [ "$APPLE_SILICON" = "1" ]; then
+  SCRCPY_DIR=$(ls -d vendor/scrcpy-macos-*/ 2>/dev/null | head -1 || true)
+fi
+if [ -z "${SCRCPY:-}" ] && [ -n "${SCRCPY_DIR:-}" ]; then
   SCRCPY="${SCRCPY_DIR%/}/scrcpy"
   ADB="${SCRCPY_DIR%/}/adb"
-elif command -v scrcpy >/dev/null 2>&1; then
+fi
+if [ -z "${SCRCPY:-}" ] && command -v scrcpy >/dev/null 2>&1; then
   SCRCPY=$(command -v scrcpy)
-  ADB=$(command -v adb || echo adb)
-else
-  echo "✗ 找不到 scrcpy:vendor/scrcpy-macos-*/ 不存在,PATH 上也没有 scrcpy。" >&2
-  echo "  解法:下载官方独立包到 vendor/(见 .gitignore 的 vendor/ 约定),或 brew install scrcpy。" >&2
+  ADB="${GUIWEAVE_ADB_PATH:-$(command -v adb || echo adb)}"
+fi
+if [ -z "${SCRCPY:-}" ]; then
+  echo "✗ 找不到 scrcpy：插件资产、vendor/scrcpy-macos-*/ 和 PATH 均不可用。" >&2
+  if [ "$APPLE_SILICON" != "1" ]; then
+    echo "  插件内 scrcpy 是 arm64 版本，Intel Mac 需要 PATH 中的兼容版本。" >&2
+  fi
+  echo "  解法：重新安装完整插件，或 brew install scrcpy。" >&2
+  exit 1
+fi
+if [ ! -x "$ADB" ]; then
+  echo "✗ 找不到可执行 adb：$ADB" >&2
   exit 1
 fi
 export ADB                       # scrcpy 经 $ADB 找 adb
@@ -72,5 +97,5 @@ LOG="${TMPDIR:-/tmp}/scrcpy-${_safe:-auto}.log"
 nohup "$SCRCPY" "${SEL[@]}" "${ARGS[@]}" >"$LOG" 2>&1 &
 PID=$!
 disown 2>/dev/null || true
-echo "scrcpy 已后台启动: ${SERIAL:-<auto>}  (pid $PID, adb=$ADB)"
+echo "scrcpy 已后台启动: ${SERIAL:-<auto>}  (pid $PID, scrcpy=$SCRCPY, adb=$ADB)"
 echo "  日志: $LOG   (关镜像窗口即退,或 kill $PID)"

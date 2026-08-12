@@ -53,6 +53,7 @@ def project_tool_agent_result(
         for role in ("master", "worker", "perception")
     }
     result_ref = getattr(run, "result_ref", None)
+    platform_time = dict(getattr(run, "platform_time", None) or {})
     platform_rejections = [
         {
             "status": feedback.get("status"),
@@ -78,6 +79,7 @@ def project_tool_agent_result(
             "result_ref": result_ref.model_dump(mode="json") if result_ref else None,
             "platform_rejections": platform_rejections,
             "models": models,
+            "platform_time": platform_time,
             "trace_path": str(log_dir / "tool_agent_trace.json"),
             "replay_path": str(log_dir / "tool_agent_replay.json"),
             "presentation_path": str(log_dir / "tool_agent_presentation.json"),
@@ -101,6 +103,7 @@ def project_tool_agent_result(
         router=router,
     )
     context.knowledge = knowledge_summary
+    context.platform_time = platform_time or None
     context.outcome = result.to_program_outcome()
     context.models = {
         **{f"tool_agent.{role}": model for role, model in models.items()},

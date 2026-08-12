@@ -16,6 +16,7 @@ if TYPE_CHECKING:
         Perception,
         PerceptionSession,
     )
+    from gui_agent.core.runtime.clock import PlatformTimeSnapshot
 
 
 @dataclass(frozen=True)
@@ -46,6 +47,7 @@ class PlatformBundle:
     make_action_visualizer: Callable[
         ["PerceptionSession"], "Optional[ActionVisualizer]"
     ]
+    read_time: Callable[["PerceptionSession"], "PlatformTimeSnapshot"]
     tool_agent_capabilities: tuple[str, ...]
 
 

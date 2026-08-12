@@ -50,6 +50,21 @@ def _clamp(v: float, lo: float, hi: float) -> int:
 _LAUNCHER_COMPONENT = re.compile(
     r"(?m)^\s*([A-Za-z0-9_][A-Za-z0-9._]*/[A-Za-z0-9_.$]+)\s*$"
 )
+_RECOVERABLE_TRANSPORT_ERRORS = (
+    "device offline",
+    " is offline",
+    "device not found",
+    "no devices/emulators found",
+    "transport error",
+    "transport is closing",
+    "connection reset",
+    "broken pipe",
+)
+
+
+def _is_recoverable_transport_error(exc: Exception) -> bool:
+    message = str(exc).casefold()
+    return any(marker in message for marker in _RECOVERABLE_TRANSPORT_ERRORS)
 
 
 class AndroidDevice:
@@ -69,6 +84,7 @@ class AndroidDevice:
         self.win_w = 1080
         self.win_h = 2400
         self._adbkeyboard_active = False  # set by _detect_ime() at connect when ADBKeyboard is on
+        self._stay_awake_enabled = False
 
     # ----- lifecycle -------------------------------------------------------
     def connect(self):
@@ -127,6 +143,9 @@ class AndroidDevice:
                 f"adb device {serial or '<auto>'} is {state or 'unknown'} "
                 f"(expected device){detail}"
             )
+        resolved_serial = getattr(candidate, "serial", None) or serial
+        if resolved_serial:
+            self.serial = str(resolved_serial)
         self._dev = candidate
 
         # screencap returns black when the screen is off — wake it on connect.
@@ -134,6 +153,15 @@ class AndroidDevice:
             self._dev.keyevent(KEYCODE["wakeup"])
         except Exception:  # noqa: BLE001 — non-fatal
             pass
+        # Wireless adb may survive an ordinary screen-off, but a sleeping Wi-Fi
+        # radio makes long GUI runs fragile. Keep the screen on while charging.
+        # This setting is intentionally persistent and idempotent; setup_check
+        # reports the matching command for restoring the device default.
+        try:
+            self._dev.shell("svc power stayon true")
+            self._stay_awake_enabled = True
+        except Exception:  # noqa: BLE001 — warn through setup, do not block adb
+            self._stay_awake_enabled = False
         try:
             ws = self._dev.window_size()
             self.win_w, self.win_h = int(ws[0]), int(ws[1])
@@ -141,6 +169,22 @@ class AndroidDevice:
             pass
         self._detect_ime()
         return self
+
+    @property
+    def stay_awake_enabled(self) -> bool:
+        return self._stay_awake_enabled
+
+    def _reconnect_transport(self):
+        """Reset only this wireless transport, then rebuild the device handle."""
+
+        if self.serial and ":" in self.serial:
+            try:
+                import adbutils
+
+                adbutils.AdbClient().disconnect(self.serial, raise_error=False)
+            except Exception:  # noqa: BLE001 — connect() remains authoritative
+                pass
+        return self.connect()
 
     def device_date(self) -> Optional[datetime]:
         """The Android device's current date (``adb shell date +%F``).
@@ -156,6 +200,40 @@ class AndroidDevice:
             return datetime.strptime(raw, "%Y-%m-%d")
         except Exception:  # noqa: BLE001 — device clock is best-effort
             return None
+
+    def platform_time(self):
+        """Read the Android device clock and configured timezone over adb."""
+
+        from gui_agent.core.runtime.clock import (
+            host_time_fallback,
+            platform_time_from_parts,
+        )
+
+        if self._dev is None:
+            return host_time_fallback(
+                "android",
+                reason="Android device clock unavailable before connection",
+            )
+        try:
+            local = self._dev.shell("date +%Y-%m-%dT%H:%M:%S%z").strip()
+            if len(local) >= 5 and local[-5] in {"+", "-"} and local[-3] != ":":
+                local = f"{local[:-2]}:{local[-2:]}"
+            offset = local[-6:] if len(local) >= 6 and local[-6] in {"+", "-"} else ""
+            zone = self._dev.shell("getprop persist.sys.timezone").strip() or offset
+            if not local or not offset:
+                raise ValueError("adb clock response is incomplete")
+            return platform_time_from_parts(
+                "android",
+                local_datetime=local,
+                timezone_name=zone,
+                utc_offset=offset,
+                source="android_adb",
+            )
+        except Exception as exc:  # noqa: BLE001 - clock has explicit fallback provenance
+            return host_time_fallback(
+                "android",
+                reason=f"Android device clock unavailable: {type(exc).__name__}",
+            )
 
     def _detect_ime(self) -> None:
         """Per-connect path — READ-ONLY: record whether the device's current IME is
@@ -213,6 +291,23 @@ class AndroidDevice:
         return self.win_w, self.win_h
 
     # ----- perception ------------------------------------------------------
+    def screenshot_once(self) -> bytes:
+        """Return one primary screencap without fallback or reconnect work.
+
+        Post-action settling uses this best-effort probe. The next authoritative
+        observation still calls :meth:`screenshot`, which owns transport recovery.
+        """
+
+        img = self._require_dev().screenshot()
+        if img is None:
+            raise RuntimeError("primary screenshot returned no image")
+        buf = io.BytesIO()
+        img.save(buf, format="PNG")
+        data = buf.getvalue()
+        if len(data) <= 100:
+            raise RuntimeError("primary screenshot returned an empty frame")
+        return data
+
     def screenshot(self) -> bytes:
         """Return the current screen as PNG bytes.
 
@@ -221,23 +316,33 @@ class AndroidDevice:
         falling back to the file method (``screencap -p /sdcard/... && pull``).
         """
         last_exc: Optional[Exception] = None
+        transport_exc: Optional[Exception] = None
+        reconnect_attempted = False
         for _ in range(3):
             try:
-                img = self._require_dev().screenshot()
-                if img is not None:
-                    buf = io.BytesIO()
-                    img.save(buf, format="PNG")
-                    data = buf.getvalue()
-                    if len(data) > 100:  # reject empty/near-empty frames
-                        return data
+                return self.screenshot_once()
             except Exception as exc:  # noqa: BLE001
                 last_exc = exc
+                if _is_recoverable_transport_error(exc):
+                    transport_exc = exc
             try:
                 data = self._screencap_pull()
                 if len(data) > 100:
                     return data
             except Exception as exc:  # noqa: BLE001
                 last_exc = exc
+                if _is_recoverable_transport_error(exc):
+                    transport_exc = exc
+            if transport_exc is not None and not reconnect_attempted and self.serial:
+                reconnect_attempted = True
+                try:
+                    # Re-resolve the adb handle and refresh host:port transports.
+                    # connect() also re-applies wake/stay-awake idempotently.
+                    self._reconnect_transport()
+                    transport_exc = None
+                    continue
+                except Exception as exc:  # noqa: BLE001
+                    last_exc = exc
         raise RuntimeError(f"screenshot failed after retries: {last_exc}")
 
     def dump_ui_hierarchy(self, timeout_s: float = 6.0) -> str | None:

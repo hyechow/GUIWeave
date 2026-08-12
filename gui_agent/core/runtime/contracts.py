@@ -5,6 +5,7 @@ from __future__ import annotations
 from typing import Protocol, runtime_checkable
 
 from gui_agent.core.schemas import BaseAction, Observation
+from gui_agent.core.runtime.clock import PlatformTimeSnapshot
 
 
 @runtime_checkable
@@ -12,6 +13,8 @@ class PerceptionSession(Protocol):
     client: object
 
     def screenshot(self) -> bytes: ...
+
+    def platform_time(self) -> PlatformTimeSnapshot: ...
 
     def __enter__(self) -> "PerceptionSession": ...
 

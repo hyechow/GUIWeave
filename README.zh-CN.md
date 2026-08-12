@@ -34,15 +34,16 @@ MCP 进程完全在本机运行，不开放网络端口；Codex 通过 stdin/std
 
 ## 环境要求
 
-- Browser/Android 需要 macOS 13 或更高版本；当前随仓库发布的 iPhone helper
-  预览二进制以 macOS 26 为目标
+- Browser/Android 需要 macOS 13 或更高版本；iPhone helper 开发者预览版仅支持
+  搭载 M 系列芯片的 Apple Silicon Mac，并以 macOS 26 为目标
 - Python 3.11+
 - [`uv`](https://docs.astral.sh/uv/)
 - 在 `.env` 或 shell 中配置的 OpenAI-compatible 模型
 - headed browser 任务需要 Chrome；headless 任务可使用 Playwright Chromium
-- Android 任务需要 Android Platform Tools；`scrcpy` 仅用于可选镜像和动作覆盖层
-- iPhone 任务需要 macOS iPhone 镜像应用，以及仓库内的 `bin/sck_server` 和
-  `bin/mirror_daemon`
+- 插件已包含 Android `adb` 和 arm64 `scrcpy` 4.0；`scrcpy` 仅用于可选镜像和动作
+  覆盖层，Intel Mac 会回退使用 PATH 中的兼容版本
+- iPhone 任务需要 M 系列 Mac 和 macOS iPhone 镜像应用；插件已包含
+  `sck_server` 和 `mirror_daemon`
 
 安装运行时：
 
@@ -52,7 +53,32 @@ uv sync
 uv run playwright install chromium
 ```
 
-模型密钥只应放在本地 `.env` 或 shell 中，不要提交进仓库。
+配置模型网关（推荐使用仓库提供的 OpenAI-compatible `standard` 模板）：
+
+```bash
+cp .env.example .env
+```
+
+然后在 `.env` 中至少替换：
+
+```dotenv
+AGENT_CONFIG=config.standard.yaml
+STANDARD_BASE_URL=https://你的模型网关/v1
+STANDARD_API_KEY=你的密钥
+```
+
+`config.standard.yaml` 已分别声明 Master、Worker、Perception、Presentation、Loading
+和 Target Verify 使用的模型。Worker、Perception 和视觉校验槽位会发送截图，因此网关中
+对应模型必须支持 OpenAI-compatible 图片输入。也可选择 `config.tokenplan.yaml` 并配置
+`TOKENPLAN_BASE_URL` / `TOKENPLAN_API_KEY`。模型密钥只应放在本地 `.env` 或 shell 中，
+不要提交进仓库；修改后需要重启 Run Console 或 Codex。
+
+统一前置检查会同时检查模型和所选平台：Browser 检查 Chrome CDP（headless 除外）；
+Android 检查 `adb` 设备，并提示可选 `scrcpy` 和 ADBKeyboard 状态；iPhone 检查是否为
+M 系列 Mac、两个插件 helper 的存在、可执行权限与 Gatekeeper 状态，以及 iPhone 镜像窗口。
+Android 连接成功后会执行 `svc power stayon true`，使设备在充电时保持亮屏并降低无线
+ADB 因深度休眠断开的概率；它不会解除锁屏，因此仍应关闭自动锁屏或延长休眠时间。
+可用 `adb -s <设备地址> shell svc power stayon false` 恢复默认设置。
 
 ## 安装 Codex 插件
 
@@ -124,7 +150,10 @@ uv run guiweave console
 
 然后访问 `http://127.0.0.1:7468`。Console 支持按平台启动任务、查看实时结构化事件、
 请求安全取消，以及打开本地报告、trace、replay 和 stdout/stderr 日志。同一平台同一时间
-只允许一个活跃任务，服务只监听本机 loopback 地址。
+只允许一个活跃任务，服务只监听本机 loopback 地址。打开新建任务窗口或切换平台时，
+Console 会显示模型、CDP/adb/iPhone helper 的检查结果；硬依赖未就绪时不会启动任务。
+选择 Android 后可直接填写设备 IP、`IP:端口` 或 adb serial；裸 IP 默认连接 5555
+端口。该地址同时用于前置检查和实际任务，留空时才会自动选择唯一已连接设备。
 
 运行环境和产物在本机，但模型推理不一定离线：任务会使用 `.env` 或 shell 中配置的模型
 网关与 API key。
@@ -200,7 +229,11 @@ uv run pytest evals/browser/webarena_response/test_response_replay.py
 ## 当前限制
 
 - 当前只把 macOS 作为已测试宿主；Linux 和 Windows 打包尚未支持。
-- 三个平台分别依赖本机 Chrome/CDP、ADB，或 macOS iPhone 镜像窗口与仓库内 helper。
+- 三个平台分别依赖本机 Chrome/CDP、已连接的 Android 设备，或 M 系列 Mac 上可见的
+  iPhone 镜像窗口；设备侧可执行程序已纳入插件包。
+- 仓库内 iPhone helper 是本地源码预览构建。对外分发可下载的插件包之前，必须使用
+  Developer ID 对两个 helper 签名并完成 notarization；前置检查会阻止被 Gatekeeper
+  拒绝且带下载隔离标记的 helper。
 - repo marketplace 插件通过 `uv` 启动本地 MCP server，并依赖完整 GUIWeave
   checkout；不能只复制插件目录作为独立安装包。
 - GUI 自动化具有概率性；失败时应结合 HTML 报告和 replay 产物排查。

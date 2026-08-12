@@ -9,6 +9,7 @@ from __future__ import annotations
 
 import hashlib
 import json
+import re
 import time
 from collections.abc import Callable
 from pathlib import Path
@@ -65,12 +66,44 @@ def result_digest(value: Any) -> str:
     return hashlib.sha256(_canonical(value).encode("utf-8")).hexdigest()
 
 
-def _deterministic_reply(*, phase: str, result: Any, summary: str) -> str:
+def _display_value(value: Any) -> str:
+    if isinstance(value, str):
+        return value
+    if value is None:
+        return "—"
+    if isinstance(value, bool):
+        return str(value).lower()
+    if isinstance(value, (int, float)):
+        return str(value)
+    return json.dumps(value, ensure_ascii=False, default=str)
+
+
+def _deterministic_reply(
+    *,
+    goal: str,
+    phase: str,
+    result: Any,
+    summary: str,
+) -> str:
     if phase != "completed":
         return summary.strip() or "The task did not complete."
     if isinstance(result, str):
         return result.strip() or json.dumps(result, ensure_ascii=False)
-    return json.dumps(result, ensure_ascii=False, default=str)
+    chinese = bool(re.search(r"[\u3400-\u9fff]", goal))
+    if isinstance(result, dict):
+        parts = [
+            f"{str(key).replace('_', ' ')}{'为' if chinese else ' is '}{_display_value(value)}"
+            for key, value in result.items()
+        ]
+        if chinese:
+            return f"查询结果：{'，'.join(parts)}。"
+        return f"Result: {', '.join(parts)}."
+    if isinstance(result, (list, tuple)):
+        values = ("、" if chinese else ", ").join(
+            _display_value(value) for value in result
+        )
+        return f"查询结果：{values}。" if chinese else f"Result: {values}."
+    return f"结果为 {_display_value(result)}。" if chinese else f"The result is {_display_value(result)}."
 
 
 def _salient_literals(value: Any, *, limit: int = 20) -> list[str]:
@@ -98,10 +131,81 @@ def _salient_literals(value: Any, *, limit: int = 20) -> list[str]:
 
 
 def _validate_fidelity(reply: str, result: Any) -> None:
-    missing = [value for value in _salient_literals(result) if value not in reply]
+    missing = [
+        value
+        for value in _salient_literals(result)
+        if not _literal_is_preserved(reply, value)
+    ]
     if missing:
         shown = ", ".join(repr(item) for item in missing[:5])
         raise ValueError(f"presentation omitted canonical result literal(s): {shown}")
+
+
+def _literal_is_preserved(reply: str, value: str) -> bool:
+    # URLs, emails, and mixed ASCII identifiers must remain byte-for-byte stable.
+    if re.search(r"https?://|@|(?=.*[A-Za-z])(?=.*\d)", value):
+        return value in reply
+    substitutions = {
+        "小于等于": "<=",
+        "不超过": "<=",
+        "大于等于": ">=",
+        "不少于": ">=",
+        "小于": "<",
+        "低于": "<",
+        "大于": ">",
+        "高于": ">",
+    }
+    comparable_reply = reply
+    comparable_value = value
+    for text, symbol in substitutions.items():
+        comparable_reply = comparable_reply.replace(text, symbol)
+        comparable_value = comparable_value.replace(text, symbol)
+    tokens = re.findall(
+        r"<=|>=|<|>|[-+]?\d+(?:\.\d+)?|[A-Za-z]+|[\u3400-\u9fff]+|℃|°|%",
+        comparable_value,
+    )
+    if not tokens:
+        return value in reply
+
+    def token_is_preserved(token: str) -> bool:
+        if re.fullmatch(r"[-+]?\d+(?:\.\d+)?", token):
+            # A bare substring check lets canonical 3 pass as corrupted 33/13.
+            return bool(
+                re.search(
+                    rf"(?<![\d.]){re.escape(token)}(?![\d.])",
+                    comparable_reply,
+                )
+            )
+        if token in {"<", ">"}:
+            return bool(
+                re.search(
+                    rf"(?<![<>]){re.escape(token)}(?![=])",
+                    comparable_reply,
+                )
+            )
+        if token in {"<=", ">="}:
+            return token in comparable_reply
+        if token.isascii() and token.isalpha():
+            return bool(
+                re.search(
+                    rf"(?<![A-Za-z]){re.escape(token)}(?![A-Za-z])",
+                    comparable_reply,
+                )
+            )
+        return token in comparable_reply
+
+    return all(token_is_preserved(token) for token in tokens)
+
+
+def _validate_natural_reply(reply: str, result: Any) -> None:
+    if not isinstance(result, (dict, list, tuple)):
+        return
+    try:
+        parsed = json.loads(reply)
+    except (TypeError, json.JSONDecodeError):
+        return
+    if isinstance(parsed, (dict, list)):
+        raise ValueError("presentation reply is serialized structured data, not user-facing prose")
 
 
 def _prompt_snapshot(messages: list[Any]) -> dict[str, Any]:
@@ -141,7 +245,12 @@ def present_result(
     """Render one public result without exposing execution capabilities."""
     digest = result_digest(result)
     replay_status = str((replay or {}).get("status") or "unavailable")
-    fallback = _deterministic_reply(phase=phase, result=result, summary=summary)
+    fallback = _deterministic_reply(
+        goal=goal,
+        phase=phase,
+        result=result,
+        summary=summary,
+    )
     if phase == "completed" and replay_status != "passed":
         return PresentationResult(
             status="fallback",
@@ -195,6 +304,7 @@ def present_result(
         reply = envelope.reply.strip()
         if phase == "completed":
             _validate_fidelity(reply, result)
+            _validate_natural_reply(reply, result)
         status: Literal["generated", "fallback"] = "generated"
         error = ""
     except Exception as exc:  # noqa: BLE001 - presentation cannot change execution success

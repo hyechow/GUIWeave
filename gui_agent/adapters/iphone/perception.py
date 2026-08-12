@@ -49,6 +49,17 @@ class IPhoneSession:
             raise RuntimeError("iPhone sck_server 尚未连接")
         return self._sck.screenshot()
 
+    def platform_time(self):
+        from gui_agent.core.runtime.clock import host_time_fallback
+
+        return host_time_fallback(
+            "iphone",
+            reason=(
+                "iPhone mirror_daemon/sck_server expose pixels and input only; "
+                "no device clock channel is available"
+            ),
+        )
+
 
 class IPhonePerception:
     def __init__(

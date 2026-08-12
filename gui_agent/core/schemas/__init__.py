@@ -1185,6 +1185,10 @@ class PolicyContext(BaseModel):
         default=None,
         description="运行平台 iphone/browser/android（AGENT_PLATFORM）。",
     )
+    platform_time: Optional[dict[str, Any]] = Field(
+        default=None,
+        description="任务启动时冻结的平台时钟、时区、来源和可信度。",
+    )
     raw_input: Optional[str] = Field(
         default=None,
         description="用户/CLI 原始输入（temporal 解析、router 改写之前）。",

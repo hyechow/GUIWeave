@@ -36,16 +36,16 @@ the plugin and communicates with Codex over stdin/stdout.
 
 ## Requirements
 
-- macOS 13 or later for Browser/Android; the bundled iPhone helper preview currently
-  targets macOS 26
+- macOS 13 or later for Browser/Android; the bundled iPhone helper preview supports
+  Apple Silicon (M-series) Macs only and currently targets macOS 26
 - Python 3.11+
 - [`uv`](https://docs.astral.sh/uv/)
 - an OpenAI-compatible model configured in `.env` or the shell
 - Chrome for headed browser tasks, or Playwright Chromium for headless tasks
-- Android Platform Tools for Android tasks; `scrcpy` is optional for the mirror and
-  action overlay
-- the macOS iPhone Mirroring app plus bundled `bin/sck_server` and
-  `bin/mirror_daemon` for iPhone tasks
+- bundled Android `adb` and arm64 scrcpy 4.0; `scrcpy` is optional for the mirror and
+  action overlay, and Intel Macs fall back to a compatible `scrcpy` on `PATH`
+- an M-series Mac and the macOS iPhone Mirroring app; the plugin bundles `sck_server`
+  and `mirror_daemon`
 
 Install the runtime:
 
@@ -55,8 +55,35 @@ uv sync
 uv run playwright install chromium
 ```
 
-Copy `.env.example` to `.env` if present, or configure the provider variables used by
-your local model setup. Never commit provider keys.
+Configure the model gateway with the supplied OpenAI-compatible `standard` template:
+
+```bash
+cp .env.example .env
+```
+
+Replace at least these values in `.env`:
+
+```dotenv
+AGENT_CONFIG=config.standard.yaml
+STANDARD_BASE_URL=https://your-model-gateway.example/v1
+STANDARD_API_KEY=your-secret
+```
+
+`config.standard.yaml` assigns models to the Master, Worker, Perception,
+Presentation, Loading, and Target Verify slots. Worker, Perception, and visual
+verification send screenshots, so their configured models must accept
+OpenAI-compatible image input. `config.tokenplan.yaml` with `TOKENPLAN_BASE_URL` and
+`TOKENPLAN_API_KEY` is also supported. Never commit provider keys, and restart the
+Run Console or Codex after changing `.env`.
+
+The shared preflight checks both model configuration and the selected platform:
+Browser checks Chrome CDP unless headless; Android checks the `adb` device and reports
+optional `scrcpy` and ADBKeyboard status; iPhone checks M-series hardware, executable
+bundled helpers, their Gatekeeper status, and the visible iPhone Mirroring window.
+After Android connects, GUIWeave runs `svc power stayon true` so a charging device
+stays awake and is less likely to drop wireless adb during deep sleep. This does not
+unlock the device; disable automatic locking or extend its timeout separately. Restore
+the default with `adb -s <device-address> shell svc power stayon false`.
 
 ## Codex plugin
 
@@ -130,7 +157,12 @@ uv run guiweave console
 
 Then open `http://127.0.0.1:7468`. The Console can start one task per platform,
 show live structured events, request cooperative cancellation, and open local reports,
-traces, replay data, and stdio logs. It listens only on the loopback interface.
+traces, replay data, and stdio logs. It listens only on the loopback interface. Opening
+the new-task dialog or changing its platform shows the model and platform dependency
+checks; a task cannot start while a required dependency is unavailable.
+For Android, enter a device IP, `IP:port`, or adb serial in the dialog. A bare IP
+defaults to port 5555. The same address is used for preflight and the actual task;
+leave it blank only to auto-select the sole connected device.
 
 The runtime is local, but inference is not necessarily offline: tasks use the model
 gateway and API key configured in your `.env` or shell.
@@ -208,8 +240,12 @@ evaluation cases in `evals/`.
 ## Preview limitations
 
 - macOS is the tested host; Linux and Windows packaging are not yet supported.
-- Platform availability depends on local Chrome/CDP, ADB, or the macOS iPhone
-  Mirroring window and bundled helpers.
+- Platform availability depends on local Chrome/CDP, an attached Android device, or
+  an M-series Mac with a visible iPhone Mirroring window. Device executables are
+  bundled in the plugin.
+- The repository iPhone helpers are local-preview builds. Before distributing a
+  downloaded plugin archive, sign both helpers with Developer ID and notarize the
+  release; preflight blocks quarantined helpers that Gatekeeper rejects.
 - The repo-marketplace plugin uses `uv` to run the local MCP server and requires a
   complete GUIWeave checkout; the plugin directory is not a standalone archive.
 - GUI automation is probabilistic. Use reports and replay artifacts to inspect failures.
