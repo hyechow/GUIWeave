@@ -96,3 +96,27 @@ def test_mcp_server_exposes_knowledge_import_tools() -> None:
         "get_user_knowledge",
     ):
         assert f"def {tool_name}(" in source
+
+
+def test_preview_exposes_three_platforms_without_device_protocol_stacks() -> None:
+    source = (PROJECT_ROOT / "gui_agent" / "mcp_server.py").read_text(
+        encoding="utf-8"
+    )
+    pyproject = (PROJECT_ROOT / "pyproject.toml").read_text(encoding="utf-8")
+
+    assert "def run_browser_task(" in source
+    assert "def run_android_task(" in source
+    assert "def run_iphone_task(" in source
+    assert (PROJECT_ROOT / "bin" / "mirror_daemon").is_file()
+    assert (PROJECT_ROOT / "bin" / "sck_server").is_file()
+    forbidden = ("webdriveragent", "xcuitest", "pymobiledevice", "usbmux")
+    assert not any(name in pyproject.lower() for name in forbidden)
+
+
+def test_sck_server_source_refuses_full_display_capture() -> None:
+    source = (PROJECT_ROOT / "sck" / "sck_stream_server.swift").read_text(
+        encoding="utf-8"
+    )
+
+    assert "refusing full-display capture" in source
+    assert "capturing full display" not in source
