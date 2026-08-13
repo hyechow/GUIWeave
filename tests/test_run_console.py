@@ -98,6 +98,11 @@ def test_console_home_explains_model_gateway_boundary(tmp_path: Path) -> None:
     assert 'id="sidebar-toggle"' in response.text
     assert 'id="trace-follow"' in response.text
     assert 'id="previous-frame"' in response.text
+    assert 'data-console-mode="chat"' in response.text
+    assert 'id="chat-form"' in response.text
+    assert 'id="chat-thread"' in response.text
+    assert 'id="chat-detail"' in response.text
+    assert "每条消息启动独立的 Headless Run" in response.text
     assert "NEW GUI RUN" in response.text
     assert "新建 GUI 任务" in response.text
     assert "Android 设备地址" in response.text
@@ -131,6 +136,15 @@ def test_console_frontend_auto_selects_and_prioritizes_final_reply() -> None:
     assert 'showFrame(state.frameIndex + (event.key === "ArrowLeft" ? -1 : 1))' in source
     assert 'frame.name === state.frameName' in source
     assert 'document.body.classList.toggle("sidebar-collapsed")' in source
+    assert 'task.mode === "chat"' in source
+    assert 'mode: "chat"' in source
+    assert 'class="chat-run-meta"' in source
+    assert 'data-chat-task="${escapeHtml(task.task_id)}"' in source
+    assert "renderChatDetail(chatTasks.find" in source
+    assert "state.chatTask = task.task_id" in source
+    assert '$("runs-mode").classList.toggle("hidden", chat)' in source
+    assert 'if (chat) {\n    loadChatEnvironment();' in source
+    assert 'event.key === "Enter" && !event.shiftKey && !event.isComposing' in source
     assert 'query.set("adb_serial", androidAddress)' in source
     assert 'platform !== "android"' in source
     assert 'ANDROID_DEVICE_STORAGE_KEY = "guiweave.android.device"' in source
@@ -162,6 +176,9 @@ def test_console_hidden_state_overrides_component_display_rules() -> None:
     assert "color-scheme: dark" in console_source
     assert "--cyan: #59e3ff" in console_source
     assert "--faint: #718198" in console_source
+    assert ".chat-shell" in console_source
+    assert ".chat-detail" in console_source
+    assert "height: calc(100vh - 74px)" in console_source
     assert "font-size: 15px" in console_source
     assert "font-size: 14px; line-height: 1.65" in console_source
     assert "font: 500 14px/1.55 var(--sans)" in console_source
@@ -279,11 +296,13 @@ def test_console_submit_enforces_background_only_options(monkeypatch) -> None:
     console = RunConsole(_NeverRunService())  # type: ignore[arg-type]
     assert RunRequest(goal="inspect", platform="browser").headless is True
     task = console.submit(RunRequest(
-        goal="inspect", platform="browser", headless=False, show_hud=True,
+        goal="inspect", platform="browser", mode="chat", headless=False, show_hud=True,
     ))
 
     assert task.request.headless is True
     assert task.request.show_hud is False
+    assert task.request.mode == "chat"
+    assert console.tasks()[0]["mode"] == "chat"
 
 
 def test_console_run_request_normalizes_android_address() -> None:
@@ -360,6 +379,22 @@ def test_console_cancels_queued_task_before_service_start(
     threads[0].run()
 
     assert task.status == "interrupted"
+
+
+def test_console_marks_result_serialization_failure_as_failed(monkeypatch) -> None:
+    monkeypatch.setattr(threading.Thread, "start", lambda thread: thread.run())
+    result = SimpleNamespace(
+        run_id="tool_agent/browser/broken",
+        phase="completed",
+        to_dict=lambda: (_ for _ in ()).throw(ValueError("invalid result")),
+    )
+    service = SimpleNamespace(run=lambda *_args, **_kwargs: result)
+    console = RunConsole(service)  # type: ignore[arg-type]
+
+    task = console.submit(RunRequest(goal="inspect", platform="browser"))
+
+    assert task.status == "failed"
+    assert task.error == "invalid result"
 
 
 def test_console_submit_does_not_repeat_platform_preflight(tmp_path: Path) -> None:
