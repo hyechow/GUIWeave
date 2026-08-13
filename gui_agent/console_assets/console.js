@@ -2,6 +2,7 @@ const state = {
   runs: [], active: null, filter: "all", modelReady: false, platformReady: false,
   platformCheck: 0, runRefresh: 0, eventFilter: "all", followTrace: true,
   events: [], frames: [], frameIndex: 0, frameName: null, frameLayout: "wide", expandedEvents: new Set(),
+  chatPlatformReady: false, chatCheck: 0, chatTask: null,
 };
 const $ = (id) => document.getElementById(id);
 const CONSOLE_HEADLESS = true;
@@ -34,6 +35,7 @@ const timeLabel = (value) => value
 const isCancellable = (run) => Boolean(
   run?.active_task_id && ["queued", "running", "cancelling"].includes(run.phase),
 );
+const activePhases = new Set(["queued", "running", "cancelling"]);
 const actionState = (event) => event.event === "runtime_action_started"
   ? "started" : event.status === "executed" && !event.no_effect
     ? "success" : event.no_effect ? "warning" : "failed";
@@ -66,7 +68,42 @@ async function loadModelEnvironment() {
   start.disabled = !result.ok;
   state.modelReady = result.ok;
   start.disabled = !(state.modelReady && state.platformReady);
+  updateChatSend();
   return result;
+}
+
+function updateChatSend() {
+  $("chat-send").disabled = !(state.modelReady && state.chatPlatformReady);
+}
+
+async function loadChatEnvironment() {
+  const check = ++state.chatCheck;
+  const platform = $("chat-platform").value;
+  const android = platform === "android";
+  $("chat-android-field").classList.toggle("hidden", !android);
+  state.chatPlatformReady = false;
+  updateChatSend();
+  $("chat-environment").className = "checking";
+  $("chat-environment").textContent = `正在检查 ${platform} 环境…`;
+  try {
+    const query = new URLSearchParams();
+    if (platform === "browser") query.set("headless", String(CONSOLE_HEADLESS));
+    if (android) {
+      const address = normalizeAndroidAddress($("chat-adb-serial").value);
+      if (address) query.set("adb_serial", address);
+    }
+    const suffix = query.size ? `?${query}` : "";
+    const result = await request(`/api/environment/${encodeURIComponent(platform)}${suffix}`);
+    if (check !== state.chatCheck) return;
+    state.chatPlatformReady = result.ok;
+    $("chat-environment").className = result.ok ? "ready" : "error";
+    $("chat-environment").textContent = result.summary;
+  } catch (error) {
+    if (check !== state.chatCheck) return;
+    $("chat-environment").className = "error";
+    $("chat-environment").textContent = error.message;
+  }
+  updateChatSend();
 }
 
 async function loadPlatformEnvironment() {
@@ -128,6 +165,7 @@ async function loadRuns() {
   const refresh = ++state.runRefresh;
   const [runs, tasks] = await Promise.all([request("/api/runs"), request("/api/tasks")]);
   if (refresh !== state.runRefresh) return;
+  renderChat(tasks.tasks);
   const activeByRun = new Map(
     tasks.tasks.filter((task) => task.run_id).map((task) => [task.run_id, task]),
   );
@@ -154,6 +192,63 @@ async function loadRuns() {
   } else {
     $("empty-state").classList.remove("hidden");
     $("run-view").classList.add("hidden");
+  }
+}
+
+function renderChat(tasks) {
+  const thread = $("chat-thread");
+  const nearBottom = thread.scrollHeight - thread.scrollTop - thread.clientHeight < 80;
+  const chatTasks = tasks.filter((task) => task.mode === "chat").reverse();
+  if (!chatTasks.some((task) => task.task_id === state.chatTask)) {
+    state.chatTask = chatTasks.at(-1)?.task_id || null;
+  }
+  thread.innerHTML = chatTasks.length ? chatTasks.map((task) => {
+    const running = activePhases.has(task.status);
+    const reply = task.result?.reply || task.result?.summary || task.error || (
+      task.status === "queued" ? "任务正在排队…" : task.status === "cancelling" ? "正在中止任务…" : "GUIWeave 正在执行任务…"
+    );
+    const runMeta = task.run_id
+      ? `<div class="chat-run-meta" title="${escapeHtml(task.run_id)}"><i></i><span>RUN</span><code>${escapeHtml(task.run_id.split("/").at(-1))}</code></div>`
+      : "";
+    return `<article class="chat-exchange ${task.task_id === state.chatTask ? "selected" : ""}" data-chat-task="${escapeHtml(task.task_id)}"><div class="chat-message user"><small>${escapeHtml(task.platform).toUpperCase()}</small><p>${escapeHtml(task.goal)}</p></div><div class="chat-message agent ${running ? "working" : escapeHtml(task.status)}"><span class="chat-avatar">GW</span><div><header><b>GUIWeave</b><span class="status ${escapeHtml(task.status)}">${phaseLabel[task.status] || escapeHtml(task.status)}</span></header><p>${escapeHtml(reply)}</p>${runMeta}</div></div></article>`;
+  }).join("") : '<div class="chat-welcome"><span>GW</span><div><b>GUIWeave 已就绪</b><p>描述你希望在界面中完成的任务，运行结果会直接回复在这里。</p></div></div>';
+  document.querySelectorAll("[data-chat-task]").forEach((item) => {
+    item.onclick = () => {
+      state.chatTask = item.dataset.chatTask;
+      document.querySelectorAll("[data-chat-task]").forEach((candidate) => {
+        candidate.classList.toggle("selected", candidate === item);
+      });
+      renderChatDetail(chatTasks.find((task) => task.task_id === state.chatTask));
+    };
+  });
+  const selectedTask = chatTasks.find((task) => task.task_id === state.chatTask);
+  renderChatDetail(selectedTask);
+  if (nearBottom || activePhases.has(selectedTask?.status)) {
+    thread.scrollTop = thread.scrollHeight;
+  }
+}
+
+function renderChatDetail(task) {
+  const detail = $("chat-detail");
+  if (!task) {
+    detail.innerHTML = '<div class="chat-detail-empty"><span>⌁</span><b>TASK DETAIL</b><p>发送任务后，这里会显示实时运行详情。</p></div>';
+    return;
+  }
+  const result = task.result || {};
+  const outcome = result.reply || result.summary || task.error || "等待 Agent 返回结果…";
+  detail.innerHTML = `<header><div><p class="kicker">TASK DETAIL</p><h2>${phaseLabel[task.status] || escapeHtml(task.status)}</h2></div><span class="status ${escapeHtml(task.status)}">${phaseLabel[task.status] || escapeHtml(task.status)}</span></header><section><label>任务目标</label><p>${escapeHtml(task.goal)}</p></section><dl><div><dt>PLATFORM</dt><dd>${escapeHtml(task.platform).toUpperCase()}</dd></div><div><dt>EXECUTION</dt><dd>HEADLESS</dd></div><div><dt>TASK ID</dt><dd><code>${escapeHtml(task.task_id)}</code></dd></div><div><dt>RUN ID</dt><dd><code>${escapeHtml(task.run_id || "等待创建")}</code></dd></div></dl><section class="chat-detail-result"><label>当前结果</label><p>${escapeHtml(outcome)}</p></section>`;
+}
+
+function setConsoleMode(mode) {
+  const chat = mode === "chat";
+  $("runs-mode").classList.toggle("hidden", chat);
+  $("chat-mode").classList.toggle("hidden", !chat);
+  document.querySelectorAll("[data-console-mode]").forEach((button) => {
+    button.classList.toggle("active", button.dataset.consoleMode === mode);
+  });
+  if (chat) {
+    loadChatEnvironment();
+    $("chat-input").focus();
   }
 }
 
@@ -331,6 +426,9 @@ document.querySelectorAll("[data-event-filter]").forEach((button) => {
     renderEvents();
   };
 });
+document.querySelectorAll("[data-console-mode]").forEach((button) => {
+  button.onclick = () => setConsoleMode(button.dataset.consoleMode);
+});
 const dialog = $("task-dialog");
 const frameDialog = $("frame-dialog");
 $("close-frame").onclick = () => frameDialog.close();
@@ -355,6 +453,48 @@ $("sidebar-toggle").onclick = () => {
 $("trace-follow").onclick = () => setTraceFollow(!state.followTrace);
 $("event-list").onscroll = () => {
   if (state.followTrace && $("event-list").scrollTop > 24) setTraceFollow(false);
+};
+$("chat-platform").onchange = loadChatEnvironment;
+$("chat-adb-serial").value = rememberedAndroidAddress();
+$("chat-adb-serial").onchange = () => {
+  const address = normalizeAndroidAddress($("chat-adb-serial").value);
+  $("chat-adb-serial").value = address;
+  rememberAndroidAddress(address);
+  loadChatEnvironment();
+};
+$("chat-input").onkeydown = (event) => {
+  if (event.key === "Enter" && !event.shiftKey && !event.isComposing) {
+    event.preventDefault();
+    $("chat-form").requestSubmit();
+  }
+};
+$("chat-form").onsubmit = async (event) => {
+  event.preventDefault();
+  const goal = $("chat-input").value.trim();
+  if (!goal || !state.modelReady || !state.chatPlatformReady) return;
+  const platform = $("chat-platform").value;
+  const address = platform === "android" ? normalizeAndroidAddress($("chat-adb-serial").value) : null;
+  $("chat-send").disabled = true;
+  $("chat-environment").textContent = "正在提交任务…";
+  try {
+    const task = await request("/api/tasks", {
+      method: "POST", headers: { "content-type": "application/json" },
+      body: JSON.stringify({
+        goal, platform, mode: "chat", perception: "enhanced", max_turns: 50,
+        adb_serial: address, headless: CONSOLE_HEADLESS, multi_action: true, show_hud: false,
+      }),
+    });
+    state.chatTask = task.task_id;
+    $("chat-input").value = "";
+    if (address) rememberAndroidAddress(address);
+    await loadRuns();
+  } catch (error) {
+    $("chat-thread").insertAdjacentHTML("beforeend", `<div class="chat-local-error">${escapeHtml(error.message)}</div>`);
+    $("chat-thread").scrollTop = $("chat-thread").scrollHeight;
+  } finally {
+    await loadChatEnvironment();
+    $("chat-input").focus();
+  }
 };
 $("new-task-button").onclick = () => {
   dialog.showModal();

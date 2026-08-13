@@ -38,6 +38,7 @@ class RunRequest(BaseModel):
 
     goal: str = Field(min_length=1, max_length=4000)
     platform: PlatformName
+    mode: Literal["run", "chat"] = "run"
     perception: Literal["vision-only", "enhanced"] = "enhanced"
     max_turns: int = Field(default=50, ge=1, le=50)
     cdp_url: str | None = Field(default=None, max_length=500)
@@ -131,6 +132,7 @@ class RunConsole:
                 on_run_created=record_run,
                 **options,
             )
+            result_payload = result.to_dict()
         except Exception as exc:  # noqa: BLE001
             with self._lock:
                 task.status = "interrupted" if task.cancel_event.is_set() else "failed"
@@ -138,7 +140,7 @@ class RunConsole:
             return
         with self._lock:
             task.run_id = result.run_id
-            task.result = result.to_dict()
+            task.result = result_payload
             task.status = (
                 "interrupted"
                 if task.cancel_event.is_set()
@@ -162,6 +164,7 @@ class RunConsole:
                     "task_id": task.task_id,
                     "goal": task.request.goal,
                     "platform": task.request.platform,
+                    "mode": task.request.mode,
                     "status": task.status,
                     "run_id": task.run_id,
                     "result": task.result,
