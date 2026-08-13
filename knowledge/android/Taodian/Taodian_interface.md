@@ -16,9 +16,13 @@ ttl: session
   **name** is the item's product title and its row identity. Price reads sort and slice the full
   price list (the three most expensive items, then sum). Identifying an item class (e.g. whether
   a title is a short-sleeve T-shirt) is a semantic read over the visible row, not a source filter.
-- Deleting a cart item is a durable per-row mutation of that identified item. Reach the exact
-  item row (target-bound), then `commit(target=row, values={"deleted": True})`. Cart deletion is
-  per-item and consumes the item row; it is not a bulk or cart-clearing action.
+- In this catalog, the cart request `短袖T恤衬衫` denotes the union of visible title markers:
+  select a row whose title contains **any of** `短袖`, `T恤`, or `衬衫`. It does not require
+  `短袖` to co-occur with the other markers.
+- Deleting identified cart items is a durable grouped mutation. For a condition that can match
+  multiple rows, use the cart's `管理` multi-select editor, select every matching title while
+  traversing the cart, then activate `删除选中` once and confirm. This removes only the selected
+  rows; it is not a cart-clearing action.
 - **Orders** is a complete collection exposing **amount** (`money`), the order's total payment. Its
   source filter **order_time** accepts the exact relative value `近1个月`. Recent-one-month spending
   is the sum of every amount returned by that filtered query.

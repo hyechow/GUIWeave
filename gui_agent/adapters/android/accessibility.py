@@ -316,6 +316,8 @@ def _is_generic_control_label(value: str) -> bool:
 def _nearby_control_label(
     control: dict[str, Any],
     nodes: list[dict[str, Any]],
+    *,
+    label_on_right: bool = False,
 ) -> str:
     """Associate an unlabeled control with text in the same hierarchy row.
 
@@ -331,7 +333,7 @@ def _nearby_control_label(
     target_x = float(target["x"])
     target_y = float(target["y"])
     target_h = float(target["height"])
-    candidates: list[tuple[int, float, float, str]] = []
+    candidates: list[tuple[int, float, float, float, str]] = []
     for node in nodes:
         if node is control or node.get("in_viewport") is False:
             continue
@@ -352,15 +354,53 @@ def _nearby_control_label(
         label_h = float(rect["height"])
         vertical_distance = abs(label_y - target_y)
         row_tolerance = max(35.0, (target_h + label_h) * 0.75)
-        if vertical_distance > row_tolerance or label_x >= target_x:
+        wrong_side = label_x <= target_x if label_on_right else label_x >= target_x
+        if vertical_distance > row_tolerance or wrong_side:
             continue
+        distances = (
+            (-int(vertical_distance / 10), -abs(target_x - label_x), -vertical_distance)
+            if label_on_right
+            else (-vertical_distance, -abs(target_x - label_x), 0.0)
+        )
         candidates.append((
-            shared_depth,
-            -vertical_distance,
-            -abs(target_x - label_x),
-            label,
+            shared_depth, *distances, label,
         ))
     return max(candidates)[-1] if candidates else ""
+
+
+def _repeated_leading_choices(nodes: list[dict[str, Any]]) -> dict[str, str]:
+    """Name repeated compact, unlabeled selectors at the start of list rows."""
+
+    candidates: list[tuple[dict[str, Any], str]] = []
+    for node in nodes:
+        rect = node.get("rect")
+        if (
+            node.get("role") != "button"
+            or node.get("key") != "scrollable region"
+            or node.get("in_viewport") is False
+            or not isinstance(rect, dict)
+            or float(rect["x"]) >= 250
+            or float(rect["width"]) > 140
+            or float(rect["height"]) > 100
+        ):
+            continue
+        label = _nearby_control_label(node, nodes, label_on_right=True)
+        if label:
+            candidates.append((node, label))
+
+    repeated: dict[str, str] = {}
+    for node, label in candidates:
+        rect = node["rect"]
+        if any(
+            other is not node
+            and _shared_ref_depth(node, other) >= 2
+            and abs(float(other["rect"]["x"]) - float(rect["x"])) <= 25
+            and abs(float(other["rect"]["width"]) - float(rect["width"])) <= 25
+            and abs(float(other["rect"]["height"]) - float(rect["height"])) <= 25
+            for other, _ in candidates
+        ):
+            repeated[str(node.get("ref") or "")] = label
+    return repeated
 
 
 def _private_use_action_point(
@@ -442,6 +482,60 @@ def _is_commit_control(*, role: str, key: str, resource: str) -> bool:
     )
 
 
+def _control_geometry(
+    control: dict[str, Any],
+) -> tuple[str, int, float, float, float, float] | None:
+    rect = control.get("rect")
+    ref = str(control.get("ref") or "")
+    if control.get("in_viewport") is False or not isinstance(rect, dict) or not ref:
+        return None
+    return (
+        ref, len(_ref_parts(control)),
+        *(float(rect[key]) for key in ("x", "y", "w", "h")),
+    )
+
+
+def _occluded_control(
+    control: dict[str, Any], controls: list[dict[str, Any]],
+) -> bool:
+    """Detect clipped controls or controls covered by a sibling/fixed layer."""
+
+    geometry = _control_geometry(control)
+    if geometry is None:
+        return False
+    ref, depth, x, y, width, height = geometry
+    trailing = 120 <= width <= 400 and x + width / 2 >= 995
+    if trailing and height < 60:
+        return True
+    for other in controls:
+        other_geometry = _control_geometry(other)
+        if other is control or other_geometry is None:
+            continue
+        other_ref, other_depth, ox, oy, ow, oh = other_geometry
+        if (
+            ref.startswith(other_ref + ".")
+            or other_ref.startswith(ref + ".")
+        ):
+            continue
+        shared_depth = _shared_ref_depth(control, other)
+        if (
+            other_depth < depth
+            and shared_depth < min(depth, other_depth) - 1
+            and abs(x - ox) < ow / 2
+            and abs(y - oy) < oh / 2
+        ):
+            return True
+        if trailing and shared_depth >= min(depth, other_depth) - 3 and (
+            ow * oh < width * height
+            and x - width / 2 <= ox - ow / 2
+            and x + width / 2 >= ox + ow / 2
+            and y - height / 2 <= oy - oh / 2
+            and y + height / 2 >= oy + oh / 2
+        ):
+            return True
+    return False
+
+
 def form_controls_from_semantic_tree(
     nodes: list[dict[str, Any]] | None,
 ) -> list[dict[str, Any]] | None:
@@ -449,6 +543,7 @@ def form_controls_from_semantic_tree(
     if nodes is None:
         return None
     controls: list[dict[str, Any]] = []
+    leading_choices = _repeated_leading_choices(nodes)
     for node in nodes:
         resource = str(node.get("resource") or "")
         key = str(node.get("key") or "")
@@ -461,6 +556,8 @@ def form_controls_from_semantic_tree(
             key=key,
             resource=resource,
         )
+        ref = str(node.get("ref") or "")
+        inferred_choice = leading_choices.get(ref, "")
         kind = (
             "text_input" if role == "textbox"
             else "select" if role == "combobox"
@@ -468,6 +565,7 @@ def form_controls_from_semantic_tree(
             else "radio" if role == "radio"
             else "switch" if role == "switch"
             else "select" if role == "button" and identity_words & {"date", "time"}
+            else "checkbox" if inferred_choice
             else "button" if role == "button" and (
                 persistence or (
                     node.get("clickable") is True and key != "scrollable region"
@@ -475,7 +573,6 @@ def form_controls_from_semantic_tree(
             )
             else ""
         )
-        ref = str(node.get("ref") or "")
         if not kind or (
             kind == "button"
             and any(
@@ -494,7 +591,7 @@ def form_controls_from_semantic_tree(
             else key if not _is_generic_control_label(key)
             else ""
         )
-        label = own_label or _nearby_control_label(node, nodes)
+        label = inferred_choice or own_label or _nearby_control_label(node, nodes)
         if not label:
             label = resource.replace("_", " ") or key
         item: dict[str, Any] = {
@@ -507,6 +604,10 @@ def form_controls_from_semantic_tree(
         for field in ("selected", "selection_mode", "action_point"):
             if field in node:
                 item[field] = node[field]
+        if inferred_choice:
+            item["selection_mode"] = "multiple"
+            item.pop("selected", None)
+            item.pop("value", None)
         if kind == "text_input" and identity_words & {"search", "filter", "query"}:
             item["is_filter"] = True
         if persistence:
@@ -524,6 +625,11 @@ def form_controls_from_semantic_tree(
                 "w": width, "h": height,
             }
         controls.append(item)
+
+    controls = [
+        control for control in controls
+        if not _occluded_control(control, controls)
+    ]
 
     # Some UI toolkits mark both a row and its immediate child clickable. Keep
     # the smaller rendered target when they expose the same visible identity.

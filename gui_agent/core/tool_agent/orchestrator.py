@@ -333,7 +333,9 @@ def _validate_gui_worker_call(
         str(binding.get("input") or "")
         for action in values.get("actions") or []
         if isinstance(action, dict)
-        for binding in (action.get("input_args") or {}).values()
+        for bindings in [action.get("input_args")]
+        if isinstance(bindings, dict)
+        for binding in bindings.values()
         if isinstance(binding, dict)
     }
     unknown_inputs = action_input_names.difference(input_names)
@@ -652,6 +654,14 @@ def _static_result_routing_diagnostics(tree: ast.AST) -> list[MasterDiagnostic]:
     return diagnostics
 
 
+def _schema_contains_array(value: Any) -> bool:
+    if isinstance(value, dict):
+        return value.get("type") == "array" or any(
+            _schema_contains_array(item) for item in value.values()
+        )
+    return isinstance(value, list) and any(map(_schema_contains_array, value))
+
+
 def _static_worker_array_input_diagnostics(tree: ast.AST) -> list[MasterDiagnostic]:
     """Reject private arrays routed directly into one visual Worker.
 
@@ -661,7 +671,7 @@ def _static_worker_array_input_diagnostics(tree: ast.AST) -> list[MasterDiagnost
     delegate the cohesive mutation to the application's own bulk/group editor.
     """
 
-    array_results: dict[str, ast.Call] = {}
+    array_results: set[str] = set()
     for assignment in ast.walk(tree):
         if (
             not isinstance(assignment, ast.Assign)
@@ -676,8 +686,8 @@ def _static_worker_array_input_diagnostics(tree: ast.AST) -> list[MasterDiagnost
             schema = _literal_keyword(call, "result_schema")
         except ValueError:
             continue
-        if isinstance(schema, dict) and schema.get("type") == "array":
-            array_results[assignment.targets[0].id] = call
+        if _schema_contains_array(schema):
+            array_results.add(assignment.targets[0].id)
 
     diagnostics: list[MasterDiagnostic] = []
     for node in ast.walk(tree):
@@ -691,16 +701,15 @@ def _static_worker_array_input_diagnostics(tree: ast.AST) -> list[MasterDiagnost
         if keyword is None or not isinstance(keyword.value, ast.Dict):
             continue
         routed_arrays = sorted({
-            name
-            for value in keyword.value.values
+            name for value in keyword.value.values
             if (name := _base_name(value)) in array_results
         })
         if routed_arrays:
             diagnostics.append(_diagnostic(
                 "WORKER_ARRAY_INPUT_UNSUPPORTED",
-                "GUI Worker input_refs cannot expand private array ResultRefs into repeated "
-                f"actions: {routed_arrays}; compute one scalar/object target, or use one "
-                "cohesive Worker over the application's bulk/group editor",
+                "GUI Worker cannot consume private array ResultRefs "
+                f"from {routed_arrays}; keep the multi-record observe/branch/act "
+                "loop inside one cohesive operator using the application's bulk/group editor",
                 worker_call,
             ))
     return diagnostics

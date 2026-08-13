@@ -37,6 +37,8 @@ from gui_agent.core.tool_agent.contracts import (
 )
 from gui_agent.core.tool_agent.action_guard import (
     WorkerActionCircuitBreaker,
+    auth_codes_from_frame,
+    auth_codes_from_text,
     control_at_point,
     is_candidate_commit,
 )
@@ -123,6 +125,20 @@ _WORKER_VERIFY_POOL = ThreadPoolExecutor(
 _TARGET_VERIFIED_ACTION_TYPES = {
     "tap", "click", "type", "long_press", "select_option",
 }
+_NUMBER = r"-?\d+(?:\.\d+)?(?:[eE][+-]?\d+)?"
+_ENCODED_COORD_PAIR = re.compile(
+    rf'(?P<head>"(?P<prefix>to_)?x"\s*:\s*{_NUMBER}),\s*'
+    rf'(?P<y>{_NUMBER})(?=\s*[,}}])'
+)
+
+
+def _decode_ordered_actions(value: object) -> object:
+    """Decode a provider string, repairing only an unkeyed x/y coordinate pair."""
+    if not isinstance(value, str):
+        return value
+    return json.loads(_ENCODED_COORD_PAIR.sub(
+        r'\g<head>,"\g<prefix>y":\g<y>', value,
+    ))
 
 
 def _worker_action_error(exc: Exception) -> dict[str, Any]:
@@ -927,6 +943,15 @@ class ToolAgentRuntime:
             logical_worker_id,
             WorkerActionCircuitBreaker(),
         )
+        observed_auth_codes = {
+            code
+            for text in (
+                getattr(self, "_task_goal", ""), spec.goal,
+                getattr(self, "_master_knowledge", ""),
+                getattr(self, "_worker_access_context", ""),
+            )
+            for code in auth_codes_from_text(str(text or ""))
+        }
         step = 0
         reusable_observation: tuple[
             MaterializedFrame,
@@ -944,6 +969,7 @@ class ToolAgentRuntime:
                     )
                 step += 1
                 frame, png = self._observe(spec)
+                observed_auth_codes.update(auth_codes_from_frame(frame))
                 initial_same_frame_feedback = None
                 predispatch_repair_turn = 0
             else:
@@ -1010,7 +1036,9 @@ class ToolAgentRuntime:
                         call = exactly_one_tool_call(response)
                         raw_state = call["args"].pop("state", None)
                         if call["name"] == "continue_with_actions":
-                            raw_actions = call["args"].get("actions") or []
+                            raw_actions = _decode_ordered_actions(
+                                call["args"].get("actions") or []
+                            )
                             if not isinstance(raw_actions, list):
                                 raise ProtocolError("actions must be an ordered list")
                             calls = [{
@@ -1051,7 +1079,7 @@ class ToolAgentRuntime:
                         if attempt:
                             raise
                         messages = [*messages, response, HumanMessage(content=(
-                            "Protocol repair: the previous response was invalid. On this SAME frame, "
+                            f"Protocol repair: {exc}. On this SAME frame, "
                             "emit exactly one required tool call including its state field. "
                             "No action was executed."
                         ))]
@@ -1162,6 +1190,14 @@ class ToolAgentRuntime:
                     None,
                 )
                 if action_spec is not None:
+                    if action_spec.capability in {
+                        "app_switch", "launch_app", "back", "home",
+                    }:
+                        observed_auth_codes.update(
+                            code
+                            for text in (state.summary, *state.established_facts)
+                            for code in auth_codes_from_text(text)
+                        )
                     resolved_guard_args = {
                         "description": action_spec.description,
                         **action_spec.fixed_args,
@@ -1172,6 +1208,7 @@ class ToolAgentRuntime:
                         capability=action_spec.capability,
                         args=resolved_guard_args,
                         frame=frame,
+                        observed_auth_codes=observed_auth_codes,
                     )
                     if circuit_decision.blocked:
                         guard_repair_turn += 1
@@ -1230,6 +1267,7 @@ class ToolAgentRuntime:
                         png=png,
                         journal=journal,
                         circuit_breaker=circuit_breaker,
+                        observed_auth_codes=observed_auth_codes,
                     )
                 else:
                     result_payload, terminal = self._execute_worker_tool(
@@ -1533,6 +1571,9 @@ class ToolAgentRuntime:
                 "and failure tools separately."
             )
         spec_for_prompt = spec.model_dump(mode="json", exclude={"actions"})
+        task_goal = str(getattr(self, "_task_goal", "") or "").strip()
+        if task_goal and task_goal != spec.goal:
+            spec_for_prompt["task_goal"] = task_goal
         private_actions = {action.name: action for action in spec.actions if action.input_args}
         spec_for_prompt["action_contracts"] = [
             private_actions.get(action.name, action).model_dump(
@@ -1545,8 +1586,9 @@ class ToolAgentRuntime:
         prompt += (
             "\n\n## Worker attempt contract\n"
             "The bound tools are the authoritative action descriptions and argument "
-            "schemas. This compact contract supplies only the subgoal, acceptance/data "
-            "contract, and Runtime-bound action descriptors.\n"
+            "schemas. This compact contract supplies the immutable task goal, subgoal, "
+            "acceptance/data contract, and Runtime-bound action descriptors. Preserve "
+            "task constraints while pursuing the subgoal.\n"
             + json.dumps(spec_for_prompt, ensure_ascii=False)
         )
         return prompt
@@ -1831,6 +1873,7 @@ class ToolAgentRuntime:
         png: bytes,
         journal: WorkerJournal,
         circuit_breaker: WorkerActionCircuitBreaker,
+        observed_auth_codes: set[str] | None = None,
     ) -> tuple[dict[str, Any], str | None]:
         """Execute one fused Worker decision as interruptible atomic actions."""
 
@@ -1881,6 +1924,7 @@ class ToolAgentRuntime:
                     **action_call["args"],
                 },
                 frame=frame,
+                observed_auth_codes=observed_auth_codes,
             )
             if circuit_decision.blocked:
                 reason = circuit_decision.reason

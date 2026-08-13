@@ -11,7 +11,7 @@ source: manual_verified
 confidence: high
 sensitivity: internal
 ttl: session
-version: 3
+version: 4
 ---
 # Taodian on Android
 
@@ -21,9 +21,11 @@ version: 3
   `购物车`. Its page title is `购物车` and the item count may be shown beside it.
 - Cart item prices are rendered in each item row, sometimes as adjacent currency,
   integer, and decimal text nodes. They are one logical monetary value.
-- Each cart item row also carries the item's product title. Rows are individually
-  actionable: the row exposes a per-item delete control, so removing one item targets
-  that row and does not clear or empty the whole cart.
+- Each cart item row carries the product title. `管理` enters the cart's multi-select
+  editor; select the intended rows, activate `删除选中`, and confirm. Use this grouped
+  path when one deletion request targets multiple items. A row-level delete surface
+  can remain hidden behind row content until explicitly revealed and is not a visible
+  action target merely because UIAutomator reports its bounds.
 - `Orders` is the signed-in order history reached through bottom navigation
   `我的 → 我的订单` and the explicit `全部 >` link at the right of that section.
   The section body itself is not an activation target. Each order record displays one

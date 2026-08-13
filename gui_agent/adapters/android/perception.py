@@ -104,7 +104,7 @@ class AndroidSession:
         # This sensor is optional. A failed/slow dump must not be repeated inside
         # one observation; screenshot perception remains authoritative and the
         # next real turn will try UIAutomator again.
-        xml_text = self.client.dump_ui_hierarchy(timeout_s=3.0)
+        xml_text = self.client.dump_ui_hierarchy()
         hierarchy_seconds = time.perf_counter() - hierarchy_started_at
         screenshot_started_at = time.perf_counter()
         png_bytes = self.client.screenshot()

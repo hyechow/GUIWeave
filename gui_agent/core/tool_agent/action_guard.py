@@ -3,7 +3,8 @@
 from __future__ import annotations
 
 import json
-from dataclasses import dataclass, field
+import re
+from dataclasses import dataclass
 from hashlib import sha256
 from typing import Any
 
@@ -34,6 +35,34 @@ _SIGNATURE_FIELDS = (
     "duration_ms",
     "target_area",
 )
+_AUTH_CODE_MARKER = r"(?:verification code|one-time code|otp|验证码|校验码|动态码)"
+_AUTH_CODE_RE = re.compile(
+    rf"{_AUTH_CODE_MARKER}\D{{0,32}}(?<!\d)(\d{{4,8}})(?!\d)"
+    rf"|(?<!\d)(\d{{4,8}})(?!\d)\D{{0,32}}{_AUTH_CODE_MARKER}",
+    re.IGNORECASE,
+)
+
+
+def auth_codes_from_text(text: str) -> set[str]:
+    """Extract digits close to an authentication marker, not unrelated numbers."""
+
+    return {value for match in _AUTH_CODE_RE.finditer(text)
+            for value in match.groups() if value}
+
+
+def auth_codes_from_frame(frame: MaterializedFrame) -> set[str]:
+    """Return transient authentication codes exposed as current non-input text."""
+
+    codes: set[str] = set()
+    for control in frame.controls:
+        kind = str(control.get("kind") or "").casefold()
+        if not any(token in kind for token in ("input", "textbox", "editor")):
+            codes.update(auth_codes_from_text(" ".join(
+                str(control.get(key) or "") for key in ("label", "value")
+            )))
+    return codes
+
+
 def control_at_point(
     args: dict[str, Any], frame: MaterializedFrame,
 ) -> dict[str, Any] | None:
@@ -81,6 +110,7 @@ def _action_boundary_error(
     capability: str,
     args: dict[str, Any],
     frame: MaterializedFrame,
+    observed_auth_codes: set[str],
 ) -> str:
     """Reject actions contradicted by authoritative enhanced observation."""
 
@@ -100,6 +130,22 @@ def _action_boundary_error(
             return f"blocked select_option on {label!r} ({kind}): target a choice control"
         if capability == "tap" and choice_like:
             return f"blocked tap on {label!r} ({kind}): use select_option to mutate it"
+    description = str(args.get("description") or "").casefold()
+    auth_context = " ".join((
+        description,
+        str((control or {}).get("label") or "").casefold(),
+    ))
+    text = str(args.get("text") or "").strip()
+    if (
+        capability == "type"
+        and re.fullmatch(r"\d{4,8}", text)
+        and re.search(_AUTH_CODE_MARKER, auth_context, re.IGNORECASE)
+        and text not in observed_auth_codes
+    ):
+        return (
+            "blocked unobserved authentication code: open its delivery surface, "
+            "read the exact current code, then return and enter it"
+        )
     for scope in frame.requirement_scopes.values():
         detail = scope.get("detail_resolution")
         detail = detail if isinstance(detail, dict) else {}
@@ -208,10 +254,11 @@ class ActionCircuitDecision:
 
 @dataclass
 class WorkerActionCircuitBreaker:
-    """Block a third equivalent action in the same task-progress window."""
+    """Block a third consecutive equivalent action without observed progress."""
 
     threshold: int = 2
-    _attempts: dict[tuple[str, str], int] = field(default_factory=dict)
+    _last_attempt: tuple[str, str] | None = None
+    _consecutive_attempts: int = 0
 
     def inspect(
         self,
@@ -220,11 +267,15 @@ class WorkerActionCircuitBreaker:
         capability: str,
         args: dict[str, Any],
         frame: MaterializedFrame,
+        observed_auth_codes: set[str] | None = None,
     ) -> ActionCircuitDecision:
         signature = action_signature(tool=tool, capability=capability, args=args)
         progress = progress_signature(frame)
-        prior = self._attempts.get((signature, progress), 0)
-        compatibility_error = _action_boundary_error(capability, args, frame)
+        attempt = (signature, progress)
+        prior = self._consecutive_attempts if attempt == self._last_attempt else 0
+        compatibility_error = _action_boundary_error(
+            capability, args, frame, observed_auth_codes or set()
+        )
         if compatibility_error:
             return ActionCircuitDecision(
                 blocked=True,
@@ -250,17 +301,23 @@ class WorkerActionCircuitBreaker:
         )
 
     def record(self, decision: ActionCircuitDecision) -> None:
-        key = (decision.signature, decision.progress)
-        self._attempts[key] = self._attempts.get(key, 0) + 1
+        attempt = (decision.signature, decision.progress)
+        self._consecutive_attempts = (
+            self._consecutive_attempts + 1 if attempt == self._last_attempt else 1
+        )
+        self._last_attempt = attempt
 
     def reset(self) -> None:
-        self._attempts.clear()
+        self._last_attempt = None
+        self._consecutive_attempts = 0
 
 
 __all__ = [
     "ActionCircuitDecision",
     "WorkerActionCircuitBreaker",
     "action_signature",
+    "auth_codes_from_frame",
+    "auth_codes_from_text",
     "is_candidate_commit",
     "control_at_point",
     "progress_signature",

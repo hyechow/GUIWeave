@@ -287,8 +287,8 @@ def _build_parser() -> argparse.ArgumentParser:
                         help="in-container emulator serial the backend controls (default emulator-5554)")
     parser.add_argument("--list", action="store_true", help="list GUI-only task names and exit")
     parser.add_argument("--all-tasks", action="store_true", help="with --list, include non-GUI (mcp/user-interaction) tasks")
-    parser.add_argument("--max-turns", type=int, default=30,
-                        help="maximum interactive turns (default 30)")
+    parser.add_argument("--max-turns", type=int, default=50,
+                        help="maximum interactive turns (default 50)")
     parser.add_argument(
         "--perception",
         choices=("vision-only", "enhanced"),
