@@ -24,7 +24,7 @@ from gui_agent.core.tool_agent.protocol import (
     ProtocolError,
     capability_parameters,
 )
-from gui_agent.core.tool_agent.runtime import ToolAgentRuntime
+from gui_agent.core.tool_agent.runtime import ToolAgentRuntime, _decode_ordered_actions
 from gui_agent.core.schemas import TargetVerify
 from gui_agent.core.tool_agent.worker_memory import (
     WorkerJournal,
@@ -59,6 +59,15 @@ def test_runtime_rejects_max_turns_above_50(tmp_path) -> None:
             perception_mode="enhanced",
             max_turns=51,
         )
+
+
+def test_runtime_decodes_provider_encoded_coordinate_pair() -> None:
+    assert _decode_ordered_actions(
+        '[{"name":"tap","args":{"x":499,499,"description":"Tap splash"}}]'
+    ) == [{
+        "name": "tap",
+        "args": {"x": 499, "y": 499, "description": "Tap splash"},
+    }]
 
 
 def test_android_runtime_rejects_browser_only_worker_action() -> None:
@@ -266,6 +275,7 @@ def test_runtime_materializes_result_ref_into_fixed_action_argument() -> None:
     runtime._installed_app_names = ()
     runtime._master_knowledge = ""
     runtime._worker_access_context = ""
+    runtime._task_goal = "Apply the description; authenticate by SMS if required"
     runtime.allow_multi_action = False
     descriptor = runtime.data_store.put_result(
         {"description": "3 customer(s) love it!"},
@@ -300,6 +310,7 @@ def test_runtime_materializes_result_ref_into_fixed_action_argument() -> None:
     assert "3 customer(s) love it!" not in prompt
     assert '"input": "computed"' in prompt
     assert '"path": ["description"]' in prompt
+    assert '"task_goal": "Apply the description; authenticate by SMS if required"' in prompt
 
 
 def test_global_turn_budget_is_shared_across_logical_workers() -> None:

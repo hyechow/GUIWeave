@@ -11,7 +11,11 @@ from gui_agent.adapters.android.actions import AndroidAction, AndroidActionDecis
 from gui_agent.adapters.android.control_grounding import ground_action_to_android_control
 from gui_agent.adapters.browser.actions import BrowserAction, BrowserActionDecision
 from gui_agent.adapters.browser.control_grounding import ground_action_to_nearest_control
-from gui_agent.core.tool_agent.action_guard import WorkerActionCircuitBreaker
+from gui_agent.core.tool_agent.action_guard import (
+    WorkerActionCircuitBreaker,
+    auth_codes_from_frame,
+    auth_codes_from_text,
+)
 from gui_agent.core.tool_agent.contracts import MaterializedFrame
 
 
@@ -423,6 +427,11 @@ def test_task108_replay_blocks_third_equivalent_action_until_target_progresses()
     )
     assert progressed.blocked is False
     assert progressed.progress != third.progress
+    breaker.record(progressed)
+    assert breaker.inspect(
+        tool=attempt["tool"], capability=attempt["capability"],
+        args=attempt["args"], frame=frame,
+    ).prior_attempts == 0
 
 
 def test_action_alias_cannot_bypass_repeated_action_fuse() -> None:
@@ -450,6 +459,33 @@ def test_action_alias_cannot_bypass_repeated_action_fuse() -> None:
 
     assert aliased.blocked is True
     assert aliased.prior_attempts == 2
+
+
+def test_distinct_prerequisite_action_releases_old_fuse_count() -> None:
+    case = _case()
+    attempt = case["attempt"]
+    frame = _frame(case)
+    breaker = WorkerActionCircuitBreaker()
+
+    for _ in range(2):
+        decision = breaker.inspect(
+            tool=attempt["tool"], capability=attempt["capability"],
+            args=attempt["args"], frame=frame,
+        )
+        breaker.record(decision)
+    prerequisite = breaker.inspect(
+        tool="accept_terms", capability="tap",
+        args={"x": 100, "y": 700}, frame=frame,
+    )
+    breaker.record(prerequisite)
+
+    retry = breaker.inspect(
+        tool=attempt["tool"], capability=attempt["capability"],
+        args=attempt["args"], frame=frame,
+    )
+
+    assert retry.blocked is False
+    assert retry.prior_attempts == 0
 
 
 def test_control_value_change_counts_as_task_progress() -> None:
@@ -555,6 +591,36 @@ def test_action_guard_rejects_control_capability_mismatches() -> None:
 
     assert tap.blocked and "use select_option" in tap.reason
     assert typed.blocked and "editable input" in typed.reason
+
+
+def test_action_guard_requires_observed_transient_authentication_code() -> None:
+    message = MaterializedFrame(
+        frame_id="message",
+        screenshot_path="message.png",
+        controls=[
+            {"kind": "text", "label": "您的验证码是 654321，请勿泄露"},
+            {"kind": "text", "label": "订单 123456"},
+        ],
+    )
+    codes = auth_codes_from_frame(message)
+    assert auth_codes_from_text(
+        "Verification code 654321 is visible; phone 13802138888 is the recipient"
+    ) == {"654321"}
+    breaker = WorkerActionCircuitBreaker()
+    args = {
+        "text": "123456",
+        "description": "Enter the SMS verification code",
+    }
+
+    assert breaker.inspect(
+        tool="type", capability="type", args=args, frame=message,
+        observed_auth_codes=codes,
+    ).blocked
+    args["text"] = "654321"
+    assert not breaker.inspect(
+        tool="type", capability="type", args=args, frame=message,
+        observed_auth_codes=codes,
+    ).blocked
 
 
 def test_action_guard_blocks_redundant_detail_scroll_and_unscoped_row() -> None:

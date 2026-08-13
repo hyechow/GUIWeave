@@ -64,6 +64,10 @@ def test_mobileworld_enables_tool_agent_multi_action_by_default() -> None:
     assert disabled.multi_action is False
 
 
+def test_mobileworld_uses_full_task_turn_budget_by_default() -> None:
+    assert _build_parser().parse_args(["OpenFlightModeTask"]).max_turns == 50
+
+
 def test_mobileworld_task_type_fallback_handles_state_mutations():
     assert _guess_task_type("Turn on device flight mode") == "MUTATE"
     assert _guess_task_type("How many alarms are configured?") == "RETRIEVE"

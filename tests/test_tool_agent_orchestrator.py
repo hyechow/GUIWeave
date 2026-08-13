@@ -6,6 +6,7 @@ from gui_agent.core.tool_agent.contracts import WorkerOutcome
 from gui_agent.core.tool_agent.data_store import RuntimeDataStore
 from gui_agent.core.tool_agent.orchestrator import (
     WorkerOrchestrationContext,
+    _schema_contains_array,
     compile_master_program,
     execute_master_program,
     validate_master_source,
@@ -435,6 +436,12 @@ ctx.finish(done["ref"], effect="mutation")
 
     assert any(
         item.code == "WORKER_ARRAY_INPUT_UNSUPPORTED" for item in diagnostics
+    )
+
+
+def test_master_review_finds_array_nested_in_private_schema() -> None:
+    assert _schema_contains_array(
+        {"type": "object", "properties": {"names": {"type": "array"}}}
     )
 
 

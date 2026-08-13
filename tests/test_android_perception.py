@@ -31,7 +31,7 @@ def test_android_capture_bounds_optional_hierarchy_to_one_attempt(result) -> Non
     assert session.capture() == (b"png", result)
     assert session.client.screenshot_calls == 1
     assert session.client.hierarchy_calls == 1
-    assert session.client.hierarchy_timeout_s == 3.0
+    assert session.client.hierarchy_timeout_s == 6.0
     assert session.last_capture_timing["hierarchy_available"] is (result is not None)
 
 

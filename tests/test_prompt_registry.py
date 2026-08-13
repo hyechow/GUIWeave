@@ -96,6 +96,10 @@ def test_worker_keeps_data_private_and_coordinates_normalized() -> None:
     prompt = load_prompt_text("task.tool_agent.worker")
     assert "Runtime data-reference values are private" in prompt
     assert "Values visibly read during this Worker's own cohesive GUI branch" in prompt
+    assert "Never guess an authentication secret" in prompt
+    assert "transient verification code on its delivery surface" in prompt
+    assert "visible required acknowledgement" in prompt
+    assert "select all matching records before committing" in prompt
     assert "Coordinates are normalized 0..999" in prompt
     assert "request_action_patch" in prompt
 
@@ -106,6 +110,10 @@ def test_master_keeps_visual_conditional_dependencies_in_one_worker() -> None:
     assert "drive a later conditional GUI mutation" in prompt
     assert "including across application switches" in prompt
     assert "ResultRefs cannot serve as hidden Worker memory" in prompt
+    assert "including by nesting it in an object" in prompt
+    assert "authorized authentication method" in prompt
+    assert "exact acceptance set" in prompt
+    assert "never prescribe per-record commits" in prompt
 
 
 def test_worker_handles_exhausted_candidate_sets_and_row_targets() -> None:

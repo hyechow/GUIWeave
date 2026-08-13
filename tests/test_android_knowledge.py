@@ -73,3 +73,17 @@ def test_calendar_knowledge_locks_month_grid_not_readable_fact() -> None:
     assert "month grid" in context
     assert "availability" in context
     assert "not from the month grid" in context
+
+
+def test_taodian_multi_item_delete_uses_group_editor() -> None:
+    knowledge = load_knowledge_for_app("Taodian", "android")
+    assert knowledge is not None
+    context = knowledge.orchestrator_context(
+        "delete all matching T-shirts from the shopping cart"
+    )
+
+    assert "管理" in context
+    assert "multi-select" in context
+    assert "删除选中" in context
+    assert "contains **any of** `短袖`, `T恤`, or `衬衫`" in context
+    assert "per-row mutation" not in context

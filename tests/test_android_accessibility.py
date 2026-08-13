@@ -23,6 +23,17 @@ XML = """<?xml version="1.0" encoding="UTF-8"?>
 """
 
 
+def _semantic_node(
+    ref: str, key: str, x: float, y: float, width: float, height: float, *,
+    role: str = "button", clickable: bool = True,
+) -> dict:
+    return {
+        "ref": ref, "key": key, "role": role, "clickable": clickable,
+        "in_viewport": True,
+        "rect": {"x": x, "y": y, "width": width, "height": height},
+    }
+
+
 def test_uiautomator_normalizes_current_collection_controls() -> None:
     tree = semantic_tree_from_uiautomator(XML, viewport_size=(1080, 2400))
 
@@ -140,6 +151,35 @@ def test_glyph_backed_multiselect_rows_expose_selection_action_points() -> None:
     })
 
 
+def test_repeated_unlabeled_leading_selectors_are_named_checkboxes() -> None:
+    nodes = [
+        _semantic_node("android:0.0.0.0", "scrollable region", 64.8148, 160.4167, 74.0741, 29.1667),
+        _semantic_node(
+            "android:0.0.0.1", "First item", 643.5185, 160.4167, 564.8148, 37.5,
+            role="text", clickable=False,
+        ),
+        _semantic_node("android:0.0.1.0", "scrollable region", 64.8148, 285.4167, 74.0741, 29.1667),
+        _semantic_node(
+            "android:0.0.1.1", "Second item", 643.5185, 285.4167, 564.8148, 37.5,
+            role="text", clickable=False,
+        ),
+        _semantic_node("android:0.1.0", "scrollable region", 64.8148, 35.4167, 74.0741, 29.1667),
+        _semantic_node(
+            "android:0.1.1", "Page title", 643.5185, 35.4167, 564.8148, 37.5,
+            role="text", clickable=False,
+        ),
+    ]
+
+    controls = form_controls_from_semantic_tree(nodes)
+
+    assert controls is not None
+    choices = {control["label"]: control for control in controls}
+    assert set(choices) == {"First item", "Second item"}
+    assert all(control["kind"] == "checkbox" for control in choices.values())
+    assert all(control["selection_mode"] == "multiple" for control in choices.values())
+    assert choices["First item"]["rect"]["y"] == pytest.approx(160.4167)
+
+
 def test_android_commit_metadata_requires_explicit_submission_semantics() -> None:
     xml = """<hierarchy>
       <node class="android.widget.FrameLayout" bounds="[0,0][1080,2400]">
@@ -170,6 +210,38 @@ def test_android_commit_metadata_requires_explicit_submission_semantics() -> Non
     assert by_label["Add Members"]["form_action"] == "commit"
     assert by_label["Send"]["form_action"] == "commit"
     assert "form_action" not in by_label["Create New Channel"]
+
+
+def test_android_hides_trailing_action_occluded_by_row_controls() -> None:
+    controls = form_controls_from_semantic_tree([
+        _semantic_node("android:0.0.0.0", "+", 925.9259, 233.3333, 74.0741, 33.3333),
+        _semantic_node("android:0.0.1", "Delete", 893.5185, 208.3333, 212.963, 166.6667),
+        _semantic_node("android:0.1", "Visible Delete", 893.5185, 375, 212.963, 83.3333),
+        _semantic_node("android:0.2", "Clipped Delete", 893.5185, 10, 212.963, 20),
+    ])
+
+    assert controls is not None
+    assert {control["ref"] for control in controls} == {
+        "android:0.0.0.0", "android:0.1",
+    }
+    assert "Visible Delete" in {control["label"] for control in controls}
+
+
+@pytest.mark.parametrize("role", ["checkbox", "button"])
+def test_android_hides_scrolled_control_under_fixed_overlay(role: str) -> None:
+    clipped = _semantic_node(
+        "android:0.0.0.0", "Clipped item", 64.8148, 868.75, 74.0741, 29.1667,
+        role=role, clickable=role == "button",
+    )
+    if role == "checkbox":
+        clipped["value"] = False
+    controls = form_controls_from_semantic_tree([
+        clipped,
+        _semantic_node("android:0.1.0", "Select all", 64.8148, 856.25, 74.0741, 29.1667),
+    ])
+
+    assert controls is not None
+    assert {control["label"] for control in controls} == {"Select all"}
 
 
 
