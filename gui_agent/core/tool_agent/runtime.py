@@ -2103,11 +2103,14 @@ class ToolAgentRuntime:
                     float(executed_action.y),
                     str(executed_action.description or ""),
                 )
-            elapsed, no_effect = settle_after_action(
-                self.platform,
-                png,
-                action_type=executed_action.action_type,
-            )
+            if executed:
+                elapsed, no_effect = settle_after_action(
+                    self.platform,
+                    png,
+                    action_type=executed_action.action_type,
+                )
+            else:
+                elapsed, no_effect = 0.0, True
             target_signal: dict[str, Any] | None = None
             if verify_future is not None:
                 try:
@@ -2208,7 +2211,10 @@ class ToolAgentRuntime:
             if (
                 rejected_feedback
                 and rejection is not None
-                and int(rejection.get("occurrences") or 1) >= 2
+                and (
+                    int(rejection.get("status") or 0) == 0
+                    or int(rejection.get("occurrences") or 1) >= 2
+                )
             ):
                 payload["reason"] = str(
                     rejection.get("message") or "The platform rejected the action."
