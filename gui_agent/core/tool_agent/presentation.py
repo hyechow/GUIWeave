@@ -78,6 +78,18 @@ def _display_value(value: Any) -> str:
     return json.dumps(value, ensure_ascii=False, default=str)
 
 
+def _record_table(rows: list[dict[str, Any]], *, chinese: bool) -> str:
+    columns = list(dict.fromkeys(str(key) for row in rows for key in row))
+    cell = lambda value: _display_value(value).replace("|", "\\|").replace("\n", "<br>")
+    intro = f"查询到 {len(rows)} 条结果：" if chinese else f"Found {len(rows)} results:"
+    header = "| " + " | ".join(column.replace("_", " ") for column in columns) + " |"
+    separator = "| " + " | ".join("---" for _ in columns) + " |"
+    body = [
+        "| " + " | ".join(cell(row.get(column)) for column in columns) + " |"
+        for row in rows
+    ]
+    return "\n\n".join((intro, "\n".join((header, separator, *body))))
+
 def _deterministic_reply(
     *,
     goal: str,
@@ -99,14 +111,19 @@ def _deterministic_reply(
             return f"查询结果：{'，'.join(parts)}。"
         return f"Result: {', '.join(parts)}."
     if isinstance(result, (list, tuple)):
+        rows = list(result)
+        if not rows:
+            return "未查询到结果。" if chinese else "No results found."
+        if all(isinstance(value, dict) for value in rows):
+            return _record_table(rows, chinese=chinese)
         values = ("、" if chinese else ", ").join(
-            _display_value(value) for value in result
+            _display_value(value) for value in rows
         )
         return f"查询结果：{values}。" if chinese else f"Result: {values}."
     return f"结果为 {_display_value(result)}。" if chinese else f"The result is {_display_value(result)}."
 
 
-def _salient_literals(value: Any, *, limit: int = 20) -> list[str]:
+def _salient_literals(value: Any, *, limit: int = 200) -> list[str]:
     values: list[str] = []
 
     def visit(item: Any) -> None:
@@ -139,12 +156,22 @@ def _validate_fidelity(reply: str, result: Any) -> None:
     if missing:
         shown = ", ".join(repr(item) for item in missing[:5])
         raise ValueError(f"presentation omitted canonical result literal(s): {shown}")
+    if (
+        isinstance(result, (list, tuple))
+        and result
+        and all(isinstance(row, dict) for row in result)
+        and not any(line.strip().startswith("|") for line in reply.splitlines())
+    ):
+        raise ValueError("presentation did not render record rows as a table")
 
 
 def _literal_is_preserved(reply: str, value: str) -> bool:
     # URLs, emails, and mixed ASCII identifiers must remain byte-for-byte stable.
     if re.search(r"https?://|@|(?=.*[A-Za-z])(?=.*\d)", value):
-        return value in reply
+        return bool(re.search(
+            rf"(?<![A-Za-z0-9]){re.escape(value)}(?![A-Za-z0-9])",
+            reply,
+        ))
     substitutions = {
         "小于等于": "<=",
         "不超过": "<=",
@@ -161,7 +188,7 @@ def _literal_is_preserved(reply: str, value: str) -> bool:
         comparable_reply = comparable_reply.replace(text, symbol)
         comparable_value = comparable_value.replace(text, symbol)
     tokens = re.findall(
-        r"<=|>=|<|>|[-+]?\d+(?:\.\d+)?|[A-Za-z]+|[\u3400-\u9fff]+|℃|°|%",
+        r"<=|>=|<|>|(?<![\d.])[-+]?\d+(?:\.\d+)?|[A-Za-z]+|[\u3400-\u9fff]+|℃|°|%",
         comparable_value,
     )
     if not tokens:

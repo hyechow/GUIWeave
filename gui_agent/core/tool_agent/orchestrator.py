@@ -756,10 +756,14 @@ def _validate_finish_call(call: ast.Call) -> list[MasterDiagnostic]:
         diagnostics.append(_diagnostic(
             "FINISH_SIGNATURE", "ctx.finish requires a result ref string", call
         ))
-    if _subscript_key(value) in {"collection_ref", "result_ref"}:
+    elif _subscript_key(value) != "ref":
+        descriptor = _subscript_key(value) in {"collection_ref", "result_ref"}
         diagnostics.append(_diagnostic(
             "REF_VALUE_REQUIRED",
-            "ctx.finish requires result_ref['ref'], not the result_ref descriptor",
+            "ctx.finish requires result_ref['ref'], not the result_ref descriptor"
+            if descriptor
+            else "ctx.finish requires an exact ResultRef string expression such as "
+            "result['ref']; literals, None, descriptors, and unproven aliases are invalid",
             value,
         ))
     effect_keyword = next((item for item in call.keywords if item.arg == "effect"), None)

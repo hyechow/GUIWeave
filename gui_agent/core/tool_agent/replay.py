@@ -324,7 +324,18 @@ def _replay_programs(
             )
 
     if terminal is None:
-        return _failed_result(recording, programs, trace, "replay produced no terminal result")
+        if (
+            programs
+            and all(program.expected_kind == "error" for program in programs)
+            and recording.expected_phase == "failed"
+            and recording.expected_output is None
+        ):
+            terminal = MasterTerminal(
+                phase="failed",
+                summary="Recorded execution errors reproduced",
+            )
+        else:
+            return _failed_result(recording, programs, trace, "replay produced no terminal result")
     output = (
         data_store.result_value(terminal.result_ref)
         if terminal.phase == "completed" and terminal.result_ref

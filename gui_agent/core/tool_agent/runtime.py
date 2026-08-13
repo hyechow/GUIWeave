@@ -11,7 +11,7 @@ from datetime import datetime
 from math import hypot
 from pathlib import Path
 from typing import Any, Callable, Literal
-from urllib.parse import unquote, urlsplit
+from urllib.parse import urlsplit
 
 from jsonschema import Draft202012Validator, validate
 from langchain_core.messages import HumanMessage
@@ -114,6 +114,29 @@ class _WorkerActionRejected(ValueError):
 
 
 _ACTION_TYPES = {"open_url": "navigate"}
+
+
+def _url_is_sourced(candidate: str, sources: list[str]) -> bool:
+    tokens = {
+        token.rstrip(".,;:)]}")
+        for source in sources
+        for token in re.findall(r"https?://[^\s`'\"<>]+|/[^\s`'\"<>]+", source, re.I)
+    }
+    if candidate in tokens:
+        return True
+
+    def parts(value: str) -> tuple[str, str]:
+        parsed = urlsplit(value)
+        route = (parsed.path or "") + (f"?{parsed.query}" if parsed.query else "")
+        return parsed.netloc.casefold(), route
+
+    origin, route = parts(candidate)
+    supplied = [parts(token) for token in tokens]
+    return bool(
+        route
+        and route in {item[1] for item in supplied}
+        and (not origin or origin in {item[0] for item in supplied})
+    )
 _REDACTED_ACCESS_VALUE = "[session access value redacted]"
 _WORKER_VERIFY_POOL = ThreadPoolExecutor(
     max_workers=1,
@@ -2010,7 +2033,7 @@ class ToolAgentRuntime:
             call_args["description"] = action_spec.description
         validate(instance=call_args, schema=parameters)
         full_args = {**action_spec.fixed_args, **call_args}
-        if call["name"] == "runtime_open_url":
+        if action_spec.capability == "open_url":
             self._validate_runtime_open_url(
                 str(full_args.get("url") or ""),
                 spec=spec,
@@ -2216,32 +2239,17 @@ class ToolAgentRuntime:
             str(getattr(self, "_task_goal", "") or ""),
             str(getattr(self, "_task_page_url", "") or ""),
             str(getattr(self, "_master_knowledge", "") or ""),
+            str(getattr(self, "_worker_access_context", "") or ""),
             spec.goal,
             *spec.success_criteria,
             str(frame.url if frame is not None else ""),
         ]
-        if any(candidate in source for source in sources if source):
-            return
-
-        candidate_parts = urlsplit(candidate)
-        candidate_route = unquote(candidate_parts.path or "")
-        if candidate_parts.query:
-            candidate_route += f"?{candidate_parts.query}"
-        supplied_routes: set[str] = set()
-        for source in sources:
-            for token in re.findall(r"https?://[^\s`'\"<>]+|/[A-Za-z0-9_./?=&%+-]+", source):
-                clean = token.rstrip(".,;:)]}")
-                parts = urlsplit(clean)
-                route = unquote(parts.path or "")
-                if parts.query:
-                    route += f"?{parts.query}"
-                if route:
-                    supplied_routes.add(route)
-        if candidate_route and candidate_route in supplied_routes:
+        if _url_is_sourced(candidate, sources):
             return
         raise ValueError(
             "runtime_open_url rejected an inferred URL/route. Use only an exact URL "
-            "present in the task or application knowledge; otherwise navigate visually."
+            "present in the task or application/deployment knowledge; otherwise "
+            "navigate visually."
         )
 
     @staticmethod
