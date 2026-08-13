@@ -41,13 +41,13 @@
   </main>
   <section id="chat-mode" class="chat-shell hidden" aria-label="GUIWeave Chat">
     <div class="chat-panel">
-      <header class="chat-header"><div><p class="kicker">WEB CHAT / HEADLESS EXECUTION</p><h1>对话式 GUI 任务</h1></div><p>每条消息启动独立的 Headless Run；平台会话与页面状态不会自动续接。</p></header>
-      <div id="chat-thread" class="chat-thread"><div class="chat-welcome"><span>GW</span><div><b>GUIWeave 已就绪</b><p>描述你希望在界面中完成的任务，运行结果会直接回复在这里。</p></div></div></div>
-      <aside id="chat-detail" class="chat-detail"><div class="chat-detail-empty"><span>⌁</span><b>TASK DETAIL</b><p>发送任务后，这里会显示实时运行详情。</p></div></aside>
+      <header class="chat-header"><div><p class="kicker">MULTI-TURN CHAT / GUI ROUTING</p><h1>对话式 GUI 助手</h1></div><div class="chat-header-actions"><p>先理解会话和意图；只有必须读取或操作界面时，才会启动 Headless Run。</p><button id="chat-new-session" type="button" title="清空当前对话并开启新 Session">＋ 新对话</button></div></header>
+      <div id="chat-thread" class="chat-thread"><div class="chat-welcome"><span>GW</span><div><b>GUIWeave 已就绪</b><p>你可以直接对话；需要界面证据或操作时，我会自动启动 GUI 任务。</p></div></div></div>
+      <aside id="chat-detail" class="chat-detail"><div class="chat-detail-empty"><span>⌁</span><b>TURN DETAIL</b><p>发送消息后，这里会显示路由判断和运行详情。</p></div></aside>
       <form id="chat-form" class="chat-composer">
-        <div class="chat-config"><label>平台<select id="chat-platform" name="platform"><option value="browser">Browser</option><option value="android">Android</option><option value="iphone">iPhone</option></select></label><label id="chat-android-field" class="hidden">设备<input id="chat-adb-serial" name="adb_serial" maxlength="200" autocomplete="off" placeholder="IP、IP:端口或 adb serial"></label><span id="chat-environment">正在检查 Browser 环境…</span></div>
-        <textarea id="chat-input" name="goal" required maxlength="4000" placeholder="输入 GUI 任务；Enter 发送，Shift + Enter 换行"></textarea>
-        <footer><small>任务默认使用 Enhanced 感知、最多 50 轮，并在本机后台执行。</small><button id="chat-send" class="primary" type="submit" disabled>发送并执行 ↗</button></footer>
+        <div class="chat-config"><label>GUI 平台<select id="chat-platform" name="platform"><option value="browser">Browser</option><option value="android">Android</option><option value="iphone">iPhone</option></select></label><label id="chat-android-field" class="hidden">设备<input id="chat-adb-serial" name="adb_serial" maxlength="200" autocomplete="off" placeholder="IP、IP:端口或 adb serial"></label><span id="chat-environment">Browser · 仅在需要 GUI 时检查</span></div>
+        <textarea id="chat-input" name="message" required maxlength="4000" placeholder="输入消息；Enter 发送，Shift + Enter 换行"></textarea>
+        <footer><small>意图路由会先判断是否需要 GUI；界面任务使用 Enhanced 感知并在本机后台执行。</small><button id="chat-send" class="primary" type="submit" disabled>发送 ↗</button></footer>
       </form>
     </div>
   </section>
