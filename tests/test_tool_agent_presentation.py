@@ -246,6 +246,11 @@ def test_presentation_artifact_and_context_keep_result_and_reply_separate(tmp_pa
         platform="browser",
         fallback_task_type="RETRIEVE",
         presentation=presentation,
+        app_router={
+            "kind": "deterministic_app_router",
+            "targets": [{"app_id": "RoboTeam"}],
+            "active_app": "RoboTeam",
+        },
     )
 
     context = json.loads((tmp_path / "context.json").read_text(encoding="utf-8"))
@@ -259,6 +264,7 @@ def test_presentation_artifact_and_context_keep_result_and_reply_separate(tmp_pa
     assert context["models"]["tool_agent.presentation"] == "presenter-model"
     assert context["platform_time"]["source"] == "browser_cdp"
     assert result.orchestrator["platform_time"]["timezone"] == "Asia/Shanghai"
+    assert context["orchestrator"]["app_router"]["active_app"] == "RoboTeam"
 
     response = _synthesize_response(
         "Return the matching email",

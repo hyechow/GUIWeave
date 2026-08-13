@@ -125,6 +125,9 @@ def test_console_frontend_auto_selects_and_prioritizes_final_reply() -> None:
     assert "result.ok && platform === \"android\" && androidAddress" in source
     assert 'localStorage.setItem(ANDROID_DEVICE_STORAGE_KEY, address)' in source
     assert 'localStorage.removeItem(ANDROID_DEVICE_STORAGE_KEY)' in source
+    assert "async function cancelTask()" in source
+    assert "已经执行的 GUI 操作不会自动撤销" in source
+    assert "中止中…" in source
 
 
 def test_console_hidden_state_overrides_component_display_rules() -> None:
@@ -294,6 +297,26 @@ class _NoDuplicatePreflightService:
         )
 
 
+class _NeverRunService:
+    def run(self, _goal: str, **_options: object):
+        raise AssertionError("a queued cancelled task must not start")
+
+
+def test_console_cancels_queued_task_before_service_start(
+    monkeypatch,
+) -> None:
+    threads: list[threading.Thread] = []
+    monkeypatch.setattr(threading.Thread, "start", lambda thread: threads.append(thread))
+    console = RunConsole(_NeverRunService())  # type: ignore[arg-type]
+
+    task = console.submit(RunRequest(goal="inspect account", platform="browser"))
+    console.cancel(task.task_id)
+    assert task.status == "cancelling"
+    threads[0].run()
+
+    assert task.status == "interrupted"
+
+
 def test_console_submit_does_not_repeat_platform_preflight(tmp_path: Path) -> None:
     client = TestClient(create_app(_NoDuplicatePreflightService(tmp_path)))  # type: ignore[arg-type]
 
@@ -327,8 +350,34 @@ def test_console_promotes_run_id_blocks_platform_conflict_and_cancels(
     else:  # pragma: no cover - protects the resource ownership invariant
         raise AssertionError("a second browser task should have been rejected")
 
-    assert console.cancel(task.task_id).status == "cancelling"
+    console.cancel(task.task_id)
     deadline = time.monotonic() + 1
     while task.status == "cancelling" and time.monotonic() < deadline:
         time.sleep(0.005)
     assert task.status == "interrupted"
+
+
+def test_console_cancel_endpoint_interrupts_active_task(tmp_path: Path) -> None:
+    service = _BlockingService(tmp_path)
+    with TestClient(create_app(service)) as client:  # type: ignore[arg-type]
+        created = client.post(
+            "/api/tasks",
+            json={"goal": "inspect account", "platform": "browser"},
+        )
+        assert created.status_code == 202
+        assert service.started.wait(timeout=1)
+
+        task_id = created.json()["task_id"]
+        cancelled = client.post(f"/api/tasks/{task_id}/cancel")
+
+        assert cancelled.status_code == 202
+        assert cancelled.json() == {"task_id": task_id, "status": "cancelling"}
+        deadline = time.monotonic() + 1
+        task_status = "cancelling"
+        while task_status == "cancelling" and time.monotonic() < deadline:
+            tasks = client.get("/api/tasks").json()["tasks"]
+            task_status = next(
+                item["status"] for item in tasks if item["task_id"] == task_id
+            )
+            time.sleep(0.005)
+        assert task_status == "interrupted"

@@ -1,13 +1,16 @@
 from __future__ import annotations
 
 import json
+from contextlib import nullcontext
 from pathlib import Path
+from types import SimpleNamespace
 
 import pytest
 
 from gui_agent.core.config.preflight import ModelPreflightResult
 from gui_agent.core.runtime.factory import SetupCheckResult
 from gui_agent.core.runtime.io import get_log_root
+from gui_agent.core.self_learning import app_summary
 from gui_agent.core.tool_agent.service import (
     ToolAgentService,
     ToolAgentServiceResult,
@@ -219,3 +222,97 @@ def test_run_blocks_before_building_platform_when_model_is_missing(
 
     with pytest.raises(RuntimeError, match="STANDARD_API_KEY"):
         service.run("inspect account", platform="browser")
+
+
+def test_run_honors_cancellation_before_model_preflight(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    service = ToolAgentService(log_root=tmp_path / "logs")
+    monkeypatch.setattr(
+        service,
+        "check_model_environment",
+        lambda: pytest.fail("cancelled run reached model preflight"),
+    )
+
+    with pytest.raises(InterruptedError, match="before runtime startup"):
+        service.run(
+            "inspect account",
+            platform="browser",
+            stop_requested=lambda: True,
+        )
+
+
+def test_service_binds_roboteam_knowledge_from_current_url(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    knowledge_root = tmp_path / "knowledge"
+    app_dir = knowledge_root / "browser" / "RoboTeam"
+    app_dir.mkdir(parents=True)
+    (app_dir / "_app.md").write_text(
+        "---\nscope:\n  - orchestrator\n---\n"
+        "# RoboTeam\n\nOrders are available from Orders > Order List.",
+        encoding="utf-8",
+    )
+    (app_dir / "_deploy.md").write_text(
+        "---\naliases:\n  - Robo Team\n---\n"
+        "Entry URL: http://1.2.3.4:22000/",
+        encoding="utf-8",
+    )
+    monkeypatch.setattr(app_summary, "KNOWLEDGE_DIR", knowledge_root)
+    monkeypatch.setattr(
+        app_summary,
+        "get_user_knowledge_root",
+        lambda: knowledge_root,
+    )
+
+    session = SimpleNamespace(client=SimpleNamespace(
+        page_info=lambda: ("http://localhost:22000/orders/list", "Orders"),
+        current_app_id=lambda: "",
+    ))
+    bundle = SimpleNamespace(
+        platform="browser",
+        setup_check=lambda: SetupCheckResult(ok=True, summary="ready", lines=()),
+        make_status_reporter=lambda _show: None,
+        open_session=lambda: nullcontext(session),
+    )
+    captured: dict = {}
+
+    def fake_execute(**kwargs):
+        captured.update(kwargs)
+        return (
+            SimpleNamespace(
+                phase="completed",
+                task_type="RETRIEVE",
+                summary="done",
+                output="[]",
+            ),
+            SimpleNamespace(reply="No orders"),
+        )
+
+    service = ToolAgentService(log_root=tmp_path / "logs")
+    monkeypatch.setattr(
+        service,
+        "check_model_environment",
+        lambda: ModelPreflightResult(
+            ok=True,
+            summary="ready",
+            lines=(),
+            config_path="/tmp/config.yaml",
+        ),
+    )
+    monkeypatch.setattr("gui_agent.core.tool_agent.service.build_platform", lambda *_a, **_k: bundle)
+    monkeypatch.setattr("gui_agent.core.tool_agent.service.execute_tool_agent", fake_execute)
+
+    result = service.run(
+        "查看当前站点的订单列表",
+        platform="browser",
+        show_hud=False,
+    )
+
+    assert result.phase == "completed"
+    assert captured["app_router"]["active_app"] == "RoboTeam"
+    assert "Orders > Order List" in captured["knowledge"]
+    assert "http://1.2.3.4:22000/" in captured["access_context"]
+    assert captured["knowledge_summary"]["app_name"] == "RoboTeam"

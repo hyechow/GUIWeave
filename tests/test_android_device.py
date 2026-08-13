@@ -177,6 +177,26 @@ def test_list_apps_and_launch_semantic_name_from_package_manager():
         device.launch_app("Missing")
 
 
+def test_current_app_id_reads_foreground_package_without_input() -> None:
+    from gui_agent.adapters.android.device import AndroidDevice
+
+    commands = []
+
+    class _ForegroundDev:
+        def shell(self, command):
+            commands.append(command)
+            return (
+                "mCurrentFocus=Window{123 u0 "
+                "com.example.calendar/.MainActivity}"
+            )
+
+    device = AndroidDevice(serial="device")
+    device._dev = _ForegroundDev()
+
+    assert device.current_app_id() == "com.example.calendar"
+    assert commands == ["dumpsys window windows"]
+
+
 def test_screenshot_returns_png_bytes(calls):
     dev = _connected_device()
     png = dev.screenshot()
