@@ -61,6 +61,7 @@ export default function Home() {
         </a>
         <div className="nav-links">
           <a href="#capabilities">能力</a>
+          <a href="#console">Console</a>
           <a href="#architecture">架构</a>
           <a href="#knowledge">Knowledge</a>
         </div>
@@ -77,7 +78,7 @@ export default function Home() {
           </p>
           <div className="hero-actions">
             <a className="button primary" href="#install">查看安装方式 <ArrowIcon /></a>
-            <a className="button secondary" href="#architecture">了解工作原理</a>
+            <a className="button secondary" href="#console">查看 Run Console</a>
           </div>
           <div className="trust-row">
             <span><b>LOCAL RUNTIME</b> 执行环境在本机</span>
@@ -121,7 +122,7 @@ export default function Home() {
       </section>
 
       <section className="marquee" aria-label="支持能力">
-        <div>TOOL AGENT <span>✦</span> BROWSER <span>✦</span> ANDROID <span>✦</span> IPHONE <span>✦</span> KNOWLEDGE <span>✦</span> EVALS <span>✦</span> REPLAY</div>
+        <div>TOOL AGENT <span>✦</span> MULTI-TURN CHAT <span>✦</span> GUI ROUTING <span>✦</span> BROWSER <span>✦</span> ANDROID <span>✦</span> IPHONE <span>✦</span> REPLAY</div>
       </section>
 
       <section className="section shell" id="capabilities">
@@ -147,6 +148,38 @@ export default function Home() {
               </div>
             </article>
           ))}
+        </div>
+      </section>
+
+      <section className="console-section" id="console">
+        <div className="shell console-intro">
+          <div>
+            <p className="eyebrow light"><span /> Multi-turn Run Console</p>
+            <h2>先理解对话，<br />再决定是否操作界面。</h2>
+          </div>
+          <p>普通问答直接回复；目标不完整时追问；只有需要当前界面证据或真实操作时，才启动 Headless GUI Run。执行结果会回到同一段对话，后续可以解释、重试或中止。</p>
+        </div>
+        <div className="shell chat-showcase">
+          <div className="chat-window">
+            <div className="chat-bar"><span>GUIWEAVE RUN CONSOLE</span><button type="button">＋ 新对话</button></div>
+            <div className="chat-thread-preview">
+              <div className="bubble user"><small>YOU</small><p>Chrome 怎么清除缓存？</p></div>
+              <div className="bubble agent"><header><b>GW</b><span>直接回复</span><i>已完成</i></header><p>可以打开“清除浏览数据”，再选择时间范围和数据类型。</p></div>
+              <div className="bubble user"><small>YOU</small><p>那你直接帮我清掉吧</p></div>
+              <div className="bubble agent"><header><b>GW</b><span className="clarify">需要补充</span><i>待确认</i></header><p>请确认要清除的数据类型和时间范围。</p></div>
+              <div className="bubble user"><small>YOU</small><p>只清缓存，过去一小时</p></div>
+              <div className="bubble agent"><header><b>GW</b><span className="gui">执行 GUI</span><i>运行中</i></header><p>已识别为 GUI 任务，正在本机后台执行…</p><code>RUN · browser / 20260813_190723</code></div>
+            </div>
+          </div>
+          <aside className="route-panel">
+            <p>TURN DETAIL</p><h3>执行 GUI</h3>
+            <dl>
+              <div><dt>ROUTE</dt><dd>执行 GUI</dd></div>
+              <div><dt>WHY</dt><dd>请求需要真实改变当前浏览器状态。</dd></div>
+              <div><dt>EXECUTION</dt><dd>HEADLESS · LOCAL</dd></div>
+              <div><dt>SESSION</dt><dd>新对话只清空会话，Runs 仍保留。</dd></div>
+            </dl>
+          </aside>
         </div>
       </section>
 

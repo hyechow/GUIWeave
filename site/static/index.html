@@ -4,9 +4,9 @@
   <meta charset="utf-8">
   <meta name="viewport" content="width=device-width, initial-scale=1">
   <title>GUIWeave — Local GUI Automation for Agents</title>
-  <meta name="description" content="GUIWeave macOS Developer Preview：本地 GUI Agent 运行时，通过用户配置的模型网关完成推理，需要对应 API_KEY。">
+  <meta name="description" content="GUIWeave macOS Developer Preview：多轮 Run Console 先判断是否需要 GUI，再在本地执行浏览器、Android 与 iPhone 自动化。">
   <meta property="og:title" content="GUIWeave — Local GUI Automation for Agents">
-  <meta property="og:description" content="让 AI 真正使用你的界面。">
+  <meta property="og:description" content="多轮对话先判断是否需要 GUI，再在本地执行并保留完整证据。">
   <meta property="og:type" content="website">
   <meta property="og:url" content="__ORIGIN__">
   <meta property="og:image" content="__ORIGIN__/og.png">
@@ -18,7 +18,7 @@
 <body><main>
   <nav class="nav shell" aria-label="主导航">
     <a class="brand" href="#top"><span class="brand-mark"><i></i><i></i><i></i></span><span>GUIWEAVE</span></a>
-    <div class="nav-links"><a href="#capabilities">能力</a><a href="#architecture">架构</a><a href="#knowledge">Knowledge</a></div>
+    <div class="nav-links"><a href="#capabilities">能力</a><a href="#console">Console</a><a href="#architecture">架构</a><a href="#knowledge">Knowledge</a></div>
     <a class="nav-cta" href="#install">开发者预览 <span>↗</span></a>
   </nav>
 
@@ -27,7 +27,7 @@
       <p class="eyebrow"><span></span> macOS Developer Preview</p>
       <h1>让 AI 真正<br>使用你的界面。</h1>
       <p class="hero-lead">GUIWeave 把 <strong>Skill + 本地 stdio MCP</strong> 组合成一个可安装的 GUI Agent 插件。在你的 Mac 上运行，统一理解浏览器、Android 与 iPhone 界面，完成任务，留下证据。</p>
-      <div class="hero-actions"><a class="button primary" href="#install">查看安装方式 <span>↗</span></a><a class="button secondary" href="#architecture">了解工作原理</a></div>
+      <div class="hero-actions"><a class="button primary" href="#install">查看安装方式 <span>↗</span></a><a class="button secondary" href="#console">查看 Run Console</a></div>
       <div class="trust-row"><span><b>LOCAL RUNTIME</b> 执行环境在本机</span><span><b>REVIEWED</b> 确认后写入</span><span><b>TRACEABLE</b> 全程可追溯</span></div>
     </div>
     <div class="agent-console" aria-label="GUIWeave 运行示意">
@@ -38,7 +38,7 @@
     </div>
   </section>
 
-  <section class="marquee"><div>TOOL AGENT <span>✦</span> BROWSER <span>✦</span> ANDROID <span>✦</span> IPHONE <span>✦</span> KNOWLEDGE <span>✦</span> EVALS <span>✦</span> REPLAY</div></section>
+  <section class="marquee"><div>TOOL AGENT <span>✦</span> MULTI-TURN CHAT <span>✦</span> GUI ROUTING <span>✦</span> BROWSER <span>✦</span> ANDROID <span>✦</span> IPHONE <span>✦</span> REPLAY</div></section>
 
   <section class="section shell" id="capabilities">
     <header class="section-head"><p class="eyebrow"><span></span> What it does</p><h2>一个插件，三平台统一运行。</h2><p>从执行，到学习，再到验证——共用同一套本地运行时与安全边界。</p></header>
@@ -48,6 +48,18 @@
       <article class="capability-card"><div class="card-visual visual-03"><span class="card-number">03</span><div class="phone-glyph"><span></span><i>◎</i><b></b></div></div><div class="card-copy"><span class="tag">iPhone · SCK</span><h3>iPhone Agent</h3><p>通过 macOS iPhone 镜像运行：SCK 截图，mirror daemon 输入。</p></div></article>
       <article class="capability-card"><div class="card-visual visual-04"><span class="card-number">04</span><div class="doc-glyph"><span>PDF</span><i>→</i><b>KN</b></div></div><div class="card-copy"><span class="tag">PDF → Knowledge</span><h3>Private Knowledge</h3><p>将 PDF、Markdown 和文本手册提炼为应用知识；预览确认后才启用。</p></div></article>
     </div>
+  </section>
+
+  <section class="console-section" id="console">
+    <div class="shell console-intro"><div><p class="eyebrow light"><span></span> Multi-turn Run Console</p><h2>先理解对话，<br>再决定是否操作界面。</h2></div><p>普通问答直接回复；目标不完整时追问；只有需要当前界面证据或真实操作时，才启动 Headless GUI Run。执行结果会回到同一段对话，后续可以解释、重试或中止。</p></div>
+    <div class="shell chat-showcase"><div class="chat-window"><div class="chat-bar"><span>GUIWEAVE RUN CONSOLE</span><button type="button">＋ 新对话</button></div><div class="chat-thread-preview">
+      <div class="bubble user"><small>YOU</small><p>Chrome 怎么清除缓存？</p></div>
+      <div class="bubble agent"><header><b>GW</b><span>直接回复</span><i>已完成</i></header><p>可以打开“清除浏览数据”，再选择时间范围和数据类型。</p></div>
+      <div class="bubble user"><small>YOU</small><p>那你直接帮我清掉吧</p></div>
+      <div class="bubble agent"><header><b>GW</b><span class="clarify">需要补充</span><i>待确认</i></header><p>请确认要清除的数据类型和时间范围。</p></div>
+      <div class="bubble user"><small>YOU</small><p>只清缓存，过去一小时</p></div>
+      <div class="bubble agent"><header><b>GW</b><span class="gui">执行 GUI</span><i>运行中</i></header><p>已识别为 GUI 任务，正在本机后台执行…</p><code>RUN · browser / 20260813_190723</code></div>
+    </div></div><aside class="route-panel"><p>TURN DETAIL</p><h3>执行 GUI</h3><dl><div><dt>ROUTE</dt><dd>执行 GUI</dd></div><div><dt>WHY</dt><dd>请求需要真实改变当前浏览器状态。</dd></div><div><dt>EXECUTION</dt><dd>HEADLESS · LOCAL</dd></div><div><dt>SESSION</dt><dd>新对话只清空会话，Runs 仍保留。</dd></div></dl></aside></div>
   </section>
 
   <section class="architecture" id="architecture"><div class="shell architecture-inner"><div class="architecture-copy"><p class="eyebrow light"><span></span> Local by design</p><h2>运行时留在本机，<br>模型连接由你配置。</h2><p>Codex 通过 stdio 启动本地 GUIWeave，无需另行部署公网 Agent 服务，也不会复制浏览器会话。Agent 推理并非离线运行：它会访问用户配置的模型网关，需要配置对应的 API_KEY，并受该网关的网络与数据策略约束。</p><div class="architecture-note"><b>安全边界</b><span>涉及发送、发布、购买、删除或账户设置时，执行前需要明确授权。</span></div></div><div class="flow-list">
