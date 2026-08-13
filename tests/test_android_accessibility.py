@@ -34,6 +34,17 @@ def _semantic_node(
     }
 
 
+def _form_controls(xml: str) -> list[dict]:
+    tree = semantic_tree_from_uiautomator(
+        f'<hierarchy><node class="android.widget.FrameLayout" '
+        f'bounds="[0,0][1080,2400]">{xml}</node></hierarchy>',
+        viewport_size=(1080, 2400),
+    )
+    controls = form_controls_from_semantic_tree(tree)
+    assert controls is not None
+    return controls
+
+
 def test_uiautomator_normalizes_current_collection_controls() -> None:
     tree = semantic_tree_from_uiautomator(XML, viewport_size=(1080, 2400))
 
@@ -178,6 +189,74 @@ def test_repeated_unlabeled_leading_selectors_are_named_checkboxes() -> None:
     assert all(control["kind"] == "checkbox" for control in choices.values())
     assert all(control["selection_mode"] == "multiple" for control in choices.values())
     assert choices["First item"]["rect"]["y"] == pytest.approx(160.4167)
+
+
+def test_documentsui_label_override_does_not_leak_to_other_apps() -> None:
+    controls = _form_controls("""
+      <node class="android.widget.LinearLayout" resource-id="app:id/item_root"
+            content-desc="Open report" clickable="true" bounds="[20,480][520,760]">
+        <node class="android.widget.ImageButton" resource-id="app:id/preview_icon"
+              clickable="true" bounds="[20,480][120,580]"/>
+        <node class="android.widget.TextView" resource-id="app:id/title" text="report.pdf"
+              bounds="[80,650][360,720]"/>
+      </node>""")
+    assert controls[0]["label"] == "Open report"
+
+
+def test_documentsui_root_rows_use_full_row_center() -> None:
+    controls = _form_controls("""
+      <node class="android.widget.ListView"
+            resource-id="com.google.android.documentsui:id/roots_list"
+            bounds="[0,258][735,2337]">
+        <node class="android.widget.LinearLayout" bounds="[0,1228][735,1375]">
+          <node class="android.widget.TextView" text="sdk_gphone64_x86_64"
+                resource-id="android:id/title" bounds="[168,1276][714,1327]"/>
+        </node>
+      </node>""")
+
+    assert len(controls) == 1
+    row = controls[0]
+    assert (row["label"], row["ref"], row["kind"]) == (
+        "sdk_gphone64_x86_64", "android:0.0.0", "button",
+    )
+    assert row["bounds"] == pytest.approx((0, 511.6667, 680.5556, 572.9167))
+    assert row["rect"] == pytest.approx({
+        "x": 340.2778, "y": 542.2917, "w": 680.5556, "h": 61.25,
+    })
+
+
+def test_documentsui_distinguishes_file_tile_from_preview_button() -> None:
+    controls = _form_controls("""
+      <node class="android.widget.LinearLayout"
+            resource-id="com.google.android.documentsui:id/item_root"
+            content-desc="Preview the file review_v2.pdf" clickable="true"
+            bounds="[551,1302][1016,1903]">
+        <node class="android.widget.TextView" text="review_v2.pdf"
+              resource-id="com.google.android.documentsui:id/title"
+              bounds="[610,1750][900,1815]"/>
+        <node class="android.widget.ImageButton"
+              resource-id="com.google.android.documentsui:id/preview_icon"
+              content-desc="Preview the file review_v2.pdf" clickable="true"
+              bounds="[890,1302][1016,1428]"/>
+      </node>""")
+
+    assert [(control["label"], control["resource"]) for control in controls] == [
+        ("review_v2.pdf", "item_root"),
+        ("Preview the file review_v2.pdf", "preview_icon"),
+    ]
+    assert controls[0]["rect"]["x"] == pytest.approx(725.463)
+    assert controls[1]["rect"]["x"] == pytest.approx(882.407)
+
+
+def test_android_autocomplete_search_is_text_input() -> None:
+    controls = _form_controls("""
+      <node class="android.widget.AutoCompleteTextView" text="review"
+            content-desc="Search documents" resource-id="search_src_text"
+            clickable="true" focused="true" bounds="[210,147][1059,242]"/>""")
+
+    assert controls[0]["kind"] == "text_input"
+    assert controls[0]["is_filter"] is True
+    assert controls[0]["value"] == "review"
 
 
 def test_android_commit_metadata_requires_explicit_submission_semantics() -> None:

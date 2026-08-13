@@ -197,6 +197,33 @@ def test_android_common_short_word_does_not_override_named_control() -> None:
     assert grounded.action.snap["info"] == "Continue"
 
 
+def test_documentsui_file_tile_description_avoids_nested_preview_button() -> None:
+    controls = [
+        {
+            **_android_button("review_v2.pdf", 725.463, 667.708, 430.556, 250.417),
+            "ref": "android:0.0.3",
+        },
+        {
+            **_android_button(
+                "Preview the file review_v2.pdf", 882.407, 568.75, 116.667, 52.5,
+            ),
+            "ref": "android:0.0.3.1.0.1",
+        },
+    ]
+    original = AndroidActionDecision(action=AndroidAction(
+        action_type="tap",
+        x=882.407,
+        y=568.75,
+        description="File tile labeled 'review_v2.pdf' in the bottom-right grid cell",
+    ))
+
+    grounded = ground_action_to_android_control(original, controls)
+
+    assert (grounded.action.x, grounded.action.y) == pytest.approx((725.463, 667.708))
+    assert grounded.action.snap is not None
+    assert grounded.action.snap["info"] == "review_v2.pdf"
+
+
 def test_task108_failed_type_point_replays_through_coordinate_grounding() -> None:
     case = _case()
     args = case["attempt"]["args"]
@@ -486,6 +513,33 @@ def test_distinct_prerequisite_action_releases_old_fuse_count() -> None:
 
     assert retry.blocked is False
     assert retry.prior_attempts == 0
+
+
+def test_action_guard_blocks_strict_two_state_cycle() -> None:
+    case = _case()
+    closed = _frame(case).model_copy(update={"controls": []})
+    opened = closed.model_copy(update={"controls": [{
+        "kind": "button", "label": "Documents", "value": "Documents",
+    }]})
+    breaker = WorkerActionCircuitBreaker()
+    actions = [
+        (closed, {"x": 70, "y": 80}),
+        (opened, {"x": 900, "y": 400}),
+    ] * 2
+    for frame, args in actions:
+        decision = breaker.inspect(
+            tool="tap", capability="tap", args=args, frame=frame,
+        )
+        assert decision.blocked is False
+        breaker.record(decision)
+
+    cycle = breaker.inspect(
+        tool="tap", capability="tap", args={"x": 70, "y": 80}, frame=closed,
+    )
+
+    assert cycle.blocked is True
+    assert cycle.prior_attempts == 2
+    assert "two-state action cycle" in cycle.reason
 
 
 def test_control_value_change_counts_as_task_progress() -> None:

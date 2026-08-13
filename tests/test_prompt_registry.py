@@ -100,6 +100,8 @@ def test_worker_keeps_data_private_and_coordinates_normalized() -> None:
     assert "transient verification code on its delivery surface" in prompt
     assert "visible required acknowledgement" in prompt
     assert "select all matching records before committing" in prompt
+    assert "the original task is context" in prompt
+    assert "call `complete` immediately" in prompt
     assert "Coordinates are normalized 0..999" in prompt
     assert "request_action_patch" in prompt
 
@@ -126,6 +128,8 @@ def test_worker_handles_exhausted_candidate_sets_and_row_targets() -> None:
     assert "An initially empty selector, a filtered zero-result view" in prompt
     assert "describe the row/button itself" in prompt
     assert "adjacent child icon or decoration" in prompt
+    assert "retain processed identities" in prompt
+    assert "explicitly remaining candidate" in prompt
 
 
 def test_large_inline_prompt_constants_are_not_added() -> None:

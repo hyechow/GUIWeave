@@ -87,3 +87,26 @@ def test_taodian_multi_item_delete_uses_group_editor() -> None:
     assert "删除选中" in context
     assert "contains **any of** `短袖`, `T恤`, or `衬衫`" in context
     assert "per-row mutation" not in context
+
+
+def test_files_mail_use_physical_folder_and_single_file_picker() -> None:
+    files = load_knowledge_for_app("Files", "android")
+    mail = load_knowledge_for_app("Mail", "android")
+    assert files is not None and mail is not None
+
+    files_context = files.orchestrator_context(
+        "move review pdf from Documents to paper and email files"
+    )
+    mail_context = mail.orchestrator_context(
+        "Mail email send compose subject attachment"
+    )
+    for fact in (
+        "indexed category", "matches descendants recursively",
+        "before scrolling", "preserve the selection",
+    ):
+        assert fact in files_context
+    for fact in (
+        "regardless of type", "`Documents` category can omit types",
+        "return after one selection", "verify the attachment in compose",
+    ):
+        assert fact in mail_context

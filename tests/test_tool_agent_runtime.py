@@ -61,6 +61,24 @@ def test_runtime_rejects_max_turns_above_50(tmp_path) -> None:
         )
 
 
+def test_effective_scroll_resets_action_cycle_history() -> None:
+    breaker = WorkerActionCircuitBreaker()
+    frame = MaterializedFrame(frame_id="frame:1", screenshot_path="frame.png")
+
+    def inspect():
+        return breaker.inspect(
+            tool="scroll", capability="scroll", args={"direction": "down"}, frame=frame,
+        )
+    breaker.record(inspect())
+
+    ToolAgentRuntime._record_action_attempt(
+        breaker, inspect(), SimpleNamespace(capability="scroll"),
+        {"status": "executed", "no_effect": False},
+    )
+
+    assert inspect().prior_attempts == 0
+
+
 def test_runtime_decodes_provider_encoded_coordinate_pair() -> None:
     assert _decode_ordered_actions(
         '[{"name":"tap","args":{"x":499,499,"description":"Tap splash"}}]'
