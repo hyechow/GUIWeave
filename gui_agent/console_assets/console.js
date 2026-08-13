@@ -29,6 +29,9 @@ const phaseLabel = {
 const timeLabel = (value) => value
   ? new Date(value).toLocaleString("zh-CN", { hour12: false })
   : "—";
+const isCancellable = (run) => Boolean(
+  run?.active_task_id && ["queued", "running", "cancelling"].includes(run.phase),
+);
 
 async function request(url, options) {
   const response = await fetch(url, options);
@@ -159,11 +162,10 @@ async function selectRun(runId, rerender = true) {
   $("run-status").className = `status ${run?.phase || "starting"}`;
   $("run-status").textContent = phaseLabel[run?.phase] || run?.phase || "启动中";
   const cancel = $("cancel-run");
-  cancel.classList.toggle(
-    "hidden",
-    !(run?.active_task_id && ["queued", "running", "cancelling"].includes(run.phase)),
-  );
+  cancel.classList.toggle("hidden", !isCancellable(run));
   cancel.dataset.task = run?.active_task_id || "";
+  cancel.disabled = run?.phase === "cancelling";
+  cancel.textContent = run?.phase === "cancelling" ? "中止中…" : "■ 中止任务";
   if (runId.startsWith("task_")) {
     $("run-summary").textContent = run.summary;
     $("event-list").innerHTML = '<p class="empty">完成环境检查并创建运行目录后，事件会出现在这里。</p>';
@@ -219,6 +221,22 @@ function showRefreshError(error) {
   }
 }
 
+async function cancelTask() {
+  const button = $("cancel-run");
+  const taskId = button.dataset.task;
+  if (!taskId || !confirm("中止这个任务？Agent 会在当前安全边界停止；已经执行的 GUI 操作不会自动撤销。")) return;
+  button.disabled = true;
+  button.textContent = "中止中…";
+  try {
+    await request(`/api/tasks/${taskId}/cancel`, { method: "POST" });
+    await loadRuns();
+  } catch (error) {
+    button.disabled = false;
+    button.textContent = "■ 中止任务";
+    alert(`无法中止任务：${error.message}`);
+  }
+}
+
 document.querySelectorAll("[data-filter]").forEach((button) => {
   button.onclick = () => {
     document.querySelectorAll("[data-filter]").forEach((item) => item.classList.remove("active"));
@@ -245,12 +263,7 @@ $("adb-serial").onchange = () => {
 };
 $("close-dialog").onclick = $("cancel-dialog").onclick = () => dialog.close();
 $("refresh-button").onclick = () => loadRuns().catch(showRefreshError);
-$("cancel-run").onclick = async () => {
-  const task = $("cancel-run").dataset.task;
-  if (!task || !confirm("在当前 Agent 轮次结束后安全取消这个任务？")) return;
-  await request(`/api/tasks/${task}/cancel`, { method: "POST" });
-  await loadRuns();
-};
+$("cancel-run").onclick = cancelTask;
 $("task-form").onsubmit = async (event) => {
   event.preventDefault();
   const data = Object.fromEntries(new FormData(event.target));

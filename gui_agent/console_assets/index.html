@@ -24,7 +24,7 @@
     <section class="workspace">
       <div id="empty-state" class="empty-state"><span>GW</span><h1>选择一个任务</h1><p>查看运行阶段、事件流、模型配置与本地产物。</p></div>
       <div id="run-view" class="run-view hidden">
-        <header class="run-header"><div><p class="kicker" id="run-id"></p><h1 id="run-goal"></h1><div class="meta"><span id="run-platform"></span><span id="run-time"></span><span id="run-events"></span></div></div><div class="run-controls"><span id="run-status" class="status"></span><button id="cancel-run" class="danger hidden">请求安全取消</button></div></header>
+        <header class="run-header"><div><p class="kicker" id="run-id"></p><h1 id="run-goal"></h1><div class="meta"><span id="run-platform"></span><span id="run-time"></span><span id="run-events"></span></div></div><div class="run-controls"><span id="run-status" class="status"></span><button id="cancel-run" class="danger hidden" type="button">■ 中止任务</button></div></header>
         <div class="summary-grid"><article><label>结果 / 当前摘要</label><p id="run-summary">—</p></article><article><label>模型</label><p id="run-model">按本地配置</p></article><article><label>运行边界</label><p>高影响操作需在任务目标中明确授权</p></article></div>
         <section class="panel"><header><div><span>LIVE TRACE</span><small>结构化事件 + 本地运行截图；截图可能包含界面数据</small></div><button id="refresh-button">刷新</button></header><div id="event-list" class="event-list"></div></section>
         <section class="panel"><header><div><span>ARTIFACTS</span><small>产物保存在本机任务目录</small></div></header><div id="artifact-list" class="artifact-list"></div></section>

@@ -36,6 +36,11 @@ button:disabled {
   overflow-wrap: anywhere;
 }
 
+.run-controls .danger:hover:not(:disabled) {
+  color: #fff;
+  background: var(--red);
+}
+
 dialog .platform-field {
   margin: -8px 24px 22px;
 }

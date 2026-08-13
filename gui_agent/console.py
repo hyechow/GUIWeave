@@ -98,7 +98,11 @@ class RunConsole:
         return task
 
     def _run_task(self, task: ActiveTask) -> None:
-        task.status = "running"
+        with self._lock:
+            if task.cancel_event.is_set():
+                task.status = "interrupted"
+                return
+            task.status = "running"
         request = task.request
         options: dict[str, object]
         if request.platform == "browser":
@@ -107,6 +111,11 @@ class RunConsole:
             options = {"serial": request.adb_serial}
         else:
             options = {}
+
+        def record_run(run_id: str, _run_dir: Path) -> None:
+            with self._lock:
+                task.run_id = run_id
+
         try:
             result = self.service.run(
                 request.goal,
@@ -117,46 +126,47 @@ class RunConsole:
                 show_hud=request.show_hud and not request.headless,
                 mirror_stdio=False,
                 stop_requested=task.cancel_event.is_set,
-                on_run_created=lambda run_id, _run_dir: setattr(task, "run_id", run_id),
+                on_run_created=record_run,
                 **options,
             )
         except Exception as exc:  # noqa: BLE001
-            task.status = "interrupted" if task.cancel_event.is_set() else "failed"
-            task.error = str(exc)
+            with self._lock:
+                task.status = "interrupted" if task.cancel_event.is_set() else "failed"
+                task.error = str(exc)
             return
-        task.run_id = result.run_id
-        task.result = result.to_dict()
-        if task.cancel_event.is_set():
-            task.status = "interrupted"
-        else:
-            task.status = "completed" if result.phase == "completed" else "failed"
+        with self._lock:
+            task.run_id = result.run_id
+            task.result = result.to_dict()
+            task.status = (
+                "interrupted"
+                if task.cancel_event.is_set()
+                else "completed" if result.phase == "completed" else "failed"
+            )
 
-    def cancel(self, task_id: str) -> ActiveTask:
+    def cancel(self, task_id: str) -> None:
         with self._lock:
             task = self._tasks.get(task_id)
-        if task is None:
-            raise FileNotFoundError(f"unknown active task: {task_id}")
-        if task.status not in {"queued", "running", "cancelling"}:
-            raise ValueError(f"task is already {task.status}")
-        task.cancel_event.set()
-        task.status = "cancelling"
-        return task
+            if task is None:
+                raise FileNotFoundError(f"unknown active task: {task_id}")
+            if task.status not in {"queued", "running", "cancelling"}:
+                raise ValueError(f"task is already {task.status}")
+            task.cancel_event.set()
+            task.status = "cancelling"
 
     def tasks(self) -> list[dict[str, Any]]:
         with self._lock:
-            tasks = list(self._tasks.values())
-        return [
-            {
-                "task_id": task.task_id,
-                "goal": task.request.goal,
-                "platform": task.request.platform,
-                "status": task.status,
-                "run_id": task.run_id,
-                "result": task.result,
-                "error": task.error,
-            }
-            for task in reversed(tasks)
-        ]
+            return [
+                {
+                    "task_id": task.task_id,
+                    "goal": task.request.goal,
+                    "platform": task.request.platform,
+                    "status": task.status,
+                    "run_id": task.run_id,
+                    "result": task.result,
+                    "error": task.error,
+                }
+                for task in reversed(self._tasks.values())
+            ]
 
 
 def _http_error(exc: Exception) -> HTTPException:
@@ -290,10 +300,10 @@ def create_app(service: ToolAgentService | None = None) -> FastAPI:
     @app.post("/api/tasks/{task_id}/cancel", status_code=202)
     def cancel_task(task_id: str):
         try:
-            task = console.cancel(task_id)
+            console.cancel(task_id)
         except Exception as exc:  # noqa: BLE001
             raise _http_error(exc) from exc
-        return {"task_id": task.task_id, "status": task.status}
+        return {"task_id": task_id, "status": "cancelling"}
 
     return app
 
