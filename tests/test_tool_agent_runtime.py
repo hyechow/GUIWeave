@@ -1723,6 +1723,62 @@ def test_runtime_surfaces_same_origin_platform_rejection(monkeypatch) -> None:
     assert runtime._worker_platform_rejections == {}
 
 
+def test_failed_transport_action_skips_settle_and_terminates(monkeypatch) -> None:
+    runtime = object.__new__(ToolAgentRuntime)
+    runtime.bundle = SimpleNamespace(
+        make_action=lambda payload: BrowserAction.model_validate(payload)
+    )
+    runtime._executor = SimpleNamespace(
+        execute=lambda _decision, *, png_bytes: False,
+    )
+    runtime._visualizer = None
+    runtime._target_verify_pool = None
+    runtime._active_worker_id = "navigation_worker"
+    runtime._validate_runtime_open_url = lambda *_args, **_kwargs: None
+    runtime._worker_platform_rejections = {}
+    runtime.platform = SimpleNamespace(
+        client=SimpleNamespace(consume_action_feedback=lambda: [{
+            "kind": "navigation",
+            "url": "https://example.test/",
+            "status": 0,
+            "body": '{"error":true,"message":"navigation timed out"}',
+        }])
+    )
+    runtime._trace = lambda *_args, **_kwargs: None
+    monkeypatch.setattr(
+        "gui_agent.core.tool_agent.runtime.settle_after_action",
+        lambda *_args, **_kwargs: (_ for _ in ()).throw(
+            AssertionError("failed actions must not settle")
+        ),
+    )
+    action = DynamicActionSpec(
+        name="open_page",
+        capability="open_url",
+        description="Open the requested page",
+        fixed_args={"url": "https://example.test/"},
+    )
+    spec = WorkerSpec(
+        profile="operator",
+        goal="Activate the requested state",
+        success_criteria=["The requested state is visible"],
+        actions=[action],
+    )
+    frame = MaterializedFrame(frame_id="frame:1", screenshot_path="frame.png")
+
+    payload, terminal = runtime._execute_worker_tool(
+        spec,
+        [action],
+        {"name": action.name, "args": {}},
+        b"unchanged",
+        frame,
+    )
+    assert terminal == "platform_rejected"
+    assert payload["status"] == "failed"
+    assert payload["reason"] == "navigation timed out"
+    assert payload["settle_seconds"] == 0.0
+    assert payload["no_effect"] is True
+
+
 def test_runtime_open_url_rejects_task549_inferred_route_before_navigation() -> None:
     runtime = object.__new__(ToolAgentRuntime)
     runtime._task_goal = "Add a new size option to a product"

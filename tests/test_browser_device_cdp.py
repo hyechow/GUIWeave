@@ -1,4 +1,6 @@
+import json
 import os
+from types import SimpleNamespace
 
 from gui_agent.adapters.browser.device import (
     PlaywrightDevice,
@@ -108,6 +110,63 @@ def test_tracked_request_keeps_browser_loading_until_response_headers():
 
     response({"requestId": "save", "type": "XHR"})
     assert dev.is_loading() is False
+
+
+def test_cdp_navigation_surfaces_protocol_error_text():
+    dev = PlaywrightDevice.__new__(PlaywrightDevice)
+    dev.headless = False
+    dev._native_action_feedback = []
+    dev._cdp_send = lambda *_args, **_kwargs: {"errorText": "net::ERR_TIMED_OUT"}
+
+    result = dev.navigate("https://example.test/")
+
+    assert result == (
+        "failed: navigate https://example.test/: net::ERR_TIMED_OUT"
+    )
+    assert json.loads(dev._native_action_feedback[0]["body"]) == {
+        "error": True,
+        "message": "net::ERR_TIMED_OUT",
+    }
+
+
+def test_headless_navigation_uses_bounded_commit_wait():
+    calls = []
+    page = SimpleNamespace(
+        goto=lambda url, **options: calls.append((url, options)),
+    )
+    dev = PlaywrightDevice.__new__(PlaywrightDevice)
+    dev.headless = True
+    dev._native_action_feedback = []
+    dev._require_page = lambda: page
+
+    assert dev.navigate("https://example.test/") == "OK navigate https://example.test/"
+    assert calls == [(
+        "https://example.test/",
+        {"wait_until": "commit", "timeout": 20_000},
+    )]
+
+
+def test_navigation_failure_feedback_skips_unresponsive_page_probe():
+    dev = PlaywrightDevice.__new__(PlaywrightDevice)
+    dev.headless = True
+    dev._native_action_feedback = []
+    dev._require_page = lambda: SimpleNamespace(
+        goto=lambda *_args, **_kwargs: (_ for _ in ()).throw(
+            TimeoutError("navigation timed out\nCall log:\n  - internal detail")
+        )
+    )
+
+    result = dev.navigate("https://example.test/")
+    assert "navigation timed out" in result
+    assert "internal detail" not in result
+    dev._follow_active_tab = lambda: None
+    dev._cdp_send = lambda *_args, **_kwargs: (_ for _ in ()).throw(
+        AssertionError("native navigation failure must bypass the page probe")
+    )
+    feedback = dev.consume_action_feedback()
+
+    assert len(feedback) == 1
+    assert json.loads(feedback[0]["body"])["message"] == "navigation timed out"
 
 
 def test_dom_snap_text_retarget_uses_interactive_accessible_names():
