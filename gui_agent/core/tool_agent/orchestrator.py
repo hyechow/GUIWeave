@@ -708,8 +708,9 @@ def _static_worker_array_input_diagnostics(tree: ast.AST) -> list[MasterDiagnost
             diagnostics.append(_diagnostic(
                 "WORKER_ARRAY_INPUT_UNSUPPORTED",
                 "GUI Worker cannot consume private array ResultRefs "
-                f"from {routed_arrays}; keep the multi-record observe/branch/act "
-                "loop inside one cohesive operator using the application's bulk/group editor",
+                f"from {routed_arrays}; do not join or serialize them into a scalar; "
+                "keep the multi-record observe/branch/act "
+                "loop inside one cohesive operator and use a bulk/group editor when available",
                 worker_call,
             ))
     return diagnostics

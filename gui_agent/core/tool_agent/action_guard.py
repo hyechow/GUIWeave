@@ -254,11 +254,12 @@ class ActionCircuitDecision:
 
 @dataclass
 class WorkerActionCircuitBreaker:
-    """Block a third consecutive equivalent action without observed progress."""
+    """Block repeated actions and strict two-state action cycles."""
 
     threshold: int = 2
     _last_attempt: tuple[str, str] | None = None
     _consecutive_attempts: int = 0
+    _recent_attempts: tuple[tuple[str, str], ...] = ()
 
     def inspect(
         self,
@@ -285,10 +286,18 @@ class WorkerActionCircuitBreaker:
                 reason=compatibility_error,
             )
         guarded = capability in _GUARDED_CAPABILITIES
-        blocked = guarded and prior >= self.threshold
+        history = self._recent_attempts
+        cycle = (
+            len(history) == 4
+            and history[::2] == (attempt, attempt)
+            and history[1] == history[3] != attempt
+        )
+        blocked = guarded and (prior >= self.threshold or cycle)
         reason = ""
         if blocked:
             reason = (
+                "blocked two-state action cycle without task-relevant progress"
+                if cycle else
                 f"blocked repeated {capability} action after {prior} equivalent "
                 "dispatches without task-relevant progress"
             )
@@ -296,12 +305,13 @@ class WorkerActionCircuitBreaker:
             blocked=blocked,
             signature=signature,
             progress=progress,
-            prior_attempts=prior,
+            prior_attempts=2 if cycle else prior,
             reason=reason,
         )
 
     def record(self, decision: ActionCircuitDecision) -> None:
         attempt = (decision.signature, decision.progress)
+        self._recent_attempts = (*self._recent_attempts[-3:], attempt)
         self._consecutive_attempts = (
             self._consecutive_attempts + 1 if attempt == self._last_attempt else 1
         )
@@ -310,6 +320,7 @@ class WorkerActionCircuitBreaker:
     def reset(self) -> None:
         self._last_attempt = None
         self._consecutive_attempts = 0
+        self._recent_attempts = ()
 
 
 __all__ = [

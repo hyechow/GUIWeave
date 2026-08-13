@@ -13,6 +13,7 @@ from typing import Any
 _BOUNDS = re.compile(r"\[(\d+),(\d+)\]\[(\d+),(\d+)\]")
 _ROLES = {
     "button": "button", "imagebutton": "button", "edittext": "textbox",
+    "autocompletetextview": "textbox",
     "checkbox": "checkbox", "radiobutton": "radio", "switch": "switch",
     "switchcompat": "switch", "togglebutton": "switch", "spinner": "combobox",
     "recyclerview": "list", "listview": "list", "textview": "text",
@@ -67,6 +68,10 @@ def _short_class(node: ET.Element) -> str:
 
 def _short_resource(node: ET.Element) -> str:
     return str(node.attrib.get("resource-id") or "").rpartition("/")[2]
+
+
+def _is_documentsui_resource(node: ET.Element, name: str) -> bool:
+    return str(node.attrib.get("resource-id") or "").endswith(f".documentsui:id/{name}")
 
 
 def _raw_bounds(node: ET.Element) -> tuple[int, int, int, int] | None:
@@ -229,15 +234,38 @@ def semantic_tree_from_uiautomator(
     if width <= 0 or height <= 0:
         return None
 
+    # DocumentsUI dispatches taps for titled root rows it marks non-clickable.
+    # Promote only direct children so grounding can use the full row center.
+    inferred_root_rows = {
+        child
+        for container in root.iter("node")
+        if _is_documentsui_resource(container, "roots_list")
+        for child in container
+        if child.tag == "node" and any(
+            _short_resource(descendant) == "title"
+            and bool(_visible_text(descendant.attrib.get("text")))
+            for descendant in child.iter("node")
+        )
+    }
     result: list[dict[str, Any]] = []
     for node, path, depth in _nodes(root):
         attrs = node.attrib
-        clickable = attrs.get("clickable") == "true"
+        clickable = attrs.get("clickable") == "true" or node in inferred_root_rows
         scrollable = attrs.get("scrollable") == "true"
         raw_visible_label = attrs.get("content-desc") or attrs.get("text") or ""
         visible_label = _visible_text(raw_visible_label)
         glyph_selection_state = _private_use_selection_state(raw_visible_label)
         resource = _short_resource(node)
+        if _is_documentsui_resource(node, "item_root") and any(
+            _is_documentsui_resource(descendant, "preview_icon")
+            for descendant in node.iter("node")
+        ):
+            visible_label = next((
+                _visible_text(descendant.attrib.get("text"))
+                for descendant in node.iter("node")
+                if _short_resource(descendant) == "title"
+                and _visible_text(descendant.attrib.get("text"))
+            ), visible_label)
         if clickable and not visible_label:
             descendant_labels = _texts(node)
             visible_label = (
@@ -284,7 +312,7 @@ def semantic_tree_from_uiautomator(
             name in class_name for name in ("checkbox", "switch", "togglebutton")
         ):
             item["value"] = attrs.get("checked") == "true"
-        elif class_name.endswith("edittext"):
+        elif class_name.endswith(("edittext", "autocompletetextview")):
             item["value"] = str(attrs.get("text") or "")
         if clickable and "selected" in attrs:
             item["selected"] = attrs.get("selected") == "true"

@@ -16,15 +16,22 @@ ttl: session
   (`datetime`), and **kind** (`text`). It has no source filters. ZIP membership and the requested
   month are therefore evaluated in Python from the complete rows; a month without a year does not
   constrain the year. A row is identified by **name**.
-- **Documents** is a separate directory in the same Files app (distinct from Downloads). Its rows
-  expose **name** (`text`) as the row identity and **path** (`text`) as a detail field. A PDF in
-  Documents is a plain Documents row whose **name** ends in `.pdf`; there is no separate PDF
-  collection, so `review*.pdf` files are the Documents rows matching the `review` name prefix and
-  the `.pdf` suffix.
+- **Documents** means the physical folder reached through `Show roots` → device storage →
+  `Documents`; the drawer's namesake item is an indexed category that can omit descendants or file
+  types. Its grid contains direct children and top-bar search matches descendants recursively, so
+  search an exact name or distinctive prefix before scrolling. Rows expose **name** (`text`) as
+  identity and **path** (`text`) as detail; a PDF row's name ends in `.pdf`.
+- The `Documents` chip in Downloads' horizontal filter row filters by file type and does not
+  navigate to that directory. Directory navigation uses the top-left `Show roots` drawer and its
+  `Documents` item.
+- Attachment pickers have the same category limitation. Use the physical path when complete folder
+  contents are required.
 - Moving a file is a durable per-row mutation of that identified Documents row. Reach the exact
   row (target-bound), then `commit(target=row, values={"destination_folder": <text>})`. The move
   consumes the source row: after it, the file is no longer listed under Documents and appears
   under the destination folder.
+- In `Move to…`, preserve the selection, navigate within the destination picker via `Show roots`
+  and device storage, then activate `MOVE`.
 - A destination subfolder (e.g. `Document/paper`) is reached like any folder: reach it by name,
   then the same Documents-style rows list its files. Querying `Documents` after that reach returns
   the opened folder's rows, so the complete moved-file set is read from the reached subfolder, not

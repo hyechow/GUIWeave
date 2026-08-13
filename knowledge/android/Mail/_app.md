@@ -12,7 +12,7 @@ source: manual_verified
 confidence: medium
 sensitivity: internal
 ttl: session
-version: 1
+version: 2
 ---
 # Mail on Android
 
@@ -23,14 +23,11 @@ version: 1
   email address.
 - Attaching files opens a file picker rooted in the file directories; the files moved
   into the destination folder are selectable there and are attached by name.
+- For “all files in a folder”, include every direct file regardless of type. Use `Show roots` and
+  device storage because the `Documents` category can omit types. The picker may return after one
+  selection; verify the attachment in compose and reopen it for each remaining file.
 
 ## Interface contract
 
-- Sending an email is an untargeted commit that owns the compose form. Its mutation
-  fields are `recipient` (`text`), `subject` (`text`), and `attachments` (a list of
-  file names). The executor opens the compose form, fills `To` and `Subject`, attaches
-  every given file, and sends. No preparatory reach or creation entity is needed
-  before the send commit.
-- The attachment names come from a prior Files read (the files that were moved into
-  the destination folder), so the send commit passes those observed names in
-  `attachments`; the file picker selects them by name.
+- Sending an email owns the compose form: fill `recipient` and `subject`, attach files through the
+  picker until the visible pending attachment set exactly matches the request, and activate Send.

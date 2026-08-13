@@ -11,12 +11,15 @@ source: manual_verified
 confidence: high
 sensitivity: internal
 ttl: session
-version: 1
+version: 2
 ---
 # Files on Android
 
 - The Files launcher opens the `Downloads` directory. Its file rows display a name,
   last-modified date, size, and media type.
+- The `Documents` chip in Downloads' horizontal filter row is only a MIME/category filter;
+  it is not the Documents directory. To change directories, use the top-left `Show roots`
+  navigation drawer.
 - Activating a ZIP row opens its archive entries in place. Files cannot preview a text
   document while it remains inside an archive.
 - To make every archive entry readable, open `More options`, use `Select all`, reopen
@@ -34,12 +37,16 @@ version: 1
 - Opening an extracted TXT file may show an `Open with` chooser. `HTML Viewer` followed
   by `Just once` displays the complete plain-text document; navigate up to return to
   Downloads for the next file.
-- The launcher's `Downloads` home is one directory; `Documents` is a separate directory
-  reachable from the same navigation. Rows there show the file name and type, and a
-  `.pdf` file is identified by its `name` ending in `.pdf`.
+- The drawer's `Documents` item is an indexed category that can omit descendants or file types,
+  including in attachment pickers. For the physical folder, use `Show roots` → device storage →
+  `Documents`.
+- A physical folder grid shows direct children, while top-bar search matches descendants
+  recursively. Search an exact name or distinctive prefix before scrolling.
 - A file is moved by targeting the row and choosing its move action with a destination
   folder. Moving consumes the source row: after the move the file appears only under
   the destination.
+- In `Move to…`, keep the selection active and use the picker's `Show roots` and device storage to
+  reach the destination before activating `MOVE`.
 
 ## Interface contract
 

@@ -1677,16 +1677,15 @@ class ToolAgentRuntime:
         action: DynamicActionSpec | None,
         result: dict[str, Any],
     ) -> None:
-        if result.get("candidate_commit"):
-            breaker.reset()
-            return
         effective_scroll = bool(
             action
             and action.capability == "scroll"
             and result.get("status") == "executed"
             and result.get("no_effect") is False
         )
-        if not effective_scroll:
+        if result.get("candidate_commit") or effective_scroll:
+            breaker.reset()
+        else:
             breaker.record(decision)
 
     def _refreshable_action_suffix(

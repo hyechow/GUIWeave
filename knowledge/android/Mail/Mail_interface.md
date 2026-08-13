@@ -12,11 +12,9 @@ ttl: session
 ---
 # Mail interface
 
-- **Sending email** is an untargeted commit that owns the compose form. Its mutation
-  fields are **recipient** (`text`), **subject** (`text`), and **attachments** (a
-  list of file names). The executor opens the compose form, fills To and Subject,
-  attaches each given file, and sends. There is no preparatory Mail entity or reach.
-- The files to attach are produced by a prior Files operation (moved into the
-  destination folder and read by name there). The send commit references those
-  observed file names in **attachments**, so the cross-app dataflow is
-  Files-read → `launch_app`("Mail") → send-commit.
+- **Sending email** is an untargeted GUI commit with **recipient** (`text`) and **subject** (`text`)
+  fields; select attachments through the compose form's picker before activating Send.
+- For every file in a folder, include each direct file regardless of type and reach the physical
+  folder through `Show roots` → device storage; the `Documents` category can omit types. The picker
+  may return after one selection, so verify the attachment in compose and reopen it for each
+  remaining file.
