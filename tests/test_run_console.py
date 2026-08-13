@@ -6,9 +6,11 @@ import time
 from pathlib import Path
 from types import SimpleNamespace
 
+import pytest
 from fastapi.testclient import TestClient
 
-from gui_agent.console import RunConsole, RunRequest, create_app
+from gui_agent.console import ChatRequest, RunConsole, RunRequest, create_app
+from gui_agent.core.chat_router import ChatRoute
 from gui_agent.core.config.preflight import ModelPreflightResult
 from gui_agent.core.runtime.factory import SetupCheckResult
 from gui_agent.core.tool_agent.service import ToolAgentService
@@ -102,12 +104,26 @@ def test_console_home_explains_model_gateway_boundary(tmp_path: Path) -> None:
     assert 'id="chat-form"' in response.text
     assert 'id="chat-thread"' in response.text
     assert 'id="chat-detail"' in response.text
-    assert "每条消息启动独立的 Headless Run" in response.text
+    assert 'id="chat-new-session"' in response.text
+    assert "只有必须读取或操作界面时" in response.text
     assert "NEW GUI RUN" in response.text
     assert "新建 GUI 任务" in response.text
     assert "Android 设备地址" in response.text
     assert 'name="adb_serial"' in response.text
     assert "新建 Tool Agent 任务" not in response.text
+
+
+def test_console_rejects_cross_origin_mutations(tmp_path: Path) -> None:
+    client = _client(tmp_path)
+
+    assert client.post(
+        "/api/chat/session",
+        headers={"origin": "https://example.com"},
+    ).status_code == 403
+    assert client.post(
+        "/api/chat/session",
+        headers={"origin": "http://127.0.0.1:7468"},
+    ).status_code == 201
 
 
 def test_console_frontend_auto_selects_and_prioritizes_final_reply() -> None:
@@ -136,14 +152,22 @@ def test_console_frontend_auto_selects_and_prioritizes_final_reply() -> None:
     assert 'showFrame(state.frameIndex + (event.key === "ArrowLeft" ? -1 : 1))' in source
     assert 'frame.name === state.frameName' in source
     assert 'document.body.classList.toggle("sidebar-collapsed")' in source
-    assert 'task.mode === "chat"' in source
-    assert 'mode: "chat"' in source
+    assert 'request("/api/chat")' in source
+    assert 'request("/api/chat/messages"' in source
+    assert 'request("/api/chat/session"' in source
+    assert 'state.chatTurn = null' in source
+    assert "已有 Runs 不会被删除" in source
     assert 'class="chat-run-meta"' in source
-    assert 'data-chat-task="${escapeHtml(task.task_id)}"' in source
-    assert "renderChatDetail(chatTasks.find" in source
-    assert "state.chatTask = task.task_id" in source
+    assert 'data-chat-turn="${escapeHtml(turn.turn_id)}"' in source
+    assert '<div class="chat-message user"><small>YOU</small>' in source
+    assert 'class="chat-route ${escapeHtml(turn.route)}"' in source
+    assert '<small>${routeLabel[turn.route]' not in source
+    assert 'clarify: "需要补充"' in source
+    assert "renderChatDetail(turns.find" in source
+    assert "state.chatTurn = response.turn.turn_id" in source
     assert '$("runs-mode").classList.toggle("hidden", chat)' in source
-    assert 'if (chat) {\n    loadChatEnvironment();' in source
+    assert 'if (chat) {\n    updateChatPlatform();' in source
+    assert "function loadChatEnvironment" not in source
     assert 'event.key === "Enter" && !event.shiftKey && !event.isComposing' in source
     assert 'query.set("adb_serial", androidAddress)' in source
     assert 'platform !== "android"' in source
@@ -366,6 +390,340 @@ class _NeverRunService:
         raise AssertionError("a queued cancelled task must not start")
 
 
+class _ChatRouter:
+    def __init__(self, *routes: ChatRoute) -> None:
+        self.routes = list(routes)
+        self.calls = []
+
+    def route(self, message, history, platform):
+        self.calls.append((message, history, platform))
+        return self.routes.pop(0)
+
+
+class _ImmediateChatService:
+    def __init__(self, log_root: Path) -> None:
+        self.log_root = log_root
+        self.goals = []
+
+    def run(self, goal: str, **options: object):
+        self.goals.append(goal)
+        run_id = "tool_agent/browser/20260813_190000"
+        options["on_run_created"](run_id, self.log_root / run_id)  # type: ignore[operator]
+        return SimpleNamespace(
+            run_id=run_id,
+            phase="completed",
+            to_dict=lambda: {
+                "run_id": run_id,
+                "phase": "completed",
+                "summary": "page opened",
+                "reply": "页面已经打开。",
+            },
+        )
+
+
+def test_console_chat_responds_without_starting_gui() -> None:
+    router = _ChatRouter(ChatRoute(
+        route="respond",
+        reply="你好，我可以帮你判断是否需要操作界面。",
+        reason="greeting needs no GUI evidence",
+    ))
+    client = TestClient(create_app(_NeverRunService(), router))  # type: ignore[arg-type]
+
+    response = client.post(
+        "/api/chat/messages",
+        json={"message": "你好", "platform": "browser"},
+    )
+
+    assert response.status_code == 200
+    turn = response.json()["turn"]
+    assert turn["route"] == "respond"
+    assert turn["task_id"] is None
+    assert client.get("/api/tasks").json() == {"tasks": []}
+    assert client.get("/api/chat").json()["turns"] == [turn]
+
+
+def test_console_starts_fresh_chat_session_without_deleting_runs(tmp_path: Path) -> None:
+    router = _ChatRouter(ChatRoute(
+        route="respond",
+        reply="你好。",
+        reason="ordinary conversation",
+    ))
+    console = RunConsole(_ImmediateChatService(tmp_path), router)  # type: ignore[arg-type]
+    task = console.submit(RunRequest(goal="inspect", platform="browser"))
+    deadline = time.monotonic() + 1
+    while task.status in {"queued", "running"} and time.monotonic() < deadline:
+        time.sleep(0.005)
+    old_chat_id = console.chat()["chat_id"]
+    console.post_chat(ChatRequest(message="你好", platform="browser"))
+
+    fresh = console.new_chat_session()
+
+    assert fresh == console.chat()
+    assert fresh["chat_id"] != old_chat_id
+    assert fresh["turns"] == []
+    assert console.tasks()[0]["task_id"] == task.task_id
+    assert console.tasks()[0]["status"] == "completed"
+
+
+def test_console_rejects_new_chat_session_while_gui_task_is_active(
+    tmp_path: Path,
+) -> None:
+    router = _ChatRouter(ChatRoute(
+        route="gui",
+        gui_goal="Open the requested page.",
+        reason="current browser state is required",
+    ))
+    service = _BlockingService(tmp_path)
+    client = TestClient(create_app(service, router))  # type: ignore[arg-type]
+    turn = client.post(
+        "/api/chat/messages",
+        json={"message": "打开页面", "platform": "browser"},
+    ).json()["turn"]
+    assert service.started.wait(timeout=1)
+
+    response = client.post("/api/chat/session")
+
+    assert response.status_code == 400
+    assert "Chat GUI 任务未结束" in response.json()["detail"]
+    client.post(f"/api/tasks/{turn['task_id']}/cancel")
+
+
+def test_console_chat_history_retains_active_gui_turn(tmp_path: Path) -> None:
+    router = _ChatRouter(
+        ChatRoute(
+            route="gui",
+            gui_goal="Open the requested page.",
+            reason="current browser state is required",
+        ),
+        *[
+            ChatRoute(route="respond", reply=f"reply {index}", reason="chat")
+            for index in range(105)
+        ],
+    )
+    service = _BlockingService(tmp_path)
+    console = RunConsole(service, router)  # type: ignore[arg-type]
+    gui_turn = console.post_chat(ChatRequest(message="打开页面", platform="browser"))
+    assert service.started.wait(timeout=1)
+
+    for index in range(105):
+        console.post_chat(ChatRequest(message=f"message {index}", platform="browser"))
+
+    turns = console.chat()["turns"]
+    assert len(turns) == 100
+    assert gui_turn.turn_id in {turn["turn_id"] for turn in turns}
+    console.cancel(gui_turn.task_id or "")
+
+
+def test_console_router_history_includes_older_active_gui_turn(tmp_path: Path) -> None:
+    router = _ChatRouter(
+        ChatRoute(
+            route="gui",
+            gui_goal="Open the requested page.",
+            reason="current browser state is required",
+        ),
+        *[
+            ChatRoute(route="respond", reply=f"reply {index}", reason="chat")
+            for index in range(13)
+        ],
+        ChatRoute(route="cancel", reply="停止任务。", reason="stop active task"),
+    )
+    service = _BlockingService(tmp_path)
+    console = RunConsole(service, router)  # type: ignore[arg-type]
+    gui_turn = console.post_chat(ChatRequest(message="打开页面", platform="browser"))
+    assert service.started.wait(timeout=1)
+    for index in range(13):
+        console.post_chat(ChatRequest(message=f"message {index}", platform="browser"))
+
+    console.post_chat(ChatRequest(message="停止任务", platform="browser"))
+
+    history = router.calls[-1][1]
+    assert len(history) == 12
+    assert any(turn["task_id"] == gui_turn.task_id for turn in history)
+    deadline = time.monotonic() + 1
+    while console.tasks()[0]["status"] == "cancelling" and time.monotonic() < deadline:
+        time.sleep(0.005)
+    assert console.tasks()[0]["status"] == "interrupted"
+
+
+def test_console_chat_routes_gui_result_back_into_next_turn(tmp_path: Path) -> None:
+    router = _ChatRouter(
+        ChatRoute(
+            route="gui",
+            gui_goal="Open the Google homepage.",
+            reason="current browser state is required",
+        ),
+        ChatRoute(
+            route="respond",
+            reply="上一步已经成功打开页面。",
+            reason="the public GUI result answers the question",
+        ),
+    )
+    service = _ImmediateChatService(tmp_path)
+    client = TestClient(create_app(service, router))  # type: ignore[arg-type]
+
+    first = client.post(
+        "/api/chat/messages",
+        json={"message": "打开 Google", "platform": "browser"},
+    )
+    assert first.status_code == 200
+    deadline = time.monotonic() + 1
+    gui_turn = first.json()["turn"]
+    while gui_turn["status"] in {"queued", "running"} and time.monotonic() < deadline:
+        gui_turn = client.get("/api/chat").json()["turns"][0]
+        time.sleep(0.005)
+
+    second = client.post(
+        "/api/chat/messages",
+        json={"message": "完成了吗？", "platform": "browser"},
+    )
+
+    assert gui_turn["status"] == "completed"
+    assert gui_turn["assistant"] == "页面已经打开。"
+    assert gui_turn["task_id"].startswith("task_")
+    assert service.goals == ["Open the Google homepage."]
+    assert second.json()["turn"]["route"] == "respond"
+    assert router.calls[1][1][-1]["assistant"] == "页面已经打开。"
+    assert len(client.get("/api/chat").json()["turns"]) == 2
+
+
+def test_console_chat_cancel_route_stops_active_gui_task(tmp_path: Path) -> None:
+    router = _ChatRouter(
+        ChatRoute(
+            route="gui",
+            gui_goal="Open the requested page.",
+            reason="current browser state is required",
+        ),
+        ChatRoute(
+            route="cancel",
+            reply="好的，停止当前任务。",
+            reason="user asked to stop the active GUI task",
+        ),
+    )
+    service = _BlockingService(tmp_path)
+    client = TestClient(create_app(service, router))  # type: ignore[arg-type]
+
+    first = client.post(
+        "/api/chat/messages",
+        json={"message": "打开页面", "platform": "browser"},
+    ).json()["turn"]
+    assert service.started.wait(timeout=1)
+
+    cancelled = client.post(
+        "/api/chat/messages",
+        json={"message": "算了，停止操作", "platform": "browser"},
+    ).json()["turn"]
+
+    assert cancelled["route"] == "cancel"
+    assert cancelled["task_id"] == first["task_id"]
+    assert cancelled["assistant"] == "已请求中止当前 GUI 任务。"
+    deadline = time.monotonic() + 1
+    gui_turn = client.get("/api/chat").json()["turns"][0]
+    while gui_turn["status"] == "cancelling" and time.monotonic() < deadline:
+        time.sleep(0.005)
+        gui_turn = client.get("/api/chat").json()["turns"][0]
+    assert gui_turn["status"] == "interrupted"
+    assert gui_turn["assistant"] == "GUI 任务已中止。"
+
+
+def test_console_chat_cancel_targets_task_id_not_selected_platform(tmp_path: Path) -> None:
+    router = _ChatRouter(
+        ChatRoute(route="gui", gui_goal="Open page.", reason="browser task"),
+        ChatRoute(route="gui", gui_goal="Open settings.", reason="android task"),
+    )
+    service = _BlockingService(tmp_path)
+    console = RunConsole(service, router)  # type: ignore[arg-type]
+    console.post_chat(ChatRequest(message="打开页面", platform="browser"))
+    console.post_chat(ChatRequest(message="打开设置", platform="android"))
+    deadline = time.monotonic() + 1
+    tasks = console.tasks()
+    while (
+        (len(tasks) < 2 or any(task["status"] != "running" for task in tasks))
+        and time.monotonic() < deadline
+    ):
+        time.sleep(0.005)
+        tasks = console.tasks()
+    assert len(tasks) == 2
+    assert all(task["status"] == "running" for task in tasks)
+    android = next(task for task in tasks if task["platform"] == "android")
+    browser = next(task for task in tasks if task["platform"] == "browser")
+    router.routes.append(ChatRoute(
+        route="cancel",
+        reply="停止 Android 任务。",
+        cancel_task_id=android["task_id"],
+        reason="user selected the Android task",
+    ))
+
+    turn = console.post_chat(ChatRequest(
+        message="停止 Android 任务",
+        platform="browser",
+    ))
+
+    assert turn.task_id == android["task_id"]
+    deadline = time.monotonic() + 1
+    while time.monotonic() < deadline:
+        tasks = console.tasks()
+        statuses = {task["task_id"]: task["status"] for task in tasks}
+        if statuses[android["task_id"]] == "interrupted":
+            break
+        time.sleep(0.005)
+    assert statuses[android["task_id"]] == "interrupted"
+    assert statuses[browser["task_id"]] == "running"
+    console.cancel(browser["task_id"])
+
+
+def test_console_chat_cancel_without_active_task_is_honest() -> None:
+    router = _ChatRouter(ChatRoute(
+        route="cancel",
+        reply="好的，停止当前任务。",
+        reason="user requested cancellation",
+    ))
+    client = TestClient(create_app(_NeverRunService(), router))  # type: ignore[arg-type]
+
+    turn = client.post(
+        "/api/chat/messages",
+        json={"message": "停止任务", "platform": "browser"},
+    ).json()["turn"]
+
+    assert turn["route"] == "respond"
+    assert turn["assistant"] == "当前没有正在执行的 GUI 任务。"
+    assert turn["task_id"] is None
+
+
+def test_console_chat_cancel_does_not_stop_run_mode_task(monkeypatch) -> None:
+    threads: list[threading.Thread] = []
+    monkeypatch.setattr(threading.Thread, "start", lambda thread: threads.append(thread))
+    router = _ChatRouter(ChatRoute(
+        route="cancel",
+        reply="好的，停止当前任务。",
+        reason="user requested cancellation",
+    ))
+    console = RunConsole(_NeverRunService(), router)  # type: ignore[arg-type]
+    run_task = console.submit(RunRequest(goal="inspect", platform="browser"))
+
+    turn = console.post_chat(ChatRequest(message="停止任务", platform="browser"))
+
+    assert turn.route == "respond"
+    assert turn.assistant == "当前没有正在执行的 GUI 任务。"
+    assert run_task.status == "queued"
+
+
+def test_console_chat_router_failure_does_not_start_gui() -> None:
+    router = SimpleNamespace(
+        route=lambda *_args: (_ for _ in ()).throw(RuntimeError("gateway unavailable"))
+    )
+    client = TestClient(create_app(_NeverRunService(), router))  # type: ignore[arg-type]
+
+    response = client.post(
+        "/api/chat/messages",
+        json={"message": "处理一下", "platform": "browser"},
+    )
+
+    turn = response.json()["turn"]
+    assert turn["route"] == "clarify"
+    assert turn["status"] == "waiting"
+    assert turn["task_id"] is None
+
+
 def test_console_cancels_queued_task_before_service_start(
     monkeypatch,
 ) -> None:
@@ -379,6 +737,26 @@ def test_console_cancels_queued_task_before_service_start(
     threads[0].run()
 
     assert task.status == "interrupted"
+
+
+def test_console_thread_start_failure_does_not_block_platform(monkeypatch) -> None:
+    attempts = 0
+
+    def start(_thread):
+        nonlocal attempts
+        attempts += 1
+        if attempts == 1:
+            raise RuntimeError("thread unavailable")
+
+    monkeypatch.setattr(threading.Thread, "start", start)
+    console = RunConsole(_NeverRunService())  # type: ignore[arg-type]
+    request = RunRequest(goal="inspect", platform="browser")
+
+    with pytest.raises(RuntimeError, match="thread unavailable"):
+        console.submit(request)
+
+    assert console.tasks()[0]["status"] == "failed"
+    assert console.submit(request).status == "queued"
 
 
 def test_console_marks_result_serialization_failure_as_failed(monkeypatch) -> None:

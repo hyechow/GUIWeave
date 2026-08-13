@@ -19,6 +19,7 @@ def test_prompt_registry_loads_all_assets() -> None:
     assert prompts
     assert len({prompt.id for prompt in prompts}) == len(prompts)
     assert {prompt.id for prompt in prompts} == {
+        "task.chat.router",
         "task.tool_agent.master",
         "task.tool_agent.master_redelegate",
         "task.tool_agent.presentation",
