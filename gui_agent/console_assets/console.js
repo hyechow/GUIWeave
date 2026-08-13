@@ -3,6 +3,7 @@ const state = {
   platformCheck: 0, runRefresh: 0,
 };
 const $ = (id) => document.getElementById(id);
+const CONSOLE_HEADLESS = true;
 const ANDROID_DEVICE_STORAGE_KEY = "guiweave.android.device";
 const normalizeAndroidAddress = (value) => {
   const address = String(value || "").trim();
@@ -74,7 +75,9 @@ async function loadPlatformEnvironment() {
   try {
     const query = new URLSearchParams();
     let androidAddress = "";
-    if (platform === "android") {
+    if (platform === "browser") {
+      query.set("headless", String(CONSOLE_HEADLESS));
+    } else if (platform === "android") {
       androidAddress = normalizeAndroidAddress($("adb-serial").value);
       if (androidAddress) {
         $("adb-serial").value = androidAddress;
@@ -268,7 +271,7 @@ $("task-form").onsubmit = async (event) => {
   event.preventDefault();
   const data = Object.fromEntries(new FormData(event.target));
   data.adb_serial = normalizeAndroidAddress(data.adb_serial) || null;
-  Object.assign(data, { max_turns: Number(data.max_turns), headless: false, multi_action: true, show_hud: false });
+  Object.assign(data, { max_turns: Number(data.max_turns), headless: CONSOLE_HEADLESS, multi_action: true, show_hud: false });
   try {
     const result = await request("/api/tasks", {
       method: "POST", headers: { "content-type": "application/json" }, body: JSON.stringify(data),

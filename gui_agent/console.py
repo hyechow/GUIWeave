@@ -42,7 +42,7 @@ class RunRequest(BaseModel):
     max_turns: int = Field(default=50, ge=1, le=50)
     cdp_url: str | None = Field(default=None, max_length=500)
     adb_serial: str | None = Field(default=None, max_length=200)
-    headless: bool = False
+    headless: bool = True
     multi_action: bool = True
     show_hud: bool = False
 
@@ -72,6 +72,8 @@ class RunConsole:
         self._lock = threading.Lock()
 
     def submit(self, request: RunRequest) -> ActiveTask:
+        # Reject stale page options at the server boundary: Console is background-only.
+        request = request.model_copy(update={"headless": True, "show_hud": False})
         task = ActiveTask(task_id=f"task_{secrets.token_hex(6)}", request=request)
         with self._lock:
             active = next(
@@ -271,7 +273,7 @@ def create_app(service: ToolAgentService | None = None) -> FastAPI:
         platform: PlatformName,
         cdp_url: str | None = None,
         adb_serial: str | None = None,
-        headless: bool = False,
+        headless: bool = True,
     ):
         android_serial = _normalize_android_serial(adb_serial)
         result = console.service.check_platform_environment(

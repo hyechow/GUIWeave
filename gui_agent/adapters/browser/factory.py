@@ -149,7 +149,7 @@ def _make_action_visualizer(session: object) -> object:
     None in headless mode — the unified headless switch is the only visibility control
     (the loop also skips the visualizer when headless; this gate covers callers like the
     WebArena harness that don't thread the loop's headless param)."""
-    if _resolve_headless(None):
+    if _resolve_headless(getattr(getattr(session, "client", None), "headless", None)):
         return None
     from gui_agent.adapters.browser.visualizer import BrowserCursorVisualizer
 
