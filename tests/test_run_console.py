@@ -88,9 +88,16 @@ def test_console_home_explains_model_gateway_boundary(tmp_path: Path) -> None:
     assert "模型网关" in response.text
     assert "API_KEY" in response.text
     assert "LOCAL RUNTIME" in response.text
+    assert "MISSION INDEX" in response.text
+    assert "SYSTEM STANDBY" in response.text
+    assert "RUN TELEMETRY" in response.text
     assert "platform-notice" in response.text
     assert "start-task" in response.text
     assert "结果 / 当前摘要" in response.text
+    assert "运行指标" in response.text
+    assert 'id="sidebar-toggle"' in response.text
+    assert 'id="trace-follow"' in response.text
+    assert 'id="previous-frame"' in response.text
     assert "NEW GUI RUN" in response.text
     assert "新建 GUI 任务" in response.text
     assert "Android 设备地址" in response.text
@@ -116,9 +123,14 @@ def test_console_frontend_auto_selects_and_prioritizes_final_reply() -> None:
     assert '["android", "iphone"].includes(run.platform) ? "portrait" : "wide"' in source
     assert 'data-frame-layout="${frameLayout}"' in source
     assert 'frameDialog.classList.toggle("frame-portrait"' in source
-    assert 'action-event action-${actionState}' in source
+    assert 'action-event action-${eventActionState}' in source
     assert '✓ 执行成功' in source
     assert '! 未确认效果' in source
+    assert 'state.eventFilter = button.dataset.eventFilter' in source
+    assert 'previousScroll + list.scrollHeight - previousHeight' in source
+    assert 'showFrame(state.frameIndex + (event.key === "ArrowLeft" ? -1 : 1))' in source
+    assert 'frame.name === state.frameName' in source
+    assert 'document.body.classList.toggle("sidebar-collapsed")' in source
     assert 'query.set("adb_serial", androidAddress)' in source
     assert 'platform !== "android"' in source
     assert 'ANDROID_DEVICE_STORAGE_KEY = "guiweave.android.device"' in source
@@ -134,6 +146,12 @@ def test_console_frontend_auto_selects_and_prioritizes_final_reply() -> None:
 
 
 def test_console_hidden_state_overrides_component_display_rules() -> None:
+    console_source = (
+        Path(__file__).resolve().parents[1]
+        / "gui_agent"
+        / "console_assets"
+        / "console.css"
+    ).read_text(encoding="utf-8")
     source = (
         Path(__file__).resolve().parents[1]
         / "gui_agent"
@@ -141,6 +159,15 @@ def test_console_hidden_state_overrides_component_display_rules() -> None:
         / "environment.css"
     ).read_text(encoding="utf-8")
 
+    assert "color-scheme: dark" in console_source
+    assert "--cyan: #59e3ff" in console_source
+    assert "--faint: #718198" in console_source
+    assert "font-size: 15px" in console_source
+    assert "font-size: 14px; line-height: 1.65" in console_source
+    assert "font: 500 14px/1.55 var(--sans)" in console_source
+    assert "font: 800 8px" not in console_source
+    assert "font: 800 8px" not in source
+    assert "@media (max-width: 760px)" in console_source
     assert ".hidden" in source
     assert "display: none !important" in source
     assert ".event-frame.frame-wide img" in source
