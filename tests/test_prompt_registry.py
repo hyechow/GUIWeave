@@ -90,6 +90,9 @@ def test_presentation_requires_user_facing_prose() -> None:
 
     assert "user-facing prose" in prompt
     assert "not serialized JSON" in prompt
+    assert "compact Markdown table" in prompt
+    assert "status values" in prompt
+    assert "Keep every row and column" in prompt
 
 
 def test_worker_keeps_data_private_and_coordinates_normalized() -> None:

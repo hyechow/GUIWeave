@@ -98,9 +98,13 @@ def test_master_review_requires_ref_strings_from_descriptors() -> None:
         "    outcome = ctx.worker_result('collect')\n"
         "    ctx.finish(outcome['collection_ref'].ref, effect='data')"
     )
+    literal = validate_master_source(
+        "def run(ctx):\n    ctx.finish(None, effect='data')"
+    )
 
     assert any(item.code == "REF_VALUE_REQUIRED" for item in descriptor_access)
     assert any(item.code == "ATTRIBUTE_ACCESS" for item in attribute_access)
+    assert any(item.code == "REF_VALUE_REQUIRED" for item in literal)
 
 
 def test_master_review_requires_explicit_terminal_effect() -> None:
@@ -761,7 +765,13 @@ ctx.gui_worker(
         "fixed_args": {{"app": {app!r}}},
     }}],
 )
-ctx.finish("result:ui_state", effect="ui_state")
+done = ctx.transform(
+    transform_id="confirm_application_open",
+    inputs=[],
+    source="def transform(inputs):\\n    return True",
+    result_schema={{"type": "boolean"}},
+)
+ctx.finish(done["ref"], effect="ui_state")
 '''.strip()
     )
 

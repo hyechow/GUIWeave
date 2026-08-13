@@ -1486,6 +1486,7 @@ def test_runtime_executes_nonspatial_browser_capabilities_through_adapter_action
     runtime._visualizer = None
     runtime.platform = object()
     runtime._trace = lambda *_args, **_kwargs: None
+    runtime._task_goal = str(args.get("url") or "Advance the browser subgoal")
     monkeypatch.setattr(
         "gui_agent.core.tool_agent.runtime.settle_after_action",
         lambda platform, png, *, action_type: (0.0, False),
@@ -1755,6 +1756,7 @@ def test_runtime_open_url_accepts_exact_knowledge_route_with_replaced_host() -> 
     runtime._task_goal = "Open the review page"
     runtime._task_page_url = "http://new-host.test/admin"
     runtime._master_knowledge = "Exact route: http://old-host.test/admin/reviews/pending/"
+    runtime._worker_access_context = "Entry URL: `http://192.0.2.10:22000`"
     action = DynamicActionSpec(
         name="runtime_open_url",
         capability="open_url",
@@ -1771,8 +1773,14 @@ def test_runtime_open_url_accepts_exact_knowledge_route_with_replaced_host() -> 
         spec=spec,
         frame=None,
     )
+    runtime._validate_runtime_open_url("http://192.0.2.10:22000", spec=spec, frame=None)
 
-
+    with pytest.raises(ValueError, match="rejected an inferred URL"):
+        runtime._validate_runtime_open_url(
+            "http://evil.test/admin/reviews/pending/",
+            spec=spec,
+            frame=None,
+        )
 def test_collector_completion_is_unavailable_until_collection_is_ready() -> None:
     runtime = object.__new__(ToolAgentRuntime)
     runtime.data_store = RuntimeDataStore()

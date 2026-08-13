@@ -125,6 +125,9 @@ def test_console_frontend_auto_selects_and_prioritizes_final_reply() -> None:
     assert "result.ok && platform === \"android\" && androidAddress" in source
     assert 'localStorage.setItem(ANDROID_DEVICE_STORAGE_KEY, address)' in source
     assert 'localStorage.removeItem(ANDROID_DEVICE_STORAGE_KEY)' in source
+    assert "const CONSOLE_HEADLESS = true" in source
+    assert 'query.set("headless", String(CONSOLE_HEADLESS))' in source
+    assert "headless: CONSOLE_HEADLESS" in source
     assert "async function cancelTask()" in source
     assert "已经执行的 GUI 操作不会自动撤销" in source
     assert "中止中…" in source
@@ -239,6 +242,21 @@ def test_console_platform_environment_passes_normalized_android_address(
         "details": ["  ✗ adb unavailable"],
     }
     assert captured == {"platform": "android", "serial": "192.168.1.50:5555"}
+    captured.clear()
+    TestClient(create_app(service)).get("/api/environment/browser")
+    assert captured == {"platform": "browser", "cdp_url": None, "headless": True}
+
+
+def test_console_submit_enforces_background_only_options(monkeypatch) -> None:
+    monkeypatch.setattr(threading.Thread, "start", lambda _thread: None)
+    console = RunConsole(_NeverRunService())  # type: ignore[arg-type]
+    assert RunRequest(goal="inspect", platform="browser").headless is True
+    task = console.submit(RunRequest(
+        goal="inspect", platform="browser", headless=False, show_hud=True,
+    ))
+
+    assert task.request.headless is True
+    assert task.request.show_hud is False
 
 
 def test_console_run_request_normalizes_android_address() -> None:
