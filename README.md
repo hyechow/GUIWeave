@@ -16,6 +16,8 @@ The preview supports:
 
 This release intentionally contains one runtime path. The previous reviewed-Python,
 policy, router, and supervisor agent loops are not part of this distribution.
+The runtime does include a deterministic App Router for binding platform-scoped
+application/site knowledge; it does not rewrite goals or call a model.
 
 ## Architecture
 
@@ -23,6 +25,7 @@ policy, router, and supervisor agent loops are not part of this distribution.
 Codex Skill
     └─ local stdio MCP (`guiweave-mcp`)
          └─ ToolAgentService
+              ├─ deterministic App Router → application/site knowledge
               └─ Tool Agent Master / visual Workers
                    ├─ Browser adapter → Chrome / Playwright
                    ├─ Android adapter → ADB
