@@ -1,6 +1,7 @@
 const state = {
   runs: [], active: null, filter: "all", modelReady: false, platformReady: false,
-  platformCheck: 0, runRefresh: 0,
+  platformCheck: 0, runRefresh: 0, eventFilter: "all", followTrace: true,
+  events: [], frames: [], frameIndex: 0, frameName: null, frameLayout: "wide", expandedEvents: new Set(),
 };
 const $ = (id) => document.getElementById(id);
 const CONSOLE_HEADLESS = true;
@@ -32,6 +33,12 @@ const timeLabel = (value) => value
   : "—";
 const isCancellable = (run) => Boolean(
   run?.active_task_id && ["queued", "running", "cancelling"].includes(run.phase),
+);
+const actionState = (event) => event.event === "runtime_action_started"
+  ? "started" : event.status === "executed" && !event.no_effect
+    ? "success" : event.no_effect ? "warning" : "failed";
+const isIssue = (event) => event.no_effect || /fail|error|warn|interrupt|exhaust/.test(
+  `${event.level || ""} ${event.status || ""} ${event.event || ""} ${event.layer || ""}`.toLowerCase(),
 );
 
 async function request(url, options) {
@@ -164,6 +171,7 @@ async function selectRun(runId, rerender = true) {
   $("run-events").textContent = `${run?.event_count || 0} EVENTS`;
   $("run-status").className = `status ${run?.phase || "starting"}`;
   $("run-status").textContent = phaseLabel[run?.phase] || run?.phase || "启动中";
+  $("run-view").classList.toggle("is-live", ["running", "starting"].includes(run?.phase));
   const cancel = $("cancel-run");
   cancel.classList.toggle("hidden", !isCancellable(run));
   cancel.dataset.task = run?.active_task_id || "";
@@ -171,6 +179,9 @@ async function selectRun(runId, rerender = true) {
   cancel.textContent = run?.phase === "cancelling" ? "中止中…" : "■ 中止任务";
   if (runId.startsWith("task_")) {
     $("run-summary").textContent = run.summary;
+    $("run-metrics").textContent = "等待运行数据";
+    state.events = [];
+    state.frames = [];
     $("event-list").innerHTML = '<p class="empty">完成环境检查并创建运行目录后，事件会出现在这里。</p>';
     $("artifact-list").innerHTML = '<p class="empty">暂无产物</p>';
     return;
@@ -184,38 +195,102 @@ async function selectRun(runId, rerender = true) {
   const models = Object.values(detail.models || {}).filter(Boolean);
   $("run-model").textContent = models.length ? [...new Set(models)].join(" · ") : "按本地配置";
   const frameLayout = ["android", "iphone"].includes(run.platform) ? "portrait" : "wide";
-  $("event-list").innerHTML = events.events.length
-    ? events.events.slice().reverse().map((event) => {
-      const frameName = event.screenshot?.name;
-      const frameUrl = frameName
-        ? `/api/run-frame?run_id=${encodeURIComponent(runId)}&frame=${encodeURIComponent(frameName)}`
-        : "";
-      const frameNumber = String(event.frame_id || "").split(":").at(-1) || event.index || "—";
-      const frameLabel = `FRAME ${frameNumber} · ${event.worker_id || event.layer || "runtime"}`;
-      const isAction = event.layer === "action";
-      const actionState = !isAction ? "" : event.event === "runtime_action_started"
-        ? "started" : event.status === "executed" && !event.no_effect
-          ? "success" : event.no_effect
-            ? "warning" : "failed";
-      const actionBadge = !isAction ? "" : {
-        started: "▶ 准备执行", success: "✓ 执行成功", warning: "! 未确认效果", failed: "× 执行失败",
-      }[actionState];
-      return `<div class="event ${isAction ? `action-event action-${actionState}` : ""}"><time>${escapeHtml(event.elapsed_s ?? "—")}s</time><span class="layer">${escapeHtml(event.layer || event.event || "event")}</span><span class="message">${actionBadge ? `<b class="action-badge">${escapeHtml(actionBadge)}</b>` : ""}${escapeHtml(event.message || event.event || "")}</span><span class="worker">${escapeHtml(event.worker_id || "")}</span>${frameUrl ? `<button type="button" class="event-frame frame-${frameLayout}" data-frame-layout="${frameLayout}" data-frame-url="${escapeHtml(frameUrl)}" data-frame-label="${escapeHtml(frameLabel)}"><img src="${escapeHtml(frameUrl)}" loading="lazy" alt="${escapeHtml(frameLabel)}"><span><b>${escapeHtml(frameLabel)}</b><small>点击查看完整截图</small></span></button>` : ""}</div>`;
-    }).join("")
-    : '<p class="empty">暂无结构化事件</p>';
-  document.querySelectorAll(".event-frame").forEach((button) => {
-    button.onclick = () => {
-      $("frame-image").src = button.dataset.frameUrl;
-      $("frame-title").textContent = button.dataset.frameLabel;
-      frameDialog.classList.toggle("frame-portrait", button.dataset.frameLayout === "portrait");
-      $("frame-dialog").showModal();
-    };
-  });
+  state.events = events.events;
+  state.frameLayout = frameLayout;
+  const actionStarts = state.events.filter((event) => event.event === "runtime_action_started").length;
+  const actionResults = state.events.filter((event) => event.layer === "action" && event.event !== "runtime_action_started").length;
+  const actionCount = actionStarts || actionResults;
+  const frameCount = state.events.filter((event) => event.screenshot?.name).length;
+  $("run-metrics").textContent = `${actionCount} 次操作 · ${frameCount} 张截图`;
+  renderEvents(runId);
   const labels = { report: "HTML REPORT", trace: "TRACE JSON", replay: "REPLAY", stdout: "STDOUT", stderr: "STDERR" };
   const entries = Object.keys(detail.artifacts || {});
   $("artifact-list").innerHTML = entries.length
     ? entries.map((key) => `<a class="artifact" href="/api/runs/${encodeURI(runId)}/artifacts/${key}" target="_blank"><span>${labels[key] || key}</span><b>${key === "report" ? "打开可视化报告" : "查看本地产物"} ↗</b></a>`).join("")
     : '<p class="empty">暂无产物</p>';
+}
+
+function renderEvents(runId = state.active) {
+  const list = $("event-list");
+  const previousScroll = list.scrollTop;
+  const previousHeight = list.scrollHeight;
+  const visible = state.events.slice().reverse().filter((event) => (
+    state.eventFilter === "all"
+    || (state.eventFilter === "action" && event.layer === "action")
+    || (state.eventFilter === "issue" && isIssue(event))
+  ));
+  const frameLayout = state.frameLayout;
+  state.frames = visible.filter((event) => event.screenshot?.name).map((event) => {
+    const name = event.screenshot.name;
+    const number = String(event.frame_id || "").split(":").at(-1) || event.index || "—";
+    return {
+      event, name, layout: frameLayout,
+      url: `/api/run-frame?run_id=${encodeURIComponent(runId)}&frame=${encodeURIComponent(name)}`,
+      label: `FRAME ${number} · ${event.worker_id || event.layer || "runtime"}`,
+    };
+  });
+  const frameIndexes = new Map(state.frames.map((frame, index) => [frame.event, index]));
+  list.innerHTML = visible.length
+    ? visible.map((event, displayIndex) => {
+      const frameName = event.screenshot?.name;
+      const frameIndex = frameName ? frameIndexes.get(event) : -1;
+      const frame = frameIndex >= 0 ? state.frames[frameIndex] : null;
+      const frameUrl = frame?.url || "";
+      const frameNumber = String(event.frame_id || "").split(":").at(-1) || event.index || "—";
+      const frameLabel = `FRAME ${frameNumber} · ${event.worker_id || event.layer || "runtime"}`;
+      const isAction = event.layer === "action";
+      const eventActionState = isAction ? actionState(event) : "";
+      const actionBadge = !isAction ? "" : {
+        started: "▶ 准备执行", success: "✓ 执行成功", warning: "! 未确认效果", failed: "× 执行失败",
+      }[eventActionState];
+      const message = String(event.message || event.event || "");
+      const eventKey = `${runId}:${event.index ?? event.frame_id ?? displayIndex}`;
+      const isLong = message.length > 220;
+      const collapsed = isLong && !state.expandedEvents.has(eventKey);
+      return `<div class="event ${isAction ? `action-event action-${eventActionState}` : ""}"><time>${escapeHtml(event.elapsed_s ?? "—")}s</time><span class="layer">${escapeHtml(event.layer || event.event || "event")}</span><span class="message">${actionBadge ? `<b class="action-badge">${escapeHtml(actionBadge)}</b>` : ""}<span class="message-copy ${collapsed ? "collapsed" : ""}">${escapeHtml(message)}</span>${isLong ? `<button type="button" class="message-toggle" data-event-key="${escapeHtml(eventKey)}">${collapsed ? "展开" : "收起"}</button>` : ""}</span><span class="worker">${escapeHtml(event.worker_id || "")}</span>${frameUrl ? `<button type="button" class="event-frame frame-${frameLayout}" data-frame-layout="${frameLayout}" data-frame-index="${frameIndex}" data-frame-url="${escapeHtml(frameUrl)}" data-frame-label="${escapeHtml(frameLabel)}"><img src="${escapeHtml(frameUrl)}" loading="lazy" alt="${escapeHtml(frameLabel)}"><span><b>${escapeHtml(frameLabel)}</b><small>点击查看完整截图</small></span></button>` : ""}</div>`;
+    }).join("")
+    : `<p class="empty">${state.events.length ? "当前筛选下暂无事件" : "暂无结构化事件"}</p>`;
+  document.querySelectorAll(".event-frame").forEach((button) => {
+    button.onclick = () => showFrame(Number(button.dataset.frameIndex));
+  });
+  document.querySelectorAll(".message-toggle").forEach((button) => {
+    button.onclick = () => {
+      const copy = button.previousElementSibling;
+      const collapsed = copy.classList.toggle("collapsed");
+      if (collapsed) state.expandedEvents.delete(button.dataset.eventKey);
+      else state.expandedEvents.add(button.dataset.eventKey);
+      button.textContent = collapsed ? "展开" : "收起";
+    };
+  });
+  list.scrollTop = state.followTrace ? 0 : previousScroll + list.scrollHeight - previousHeight;
+  if ($("frame-dialog").open) {
+    const index = state.frames.findIndex((frame) => frame.name === state.frameName);
+    if (index < 0) $("frame-dialog").close();
+    else showFrame(index);
+  }
+}
+
+function showFrame(index) {
+  const frame = state.frames[index];
+  if (!frame) return;
+  state.frameIndex = index;
+  state.frameName = frame.name;
+  $("frame-image").src = frame.url;
+  $("frame-title").textContent = frame.label;
+  $("frame-counter").textContent = `${index + 1} / ${state.frames.length}`;
+  $("previous-frame").disabled = index === 0;
+  $("next-frame").disabled = index === state.frames.length - 1;
+  frameDialog.classList.toggle("frame-portrait", frame.layout === "portrait");
+  if (!frameDialog.open) frameDialog.showModal();
+}
+
+function setTraceFollow(enabled) {
+  state.followTrace = enabled;
+  const button = $("trace-follow");
+  button.classList.toggle("active", enabled);
+  button.setAttribute("aria-pressed", String(enabled));
+  button.textContent = enabled ? "◎ 跟随" : "○ 已停";
+  if (enabled) $("event-list").scrollTop = 0;
 }
 
 function showRefreshError(error) {
@@ -248,11 +323,38 @@ document.querySelectorAll("[data-filter]").forEach((button) => {
     renderList();
   };
 });
+document.querySelectorAll("[data-event-filter]").forEach((button) => {
+  button.onclick = () => {
+    document.querySelectorAll("[data-event-filter]").forEach((item) => item.classList.remove("active"));
+    button.classList.add("active");
+    state.eventFilter = button.dataset.eventFilter;
+    renderEvents();
+  };
+});
 const dialog = $("task-dialog");
 const frameDialog = $("frame-dialog");
 $("close-frame").onclick = () => frameDialog.close();
+$("previous-frame").onclick = () => showFrame(state.frameIndex - 1);
+$("next-frame").onclick = () => showFrame(state.frameIndex + 1);
+frameDialog.onkeydown = (event) => {
+  if (event.key === "ArrowLeft" || event.key === "ArrowRight") {
+    event.preventDefault();
+    showFrame(state.frameIndex + (event.key === "ArrowLeft" ? -1 : 1));
+  }
+};
 frameDialog.onclick = (event) => {
   if (event.target === frameDialog) frameDialog.close();
+};
+$("sidebar-toggle").onclick = () => {
+  const collapsed = document.body.classList.toggle("sidebar-collapsed");
+  const button = $("sidebar-toggle");
+  button.setAttribute("aria-expanded", String(!collapsed));
+  button.setAttribute("aria-label", collapsed ? "展开任务列表" : "收起任务列表");
+  button.title = collapsed ? "展开任务列表" : "收起任务列表";
+};
+$("trace-follow").onclick = () => setTraceFollow(!state.followTrace);
+$("event-list").onscroll = () => {
+  if (state.followTrace && $("event-list").scrollTop > 24) setTraceFollow(false);
 };
 $("new-task-button").onclick = () => {
   dialog.showModal();
