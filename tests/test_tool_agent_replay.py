@@ -6,6 +6,8 @@ from gui_agent.core.tool_agent.contracts import CollectionRef, WorkerOutcome, Wo
 from gui_agent.core.tool_agent.replay import (
     RecordedContext,
     RecordedGuiWorker,
+    RecordedProgram,
+    RecordedRun,
     load_recorded_run,
     replay_program,
     replay_recorded_run,
@@ -124,6 +126,23 @@ def test_replay_rejects_a_changed_gui_worker_contract() -> None:
 
     assert result.status == "failed"
     assert "specification does not match" in result.error
+
+
+def test_replay_accepts_a_recorded_execution_error_as_failed_terminal() -> None:
+    recorded = RecordedRun(
+        (RecordedProgram(
+            source="def run(ctx):\n    ctx.finish(None, effect='ui_state')",
+            execution=1,
+            expected_kind="error",
+        ),),
+        RecordedContext(gui_workers={}, expected_phase="failed"),
+    )
+
+    result = replay_recorded_run(recorded)
+
+    assert result.ok, result.error
+    assert result.phase == "failed"
+    assert result.trace[-1]["event"] == "replay_program_error_reproduced"
 
 
 def test_load_recorded_run_replays_normal_runtime_artifacts(tmp_path, monkeypatch) -> None:

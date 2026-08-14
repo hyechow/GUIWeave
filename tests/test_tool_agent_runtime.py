@@ -725,6 +725,7 @@ class _MultiActionWorker:
         self.bound_names: set[str] = set()
         self.bound_schemas: list[str] = []
         self.action_batches = action_batches
+        self.messages = []
 
     def bind_tools(self, tools, **kwargs):
         assert kwargs.get("parallel_tool_calls") is False
@@ -733,7 +734,7 @@ class _MultiActionWorker:
         return self
 
     def invoke(self, messages):
-        del messages
+        self.messages = messages
         self.calls += 1
         actions = (
             self.action_batches[self.calls - 1]
@@ -816,7 +817,7 @@ def _run_fused_worker(
         )],
         max_steps=1,
     )
-    runtime._run_worker("fused-worker", spec)
+    runtime.outcome = runtime._run_worker("fused-worker", spec)
     return runtime
 
 
@@ -842,6 +843,30 @@ def test_fused_worker_executes_ordered_actions_and_discards_invalid_suffix(
     assert any(event["event"] == expected_event for event in runtime.trace)
     if expected_actions == 3:
         assert any(status.startswith("Action · 2/3 · type") for status in runtime.statuses)
+
+
+def test_fused_worker_returns_typed_failure_after_repeated_empty_action_envelope(
+    monkeypatch,
+) -> None:
+    worker = _MultiActionWorker([[], []])
+
+    runtime = _run_fused_worker(
+        monkeypatch,
+        current_url="https://example.test/items",
+        worker=worker,
+    )
+
+    assert runtime.outcome.phase == "failed"
+    assert runtime.outcome.steps == 0
+    assert "action envelope must contain" in runtime.outcome.summary
+    assert len(runtime._executor.actions) == 0
+    assert worker.calls == 2
+    assert any(
+        "between 1 and 5 executable actions" in str(message.content)
+        and "action envelope must contain" in str(message.content)
+        for message in worker.messages
+        if getattr(message, "type", "") == "human"
+    )
 
 
 def test_fused_worker_repairs_guarded_first_action_on_same_frame(monkeypatch) -> None:
@@ -1670,6 +1695,7 @@ def test_runtime_executes_nonspatial_browser_capabilities_through_adapter_action
     runtime._visualizer = None
     runtime.platform = object()
     runtime._trace = lambda *_args, **_kwargs: None
+    runtime._task_goal = str(args.get("url") or "Advance the browser subgoal")
     monkeypatch.setattr(
         "gui_agent.core.tool_agent.runtime.settle_after_action",
         lambda platform, png, *, action_type: (0.0, False),
@@ -1906,6 +1932,62 @@ def test_runtime_surfaces_same_origin_platform_rejection(monkeypatch) -> None:
     assert runtime._worker_platform_rejections == {}
 
 
+def test_failed_transport_action_skips_settle_and_terminates(monkeypatch) -> None:
+    runtime = object.__new__(ToolAgentRuntime)
+    runtime.bundle = SimpleNamespace(
+        make_action=lambda payload: BrowserAction.model_validate(payload)
+    )
+    runtime._executor = SimpleNamespace(
+        execute=lambda _decision, *, png_bytes: False,
+    )
+    runtime._visualizer = None
+    runtime._target_verify_pool = None
+    runtime._active_worker_id = "navigation_worker"
+    runtime._validate_runtime_open_url = lambda *_args, **_kwargs: None
+    runtime._worker_platform_rejections = {}
+    runtime.platform = SimpleNamespace(
+        client=SimpleNamespace(consume_action_feedback=lambda: [{
+            "kind": "navigation",
+            "url": "https://example.test/",
+            "status": 0,
+            "body": '{"error":true,"message":"navigation timed out"}',
+        }])
+    )
+    runtime._trace = lambda *_args, **_kwargs: None
+    monkeypatch.setattr(
+        "gui_agent.core.tool_agent.runtime.settle_after_action",
+        lambda *_args, **_kwargs: (_ for _ in ()).throw(
+            AssertionError("failed actions must not settle")
+        ),
+    )
+    action = DynamicActionSpec(
+        name="open_page",
+        capability="open_url",
+        description="Open the requested page",
+        fixed_args={"url": "https://example.test/"},
+    )
+    spec = WorkerSpec(
+        profile="operator",
+        goal="Activate the requested state",
+        success_criteria=["The requested state is visible"],
+        actions=[action],
+    )
+    frame = MaterializedFrame(frame_id="frame:1", screenshot_path="frame.png")
+
+    payload, terminal = runtime._execute_worker_tool(
+        spec,
+        [action],
+        {"name": action.name, "args": {}},
+        b"unchanged",
+        frame,
+    )
+    assert terminal == "platform_rejected"
+    assert payload["status"] == "failed"
+    assert payload["reason"] == "navigation timed out"
+    assert payload["settle_seconds"] == 0.0
+    assert payload["no_effect"] is True
+
+
 def test_runtime_open_url_rejects_task549_inferred_route_before_navigation() -> None:
     runtime = object.__new__(ToolAgentRuntime)
     runtime._task_goal = "Add a new size option to a product"
@@ -1939,6 +2021,7 @@ def test_runtime_open_url_accepts_exact_knowledge_route_with_replaced_host() -> 
     runtime._task_goal = "Open the review page"
     runtime._task_page_url = "http://new-host.test/admin"
     runtime._master_knowledge = "Exact route: http://old-host.test/admin/reviews/pending/"
+    runtime._worker_access_context = "Entry URL: `http://192.0.2.10:22000`"
     action = DynamicActionSpec(
         name="runtime_open_url",
         capability="open_url",
@@ -1955,8 +2038,14 @@ def test_runtime_open_url_accepts_exact_knowledge_route_with_replaced_host() -> 
         spec=spec,
         frame=None,
     )
+    runtime._validate_runtime_open_url("http://192.0.2.10:22000", spec=spec, frame=None)
 
-
+    with pytest.raises(ValueError, match="rejected an inferred URL"):
+        runtime._validate_runtime_open_url(
+            "http://evil.test/admin/reviews/pending/",
+            spec=spec,
+            frame=None,
+        )
 def test_collector_completion_is_unavailable_until_collection_is_ready() -> None:
     runtime = object.__new__(ToolAgentRuntime)
     runtime.data_store = RuntimeDataStore()

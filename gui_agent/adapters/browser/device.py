@@ -39,6 +39,7 @@ from urllib.parse import urlsplit
 # None for the user's existing tab). Typical laptop content size.
 _DEFAULT_VIEWPORT_W = 1280
 _DEFAULT_VIEWPORT_H = 800
+_NAVIGATION_TIMEOUT_MS = 20_000
 TEXT_RETARGET_RADIUS_PX = 220
 _CDP_PROXY_ENV_LOCK = threading.Lock()
 
@@ -239,6 +240,7 @@ class PlaywrightDevice:
         self._dpr = None  # cached devicePixelRatio (stable; only changes across monitors)
         self._pending_upload = None  # file path armed for the NEXT file chooser (upload action)
         self._upload_result = None   # set by the file-chooser handler so upload_file can report
+        self._native_action_feedback: list[dict] = []
         # CDP settle network tracking (armed lazily on the live CDP session, re-armed if it is
         # rebuilt). Tracks in-flight XHR/Fetch ONLY — the data the page is waiting on — so a slow
         # post-readyState fetch blocks settle, while persistent Script/blob workers and SSE (which
@@ -854,6 +856,7 @@ class PlaywrightDevice:
     # ----- input primitives ------------------------------------------------
     def begin_action_feedback(self) -> None:
         """Start a bounded same-origin response monitor for the next GUI action."""
+        self._native_action_feedback = []
         try:
             self._follow_active_tab()
             self._cdp_send(
@@ -865,6 +868,10 @@ class PlaywrightDevice:
 
     def consume_action_feedback(self) -> list[dict]:
         """Return response payloads caused since :meth:`begin_action_feedback`."""
+        native = getattr(self, "_native_action_feedback", [])
+        self._native_action_feedback = []
+        if native:
+            return native
         try:
             self._follow_active_tab()
             result = self._cdp_send(
@@ -872,7 +879,11 @@ class PlaywrightDevice:
                 {"expression": _ACTION_FEEDBACK_CONSUME_JS, "returnByValue": True},
             )
             value = (result.get("result", {}) or {}).get("value")
-            return [item for item in value if isinstance(item, dict)] if isinstance(value, list) else []
+            return (
+                [item for item in value if isinstance(item, dict)]
+                if isinstance(value, list)
+                else []
+            )
         except Exception:
             return []
 
@@ -1485,11 +1496,35 @@ class PlaywrightDevice:
         return f"OK dump_cookies {len(out_cookies)} -> {path}"
 
     # ----- browser-only extras --------------------------------------------
+    def _navigation_failure(self, url: str, error: object) -> str:
+        message = (
+            str(error or "unknown navigation error")
+            .split("\nCall log:", 1)[0]
+            .strip()
+        )
+        message = message[:500] or "unknown navigation error"
+        self._native_action_feedback = [{
+            "kind": "navigation",
+            "url": url,
+            "status": 0,
+            "body": json.dumps({"error": True, "message": message}),
+        }]
+        return f"failed: navigate {url}: {message}"
+
     def navigate(self, url: str) -> str:
         try:
-            self._cdp_send("Page.navigate", {"url": url})
+            if self.headless:
+                self._require_page().goto(
+                    url,
+                    wait_until="commit",
+                    timeout=_NAVIGATION_TIMEOUT_MS,
+                )
+            else:
+                result = self._cdp_send("Page.navigate", {"url": url})
+                if error := str(result.get("errorText") or "").strip():
+                    return self._navigation_failure(url, error)
         except Exception as exc:  # noqa: BLE001
-            return f"failed: {exc}"
+            return self._navigation_failure(url, exc)
         return f"OK navigate {url}"
 
     def go_back(self) -> str:

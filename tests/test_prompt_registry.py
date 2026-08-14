@@ -19,6 +19,7 @@ def test_prompt_registry_loads_all_assets() -> None:
     assert prompts
     assert len({prompt.id for prompt in prompts}) == len(prompts)
     assert {prompt.id for prompt in prompts} == {
+        "task.chat.router",
         "task.tool_agent.master",
         "task.tool_agent.master_redelegate",
         "task.tool_agent.presentation",
@@ -75,6 +76,7 @@ def test_master_exposes_only_tool_agent_runtime_api() -> None:
     assert "never require perception to invent a missing year" in prompt
     assert "When success criteria guarantee exactly one target record" in prompt
     assert "Source layout order is not a data contract" in prompt
+    assert "navigation, not data retrieval" in prompt
 
 
 def test_visual_transcription_uses_runtime_time_without_inventing_dates() -> None:
@@ -90,6 +92,9 @@ def test_presentation_requires_user_facing_prose() -> None:
 
     assert "user-facing prose" in prompt
     assert "not serialized JSON" in prompt
+    assert "compact Markdown table" in prompt
+    assert "status values" in prompt
+    assert "Keep every row and column" in prompt
 
 
 def test_worker_keeps_data_private_and_coordinates_normalized() -> None:

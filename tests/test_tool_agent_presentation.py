@@ -43,7 +43,7 @@ def test_presenter_turns_verified_result_into_natural_reply_without_capabilities
         invoke=invoke,
     )
 
-    assert presentation.status == "generated"
+    assert presentation.status == "generated", presentation.error
     assert presentation.model == "presenter-model"
     assert "a@example.com" in presentation.reply
     assert "b@example.com" in presentation.reply
@@ -108,6 +108,32 @@ def test_presenter_replaces_serialized_json_with_natural_language_fallback() -> 
     assert "多云转雷阵雨" in presentation.reply
     assert not presentation.reply.startswith("{")
     assert "serialized structured data" in presentation.error
+
+
+def test_presenter_translation_failure_falls_back_to_record_table() -> None:
+    value = [
+        {"order_id": "32", "status": "Completed"},
+        {"order_id": "31", "status": "Canceled"},
+    ]
+
+    presentation = present_result(
+        goal="查看订单列表",
+        phase="completed",
+        result=value,
+        summary="computed",
+        replay={"status": "passed"},
+        llm=object(),
+        invoke=lambda _llm, _messages, schema, **_kwargs: schema(
+            reply="订单 32 为 Completed，订单 31 为 Canceled。",
+            result_digest=result_digest(value),
+        ),
+    )
+
+    assert presentation.status == "fallback"
+    assert presentation.reply == (
+        "查询到 2 条结果：\n\n| order id | status |\n| --- | --- |\n"
+        "| 32 | Completed |\n| 31 | Canceled |"
+    )
 
 
 def test_presenter_accepts_natural_reordering_and_verbalized_comparison() -> None:
@@ -246,6 +272,11 @@ def test_presentation_artifact_and_context_keep_result_and_reply_separate(tmp_pa
         platform="browser",
         fallback_task_type="RETRIEVE",
         presentation=presentation,
+        app_router={
+            "kind": "deterministic_app_router",
+            "targets": [{"app_id": "RoboTeam"}],
+            "active_app": "RoboTeam",
+        },
     )
 
     context = json.loads((tmp_path / "context.json").read_text(encoding="utf-8"))
@@ -259,6 +290,7 @@ def test_presentation_artifact_and_context_keep_result_and_reply_separate(tmp_pa
     assert context["models"]["tool_agent.presentation"] == "presenter-model"
     assert context["platform_time"]["source"] == "browser_cdp"
     assert result.orchestrator["platform_time"]["timezone"] == "Asia/Shanghai"
+    assert context["orchestrator"]["app_router"]["active_app"] == "RoboTeam"
 
     response = _synthesize_response(
         "Return the matching email",

@@ -3,38 +3,58 @@
 <head>
   <meta charset="utf-8">
   <meta name="viewport" content="width=device-width, initial-scale=1">
+  <meta name="theme-color" content="#070b12">
   <title>GUIWeave Run Console</title>
   <link rel="stylesheet" href="/assets/console.css">
   <link rel="stylesheet" href="/assets/environment.css">
 </head>
 <body>
   <header class="topbar">
-    <a class="brand" href="/"><span class="mark"><i></i><i></i><i></i></span> GUIWEAVE <b>RUN CONSOLE</b></a>
+    <a class="brand" href="/">
+      <span class="mark" aria-hidden="true"><i></i><i></i><i></i></span>
+      <span class="brand-copy"><strong>GUIWEAVE</strong><b>RUN CONSOLE</b></span>
+    </a>
+    <nav class="mode-switch" aria-label="Console 模式"><button class="active" type="button" data-console-mode="runs">RUNS</button><button type="button" data-console-mode="chat">CHAT</button></nav>
     <div id="model-runtime" class="runtime"><i></i><span id="model-status">检查模型配置…</span><small id="model-summary">LOCAL RUNTIME</small></div>
-    <button id="new-task-button" class="primary">＋ 新建任务</button>
+    <button id="new-task-button" class="primary"><span>＋</span> NEW RUN</button>
   </header>
-  <main class="layout">
+  <main id="runs-mode" class="layout">
     <aside class="sidebar">
-      <div class="side-title">TASKS <span id="run-count">0</span></div>
+      <div class="side-title"><span><small>MISSION INDEX</small><strong>LOCAL RUNS</strong></span><div class="side-actions"><b id="run-count">0</b><button id="sidebar-toggle" type="button" aria-label="收起任务列表" aria-expanded="true" title="收起任务列表">‹</button></div></div>
       <div class="filters" role="group" aria-label="任务筛选">
         <button class="active" data-filter="all">全部</button><button data-filter="running">运行中</button><button data-filter="completed">已完成</button><button data-filter="failed">失败</button>
       </div>
       <div id="task-list" class="task-list"><p class="empty">正在读取本地任务…</p></div>
     </aside>
     <section class="workspace">
-      <div id="empty-state" class="empty-state"><span>GW</span><h1>选择一个任务</h1><p>查看运行阶段、事件流、模型配置与本地产物。</p></div>
+      <div id="empty-state" class="empty-state">
+        <div class="empty-orbit" aria-hidden="true"><i></i><i></i><span><b>GW</b></span></div>
+        <p class="kicker">SYSTEM STANDBY</p><h1>选择一个任务</h1><p>接入运行遥测，查看 Agent 阶段、事件流与本地产物。</p>
+      </div>
       <div id="run-view" class="run-view hidden">
-        <header class="run-header"><div><p class="kicker" id="run-id"></p><h1 id="run-goal"></h1><div class="meta"><span id="run-platform"></span><span id="run-time"></span><span id="run-events"></span></div></div><div class="run-controls"><span id="run-status" class="status"></span><button id="cancel-run" class="danger hidden">请求安全取消</button></div></header>
-        <div class="summary-grid"><article><label>结果 / 当前摘要</label><p id="run-summary">—</p></article><article><label>模型</label><p id="run-model">按本地配置</p></article><article><label>运行边界</label><p>高影响操作需在任务目标中明确授权</p></article></div>
-        <section class="panel"><header><div><span>LIVE TRACE</span><small>结构化事件 + 本地运行截图；截图可能包含界面数据</small></div><button id="refresh-button">刷新</button></header><div id="event-list" class="event-list"></div></section>
-        <section class="panel"><header><div><span>ARTIFACTS</span><small>产物保存在本机任务目录</small></div></header><div id="artifact-list" class="artifact-list"></div></section>
+        <header class="run-header"><div class="run-heading"><p class="kicker">RUN TELEMETRY</p><p class="run-id" id="run-id"></p><h1 id="run-goal"></h1><div class="meta"><span id="run-platform"></span><span id="run-time"></span><span id="run-events"></span></div></div><div class="run-controls"><span id="run-status" class="status"></span><button id="cancel-run" class="danger hidden" type="button">■ 中止任务</button></div></header>
+        <div class="summary-grid"><article class="summary-primary"><i>01</i><div><label>结果 / 当前摘要</label><p id="run-summary">—</p></div></article><article><i>02</i><div><label>模型</label><p id="run-model">按本地配置</p></div></article><article><i>03</i><div><label>运行指标</label><p id="run-metrics">等待运行数据</p></div></article></div>
+        <section class="panel trace-panel"><header><div><span><i class="pulse-dot"></i> LIVE TRACE</span><small>结构化事件 + 本地运行截图；截图可能包含界面数据</small></div><div class="trace-tools"><button class="active" data-event-filter="all">全部</button><button data-event-filter="action">操作</button><button data-event-filter="issue">异常</button><button id="trace-follow" class="active" type="button" aria-pressed="true">◎ 跟随</button><button id="refresh-button" type="button">↻ 刷新</button></div></header><div id="event-list" class="event-list"></div></section>
+        <section class="panel artifact-panel"><header><div><span>ARTIFACTS</span><small>产物保存在本机任务目录</small></div></header><div id="artifact-list" class="artifact-list"></div></section>
       </div>
     </section>
   </main>
+  <section id="chat-mode" class="chat-shell hidden" aria-label="GUIWeave Chat">
+    <div class="chat-panel">
+      <header class="chat-header"><div><p class="kicker">MULTI-TURN CHAT / GUI ROUTING</p><h1>对话式 GUI 助手</h1></div><div class="chat-header-actions"><p>先理解会话和意图；只有必须读取或操作界面时，才会启动 Headless Run。</p><button id="chat-new-session" type="button" title="清空当前对话并开启新 Session">＋ 新对话</button></div></header>
+      <div id="chat-thread" class="chat-thread"><div class="chat-welcome"><span>GW</span><div><b>GUIWeave 已就绪</b><p>你可以直接对话；需要界面证据或操作时，我会自动启动 GUI 任务。</p></div></div></div>
+      <aside id="chat-detail" class="chat-detail"><div class="chat-detail-empty"><span>⌁</span><b>TURN DETAIL</b><p>发送消息后，这里会显示路由判断和运行详情。</p></div></aside>
+      <form id="chat-form" class="chat-composer">
+        <div class="chat-config"><label>GUI 平台<select id="chat-platform" name="platform"><option value="browser">Browser</option><option value="android">Android</option><option value="iphone">iPhone</option></select></label><label id="chat-android-field" class="hidden">设备<input id="chat-adb-serial" name="adb_serial" maxlength="200" autocomplete="off" placeholder="IP、IP:端口或 adb serial"></label><span id="chat-environment">Browser · 仅在需要 GUI 时检查</span></div>
+        <textarea id="chat-input" name="message" required maxlength="4000" placeholder="输入消息；Enter 发送，Shift + Enter 换行"></textarea>
+        <footer><small>意图路由会先判断是否需要 GUI；界面任务使用 Enhanced 感知并在本机后台执行。</small><button id="chat-send" class="primary" type="submit" disabled>发送 ↗</button></footer>
+      </form>
+    </div>
+  </section>
 
   <dialog id="task-dialog">
     <form id="task-form" method="dialog">
-      <header><div><p class="kicker">NEW GUI RUN</p><h2>新建 GUI 任务</h2></div><button type="button" id="close-dialog" aria-label="关闭">×</button></header>
+      <header><div><p class="kicker">NEW GUI RUN / MISSION SETUP</p><h2>新建 GUI 任务</h2></div><button type="button" id="close-dialog" aria-label="关闭">×</button></header>
       <label>任务目标<textarea name="goal" required maxlength="4000" placeholder="例如：打开订单列表，找到最新失败订单并返回订单号"></textarea></label>
       <div class="form-row"><label>平台<select id="task-platform" name="platform"><option value="browser">Browser</option><option value="android">Android</option><option value="iphone">iPhone</option></select></label><label>感知模式<select name="perception"><option value="enhanced">Enhanced</option><option value="vision-only">Vision only</option></select></label><label>最大轮次<input name="max_turns" type="number" min="1" max="50" value="50"></label></div>
       <label id="android-device-field" class="platform-field hidden">Android 设备地址
@@ -47,7 +67,7 @@
     </form>
   </dialog>
   <dialog id="frame-dialog" class="frame-dialog">
-    <header><strong id="frame-title">运行截图</strong><button type="button" id="close-frame" aria-label="关闭截图">×</button></header>
+    <header><button type="button" id="previous-frame" aria-label="上一张截图">‹</button><strong id="frame-title">运行截图</strong><small id="frame-counter">0 / 0</small><button type="button" id="next-frame" aria-label="下一张截图">›</button><button type="button" id="close-frame" aria-label="关闭截图">×</button></header>
     <img id="frame-image" alt="运行截图">
   </dialog>
   <script src="/assets/console.js" defer></script>

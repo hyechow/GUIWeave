@@ -21,11 +21,8 @@ from gui_agent.core.runtime.io import (
 )
 from gui_agent.core.runtime.factory import SetupCheckResult, build_platform
 from gui_agent.core.runtime.platforms import PLATFORMS, PlatformName
-from gui_agent.core.self_learning.app_summary import (
-    auto_discover_knowledge,
-    load_knowledge_for_app,
-    match_app_by_url,
-)
+from gui_agent.core.app_router import resolve_app_routes
+from gui_agent.core.self_learning.app_summary import load_knowledge_for_app
 from gui_agent.core.tool_agent.result import execute_tool_agent
 
 
@@ -73,6 +70,11 @@ def _fallback_task_type(goal: str) -> str:
     if any(marker in text for marker in navigation_markers):
         return "NAVIGATE"
     return "RETRIEVE"
+
+
+def _raise_if_stopped(stop_requested: Callable[[], bool] | None) -> None:
+    if stop_requested is not None and stop_requested():
+        raise InterruptedError("Tool Agent interrupted before runtime startup")
 
 
 class ToolAgentService:
@@ -141,6 +143,7 @@ class ToolAgentService:
         if not 1 <= max_turns <= 50:
             raise ValueError("max_turns must be between 1 and 50")
 
+        _raise_if_stopped(stop_requested)
         model_setup = self.check_model_environment()
         if not model_setup.ok:
             detail = "\n".join(model_setup.lines)
@@ -151,6 +154,7 @@ class ToolAgentService:
         if not setup.ok:
             detail = "\n".join(setup.lines)
             raise RuntimeError(f"{setup.summary}\n{detail}".strip())
+        _raise_if_stopped(stop_requested)
 
         log_dir = create_run_dir(
             "tool_agent",
@@ -170,30 +174,73 @@ class ToolAgentService:
 
             hud = bundle.make_status_reporter(show_hud)
             try:
+                _raise_if_stopped(stop_requested)
                 with bundle.open_session() as session:
+                    _raise_if_stopped(stop_requested)
                     page_url = ""
                     page_title = ""
-                    site_name = ""
+                    current_app_id = ""
                     device = getattr(session, "client", None)
                     if device is not None and hasattr(device, "page_info"):
                         try:
                             page_url, page_title = device.page_info()
-                            site_name = match_app_by_url(page_url, platform) or ""
                         except Exception as exc:  # noqa: BLE001
                             print(f"Initial page probe unavailable: {exc}")
+                    if device is not None and hasattr(device, "current_app_id"):
+                        try:
+                            current_app_id = str(device.current_app_id() or "").strip()
+                        except Exception as exc:  # noqa: BLE001
+                            print(f"Initial app identity probe unavailable: {exc}")
 
-                    app_knowledge = auto_discover_knowledge(goal, platform)
-                    if app_knowledge is None and site_name:
-                        app_knowledge = load_knowledge_for_app(site_name, platform)
+                    app_route = resolve_app_routes(
+                        goal,
+                        platform,
+                        current_url=page_url,
+                        current_app_id=current_app_id,
+                    )
+                    if app_route.needs_clarification:
+                        raise ValueError(
+                            f"application routing is ambiguous: {app_route.clarification}"
+                        )
+                    app_knowledges = [
+                        candidate
+                        for app_id in app_route.app_ids
+                        if (candidate := load_knowledge_for_app(app_id, platform))
+                        is not None
+                    ]
+                    route_payload = app_route.to_dict()
+                    routed_names = ", ".join(app_route.app_ids) or "none"
+                    print(
+                        f"App Router: targets={routed_names} "
+                        f"active={app_route.active_app or 'unknown'}"
+                    )
                     effective_knowledge = knowledge
                     effective_access = access_context
                     knowledge_summary = None
-                    if app_knowledge is not None:
+                    if app_knowledges:
                         if effective_knowledge is None:
-                            effective_knowledge = app_knowledge.orchestrator_context(goal)
+                            effective_knowledge = "\n\n".join(
+                                context
+                                for item in app_knowledges
+                                if (context := item.orchestrator_context(goal))
+                            )
                         if effective_access is None:
-                            effective_access = app_knowledge.deployment
-                        knowledge_summary = app_knowledge.summary()
+                            effective_access = "\n\n".join(
+                                item.deployment
+                                for item in app_knowledges
+                                if item.deployment
+                            )
+                        summaries = [item.summary() for item in app_knowledges]
+                        knowledge_summary = (
+                            summaries[0]
+                            if len(summaries) == 1
+                            else {
+                                "app_name": " + ".join(
+                                    item.app_name for item in app_knowledges
+                                ),
+                                "apps": summaries,
+                            }
+                        )
 
                     result, presentation = execute_tool_agent(
                         intent=goal,
@@ -205,6 +252,7 @@ class ToolAgentService:
                         allow_multi_action=allow_multi_action,
                         fallback_task_type=_fallback_task_type(goal),
                         knowledge_summary=knowledge_summary,
+                        app_router=route_payload,
                         knowledge=effective_knowledge or "",
                         access_context=effective_access or "",
                         page_url=page_url,

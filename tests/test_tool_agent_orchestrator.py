@@ -99,9 +99,13 @@ def test_master_review_requires_ref_strings_from_descriptors() -> None:
         "    outcome = ctx.worker_result('collect')\n"
         "    ctx.finish(outcome['collection_ref'].ref, effect='data')"
     )
+    literal = validate_master_source(
+        "def run(ctx):\n    ctx.finish(None, effect='data')"
+    )
 
     assert any(item.code == "REF_VALUE_REQUIRED" for item in descriptor_access)
     assert any(item.code == "ATTRIBUTE_ACCESS" for item in attribute_access)
+    assert any(item.code == "REF_VALUE_REQUIRED" for item in literal)
 
 
 def test_master_review_explains_visual_only_worker_dependencies() -> None:
@@ -790,6 +794,40 @@ def test_master_compiler_regenerates_only_during_static_review() -> None:
     assert events[1][1]["diagnostics"] == []
 
 
+def test_master_review_rejects_data_collection_for_destination_only_goal() -> None:
+    source = _program(
+        f'''\
+records = {GUI_CALL}
+result = ctx.transform(
+    transform_id="return_records",
+    inputs=[records["collection_ref"]["ref"]],
+    source="def transform(inputs):\\n    return inputs[0]",
+    result_schema={{"type": "array", "items": {ROW_SCHEMA!r}}},
+)
+ctx.finish(result["ref"], effect="data")
+'''.strip()
+    )
+
+    diagnostics = validate_master_source(source, user_goal="查看订单列表")
+
+    assert any(item.code == "TASK_INTENT" for item in diagnostics)
+    inferred = source.replace('profile="collector",\n', "")
+    assert any(
+        item.code == "TASK_INTENT"
+        for item in validate_master_source(inferred, user_goal="打开设置")
+    )
+    assert not any(
+        item.code == "TASK_INTENT"
+        for item in validate_master_source(source, user_goal="查看有多少订单的订单列表")
+    )
+
+
+def test_master_review_accepts_operator_for_destination_only_goal() -> None:
+    assert validate_master_source(
+        _launch_app_program("settings"), user_goal="查看订单列表"
+    ) == []
+
+
 def _launch_app_program(app: str) -> str:
     return _program(
         f'''\
@@ -806,7 +844,13 @@ ctx.gui_worker(
         "fixed_args": {{"app": {app!r}}},
     }}],
 )
-ctx.finish("result:ui_state", effect="ui_state")
+done = ctx.transform(
+    transform_id="confirm_application_open",
+    inputs=[],
+    source="def transform(inputs):\\n    return True",
+    result_schema={{"type": "boolean"}},
+)
+ctx.finish(done["ref"], effect="ui_state")
 '''.strip()
     )
 

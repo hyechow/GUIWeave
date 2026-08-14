@@ -22,6 +22,7 @@ agent loop 不再属于本发行版。
 Codex Skill
     └─ 本地 stdio MCP (`guiweave-mcp`)
          └─ ToolAgentService
+              ├─ 确定性 App Router → 应用/站点知识绑定
               └─ Tool Agent Master / visual Workers
                    ├─ Browser adapter → Chrome / Playwright
                    ├─ Android adapter → ADB
@@ -29,6 +30,10 @@ Codex Skill
 
 每次运行 → context + trace + screenshots + replay + HTML report
 ```
+
+App Router 直接从用户目标中的应用名称/alias 识别目标，并结合当前 URL 或平台应用标识
+绑定知识。它不要求用户预选应用、不调用模型、不改写用户目标，也不是已经移除的旧
+Router Agent。
 
 MCP 进程完全在本机运行，不开放网络端口；Codex 通过 stdin/stdout 与它通信。
 

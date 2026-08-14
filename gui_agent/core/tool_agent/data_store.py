@@ -84,8 +84,9 @@ class RuntimeDataStore:
         chunk_ids = list(self._requirement_chunks[bucket])
         collection_id = f"collection:{requirement_id}"
         chunk_coverage = [self._chunks[item].coverage for item in chunk_ids]
+        coverage_samples = chunk_coverage if created else [*chunk_coverage, coverage]
         structured = any(
-            item.get("source_scope") == "structured_surface" for item in chunk_coverage
+            item.get("source_scope") == "structured_surface" for item in coverage_samples
         )
         collection_rows: list[dict[str, Any]] = []
         previous_ref = ""
@@ -109,22 +110,24 @@ class RuntimeDataStore:
         row_count = len(collection_rows)
         totals = {
             int(value)
-            for item in chunk_coverage
+            for item in coverage_samples
             if (value := item.get("total_records")) not in (None, "")
         }
         known_total = next(iter(totals)) if len(totals) == 1 else None
         pages_seen = sorted({
             int(value)
-            for item in chunk_coverage
+            for item in coverage_samples
             if (value := item.get("page_index")) not in (None, "")
         })
         page_counts = {
             int(value)
-            for item in chunk_coverage
+            for item in coverage_samples
             if (value := item.get("page_count")) not in (None, "")
         }
         page_count = next(iter(page_counts)) if len(page_counts) == 1 else None
-        last_coverage = chunk_coverage[-1] if chunk_coverage else {}
+        # Completion follows the latest observation even when its rows dedupe to
+        # an earlier chunk (for example, revisiting the last page after backfill).
+        last_coverage = coverage
         all_pages = bool(
             page_count is not None
             and pages_seen == list(range(1, page_count + 1))
@@ -135,11 +138,13 @@ class RuntimeDataStore:
         scope_status = str(last_coverage.get("scope_status") or "met")
         contiguous_to_end = bool(
             at_end
+            and page_count is None
             and pages_seen
             and pages_seen == list(range(1, max(pages_seen) + 1))
         )
-        static_complete = bool(
-            last_coverage.get("traversal_type") == "static"
+        traversal_type = last_coverage.get("traversal_type")
+        surface_complete = bool(
+            (traversal_type == "static" or traversal_type == "scroll" and at_end)
             and not last_coverage.get("partial")
             and (known_total is None or row_count >= known_total)
         )
@@ -152,21 +157,24 @@ class RuntimeDataStore:
             coverage_status = "conflicting"
         elif structured and (
             all_pages
-            or contiguous_to_end
-            or (
-                known_total is not None
+            or page_count is None and (
+                contiguous_to_end
+                or known_total is not None
                 and row_count >= known_total
                 and not last_coverage.get("partial")
+                or surface_complete
             )
-            or static_complete
         ):
             coverage_status = "complete"
         elif not structured and at_end and (
+            page_count is None or all_pages
+        ) and (
             known_total is None or row_count >= known_total
         ):
             coverage_status = "complete"
         elif (
             last_coverage.get("has_next_page") is True
+            or (page_count is not None and not all_pages)
             or (known_total is not None and row_count < known_total)
             or last_coverage.get("partial")
         ):
@@ -197,6 +205,9 @@ class RuntimeDataStore:
                 )
             ),
         }
+        for key in ("coverage_evidence", "empty_state_evidence"):
+            if last_coverage.get(key) not in (None, ""):
+                combined_coverage[key] = last_coverage[key]
         collection = CollectionRef(
             ref=collection_id,
             requirement_id=requirement_id,

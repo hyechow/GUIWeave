@@ -256,6 +256,42 @@ def table_snapshot_js() -> str:
     'nav[aria-label*="pagination" i]', '[aria-label*="page" i]',
   ].join(',');
 
+  const pagerControlLabel = (el) => norm([
+    el.getAttribute('aria-label'), el.getAttribute('title'),
+    text(el),
+  ].filter(Boolean).join(' '));
+  const pagerControl = (root, direction) => {{
+    const next = direction === 'next';
+    const name = next ? 'next' : 'previous';
+    const selector = [
+      `[aria-label*="${{name}} page" i]`, `[aria-label*="${{next ? '下一页' : '上一页'}}" i]`,
+      `[role="button"][aria-label*="${{name}}" i]`, `.${{next ? 'next' : 'prev'}}-page`,
+      `.action-${{name}}`, `button[title*="${{name}}" i]`, `button[class*="${{name}}" i]`,
+    ].join(', ');
+    if (root.matches && root.matches(selector)) return root;
+    const selected = root.querySelector(selector);
+    if (selected) return selected;
+    const pattern = next
+      ? /^(?:next(?:\\s+page)?|下一页|下一頁)(?:\\s|$|[→›»])/i
+      : /^(?:previous(?:\\s+page)?|prev|上一页|上一頁)(?:\\s|$|[←‹«])/i;
+    return Array.from(root.querySelectorAll('button, a, [role="button"]'))
+      .find(el => visible(el) && pattern.test(pagerControlLabel(el))) || null;
+  }};
+  const pagerFromControls = (container, tableOrGrid) => {{
+    const next = pagerControl(container, 'next');
+    const prev = pagerControl(container, 'previous');
+    const anchor = next || prev;
+    if (!anchor) return null;
+    const tableRect = tableOrGrid.getBoundingClientRect();
+    const anchorRect = anchor.getBoundingClientRect();
+    if (anchorRect.bottom < tableRect.top || anchorRect.top > tableRect.bottom + 320) return null;
+    let root = anchor.parentElement;
+    for (let depth = 0; root && root !== container.parentElement && depth < 5; depth++, root = root.parentElement) {{
+      if ((!next || root.contains(next)) && (!prev || root.contains(prev))) return root;
+    }}
+    return anchor.parentElement;
+  }};
+
   const detectPagerState = (tableOrGrid) => {{
     let container = tableOrGrid.parentElement;
     for (let depth = 0; depth < 4 && container; depth++, container = container.parentElement) {{
@@ -280,7 +316,13 @@ def table_snapshot_js() -> str:
         }}
         return false;
       }});
-      if (pager) return readPagedPager(pager);
+      if (pager) {{
+        const state = readPagedPager(pager);
+        if (state.page_index != null || state.page_count != null ||
+            state.has_next_page != null || state.has_prev_page != null) return state;
+      }}
+      const inferred = pagerFromControls(container, tableOrGrid);
+      if (inferred) return readPagedPager(inferred);
     }}
     return detectScrollState(tableOrGrid);
   }};
@@ -291,9 +333,9 @@ def table_snapshot_js() -> str:
     let has_next_page = null;
     let has_prev_page = null;
 
-    const text = pager.innerText || '';
-    const pageMatch = text.match(/(?:page\\s*)?(\\d+)\\s*(?:of|\\/|共)\\s*(?:page\\s*)?(\\d+)/i)
-      || text.match(/(\\d+)\\s*-\\s*\\d+\\s*(?:of|\\/|共)\\s*(\\d+)/i);
+    const pagerText = pager.innerText || '';
+    const pageMatch = pagerText.match(/(?:page\\s*)?(\\d+)\\s*(?:of|\\/|共)\\s*(?:page\\s*)?(\\d+)/i)
+      || pagerText.match(/(\\d+)\\s*-\\s*\\d+\\s*(?:of|\\/|共)\\s*(\\d+)/i);
     if (pageMatch) {{
       page_index = parseInt(pageMatch[1]);
       page_count = parseInt(pageMatch[2]);
@@ -335,38 +377,40 @@ def table_snapshot_js() -> str:
       }}
     }}
 
-    const nextBtn = pager.querySelector([
-      '[aria-label*="next page" i]',
-      '[aria-label*="下一页" i]',
-      '[role="button"][aria-label*="next" i]',
-      '.next-page', '.action-next',
-      'button[title*="Next" i]',
-      'button[class*="next" i]',
-    ].join(', '));
-    const prevBtn = pager.querySelector([
-      '[aria-label*="previous page" i]',
-      '[aria-label*="上一页" i]',
-      '[role="button"][aria-label*="previous" i]',
-      '.prev-page', '.action-previous',
-      'button[title*="Previous" i]',
-      'button[class*="previous" i]',
-    ].join(', '));
+    const nextBtn = pagerControl(pager, 'next');
+    const prevBtn = pagerControl(pager, 'previous');
 
     if (nextBtn) has_next_page = !disabled(nextBtn);
     if (prevBtn) has_prev_page = !disabled(prevBtn);
 
+    const pageItems = Array.from(pager.querySelectorAll('button, a, [role="button"]'))
+      .map(el => ({{ el, value: /^\\d+$/.test(text(el)) ? parseInt(text(el)) : null }}))
+      .filter(item => item.value != null);
+    const pageNumbers = pageItems.map(item => item.value);
+    if (!page_count && pageNumbers.length) page_count = Math.max(...pageNumbers);
+
     if (!page_index) {{
-      const activePage = pager.querySelector([
-        '.active[role="button"]',
-        '[aria-current="page"]',
-        '.current',
-        '[aria-selected="true"]',
-      ].join(', '));
-      if (activePage) {{
-        const pageNum = parseInt(activePage.innerText || activePage.getAttribute('data-page'));
-        if (pageNum) page_index = pageNum;
-      }}
+      const activeSelector = '.active, .current, [aria-current="page"], '
+        + '[aria-selected="true"], [data-state="active"], [data-active="true"]';
+      const activePage = pageItems.find(item =>
+        item.el.matches(activeSelector) || item.el.parentElement?.matches(activeSelector)
+      );
+      if (activePage) page_index = activePage.value;
     }}
+    if (!page_index && pageItems.length >= 3) {{
+      const styled = pageItems.map(item => {{
+        const style = getComputedStyle(item.el);
+        return {{ ...item, key: [style.backgroundColor, style.borderTopColor,
+          style.borderTopWidth, style.color, style.fontWeight, style.boxShadow].join('|') }};
+      }});
+      const counts = styled.reduce((all, item) => (all[item.key] = (all[item.key] || 0) + 1, all), {{}});
+      const unique = styled.filter(item => counts[item.key] === 1);
+      if (unique.length === 1 && Math.max(...Object.values(counts)) >= 2) page_index = unique[0].value;
+    }}
+    if (!page_index && prevBtn && disabled(prevBtn) && pageNumbers.includes(1)) page_index = 1;
+    if (!page_index && nextBtn && disabled(nextBtn) && page_count) page_index = page_count;
+    if (has_next_page == null && page_index && page_count) has_next_page = page_index < page_count;
+    if (has_prev_page == null && page_index) has_prev_page = page_index > 1;
 
     const pageSize = detectPageSizeState(pager);
     return {{

@@ -2,11 +2,9 @@
 
 from __future__ import annotations
 
-import re
 from dataclasses import dataclass, field
 from pathlib import Path
 from typing import Any
-from urllib.parse import urlparse
 
 from gui_agent.core.self_learning.progressive import (
     ProgressiveKnowledge,
@@ -131,54 +129,6 @@ def list_known_apps(platform: str = "browser") -> list[str]:
     return sorted(path.name for path in _app_dirs(platform))
 
 
-def match_app_by_url(url: str, platform: str = "browser") -> str | None:
-    """Match a URL to a knowledge directory through `_deploy.md` entry URLs."""
-
-    if not url:
-        return None
-    try:
-        current = urlparse(url)
-        current_host = (current.netloc or "").lower()
-        current_name = (current.hostname or "").lower()
-        current_port = current.port
-    except (TypeError, ValueError):
-        return None
-    if not current_host:
-        return None
-    port_matches: list[str] = []
-    for app_dir in _app_dirs(platform):
-        deploy = app_dir / "_deploy.md"
-        if not deploy.is_file():
-            continue
-        try:
-            text = deploy.read_text(encoding="utf-8")
-        except OSError:
-            continue
-        for match in re.finditer(r"https?://[^\s）)、,，。；;]+", text):
-            parsed = urlparse(match.group(0))
-            if (parsed.netloc or "").lower() == current_host:
-                return app_dir.name
-            try:
-                entry_port = parsed.port
-            except ValueError:
-                entry_port = None
-            if (
-                current_port is not None
-                and current_name in {"localhost", "127.0.0.1", "::1", "0.0.0.0"}
-                and entry_port == current_port
-            ):
-                port_matches.append(app_dir.name)
-    return port_matches[0] if len(set(port_matches)) == 1 else None
-
-
-def _aliases(app_dir: Path) -> list[str]:
-    deploy = app_dir / "_deploy.md"
-    if not deploy.exists():
-        return []
-    aliases = _read_markdown(deploy)[0].get("aliases")
-    return [str(item).strip() for item in _as_list(aliases) if str(item).strip()]
-
-
 def load_app_dir(
     app_dir: Path,
     *,
@@ -255,30 +205,9 @@ def load_knowledge_for_app(
     return load_app_dir(app_dir, include_skills=include_skills) if app_dir else None
 
 
-def auto_discover_knowledge(
-    goal: str,
-    platform: str = "browser",
-    *,
-    include_skills: bool = False,
-) -> AppKnowledge | None:
-    goal_lower = goal.lower()
-    candidates: dict[str, Path] = {}
-    for app_dir in _app_dirs(platform):
-        candidates[app_dir.name.lower()] = app_dir
-        candidates.setdefault(app_dir.name.replace("_", " ").lower(), app_dir)
-        for alias in _aliases(app_dir):
-            candidates.setdefault(alias.lower(), app_dir)
-    for name, app_dir in candidates.items():
-        if name in goal_lower:
-            return load_app_dir(app_dir, include_skills=include_skills)
-    return None
-
-
 __all__ = [
     "AppKnowledge",
-    "auto_discover_knowledge",
     "list_known_apps",
     "load_app_dir",
     "load_knowledge_for_app",
-    "match_app_by_url",
 ]

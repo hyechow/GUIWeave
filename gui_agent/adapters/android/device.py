@@ -50,6 +50,10 @@ def _clamp(v: float, lo: float, hi: float) -> int:
 _LAUNCHER_COMPONENT = re.compile(
     r"(?m)^\s*([A-Za-z0-9_][A-Za-z0-9._]*/[A-Za-z0-9_.$]+)\s*$"
 )
+_FOREGROUND_COMPONENT = re.compile(
+    r"(?:mCurrentFocus|mFocusedApp|mResumedActivity|topResumedActivity)"
+    r"[^\r\n]*?\s(?:u\d+\s+)?([A-Za-z0-9_][A-Za-z0-9._]*)/"
+)
 _RECOVERABLE_TRANSPORT_ERRORS = (
     "device offline",
     " is offline",
@@ -234,6 +238,21 @@ class AndroidDevice:
                 "android",
                 reason=f"Android device clock unavailable: {type(exc).__name__}",
             )
+
+    def current_app_id(self) -> str:
+        """Return the foreground Android package without changing device state."""
+
+        if self._dev is None:
+            return ""
+        for command in ("dumpsys window windows", "dumpsys activity activities"):
+            try:
+                output = str(self._dev.shell(command) or "")
+            except Exception:  # noqa: BLE001 - identity is optional routing evidence
+                continue
+            match = _FOREGROUND_COMPONENT.search(output)
+            if match:
+                return match.group(1)
+        return ""
 
     def _detect_ime(self) -> None:
         """Per-connect path — READ-ONLY: record whether the device's current IME is

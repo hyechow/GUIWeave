@@ -128,6 +128,58 @@ def test_visual_collection_merges_identical_rows_by_window_context(
     assert collection.coverage["status"] == "complete"
 
 
+@pytest.mark.parametrize("provider", ["vision", "structured"])
+def test_pager_requires_every_page_before_completion(provider: str) -> None:
+    store = RuntimeDataStore()
+    common = dict(
+        requirement_id="records",
+        provider=provider,
+        row_schema=ROW_SCHEMA,
+    )
+
+    def put(page: int, page_count: int = 4, total_records: int | None = None):
+        return store.put_chunk(
+            frame_id=f"frame:{page}",
+            rows=[{"label": f"page {page}", "metric": page}],
+            coverage={
+                "window_context": f"page:{page}",
+                "source_scope": (
+                    "structured_surface" if provider == "structured"
+                    else "visual_viewport"
+                ),
+                "page_index": page,
+                "page_count": page_count,
+                "total_records": total_records,
+                "has_next_page": page < 4,
+                "at_end": page == 4,
+                "partial": page < 4,
+            },
+            **common,
+        )
+
+    put(1, total_records=2)
+    _, collection, _ = put(4, total_records=2)
+
+    assert collection.coverage["status"] == "incomplete"
+    assert collection.coverage["pages_seen"] == [1, 4]
+
+    store = RuntimeDataStore()
+    put(1)
+    put(4)
+    put(2)
+    put(3)
+    _, collection, created = put(4)
+
+    assert created is False
+    assert collection.row_count == 4
+    assert collection.coverage["status"] == "complete"
+    assert collection.coverage["pages_seen"] == [1, 2, 3, 4]
+
+    _, collection, created = put(4, page_count=5)
+    assert created is False
+    assert collection.coverage["status"] == "conflicting"
+
+
 def test_structured_collection_preserves_identical_business_rows_on_distinct_pages() -> None:
     store = RuntimeDataStore()
     common = dict(

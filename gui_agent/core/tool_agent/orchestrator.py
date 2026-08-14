@@ -42,6 +42,15 @@ from gui_agent.core.tool_agent.sandbox import (
 
 _MASTER_FILENAME = "<tool-agent-master>"
 _WORKER_ID_PATTERN = re.compile(r"^[a-z][a-z0-9_]{0,63}$")
+_DESTINATION_ONLY_GOAL = re.compile(
+    r"^(?!.*(?:多少|数量|总数|统计|汇总|返回|列出|提取|how\s+many|count|total|"
+    r"summari[sz]e|extract|list\s+all))"
+    r"(?:(?:请|请帮我|帮我)?(?:看|查看|打开|进入|前往|转到|导航到|显示)(?:一下)?"
+    r"[^，,；;。！？?!]{0,120}(?:页面|界面|列表|详情|设置|面板|模块|区域|栏目)"
+    r"|(?:please\s+)?(?:view|open|go\s+to|navigate\s+to|show)\s+.{0,120}"
+    r"(?:page|screen|list|details|settings|dashboard|section|panel))$",
+    re.IGNORECASE,
+)
 _CTX_METHODS = {
     "gui_worker",
     "transform",
@@ -770,10 +779,14 @@ def _validate_finish_call(call: ast.Call) -> list[MasterDiagnostic]:
         diagnostics.append(_diagnostic(
             "FINISH_SIGNATURE", "ctx.finish requires a result ref string", call
         ))
-    if _subscript_key(value) in {"collection_ref", "result_ref"}:
+    elif _subscript_key(value) != "ref":
+        descriptor = _subscript_key(value) in {"collection_ref", "result_ref"}
         diagnostics.append(_diagnostic(
             "REF_VALUE_REQUIRED",
-            "ctx.finish requires result_ref['ref'], not the result_ref descriptor",
+            "ctx.finish requires result_ref['ref'], not the result_ref descriptor"
+            if descriptor
+            else "ctx.finish requires an exact ResultRef string expression such as "
+            "result['ref']; literals, None, descriptors, and unproven aliases are invalid",
             value,
         ))
     effect_keyword = next((item for item in call.keywords if item.arg == "effect"), None)
@@ -797,6 +810,7 @@ def validate_master_source(
     source: str,
     *,
     platform_context: dict[str, Any] | None = None,
+    user_goal: str = "",
 ) -> list[MasterDiagnostic]:
     """Validate one restricted Worker-orchestration program."""
     try:
@@ -805,6 +819,8 @@ def validate_master_source(
         return [MasterDiagnostic("SYNTAX", str(exc), exc.lineno or 0)]
 
     diagnostics: list[MasterDiagnostic] = []
+    goal = user_goal.strip().rstrip("。.!！?").strip()
+    destination_only = bool(_DESTINATION_ONLY_GOAL.fullmatch(goal))
     functions = [item for item in tree.body if isinstance(item, ast.FunctionDef)]
     if len(tree.body) != 1 or len(functions) != 1 or functions[0].name != "run":
         diagnostics.append(_diagnostic("PROGRAM_SHAPE", "source must contain exactly def run(ctx):"))
@@ -862,12 +878,41 @@ def validate_master_source(
                     node,
                     platform_context=platform_context,
                 ))
+                if destination_only:
+                    try:
+                        requirements = _literal_keyword(node, "data_requirements")
+                        profile = (
+                            _literal_keyword(node, "profile")
+                            if any(item.arg == "profile" for item in node.keywords)
+                            else None
+                        )
+                    except ValueError:
+                        pass
+                    else:
+                        if profile == "collector" or requirements:
+                            diagnostics.append(_diagnostic(
+                                "TASK_INTENT",
+                                "destination-only requests require an operator with no data",
+                                node,
+                            ))
             elif method == "transform":
                 diagnostics.extend(_validate_transform_call(node))
             elif method in {"finish", "replan", "fail"}:
                 terminal_calls += 1
                 if method == "finish":
                     diagnostics.extend(_validate_finish_call(node))
+                    if destination_only:
+                        try:
+                            effect = _literal_keyword(node, "effect")
+                        except ValueError:
+                            pass
+                        else:
+                            if effect != "ui_state":
+                                diagnostics.append(_diagnostic(
+                                    "TASK_INTENT",
+                                    "destination-only requests require effect='ui_state'",
+                                    node,
+                                ))
             continue
         if node.func.attr not in _SAFE_METHODS:
             diagnostics.append(_diagnostic("UNSAFE_METHOD", f"method {node.func.attr!r} is disallowed", node))
@@ -936,6 +981,7 @@ def compile_master_program(
             platform_context=(
                 platform_context if isinstance(platform_context, dict) else None
             ),
+            user_goal=str(task_context.get("goal") or ""),
         )
         if on_event is not None:
             on_event(

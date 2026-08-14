@@ -33,6 +33,10 @@ knowledge/<platform>/<app>/
 - `check`：应用特有的可观察完成标志。
 - `metadata`：frontmatter 来源、作用域和版本信息。
 
+`gui_agent/core/app_router.py` 在加载知识前统一解析应用身份。它从目标中的规范名称/alias、
+当前 URL 或平台应用标识收集确定性证据；发生 alias 冲突时要求澄清，不会选择第一个目录。
+Router 支持一次返回多个目标应用，供跨应用任务分别绑定知识。
+
 初始规划调用 `AppKnowledge.orchestrator_context(goal)`。只有 frontmatter 中显式包含
 `scope: [orchestrator]` 的普通章节才会参与目标匹配；未命中章节时仅返回 navigation。
 
@@ -63,7 +67,9 @@ version: 1
 覆盖层建议：
 
 - `_app.md`：`source_type: knowledge_navigation`
-- `_deploy.md`：`source_type: deployment_context`，可通过 `aliases` 声明部署别名
+- `_deploy.md`：`source_type: deployment_context`；frontmatter 可用 `aliases` 声明自然语言
+  别名、`browser_origins` 声明站点 origin、`android_packages` / `iphone_bundle_ids` 声明
+  平台应用标识。正文中的 HTTP(S) 入口也会参与 Browser origin 匹配。
 - `_skill.md`：`source_type: knowledge_skill`
 - `_check.md`：`source_type: knowledge_check_rules`
 

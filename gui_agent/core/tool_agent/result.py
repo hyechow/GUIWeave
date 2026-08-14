@@ -37,6 +37,7 @@ def project_tool_agent_result(
     presentation: object | None = None,
     raw_input: str | None = None,
     router: dict | None = None,
+    app_router: dict | None = None,
 ) -> AgentResult:
     """Project a Tool Agent run onto stable result and report contracts."""
 
@@ -80,6 +81,7 @@ def project_tool_agent_result(
             "platform_rejections": platform_rejections,
             "models": models,
             "platform_time": platform_time,
+            "app_router": app_router,
             "trace_path": str(log_dir / "tool_agent_trace.json"),
             "replay_path": str(log_dir / "tool_agent_replay.json"),
             "presentation_path": str(log_dir / "tool_agent_presentation.json"),
@@ -136,6 +138,7 @@ def execute_tool_agent(
     hud: object | None = None,
     raw_input: str | None = None,
     router: dict | None = None,
+    app_router: dict | None = None,
     stop_requested: Callable[[], bool] | None = None,
 ) -> tuple[AgentResult, PresentationResult]:
     """Run Tool Agent and persist its replay, presentation, and stable context."""
@@ -190,6 +193,7 @@ def execute_tool_agent(
         presentation=presentation,
         raw_input=raw_input,
         router=router,
+        app_router=app_router,
     )
     return result, presentation
 

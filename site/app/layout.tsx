@@ -3,7 +3,7 @@ import { headers } from "next/headers";
 import "./globals.css";
 
 const title = "GUIWeave — Local GUI Automation for Agents";
-const description = "GUIWeave macOS Developer Preview：本地 GUI Agent 运行时，通过用户配置的模型网关完成推理，需要对应 API_KEY。";
+const description = "GUIWeave macOS Developer Preview：多轮 Run Console 先判断是否需要 GUI，再在本地执行浏览器、Android 与 iPhone 自动化。";
 
 export async function generateMetadata(): Promise<Metadata> {
   const requestHeaders = await headers();
