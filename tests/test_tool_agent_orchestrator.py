@@ -749,6 +749,40 @@ def test_master_compiler_regenerates_only_during_static_review() -> None:
     assert events[1][1]["diagnostics"] == []
 
 
+def test_master_review_rejects_data_collection_for_destination_only_goal() -> None:
+    source = _program(
+        f'''\
+records = {GUI_CALL}
+result = ctx.transform(
+    transform_id="return_records",
+    inputs=[records["collection_ref"]["ref"]],
+    source="def transform(inputs):\\n    return inputs[0]",
+    result_schema={{"type": "array", "items": {ROW_SCHEMA!r}}},
+)
+ctx.finish(result["ref"], effect="data")
+'''.strip()
+    )
+
+    diagnostics = validate_master_source(source, user_goal="查看订单列表")
+
+    assert any(item.code == "TASK_INTENT" for item in diagnostics)
+    inferred = source.replace('profile="collector",\n', "")
+    assert any(
+        item.code == "TASK_INTENT"
+        for item in validate_master_source(inferred, user_goal="打开设置")
+    )
+    assert not any(
+        item.code == "TASK_INTENT"
+        for item in validate_master_source(source, user_goal="查看有多少订单的订单列表")
+    )
+
+
+def test_master_review_accepts_operator_for_destination_only_goal() -> None:
+    assert validate_master_source(
+        _launch_app_program("settings"), user_goal="查看订单列表"
+    ) == []
+
+
 def _launch_app_program(app: str) -> str:
     return _program(
         f'''\

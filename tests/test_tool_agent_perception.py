@@ -152,6 +152,45 @@ def test_enhanced_materializes_matching_structured_surface_outside_viewport(tmp_
     assert frame.chunks[0].coverage["source_scope"] == "structured_surface"
 
 
+def test_structured_surface_resolves_caption_qualified_field(tmp_path: Path) -> None:
+    requirement = DataRequirement(
+        id="orders",
+        description="All order records",
+        row_schema={
+            "type": "object",
+            "properties": {"order_id": {"type": "string"}},
+            "required": ["order_id"],
+            "additionalProperties": False,
+        },
+        field_sources={"order_id": "Order ID"},
+        field_types={"order_id": "text"},
+    )
+    tables = [
+        {"caption": "Customer List", "headers": ["ID"], "rows": [{"ID": "99"}]},
+        {
+            "caption": "Order List",
+            "headers": ["ID"],
+            "rows": [{"ID": "32"}],
+            "partial": False,
+            "traversal": {"type": "scroll", "at_scroll_end": True},
+        },
+    ]
+    materializer = _materializer(tmp_path, "enhanced")
+
+    frame, _ = materializer.observe(
+        bundle=FakeBundle(tables),
+        platform=FakePlatform(),
+        requirements=[requirement],
+        frame_no=1,
+    )
+
+    assert frame.chunks[0].provider == "structured"
+    assert materializer.data_store.collection_rows(frame.collections[0].ref) == [
+        {"order_id": "32"}
+    ]
+    assert frame.collections[0].coverage["status"] == "complete"
+
+
 def test_acquisition_scope_can_broaden_without_changing_logical_row_filter(
     tmp_path: Path,
 ) -> None:
@@ -431,6 +470,56 @@ def test_visual_values_use_complete_enhanced_surface_as_coverage_evidence(
     assert frame.chunks[0].coverage["end_visible"] is False
     assert frame.collections[0].row_count == 2
     assert frame.collections[0].coverage["status"] == "complete"
+
+
+def test_visual_bottom_does_not_override_enabled_surface_pagination(
+    tmp_path: Path,
+) -> None:
+    requirement = DataRequirement(
+        id="records",
+        description="Order List",
+        target_label="Order List",
+        row_schema={
+            "type": "object",
+            "properties": {"record_id": {"type": "string"}},
+            "required": ["record_id"],
+        },
+        field_sources={"record_id": "Record ID"},
+        field_types={"record_id": "text"},
+    )
+    materializer = _materializer(tmp_path, "enhanced")
+    materializer._vision_extract = lambda *_args, **_kwargs: {  # type: ignore[method-assign]
+        "found": True,
+        "rows": [{"record_id": "1"}],
+        "end_visible": True,
+        "scope_satisfied": True,
+    }
+    table = {
+        "caption": "Order List",
+        "headers": ["ID"],
+        "rows": [{"ID": "1"}],
+        "partial": False,
+        "traversal": {
+            "type": "paged",
+            "page_index": 1,
+            "page_count": 4,
+            "has_next_page": True,
+            "has_prev_page": False,
+        },
+    }
+    frame, _ = materializer.observe(
+        bundle=FakeBundle([table]),
+        platform=FakePlatform(),
+        requirements=[requirement],
+        frame_no=1,
+    )
+
+    coverage = frame.collections[0].coverage
+    assert frame.chunks[0].provider == "vision"
+    assert coverage["status"] == "incomplete"
+    assert coverage["at_end"] is False
+    assert coverage["pages_seen"] == [1]
+    assert coverage["movement"]["has_next_page"] is True
 
 
 def test_detail_collection_keeps_candidate_total_and_survives_list_navigation(

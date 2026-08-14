@@ -20,6 +20,9 @@ def test_table_snapshot_js_is_serialized_expression():
     assert "viewport: detectPageViewport" in js
     assert "document.documentElement.scrollHeight" in js
     assert "return { type: 'static' }" in js
+    assert "pagerFromControls" in js
+    assert "pageNumbers" in js
+    assert "getComputedStyle(item.el)" in js
     assert 'getAttribute("aria-colspan")' in js
     assert 'row.closest("table") === table' in js
     assert 'cell.closest("tr") === row' in js
