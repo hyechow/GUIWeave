@@ -46,6 +46,9 @@ def test_action_envelope_preserves_dynamic_atomic_schemas() -> None:
         if tool["function"]["name"] == "continue_with_actions"
     )
     description = envelope["function"]["description"]
+    assert "excluded or already-processed candidates permit traversal" in description
+    assert "call complete directly" in description
+    assert "do not put terminal tools" in description
     assert "tap" not in description
     assert "clear_text" not in description
     assert "select_option" not in description
@@ -53,6 +56,7 @@ def test_action_envelope_preserves_dynamic_atomic_schemas() -> None:
     state = {
         "status": "exploring",
         "summary": "The complete form is visible.",
+        "established_facts": [],
         "next_instruction": "Fill and submit the form.",
     }
     actions = [
@@ -285,6 +289,13 @@ def test_runtime_action_floor_and_patch_tool_are_always_available() -> None:
         parameters = tool["function"]["parameters"]
         assert "state" in parameters["properties"]
         assert "state" in parameters["required"]
+        facts = parameters["properties"]["state"]["properties"]["established_facts"]
+        assert facts["type"] == "array"
+        assert "not already present in WorkerMemory" in facts["description"]
+        assert "Before leaving a record" in facts["description"]
+        assert "confirmed effect together" in facts["description"]
+        assert "without pronouns" in facts["description"]
+        assert "established_facts" in parameters["properties"]["state"]["required"]
     runtime_tap = next(
         tool for tool in tools
         if tool["function"]["name"] == "runtime_tap_visible"
@@ -313,6 +324,7 @@ def test_runtime_action_floor_and_patch_tool_are_always_available() -> None:
             "state": {
                 "status": "exploring",
                 "summary": "The exact target route is known.",
+                "established_facts": [],
                 "next_instruction": "Open it directly.",
             },
             "url": "/admin/review/product/index/",

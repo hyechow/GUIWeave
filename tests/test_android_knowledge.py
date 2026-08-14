@@ -110,3 +110,39 @@ def test_files_mail_use_physical_folder_and_single_file_picker() -> None:
         "return after one selection", "verify the attachment in compose",
     ):
         assert fact in mail_context
+
+
+def test_files_archive_content_keeps_intermediate_names_in_one_branch() -> None:
+    knowledge = load_knowledge_for_app("Files", "android")
+    assert knowledge is not None
+
+    context = knowledge.orchestrator_context(
+        "earliest zip from July extract contents and count lines"
+    )
+
+    for fact in (
+        "Downloads top-bar search", "not a tap target",
+        "one uninterrupted Files interaction", "match only those names",
+        "separate branch", "candidate identities", "substitute every/recent",
+    ):
+        assert fact in context
+
+
+def test_mastodon_saved_views_require_global_profile_navigation() -> None:
+    knowledge = load_knowledge_for_app("Mastodon", "android")
+    assert knowledge is not None
+
+    context = knowledge.orchestrator_context(
+        "favorite dogs except existing favorites and bookmarks"
+    )
+
+    for fact in (
+        "Profile → Saved → Favorites", "selected `Saved` tab", "profile strip",
+        "use visible Back one", "until the global bar returns",
+        "After both sets are complete", "controls on a tag row or TootDetail are not authoritative",
+        "exact hashtag row", "0 people are talking", "never proof",
+        "open its text body", "exact tag title identifies",
+        "Never favorite from timeline action bars", "fixed `reply`",
+        "separate structured `Favorite` control",
+    ):
+        assert fact in context

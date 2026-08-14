@@ -54,12 +54,14 @@ class FakePerception:
         control_state: list[dict] | None = None,
         applied_filters: dict[str, str] | None = None,
         applied_filter_state: AppliedFilterState | None = None,
+        collection_regions: list | None = None,
     ) -> None:
         self.tables = tables
         self.controls = controls or []
         self.control_state = control_state
         self.applied_filters = applied_filters or {}
         self.applied_filter_state = applied_filter_state
+        self.collection_regions = collection_regions
 
     def observe(self):
         return SimpleNamespace(
@@ -69,6 +71,7 @@ class FakePerception:
             form_control_state=self.control_state,
             applied_filters=self.applied_filters,
             applied_filter_state=self.applied_filter_state,
+            collection_regions=self.collection_regions,
             url="https://example.test",
             title="Example",
         )
@@ -83,12 +86,14 @@ class FakeBundle:
         control_state: list[dict] | None = None,
         applied_filters: dict[str, str] | None = None,
         applied_filter_state: AppliedFilterState | None = None,
+        collection_regions: list | None = None,
     ) -> None:
         self.tables = tables
         self.controls = controls or []
         self.control_state = control_state
         self.applied_filters = applied_filters or {}
         self.applied_filter_state = applied_filter_state
+        self.collection_regions = collection_regions
         self.make_perception_calls = 0
 
     def make_perception(self, _platform, _path):
@@ -99,6 +104,7 @@ class FakeBundle:
             control_state=self.control_state,
             applied_filters=self.applied_filters,
             applied_filter_state=self.applied_filter_state,
+            collection_regions=self.collection_regions,
         )
 
 
@@ -116,6 +122,74 @@ def _materializer(tmp_path: Path, mode: str) -> PerceptionMaterializer:
         "end_visible": False,
     }
     return materializer
+
+
+def _visible_region() -> SimpleNamespace:
+    return SimpleNamespace(
+        caption="Saved items",
+        bounds=None,
+        traversal={"type": "scroll"},
+        cells=[SimpleNamespace(
+            ref="android:1.2",
+            bounds=(10.0, 20.0, 900.0, 500.0),
+            texts=["@demo", "Exact visible text 💛🐾"],
+            clipped_top=False,
+            clipped_bottom=False,
+        )],
+    )
+
+
+def test_operator_projects_exact_visible_collection_cell_text(tmp_path: Path) -> None:
+    materializer = _materializer(tmp_path, "enhanced")
+
+    frame, _ = materializer.observe(
+        bundle=FakeBundle([], collection_regions=[_visible_region()]),
+        platform=FakePlatform(),
+        requirements=[],
+        frame_no=1,
+    )
+
+    assert len(frame.visible_collection_regions) == 1
+    region = frame.visible_collection_regions[0]
+    assert region["caption"] == "Saved items"
+    assert region["traversal"] == {"type": "scroll"}
+    assert region["viewport_tail_clipped"] is False
+    assert region["cells"][0]["texts"] == ["@demo", "Exact visible text 💛🐾"]
+
+
+def test_collector_does_not_project_collection_cell_values(tmp_path: Path) -> None:
+    materializer = _materializer(tmp_path, "enhanced")
+
+    frame, _ = materializer.observe(
+        bundle=FakeBundle(
+            [{
+                "caption": "Top Terms",
+                "headers": ["Search Term", "Uses"],
+                "rows": [{"Search Term": "private", "Uses": 1}],
+            }],
+            collection_regions=[_visible_region()],
+        ),
+        platform=FakePlatform(),
+        requirements=[_requirement()],
+        frame_no=1,
+    )
+
+    assert frame.visible_collection_regions == []
+
+
+def test_operator_marks_a_clipped_collection_tail(tmp_path: Path) -> None:
+    region = _visible_region()
+    region.cells[-1].clipped_bottom = True
+    materializer = _materializer(tmp_path, "enhanced")
+
+    frame, _ = materializer.observe(
+        bundle=FakeBundle([], collection_regions=[region]),
+        platform=FakePlatform(),
+        requirements=[],
+        frame_no=1,
+    )
+
+    assert frame.visible_collection_regions[0]["viewport_tail_clipped"] is True
 
 
 def test_enhanced_materializes_matching_structured_surface_outside_viewport(tmp_path: Path) -> None:

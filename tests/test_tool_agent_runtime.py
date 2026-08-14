@@ -79,6 +79,85 @@ def test_effective_scroll_resets_action_cycle_history() -> None:
     assert inspect().prior_attempts == 0
 
 
+def test_runtime_rejects_spatial_target_inside_clipped_collection_cell() -> None:
+    frame = MaterializedFrame(
+        frame_id="frame:30",
+        screenshot_path="frame.png",
+        visible_collection_regions=[{"cells": [{
+            "bounds": [0, 897, 1000, 1000],
+            "texts": ["partially visible record"],
+            "clipped_bottom": True,
+        }]}],
+    )
+
+    def inspect(target_frame: MaterializedFrame, capability: str, y: int):
+        return WorkerActionCircuitBreaker().inspect(
+            tool=capability,
+            capability=capability,
+            args={"x": 500, "y": y},
+            frame=target_frame,
+        )
+
+    assert "clipped collection cell" in inspect(frame, "tap", 948).reason
+    assert inspect(frame, "tap", 700).blocked is False
+    assert inspect(frame, "scroll", 948).blocked is False
+
+    selectable = frame.model_copy(update={"controls": [{
+        "kind": "checkbox",
+        "label": "Select record",
+        "selection_mode": "multiple",
+        "rect": {"x": 500, "y": 948, "w": 40, "h": 40},
+    }]})
+    assert inspect(selectable, "tap", 948).blocked is False
+
+
+def test_runtime_blocks_navigation_outside_unfinished_scroll_collection() -> None:
+    frame = MaterializedFrame(
+        frame_id="frame:9",
+        screenshot_path="frame.png",
+        visible_collection_regions=[{
+            "bounds": [0, 116, 1000, 886],
+            "viewport_tail_clipped": True,
+            "cells": [],
+        }],
+    )
+    state = WorkerState(
+        status="collecting",
+        summary="Collection is complete.",
+        next_instruction="Navigate away.",
+    )
+    journal = WorkerJournal("collection")
+    journal.collection_context = "Bookmarks"
+
+    reason = ToolAgentRuntime._incomplete_collection_exit_reason(
+        capability="tap",
+        args={"x": 375, "y": 930},
+        state=state,
+        journal=journal,
+        frame=frame,
+    )
+    assert "latest traversal scroll returned no_effect" in reason
+
+    journal.last_scroll_no_effect = True
+    assert ToolAgentRuntime._incomplete_collection_exit_reason(
+        capability="tap",
+        args={"x": 375, "y": 930},
+        state=state,
+        journal=journal,
+        frame=frame,
+    ) == ""
+
+    journal.collection_context = ""
+    journal.last_scroll_no_effect = False
+    assert ToolAgentRuntime._incomplete_collection_exit_reason(
+        capability="tap",
+        args={"x": 375, "y": 930},
+        state=state,
+        journal=journal,
+        frame=frame,
+    ) == ""
+
+
 def test_runtime_decodes_provider_encoded_coordinate_pair() -> None:
     assert _decode_ordered_actions(
         '[{"name":"tap","args":{"x":499,499,"description":"Tap splash"}}]'
@@ -638,7 +717,10 @@ _LOGIN_ACTIONS = [
 
 
 class _MultiActionWorker:
-    def __init__(self, action_batches: list[list[dict]] | None = None) -> None:
+    def __init__(
+        self,
+        action_batches: list[list[dict]] | None = None,
+    ) -> None:
         self.calls = 0
         self.bound_names: set[str] = set()
         self.bound_schemas: list[str] = []
@@ -693,6 +775,7 @@ def _run_fused_worker(
     actions: list[DynamicActionSpec] | None = None,
     controls: list[dict] | None = None,
     requirement_scopes: dict[str, dict] | None = None,
+    visible_collection_regions: list[dict] | None = None,
 ) -> ToolAgentRuntime:
     runtime = object.__new__(ToolAgentRuntime)
     runtime.trace = []
@@ -714,6 +797,7 @@ def _run_fused_worker(
             screenshot_path="frame.png",
             url="https://example.test/login",
             controls=controls or [],
+            visible_collection_regions=visible_collection_regions or [],
             requirement_scopes=requirement_scopes or {},
         ), b"initial-png"
 

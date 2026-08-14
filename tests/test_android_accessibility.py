@@ -306,6 +306,18 @@ def test_android_hides_trailing_action_occluded_by_row_controls() -> None:
     assert "Visible Delete" in {control["label"] for control in controls}
 
 
+def test_android_hides_thin_scrolled_action_fragments() -> None:
+    controls = form_controls_from_semantic_tree([
+        _semantic_node("android:0.0.0", "Favorite", 565.7, 117.1, 155.6, 1.7),
+        _semantic_node("android:0.0.1", "Favorite", 565.7, 662.3, 155.6, 37.1),
+    ])
+
+    assert controls is not None
+    assert [(item["label"], item["rect"]["y"]) for item in controls] == [
+        ("Favorite", pytest.approx(662.3)),
+    ]
+
+
 @pytest.mark.parametrize("role", ["checkbox", "button"])
 def test_android_hides_scrolled_control_under_fixed_overlay(role: str) -> None:
     clipped = _semantic_node(

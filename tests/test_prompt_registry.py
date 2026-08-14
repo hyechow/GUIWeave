@@ -109,27 +109,38 @@ def test_worker_keeps_data_private_and_coordinates_normalized() -> None:
 def test_master_keeps_visual_conditional_dependencies_in_one_worker() -> None:
     prompt = load_prompt_text("task.tool_agent.master")
 
-    assert "drive a later conditional GUI mutation" in prompt
-    assert "including across application switches" in prompt
-    assert "ResultRefs cannot serve as hidden Worker memory" in prompt
-    assert "including by nesting it in an object" in prompt
-    assert "authorized authentication method" in prompt
-    assert "exact acceptance set" in prompt
-    assert "never prescribe per-record commits" in prompt
+    for rule in (
+        "drive a later conditional GUI mutation", "including across application switches",
+        "ResultRefs cannot serve as hidden Worker memory", "including by nesting it in an object",
+        "authorized authentication method", "exact acceptance set", "never prescribe per-record commits",
+        "traverses every prerequisite collection", "compares each candidate", "mutates only nonmatches",
+        "candidate-local evidence", "complete—not merely visible—candidate traversal",
+        "excluded/already-processed identities", "never emit an empty list", "intermediate identities",
+        "UI transitions/mutations", "clean environment", "Action `description` is static metadata",
+        "such as `type.text`",
+    ):
+        assert rule in prompt
 
 
 def test_worker_handles_exhausted_candidate_sets_and_row_targets() -> None:
     prompt = load_prompt_text("task.tool_agent.worker")
 
-    assert "an exhausted candidate set is direct" in prompt
-    assert "the same unfiltered selector" in prompt
-    assert "latest selected batch's commit produced a confirmed transition" in prompt
-    assert "candidate_set_state.status = exhausted" in prompt
-    assert "An initially empty selector, a filtered zero-result view" in prompt
-    assert "describe the row/button itself" in prompt
-    assert "adjacent child icon or decoration" in prompt
-    assert "retain processed identities" in prompt
-    assert "explicitly remaining candidate" in prompt
+    for rule in (
+        "an exhausted candidate set is direct", "the same unfiltered selector",
+        "latest selected batch's commit produced a confirmed transition",
+        "candidate_set_state.status = exhausted", "An initially empty selector, a filtered zero-result view",
+        "describe the row/button itself", "adjacent child icon or decoration", "named action does not prove",
+        "never relabel another visible control", "retain processed identities",
+        "explicitly remaining candidate", "durable completion fact means processed", "without reopening",
+        "comparison evidence", "implement `state.next_instruction`",
+        "never an internal step such as compare/evaluate/determine", "excluded match permits traversal",
+        "complete application-declared identity", "repeated, prefixed, ellipsized, or partial",
+        "complete identity and confirmed effect", "this item/record", "visible_collection_regions",
+        "not record boundaries", "skip exact excluded matches", "viewport_tail_clipped = true",
+        "repeated identity alone is insufficient", "Stable page chrome", "selector scrolls offscreen",
+        "unobscured central viewport", "opening tap returns `no_effect`",
+    ):
+        assert rule in prompt
 
 
 def test_large_inline_prompt_constants_are_not_added() -> None:

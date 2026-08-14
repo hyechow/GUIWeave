@@ -55,7 +55,7 @@ def test_worker_memory_is_a_bounded_projection_of_append_only_runtime_facts() ->
     rendered = memory.render_prompt_section()
     assert "runtime reported no_effect" in rendered
     assert "[step:1]" not in rendered
-    assert "Only runtime results below are facts" in rendered
+    assert "Worker-established visual facts" in rendered
 
 
 def test_worker_memory_omits_spatial_and_execution_metadata() -> None:
@@ -127,6 +127,92 @@ def test_worker_memory_preserves_flash_off_target_signal() -> None:
     assert "flash verifier reported off_target" in rendered
     assert "Browse Channels" in rendered
     assert "do not repeat the same point" in rendered
+
+
+def test_worker_memory_accumulates_explicit_visual_facts() -> None:
+    journal = WorkerJournal(worker_id="identity_memory")
+    for step, fact in enumerate((
+        "Bookmarks identity: author=pupper; content=Border Collie",
+        "Bookmarks identity: author=demo; content=Golden Retriever",
+        "Bookmarks identity: author=pupper; content=Border Collie",
+    ), start=1):
+        journal.record_turn(
+            step=step,
+            frame_id=f"frame:{step}",
+            state=_state(step).model_copy(update={"established_facts": [fact]}),
+            tool="scroll_records",
+            args={},
+            result={"status": "executed", "action_type": "scroll", "no_effect": False},
+        )
+
+    rendered = build_worker_memory_view(journal).render_prompt_section()
+
+    assert "author=pupper; content=Border Collie" in rendered
+    assert "author=demo; content=Golden Retriever" in rendered
+    assert rendered.index("author=demo") < rendered.index("author=pupper")
+    assert sum(event.kind == "established_fact" for event in journal.events) == 2
+
+
+def test_worker_memory_tracks_collection_anchor_without_persisting_raw_cells() -> None:
+    journal = WorkerJournal("collection_memory")
+    frame = MaterializedFrame(
+        frame_id="frame:7",
+        screenshot_path="frame.png",
+        controls=[{
+            "label": "Bookmarks",
+            "selected": True,
+            "rect": {"x": 400, "y": 290, "w": 200, "h": 40},
+        }, {
+            "label": "Selected row",
+            "selected": True,
+            "selection_mode": "multiple",
+            "rect": {"x": 400, "y": 400, "w": 200, "h": 40},
+        }, {
+            "label": "Profile",
+            "selected": True,
+            "rect": {"x": 875, "y": 930, "w": 250, "h": 80},
+        }],
+        visible_collection_regions=[{
+            "bounds": (0, 330, 1000, 886),
+            "cells": [
+                {"ref": "body", "texts": ["Exact content 💛🐾"]},
+                {"ref": "media", "texts": ["Media without description"]},
+                {"ref": "actions", "texts": ["Reply", "Favorite"], "clipped_bottom": True},
+            ],
+        }],
+    )
+
+    journal.observe_collection(frame)
+    rendered = build_worker_memory_view(journal).render_prompt_section()
+
+    assert journal.collection_context == "Bookmarks"
+    assert "Exact content 💛🐾" not in rendered
+    assert journal.events == []
+    projection = project_worker_context(
+        memory=build_worker_memory_view(journal), frame=frame,
+    )
+    assert "Exact content 💛🐾" in projection.text
+
+    journal.record_turn(
+        step=1,
+        frame_id="frame:7",
+        state=_state(1),
+        tool="scroll_records",
+        args={},
+        result={"status": "executed", "action_type": "scroll", "no_effect": True},
+    )
+    assert journal.last_scroll_no_effect is True
+
+    journal.record_turn(
+        step=2,
+        frame_id="frame:7",
+        state=_state(2),
+        tool="open_search",
+        args={},
+        result={"status": "executed", "action_type": "tap"},
+    )
+    assert journal.collection_context == ""
+    assert journal.last_scroll_no_effect is False
 
 
 def test_worker_context_always_uses_compact_semantic_frame() -> None:
