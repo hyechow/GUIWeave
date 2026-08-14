@@ -980,6 +980,7 @@ class ToolAgentRuntime:
                 self._worker_last_frames = {}
                 last_frames = self._worker_last_frames
             last_frames[worker_id] = frame
+            journal.observe_collection(frame)
             ready_collection = self._ready_collection(spec, frame)
             if ready_collection is not None and ready_collection.row_count == 0:
                 self._trace(
@@ -1210,13 +1211,29 @@ class ToolAgentRuntime:
                         frame=frame,
                         observed_auth_codes=observed_auth_codes,
                     )
-                    if circuit_decision.blocked:
+                    collection_exit_reason = self._incomplete_collection_exit_reason(
+                        capability=action_spec.capability,
+                        args=resolved_guard_args,
+                        state=state,
+                        journal=journal,
+                        frame=frame,
+                    )
+                    blocked_reason = collection_exit_reason or (
+                        circuit_decision.reason if circuit_decision.blocked else ""
+                    )
+                    if blocked_reason:
                         guard_repair_turn += 1
                         feedback = {
                             "status": "blocked_repeated_action",
-                            "reason": circuit_decision.reason,
+                            "reason": blocked_reason,
                             "prior_attempts": circuit_decision.prior_attempts,
                             "instruction": (
+                                "The collection end is not established. Scroll this same "
+                                "collection now; do not navigate away."
+                                if collection_exit_reason else
+                                "Tap the visible input control to focus it now; do not type "
+                                "on this frame."
+                                if blocked_reason.startswith("blocked type on ") else
                                 "Treat the Runtime guard as authoritative. Do not rephrase or "
                                 "retry the blocked action; advance from the current observation "
                                 "or choose a materially different capability."
@@ -1231,13 +1248,13 @@ class ToolAgentRuntime:
                             signature=circuit_decision.signature,
                             progress=circuit_decision.progress,
                             prior_attempts=circuit_decision.prior_attempts,
-                            reason=circuit_decision.reason,
+                            reason=blocked_reason,
                         )
                         journal.record_guard(
                             step=step,
                             repair_turn=guard_repair_turn,
                             tool=guarded_call["name"],
-                            reason=circuit_decision.reason,
+                            reason=blocked_reason,
                         )
                         if guard_repair_turn > _MAX_ACTION_GUARD_REPAIRS_PER_FRAME:
                             return WorkerOutcome(
@@ -2419,6 +2436,41 @@ class ToolAgentRuntime:
         raise _WorkerActionRejected(
             "launch_app requires an exact Runtime-provided application name; "
             f"available: {list(installed)}"
+        )
+
+    @staticmethod
+    def _incomplete_collection_exit_reason(
+        *,
+        capability: str,
+        args: dict[str, Any],
+        state: WorkerState,
+        journal: WorkerJournal,
+        frame: MaterializedFrame,
+    ) -> str:
+        if (
+            state.status != "collecting"
+            or capability not in {"tap", "long_press"}
+            or not journal.collection_context
+            or journal.last_scroll_no_effect
+            or len(frame.visible_collection_regions) != 1
+        ):
+            return ""
+        region = frame.visible_collection_regions[0]
+        bounds = region.get("bounds") or ()
+        if not region.get("viewport_tail_clipped") or len(bounds) != 4:
+            return ""
+        x, y = args.get("x"), args.get("y")
+        if not isinstance(x, (int, float)) or not isinstance(y, (int, float)):
+            return ""
+        inside = (
+            float(bounds[0]) <= float(x) <= float(bounds[2])
+            and float(bounds[1]) <= float(y) <= float(bounds[3])
+        )
+        if inside:
+            return ""
+        return (
+            "cannot navigate outside a scroll collection while its viewport tail is clipped "
+            "unless the latest traversal scroll returned no_effect"
         )
 
     def _supported_capabilities(self) -> frozenset[str]:

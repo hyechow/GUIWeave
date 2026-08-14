@@ -374,7 +374,16 @@ class WorkerState(StrictModel):
 
     status: Literal["exploring", "collecting", "completed", "failed"]
     summary: str
-    established_facts: list[str] = Field(default_factory=list)
+    established_facts: list[str] = Field(
+        default_factory=list,
+        description=(
+            "New exact visual facts not already present in WorkerMemory; Runtime retains "
+            "them across turns. Before leaving a record used for later matching, include "
+            "its complete application-declared identity without pronouns, prefixes, ellipses, "
+            "summaries, or repetition. A completion fact must contain that identity and confirmed "
+            "effect together."
+        ),
+    )
     open_gaps: list[str] = Field(default_factory=list)
     coverage: dict[str, str] = Field(default_factory=dict)
     action_space_status: Literal["sufficient", "missing_action"] = "sufficient"
@@ -417,6 +426,7 @@ class MaterializedFrame(StrictModel):
     url: str = ""
     title: str = ""
     controls: list[dict[str, Any]] = Field(default_factory=list)
+    visible_collection_regions: list[dict[str, Any]] = Field(default_factory=list)
     structured_surfaces: list[dict[str, Any]] = Field(default_factory=list)
     applied_filters: dict[str, Any] = Field(default_factory=dict)
     requirement_scopes: dict[str, dict[str, Any]] = Field(default_factory=dict)

@@ -154,7 +154,7 @@ class MobileWorldEnv:
         self.ensure_init()
         self._req(
             "POST", "/task/init",
-            json={"task_name": task_name, "req_device": self.device}, timeout=300,
+            json={"task_name": task_name, "req_device": self.device}, timeout=600,
         )
 
     def answer(self, text: str) -> None:

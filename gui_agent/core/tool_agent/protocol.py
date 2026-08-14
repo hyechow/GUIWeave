@@ -16,6 +16,7 @@ from pydantic import BaseModel, ConfigDict, Field
 from gui_agent.core.tool_agent.contracts import (
     DynamicActionSpec,
     ToolActionCapability,
+    WorkerState,
 )
 
 
@@ -393,9 +394,15 @@ _WORKER_STATE_SCHEMA: dict[str, Any] = {
             "enum": ["exploring", "collecting", "completed", "failed"],
         },
         "summary": {"type": "string", "maxLength": 320},
+        "established_facts": {
+            "type": "array",
+            "items": {"type": "string", "minLength": 1, "maxLength": 500},
+            "maxItems": 8,
+            "description": WorkerState.model_fields["established_facts"].description,
+        },
         "next_instruction": {"type": "string", "maxLength": 240},
     },
-    "required": ["status", "summary", "next_instruction"],
+    "required": ["status", "summary", "established_facts", "next_instruction"],
     "additionalProperties": False,
 }
 
@@ -485,6 +492,9 @@ def dynamic_action_envelope_tool(
         "continue_with_actions",
         (
             f"Continue with one to {MAX_ORDERED_ACTIONS} ordered actions on already-visible targets. "
+            "Apply task conditions first: excluded or already-processed candidates permit traversal, "
+            "never their mutation path. If no eligible work remains, call complete directly; do not "
+            "put terminal tools in this action list. "
             "Later actions must not depend on newly revealed UI. Put geometry- or "
             "surface-changing actions last; only a focus action may precede operations "
             "on that same already-visible control. Runtime may discard a stale suffix."

@@ -145,6 +145,44 @@ class WorkerJournal:
 
     worker_id: str
     events: list[WorkerJournalEvent] = field(default_factory=list)
+    collection_context: str = ""
+    last_scroll_no_effect: bool = False
+    established_fact_texts: set[str] = field(default_factory=set, repr=False)
+
+    def observe_collection(self, frame: MaterializedFrame) -> None:
+        if len(frame.visible_collection_regions) != 1:
+            return
+        region = frame.visible_collection_regions[0]
+        bounds = region.get("bounds")
+        context = str(region.get("caption") or "").strip()
+        if isinstance(bounds, (list, tuple)) and len(bounds) == 4:
+            top = float(bounds[1])
+            anchors = [
+                control for control in frame.controls
+                if control.get("selected") is True
+                and control.get("label")
+                and isinstance(control.get("rect"), dict)
+                and float(control["rect"].get("y") or 0)
+                + float(control["rect"].get("h") or 0) / 2 <= top
+            ]
+            if anchors:
+                context = str(max(
+                    anchors,
+                    key=lambda control: float(control["rect"].get("y") or 0),
+                )["label"]).strip()
+        if context:
+            self.collection_context = context[:120]
+
+    def record_established_fact(self, *, event_ref: str, text: str) -> None:
+        fact = " ".join(str(text or "").split())
+        if not fact or fact in self.established_fact_texts:
+            return
+        self.established_fact_texts.add(fact)
+        self.events.append(WorkerJournalEvent(
+            event_ref=event_ref,
+            kind="established_fact",
+            durable_text=f"Worker-established visual fact: {fact}",
+        ))
 
     def record_replan(self, *, attempt: int) -> None:
         self.events.append(WorkerJournalEvent(
@@ -201,6 +239,12 @@ class WorkerJournal:
             if isinstance(result, dict)
             else ""
         )
+        if result_status == "executed":
+            if result.get("action_type") == "scroll":
+                self.last_scroll_no_effect = bool(result.get("no_effect"))
+            else:
+                self.collection_context = ""
+                self.last_scroll_no_effect = False
         is_exception = isinstance(result, dict) and bool(result.get("error"))
         is_no_effect = isinstance(result, dict) and bool(result.get("no_effect"))
         candidate_commit = isinstance(result, dict) and bool(result.get("candidate_commit"))
@@ -247,18 +291,24 @@ class WorkerJournal:
             if memory_args
             else ""
         )
+        event_ref = (
+            f"step:{step}.{substep}"
+            if substep is not None
+            else f"step:{step}"
+        )
+        for index, fact in enumerate(state.established_facts, start=1):
+            self.record_established_fact(
+                event_ref=f"{event_ref}:fact:{index}",
+                text=fact,
+            )
         self.events.append(WorkerJournalEvent(
-            event_ref=(
-                f"step:{step}.{substep}"
-                if substep is not None
-                else f"step:{step}"
-            ),
+            event_ref=event_ref,
             kind="candidate_commit" if candidate_commit else "action_result",
             durable_text=durable_text,
             narrative_text=(
                 f"state={state.status}; tool={tool}{args_text}; "
                 f"result={_bounded_json(memory_result, limit=260)}; "
-                f"summary={state.summary[:240]}; next={state.next_instruction[:200]}"
+                f"next={state.next_instruction[:200]}"
             ),
             pending_subgoal=(
                 state.open_gaps[0]
@@ -293,8 +343,8 @@ class WorkerMemoryView:
     def render_prompt_section(self) -> str:
         lines = [
             "## WorkerMemory (runtime-projected; not conversation history)",
-            "Only runtime results below are facts. State summaries are narrative guidance, "
-            "not completion evidence.",
+            "Runtime results and explicitly Worker-established visual facts below may be "
+            "used. Recent steps are narrative guidance, not completion evidence.",
         ]
         if self.pending_subgoal:
             lines.extend(["### Pending subgoal", f"- {self.pending_subgoal}"])
@@ -302,7 +352,7 @@ class WorkerMemoryView:
             lines.append("### Durable runtime facts")
             lines.extend(
                 f"- [{event.event_ref}] {event.durable_text}"
-                for event in self.durable_facts
+                for event in reversed(self.durable_facts)
             )
         if self.compressed_history:
             lines.append("### Older narrative summaries")
@@ -406,6 +456,7 @@ def _frame_payload(
         "scope_blockers": scope_blockers,
         "observed_choice_state": _observed_choice_state(frame.controls),
         "candidate_set_state": candidate_state,
+        "visible_collection_regions": frame.visible_collection_regions,
         "structured_surfaces": frame.structured_surfaces,
         "chunks": [
             {
@@ -473,7 +524,9 @@ def project_worker_context(
             coverage="complete",
             content=(
                 "## Current MaterializedFrame (compact semantic projection)\n"
-                "Values remain private; descriptors and controls only. "
+                "Runtime-owned collection/data values remain private. "
+                "Visible collection cell text is exact current-frame evidence, but cells "
+                "do not declare record boundaries; clipped cells may be incomplete. "
                 "For every control rect, x/y are its normalized center coordinates; "
                 "never add half of w/h to derive the action point.\n"
                 + compact_frame

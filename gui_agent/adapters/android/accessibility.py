@@ -532,6 +532,11 @@ def _occluded_control(
     if geometry is None:
         return False
     ref, depth, x, y, width, height = geometry
+    # UIAutomator may retain only a one- or two-pixel strip of a scrolled row
+    # below a fixed toolbar. Such a fragment is not a usable visual target and
+    # can duplicate the same action from the next fully visible record.
+    if width < 8 or height < 8:
+        return True
     trailing = 120 <= width <= 400 and x + width / 2 >= 995
     if trailing and height < 60:
         return True

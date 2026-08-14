@@ -130,6 +130,31 @@ def _action_boundary_error(
             return f"blocked select_option on {label!r} ({kind}): target a choice control"
         if capability == "tap" and choice_like:
             return f"blocked tap on {label!r} ({kind}): use select_option to mutate it"
+    selectable = bool(control and (
+        str(control.get("kind") or "").casefold()
+        in {"checkbox", "checkbox_input", "radio", "radio_input", "switch", "switch_input"}
+        or control.get("selection_mode") in {"single", "multiple"}
+    ))
+    x, y = args.get("x"), args.get("y")
+    if (
+        capability in {"tap", "long_press"}
+        and not selectable
+        and isinstance(x, (int, float))
+        and isinstance(y, (int, float))
+    ):
+        for region in frame.visible_collection_regions:
+            for cell in region.get("cells") or ():
+                bounds = cell.get("bounds") or ()
+                if (
+                    len(bounds) == 4
+                    and (cell.get("clipped_top") or cell.get("clipped_bottom"))
+                    and float(bounds[0]) <= float(x) <= float(bounds[2])
+                    and float(bounds[1]) <= float(y) <= float(bounds[3])
+                ):
+                    return (
+                        "spatial target lies inside a clipped collection cell; scroll it "
+                        "into the unobscured central viewport before acting"
+                    )
     description = str(args.get("description") or "").casefold()
     auth_context = " ".join((
         description,

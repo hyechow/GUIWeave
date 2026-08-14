@@ -35,8 +35,8 @@ version: 5
 - Match a Toot across these collections by the exact pair
   (`author_handle`, `content`). A tag-result Toot can only be relocated through
   its `TaggedToots` collection.
-- Favorite membership cannot be inferred from the tag view. Bookmark membership
-  cannot be inferred from a missing card marker.
+- Favorite or bookmark membership cannot be inferred from controls on a tag row or
+  TootDetail; only complete traversal of the corresponding Saved collection is authoritative.
 - Favorite mutation uses the boolean field `favorited`; this is not a field
   displayed by `TaggedToots` and is neither a query field nor a query filter.
   Do not prefilter `TaggedToots` by favorite state; determine exclusion only from

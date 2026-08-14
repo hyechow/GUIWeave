@@ -37,7 +37,12 @@ ttl: session
   the opened folder's rows, so the complete moved-file set is read from the reached subfolder, not
   from the root Documents list.
 - Opening a selected ZIP exposes the complete **ArchiveEntries** collection with query field
-  **name** (`text`). Entry names must be collected before extraction.
+  **name** (`text`). Locate a computed exact archive name through the Downloads top-bar search,
+  then visually open the matching row; the name is text entered into search, not a tap target.
+  When extracted contents are needed, use one uninterrupted Files interaction to remember entry
+  names, extract, return to Downloads, match only those names, and read **content**. Do not finish
+  entry discovery or extraction as a separate branch, or substitute every/recent DownloadFiles row;
+  entry names are the candidate identities for final **name** and **content** rows.
 - Extracting every entry is a durable mutation of that selected ZIP with **selection** = `all` and
   **destination** = `Downloads`. It creates same-named DownloadFiles rows and consumes the archive
   view, so DownloadFiles must be queried again after extraction.

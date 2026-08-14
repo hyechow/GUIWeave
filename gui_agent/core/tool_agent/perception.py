@@ -114,6 +114,33 @@ def _structured_surface_descriptor(table: dict[str, Any]) -> dict[str, Any]:
     return descriptor
 
 
+def _visible_collection_regions(regions: Any) -> list[dict[str, Any]]:
+    """Project exact current-frame cell text without inferring record boundaries."""
+    result: list[dict[str, Any]] = []
+    for region in regions or ():
+        cells = [
+            {
+                "ref": cell.ref,
+                "bounds": cell.bounds,
+                "texts": cell.texts,
+                "clipped_top": cell.clipped_top,
+                "clipped_bottom": cell.clipped_bottom,
+            }
+            for cell in region.cells
+            if cell.texts
+        ]
+        if not cells:
+            continue
+        result.append({
+            "caption": str(region.caption or ""),
+            "bounds": region.bounds,
+            "traversal": dict(region.traversal),
+            "viewport_tail_clipped": bool(cells[-1]["clipped_bottom"]),
+            "cells": cells,
+        })
+    return result
+
+
 def _table_supports_requirement(
     requirement: DataRequirement,
     table: dict[str, Any],
@@ -706,6 +733,7 @@ class PerceptionMaterializer:
         controls: list[dict[str, Any]] = []
         applied_filters: dict[str, Any] = {}
         applied_filter_state = None
+        visible_collection_regions: list[dict[str, Any]] = []
         if self.mode == "enhanced":
             observation = bundle.make_perception(platform, screenshot_path).observe()
             png = observation.png_bytes
@@ -725,6 +753,10 @@ class PerceptionMaterializer:
             ]
             applied_filters = dict(getattr(observation, "applied_filters", None) or {})
             applied_filter_state = getattr(observation, "applied_filter_state", None)
+            if not requirements:
+                visible_collection_regions = _visible_collection_regions(
+                    getattr(observation, "collection_regions", None)
+                )
             url, title = observation.url or "", observation.title or ""
         else:
             png = platform.screenshot()
@@ -1012,6 +1044,7 @@ class PerceptionMaterializer:
             url=url or "",
             title=title or "",
             controls=controls,
+            visible_collection_regions=visible_collection_regions,
             structured_surfaces=[
                 _structured_surface_descriptor(table)
                 for table in tables
