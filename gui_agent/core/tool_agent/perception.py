@@ -77,14 +77,43 @@ def _words(text: str) -> set[str]:
     return set(re.findall(r"[a-z0-9]+", text.casefold()))
 
 
-def _table_fields(table: dict[str, Any]) -> set[str]:
-    available = {
-        _normalize(str(header)) for header in list(table.get("headers") or [])
+def _table_fields(table: dict[str, Any]) -> dict[str, str]:
+    labels = list(table.get("headers") or [])
+    labels.extend(
+        key for row in table.get("rows") or [] if isinstance(row, dict) for key in row
+    )
+    return {
+        normalized: str(label) for label in labels
+        if (normalized := _normalize(str(label)))
     }
-    for row in list(table.get("rows") or []):
-        if isinstance(row, dict):
-            available.update(_normalize(str(key)) for key in row)
-    return available
+
+
+def _source_keys(
+    requirement: DataRequirement,
+    table: dict[str, Any],
+) -> dict[str, str]:
+    """Resolve exact fields and unambiguous caption-qualified aliases once."""
+
+    available = _table_fields(table)
+    caption_words = _words(str(table.get("caption") or ""))
+    caption_words |= {word[:-1] for word in caption_words if word.endswith("s")}
+    resolved: dict[str, str] = {}
+    for field in requirement.row_schema.get("properties") or {}:
+        source = requirement.field_sources.get(field, field)
+        exact = _normalize(source)
+        if exact in available:
+            resolved[field] = exact
+            continue
+        source_words = _words(source)
+        matches = [
+            key for key, label in available.items()
+            if (words := _words(label))
+            and words < source_words
+            and (source_words - words).issubset(caption_words)
+        ]
+        if len(matches) == 1:
+            resolved[field] = matches[0]
+    return resolved
 
 
 def _structured_surface_descriptor(table: dict[str, Any]) -> dict[str, Any]:
@@ -118,11 +147,8 @@ def _table_supports_requirement(
     requirement: DataRequirement,
     table: dict[str, Any],
 ) -> bool:
-    required_sources = {
-        _normalize(requirement.field_sources.get(field, field))
-        for field in (requirement.row_schema.get("properties") or {})
-    }
-    return bool(required_sources) and required_sources.issubset(_table_fields(table))
+    properties = requirement.row_schema.get("properties") or {}
+    return bool(properties) and len(_source_keys(requirement, table)) == len(properties)
 
 
 def _authoritative_empty_table(table: dict[str, Any]) -> bool:
@@ -150,19 +176,15 @@ def _authoritative_empty_table(table: dict[str, Any]) -> bool:
 def _match_table(requirement: DataRequirement, tables: list[dict[str, Any]]) -> dict[str, Any] | None:
     target = _normalize(requirement.target_label)
     wanted_words = _words(requirement.target_label or requirement.description)
-    required_sources = {
-        _normalize(requirement.field_sources.get(field, field))
-        for field in (requirement.row_schema.get("properties") or {})
-    }
+    field_count = len(requirement.row_schema.get("properties") or {})
     ranked: list[tuple[tuple[bool, bool, int, int], dict[str, Any]]] = []
     for table in tables:
         caption = _normalize(str(table.get("caption") or ""))
         caption_words = _words(str(table.get("caption") or ""))
-        available = _table_fields(table)
-        field_matches = len(required_sources.intersection(available))
+        field_matches = len(_source_keys(requirement, table))
         rank = (
             bool(target and (target == caption or target in caption or caption in target)),
-            bool(required_sources) and field_matches == len(required_sources),
+            bool(field_count) and field_matches == field_count,
             field_matches,
             len(wanted_words.intersection(caption_words)),
         )
@@ -179,6 +201,7 @@ def _structured_rows(
 ) -> list[dict[str, Any]]:
     source_map = requirement.field_sources
     properties = requirement.row_schema.get("properties") or {}
+    source_keys = _source_keys(requirement, table)
     rows: list[dict[str, Any]] = []
     for row_index, source_row in enumerate(list(table.get("rows") or []), start=1):
         if not isinstance(source_row, dict):
@@ -187,7 +210,7 @@ def _structured_rows(
         output: dict[str, Any] = {}
         for field, field_schema in properties.items():
             source = source_map.get(field, field)
-            value = source_row.get(source, normalized_sources.get(_normalize(source)))
+            value = normalized_sources.get(source_keys.get(field, ""))
             declared_type = requirement.field_types.get(field)
             if value is not None and declared_type is not None:
                 try:
@@ -227,12 +250,7 @@ def _partial_structured_rows(
     """Read candidate fields without pretending detail-only fields were observed."""
 
     properties = requirement.row_schema.get("properties") or {}
-    available = _table_fields(table)
-    list_fields = {
-        field
-        for field in properties
-        if _normalize(requirement.field_sources.get(field, field)) in available
-    }
+    list_fields = set(_source_keys(requirement, table))
     if len(list_fields) < 2:
         return [], set()
     required_fields = set(requirement.row_schema.get("required") or [])
@@ -536,6 +554,8 @@ def _structured_coverage(
         or page_index not in (None, "")
         and page_count not in (None, "")
         and page_index == page_count
+        or traversal_type == "scroll"
+        and traversal.get("at_scroll_end") is True
     )
     movement_keys = {
         "type",
@@ -572,6 +592,13 @@ def _structured_coverage(
         "movement": movement,
         "window_key": f"page:{page_index}" if page_index not in (None, "") else "",
     }
+
+
+def _page_has_more(page_index: Any, page_count: Any) -> bool:
+    try:
+        return int(page_index) < int(page_count)
+    except (TypeError, ValueError):
+        return False
 
 
 class PerceptionMaterializer:
@@ -854,6 +881,22 @@ class PerceptionMaterializer:
                         and surface.get("at_end") is True
                         and surface.get("partial") is False
                     )
+                    movement = dict(surface.get("movement") or {})
+                    surface_has_more = bool(
+                        surface
+                        and (
+                            surface.get("has_next_page") is True
+                            or _page_has_more(
+                                surface.get("page_index"),
+                                surface.get("page_count"),
+                            )
+                            or movement.get("can_scroll_more") is True
+                            or movement.get("at_scroll_end") is False
+                        )
+                    )
+                    at_end = bool(
+                        (end_visible or surface_complete) and not surface_has_more
+                    )
                     coverage = {
                         "scope": requirement.scope,
                         "scope_status": scope["status"],
@@ -867,11 +910,25 @@ class PerceptionMaterializer:
                         "window_context": _fingerprint({
                             "route": url,
                             "surface": _surface_marker(table),
+                            "window": surface.get("window_key") if surface else "",
                         }),
                         "end_visible": end_visible,
-                        "at_end": end_visible or surface_complete,
-                        "partial": not (end_visible or surface_complete),
+                        "at_end": at_end,
+                        "partial": not at_end,
                     }
+                    if surface:
+                        coverage.update({
+                            key: surface.get(key)
+                            for key in (
+                                "total_records",
+                                "page_index",
+                                "page_count",
+                                "has_next_page",
+                                "traversal_type",
+                                "movement",
+                            )
+                            if surface.get(key) is not None
+                        })
                     if authoritative_visual_empty:
                         coverage.update({
                             "total_records": 0,
@@ -880,9 +937,6 @@ class PerceptionMaterializer:
                         })
                     if surface_complete:
                         coverage.update({
-                            "total_records": len(rows),
-                            "traversal_type": surface.get("traversal_type"),
-                            "movement": surface.get("movement") or {},
                             "coverage_evidence": "structured_surface_cardinality",
                         })
                     collection_found = bool(
