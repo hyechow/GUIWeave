@@ -1,0 +1,5 @@
+#!/usr/bin/env bash
+# Re-sample one recorded Tool-Agent Master or Worker decision with the configured model.
+set -e
+cd "$(dirname "$0")/.."
+exec uv run python -m replay.decision "$@"

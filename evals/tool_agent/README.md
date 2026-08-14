@@ -11,3 +11,12 @@ It covers Master compilation and sandboxing, Worker protocol and memory, groundi
 ```bash
 bin/replay_run logs/gui_agent/tool_agent/<platform>/<run-id> --json
 ```
+
+`replay_run` is deterministic and does not call a model. `replay_decision` uses
+the current configured model, static prompt, and tool schemas with the recorded
+task or frozen Worker frame/memory; it does not connect to a device:
+
+```bash
+bin/replay_decision <run-dir> --master --samples 3
+bin/replay_decision <run-dir> --worker-frame 12 --samples 3
+```
