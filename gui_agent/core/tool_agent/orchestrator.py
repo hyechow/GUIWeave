@@ -683,6 +683,37 @@ def _static_result_routing_diagnostics(tree: ast.AST) -> list[MasterDiagnostic]:
     return diagnostics
 
 
+def _static_data_program_worker_diagnostics(
+    tree: ast.AST,
+) -> list[MasterDiagnostic]:
+    """Require every GUI effect in a data program to belong to a collector."""
+
+    data_terminal = any(
+        any(
+            item.arg == "effect"
+            and isinstance(item.value, ast.Constant)
+            and item.value.value == "data"
+            for item in call.keywords
+        )
+        for node in ast.walk(tree)
+        if (call := _ctx_call(node, "finish")) is not None
+    )
+    if not data_terminal:
+        return []
+    return [
+        _diagnostic(
+            "DATA_PROGRAM_OPERATOR",
+            "a data-returning program cannot contain a standalone operator because it "
+            "produces no typed data or scope output; keep prerequisite GUI effects in "
+            "the collector that materializes the dependent rows",
+            call,
+        )
+        for _, assignment in _named_assignments(tree)
+        if (call := _ctx_call(assignment.value, "gui_worker")) is not None
+        and not _collector_requirements(call)
+    ]
+
+
 def _schema_contains_array(value: Any) -> bool:
     if isinstance(value, dict):
         return value.get("type") == "array" or any(
@@ -933,6 +964,7 @@ def validate_master_source(
     diagnostics.extend(_static_collector_consumption_diagnostics(tree))
     diagnostics.extend(_static_worker_output_diagnostics(tree))
     diagnostics.extend(_static_result_routing_diagnostics(tree))
+    diagnostics.extend(_static_data_program_worker_diagnostics(tree))
     diagnostics.extend(_static_worker_array_input_diagnostics(tree))
     diagnostics.extend(_static_finish_ref_diagnostics(tree))
     unique: list[MasterDiagnostic] = []

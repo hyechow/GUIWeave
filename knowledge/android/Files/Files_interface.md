@@ -42,6 +42,8 @@ ttl: session
   Entry names identify the same-named DownloadFiles rows created by extraction.
 - Extracting every entry is a durable mutation of that selected ZIP with **selection** = `all` and
   **destination** = `Downloads`. It creates same-named DownloadFiles rows but leaves the archive
-  view open; return to Downloads after confirmation, then query the fresh DownloadFiles rows.
+  view open; return to Downloads after confirmation, then query the fresh DownloadFiles rows. The
+  Downloads view is not scoped to the latest extraction and may also contain unrelated prior files;
+  the archive entry **name** is the identity link to its same-named DownloadFiles row.
 - **content** is a detail field of each concrete extracted DownloadFiles row; it is not a
   collection field.

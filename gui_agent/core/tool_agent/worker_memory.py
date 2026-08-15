@@ -502,6 +502,9 @@ def _frame_payload(
         "title": frame.title,
         "applied_filters": frame.applied_filters,
         "requirement_scopes": frame.requirement_scopes,
+        "required_interactions": [
+            item.model_dump(mode="json") for item in frame.required_interactions
+        ],
         "scope_blockers": scope_blockers,
         "observed_choice_state": _observed_choice_state(frame.controls),
         "candidate_set_state": candidate_state,

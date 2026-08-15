@@ -429,6 +429,15 @@ class ResultRef(StrictModel):
     summary: str = ""
 
 
+class RequiredInteraction(StrictModel):
+    """One structured, currently mandatory physical interaction."""
+
+    capability: ToolActionCapability
+    args: dict[str, Any]
+    description: str
+    exclusive: bool = True
+
+
 class MaterializedFrame(StrictModel):
     frame_id: str
     screenshot_path: str
@@ -440,6 +449,7 @@ class MaterializedFrame(StrictModel):
     structured_surfaces: list[dict[str, Any]] = Field(default_factory=list)
     applied_filters: dict[str, Any] = Field(default_factory=dict)
     requirement_scopes: dict[str, dict[str, Any]] = Field(default_factory=dict)
+    required_interactions: list[RequiredInteraction] = Field(default_factory=list)
     chunks: list[DataChunkRef] = Field(default_factory=list)
     collections: list[CollectionRef] = Field(default_factory=list)
     missing_requirements: list[str] = Field(default_factory=list)

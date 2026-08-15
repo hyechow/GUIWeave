@@ -32,6 +32,8 @@ from gui_agent.prompts import load_prompt_text
 from gui_agent.core.tool_agent.contracts import (
     DataRequirement,
     MaterializedFrame,
+    RequiredInteraction,
+    ToolActionCapability,
 )
 from gui_agent.core.tool_agent.data_store import RuntimeDataStore
 from gui_agent.core.tool_agent.protocol import (
@@ -59,6 +61,61 @@ class _DetailCollectionState:
     surface: str
     location: str
     pending_index: int | None = None
+
+
+_EDITOR_KINDS = {"text_input", "textbox", "textarea", "editor"}
+
+
+def derive_required_interactions(
+    controls: list[dict[str, Any]],
+    requirement_scopes: dict[str, dict[str, Any]],
+    *,
+    pending_capabilities: (
+        set[ToolActionCapability] | frozenset[ToolActionCapability]
+    ) = frozenset(),
+) -> list[RequiredInteraction]:
+    """Materialize a unique structured prerequisite for the current frame."""
+
+    unresolved = any(
+        isinstance(detail := scope.get("detail_resolution"), dict)
+        and detail.get("status") == "active"
+        and detail.get("next_unresolved_candidate")
+        for scope in requirement_scopes.values()
+    )
+    visible = [
+        item for item in controls
+        if item.get("in_viewport") is not False and item.get("enabled") is not False
+    ]
+    if not (unresolved or "type" in pending_capabilities) or any(
+        item.get("is_filter") is True
+        and str(item.get("kind") or "").casefold() in _EDITOR_KINDS
+        for item in visible
+    ):
+        return []
+    openers = [item for item in visible if item.get("query_action") == "open"]
+    if len(openers) != 1:
+        return []
+    opener = openers[0]
+    point = opener.get("action_point")
+    if not isinstance(point, dict):
+        point = opener.get("rect")
+    if not isinstance(point, dict) or not all(
+        isinstance(point.get(key), (int, float)) for key in ("x", "y")
+    ):
+        return []
+    label = str(opener.get("label") or "query")
+    return [RequiredInteraction(
+        capability="tap",
+        args={
+            "x": float(point["x"]),
+            "y": float(point["y"]),
+            "description": f"Activate visible query-entry control {label!r}",
+        },
+        description=(
+            f"Activate the visible query-entry control {label!r} to expose the "
+            "required editable input."
+        ),
+    )]
 
 
 def _normalize_runtime_value(
@@ -881,6 +938,9 @@ class PerceptionMaterializer:
         requirements: list[DataRequirement],
         acquisition_filters: dict[str, Any] | None = None,
         allow_linked_details: bool = True,
+        pending_capabilities: (
+            set[ToolActionCapability] | frozenset[ToolActionCapability]
+        ) = frozenset(),
         state_scope: str = "",
         frame_no: int,
     ) -> tuple[MaterializedFrame, bytes]:
@@ -1294,6 +1354,11 @@ class PerceptionMaterializer:
             ],
             applied_filters=applied_filters,
             requirement_scopes=requirement_scopes,
+            required_interactions=derive_required_interactions(
+                controls,
+                requirement_scopes,
+                pending_capabilities=pending_capabilities,
+            ) if self.mode == "enhanced" else [],
             chunks=chunks,
             collections=collections,
             missing_requirements=missing,

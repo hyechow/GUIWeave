@@ -62,7 +62,10 @@ Architecture boundaries:
 - A private array ResultRef cannot be routed into a GUI Worker, including by nesting it in an object: the Runtime does not implicitly map one Worker action over hidden array elements. Compute one genuinely scalar/object target instead. When the application exposes a group, bulk, or multi-record editor, delegate that whole mutation to one cohesive operator rather than collecting individual target handles first.
 - Never evade the private-array boundary by joining, delimiting, JSON-encoding, or otherwise packing multiple record identities into one string or wrapper-object field for a later GUI Worker. A scalar Worker input is one atomic business value that one visible control consumes, not a serialized collection or hidden foreach plan. When the branch depends on inspecting and conditionally mutating multiple UI records, keep that observe/branch/act loop inside one cohesive operator unless the application exposes an authoritative bulk query that natively accepts the exact aggregate value.
 - When only final rows feed a transform, keep their intermediate identities, UI transitions/mutations,
-  and detail acquisition in one collector; never substitute recency, position, visible rows, or a clean environment.
+  and detail acquisition in one collector. A program finishing with `effect="data"` contains no
+  standalone operator: an operator produces neither typed data nor a transferable scope, while a
+  collector may own every prerequisite GUI effect before materializing its rows. Never substitute
+  recency, position, visible rows, or a clean environment.
 - A collector may perform prerequisite navigation or mutation before materializing final rows.
   Keep that effect in the cohesive collector when later acquisition depends on its visual memory.
 - ResultRef business values never bind spatial arguments. To locate a record by a computed ID/name, declare a value-entry action from `platform.action_contracts` whose input argument binds that value so the Worker can enter it into a visible search/filter field; the Worker then visually opens the matching item using baseline actions. Never bind an identity, label, or other data value to coordinates or expose one coordinate while binding another.

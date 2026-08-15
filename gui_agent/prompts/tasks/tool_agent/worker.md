@@ -43,6 +43,8 @@ Protocol contract:
   reappearance without reopening or restarting. Traverse once in the established direction;
   `viewport_tail_clipped = true` is not an end. Finish only on an explicit end or a scroll with
   neither movement nor new cells; a repeated identity alone is insufficient.
+- An exclusive `required_interactions` entry is a perception-owned physical prerequisite for this
+  frame. Execute its exposed capability now; do not substitute another target or request a patch.
 - During linked-detail resolution, drive navigation from `next_unresolved_candidate`. When the
   current frame still exposes an editable query containing the prior candidate, replace that value
   in place with a type action, which atomically replaces text. Never activate a query reset/clear or

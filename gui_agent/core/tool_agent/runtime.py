@@ -59,6 +59,7 @@ from gui_agent.core.tool_agent.protocol import (
     RequestActionPatchArgs,
     cacheable_system_message,
     capability_parameters,
+    constrain_worker_action_calls,
     diagnostic_prompt_reports,
     dynamic_worker_tools,
     dynamic_action_tool,
@@ -1110,6 +1111,16 @@ class ToolAgentRuntime:
                         else:
                             call["args"] = normalize_action_arguments(call["args"])
                             calls = [call]
+                        constraint_frame = frame if getattr(
+                            self, "perception_mode", "vision-only"
+                        ) == "enhanced" else None
+                        calls = constrain_worker_action_calls(
+                            calls, active_actions, constraint_frame,
+                        )
+                        if call["name"] == "continue_with_actions":
+                            call["args"]["actions"] = calls
+                        else:
+                            call = calls[0]
                         if call["name"] == "continue_with_actions":
                             self._validate_multi_action_calls(calls, active_actions)
                         state, state_source, state_compatibility = self._decode_worker_state(
@@ -1578,6 +1589,10 @@ class ToolAgentRuntime:
             acquisition_filters=spec.acquisition_filters,
             allow_linked_details=not any(
                 action.input_args and action.name not in executed_tools for action in spec.actions),
+            pending_capabilities={
+                action.capability for action in spec.actions
+                if action.input_args and action.name not in executed_tools
+            },
             state_scope=logical_worker_id,
             frame_no=self._frame_no,
         )
@@ -1597,6 +1612,9 @@ class ToolAgentRuntime:
             collections=[item.model_dump(mode="json") for item in frame.collections],
             missing_requirements=frame.missing_requirements,
             requirement_scopes=frame.requirement_scopes,
+            required_interactions=[
+                item.model_dump(mode="json") for item in frame.required_interactions
+            ],
             applied_filters=frame.applied_filters,
             url=frame.url,
             title=frame.title,
@@ -1730,6 +1748,7 @@ class ToolAgentRuntime:
         frame: MaterializedFrame,
     ) -> list[dict[str, Any]]:
         journal = self._active_worker_journal()
+        enhanced = getattr(self, "perception_mode", "vision-only") == "enhanced"
         completion_mode: Literal["unavailable", "operator", "collector"]
         if spec.profile == "operator":
             completion_mode = "operator"
@@ -1742,11 +1761,12 @@ class ToolAgentRuntime:
                 spec,
                 actions,
                 frame,
-                enhanced=getattr(self, "perception_mode", "vision-only") == "enhanced",
+                enhanced=enhanced,
                 executed_tools=getattr(journal, "executed_tools", set()),
             ),
             completion_mode=completion_mode,
             action_envelope=bool(getattr(self, "allow_multi_action", False)),
+            frame=frame if enhanced else None,
         )
 
     def _active_platform_rejection(self) -> dict[str, Any] | None:

@@ -16,6 +16,7 @@ from pydantic import BaseModel, ConfigDict, Field
 from gui_agent.core.tool_agent.contracts import (
     DynamicActionSpec,
     MaterializedFrame,
+    RequiredInteraction,
     ToolActionCapability,
     WorkerSpec,
     WorkerState,
@@ -395,7 +396,7 @@ def available_worker_actions(
     enhanced: bool,
     executed_tools: set[str] | frozenset[str] = frozenset(),
 ) -> list[DynamicActionSpec]:
-    """Expose bound typing only when its structured input is ready."""
+    """Expose only actions consistent with current structured prerequisites."""
 
     if not enhanced:
         return actions
@@ -403,10 +404,10 @@ def available_worker_actions(
         item for item in frame.controls
         if item.get("in_viewport") is not False and item.get("enabled") is not False
     ]
-    editor_kinds = {"text_input", "textbox", "textarea", "editor"}
     editors = [
         item for item in controls
-        if str(item.get("kind") or "").casefold() in editor_kinds
+        if str(item.get("kind") or "").casefold()
+        in {"text_input", "textbox", "textarea", "editor"}
     ]
     query_editors = [item for item in editors if item.get("is_filter") is True]
     pending_types = {
@@ -415,19 +416,60 @@ def available_worker_actions(
         and action.capability == "type"
         and "text" in action.input_args
     }
-    if not pending_types:
-        return actions
-    query_closed = not query_editors and any(
-        item.get("query_action") == "open" for item in controls
-    )
-    unavailable = set(pending_types) if query_closed else set()
-    if query_editors and len(editors) == len(query_editors):
+    unavailable: set[str] = set()
+    if required := _required_action(actions, frame):
+        interaction, action = required
+        return [action.model_copy(update={"description": interaction.description})]
+    if pending_types and query_editors and len(editors) == len(query_editors):
         private_names = {action.name for action in spec.actions}
         unavailable.update(
             action.name for action in actions
             if action.capability == "type" and action.name not in private_names
         )
     return [action for action in actions if action.name not in unavailable]
+
+
+def _required_action(
+    actions: list[DynamicActionSpec],
+    frame: MaterializedFrame | None,
+) -> tuple[RequiredInteraction, DynamicActionSpec] | None:
+    """Resolve one perception-owned interaction to one Runtime floor action."""
+
+    if frame is None or len(frame.required_interactions) != 1:
+        return None
+    interaction = frame.required_interactions[0]
+    matches = [
+        action for action in actions
+        if interaction.exclusive
+        and action.name.startswith("runtime_")
+        and action.capability == interaction.capability
+    ]
+    return (interaction, matches[0]) if len(matches) == 1 else None
+
+
+def constrain_worker_action_calls(
+    calls: list[dict[str, Any]],
+    actions: list[DynamicActionSpec],
+    frame: MaterializedFrame | None,
+) -> list[dict[str, Any]]:
+    """Ground a uniquely determined structured prerequisite without model geometry."""
+
+    required = _required_action(actions, frame)
+    interaction, action = required if required is not None else (None, None)
+    return [
+        {
+            **call,
+            "args": {
+                **dict(call.get("args") or {}),
+                **(
+                    interaction.args
+                    if interaction is not None and call.get("name") == action.name
+                    else {}
+                ),
+            },
+        }
+        for call in calls
+    ]
 
 
 def worker_attempt_contract(spec: WorkerSpec, actions: list[DynamicActionSpec]) -> str:
@@ -464,8 +506,8 @@ def worker_attempt_contract(spec: WorkerSpec, actions: list[DynamicActionSpec]) 
         "schemas. This compact contract supplies the immutable subgoal, acceptance/data "
         "contract, and Runtime-bound action descriptors. Preserve its constraints while "
         "pursuing the subgoal. A deferred bound action is not callable on this frame: "
-        "prepare its matching input through the visible query-entry/open control, without "
-        "opening an arbitrary candidate, then use the bound action when Runtime exposes it.\n"
+        "complete the perception-provided required interaction that exposes its matching "
+        "input, then use the bound action when Runtime exposes it.\n"
         + json.dumps(payload, ensure_ascii=False)
     )
 
@@ -514,20 +556,23 @@ def dynamic_worker_tools(
         "legacy", "unavailable", "operator", "collector"
     ] = "legacy",
     action_envelope: bool = False,
+    frame: MaterializedFrame | None = None,
 ) -> list[dict[str, Any]]:
+    constrained = _required_action(actions, frame) is not None
     tools = (
         [_with_worker_state(dynamic_action_envelope_tool(actions))]
         if action_envelope
         else [_with_worker_state(dynamic_action_tool(item)) for item in actions]
     )
-    tools.append(_with_worker_state(model_tool(
-        "request_action_patch",
-        (
-            "Add one missing frame-driven GUI action from the registered capability set, "
-            "then reason again on the same screenshot. This does not execute a GUI action."
-        ),
-        RequestActionPatchArgs,
-    )))
+    if not constrained:
+        tools.append(_with_worker_state(model_tool(
+            "request_action_patch",
+            (
+                "Add one missing frame-driven GUI action from the registered capability set, "
+                "then reason again on the same screenshot. This does not execute a GUI action."
+            ),
+            RequestActionPatchArgs,
+        )))
     if completion_mode != "unavailable":
         complete_model = (
             CompleteWorkerArgs
