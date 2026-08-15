@@ -18,7 +18,7 @@ _BOUND_SUFFIX = re.compile(
     re.IGNORECASE,
 )
 _DATE = r"(?:\d{4}[-/]\d{1,2}[-/]\d{1,2}|\d{1,2}[-/]\d{1,2}[-/]\d{2,4})"
-_DATE_RANGE = re.compile(rf"^\s*(?P<lower>{_DATE})\s+-\s+(?P<upper>{_DATE})\s*$")
+_DATE_RANGE = re.compile(rf"^\s*(?P<lower>{_DATE})\s*-\s*(?P<upper>{_DATE})\s*$")
 _NUMBER = r"[+-]?(?:\d+(?:\.\d*)?|\.\d+)"
 _NUMBER_VALUE = re.compile(rf"^{_NUMBER}$")
 _NUMBER_RANGE = re.compile(

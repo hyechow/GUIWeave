@@ -8,6 +8,7 @@ import pytest
 from gui_agent.adapters.browser.actions import BrowserAction
 from gui_agent.adapters.android.actions import AndroidAction
 from gui_agent.core.tool_agent.contracts import (
+    DataRequirement,
     DynamicActionSpec,
     MaterializedFrame,
     WorkerOutcome,
@@ -1549,6 +1550,7 @@ def test_worker_action_returns_flash_off_target_signal(monkeypatch) -> None:
     )
 
 
+
 def test_multi_action_aborts_suffix_after_flash_off_target(monkeypatch) -> None:
     runtime = object.__new__(ToolAgentRuntime)
     runtime.bundle = SimpleNamespace(
@@ -2438,6 +2440,8 @@ def test_runtime_does_not_replay_frozen_program_after_local_budget_failure(
     assert replay["program_count"] == 1
 
 
+
+
 def test_runtime_interruption_is_sealed_as_a_reportable_failed_run(tmp_path) -> None:
     runtime = object.__new__(ToolAgentRuntime)
     runtime.max_subgoal_replans = 0
@@ -2471,3 +2475,4 @@ def test_runtime_interruption_is_sealed_as_a_reportable_failed_run(tmp_path) -> 
     )
     assert replay["status"] == "unavailable"
     assert runtime._visualizer.clear_calls == 1
+

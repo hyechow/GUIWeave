@@ -34,7 +34,12 @@ def settle_after_action(
         if cdp_settle is not None:
             try:
                 elapsed, no_effect = cdp_settle(action_type)
-                if no_effect and pre_frame is not None:
+                # Input value / caret edits are not DOM mutations. Treating them as
+                # no_effect makes Workers retry type forever while the placeholder
+                # attribute is still visible.
+                if action_type in {"type", "clear_text"}:
+                    no_effect = False
+                elif no_effect and pre_frame is not None:
                     current = screenshot()
                     if frame_changed(pre_frame, current, focus_y, center=center):
                         no_effect = False

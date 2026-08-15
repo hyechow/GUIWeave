@@ -517,7 +517,7 @@ def test_distinct_prerequisite_action_releases_old_fuse_count() -> None:
 
 def test_action_guard_blocks_strict_two_state_cycle() -> None:
     case = _case()
-    closed = _frame(case).model_copy(update={"controls": []})
+    closed = _frame(case, scope_status="met").model_copy(update={"controls": []})
     opened = closed.model_copy(update={"controls": [{
         "kind": "button", "label": "Documents", "value": "Documents",
     }]})
@@ -709,3 +709,47 @@ def test_action_guard_blocks_redundant_detail_scroll_and_unscoped_row() -> None:
     assert breaker.inspect(
         tool="tap", capability="tap", args={"x": 800, "y": 500}, frame=row
     ).blocked
+
+    column_filter = row.model_copy(update={
+        "controls": [{
+            "kind": "text_input",
+            "label": "Product",
+            "group_index": 1,
+            "is_filter": True,
+            "rect": {"x": 800, "y": 200, "w": 160, "h": 28},
+        }],
+    })
+    allowed = breaker.inspect(
+        tool="type",
+        capability="type",
+        args={"x": 800, "y": 200, "text": "query"},
+        frame=column_filter,
+    )
+    assert not allowed.blocked, allowed.reason
+
+    search = row.model_copy(update={
+        "controls": [{
+            "kind": "button",
+            "label": "Search",
+            "query_action": "submit",
+            "rect": {"x": 900, "y": 200, "w": 80, "h": 28},
+        }],
+    })
+    assert not breaker.inspect(
+        tool="tap",
+        capability="tap",
+        args={"x": 900, "y": 200, "description": "Search"},
+        frame=search,
+    ).blocked
+
+    empty = row.model_copy(update={"controls": []})
+    blocked_empty = breaker.inspect(
+        tool="tap",
+        capability="tap",
+        args={"x": 500, "y": 400, "description": "empty grid body"},
+        frame=empty,
+    )
+    assert blocked_empty.blocked, blocked_empty.reason
+
+
+

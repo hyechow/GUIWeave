@@ -39,6 +39,10 @@ def test_form_controls_js_is_serialized_expression():
     assert "filter[-_].*(apply|submit)" in js
     assert "document.elementFromPoint" in js
     assert "occluded: true" in js
+    assert "radioGroupLabelOf" in js
+    assert "input[type=\"radio\"]" in js
+    assert "radio_group" in js
+    assert "selectedScale" in js
     assert "effect_kind" not in js
 
 
@@ -390,6 +394,86 @@ def test_snapshot_keeps_bottom_repeated_row_atomic_and_reports_truncation():
         "coverage": "partial",
         "raw_limit_hit": False,
     }
+
+
+def test_normalize_keeps_collapsed_rating_control():
+    from gui_agent.adapters.browser.form_reader import rating_selected_scale
+
+    assert rating_selected_scale("16", ["16", "17", "18", "19", "20"]) == "1"
+    assert rating_selected_scale("20", ["20", "19", "18", "17", "16"]) == "5"
+    assert rating_selected_scale("18", ["16", "17", "18", "19", "20"]) == "3"
+
+    controls = normalize_form_controls({
+        "controls": [{
+            "label": "Detailed Rating",
+            "kind": "rating",
+            "name": "ratings[4]",
+            "value": "20",
+            "selected_text": "1",
+            "selected_text_primary": "1",
+            "options": ["20", "19", "18", "17", "16"],
+            "rect": {"x": 400, "y": 300, "w": 120, "h": 20},
+        }]
+    })
+    assert controls[0]["kind"] == "rating"
+    assert controls[0]["label"] == "Detailed Rating"
+    assert controls[0]["value"] == "20"
+    assert controls[0]["selected_text_primary"] == "5"
+    assert controls[0]["options"] == ["20", "19", "18", "17", "16"]
+
+
+def test_normalize_prefers_choice_fields_over_collection_links():
+    raw = [
+        {
+            "kind": "a",
+            "label": f"Product-{index}",
+            "value": f"Product-{index}",
+            "in_viewport": True,
+            "rect": {"x": 10, "y": index, "w": 80, "h": 16},
+        }
+        for index in range(50)
+    ]
+    raw.extend([
+        {
+            "kind": "button",
+            "label": "Deselect All",
+            "value": "Deselect All",
+            "in_viewport": True,
+            "rect": {"x": 20, "y": 400, "w": 80, "h": 16},
+        },
+        {
+            "kind": "checkbox_input",
+            "label": "Blue",
+            "value": "on",
+            "in_viewport": True,
+            "rect": {"x": 20, "y": 420, "w": 16, "h": 16},
+        },
+        {
+            "kind": "checkbox_input",
+            "label": "Red",
+            "value": "on",
+            "in_viewport": True,
+            "rect": {"x": 20, "y": 440, "w": 16, "h": 16},
+        },
+        {
+            "kind": "rating",
+            "label": "Detailed Rating",
+            "value": "2",
+            "in_viewport": True,
+            "rect": {"x": 20, "y": 460, "w": 80, "h": 16},
+        },
+    ])
+    controls = normalize_form_controls({
+        "controls": raw,
+        "total_rendered": len(raw),
+        "raw_limit_hit": False,
+    })
+    labels = {item.get("label") for item in controls}
+    assert "Deselect All" in labels
+    assert "Blue" in labels
+    assert "Red" in labels
+    assert "Detailed Rating" in labels
+    assert len(controls) == 40
 
 
 def test_complete_control_state_is_retained_before_prompt_truncation():

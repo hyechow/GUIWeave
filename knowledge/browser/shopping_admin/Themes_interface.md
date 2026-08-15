@@ -12,7 +12,7 @@ ttl: session
 ---
 # Themes interface
 
-- Theme resource settings belong to **Content > Design > Themes**. The **Magento Luma** resource
-  has the stable same-origin route `/admin/system_design_theme/edit/id/3`.
+- Theme resource settings belong to **Content > Design > Themes**. Open the **Magento Luma** row
+  from that list; do not construct a theme-edit URL from a remembered numeric id.
 - **Design Configuration** edits a store scope's applied-theme settings; an Applied Theme value of
   **Magento Luma** does not identify the Magento Luma theme resource page.

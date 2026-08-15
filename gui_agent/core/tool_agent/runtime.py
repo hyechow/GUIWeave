@@ -43,6 +43,7 @@ from gui_agent.core.tool_agent.action_guard import (
     is_candidate_commit,
 )
 from gui_agent.core.tool_agent.data_store import RuntimeDataStore
+from gui_agent.core.tool_agent.filter_state import canonical_filter_value
 from gui_agent.core.tool_agent.orchestrator import (
     MasterCompileError,
     WorkerOrchestrationContext,
@@ -2530,6 +2531,7 @@ class ToolAgentRuntime:
         if not action.input_args:
             return action
         resolved = dict(action.fixed_args)
+        properties = capability_parameters(action.capability).get("properties") or {}
         for argument, binding in action.input_args.items():
             try:
                 value = self.data_store.result_value(spec.input_refs[binding.input])
@@ -2540,6 +2542,9 @@ class ToolAgentRuntime:
                     f"{action.name}: cannot resolve input binding for {argument!r} "
                     f"from {binding.input!r} path {binding.path!r}"
                 ) from exc
+            schema = properties.get(argument) or {}
+            if schema.get("type") == "string" and isinstance(value, (int, float)) and not isinstance(value, bool):
+                value = canonical_filter_value(value)
             resolved[argument] = value
         materialized = action.model_copy(update={
             "fixed_args": resolved,

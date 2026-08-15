@@ -558,6 +558,30 @@ ctx.finish(done["ref"], effect="mutation")
     )
 
 
+def test_master_review_rejects_finishing_operator_collection_ref() -> None:
+    source = _program(
+        '''
+outcome = ctx.gui_worker(
+    worker_id="open_filtered_list",
+    profile="operator",
+    goal="Open the filtered list",
+    success_criteria=["The filtered list is visible"],
+    actions=[{
+        "name": "apply_filter",
+        "capability": "select_option",
+        "description": "Apply the requested filter",
+    }],
+)
+if outcome["phase"] != "completed":
+    ctx.fail(outcome["summary"])
+ctx.finish(outcome["collection_ref"]["ref"], effect="ui_state")
+'''.strip()
+    )
+    assert any(
+        item.code == "OPERATOR_FINISH_REF" for item in validate_master_source(source)
+    )
+
+
 def test_master_review_accepts_explicit_null_input_refs_as_empty() -> None:
     source = _program(
         '''

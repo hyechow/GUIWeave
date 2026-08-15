@@ -451,6 +451,17 @@ def test_worker_can_materialize_registered_frame_driven_action() -> None:
     assert set(action.exposed_args) == {"x", "y", "description"}
 
 
+def test_open_url_can_bind_a_sourced_url() -> None:
+    spec = DynamicActionSpec(
+        name="open_sourced_url",
+        capability="open_url",
+        description="Open a URL supplied by a prior result",
+        input_args={"url": {"input": "target", "path": ["url"]}},
+    )
+    assert spec.input_args["url"].input == "target"
+    assert "url" not in spec.exposed_args
+
+
 def test_open_url_is_worker_owned_or_can_be_bound_by_action_patch() -> None:
     dynamic = DynamicActionSpec(
         name="open_goal_url",

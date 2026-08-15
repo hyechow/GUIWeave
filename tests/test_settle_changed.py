@@ -62,3 +62,19 @@ def test_settle_uses_adapter_lightweight_screenshot_probe(monkeypatch):
     assert no_effect is True
     assert platform.probe_calls == 6
     assert platform.full_calls == 0
+
+
+def test_type_settle_ignores_dom_quiet_no_effect():
+    frame = _png(Image.new("RGB", (160, 320), "white"))
+
+    class _Platform:
+        def wait_settled(self, action_type=None):
+            assert action_type == "type"
+            return 0.2, True
+
+        def screenshot(self):
+            raise AssertionError("type settle should not fall back to pixels")
+
+    _, no_effect = settle_after_action(_Platform(), frame, action_type="type")
+
+    assert no_effect is False

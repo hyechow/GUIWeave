@@ -5,7 +5,7 @@ platform: browser
 app: shopping_admin
 scope:
   - orchestrator
-selector_when: product description configurable parent configuration green tee existing size color variants
+selector_when: product products catalog inventory quantity price stock size sizes color colors configurations short description keyword new combination
 source: manual_curated
 confidence: high
 ttl: session
@@ -14,38 +14,35 @@ ttl: session
 
 - The **Products** grid has the stable same-origin route `/admin/catalog/product/`. When the
   direct URL capability is available, prefer this sourced route over reopening the Catalog menu.
-- The Products grid exposes one global input visibly labeled **Search by keyword** above the
-  table; it is not a per-column Name filter. Use that visible input when locating a product.
-- The Products keyword filter treats rendered punctuation and typographic marks as significant.
-  If a full-name query returns no rows while the unfiltered grid contains a visually matching
-  name, keep the required Type discriminator and retry with a distinctive name substring that
-  omits the differing mark. Do not repeat the empty full-name query.
+- Locate rows with the global **Search by keyword** input above the table, not a table-header
+  Name box. Type the query and submit (Enter or **Search**) in the same step. A leftover
+  placeholder is not an empty field until that submit runs.
+- Keyword search is a word query, not a substring. A color or size that only appears after a
+  hyphen in `{base}-{Size}-{Color}` may return 0 rows — drop the glued token and keep the
+  product-line words, then open only simples whose Name contains the requested color or size.
+  Informal synonyms that are not whole words on a visible Name also return 0 rows.
+- A further **Name** restriction belongs in the **Filters** side panel (then **Apply Filters**),
+  not the table-header Name box. Magento persists leftover **Active filters** via `ui_bookmark`;
+  **Clear all** before a new search.
 - A configurable parent has Type `Configurable Product` and owns **Short Description** and
   **Configurations**. A simple variation has Type `Simple Product` and owns **Price**,
-  **Quantity**, and **Stock Status**.
-- The configurable owner is selected from **Products** by both **Name** and
-  **Type** = `Configurable Product`; Name alone can also match simple variations.
-- A **Short Description** change therefore uses Products collection fields **Name** and **Type**,
-  with both the requested Name and Type `Configurable Product` as source filters. The full-name and
-  fallback-name lookups preserve that same Type discriminator.
-- Adding a Size/Color combination to an existing named configurable product adds one
-  **Configurations** member on that parent. Configurations is a list-valued parent field with
-  member shape `{"Color": <color>, "Size": <size>}`; it is not two top-level parent fields and not
-  a separate Simple Product creation.
-- The parent editor's **Edit Configurations** wizard owns creation of a new combination. In its
-  Attribute Values step, clear inherited selections for each relevant attribute, select only the
-  requested Size and Color values, advance through the remaining steps, use **Generate Products**,
-  then save the parent. A selected value in the wizard is not durable until both generation and
-  the parent save have completed.
-- Attribute Values initially checks values inherited from existing configurations. Those checks
-  are not part of the new requested set. Use **Deselect All** independently in each relevant
-  attribute section before choosing the requested values. On **Summary**, the New Product Review
-  rows must equal the Cartesian product of only those requested values (one Size and one Color
-  means exactly one pending row); if it is a superset, go Back and correct it before Generate
-  Products.
+  **Quantity**, and **Stock Status**. Parent **Stock Status** is independent of its simple
+  children. **Quantity** and **Price** are absolute per-simple fields: typing a number
+  replaces the current value. Actions → Update Attributes does not add or apply a percent.
+- After a keyword search, Name alone can also match simple variations; Type distinguishes
+  the configurable parent.
+- **Short Description** is the WYSIWYG under the product form's collapsible **Content**
+  heading. It is not the top admin **CONTENT** menu (that opens CMS Pages). Content sits
+  immediately above **Configurations**; a large wheel overshoots it.
+- **Edit Configurations** sits immediately above the configurations table. Option dropdowns
+  above that table (Activity, Style, Material, Color) are always-open in-page multi-selects —
+  do not tap them to dismiss. The per-row **Select** menu and page-header **Add Attribute**
+  do not add a Configurations member. Size attribute options (Stores → Attributes) are a
+  separate resource from a parent's Configurations members.
+- The **Edit Configurations** wizard owns a new combination. In Attribute Values, **Deselect
+  All** in every participating attribute (inherited checks are not the requested set), select
+  only the requested values, then **Generate Products** and save the parent. On **Summary**,
+  New Product Review rows must equal the Cartesian product of only those requested values.
 - Supplying one requested Configurations member appends that member and preserves unrelated
-  existing members; the current Configurations collection is not read or merged by the caller.
-- A request to add one or more Size values to all existing Color variants is one mutation on the
-  configurable parent. Use that parent's Configurations editor to include the requested Size
-  values together with every existing Color value, then save the parent; do not edit each simple
-  variation as an independent product.
+  existing members. Adding a Size to all existing Color variants is one mutation on the
+  configurable parent, not a per-simple edit.

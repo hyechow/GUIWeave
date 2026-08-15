@@ -16,6 +16,66 @@ _COMMIT_LABEL_RE = re.compile(
     re.IGNORECASE,
 )
 _COMMIT_CONTROL_KINDS = frozenset({"button", "submit"})
+_FIELD_KINDS = frozenset({
+    "text_input",
+    "textarea",
+    "native_select",
+    "select",
+    "selectmenu",
+    "checkbox_input",
+    "radio_input",
+    "radio_group",
+    "rating",
+    "rich_textarea",
+    "number_input",
+    "number",
+})
+_CHOICE_OP_LABELS = frozenset({
+    "deselectall",
+    "unselectall",
+    "clearall",
+    "selectall",
+    "取消全选",
+    "全部取消",
+    "全选",
+})
+_OFFSCREEN_UNIT_RANK = 6
+
+
+def _alnum_key(value: object) -> str:
+    return "".join(char.casefold() for char in str(value or "") if char.isalnum())
+
+
+def rating_selected_scale(value: object, options: list[str] | None) -> str:
+    """Map a radio option id onto a 1–N scale using sorted numeric values.
+
+    Star widgets often render highest-first and store opaque option ids. DOM order
+    is not the scale; the smallest numeric option is 1 and the largest is N.
+    """
+
+    numbers: list[int] = []
+    for option in options or []:
+        text = str(option).strip()
+        if not text.lstrip("-").isdigit():
+            return ""
+        numbers.append(int(text))
+    if len(numbers) < 2:
+        return ""
+    try:
+        current = int(str(value).strip())
+    except (TypeError, ValueError):
+        return ""
+    ordered = sorted(set(numbers))
+    if current not in ordered:
+        return ""
+    return str(ordered.index(current) + 1)
+
+
+def _is_choice_operation(control: dict[str, Any]) -> bool:
+    kind = str(control.get("kind") or "")
+    if kind not in {"button", "a"}:
+        return False
+    return _alnum_key(control.get("label") or control.get("value")) in _CHOICE_OP_LABELS
 
 
 def form_controls_js() -> str:
@@ -161,6 +221,32 @@ def form_controls_js() -> str:
     const prevText = clean(prev && (prev.innerText || prev.textContent));
     if (prevText && prevText.length <= 80) return prevText;
     return clean(el.getAttribute('placeholder') || el.name || el.id);
+  };
+  // Radio groups (including visually hidden star/score widgets) share a name and a
+  // field label. The per-option label is often just "1"/"2"; walk out to the field
+  // legend so collectors can bind the selected value instead of counting painted icons.
+  const radioGroupLabelOf = (el) => {
+    const generic = (s) => /^(rating|score|stars?|\d+)$/i.test(clean(s));
+    const texts = [];
+    let node = el;
+    for (let depth = 0; depth < 8 && node; depth += 1, node = node.parentElement) {
+      const fromBox = labelFromContainer(node);
+      if (fromBox) texts.push(fromBox);
+      if (node.tagName === 'FIELDSET') {
+        const legend = node.querySelector(':scope > legend');
+        const legendText = clean(legend && (legend.innerText || legend.textContent));
+        if (legendText) texts.push(legendText);
+      }
+    }
+    const unique = [];
+    const seen = new Set();
+    for (const text of texts) {
+      const key = text.toLowerCase();
+      if (!text || seen.has(key)) continue;
+      seen.add(key);
+      unique.push(text);
+    }
+    return unique.find((text) => !generic(text)) || unique[0] || '';
   };
   const gridHeaderLabelOf = (el) => {
     const table = el.closest('table');
@@ -513,6 +599,80 @@ def form_controls_js() -> str:
     }
     pushControl(item);
   }
+  const radiosByName = new Map();
+  for (const el of Array.from(document.querySelectorAll('input[type="radio"]'))) {
+    const name = clean(el.getAttribute('name') || el.name || '');
+    if (!name) continue;
+    if (!radiosByName.has(name)) radiosByName.set(name, []);
+    radiosByName.get(name).push(el);
+  }
+  const collapsedRadioNames = new Set();
+  for (const [name, radios] of radiosByName.entries()) {
+    const values = radios.map((radio) => clean(radio.value));
+    const numericScale = values.length >= 2 && values.every((value) => /^\d+$/.test(value));
+    if (radios.length < 2 && !numericScale) continue;
+    const label = radioGroupLabelOf(radios[0]);
+    if (!clean(label)) continue;
+    collapsedRadioNames.add(name);
+    const checked = radios.find((radio) => radio.checked);
+    const visibleLabel = radios.map((radio) => {
+      const labeled = radio.labels && radio.labels[0];
+      if (labeled && rendered(labeled)) return labeled;
+      if (!radio.id) return null;
+      const css = window.CSS && CSS.escape ? CSS.escape(radio.id) : radio.id.replace(/"/g, '\\"');
+      const forLabel = document.querySelector(`label[for="${css}"]`);
+      return forLabel && rendered(forLabel) ? forLabel : null;
+    }).find(Boolean);
+    const box = radios[0].closest('fieldset, .admin__field, .field, [class*="field"]') || radios[0];
+    const rectEl = visibleLabel || (rendered(box) ? box : radios[0]);
+    const optionLabels = radios.map((radio) => {
+      const optionLabel = radio.labels && radio.labels[0]
+        ? clean(radio.labels[0].innerText || radio.labels[0].textContent)
+        : '';
+      return clean(optionLabel);
+    });
+    const uniqueNumericLabels = optionLabels.filter((text, index, all) => (
+      /^\d+$/.test(text) && all.indexOf(text) === index
+    ));
+    const checkedIndex = radios.findIndex((radio) => radio.checked);
+    let selectedScale = '';
+    if (checked && numericScale) {
+      const ranked = values.slice().sort((left, right) => Number(left) - Number(right));
+      selectedScale = String(ranked.indexOf(clean(checked.value)) + 1);
+    } else if (checkedIndex >= 0 && uniqueNumericLabels.length === radios.length) {
+      selectedScale = optionLabels[checkedIndex];
+    } else if (checkedIndex >= 0) {
+      selectedScale = String(checkedIndex + 1);
+    }
+    const options = (numericScale ? values : optionLabels)
+      .map((text) => cut(text, 40))
+      .filter(Boolean);
+    totalRendered += 1;
+    if (sectionControls.length + controls.length >= rawControlLimit) {
+      rawLimitHit = true;
+      continue;
+    }
+    pushControl({
+      label: cut(label, 80),
+      kind: numericScale ? 'rating' : 'radio_group',
+      name: cut(name, 80),
+      id: cut((checked && checked.id) || radios[0].id || '', 80),
+      value: checked ? clean(checked.value) : '',
+      selected_text: selectedScale,
+      selected_text_primary: selectedScale,
+      options,
+      rect: rectOf(rectEl),
+      ...viewState(rectEl),
+    });
+  }
+  if (collapsedRadioNames.size) {
+    for (let index = controls.length - 1; index >= 0; index -= 1) {
+      const item = controls[index];
+      if (item.kind === 'radio_input' && collapsedRadioNames.has(item.name)) {
+        controls.splice(index, 1);
+      }
+    }
+  }
   const richSelector = [
     '[contenteditable="true"]',
     'iframe[id$="_ifr"]',
@@ -602,6 +762,11 @@ def normalize_form_control_snapshot(
             norm["placeholder"] = placeholder
         if value:
             norm["value"] = value
+        if kind == "rating":
+            scale = rating_selected_scale(value, options)
+            if scale:
+                selected_text = scale
+                selected_text_primary = scale
         if selected_text or (
             "selected_text" in item and select_like
         ):
@@ -699,6 +864,9 @@ def normalize_form_control_snapshot(
         focused = any(item[2].get("focused") is True for item in unit)
         grouped = any(item[2].get("group_id") for item in unit)
         in_view = any(item[2].get("in_viewport") is not False for item in unit)
+        field_like = bool(kinds & _FIELD_KINDS) or any(
+            _is_choice_operation(item[2]) for item in unit
+        )
         if "status_message" in kinds:
             return (-1, first_index)
         if "section_toggle" in kinds:
@@ -707,21 +875,27 @@ def normalize_form_control_snapshot(
             return (1, first_index)
         if focused:
             return (2, first_index)
+        if field_like and in_view:
+            # Editable fields and select/clear-all ops outrank collection row links so a
+            # dense table cannot evict the checkboxes the current surface is asking about.
+            return (3, first_index)
         if grouped and in_view:
             # Bottom-most rendered rows are commonly the newly-added/incomplete rows.  Prefer
             # them over older rows while retaining the whole row atomically.
-            return (3, -first_index)
+            return (4, -first_index)
         if in_view:
-            return (4, first_index)
-        return (5, first_index)
+            return (5, first_index)
+        return (_OFFSCREEN_UNIT_RANK, first_index)
 
     ordered_units = sorted(units.values(), key=unit_rank)
     selected: list[tuple[int, int, dict[str, Any]]] = []
     deferred_offscreen: list[list[tuple[int, int, dict[str, Any]]]] = []
-    has_offscreen = any(unit_rank(unit)[0] == 5 for unit in ordered_units)
+    has_offscreen = any(
+        unit_rank(unit)[0] == _OFFSCREEN_UNIT_RANK for unit in ordered_units
+    )
     on_view_limit = max_controls - (OFF_VIEWPORT_RESERVE if has_offscreen else 0)
     for unit in ordered_units:
-        if unit_rank(unit)[0] == 5:
+        if unit_rank(unit)[0] == _OFFSCREEN_UNIT_RANK:
             deferred_offscreen.append(unit)
             continue
         if len(selected) + len(unit) <= on_view_limit:

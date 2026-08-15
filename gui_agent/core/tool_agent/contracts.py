@@ -213,6 +213,7 @@ class DynamicActionSpec(StrictModel):
             capability == "open_url"
             and "url" not in fixed_args
             and "url" not in exposed_args
+            and "url" not in input_args
         ):
             exposed_args.append("url")
         if (

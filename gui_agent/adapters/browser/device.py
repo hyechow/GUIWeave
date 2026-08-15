@@ -43,6 +43,87 @@ _NAVIGATION_TIMEOUT_MS = 20_000
 TEXT_RETARGET_RADIUS_PX = 220
 _CDP_PROXY_ENV_LOCK = threading.Lock()
 
+# Wheel anchors must not land on native selects or custom ARIA/admin choice
+# widgets. A closed tabindex=0 combobox looks like empty surface to tag-only
+# probes, so a center wheel opens the option list instead of scrolling.
+UNSAFE_SCROLL_SELECTOR = ",".join((
+    "a",
+    "button",
+    "input",
+    "textarea",
+    "select",
+    "option",
+    '[contenteditable="true"]',
+    '[draggable="true"]',
+    '[role="button"]',
+    '[role="checkbox"]',
+    '[role="combobox"]',
+    '[role="listbox"]',
+    '[role="menu"]',
+    '[role="menuitem"]',
+    '[role="option"]',
+    '[role="radio"]',
+    '[role="scrollbar"]',
+    '[role="slider"]',
+    '[role="spinbutton"]',
+    '[role="switch"]',
+    '[role="tab"]',
+    '[role="textbox"]',
+    ".action-select",
+    ".action-select-wrap",
+    ".admin__action-multiselect",
+    ".admin__action-multiselect-wrap",
+    ".admin__action-multiselect-text",
+    '[data-role="advanced-select"]',
+    '[aria-haspopup="listbox"]',
+    ".ui-select",
+    ".select2-container",
+    ".mage-suggest",
+))
+_CHOICE_OVERLAY_OPEN_JS = """(() => {
+  /* choice_overlay_open */
+  const visible = (el) => {
+    if (!el) return false;
+    const style = getComputedStyle(el);
+    if (style.display === 'none' || style.visibility === 'hidden') return false;
+    if (Number(style.opacity) === 0) return false;
+    const r = el.getBoundingClientRect();
+    return r.width > 2 && r.height > 2
+      && r.bottom > 0 && r.right > 0
+      && r.top < innerHeight && r.left < innerWidth;
+  };
+  const active = document.activeElement;
+  if (active && String(active.tagName || '').toLowerCase() === 'select') return true;
+  const menus = document.querySelectorAll(
+    '.admin__action-multiselect-menu-inner, .admin__action-multiselect-menu, '
+    + '.action-menu._active, .selectmenu-items, [role="listbox"]'
+  );
+  for (const el of menus) {
+    if (visible(el)) return true;
+  }
+  const expanded = document.querySelectorAll(
+    '[aria-haspopup="listbox"][aria-expanded="true"], '
+    + '[role="combobox"][aria-expanded="true"], '
+    + '.admin__action-multiselect[aria-expanded="true"], '
+    + '.action-select[aria-expanded="true"]'
+  );
+  for (const el of expanded) {
+    if (visible(el)) return true;
+  }
+  return false;
+})()"""
+_POINT_HITS_CHOICE_JS = """(function(x, y) {
+  const el = document.elementFromPoint(x, y);
+  if (!el) return false;
+  if (el.closest && el.closest(
+    'select, option, [role="listbox"], [role="option"], [role="menu"], '
+    + '[role="menuitem"], .admin__action-multiselect-menu, '
+    + '.admin__action-multiselect-menu-inner, .action-menu._active, '
+    + '.selectmenu-items'
+  )) return true;
+  return false;
+})"""
+
 
 def _direct_cdp_host(cdp_url: str) -> str:
     """Return a host that should bypass HTTP proxies, or an empty string."""
@@ -833,6 +914,54 @@ class PlaywrightDevice:
         except Exception as exc:
             return f"failed: {exc}"
 
+    def reveal_control(self, control: dict) -> str:
+        """Scroll a form-reader control into the viewport center.
+
+        Prefers the element's DOM id. Falls back to a viewport-normalized
+        ``scrollBy`` using the control rect (0-1000 over the current viewport,
+        including off-screen positions below/above the fold).
+        """
+
+        try:
+            page = self._require_page()
+        except Exception as exc:
+            return f"failed: {exc}"
+        control_id = str((control or {}).get("id") or "").strip()
+        if control_id:
+            try:
+                found = page.evaluate(
+                    """(id) => {
+                        const el = document.getElementById(id);
+                        if (!el) return false;
+                        el.scrollIntoView({block: 'center', behavior: 'instant'});
+                        return true;
+                    }""",
+                    control_id,
+                )
+                if found:
+                    return "ok"
+            except Exception:
+                pass
+        rect = (control or {}).get("rect") if isinstance((control or {}).get("rect"), dict) else {}
+        x, y = rect.get("x"), rect.get("y")
+        if not all(isinstance(value, (int, float)) for value in (x, y)):
+            return "failed: no locator"
+        try:
+            page.evaluate(
+                """([nx, ny]) => {
+                    const vh = innerHeight || document.documentElement.clientHeight || 1;
+                    window.scrollBy({
+                        top: ny / 1000 * vh - vh / 2,
+                        left: 0,
+                        behavior: 'instant',
+                    });
+                }""",
+                [float(x), float(y)],
+            )
+            return "ok"
+        except Exception as exc:
+            return f"failed: {exc}"
+
     def eval_js(self, expression: str) -> object:
         """Best-effort JS eval via page.evaluate(). Used by the action visualizer.
         Returns None on any failure; never raises."""
@@ -887,6 +1016,48 @@ class PlaywrightDevice:
         except Exception:
             return []
 
+    def _eval_bool(self, expression: str) -> bool:
+        """Best-effort boolean page probe. page.evaluate can be bound-broken over CDP."""
+        try:
+            page = self._require_page()
+            result = page.evaluate(expression)
+            return bool(result)
+        except Exception:
+            pass
+        try:
+            res = self._cdp_send(
+                "Runtime.evaluate",
+                {"expression": expression, "returnByValue": True},
+            )
+            return bool((res.get("result") or {}).get("value"))
+        except Exception:
+            return False
+
+    def _choice_overlay_open(self) -> bool:
+        return self._eval_bool(_CHOICE_OVERLAY_OPEN_JS)
+
+    def _point_hits_choice_overlay(self, x: float, y: float) -> bool:
+        expr = f"{_POINT_HITS_CHOICE_JS}({float(x)}, {float(y)})"
+        return self._eval_bool(expr)
+
+    def _dismiss_choice_overlay(self) -> bool:
+        """Close a native <select> popup or custom choice list with Escape."""
+        try:
+            page = self._require_page()
+            page.keyboard.press("Escape")
+            try:
+                page.evaluate(
+                    """() => {
+                      const active = document.activeElement;
+                      if (active && typeof active.blur === 'function') active.blur();
+                    }"""
+                )
+            except Exception:
+                pass
+            return True
+        except Exception:
+            return False
+
     def tap(self, x: float, y: float) -> str:
         self._follow_active_tab()
         try:
@@ -895,12 +1066,23 @@ class PlaywrightDevice:
                 page.bring_to_front()
             except Exception:
                 pass
+            # A native <select> popup sits outside the page tree. Dismiss an
+            # already-open choice overlay first, then click the requested point.
+            if self._choice_overlay_open() and not self._point_hits_choice_overlay(x, y):
+                self._dismiss_choice_overlay()
             page.mouse.click(x, y)
         except Exception as exc:  # noqa: BLE001
             return f"failed: {exc}"
         return f"OK tap ({x:.0f},{y:.0f})"
 
-    def select_option(self, x: Optional[float], y: Optional[float], option_text: str) -> str:
+    def select_option(
+        self,
+        x: Optional[float],
+        y: Optional[float],
+        option_text: str,
+        *,
+        deselect: bool = False,
+    ) -> str:
         """Select an option: mouse-click for rendered dropdowns, JS only for native ``<select>``.
 
         Two paths by what the screenshot can see (mouse interaction is the default — most
@@ -921,7 +1103,7 @@ class PlaywrightDevice:
             except Exception:
                 pass
             result = page.evaluate(
-                r"""({x, y, target}) => {
+                r"""({x, y, target, deselect}) => {
                     const norm = (v) => String(v ?? '')
                         .replace(/\s+/g, ' ')
                         .trim()
@@ -967,13 +1149,14 @@ class PlaywrightDevice:
                         // selection instead. Single-select keeps the value= path. Verified live via
                         // CDP on /sales_rule/promo_quote/new/ (customer_group_ids).
                         if (select.multiple) {
-                            option.selected = true;
+                            option.selected = !deselect;
                         } else {
                             select.value = option.value;
                             option.selected = true;
                         }
                         select.dispatchEvent(new Event('input', {bubbles: true}));
                         select.dispatchEvent(new Event('change', {bubbles: true}));
+                        if (typeof select.blur === 'function') select.blur();
                         return {
                             ok: true,
                             mode: 'native',
@@ -983,7 +1166,10 @@ class PlaywrightDevice:
                     }
 
                     const candidates = Array.from(document.querySelectorAll(
-                        '[role=option], [role=menuitem], [role=listbox] li, .admin__action-dropdown-menu li, .selectmenu li, li, option'
+                        '[role=option], [role=menuitem], [role=listbox] li, '
+                        + '.admin__action-dropdown-menu li, .selectmenu li, '
+                        + '.admin__action-multiselect-menu .admin__action-multiselect-label, '
+                        + '.admin__action-multiselect-menu li, li, option'
                     )).filter((el) => {
                         if (el.closest('select')) return false;
                         const r = el.getBoundingClientRect();
@@ -1008,7 +1194,7 @@ class PlaywrightDevice:
                         reason: 'no select at point/focus and no visible matching option',
                     };
                 }""",
-                {"x": x, "y": y, "target": option_text},
+                {"x": x, "y": y, "target": option_text, "deselect": bool(deselect)},
             )
         except Exception as exc:  # noqa: BLE001
             return f"failed: {exc}"
@@ -1033,7 +1219,9 @@ class PlaywrightDevice:
                 return f"failed: mouse target not finite ({mx!r},{my!r})"
             page.mouse.click(mx, my)
             return f"OK select_option {label!r} (mouse)"
-        # native <select>:option 不在渲染树,JS 已在上方 set value + dispatch change
+        # native <select>:option 不在渲染树,JS 已在上方 set value + dispatch change.
+        # The OS popup still covers the screenshot until Escape/blur.
+        self._dismiss_choice_overlay()
         value = result.get("value")
         suffix = f" value={value!r}" if value is not None else ""
         return f"OK select_option {label!r} (select){suffix}"
@@ -1233,61 +1421,64 @@ class PlaywrightDevice:
         the page remains fixed. This read-only DOM probe chooses a visible non-control point.
         """
         self._follow_active_tab()
-        page = self._require_page()
+        preferred_x = float(x)
+        preferred_y = float(y)
+        area = json.dumps(target_area or "main_content")
+        unsafe = json.dumps(UNSAFE_SCROLL_SELECTOR)
+        expression = (
+            "(() => {"
+            f"const preferredX={preferred_x}, preferredY={preferred_y}, area={area};"
+            f"const unsafe={unsafe};"
+            "const ranges = {"
+            "  main_content: [0.18, 0.94, 0.12, 0.88],"
+            "  left_panel: [0.02, 0.45, 0.12, 0.88],"
+            "  right_panel: [0.55, 0.98, 0.12, 0.88],"
+            "  top_content: [0.10, 0.90, 0.05, 0.48],"
+            "  bottom_content: [0.10, 0.90, 0.52, 0.95]"
+            "};"
+            "const [x0, x1, y0, y1] = ranges[area] || ranges.main_content;"
+            "const preferredInside = ("
+            "  preferredX >= innerWidth * x0 && preferredX <= innerWidth * x1 &&"
+            "  preferredY >= innerHeight * y0 && preferredY <= innerHeight * y1"
+            ");"
+            "const candidates = preferredInside ? [[preferredX, preferredY]] : [];"
+            "for (const yf of [0.5, 0.35, 0.65, 0.2, 0.8]) {"
+            "  for (const xf of [0.82, 0.68, 0.54, 0.40, 0.26]) {"
+            "    candidates.push(["
+            "      innerWidth * (x0 + (x1 - x0) * xf),"
+            "      innerHeight * (y0 + (y1 - y0) * yf)"
+            "    ]);"
+            "  }"
+            "}"
+            "let best = null;"
+            "for (const [px, py] of candidates) {"
+            "  const el = document.elementFromPoint(px, py);"
+            "  if (!el || el.closest(unsafe)) continue;"
+            "  const style = getComputedStyle(el);"
+            "  if (style.visibility === 'hidden' || style.display === 'none') continue;"
+            "  const score = Math.hypot(px - preferredX, py - preferredY);"
+            "  if (!best || score < best.score) {"
+            "    best = {x: Math.round(px), y: Math.round(py),"
+            "            tag: (el.tagName || '').toLowerCase(), score};"
+            "  }"
+            "}"
+            "return best;"
+            "})()"
+        )
+        result = None
         try:
-            result = page.evaluate(
-                """({preferredX, preferredY, area}) => {
-                  const ranges = {
-                    main_content: [0.18, 0.94, 0.12, 0.88],
-                    left_panel: [0.02, 0.45, 0.12, 0.88],
-                    right_panel: [0.55, 0.98, 0.12, 0.88],
-                    top_content: [0.10, 0.90, 0.05, 0.48],
-                    bottom_content: [0.10, 0.90, 0.52, 0.95],
-                  };
-                  const [x0, x1, y0, y1] = ranges[area] || ranges.main_content;
-                  const unsafe = [
-                    'a', 'button', 'input', 'textarea', 'select', 'option',
-                    '[contenteditable="true"]', '[draggable="true"]',
-                    '[role="button"]', '[role="checkbox"]', '[role="combobox"]',
-                    '[role="listbox"]', '[role="menu"]', '[role="menuitem"]',
-                    '[role="option"]', '[role="radio"]', '[role="scrollbar"]',
-                    '[role="slider"]', '[role="spinbutton"]', '[role="switch"]',
-                    '[role="tab"]', '[role="textbox"]'
-                  ].join(',');
-                  const preferredInside = (
-                    preferredX >= innerWidth * x0 && preferredX <= innerWidth * x1 &&
-                    preferredY >= innerHeight * y0 && preferredY <= innerHeight * y1
-                  );
-                  const candidates = preferredInside ? [[preferredX, preferredY]] : [];
-                  for (const yf of [0.5, 0.35, 0.65, 0.2, 0.8]) {
-                    for (const xf of [0.82, 0.68, 0.54, 0.40, 0.26]) {
-                      const px = innerWidth * (x0 + (x1 - x0) * xf);
-                      const py = innerHeight * (y0 + (y1 - y0) * yf);
-                      candidates.push([px, py]);
-                    }
-                  }
-                  let best = null;
-                  for (const [px, py] of candidates) {
-                    const el = document.elementFromPoint(px, py);
-                    if (!el || el.closest(unsafe)) continue;
-                    const style = getComputedStyle(el);
-                    if (style.visibility === 'hidden' || style.display === 'none') continue;
-                    const score = Math.hypot(px - preferredX, py - preferredY);
-                    if (!best || score < best.score) {
-                      best = {x: Math.round(px), y: Math.round(py),
-                              tag: (el.tagName || '').toLowerCase(), score};
-                    }
-                  }
-                  return best;
-                }""",
-                {
-                    "preferredX": float(x),
-                    "preferredY": float(y),
-                    "area": target_area or "main_content",
-                },
-            )
+            result = self._require_page().evaluate(expression)
         except Exception:
-            return None
+            result = None
+        if not isinstance(result, dict):
+            try:
+                res = self._cdp_send(
+                    "Runtime.evaluate",
+                    {"expression": expression, "returnByValue": True},
+                )
+                result = (res.get("result") or {}).get("value")
+            except Exception:
+                return None
         if not isinstance(result, dict):
             return None
         try:
@@ -1325,6 +1516,11 @@ class PlaywrightDevice:
         try:
             page.mouse.move(x, y)
             page.mouse.wheel(dx, dy)
+            # A wheel that still grazes a focused <select> / Magento multiselect
+            # opens the option list and blocks the rest of the form. Dismiss it
+            # immediately so the next observe sees the scrolled form, not the list.
+            if self._choice_overlay_open():
+                self._dismiss_choice_overlay()
         except Exception as exc:  # noqa: BLE001
             return f"failed: {exc}"
         return f"OK scroll {d} {dist}px @({x:.0f},{y:.0f})"

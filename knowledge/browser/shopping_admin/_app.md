@@ -68,9 +68,9 @@ version: 2
 *   **Sales Reports (list)**: 销售类报表汇总（订单、税收、发票、运费等），子项含 **Orders**（Reports › Sales › Orders）、**Tax**（Reports › Sales › Tax）等，按日期区间统计。⚠️ **"Show / View the sales order report / tax report (for <时间段>)" 是导航类意图**——目标是**到达并渲染**对应报表，不是读取报表里的具体数值。做法：① 按报表名选对子类型入口（**"tax report" 进 Tax 报表，不是 Orders 报表**；子类型→URL 见下方映射）；② 在 **From / To** 填日期区间（**MM/DD/YYYY**，相对日期换算见下方），点 **Show Report**。报表渲染在 URL `…/reports/report_sales/<subtype>/filter/…`，进入该渲染页即视为到达。**报表区可能为空**（无数据时显示 "No records found"），且 Magento 报表页把 Filter 表单留在顶部、统计表渲染在其下方甚至 below-fold——空报表是正常结果。这类导航意图不要求返回任何数值字段（不读 total_orders / total_revenue 等）。
 *   **报表子类型 → URL 映射**(决定 `report_sales/<subtype>/filter` 的 subtype,务必按 intent 的报表名选对,否则会进错报表):**orders / sales order report → `sales`**(Reports › Sales › Orders);**tax report → `tax`**(Reports › Sales › Tax);invoiced → `invoiced`、shipping → `shipping`、refunds → `refunded`、coupons → `coupons`(均在 Reports › Sales › 对应子项)。
 *   **相对日期换算**(报表 From/To,相对 intent 里给定的 today;**关键:"this year" 截到今天、不是年底**):
-    *   **"last year"** = 去年**整年** → From `01/01/<去年>`、To `12/31/<去年>`。例:today=Mar 15 2023 → From `01/01/2022`、To `12/31/2022`。
-    *   **"this year"** = 今年 1 月 1 日 → **今天**(当年未过完,To 取 today,**不要填 12/31**)。例:today=Mar 15 2023 的 "tax report for this year" → From `01/01/2023`、To `03/15/2023`。
-    *   **显式区间**(intent 已给起止日期)= 直接用,不换算。例:"orders report from May 1 2021 to March 31 2022" → From `05/01/2021`、To `03/31/2022`。
+    *   **"last year"** = 去年**整年** → From `01/01/<去年>`、To `12/31/<去年>`。
+    *   **"this year"** = 今年 1 月 1 日 → **今天**(当年未过完,To 取 today,**不要填 12/31**)。
+    *   **显式区间**(intent 已给起止日期)= 直接用,不换算。
 *   **Product Reports (list)**: 产品类报表汇总（浏览量、畅销品、库存预警等）。
 *   **Customer Reports (list)**: 客户类报表汇总（订单总额、新增账户、愿望清单等）。
 *   **Marketing Reports (list)**: 营销类报表汇总（购物车放弃率、搜索词、邮件问题等）。
@@ -87,7 +87,7 @@ version: 2
 *   **Pages (list/form)**: CMS 静态页面列表及编辑页（如 Home Page、Privacy Policy 的标题/内容）。
 *   **Blocks / Widgets (list/form)**: 可复用内容块与小部件配置。
 *   **Design Configuration (list)**: 各 Store View 的设计配置入口。
-*   **Themes (list)**: 已安装主题列表（Magento Luma、Magento Blank 等）。⚠️ **主题设置 / 外观设置 / "Magento Luma theme settings page" 在这里**——路径 **Content › Design › Themes**，**不在 System/Stores 菜单**（Design 入口属于 Content，不属于 System）。进列表后点 **Magento Luma** 行进入该主题设置页 `admin/system_design_theme/edit/id/3`（页标题 "Theme: Magento Luma"）。
+*   **Themes (list)**: 已安装主题列表（Magento Luma、Magento Blank 等）。⚠️ **主题设置 / 外观设置 / "Magento Luma theme settings page" 在这里**——路径 **Content › Design › Themes**，**不在 System/Stores 菜单**（Design 入口属于 Content，不属于 System）。进列表后点 **Magento Luma** 行进入该主题设置页（页标题 "Theme: Magento Luma"）。不要凭记忆拼 theme id URL。
 *   **Schedule (list)**: 设计变更的定时排程。
 
 ## 3. 导航关系
@@ -121,7 +121,7 @@ version: 2
     *   `Reports Menu` -> `Sales` / `Products` / `Customers` / `Marketing`: 进入对应的 **Report List** 页。
     *   `Report List` -> `Export` / `Refresh`: 触发数据导出或刷新操作（通常在同一页面或弹窗完成）。
 *   **Content 模块**:
-    *   `Sidebar` -> `Content` -> `Design` -> `Themes`: 进入 **Themes** 列表；点 **Magento Luma** 行 -> 该主题设置页（`admin/system_design_theme/edit/id/3`）。主题/外观设置都走这里，**不要去 System/Stores 菜单找 Design**。
+    *   `Sidebar` -> `Content` -> `Design` -> `Themes`: 进入 **Themes** 列表；点 **Magento Luma** 行 -> 该主题设置页。主题/外观设置都走这里，**不要去 System/Stores 菜单找 Design**。
     *   `Sidebar` -> `Content` -> `Elements` -> `Pages`: 进入 **Pages** 列表（CMS 页面标题/内容编辑）。
 
 ### 跨模块关联

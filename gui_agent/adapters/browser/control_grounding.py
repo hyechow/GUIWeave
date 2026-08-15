@@ -474,6 +474,8 @@ def _explicit_target_position(description: str, control: dict) -> int | None:
         allowed_types = {"link", "option", "item"}
     elif kind in {"button", "input_button", "submit", "section_toggle"}:
         allowed_types = {"button", "option", "item", "toggle"}
+        if kind == "section_toggle":
+            allowed_types = allowed_types | {"section", "heading"}
     elif any(token in kind for token in ("checkbox", "radio")):
         allowed_types = {"checkbox", "radio", "option", "row", "control"}
     elif any(token in kind for token in ("input", "textbox", "textarea", "editor")):

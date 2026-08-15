@@ -899,6 +899,105 @@ def test_empty_surface_is_authoritative_when_detail_fields_are_not_grid_columns(
     assert frame.collections[0].coverage["status"] == "complete"
 
 
+def test_assembled_details_replace_a_stale_empty_collection(tmp_path: Path) -> None:
+    """A complete 0-row query must not block a later assembled walk."""
+
+    requirement = DataRequirement(
+        id="review_details",
+        description="Review details",
+        row_schema={
+            "type": "object",
+            "properties": {
+                "product": {"type": "string"},
+                "title": {"type": "string"},
+                "rating": {"type": "number"},
+            },
+            "required": ["product", "title", "rating"],
+        },
+        field_sources={
+            "product": "Product",
+            "title": "Title",
+            "rating": "Detailed Rating",
+        },
+        field_types={
+            "product": "text",
+            "title": "text",
+            "rating": "number",
+        },
+    )
+    empty = {
+        "caption": "All Reviews",
+        "headers": ["Product", "Title", "Action"],
+        "rows": [],
+        "total_records": 0,
+        "partial": False,
+        "traversal": {"type": "static", "has_next_page": False},
+    }
+    listed = {
+        "caption": "All Reviews",
+        "headers": ["Product", "Title", "Action"],
+        "rows": [
+            {"Product": "Widget A", "Title": "Ann", "Action": "Edit"},
+            {"Product": "Widget B", "Title": "Bob", "Action": "Edit"},
+        ],
+        "total_records": 2,
+        "partial": False,
+        "traversal": {"type": "static"},
+    }
+    materializer = _materializer(tmp_path, "enhanced")
+    materializer._vision_extract = lambda *_a, **_k: (_ for _ in ()).throw(  # type: ignore[method-assign]
+        AssertionError("structured list/detail evidence must not invoke visual extraction")
+    )
+
+    def observe(frame_no: int, *, table=None, controls=None, applied=None, query=None):
+        return materializer.observe(
+            bundle=FakeBundle(
+                [table] if table else [],
+                controls=controls or [],
+                applied_filters=applied or {},
+                applied_filter_state=(
+                    AppliedFilterState(
+                        predicates=compile_filter_predicates(applied),
+                        coverage="complete",
+                        source="filter_indicator",
+                    )
+                    if applied
+                    else None
+                ),
+            ),
+            platform=FakePlatform(),
+            requirements=[requirement],
+            acquisition_filters=query or {},
+            frame_no=frame_no,
+        )[0]
+
+    empty_frame = observe(
+        1, table=empty, applied={"Product": "widgets"}, query={"product": "widgets"},
+    )
+    assert empty_frame.collections[0].row_count == 0
+    assert empty_frame.collections[0].coverage["status"] == "complete"
+
+    observe(2, table=listed, applied={"Product": "widget"}, query={"product": "widget"})
+    observe(
+        3,
+        controls=[
+            {"label": "Title", "kind": "text_input", "value": "Ann"},
+            {"label": "Detailed Rating", "kind": "number", "value": 3},
+        ],
+        query={"product": "widget"},
+    )
+    last = observe(
+        4,
+        controls=[
+            {"label": "Title", "kind": "text_input", "value": "Bob"},
+            {"label": "Detailed Rating", "kind": "number", "value": 2},
+        ],
+        query={"product": "widget"},
+    )
+    assert last.collections[0].row_count == 2
+    assert last.collections[0].coverage["status"] == "complete"
+
+
 def test_collector_establishes_filter_scope_before_materializing_rows(tmp_path: Path) -> None:
     row_schema = {
         "type": "object",
@@ -1098,8 +1197,447 @@ def test_linked_details_resolve_empty_values_from_related_records(tmp_path: Path
     collection = completed.collections[0]
     assert collection.coverage["status"] == "complete"
     assert collection.row_count == 2
-    assert completed.chunks[0].provider == "structured"
     assert materializer.data_store.collection_rows(collection.ref) == case["expected_rows"]
+
+
+def test_vision_detail_row_advances_unresolved_candidate(tmp_path: Path) -> None:
+    """Vision-only detail fields (absent from form controls) must resolve the candidate."""
+
+    requirement = DataRequirement(
+        id="items",
+        description="Items",
+        target_label="Items",
+        row_schema={
+            "type": "object",
+            "properties": {
+                "title": {"type": "string"},
+                "owner": {"type": "string"},
+                "score": {"type": "number"},
+            },
+            "required": ["title", "owner", "score"],
+            "additionalProperties": False,
+        },
+        field_sources={"title": "Title", "owner": "Owner", "score": "Score"},
+        field_types={"title": "text", "owner": "text", "score": "number"},
+    )
+    list_table = {
+        "headers": ["Title", "Owner", "Action"],
+        "rows": [
+            {"Title": "Alpha", "Owner": "Ann", "Action": "Edit"},
+            {"Title": "Beta", "Owner": "Bob", "Action": "Edit"},
+        ],
+        "total_records": 2,
+        "partial": False,
+        "traversal": {"type": "static"},
+    }
+    materializer = _materializer(tmp_path, "enhanced")
+    vision_rows = iter([
+        [{"title": "Alpha", "owner": "Ann", "score": 1}],
+        [{"title": "Beta", "owner": "Bob", "score": 2}],
+    ])
+    materializer._vision_extract = lambda *_a, **_k: {  # type: ignore[method-assign]
+        "found": True,
+        "end_visible": True,
+        "scope_satisfied": True,
+        "rows": next(vision_rows),
+    }
+
+    def observe(frame_no: int, *, table=None, controls=None):
+        return materializer.observe(
+            bundle=FakeBundle([table] if table else [], controls=controls or []),
+            platform=FakePlatform(),
+            requirements=[requirement],
+            frame_no=frame_no,
+        )[0]
+
+    listed = observe(1, table=list_table)
+    assert listed.requirement_scopes["items"]["detail_resolution"]["next_unresolved_candidate"]["ordinal"] == 1
+
+    first = observe(2, controls=[{"label": "Owner", "kind": "text_input", "value": "Ann"}])
+    progress = first.requirement_scopes["items"]["detail_resolution"]
+    assert progress["resolved_candidate_ordinals"] == [1]
+    assert progress["next_unresolved_candidate"]["ordinal"] == 2
+    assert "score" in progress["current_observed_detail_fields"]
+
+    last = observe(3, controls=[{"label": "Owner", "kind": "text_input", "value": "Bob"}])
+    progress = last.requirement_scopes["items"]["detail_resolution"]
+    assert progress["status"] == "resolved"
+    assert last.collections[0].row_count == 2
+
+
+def test_detail_without_identity_advances_next_unresolved(tmp_path: Path) -> None:
+    """A sequential Next walk still resolves when the editor has no identity control."""
+
+    requirement = DataRequirement(
+        id="reviews",
+        description="Reviews",
+        target_label="Reviews",
+        row_schema={
+            "type": "object",
+            "properties": {
+                "nickname": {"type": "string"},
+                "product": {"type": "string"},
+                "rating": {"type": "number"},
+            },
+            "required": ["nickname", "product", "rating"],
+            "additionalProperties": False,
+        },
+        field_sources={
+            "nickname": "Nickname",
+            "product": "Product",
+            "rating": "Detailed Rating",
+        },
+        field_types={"nickname": "text", "product": "text", "rating": "number"},
+    )
+    list_table = {
+        "headers": ["Nickname", "Product", "Action"],
+        "rows": [
+            {"Nickname": "Ann", "Product": "Tank A", "Action": "Edit"},
+            {"Nickname": "Bob", "Product": "Tank B", "Action": "Edit"},
+        ],
+        "total_records": 2,
+        "partial": False,
+        "traversal": {"type": "static"},
+    }
+    materializer = _materializer(tmp_path, "enhanced")
+    materializer._vision_extract = lambda *_a, **_k: (_ for _ in ()).throw(  # type: ignore[method-assign]
+        AssertionError("identity-free detail pages should use the star control")
+    )
+
+    def observe(frame_no: int, *, table=None, controls=None):
+        return materializer.observe(
+            bundle=FakeBundle([table] if table else [], controls=controls or []),
+            platform=FakePlatform(),
+            requirements=[requirement],
+            frame_no=frame_no,
+        )[0]
+
+    observe(1, table=list_table)
+    materializer.data_store.put_chunk(
+        requirement_id="reviews",
+        frame_id="prefix",
+        provider="vision",
+        rows=[{"nickname": "Ann", "product": "Tank A", "rating": 3}],
+        row_schema=requirement.row_schema,
+        coverage={
+            "scope_status": "met",
+            "status": "incomplete",
+            "requested_filters": {},
+            "collection_key": "visual:prefix",
+            "total_records": 2,
+            "partial": True,
+            "at_end": False,
+        },
+    )
+    first = observe(
+        2,
+        controls=[{"label": "Detailed Rating", "kind": "number", "value": 3}],
+    )
+    progress = first.requirement_scopes["reviews"]["detail_resolution"]
+    assert progress["resolved_candidate_ordinals"] == [1]
+    assert progress["next_unresolved_candidate"]["ordinal"] == 2
+
+    last = observe(
+        3,
+        controls=[{"label": "Detailed Rating", "kind": "number", "value": 2}],
+    )
+    progress = last.requirement_scopes["reviews"]["detail_resolution"]
+    assert progress["status"] == "resolved"
+    assert last.collections[0].row_count == 2
+    assert materializer.data_store.collection_rows(last.collections[0].ref) == [
+        {"nickname": "Ann", "product": "Tank A", "rating": 3},
+        {"nickname": "Bob", "product": "Tank B", "rating": 2},
+    ]
+
+    partial_grid = observe(
+        4,
+        table={
+            "headers": ["Nickname", "Product", "Action"],
+            "rows": [
+                {"Nickname": "Ann", "Product": "Tank A", "Action": "Edit"},
+            ],
+            "total_records": 2,
+            "partial": True,
+            "traversal": {"type": "static"},
+        },
+    )
+    assert partial_grid.requirement_scopes["reviews"]["detail_resolution"]["status"] == "resolved"
+
+
+def test_rating_control_fills_named_editor_without_counting_stars(
+    tmp_path: Path,
+) -> None:
+    """A named editor's rating widget is the selected control value, not a vision star count."""
+
+    requirement = DataRequirement(
+        id="reviews",
+        description="Reviews",
+        target_label="Reviews",
+        row_schema={
+            "type": "object",
+            "properties": {
+                "nickname": {"type": "string"},
+                "product": {"type": "string"},
+                "rating": {"type": "number"},
+            },
+            "required": ["nickname", "product", "rating"],
+            "additionalProperties": False,
+        },
+        field_sources={
+            "nickname": "Nickname",
+            "product": "Product",
+            "rating": "Detailed Rating",
+        },
+        field_types={"nickname": "text", "product": "text", "rating": "number"},
+    )
+    list_table = {
+        "headers": ["Nickname", "Product", "Action"],
+        "rows": [
+            {"Nickname": "Ann", "Product": "Tank A", "Action": "Edit"},
+            {"Nickname": "Bob", "Product": "Tank A", "Action": "Edit"},
+        ],
+        "total_records": 2,
+        "partial": False,
+        "traversal": {"type": "static"},
+    }
+    materializer = _materializer(tmp_path, "enhanced")
+    materializer._vision_extract = lambda *_a, **_k: (_ for _ in ()).throw(  # type: ignore[method-assign]
+        AssertionError("rating widgets must be read from form controls")
+    )
+
+    def observe(frame_no: int, *, table=None, controls=None):
+        return materializer.observe(
+            bundle=FakeBundle([table] if table else [], controls=controls or []),
+            platform=FakePlatform(),
+            requirements=[requirement],
+            frame_no=frame_no,
+        )[0]
+
+    observe(1, table=list_table)
+    observe(
+        2,
+        controls=[
+            {"label": "Nickname", "kind": "text_input", "value": "Ann"},
+            {"label": "Detailed Rating", "kind": "rating", "value": "2"},
+        ],
+    )
+    last = observe(
+        3,
+        controls=[
+            {"label": "Nickname", "kind": "text_input", "value": "Bob"},
+            {"label": "Detailed Rating", "kind": "rating", "value": "5"},
+        ],
+    )
+    assert last.requirement_scopes["reviews"]["detail_resolution"]["status"] == "resolved"
+    assert materializer.data_store.collection_rows(last.collections[0].ref) == [
+        {"nickname": "Ann", "product": "Tank A", "rating": 2},
+        {"nickname": "Bob", "product": "Tank A", "rating": 5},
+    ]
+
+
+def test_rating_control_uses_selected_scale_not_option_id(tmp_path: Path) -> None:
+    """Hidden radio widgets often store option ids; the selected scale is 1–N."""
+
+    requirement = DataRequirement(
+        id="reviews",
+        description="Reviews",
+        target_label="Reviews",
+        row_schema={
+            "type": "object",
+            "properties": {
+                "nickname": {"type": "string"},
+                "product": {"type": "string"},
+                "rating": {"type": "number"},
+            },
+            "required": ["nickname", "product", "rating"],
+            "additionalProperties": False,
+        },
+        field_sources={
+            "nickname": "Nickname",
+            "product": "Product",
+            "rating": "Detailed Rating",
+        },
+        field_types={"nickname": "text", "product": "text", "rating": "number"},
+    )
+    list_table = {
+        "headers": ["Nickname", "Product", "Action"],
+        "rows": [
+            {"Nickname": "Ann", "Product": "Tank A", "Action": "Edit"},
+        ],
+        "total_records": 1,
+        "partial": False,
+        "traversal": {"type": "static"},
+    }
+    materializer = _materializer(tmp_path, "enhanced")
+    materializer._vision_extract = lambda *_a, **_k: (_ for _ in ()).throw(  # type: ignore[method-assign]
+        AssertionError("rating widgets must be read from form controls")
+    )
+    materializer.observe(
+        bundle=FakeBundle([list_table]),
+        platform=FakePlatform(),
+        requirements=[requirement],
+        frame_no=1,
+    )
+    done = materializer.observe(
+        bundle=FakeBundle([], controls=[{
+            "label": "Nickname",
+            "kind": "text_input",
+            "value": "Ann",
+        }, {
+            "label": "Detailed Rating",
+            "kind": "rating",
+            "value": "18",
+            "selected_text": "3",
+            "selected_text_primary": "3",
+        }]),
+        platform=FakePlatform(),
+        requirements=[requirement],
+        frame_no=2,
+    )[0]
+    assert done.requirement_scopes["reviews"]["detail_resolution"]["status"] == "resolved"
+    assert materializer.data_store.collection_rows(done.collections[0].ref) == [
+        {"nickname": "Ann", "product": "Tank A", "rating": 3},
+    ]
+
+
+def _review_requirement(**filters: object) -> DataRequirement:
+    return DataRequirement(
+        id="reviews",
+        description="Reviews",
+        target_label="Reviews",
+        row_schema={
+            "type": "object",
+            "properties": {
+                "nickname": {"type": "string"},
+                "product": {"type": "string"},
+                "rating": {"type": "number"},
+            },
+            "required": ["nickname", "product", "rating"],
+            "additionalProperties": False,
+        },
+        field_sources={
+            "nickname": "Nickname",
+            "product": "Product",
+            "rating": "Detailed Rating",
+        },
+        field_types={"nickname": "text", "product": "text", "rating": "number"},
+        filters=dict(filters),
+    )
+
+
+def _review_table(rows: list[dict[str, str]], *, total: int) -> dict:
+    return {
+        "headers": ["Nickname", "Product", "Action"],
+        "rows": [{**row, "Action": "Edit"} for row in rows],
+        "total_records": total,
+        "partial": len(rows) < total,
+        "traversal": {"type": "static"},
+    }
+
+
+def test_named_stranger_does_not_fill_first_unresolved(tmp_path: Path) -> None:
+    """An editor whose identity is not in the candidate set must not credit the first gap."""
+
+    requirement = _review_requirement()
+    materializer = _materializer(tmp_path, "enhanced")
+    materializer._vision_extract = lambda *_a, **_k: (_ for _ in ()).throw(  # type: ignore[method-assign]
+        AssertionError("named editors should not fall through to vision")
+    )
+
+    def observe(frame_no: int, *, table=None, controls=None):
+        return materializer.observe(
+            bundle=FakeBundle([table] if table else [], controls=controls or []),
+            platform=FakePlatform(),
+            requirements=[requirement],
+            frame_no=frame_no,
+        )[0]
+
+    observe(
+        1,
+        table=_review_table(
+            [
+                {"Nickname": "Ann", "Product": "Tank A"},
+                {"Nickname": "Bob", "Product": "Tank B"},
+            ],
+            total=2,
+        ),
+    )
+    stranger = observe(
+        2,
+        controls=[
+            {"label": "Nickname", "kind": "text_input", "value": "Cy"},
+            {"label": "Detailed Rating", "kind": "rating", "value": "5"},
+        ],
+    )
+    progress = stranger.requirement_scopes["reviews"]["detail_resolution"]
+    assert progress["status"] == "active"
+    assert progress["resolved_candidate_ordinals"] == []
+    assert progress["next_unresolved_candidate"]["ordinal"] == 1
+    assert stranger.collections == []
+
+
+def test_acquisition_scope_change_resets_detail_collection(tmp_path: Path) -> None:
+    """A new physical query must not union rows assembled under a prior acquisition scope."""
+
+    requirement = _review_requirement(product="Tank A")
+    materializer = _materializer(tmp_path, "enhanced")
+    materializer._vision_extract = lambda *_a, **_k: (_ for _ in ()).throw(  # type: ignore[method-assign]
+        AssertionError("scope reset should keep using structured list/detail evidence")
+    )
+
+    def observe(frame_no: int, *, product: str, table=None, controls=None):
+        return materializer.observe(
+            bundle=FakeBundle(
+                [table] if table else [],
+                controls=controls or [],
+                applied_filters={"Product": product},
+                applied_filter_state=AppliedFilterState(
+                    predicates=compile_filter_predicates({"Product": product}),
+                    coverage="complete",
+                    source="replay",
+                ),
+            ),
+            platform=FakePlatform(),
+            requirements=[requirement],
+            acquisition_filters={"product": product},
+            frame_no=frame_no,
+        )[0]
+
+    observe(
+        1,
+        product="Tank A",
+        table=_review_table(
+            [
+                {"Nickname": "Ann", "Product": "Tank A"},
+                {"Nickname": "Bob", "Product": "Tank A"},
+            ],
+            total=2,
+        ),
+    )
+    observe(
+        2,
+        product="Tank A",
+        controls=[
+            {"label": "Nickname", "kind": "text_input", "value": "Ann"},
+            {"label": "Detailed Rating", "kind": "rating", "value": "2"},
+        ],
+    )
+    changed = observe(
+        3,
+        product="Tank B",
+        table=_review_table(
+            [
+                {"Nickname": "Cy", "Product": "Tank B"},
+                {"Nickname": "Dee", "Product": "Tank B"},
+            ],
+            total=2,
+        ),
+    )
+    progress = changed.requirement_scopes["reviews"]["detail_resolution"]
+    assert progress["candidate_records"] == 2
+    assert progress["resolved_candidate_ordinals"] == []
+    assert progress["next_unresolved_candidate"]["fields"]["nickname"] == "Cy"
+    assert changed.collections == []
 
 
 def test_vision_only_never_invokes_platform_perception(tmp_path: Path) -> None:

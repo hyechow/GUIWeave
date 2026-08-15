@@ -789,6 +789,15 @@ def _validate_finish_call(call: ast.Call) -> list[MasterDiagnostic]:
             "result['ref']; literals, None, descriptors, and unproven aliases are invalid",
             value,
         ))
+    _base, path = _subscript_path(value) if value is not None else ("", ())
+    if path[:1] == ("collection_ref",):
+        diagnostics.append(_diagnostic(
+            "OPERATOR_FINISH_REF",
+            "ctx.finish cannot use a Worker collection_ref; route collected rows "
+            "through ctx.transform, or after an operator use transform(inputs=[]) "
+            "and finish that ['ref']",
+            value or call,
+        ))
     effect_keyword = next((item for item in call.keywords if item.arg == "effect"), None)
     effect = (
         effect_keyword.value.value

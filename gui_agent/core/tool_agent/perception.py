@@ -57,6 +57,7 @@ class _DetailCollectionState:
     rows: list[dict[str, Any]]
     detail_fields: set[str]
     pending_index: int | None = None
+    scope_key: str = ""
 
 
 def _normalize_runtime_value(
@@ -331,6 +332,53 @@ def _control_row(
 
 def _nonempty(value: Any) -> bool:
     return value is not None and (not isinstance(value, str) or bool(value.strip()))
+
+
+def _apply_observed_detail(
+    state: _DetailCollectionState,
+    detail: dict[str, Any],
+    observed: set[str],
+) -> None:
+    """Credit observed detail fields to the unique identity match or pending row."""
+
+    if not observed.intersection(state.detail_fields):
+        return
+    scores = [
+        sum(
+            key not in state.detail_fields
+            and _nonempty(value)
+            and row.get(key) == value
+            for key, value in detail.items()
+        )
+        for row in state.rows
+    ]
+    best = max(scores, default=0)
+    matching = scores.index(best) if best and scores.count(best) == 1 else None
+    target = matching if matching is not None else state.pending_index
+    if target is None:
+        identity_observed = any(
+            key not in state.detail_fields and _nonempty(value)
+            for key, value in detail.items()
+        )
+        if identity_observed:
+            return
+        unresolved = [
+            index for index, row in enumerate(state.rows)
+            if any(not _nonempty(row.get(field)) for field in state.detail_fields)
+        ]
+        target = unresolved[0] if unresolved else None
+    if target is None:
+        return
+    for key in state.detail_fields.intersection(observed):
+        value = detail.get(key)
+        if matching is not None or (
+            _nonempty(value) and not _nonempty(state.rows[target].get(key))
+        ):
+            state.rows[target][key] = value
+    state.pending_index = target if any(
+        not _nonempty(state.rows[target].get(field))
+        for field in state.detail_fields
+    ) else None
 
 
 def _normalize_visual_rows(
@@ -664,10 +712,20 @@ class PerceptionMaterializer:
         detail_fields: set[str],
         controls: list[dict[str, Any]],
         scope_status: str,
+        observed_rows: list[dict[str, Any]] | None = None,
+        scope_key: str = "",
     ) -> tuple[_DetailCollectionState, list[dict[str, Any]], dict[str, Any]] | None:
         """Accumulate list candidates and form details without exposing row values."""
 
         state = self._detail_collections.get(requirement.id)
+        if (
+            state is not None
+            and scope_key
+            and state.scope_key
+            and state.scope_key != scope_key
+        ):
+            state = None
+            self._detail_collections.pop(requirement.id, None)
         if candidate_rows and detail_fields and scope_status == "met":
             identity_fields = detail_fields | (state.detail_fields if state else set())
             def identities(items: list[dict[str, Any]]) -> list[dict[str, Any]]:
@@ -676,44 +734,44 @@ class PerceptionMaterializer:
                     for row in items
                 ]
 
-            if state is None or identities(state.rows) != identities(candidate_rows):
-                state = _DetailCollectionState(
-                    rows=[dict(row) for row in candidate_rows],
-                    detail_fields=set(detail_fields),
+            existing_ids = identities(state.rows) if state is not None else None
+            incoming_ids = identities(candidate_rows)
+            filled = bool(
+                state is not None
+                and any(
+                    _nonempty(row.get(field))
+                    for row in state.rows
+                    for field in state.detail_fields
                 )
-                self._detail_collections[requirement.id] = state
-            else:
+            )
+            if state is not None and existing_ids == incoming_ids:
                 state.detail_fields.update(detail_fields)
                 for row, candidate in zip(state.rows, candidate_rows, strict=True):
                     row.update(candidate)
+            elif state is not None and filled and incoming_ids:
+                state.detail_fields.update(detail_fields)
+                for row, ident in zip(candidate_rows, incoming_ids, strict=True):
+                    if ident not in existing_ids:
+                        state.rows.append(dict(row))
+                        existing_ids.append(ident)
+            else:
+                state = _DetailCollectionState(
+                    rows=[dict(row) for row in candidate_rows],
+                    detail_fields=set(detail_fields),
+                    scope_key=scope_key,
+                )
+                self._detail_collections[requirement.id] = state
         if state is None or not state.rows or not state.detail_fields:
             return None
 
         detail, observed = _control_row(requirement, controls)
-        if observed.intersection(state.detail_fields):
-            scores = [
-                sum(
-                    key not in state.detail_fields
-                    and _nonempty(value)
-                    and row.get(key) == value
-                    for key, value in detail.items()
-                )
-                for row in state.rows
-            ]
-            best = max(scores, default=0)
-            matching = scores.index(best) if best and scores.count(best) == 1 else None
-            target = matching if matching is not None else state.pending_index
-            if target is not None:
-                for key in state.detail_fields.intersection(observed):
-                    value = detail.get(key)
-                    if matching is not None or (
-                        _nonempty(value) and not _nonempty(state.rows[target].get(key))
-                    ):
-                        state.rows[target][key] = value
-                state.pending_index = target if any(
-                    not _nonempty(state.rows[target].get(field))
-                    for field in state.detail_fields
-                ) else None
+        _apply_observed_detail(state, detail, observed)
+        for extra in observed_rows or []:
+            extra_fields = {
+                key for key in state.detail_fields if _nonempty(extra.get(key))
+            }
+            _apply_observed_detail(state, extra, extra_fields)
+            observed = observed.union(extra_fields)
 
         unresolved_indexes = [
             index for index, row in enumerate(state.rows)
@@ -986,6 +1044,12 @@ class PerceptionMaterializer:
                 ),
             )
             scope = requirement_scopes[requirement.id]
+            requested_fingerprint = json.dumps(
+                scope.get("requested_filters") or {},
+                ensure_ascii=False,
+                sort_keys=True,
+                default=str,
+            )
             assembled = (
                 self._assemble_detail_collection(
                     requirement=requirement,
@@ -993,57 +1057,17 @@ class PerceptionMaterializer:
                     detail_fields=detail_fields,
                     controls=controls,
                     scope_status=str(scope.get("status") or "unknown"),
+                    observed_rows=(
+                        rows
+                        if rows and not candidate_rows and provider == "vision"
+                        else None
+                    ),
+                    scope_key=requested_fingerprint,
                 )
                 if self.mode == "enhanced"
                 else None
             )
-            if assembled is not None:
-                detail_state, assembled_rows, detail_progress = assembled
-                ready = bool(assembled_rows)
-                pending_ordinal = detail_state.pending_index
-                pending_ordinal = pending_ordinal + 1 if pending_ordinal is not None else None
-                current_detail_fields = set(
-                    detail_progress.get("current_observed_detail_fields") or []
-                )
-                scope["detail_resolution"] = {
-                    "status": "resolved" if ready else "active",
-                    **detail_progress,
-                    "detail_fields": sorted(detail_state.detail_fields),
-                    "pending_candidate_ordinal": pending_ordinal,
-                }
-                if current_detail_fields or pending_ordinal is not None or ready:
-                    rows = []
-                    collection_found = False
-                if scope["status"] == "met" and ready:
-                    rows = assembled_rows
-                    provider = "structured"
-                    coverage = {
-                        "scope": requirement.scope,
-                        "scope_status": "met",
-                        "requested_filters": scope["requested_filters"],
-                        "applied_filters": scope["applied_filters"],
-                        "collection_key": "visual:" + _fingerprint({
-                            "requirement": requirement.id,
-                            "filters": scope["requested_filters"],
-                        }),
-                        "source_scope": "linked_detail",
-                        "window_context": requirement.id,
-                        "at_end": True,
-                        "partial": False,
-                        "total_records": detail_progress["candidate_records"],
-                        "coverage_evidence": "linked_detail_assembly",
-                        **detail_progress,
-                    }
-                    collection_found = True
-            scope_key = (
-                requirement.id,
-                json.dumps(
-                    scope.get("requested_filters") or {},
-                    ensure_ascii=False,
-                    sort_keys=True,
-                    default=str,
-                ),
-            )
+            scope_key = (requirement.id, requested_fingerprint)
             table_total = table.get("total_records") if table is not None else None
             if scope["status"] == "met" and table_total not in (None, ""):
                 try:
@@ -1051,6 +1075,51 @@ class PerceptionMaterializer:
                 except (TypeError, ValueError):
                     pass
             expected_total = expected_totals.get(scope_key)
+            if assembled is not None:
+                detail_state, assembled_rows, detail_progress = assembled
+                ready = bool(assembled_rows)
+                enough = (
+                    expected_total is None
+                    or int(detail_progress["candidate_records"]) >= int(expected_total)
+                )
+                ready_to_complete = ready and enough
+                pending_ordinal = detail_state.pending_index
+                pending_ordinal = pending_ordinal + 1 if pending_ordinal is not None else None
+                scope["detail_resolution"] = {
+                    "status": "resolved" if ready_to_complete else "active",
+                    **detail_progress,
+                    "detail_fields": sorted(detail_state.detail_fields),
+                    "pending_candidate_ordinal": pending_ordinal,
+                }
+                if ready_to_complete and scope["status"] != "unmet":
+                    existing = self.data_store.collection_for_requirement(requirement.id)
+                    if existing is not None and (
+                        existing.coverage.get("status") != "complete"
+                        or existing.row_count == 0
+                    ):
+                        self.data_store.discard_requirement(requirement.id)
+                        existing = None
+                    if existing is None:
+                        rows = assembled_rows
+                        provider = "structured"
+                        coverage = {
+                            "scope": requirement.scope,
+                            "scope_status": "met",
+                            "requested_filters": scope["requested_filters"],
+                            "applied_filters": scope["applied_filters"],
+                            "collection_key": "visual:" + _fingerprint({
+                                "requirement": requirement.id,
+                                "filters": scope["requested_filters"],
+                            }),
+                            "source_scope": "linked_detail",
+                            "window_context": requirement.id,
+                            "at_end": True,
+                            "partial": False,
+                            "total_records": detail_progress["candidate_records"],
+                            "coverage_evidence": "linked_detail_assembly",
+                            **detail_progress,
+                        }
+                        collection_found = True
             if provider == "vision" and coverage and expected_total is not None:
                 # A list surface may reveal the candidate cardinality while the
                 # required fields live on linked detail surfaces. Carry that

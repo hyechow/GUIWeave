@@ -21,6 +21,17 @@ from gui_agent.adapters.browser.actions import BrowserAction
 from gui_agent.adapters.browser.control_grounding import ground_action_to_nearest_control
 from gui_agent.core.runtime.executor import VisionExecutor
 
+_DESELECT_OPTION = re.compile(
+    r"\b(deselect|unselect|uncheck|remove|toggle off)\b",
+    re.IGNORECASE,
+)
+
+
+def _wants_multi_select_deselect(description: object) -> bool:
+    """True when the Worker asked to drop one option from a native multi-select."""
+
+    return bool(_DESELECT_OPTION.search(str(description or "")))
+
 # jQuery UI datepicker capability. A non-bubbling ``change`` reaches the
 # widget's direct binding without triggering delegated form behavior.
 _JQUERY_DATEPICKER_SET_JS = r"""(() => {{
@@ -337,7 +348,12 @@ class BrowserExecutor(VisionExecutor):
                 print(f"选择下拉选项 {action.text!r} @({px:.0f},{py:.0f})")
             else:
                 print(f"选择当前聚焦下拉选项 {action.text!r}")
-            result = client.select_option(px, py, action.text)
+            result = client.select_option(
+                px,
+                py,
+                action.text,
+                deselect=_wants_multi_select_deselect(action.description),
+            )
             print(f"  结果: {result}")
             return self._result_succeeded(result, "选择下拉选项")
         if at == "scroll_to_ref":

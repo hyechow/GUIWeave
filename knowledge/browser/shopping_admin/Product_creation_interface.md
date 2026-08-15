@@ -17,9 +17,15 @@ A new **Simple Product** is one new record without an existing owner. Its fields
 `In Stock` and `Out of Stock`.
 
 - If the Simple Product form does not yet show a required optional field such as **Size** or
-  **Color**, use the top-level **Add Attribute** action. In the Select Attribute grid, select the
-  existing `size` and `color` rows and choose **Add Selected**; their value controls then become
-  part of this product form inside a new collapsed **Attributes** section near the bottom. Expand
-  that section and select the requested Size and Color values before saving.
+  **Color**, first expand the collapsed **Attributes** section near the bottom of the form.
+  If several form scrolls never reveal an **Attributes** heading, stop scrolling and use
+  the page-header **Add Attribute** action. A 0-row **Add Attribute** filter on Attribute
+  Code means that attribute is already on this attribute set — close the modal and set the
+  value in **Attributes**; do not page the modal or **Create New Attribute**. Filter the
+  modal by **Attribute Code** instead of paging. Check the matching row, then **Add Selected**
+  on the modal chrome (often top-right), not in the page header. Keep a checked row selected
+  while searching for the next code; clearing the filter or paging the modal can drop the
+  checkbox. After the attributes are on the form, expand **Attributes**, set the requested
+  option labels, and **Save**.
 - Do not use **Create Configurations** for this case. That workflow generates variation members
   for a Configurable Product, while a Simple Product stores its own Size and Color values directly.

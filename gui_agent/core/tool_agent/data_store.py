@@ -243,6 +243,18 @@ class RuntimeDataStore:
             return None
         return collection
 
+    def discard_requirement(self, requirement_id: str) -> None:
+        """Drop stored chunks so a later assembly or nonempty query can publish."""
+        collection_id = f"collection:{requirement_id}"
+        self._collections.pop(collection_id, None)
+        self._values.pop(collection_id, None)
+        for bucket in [key for key in self._requirement_chunks if key[0] == requirement_id]:
+            for chunk_id in self._requirement_chunks.pop(bucket):
+                self._chunks.pop(chunk_id, None)
+                self._values.pop(chunk_id, None)
+        for key in [item for item in self._dedupe if item[0] == requirement_id]:
+            del self._dedupe[key]
+
     def restore_collection(self, descriptor: CollectionRef, rows: list[dict[str, Any]]) -> None:
         """Restore one recorded GUI artifact without replaying browser observations."""
         for row in rows:

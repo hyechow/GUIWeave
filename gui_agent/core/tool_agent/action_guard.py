@@ -63,6 +63,18 @@ def auth_codes_from_frame(frame: MaterializedFrame) -> set[str]:
     return codes
 
 
+def _is_scope_control(control: dict[str, Any] | None) -> bool:
+    """True when the target can change applied filters."""
+
+    if control is None:
+        return False
+    if control.get("is_filter") is True:
+        return True
+    if control.get("form_action") in {"commit", "reset", "clear", "query"}:
+        return True
+    return control.get("query_action") not in (None, "")
+
+
 def control_at_point(
     args: dict[str, Any], frame: MaterializedFrame,
 ) -> dict[str, Any] | None:
@@ -192,13 +204,14 @@ def _action_boundary_error(
             and detail.get("pending_candidate_ordinal") is not None
         ):
             continue
-        if control is not None and control.get("group_index") is not None:
-            return (
-                "blocked row action because acquisition scope remains unmet; do not "
-                f"claim it is met (requested={scope.get('requested_filters') or {}}, "
-                f"applied={scope.get('applied_filters') or {}}). Resolve the filter "
-                "blockers before opening a record"
-            )
+        if capability not in {"tap", "click"} or _is_scope_control(control):
+            continue
+        return (
+            "blocked action because acquisition scope remains unmet; do not "
+            f"claim it is met (requested={scope.get('requested_filters') or {}}, "
+            f"applied={scope.get('applied_filters') or {}}). Resolve the filter "
+            "blockers before collecting"
+        )
     return ""
 
 

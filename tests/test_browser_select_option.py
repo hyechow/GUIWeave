@@ -23,8 +23,8 @@ class _Client:
         self.clicked = (x, y)
         return f"OK tap ({x:.0f},{y:.0f})"
 
-    def select_option(self, x, y, option_text):
-        self.selected = (x, y, option_text)
+    def select_option(self, x, y, option_text, *, deselect=False):
+        self.selected = (x, y, option_text, deselect)
         return f"OK select_option {option_text!r}"
 
     def scroll_to_ref(self, target_ref):
@@ -49,7 +49,7 @@ def test_select_option_action_dispatches_client():
     )
 
     assert _exec(client).execute(decision) is True
-    assert client.selected == (600.0, 500.0, "Complete")
+    assert client.selected == (600.0, 500.0, "Complete", False)
     assert client.clicked is None
 
 
@@ -66,8 +66,33 @@ def test_tool_agent_base_action_dispatches_browser_select_option():
     )
 
     assert _exec(client).execute(decision) is True
-    assert client.selected == (600.0, 500.0, "Complete")
+    assert client.selected == (600.0, 500.0, "Complete", False)
     assert client.clicked is None
+
+
+def test_select_option_deselect_intent_is_forwarded():
+    from gui_agent.adapters.browser.executor import _wants_multi_select_deselect
+
+    assert _wants_multi_select_deselect(
+        "deselect NOT LOGGED IN from the Customer Groups list"
+    )
+    assert not _wants_multi_select_deselect(
+        "select General from the Customer Groups list"
+    )
+
+    client = _Client()
+    decision = BrowserActionDecision(
+        action=BrowserAction(
+            action_type="select_option",
+            x=600,
+            y=500,
+            text="NOT LOGGED IN",
+            description="deselect NOT LOGGED IN from Customer Groups",
+        )
+    )
+
+    assert _exec(client).execute(decision) is True
+    assert client.selected == (600.0, 500.0, "NOT LOGGED IN", True)
 
 
 def test_scroll_to_ref_dispatches_transport_without_click():
