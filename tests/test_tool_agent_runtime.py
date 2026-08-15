@@ -23,6 +23,7 @@ from gui_agent.core.tool_agent.protocol import (
     MAX_ORDERED_ACTIONS,
     ProtocolError,
     capability_parameters,
+    constrain_worker_action_calls,
     worker_action_floor,
 )
 from gui_agent.core.tool_agent.runtime import ToolAgentRuntime, _decode_ordered_actions
@@ -499,6 +500,18 @@ def test_bound_type_waits_until_structured_query_input_is_open() -> None:
         controls=[{
             "kind": "button", "label": "Search", "query_action": "open",
             "enabled": True, "in_viewport": True,
+            "rect": {"x": 500, "y": 80, "w": 120, "h": 50},
+            "action_point": {"x": 510, "y": 85},
+        }],
+        required_interactions=[{
+            "capability": "tap",
+            "args": {
+                "x": 510, "y": 85,
+                "description": "Activate visible query-entry control 'Search'",
+            },
+            "description": (
+                "Activate the visible query-entry control 'Search' to expose the input"
+            ),
         }],
     )
     editable = MaterializedFrame(
@@ -522,6 +535,46 @@ def test_bound_type_waits_until_structured_query_input_is_open() -> None:
     assert "runtime_tap_visible" in closed_names
     assert "enter_query" in open_names
     assert "runtime_type_visible" not in open_names
+
+    linked_opener = opener
+    linked_names = {
+        tool["function"]["name"]
+        for tool in runtime._worker_tools_for_frame(spec, list(actions), linked_opener)
+    }
+    assert "runtime_tap_visible" in linked_names
+    assert "runtime_scroll_visible" not in linked_names
+    assert "runtime_type_visible" not in linked_names
+    assert "runtime_press_enter" not in linked_names
+    assert "request_action_patch" not in linked_names
+    linked_tap = next(
+        tool for tool in runtime._worker_tools_for_frame(
+            spec, list(actions), linked_opener,
+        )
+        if tool["function"]["name"] == "runtime_tap_visible"
+    )
+    assert "query-entry control 'Search'" in linked_tap["function"]["description"]
+    constrained = constrain_worker_action_calls([{
+        "name": "runtime_tap_visible",
+        "args": {"x": 500, "y": 700, "description": "Tap an unrelated row"},
+    }], actions, linked_opener)
+    assert constrained[0]["args"] == {
+        "x": 510.0,
+        "y": 85.0,
+        "description": "Activate visible query-entry control 'Search'",
+    }
+
+    linked_editable = linked_opener.model_copy(update={
+        "controls": [*linked_opener.controls, *editable.controls],
+        "required_interactions": [],
+    })
+    linked_editable_tools = runtime._worker_tools_for_frame(
+        spec, list(actions), linked_editable,
+    )
+    linked_editable_names = {
+        tool["function"]["name"] for tool in linked_editable_tools
+    }
+    assert "enter_query" in linked_editable_names
+    assert "request_action_patch" in linked_editable_names
 
     mixed = editable.model_copy(update={"controls": [
         *editable.controls,

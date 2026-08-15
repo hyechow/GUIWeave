@@ -21,8 +21,10 @@ from gui_agent.core.tool_agent.action_guard import (
 from gui_agent.core.self_learning.app_summary import load_knowledge_for_app
 from gui_agent.core.tool_agent.contracts import DynamicActionSpec, MaterializedFrame, WorkerSpec
 from gui_agent.core.tool_agent.orchestrator import compile_master_program
+from gui_agent.core.tool_agent.perception import derive_required_interactions
 from gui_agent.core.tool_agent.protocol import (
     available_worker_actions,
+    constrain_worker_action_calls,
     ProtocolError,
     dynamic_worker_tools,
     exactly_one_tool_call,
@@ -428,17 +430,27 @@ def _worker_decision(
     actions: list[DynamicActionSpec],
     tools: dict[str, dict[str, Any]],
     frame: MaterializedFrame | None = None,
+    constrain_actions: bool = False,
 ) -> dict[str, Any]:
     call = exactly_one_tool_call(response)
     tool = tools.get(call["name"])
     if tool is None:
         raise ProtocolError(f"unknown Worker tool {call['name']!r}")
+    if call["name"] == "continue_with_actions":
+        ordered = call["args"].get("actions") or []
+        ordered = json.loads(ordered) if isinstance(ordered, str) else ordered
+        call["args"]["actions"] = constrain_worker_action_calls(
+            ordered, actions, frame if constrain_actions else None,
+        )
+    else:
+        call = constrain_worker_action_calls(
+            [call], actions, frame if constrain_actions else None,
+        )[0]
     validate(instance=call["args"], schema=tool["function"]["parameters"])
     state = call["args"].get("state")
     names = [call["name"]]
     if call["name"] == "continue_with_actions":
         ordered = call["args"].get("actions") or []
-        ordered = json.loads(ordered) if isinstance(ordered, str) else ordered
         names = [str(item.get("name") or "") for item in ordered]
     capabilities = {action.name: action.capability for action in actions}
     decision = {
@@ -494,8 +506,23 @@ def replay_worker_decision(
         observation["controls"] = refresh_android_control_semantics(
             list(observation.get("controls") or [])
         )
-    materialized = MaterializedFrame.model_validate(observation)
     spec = _worker_spec(events, selected)
+    started = next((event for event in events if event.get("event") == "runtime_started"), {})
+    enhanced = started.get("perception_mode") == "enhanced"
+    if enhanced:
+        executed_tools = _executed_tools(events, selected)
+        observation["required_interactions"] = [
+            item.model_dump(mode="json")
+            for item in derive_required_interactions(
+                list(observation.get("controls") or []),
+                dict(observation.get("requirement_scopes") or {}),
+                pending_capabilities={
+                    action.capability for action in spec.actions
+                    if action.input_args and action.name not in executed_tools
+                },
+            )
+        ]
+    materialized = MaterializedFrame.model_validate(observation)
     actions = _worker_actions(run_dir, events, context, selected, spec)
     ready = bool(spec.data_requirements) and any(
         item.requirement_id == spec.data_requirements[0].id
@@ -504,18 +531,18 @@ def replay_worker_decision(
         for item in materialized.collections
     )
     completion = "operator" if spec.profile == "operator" else "collector" if ready else "unavailable"
-    started = next((event for event in events if event.get("event") == "runtime_started"), {})
     frame_actions = available_worker_actions(
         spec,
         actions,
         materialized,
-        enhanced=started.get("perception_mode") == "enhanced",
+        enhanced=enhanced,
         executed_tools=_executed_tools(events, selected),
     )
     tools = dynamic_worker_tools(
         frame_actions,
         completion_mode=completion,
         action_envelope=bool(started.get("multi_action")),
+        frame=materialized if enhanced else None,
     )
     messages = _worker_messages(
         _report(selected, "tool_agent.worker"),
@@ -551,6 +578,7 @@ def replay_worker_decision(
             try:
                 decision = _worker_decision(
                     response, actions, tools_by_name, materialized,
+                    constrain_actions=enhanced,
                 )
                 break
             except Exception as exc:  # noqa: BLE001 - mirrors one production repair

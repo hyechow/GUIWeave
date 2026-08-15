@@ -130,7 +130,8 @@ def test_master_keeps_visual_conditional_dependencies_in_one_worker() -> None:
         "candidate-local evidence", "complete—not merely visible—candidate traversal",
         "excluded/already-processed identities", "never emit an empty list", "intermediate identities",
         "UI transitions/mutations", "clean environment", "Action `description` is static metadata",
-        "such as `type.text`",
+        "such as `type.text`", "finishing with `effect=\"data\"`",
+        "neither typed data nor a transferable scope",
     ):
         assert rule in prompt
 
@@ -152,6 +153,7 @@ def test_worker_handles_exhausted_candidate_sets_and_row_targets() -> None:
         "not record boundaries", "skip exact excluded matches", "viewport_tail_clipped = true",
         "repeated identity alone is insufficient", "Stable page chrome", "selector scrolls offscreen",
         "unobscured central viewport", "opening tap returns `no_effect`",
+        "exclusive `required_interactions`", "perception-owned physical prerequisite",
     ):
         assert rule in prompt
 

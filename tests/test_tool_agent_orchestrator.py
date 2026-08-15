@@ -1109,4 +1109,4 @@ ctx.finish(result["ref"], effect="mutation")
     assert store.result_value(execution.terminal.result_ref) is True
 
     rejected = execute_master_program(source.replace('effect="mutation"', 'effect="data"'), ctx)
-    assert "requires a ResultRef derived from collected data" in rejected.error
+    assert "produces no typed data or scope output" in rejected.error

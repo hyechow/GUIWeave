@@ -123,7 +123,8 @@ def test_files_archive_content_exposes_only_application_facts() -> None:
     for fact in (
         "Downloads top-bar search", "not a tap target",
         "Entry names identify the same-named", "leaves the archive",
-        "return to Downloads", "detail field",
+        "return to Downloads", "not scoped to the latest extraction",
+        "may also contain unrelated prior files", "identity link", "detail field",
     ):
         assert fact in context
 

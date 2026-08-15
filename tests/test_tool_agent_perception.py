@@ -12,6 +12,7 @@ from gui_agent.core.tool_agent.contracts import DataRequirement
 from gui_agent.core.tool_agent.data_store import RuntimeDataStore
 from gui_agent.core.tool_agent.perception import (
     PerceptionMaterializer,
+    derive_required_interactions,
     _visible_row_schema,
 )
 
@@ -38,6 +39,33 @@ def _requirement() -> DataRequirement:
         row_schema=ROW_SCHEMA,
         field_sources={"term": "Search Term", "uses": "Uses"},
     )
+
+
+def test_perception_derives_unique_required_interaction() -> None:
+    opener = {
+        "kind": "button", "label": "Search", "query_action": "open",
+        "enabled": True, "in_viewport": True,
+        "action_point": {"x": 800, "y": 80},
+    }
+    pending = derive_required_interactions(
+        [opener], {}, pending_capabilities={"type"},
+    )
+
+    assert len(pending) == 1
+    assert pending[0].capability == "tap"
+    assert pending[0].args["x"] == 800.0
+    assert derive_required_interactions([opener], {}) == []
+    scopes = {"rows": {"detail_resolution": {
+        "status": "active", "next_unresolved_candidate": {"ordinal": 2},
+    }}}
+    assert len(derive_required_interactions([opener], scopes)) == 1
+    assert derive_required_interactions(
+        [opener, {
+            "kind": "text_input", "is_filter": True,
+            "enabled": True, "in_viewport": True,
+        }],
+        scopes,
+    ) == []
 
 
 class FakePlatform:
