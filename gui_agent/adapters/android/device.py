@@ -385,6 +385,16 @@ class AndroidDevice:
         except Exception:  # noqa: BLE001 - screenshots remain the required sensor
             return None
 
+    def webview_document(self) -> dict | None:
+        """Read a foreground plain-text WebView without changing page state."""
+        try:
+            from gui_agent.adapters.android.webview import read_foreground_document
+
+            package_id = self.current_app_id()
+            return read_foreground_document(self._require_dev(), package_id) if package_id else None
+        except Exception:  # noqa: BLE001 - UIAutomator/pixels remain authoritative
+            return None
+
     def _screencap_pull(self) -> bytes:
         """File-based capture: screencap to /sdcard then pull (robust fallback)."""
         import tempfile
@@ -500,9 +510,9 @@ class AndroidDevice:
         fx, tx = _clamp(fx, 5, w - 5), _clamp(tx, 5, w - 5)
         fy, ty = _clamp(fy, v_inset, h - v_inset), _clamp(ty, v_inset, h - v_inset)
         # Swipe SPEED matters for wheel pickers: a fast flick flings past the target by
-        # momentum. Keep 1-2 unit picker gestures slow and bounded 3-5 unit picker
-        # coarse moves at medium speed; ordinary list large still flings via 8 units.
-        secs = 0.7 if amount <= 2 else 0.45 if amount <= 5 else 0.25
+        # momentum. Keep 1-2 unit picker gestures slow and a 3-unit coarse move
+        # bounded; larger collection traversal stays below long-press duration.
+        secs = 0.7 if amount <= 2 else 0.45 if amount == 3 else 0.2
         try:
             self._require_dev().swipe(fx, fy, tx, ty, secs)
         except Exception as exc:  # noqa: BLE001

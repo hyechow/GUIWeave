@@ -18,7 +18,9 @@ from typing import Optional
 
 from gui_agent.adapters.android.accessibility import (
     collection_regions_from_uiautomator,
+    collection_tables_from_regions,
     form_controls_from_semantic_tree,
+    screen_title_from_semantic_tree,
     semantic_tree_from_uiautomator,
 )
 from gui_agent.adapters.android.constants import SCREENSHOT_MAX_WIDTH
@@ -143,6 +145,17 @@ class AndroidPerception:
             viewport_size=client.viewport_size if client is not None else (0, 0),
         )
         form_controls = form_controls_from_semantic_tree(semantic_tree)
+        screen_title = screen_title_from_semantic_tree(semantic_tree)
+        native_tables = collection_tables_from_regions(
+            collection_regions, screen_title=screen_title,
+        )
+        webview = (
+            client.webview_document()
+            if client is not None
+            and (not hierarchy or "android.webkit.WebView" in hierarchy)
+            else None
+        )
+        tables = [*(webview or {}).get("tables", []), *native_tables]
         # Downscale to the configured width; tap coordinates are unaffected because
         # the executor denormalizes against device pixels.
         png_bytes = _downscale_width(png_bytes, SCREENSHOT_MAX_WIDTH)
@@ -154,7 +167,13 @@ class AndroidPerception:
         return Observation(
             png_bytes=png_bytes,
             source="android",
+            url=(webview or {}).get("url") or None,
+            # A native WebView wrapper may expose the whole document body as its
+            # accessibility title.  CDP's document title is the authoritative
+            # surface identity when the guarded WebView sensor succeeded.
+            title=(webview or {}).get("title") or screen_title or None,
             semantic_tree=semantic_tree,
+            tables=tables,
             collection_regions=collection_regions,
             form_control_state=form_controls,
         )
