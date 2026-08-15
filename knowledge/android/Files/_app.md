@@ -34,9 +34,10 @@ version: 2
   destination is already Downloads. The explicit `EXTRACT` button performs the final
   persistent action. The Android accessibility node named `pick_button_overlay` is
   only an implementation overlay beside it; it is not a folder picker.
-- Opening an extracted TXT file may show an `Open with` chooser. `HTML Viewer` followed
-  by `Just once` displays the complete plain-text document; navigate up to return to
-  Downloads for the next file.
+- Opening an extracted TXT file may show an `Open with` chooser. `HTML Viewer` displays
+  the complete plain-text document. `Just once` shows the chooser again for the next TXT;
+  `Always` also changes the device's default handler for later TXT files. Navigate up to
+  return to Downloads.
 - The drawer's `Documents` item is an indexed category that can omit descendants or file types,
   including in attachment pickers. For the physical folder, use `Show roots` → device storage →
   `Documents`.
@@ -64,10 +65,11 @@ version: 2
 - Archive extraction mutates the selected archive directly; there is no preparatory
   Extraction entity. Its mutation fields and exact values for extracting every entry
   are `selection` equal to `all` and `destination` equal to `Downloads`. Extraction
-  consumes the opened archive view and creates same-named `DownloadFiles` rows.
+  creates same-named `DownloadFiles` rows and leaves the opened archive view visible;
+  return to Downloads explicitly before matching those rows.
 - Archive entry names are visible only in `ArchiveEntries` before extraction. They are
   the identities for matching the same-named extracted rows afterward, so they must be
-  observed before the extraction consumes that view.
+  observed before leaving that view.
 - `content` belongs to a concrete `DownloadFiles` row while that collection remains
   active. Concrete-row detail is its only retrieval interface. There is no separate
   FileContent entity, and `content` is never a collection query or source filter field.

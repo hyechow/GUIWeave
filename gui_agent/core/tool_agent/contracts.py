@@ -13,7 +13,9 @@ class StrictModel(BaseModel):
     model_config = ConfigDict(extra="forbid")
 
 
-DataFieldType = Literal["text", "number", "money", "datetime", "boolean"]
+DataFieldType = Literal[
+    "text", "text_list", "number", "money", "datetime", "boolean"
+]
 
 
 class DataRequirement(StrictModel):
@@ -93,6 +95,7 @@ class DataRequirement(StrictModel):
             )
         expected_json_types = {
             "text": {"string"},
+            "text_list": {"array"},
             "datetime": {"string"},
             "number": {"number", "integer"},
             "money": {"number", "integer"},
@@ -121,6 +124,13 @@ class DataRequirement(StrictModel):
                 )
             if field_type == "datetime":
                 field_schema.setdefault("format", "date-time")
+            if field_type == "text_list" and (
+                not isinstance(field_schema.get("items"), dict)
+                or field_schema["items"].get("type") != "string"
+            ):
+                raise ValueError(
+                    f"field_types[{field!r}]='text_list' requires string array items"
+                )
         self.row_schema = schema
         return self
 
@@ -439,7 +449,7 @@ class WorkerOutcome(StrictModel):
     phase: Literal["completed", "failed"]
     summary: str
     collection_ref: CollectionRef | None = None
-    failure_kind: Literal["platform_rejected"] | None = None
+    failure_kind: Literal["platform_rejected", "step_window_exhausted"] | None = None
     steps: int
 
 

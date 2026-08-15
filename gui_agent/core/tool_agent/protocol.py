@@ -15,7 +15,9 @@ from pydantic import BaseModel, ConfigDict, Field
 
 from gui_agent.core.tool_agent.contracts import (
     DynamicActionSpec,
+    MaterializedFrame,
     ToolActionCapability,
+    WorkerSpec,
     WorkerState,
 )
 
@@ -385,6 +387,89 @@ def worker_action_floor(
     return filtered
 
 
+def available_worker_actions(
+    spec: WorkerSpec,
+    actions: list[DynamicActionSpec],
+    frame: MaterializedFrame,
+    *,
+    enhanced: bool,
+    executed_tools: set[str] | frozenset[str] = frozenset(),
+) -> list[DynamicActionSpec]:
+    """Expose bound typing only when its structured input is ready."""
+
+    if not enhanced:
+        return actions
+    controls = [
+        item for item in frame.controls
+        if item.get("in_viewport") is not False and item.get("enabled") is not False
+    ]
+    editor_kinds = {"text_input", "textbox", "textarea", "editor"}
+    editors = [
+        item for item in controls
+        if str(item.get("kind") or "").casefold() in editor_kinds
+    ]
+    query_editors = [item for item in editors if item.get("is_filter") is True]
+    pending_types = {
+        action.name for action in spec.actions
+        if action.input_args and action.name not in executed_tools
+        and action.capability == "type"
+        and "text" in action.input_args
+    }
+    if not pending_types:
+        return actions
+    query_closed = not query_editors and any(
+        item.get("query_action") == "open" for item in controls
+    )
+    unavailable = set(pending_types) if query_closed else set()
+    if query_editors and len(editors) == len(query_editors):
+        private_names = {action.name for action in spec.actions}
+        unavailable.update(
+            action.name for action in actions
+            if action.capability == "type" and action.name not in private_names
+        )
+    return [action for action in actions if action.name not in unavailable]
+
+
+def worker_attempt_contract(spec: WorkerSpec, actions: list[DynamicActionSpec]) -> str:
+    """Serialize the immutable Worker contract shared by live and replay prompts."""
+
+    payload = spec.model_dump(mode="json", exclude={"actions"})
+    private = {action.name: action for action in spec.actions if action.input_args}
+    available = {action.name for action in actions}
+    payload["action_contracts"] = [
+        private.get(action.name, action).model_dump(
+            mode="json",
+            include={"name", "fixed_args", "input_args"},
+            exclude_defaults=True,
+        )
+        for action in actions
+    ]
+    deferred = [
+        {
+            **action.model_dump(
+                mode="json",
+                include={"name", "capability", "description", "input_args"},
+                exclude_defaults=True,
+            ),
+            "status": "deferred_until_matching_control_is_ready",
+        }
+        for action in spec.actions
+        if action.input_args and action.name not in available
+    ]
+    if deferred:
+        payload["deferred_bound_actions"] = deferred
+    return (
+        "## Worker attempt contract\n"
+        "The bound tools are the authoritative action descriptions and argument "
+        "schemas. This compact contract supplies the immutable subgoal, acceptance/data "
+        "contract, and Runtime-bound action descriptors. Preserve its constraints while "
+        "pursuing the subgoal. A deferred bound action is not callable on this frame: "
+        "prepare its matching input through the visible query-entry/open control, without "
+        "opening an arbitrary candidate, then use the bound action when Runtime exposes it.\n"
+        + json.dumps(payload, ensure_ascii=False)
+    )
+
+
 _WORKER_STATE_SCHEMA: dict[str, Any] = {
     "type": "object",
     "description": "Compact semantic state paired with this atomic action.",
@@ -495,9 +580,10 @@ def dynamic_action_envelope_tool(
             "Apply task conditions first: excluded or already-processed candidates permit traversal, "
             "never their mutation path. If no eligible work remains, call complete directly; do not "
             "put terminal tools in this action list. "
-            "Later actions must not depend on newly revealed UI. Put geometry- or "
-            "surface-changing actions last; only a focus action may precede operations "
-            "on that same already-visible control. Runtime may discard a stale suffix."
+            "Later actions must not depend on newly revealed UI; they may depend on an earlier "
+            "selection or focus enabling another already-visible control. Put geometry- or "
+            "surface-changing actions last. Runtime rebinds structured controls and may discard "
+            "a stale or still-disabled suffix."
         ),
         {
             "type": "object",

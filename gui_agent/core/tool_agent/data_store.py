@@ -21,7 +21,7 @@ def _canonical(value: Any) -> str:
 
 
 def _boundary_overlap(left: list[Any], right: list[Any]) -> int:
-    """Longest exact suffix/prefix overlap between consecutive visual windows."""
+    """Longest exact suffix/prefix overlap between consecutive windows."""
     for size in range(min(len(left), len(right)), 0, -1):
         if left[-size:] == right[:size]:
             return size
@@ -34,6 +34,7 @@ class RuntimeDataStore:
         self._chunks: dict[str, DataChunkRef] = {}
         self._collections: dict[str, CollectionRef] = {}
         self._results: dict[str, ResultRef] = {}
+        self._data_results: set[str] = set()
         self._requirement_chunks: dict[tuple[str, str], list[str]] = defaultdict(list)
         self._dedupe: dict[tuple[str, str, str, str, str], str] = {}
 
@@ -92,20 +93,27 @@ class RuntimeDataStore:
         previous_ref = ""
         for chunk_ref in chunk_ids:
             current_rows = self._values[chunk_ref]
-            overlap = 0
             if previous_ref:
                 previous = self._chunks[previous_ref]
                 current = self._chunks[chunk_ref]
                 previous_context = str(previous.coverage.get("window_context") or "")
                 current_context = str(current.coverage.get("window_context") or "")
                 if (
-                    previous.provider == current.provider == "vision"
+                    previous.provider == current.provider
+                    and current.provider in {"vision", "structured"}
                     and previous_context
                     and previous_context == current_context
                     and previous.coverage.get("partial") is True
                 ):
                     overlap = _boundary_overlap(self._values[previous_ref], current_rows)
-            collection_rows.extend(current_rows[overlap:])
+                    if overlap:
+                        current_rows = current_rows[overlap:]
+                    elif reverse := _boundary_overlap(
+                        current_rows, self._values[previous_ref]
+                    ):
+                        collection_rows[:0] = current_rows[:-reverse]
+                        current_rows = []
+            collection_rows.extend(current_rows)
             previous_ref = chunk_ref
         row_count = len(collection_rows)
         totals = {
@@ -135,6 +143,12 @@ class RuntimeDataStore:
         at_end = bool(
             last_coverage.get("at_end", last_coverage.get("end_visible"))
         )
+        start_values = [
+            item.get("start_visible")
+            for item in coverage_samples
+            if isinstance(item.get("start_visible"), bool)
+        ]
+        start_seen = True if True in start_values else False if start_values else None
         scope_status = str(last_coverage.get("scope_status") or "met")
         contiguous_to_end = bool(
             at_end
@@ -146,6 +160,7 @@ class RuntimeDataStore:
         surface_complete = bool(
             (traversal_type == "static" or traversal_type == "scroll" and at_end)
             and not last_coverage.get("partial")
+            and start_seen is not False
             and (known_total is None or row_count >= known_total)
         )
         totals_conflict = len(totals) > 1 or len(page_counts) > 1
@@ -166,12 +181,13 @@ class RuntimeDataStore:
             )
         ):
             coverage_status = "complete"
-        elif not structured and at_end and (
-            page_count is None or all_pages
-        ) and (
-            known_total is None or row_count >= known_total
+        elif not structured and (page_count is None or all_pages) and (
+            known_total is not None and row_count >= known_total
+            or at_end and known_total is None and start_seen is not False
         ):
             coverage_status = "complete"
+        elif start_seen is False and page_count is None and known_total is None:
+            coverage_status = "incomplete"
         elif (
             last_coverage.get("has_next_page") is True
             or (page_count is not None and not all_pages)
@@ -205,6 +221,8 @@ class RuntimeDataStore:
                 )
             ),
         }
+        if start_seen is not None:
+            combined_coverage["start_seen"] = start_seen
         for key in ("coverage_evidence", "empty_state_evidence"):
             if last_coverage.get(key) not in (None, ""):
                 combined_coverage[key] = last_coverage[key]
@@ -236,6 +254,28 @@ class RuntimeDataStore:
         except KeyError as exc:
             raise KeyError(f"unknown CollectionRef {ref!r}") from exc
 
+    def mark_scroll_end(self, ref: str) -> CollectionRef:
+        """Record the terminal boundary proven by a downward scroll with no effect."""
+        collection = self.collection_descriptor(ref)
+        coverage = collection.coverage
+        scrollable = coverage.get("source_scope") == "visual_collection" or (
+            coverage.get("source_scope") == "structured_collection"
+            and coverage.get("movement", {}).get("type") == "scroll"
+        )
+        if not scrollable:
+            return collection
+        started = coverage.get("start_seen") is True
+        coverage = {
+            **coverage,
+            "at_end": True,
+            "coverage_evidence": "downward_scroll_no_effect"
+            + ("" if started else "_without_start"),
+            **({"status": "complete"} if started else {}),
+        }
+        collection = collection.model_copy(update={"coverage": coverage})
+        self._collections[ref] = collection
+        return collection
+
     def collection_for_requirement(self, requirement_id: str) -> CollectionRef | None:
         """Return the latest accumulated collection for one logical requirement."""
         collection = self._collections.get(f"collection:{requirement_id}")
@@ -260,13 +300,28 @@ class RuntimeDataStore:
         collection = self._collections.get(ref)
         return collection.row_schema if collection is not None else None
 
-    def put_result(self, value: Any, schema: dict[str, Any], *, summary: str = "") -> ResultRef:
+    def put_result(
+        self,
+        value: Any,
+        schema: dict[str, Any],
+        *,
+        summary: str = "",
+        source_refs: list[str] | None = None,
+    ) -> ResultRef:
         validate(instance=value, schema=schema)
         ref_id = f"result:{len(self._results) + 1}"
         descriptor = ResultRef(ref=ref_id, value_schema=schema, summary=summary)
         self._results[ref_id] = descriptor
         self._values[ref_id] = value
+        if any(
+            ref in self._collections or ref in self._data_results
+            for ref in source_refs or []
+        ):
+            self._data_results.add(ref_id)
         return descriptor
+
+    def is_data_result(self, ref: str) -> bool:
+        return ref in self._data_results
 
     def result_descriptor(self, ref: str) -> ResultRef:
         try:

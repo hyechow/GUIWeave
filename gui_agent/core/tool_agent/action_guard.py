@@ -41,6 +41,10 @@ _AUTH_CODE_RE = re.compile(
     rf"|(?<!\d)(\d{{4,8}})(?!\d)\D{{0,32}}{_AUTH_CODE_MARKER}",
     re.IGNORECASE,
 )
+_DEFAULT_BLOCK_INSTRUCTION = (
+    "Treat the Runtime guard as authoritative. Do not retry the blocked action; "
+    "advance from the current observation or choose a materially different capability."
+)
 
 
 def auth_codes_from_text(text: str) -> set[str]:
@@ -118,6 +122,8 @@ def _action_boundary_error(
     if control is not None:
         kind = str(control.get("kind") or "").casefold()
         label = str(control.get("label") or kind or "control")
+        if control.get("enabled") is False:
+            return f"blocked action on disabled control {label!r}"
         text_like = any(
             token in kind for token in ("input", "textarea", "textbox", "editor")
         )
@@ -130,15 +136,9 @@ def _action_boundary_error(
             return f"blocked select_option on {label!r} ({kind}): target a choice control"
         if capability == "tap" and choice_like:
             return f"blocked tap on {label!r} ({kind}): use select_option to mutate it"
-    selectable = bool(control and (
-        str(control.get("kind") or "").casefold()
-        in {"checkbox", "checkbox_input", "radio", "radio_input", "switch", "switch_input"}
-        or control.get("selection_mode") in {"single", "multiple"}
-    ))
     x, y = args.get("x"), args.get("y")
     if (
         capability in {"tap", "long_press"}
-        and not selectable
         and isinstance(x, (int, float))
         and isinstance(y, (int, float))
     ):
@@ -151,6 +151,13 @@ def _action_boundary_error(
                     and float(bounds[0]) <= float(x) <= float(bounds[2])
                     and float(bounds[1]) <= float(y) <= float(bounds[3])
                 ):
+                    cell_ref = str(cell.get("ref") or "")
+                    control_ref = str((control or {}).get("ref") or "")
+                    if control_ref and cell_ref and not (
+                        control_ref == cell_ref
+                        or control_ref.startswith(cell_ref + ".")
+                    ):
+                        continue
                     return (
                         "spatial target lies inside a clipped collection cell; scroll it "
                         "into the unobscured central viewport before acting"
@@ -174,19 +181,6 @@ def _action_boundary_error(
     for scope in frame.requirement_scopes.values():
         detail = scope.get("detail_resolution")
         detail = detail if isinstance(detail, dict) else {}
-        observed = set(detail.get("current_observed_detail_fields") or [])
-        required = set(detail.get("detail_fields") or [])
-        description = str(args.get("description") or "").casefold()
-        if (
-            capability == "scroll"
-            and required
-            and required.issubset(observed)
-            and any(str(field).casefold() in description for field in required)
-        ):
-            return (
-                "blocked redundant scroll: enhanced observation already contains every "
-                "required detail field; continue from the observed values"
-            )
         if scope.get("status") != "unmet" or (
             detail.get("status") == "active"
             and detail.get("pending_candidate_ordinal") is not None
@@ -200,6 +194,19 @@ def _action_boundary_error(
                 "blockers before opening a record"
             )
     return ""
+
+
+def _action_boundary_instruction(
+    capability: str, args: dict[str, Any], frame: MaterializedFrame,
+) -> str:
+    control = control_at_point(args, frame)
+    if capability == "type" and control and control.get("query_action") == "open":
+        label = str(control.get("label") or "shown")
+        return (
+            f"Activate the visible query-entry control {label!r} to reveal its "
+            "editable input; do not choose a collection candidate."
+        )
+    return _DEFAULT_BLOCK_INSTRUCTION
 
 
 def _coordinate_bucket(value: Any, *, size: int = 25) -> int | None:
@@ -275,6 +282,7 @@ class ActionCircuitDecision:
     progress: str
     prior_attempts: int
     reason: str = ""
+    instruction: str = ""
 
 
 @dataclass
@@ -309,6 +317,7 @@ class WorkerActionCircuitBreaker:
                 progress=progress,
                 prior_attempts=prior,
                 reason=compatibility_error,
+                instruction=_action_boundary_instruction(capability, args, frame),
             )
         guarded = capability in _GUARDED_CAPABILITIES
         history = self._recent_attempts
@@ -332,6 +341,7 @@ class WorkerActionCircuitBreaker:
             progress=progress,
             prior_attempts=2 if cycle else prior,
             reason=reason,
+            instruction=_DEFAULT_BLOCK_INSTRUCTION if blocked else "",
         )
 
     def record(self, decision: ActionCircuitDecision) -> None:

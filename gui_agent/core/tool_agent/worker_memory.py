@@ -39,6 +39,7 @@ _CONTROL_PROMPT_FIELDS = (
     "selected_text_primary",
     "options",
     "focused",
+    "enabled",
     "required",
     "is_filter",
     "query_action",
@@ -146,12 +147,23 @@ class WorkerJournal:
     worker_id: str
     events: list[WorkerJournalEvent] = field(default_factory=list)
     collection_context: str = ""
+    collection_ref: str = ""
     last_scroll_no_effect: bool = False
+    last_scroll_direction: str = ""
+    last_scroll_collection_ref: str = ""
+    last_scroll_point: tuple[float, float] | None = None
     established_fact_texts: set[str] = field(default_factory=set, repr=False)
+    executed_tools: set[str] = field(default_factory=set, repr=False)
 
-    def observe_collection(self, frame: MaterializedFrame) -> None:
+    def observe_collection(self, frame: MaterializedFrame) -> str:
+        """Track the visible collection and return a proven terminal ref, if any."""
+
         if len(frame.visible_collection_regions) != 1:
-            return
+            self.collection_ref = ""
+            return ""
+        self.collection_ref = (
+            frame.collections[0].ref if len(frame.collections) == 1 else ""
+        )
         region = frame.visible_collection_regions[0]
         bounds = region.get("bounds")
         context = str(region.get("caption") or "").strip()
@@ -172,6 +184,31 @@ class WorkerJournal:
                 )["label"]).strip()
         if context:
             self.collection_context = context[:120]
+        return (
+            self.collection_ref
+            if self.collection_ref == self.last_scroll_collection_ref
+            and self.downward_scroll_reached_end(frame)
+            else ""
+        )
+
+    def downward_scroll_reached_end(self, frame: MaterializedFrame) -> bool:
+        """Whether the last no-effect scroll targeted this frame's sole collection."""
+
+        if not (
+            self.last_scroll_no_effect
+            and self.last_scroll_direction == "down"
+            and self.last_scroll_point is not None
+            and len(frame.visible_collection_regions) == 1
+        ):
+            return False
+        bounds = frame.visible_collection_regions[0].get("bounds") or ()
+        if len(bounds) != 4:
+            return False
+        x, y = self.last_scroll_point
+        return (
+            float(bounds[0]) <= x <= float(bounds[2])
+            and float(bounds[1]) <= y <= float(bounds[3])
+        )
 
     def record_established_fact(self, *, event_ref: str, text: str) -> None:
         fact = " ".join(str(text or "").split())
@@ -240,11 +277,23 @@ class WorkerJournal:
             else ""
         )
         if result_status == "executed":
+            self.executed_tools.add(tool)
             if result.get("action_type") == "scroll":
                 self.last_scroll_no_effect = bool(result.get("no_effect"))
+                self.last_scroll_direction = str(
+                    result.get("direction") or args.get("direction") or ""
+                )
+                self.last_scroll_collection_ref = self.collection_ref
+                self.last_scroll_point = (
+                    float(args.get("x", 500)), float(args.get("y", 500))
+                )
             else:
                 self.collection_context = ""
+                self.collection_ref = ""
                 self.last_scroll_no_effect = False
+                self.last_scroll_direction = ""
+                self.last_scroll_collection_ref = ""
+                self.last_scroll_point = None
         is_exception = isinstance(result, dict) and bool(result.get("error"))
         is_no_effect = isinstance(result, dict) and bool(result.get("no_effect"))
         candidate_commit = isinstance(result, dict) and bool(result.get("candidate_commit"))

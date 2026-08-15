@@ -1197,6 +1197,11 @@ def main() -> int:
                                 if knowledge is not None
                                 else ""
                             ),
+                            worker_knowledge=(
+                                knowledge.worker_context()
+                                if knowledge is not None
+                                else ""
+                            ),
                             access_context=(
                                 knowledge.deployment if knowledge is not None else ""
                             ),

@@ -10,7 +10,9 @@ from typing import Any, Literal
 from pydantic import BaseModel, JsonValue
 
 
-ValueType = Literal["auto", "text", "number", "money", "datetime", "boolean"]
+ValueType = Literal[
+    "auto", "text", "text_list", "number", "money", "datetime", "boolean"
+]
 
 
 class ValueNormalizationError(ValueError):
@@ -107,6 +109,12 @@ def _typed(value: Any, value_type: ValueType) -> Any:
         return value
     if value_type == "text":
         return "" if value is None else str(value)
+    if value_type == "text_list":
+        if isinstance(value, str):
+            return value.splitlines()
+        if isinstance(value, (list, tuple)):
+            return [str(item) for item in value]
+        raise ValueNormalizationError(f"cannot parse {value!r} as text_list")
     if value_type == "number":
         return _decimal(value)
     if value_type == "money":

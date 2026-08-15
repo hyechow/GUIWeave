@@ -440,41 +440,59 @@ def _ctx_call(node: ast.AST, method: str) -> ast.Call | None:
     return node
 
 
+def _named_assignments(tree: ast.AST) -> list[tuple[str, ast.Assign]]:
+    """Return simple-name assignments in source order for static data-flow checks."""
+
+    assignments = [
+        (node.targets[0].id, node)
+        for node in ast.walk(tree)
+        if isinstance(node, ast.Assign)
+        and len(node.targets) == 1
+        and isinstance(node.targets[0], ast.Name)
+    ]
+    return sorted(assignments, key=lambda item: getattr(item[1], "lineno", 0))
+
+
+def _collector_requirements(call: ast.Call) -> list[dict[str, Any]]:
+    """Return literal requirements only when a reviewed call is a collector."""
+
+    try:
+        requirements = _literal_keyword(call, "data_requirements")
+        profile = (
+            _literal_keyword(call, "profile")
+            if any(item.arg == "profile" for item in call.keywords)
+            else None
+        )
+    except ValueError:
+        return []
+    return requirements if profile != "operator" and isinstance(requirements, list) else []
+
+
 def _static_transform_input_diagnostics(tree: ast.AST) -> list[MasterDiagnostic]:
     """Review transform row fields against statically routed Worker schemas."""
 
     row_schemas: dict[str, dict[str, Any]] = {}
+    row_filters: dict[str, dict[str, Any]] = {}
     # The value represented by each row schema is reached through this exact path.
     # A local alias such as ``rows_ref = outcome["collection_ref"]["ref"]`` has
     # already resolved the descriptor path, so its expected path is empty.
     ref_paths: dict[str, tuple[str, ...]] = {}
     transform_calls: list[ast.Call] = []
-    assignments = sorted(
-        (node for node in ast.walk(tree) if isinstance(node, ast.Assign)),
-        key=lambda node: getattr(node, "lineno", 0),
-    )
-    for assignment in assignments:
-        if len(assignment.targets) != 1 or not isinstance(assignment.targets[0], ast.Name):
-            continue
-        name = assignment.targets[0].id
+    assignments = _named_assignments(tree)
+    for name, assignment in assignments:
         worker_call = _ctx_call(assignment.value, "gui_worker")
         if worker_call is not None:
             try:
-                requirements = _literal_keyword(worker_call, "data_requirements")
-                profile = (
-                    _literal_keyword(worker_call, "profile")
-                    if any(item.arg == "profile" for item in worker_call.keywords)
-                    else None
-                )
-                if profile == "operator" or not requirements:
+                requirements = _collector_requirements(worker_call)
+                if not requirements:
                     continue
                 requirement = requirements[0]
                 if isinstance(requirement, dict) and isinstance(
                     requirement.get("row_schema"), dict
                 ):
-                    row_schemas[name] = DataRequirement.model_validate(
-                        requirement
-                    ).row_schema
+                    contract = DataRequirement.model_validate(requirement)
+                    row_schemas[name] = contract.row_schema
+                    row_filters[name] = contract.filters
                     ref_paths[name] = ("collection_ref", "ref")
             except Exception:
                 # The ordinary WorkerSpec review reports malformed requirements.
@@ -485,6 +503,7 @@ def _static_transform_input_diagnostics(tree: ast.AST) -> list[MasterDiagnostic]
             base, path = _subscript_path(assignment.value)
             if base in row_schemas and path == ref_paths.get(base):
                 row_schemas[name] = row_schemas[base]
+                row_filters[name] = row_filters.get(base, {})
                 ref_paths[name] = ()
             elif (
                 isinstance(assignment.value, ast.Name)
@@ -492,6 +511,7 @@ def _static_transform_input_diagnostics(tree: ast.AST) -> list[MasterDiagnostic]
                 and ref_paths.get(assignment.value.id) == ()
             ):
                 row_schemas[name] = row_schemas[assignment.value.id]
+                row_filters[name] = row_filters.get(assignment.value.id, {})
                 ref_paths[name] = ()
             continue
         transform_calls.append(transform_call)
@@ -515,10 +535,12 @@ def _static_transform_input_diagnostics(tree: ast.AST) -> list[MasterDiagnostic]
         if not isinstance(inputs_node, (ast.List, ast.Tuple)):
             continue
         schemas = []
+        filters: dict[str, Any] = {}
         for item in inputs_node.elts:
             name, path = _subscript_path(item)
             if name in row_schemas and path == ref_paths.get(name):
                 schemas.append(row_schemas[name])
+                filters.update(row_filters.get(name, {}))
         if not schemas:
             continue
         combined = {
@@ -531,7 +553,9 @@ def _static_transform_input_diagnostics(tree: ast.AST) -> list[MasterDiagnostic]
         }
         try:
             source = _literal_keyword(call, "source")
-            validate_transform_row_fields(source, combined)
+            validate_transform_row_fields(
+                source, combined, literal_filters=filters,
+            )
         except Exception as exc:  # noqa: BLE001 - one static diagnostic channel
             diagnostics.append(
                 _diagnostic("TRANSFORM_INPUT_SCHEMA", str(exc), call)
@@ -550,35 +574,15 @@ def _static_collector_consumption_diagnostics(tree: ast.AST) -> list[MasterDiagn
     collectors: dict[str, ast.Call] = {}
     ref_aliases: dict[str, str] = {}
     consumed: set[str] = set()
-    assignments = sorted(
-        (node for node in ast.walk(tree) if isinstance(node, ast.Assign)),
-        key=lambda node: getattr(node, "lineno", 0),
-    )
-    for assignment in assignments:
-        if (
-            len(assignment.targets) != 1
-            or not isinstance(assignment.targets[0], ast.Name)
-        ):
-            continue
+    assignments = _named_assignments(tree)
+    for name, assignment in assignments:
         call = _ctx_call(assignment.value, "gui_worker")
         if call is None:
             continue
-        try:
-            requirements = _literal_keyword(call, "data_requirements")
-            profile = (
-                _literal_keyword(call, "profile")
-                if any(item.arg == "profile" for item in call.keywords)
-                else None
-            )
-        except ValueError:
-            continue
-        if profile == "collector" or (profile is None and requirements):
-            collectors[assignment.targets[0].id] = call
+        if _collector_requirements(call):
+            collectors[name] = call
 
-    for assignment in assignments:
-        if len(assignment.targets) != 1 or not isinstance(assignment.targets[0], ast.Name):
-            continue
-        alias = assignment.targets[0].id
+    for alias, assignment in assignments:
         base, path = _subscript_path(assignment.value)
         if base in collectors and path == ("collection_ref", "ref"):
             ref_aliases[alias] = base
@@ -614,19 +618,35 @@ def _static_collector_consumption_diagnostics(tree: ast.AST) -> list[MasterDiagn
     ]
 
 
+def _static_worker_output_diagnostics(tree: ast.AST) -> list[MasterDiagnostic]:
+    """Reject collection data flow from Workers that cannot produce a collection."""
+
+    operators: dict[str, ast.Call] = {}
+    for name, assignment in _named_assignments(tree):
+        call = _ctx_call(assignment.value, "gui_worker")
+        if call is not None and not _collector_requirements(call):
+            operators[name] = call
+
+    diagnostics: list[MasterDiagnostic] = []
+    for node in ast.walk(tree):
+        base, path = _subscript_path(node)
+        if base in operators and path and path[0] == "collection_ref":
+            diagnostics.append(_diagnostic(
+                "OPERATOR_COLLECTION_REF",
+                f"operator {base!r} cannot produce collection_ref; make the cohesive "
+                "Worker a collector with one data requirement when downstream Python "
+                "needs observed rows",
+                node,
+            ))
+    return diagnostics
+
+
 def _static_result_routing_diagnostics(tree: ast.AST) -> list[MasterDiagnostic]:
     """Require computed ResultRefs to reach the next physical-effect Worker explicitly."""
 
     pending_results: set[str] = set()
     diagnostics: list[MasterDiagnostic] = []
-    assignments = sorted(
-        (node for node in ast.walk(tree) if isinstance(node, ast.Assign)),
-        key=lambda node: getattr(node, "lineno", 0),
-    )
-    for assignment in assignments:
-        if len(assignment.targets) != 1 or not isinstance(assignment.targets[0], ast.Name):
-            continue
-        assigned_name = assignment.targets[0].id
+    for assigned_name, assignment in _named_assignments(tree):
         transform_call = _ctx_call(assignment.value, "transform")
         if transform_call is not None:
             inputs = next(
@@ -681,13 +701,7 @@ def _static_worker_array_input_diagnostics(tree: ast.AST) -> list[MasterDiagnost
     """
 
     array_results: set[str] = set()
-    for assignment in ast.walk(tree):
-        if (
-            not isinstance(assignment, ast.Assign)
-            or len(assignment.targets) != 1
-            or not isinstance(assignment.targets[0], ast.Name)
-        ):
-            continue
+    for name, assignment in _named_assignments(tree):
         call = _ctx_call(assignment.value, "transform")
         if call is None:
             continue
@@ -696,7 +710,7 @@ def _static_worker_array_input_diagnostics(tree: ast.AST) -> list[MasterDiagnost
         except ValueError:
             continue
         if _schema_contains_array(schema):
-            array_results.add(assignment.targets[0].id)
+            array_results.add(name)
 
     diagnostics: list[MasterDiagnostic] = []
     for node in ast.walk(tree):
@@ -729,12 +743,8 @@ def _static_finish_ref_diagnostics(tree: ast.AST) -> list[MasterDiagnostic]:
     """Reject transform descriptor objects passed where finish requires their ref string."""
 
     transform_descriptors = {
-        assignment.targets[0].id
-        for assignment in ast.walk(tree)
-        if isinstance(assignment, ast.Assign)
-        and len(assignment.targets) == 1
-        and isinstance(assignment.targets[0], ast.Name)
-        and _ctx_call(assignment.value, "transform") is not None
+        name for name, assignment in _named_assignments(tree)
+        if _ctx_call(assignment.value, "transform") is not None
     }
     diagnostics: list[MasterDiagnostic] = []
     for node in ast.walk(tree):
@@ -921,6 +931,7 @@ def validate_master_source(
         diagnostics.append(_diagnostic("TERMINAL_REQUIRED", "program must call ctx.finish or ctx.fail"))
     diagnostics.extend(_static_transform_input_diagnostics(tree))
     diagnostics.extend(_static_collector_consumption_diagnostics(tree))
+    diagnostics.extend(_static_worker_output_diagnostics(tree))
     diagnostics.extend(_static_result_routing_diagnostics(tree))
     diagnostics.extend(_static_worker_array_input_diagnostics(tree))
     diagnostics.extend(_static_finish_ref_diagnostics(tree))
@@ -1177,6 +1188,7 @@ class WorkerOrchestrationContext:
                 value,
                 result_schema,
                 summary=f"Deterministic transform {transform_id} completed.",
+                source_refs=inputs,
             )
         except Exception as exc:
             self._trace(
@@ -1210,6 +1222,10 @@ class WorkerOrchestrationContext:
                 f"got {type(result_ref).__name__}"
             )
         descriptor = self._data_store.result_descriptor(result_ref)
+        if effect == "data" and not self._data_store.is_data_result(result_ref):
+            raise ValueError(
+                "effect='data' requires a ResultRef derived from collected data"
+            )
         self._terminal = MasterTerminal(
             phase="completed",
             summary=descriptor.summary or "Coding Master accepted the ResultRef.",

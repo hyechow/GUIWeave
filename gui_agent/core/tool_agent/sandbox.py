@@ -79,7 +79,12 @@ def validate_transform_source(source: str) -> None:
             raise TransformValidationError("private/dunder attribute access is disallowed")
 
 
-def validate_transform_row_fields(source: str, row_schema: dict[str, Any]) -> None:
+def validate_transform_row_fields(
+    source: str,
+    row_schema: dict[str, Any],
+    *,
+    literal_filters: dict[str, Any] | None = None,
+) -> None:
     """Require transforms to read normalized schema keys, not display labels."""
     validate_transform_source(source)
     tree = ast.parse(source, mode="exec")
@@ -156,6 +161,69 @@ def validate_transform_row_fields(source: str, row_schema: dict[str, Any]) -> No
             "transform reads fields outside normalized row_schema: "
             f"{sorted(unknown)}; available fields are {sorted(properties)}"
         )
+
+    def row_field(node: ast.AST) -> str:
+        while (
+            isinstance(node, ast.Call)
+            and isinstance(node.func, ast.Attribute)
+            and not node.args
+            and node.func.attr in {"casefold", "lower", "strip", "upper"}
+        ):
+            node = node.func.value
+        if (
+            isinstance(node, ast.Subscript)
+            and isinstance(node.value, ast.Name)
+            and node.value.id in row_names
+            and isinstance(node.slice, ast.Constant)
+            and isinstance(node.slice.value, str)
+        ):
+            return node.slice.value
+        if (
+            isinstance(node, ast.Call)
+            and isinstance(node.func, ast.Attribute)
+            and node.func.attr == "get"
+            and isinstance(node.func.value, ast.Name)
+            and node.func.value.id in row_names
+            and node.args
+            and isinstance(node.args[0], ast.Constant)
+            and isinstance(node.args[0].value, str)
+        ):
+            return node.args[0].value
+        return ""
+
+    filters = literal_filters or {}
+    schemas = row_schema.get("properties") or {}
+    for comparison in (node for node in ast.walk(function) if isinstance(node, ast.Compare)):
+        left = comparison.left
+        for operator, right in zip(comparison.ops, comparison.comparators, strict=True):
+            pairs = ((left, right), (right, left)) if isinstance(
+                operator, (ast.Eq, ast.NotEq)
+            ) else ()
+            for expression, literal in pairs:
+                field = row_field(expression)
+                if not (
+                    field and isinstance(literal, ast.Constant)
+                    and isinstance(literal.value, str)
+                ):
+                    continue
+                schema = schemas.get(field) or {}
+                types = schema.get("type")
+                if types != "string" and not (
+                    isinstance(types, list) and "string" in types
+                ):
+                    continue
+                authorized = list(schema.get("enum") or [])
+                if field in filters and not isinstance(filters[field], dict):
+                    authorized.append(filters[field])
+                if literal.value.casefold() not in {
+                    str(value).casefold() for value in authorized
+                }:
+                    raise TransformValidationError(
+                        f"transform compares free-form text field {field!r} to "
+                        f"undeclared literal {literal.value!r}; declare an authoritative "
+                        "DataRequirement filter/enum or use a structural predicate"
+                    )
+            left = right
 
 
 def _sandbox_child(connection: Any, source: str, rows: Any) -> None:
