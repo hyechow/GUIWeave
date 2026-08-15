@@ -14,11 +14,11 @@ from typing import Any, Callable, Literal
 
 from jsonschema import ValidationError, validate
 from langchain_core.messages import SystemMessage
-from langchain_openai import ChatOpenAI
 
 from gui_agent.core.config import resolve_llm_config
 from gui_agent.core.runtime.clock import PlatformTimeSnapshot, host_time_fallback
 from gui_agent.core.tool_agent.filter_state import (
+    canonical_filter_field,
     canonical_filter_value,
     compile_filter_predicates,
     match_filter_state,
@@ -40,6 +40,7 @@ from gui_agent.core.tool_agent.protocol import (
     parse_json_object,
     response_usage,
 )
+from llm.provider_config import build_chat_model, chat_request_kwargs
 
 PerceptionMode = Literal["vision-only", "enhanced"]
 
@@ -424,20 +425,16 @@ def _rows_satisfy_filters(
     if not rows:
         return None
     predicates = compile_filter_predicates(active_filters)
+    row_fields = {
+        canonical_filter_field(field): field for field in active_filters
+    }
+    unknown = False
     for row in rows:
         for field, predicate in predicates.items():
-            # Requirement filter keys are normalized row-schema fields. The filter
-            # compiler only canonicalizes their spelling for predicate matching.
-            row_field = next(
-                (
-                    key
-                    for key in active_filters
-                    if key.replace("_", " ").casefold() == field
-                ),
-                field.replace(" ", "_"),
-            )
+            row_field = row_fields.get(field, field.replace(" ", "_"))
             if row_field not in row:
-                return None
+                unknown = True
+                continue
             value = row[row_field]
             field_type = requirement.field_types.get(row_field)
             field_name = requirement.field_sources.get(row_field, row_field)
@@ -479,7 +476,21 @@ def _rows_satisfy_filters(
                 )
             if not matches:
                 return False
-    return True
+    return None if unknown else True
+
+
+def _logical_rows(
+    requirement: DataRequirement,
+    rows: list[dict[str, Any]],
+    *,
+    keep_unknown: bool = False,
+) -> list[dict[str, Any]]:
+    return [
+        row
+        for row in rows
+        if (match := _rows_satisfy_filters(requirement, [row])) is True
+        or keep_unknown and match is None
+    ]
 
 
 def _scope_descriptor(
@@ -642,19 +653,14 @@ class PerceptionMaterializer:
         self.data_store = data_store
         self.log_dir = log_dir
         self.platform_time = platform_time
+        self.task_goal = ""
         self._on_event = on_event
         self._expected_totals: dict[tuple[str, str], int] = {}
         self._detail_collections: dict[str, _DetailCollectionState] = {}
         cfg = resolve_llm_config("tool_agent.perception")
+        self._vision_cfg = cfg
         self.model = cfg.model
-        self._vision = ChatOpenAI(
-            model=cfg.model,
-            api_key=cfg.api_key,
-            base_url=cfg.base_url,
-            timeout=cfg.timeout_s,
-            max_retries=cfg.max_retries,
-            temperature=0,
-        )
+        self._vision = build_chat_model(cfg)
 
     def _assemble_detail_collection(
         self,
@@ -806,6 +812,7 @@ class PerceptionMaterializer:
                 else dict(requirement.filters)
             )
             rows: list[dict[str, Any]] = []
+            scope_rows: list[dict[str, Any]] = []
             provider: Literal["vision", "structured"] = "vision"
             table = _match_table(requirement, tables) if tables else None
             candidate_rows: list[dict[str, Any]] = []
@@ -828,15 +835,21 @@ class PerceptionMaterializer:
             )
             if table_complete:
                 rows = _structured_rows(requirement, table)
+                scope_rows = rows
+                rows = _logical_rows(requirement, rows)
             elif self.mode == "enhanced" and table is not None and not empty_complete:
                 candidate_rows, detail_fields = _partial_structured_rows(requirement, table)
+                scope_rows = candidate_rows
+                candidate_rows = _logical_rows(
+                    requirement, candidate_rows, keep_unknown=True
+                )
             if table_complete or empty_complete or candidate_rows:
                 scope = _scope_descriptor(
                     requirement,
                     acquisition_filters=attempt_filters,
                     applied_filter_state=applied_filter_state,
                     applied_filters=applied_filters,
-                    rows=rows or candidate_rows,
+                    rows=scope_rows,
                 )
                 requirement_scopes[requirement.id] = scope
                 if scope["status"] == "met" and (table_complete or empty_complete):
@@ -847,6 +860,10 @@ class PerceptionMaterializer:
                         scope=scope,
                         url=url,
                     )
+                    if len(rows) != len(scope_rows):
+                        source_total = coverage.pop("total_records", None)
+                        if source_total is not None:
+                            coverage["source_total_records"] = source_total
                     collection_found = True
             detail_state = self._detail_collections.get(requirement.id)
             structured_detail = bool(
@@ -860,6 +877,7 @@ class PerceptionMaterializer:
                     requirement,
                     png,
                     acquisition_filters=attempt_filters,
+                    page_identity={"url": url, "title": title},
                 )
                 visually_found = bool(extracted.get("found"))
                 end_visible = bool(extracted.get("end_visible"))
@@ -886,16 +904,23 @@ class PerceptionMaterializer:
                 )
                 requirement_scopes[requirement.id] = scope
                 if visually_found or authoritative_visual_empty:
-                    rows = _normalize_visual_rows(
+                    valid_visual_rows = _normalize_visual_rows(
                         requirement,
                         raw_visual_rows,
                     )
-                    rejected_visual_rows = len(raw_visual_rows) - len(rows)
-                    if rejected_visual_rows:
+                    rows = _logical_rows(requirement, valid_visual_rows)
+                    if len(raw_visual_rows) != len(valid_visual_rows):
                         scope["collection_blockers"] = [
                             "visible rows did not satisfy the required row schema"
                         ]
-                        scope["schema_rejected_rows"] = rejected_visual_rows
+                        scope["schema_rejected_rows"] = (
+                            len(raw_visual_rows) - len(valid_visual_rows)
+                        )
+                    if len(rows) != len(valid_visual_rows):
+                        scope.setdefault("collection_blockers", []).append(
+                            "visible rows did not satisfy the immutable logical filters"
+                        )
+                        scope["filter_rejected_rows"] = len(valid_visual_rows) - len(rows)
                     surface = (
                         _structured_coverage(
                             table, requirement, scope=scope, url=url
@@ -1084,6 +1109,7 @@ class PerceptionMaterializer:
                 coverage["normalization"] = dict(requirement.field_types)
                 coverage["normalized_rows"] = len(rows)
                 coverage["rejected_rows"] = 0
+            coverage["requested"] = requirement.coverage
             chunk, collection, _created = self.data_store.put_chunk(
                 requirement_id=requirement.id,
                 frame_id=frame_id,
@@ -1128,22 +1154,36 @@ class PerceptionMaterializer:
         png: bytes,
         *,
         acquisition_filters: dict[str, Any],
+        page_identity: dict[str, str] | None = None,
     ) -> dict[str, Any]:
+        reference_time = (
+            getattr(self, "platform_time", None)
+            or host_time_fallback("browser", reason="legacy perception fallback")
+        )
         prompt = (
             f"Data requirement: {requirement.description}\n"
             f"Visible target label: {requirement.target_label or '(not specified)'}\n"
+            f"Current page identity: {json.dumps(page_identity or {}, ensure_ascii=False)}\n"
+            f"Original task temporal context: {getattr(self, 'task_goal', '') or '(none)'}\n"
             "Task reference time (frozen platform clock): "
-            f"{json.dumps((getattr(self, 'platform_time', None) or host_time_fallback('browser', reason='legacy perception fallback')).model_dump(mode='json'), ensure_ascii=False)}\n"
+            f"{json.dumps(reference_time.model_dump(mode='json'), ensure_ascii=False)}\n"
+            "Frozen relative calendar dates by day offset: "
+            f"{json.dumps(reference_time.relative_date_offsets(), ensure_ascii=False)}\n"
             f"Logical row filters: {json.dumps(requirement.filters, ensure_ascii=False)}\n"
             f"Current UI acquisition filters: "
             f"{json.dumps(acquisition_filters, ensure_ascii=False)}\n"
             f"Required row JSON Schema: {json.dumps(requirement.row_schema, ensure_ascii=False)}"
         )
         started_at = time.perf_counter()
-        messages = [SystemMessage(content=_VISION_SYSTEM), image_message(prompt, png)]
+        config = getattr(self, "_vision_cfg", None)
+        model = getattr(config, "model", None) or getattr(self, "model", None)
+        messages = [
+            SystemMessage(content=_VISION_SYSTEM),
+            image_message(prompt, png, scale=float(getattr(config, "image_scale", 1.0))),
+        ]
         response = self._vision.bind(
             response_format={"type": "json_object"},
-            extra_body={"enable_thinking": False},
+            **chat_request_kwargs(model),
         ).invoke(messages)
         llm_elapsed_s = time.perf_counter() - started_at
         value = parse_json_object(response.content)

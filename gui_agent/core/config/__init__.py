@@ -2,11 +2,13 @@
 
 import copy
 import os
+from dataclasses import replace
 from functools import lru_cache
 from pathlib import Path
-from typing import Any
+from typing import Any, Literal
 
 import yaml
+from pydantic import BaseModel, ConfigDict, Field, ValidationError
 
 from llm.provider_config import ChatProviderConfig, resolve_chat_provider_config
 
@@ -20,6 +22,19 @@ _LLM_CONFIG_ALIASES = {
     "recon.navigator": ("back_nav",),
     "back_nav": ("recon.navigator",),
 }
+
+
+class _LLMOptions(BaseModel):
+    model_config = ConfigDict(strict=True)
+
+    temperature: float | None = Field(ge=0, le=2)
+    reasoning_effort: str | None
+    image_scale: float = Field(gt=0, le=1)
+    max_actions_per_call: int = Field(ge=1, le=5)
+    action_protocol: Literal["tool_call", "json"]
+    use_responses_api: bool
+    timeout_s: float = Field(gt=0)
+    max_retries: int = Field(ge=0)
 
 
 def active_config_path() -> Path:
@@ -106,12 +121,22 @@ def resolve_llm_config(name: str) -> ChatProviderConfig:
         if found:
             break
 
-    return resolve_chat_provider_config(
+    config = resolve_chat_provider_config(
         provider=_optional_str(section.get("provider")),
         model=_optional_str(section.get("model")),
         api_key=_optional_str(section.get("api_key")),
         base_url=_optional_str(section.get("base_url")),
     )
+    values = {
+        field: section.get(field, getattr(config, field))
+        for field in _LLMOptions.model_fields
+    }
+    values["reasoning_effort"] = _optional_str(values["reasoning_effort"])
+    try:
+        options = _LLMOptions.model_validate(values)
+    except ValidationError as exc:
+        raise ValueError(f"gui_agent config llm.{name}: {exc}") from exc
+    return replace(config, **options.model_dump())
 
 
 def _lookup_llm_section(llm_config: dict[str, Any], name: str) -> tuple[bool, dict[str, Any]]:

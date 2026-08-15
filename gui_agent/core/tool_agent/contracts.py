@@ -47,7 +47,7 @@ class DataRequirement(StrictModel):
             "attempt's broader or narrower UI acquisition literal."
         ),
     )
-    coverage: Literal["complete"] = "complete"
+    coverage: Literal["complete", "first_match"] = "complete"
 
     @model_validator(mode="before")
     @classmethod
@@ -262,6 +262,13 @@ class WorkerSpec(StrictModel):
         ),
     )
     goal: str
+    strategy: str = Field(
+        default="",
+        description=(
+            "Current physical execution approach. The logical goal and acceptance "
+            "contract stay fixed when Strategy Planner replaces it."
+        ),
+    )
     success_criteria: list[str] = Field(min_length=1)
     input_refs: dict[str, str] = Field(
         default_factory=dict,
@@ -302,6 +309,14 @@ class WorkerSpec(StrictModel):
             action = dict(raw_action)
             input_args = dict(action.get("input_args") or {})
             exposed_args = list(action.get("exposed_args") or [])
+            if not str(action.get("description") or "").strip():
+                visual_description = input_args.get("description")
+                action["description"] = (
+                    visual_description.strip()
+                    if isinstance(visual_description, str)
+                    and visual_description.strip()
+                    else str(action.get("name") or "proposed action").replace("_", " ")
+                )
             for argument, binding in list(input_args.items()):
                 if not isinstance(binding, str):
                     continue
@@ -373,6 +388,15 @@ class WorkerState(StrictModel):
     """Visible state-machine channel emitted in assistant ``content``."""
 
     status: Literal["exploring", "collecting", "completed", "failed"]
+    strategy_status: Literal["advancing", "blocked"] = Field(
+        default="advancing",
+        description=(
+            "Whether the current selected strategy can still make material "
+            "progress. Mark blocked only when visible evidence disproves the strategy "
+            "or every applicable action would repeat a failed path; incomplete or "
+            "loading observations remain unknown."
+        ),
+    )
     summary: str
     established_facts: list[str] = Field(
         default_factory=list,
@@ -439,7 +463,7 @@ class WorkerOutcome(StrictModel):
     phase: Literal["completed", "failed"]
     summary: str
     collection_ref: CollectionRef | None = None
-    failure_kind: Literal["platform_rejected"] | None = None
+    failure_kind: Literal["platform_rejected", "navigation_blocked"] | None = None
     steps: int
 
 

@@ -118,12 +118,12 @@ def _action_boundary_error(
     if control is not None:
         kind = str(control.get("kind") or "").casefold()
         label = str(control.get("label") or kind or "control")
-        text_like = any(
-            token in kind for token in ("input", "textarea", "textbox", "editor")
-        )
         choice_like = any(
             key in control for key in ("options", "selected_text", "selected_text_primary")
         )
+        text_like = any(
+            token in kind for token in ("input", "textarea", "textbox", "editor")
+        ) or ("combobox" in kind and not choice_like)
         if capability == "type" and not text_like:
             return f"blocked type on {label!r} ({kind}): target an editable input control"
         if capability == "select_option" and not choice_like:
@@ -202,7 +202,7 @@ def _action_boundary_error(
     return ""
 
 
-def _coordinate_bucket(value: Any, *, size: int = 25) -> int | None:
+def _coordinate_bucket(value: Any, *, size: int = 50) -> int | None:
     if not isinstance(value, (int, float)) or isinstance(value, bool):
         return None
     return int(round(float(value) / size) * size)
@@ -220,13 +220,16 @@ def action_signature(
         "capability": capability,
     }
     for field_name in _SIGNATURE_FIELDS:
+        if capability == "scroll" and field_name == "amount":
+            continue
         value = args.get(field_name)
         if value not in (None, ""):
             payload[field_name] = value
-    for coordinate in ("x", "y", "to_x", "to_y"):
-        bucket = _coordinate_bucket(args.get(coordinate))
-        if bucket is not None:
-            payload[coordinate] = bucket
+    if capability != "scroll":
+        for coordinate in ("x", "y", "to_x", "to_y"):
+            bucket = _coordinate_bucket(args.get(coordinate))
+            if bucket is not None:
+                payload[coordinate] = bucket
     return json.dumps(payload, ensure_ascii=False, sort_keys=True, separators=(",", ":"))
 
 
@@ -251,6 +254,7 @@ def progress_signature(frame: MaterializedFrame) -> str:
             }
             for item in frame.collections
         ],
+        "visible_collections": frame.visible_collection_regions,
         "controls": [
             {
                 key: control.get(key)
@@ -298,6 +302,7 @@ class WorkerActionCircuitBreaker:
         signature = action_signature(tool=tool, capability=capability, args=args)
         progress = progress_signature(frame)
         attempt = (signature, progress)
+        history = self._recent_attempts
         prior = self._consecutive_attempts if attempt == self._last_attempt else 0
         compatibility_error = _action_boundary_error(
             capability, args, frame, observed_auth_codes or set()
@@ -311,11 +316,10 @@ class WorkerActionCircuitBreaker:
                 reason=compatibility_error,
             )
         guarded = capability in _GUARDED_CAPABILITIES
-        history = self._recent_attempts
         cycle = (
-            len(history) == 4
-            and history[::2] == (attempt, attempt)
-            and history[1] == history[3] != attempt
+            len(history) >= 2
+            and history[-2] == attempt != history[-1]
+            and (len(history) < 3 or history[-3] != attempt)
         )
         blocked = guarded and (prior >= self.threshold or cycle)
         reason = ""

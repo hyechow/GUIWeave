@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import base64
+from io import BytesIO
 import json
 import re
 from collections.abc import Collection
@@ -11,6 +12,7 @@ from typing import Any, Literal
 
 from jsonschema import validate
 from langchain_core.messages import HumanMessage, SystemMessage
+from PIL import Image
 from pydantic import BaseModel, ConfigDict, Field
 
 from gui_agent.core.tool_agent.contracts import (
@@ -75,8 +77,8 @@ class RequestActionPatchArgs(BaseModel):
     url: str = Field(
         default="",
         description=(
-            "Exact task- or knowledge-provided URL for open_url when known; leave "
-            "empty when the Worker must choose it from its current context."
+            "Exact allowed URL for open_url when known; leave empty when the Worker "
+            "must choose it from its current context."
         ),
     )
     reason: str
@@ -219,7 +221,10 @@ _CAPABILITY_SCHEMAS: dict[str, dict[str, Any]] = {
                 "type": "string",
                 "minLength": 1,
                 "maxLength": 2048,
-                "description": "Task- or knowledge-provided URL to open in the current tab.",
+                "description": (
+                    "Absolute HTTP(S) URL to open in the current tab. Master-declared "
+                    "actions may change origin; baseline Worker navigation stays same-origin."
+                ),
             },
         },
         "required": ["url"],
@@ -302,7 +307,7 @@ def worker_action_floor(
         DynamicActionSpec(
             name="runtime_scroll_visible",
             capability="scroll",
-            description="Scroll a visible region to reveal content needed by the current Worker goal.",
+            description="Traverse a target collection or reveal an uninspected surface.",
             exposed_args=["direction", "amount", "target_area", "description"],
         ),
         DynamicActionSpec(
@@ -346,14 +351,18 @@ def worker_action_floor(
             name="runtime_open_url",
             capability="open_url",
             description=(
-                "Open an exact absolute URL or route copied from the task or application "
-                "knowledge in the current browser tab. Runtime rejects inferred routes."
+                "Open an allowed absolute HTTP(S) destination in the current browser tab. "
+                "Runtime may require Strategy Planner revision before changing the active origin."
             ),
+            exposed_args=["url"],
         ),
         DynamicActionSpec(
             name="runtime_browser_back",
             capability="back",
-            description="Go back once in the current browser tab's history.",
+            description=(
+                "Go back once within a viable execution path. If the current path is "
+                "blocked or unusable, fail so Master can replace it instead of retrying it."
+            ),
         ),
         DynamicActionSpec(
             name="runtime_home",
@@ -393,6 +402,11 @@ _WORKER_STATE_SCHEMA: dict[str, Any] = {
             "type": "string",
             "enum": ["exploring", "collecting", "completed", "failed"],
         },
+        "strategy_status": {
+            "type": "string",
+            "enum": ["advancing", "blocked"],
+            "description": WorkerState.model_fields["strategy_status"].description,
+        },
         "summary": {"type": "string", "maxLength": 320},
         "established_facts": {
             "type": "array",
@@ -402,7 +416,9 @@ _WORKER_STATE_SCHEMA: dict[str, Any] = {
         },
         "next_instruction": {"type": "string", "maxLength": 240},
     },
-    "required": ["status", "summary", "established_facts", "next_instruction"],
+    "required": [
+        "status", "strategy_status", "summary", "established_facts", "next_instruction",
+    ],
     "additionalProperties": False,
 }
 
@@ -429,9 +445,13 @@ def dynamic_worker_tools(
         "legacy", "unavailable", "operator", "collector"
     ] = "legacy",
     action_envelope: bool = False,
+    max_ordered_actions: int = MAX_ORDERED_ACTIONS,
 ) -> list[dict[str, Any]]:
     tools = (
-        [_with_worker_state(dynamic_action_envelope_tool(actions))]
+        [_with_worker_state(dynamic_action_envelope_tool(
+            actions,
+            max_ordered_actions=max_ordered_actions,
+        ))]
         if action_envelope
         else [_with_worker_state(dynamic_action_tool(item)) for item in actions]
     )
@@ -466,16 +486,27 @@ def dynamic_worker_tools(
             complete_model,
         )))
     tools.append(_with_worker_state(model_tool(
-        "fail", "Stop this worker with an explicit reason.", FailWorkerArgs
+        "fail",
+        "Stop with an explicit blocker only when no applicable WorkerSpec-declared "
+        "action can address it.",
+        FailWorkerArgs,
     )))
     return tools
 
 
 def dynamic_action_envelope_tool(
     actions: list[DynamicActionSpec],
+    *,
+    max_ordered_actions: int = MAX_ORDERED_ACTIONS,
 ) -> dict[str, Any]:
     """Wrap unchanged dynamic actions in one ordered Worker decision."""
 
+    if (
+        not isinstance(max_ordered_actions, int)
+        or isinstance(max_ordered_actions, bool)
+        or not 1 <= max_ordered_actions <= MAX_ORDERED_ACTIONS
+    ):
+        raise ValueError(f"max_ordered_actions must be in [1, {MAX_ORDERED_ACTIONS}]")
     variants = [
         {
             "type": "object",
@@ -488,10 +519,15 @@ def dynamic_action_envelope_tool(
         }
         for action in actions
     ]
+    action_range = (
+        "exactly one action"
+        if max_ordered_actions == 1
+        else f"one to {max_ordered_actions} ordered actions"
+    )
     return function_tool(
         "continue_with_actions",
         (
-            f"Continue with one to {MAX_ORDERED_ACTIONS} ordered actions on already-visible targets. "
+            f"Continue with {action_range} on already-visible targets. "
             "Apply task conditions first: excluded or already-processed candidates permit traversal, "
             "never their mutation path. If no eligible work remains, call complete directly; do not "
             "put terminal tools in this action list. "
@@ -506,7 +542,7 @@ def dynamic_action_envelope_tool(
                     "type": "array",
                     "items": {"oneOf": variants},
                     "minItems": 1,
-                    "maxItems": MAX_ORDERED_ACTIONS,
+                    "maxItems": max_ordered_actions,
                 },
             },
             "required": ["actions"],
@@ -607,7 +643,16 @@ def validate_dynamic_action_spec(action: DynamicActionSpec) -> None:
     dynamic_action_tool(action)
 
 
-def image_message(text: str, png: bytes) -> HumanMessage:
+def image_message(text: str, png: bytes, *, scale: float = 1.0) -> HumanMessage:
+    if not 0 < scale <= 1:
+        raise ValueError("image scale must be in (0, 1]")
+    if scale < 1:
+        with Image.open(BytesIO(png)) as image:
+            size = tuple(max(1, round(axis * scale)) for axis in image.size)
+            resized = image.resize(size, Image.Resampling.LANCZOS)
+            buffer = BytesIO()
+            resized.save(buffer, format="PNG", optimize=True)
+            png = buffer.getvalue()
     encoded = base64.b64encode(png).decode("ascii")
     return HumanMessage(
         content=[
@@ -832,6 +877,85 @@ def exactly_one_tool_call(response: Any) -> dict[str, Any]:
         "name": str(call.get("name") or ""),
         "args": dict(raw_args),
     }
+
+
+def json_worker_decision_instruction(tools: list[dict[str, Any]]) -> str:
+    """Describe the same dynamic action contract without provider tool calling."""
+
+    catalog: dict[str, dict[str, Any]] = {}
+    shared_state: dict[str, Any] = {}
+    for tool in tools:
+        function = tool.get("function")
+        if not isinstance(function, dict):
+            continue
+        parameters = deepcopy(function["parameters"])
+        properties = parameters.get("properties") or {}
+        state_schema = properties.pop("state", None)
+        if isinstance(state_schema, dict) and not shared_state:
+            shared_state = state_schema
+        parameters["properties"] = properties
+        parameters["required"] = [
+            name for name in parameters.get("required", []) if name != "state"
+        ]
+        catalog[function["name"]] = {
+            "description": function.get("description", ""),
+            "parameters": parameters,
+        }
+    contract = {"shared_state": shared_state, "actions": catalog}
+    return (
+        "Decision transport: return only one JSON object with exactly two keys: "
+        '`{"tool": "<exact action name>", "args": {<arguments>}}`. '
+        "Do not emit a function/tool call, Markdown, commentary, or a JSON Schema. "
+        "Choose exactly one listed action. `state` must occur exactly once as a direct "
+        "member of the outer `args`, never inside `args.actions[*]` or another nested "
+        "object. It must match `shared_state`; the remaining args must satisfy the "
+        "selected action's schema. "
+        "Available contract:\n"
+        + json.dumps(contract, ensure_ascii=False, separators=(",", ":"))
+    )
+
+
+def bind_worker_decision_transport(
+    llm: Any,
+    tools: list[dict[str, Any]],
+    *,
+    protocol: str,
+    bind_kwargs: dict[str, Any] | None = None,
+) -> tuple[Any, str, str]:
+    """Bind one provider transport while keeping the action contract unchanged."""
+
+    kwargs = bind_kwargs or {}
+    if protocol == "json":
+        return (
+            llm.bind(**kwargs),
+            json_worker_decision_instruction(tools),
+            "return exactly one JSON object with only tool and args",
+        )
+    if protocol == "tool_call":
+        return llm.bind_tools(
+            tools,
+            tool_choice="required",
+            parallel_tool_calls=False,
+            **kwargs,
+        ), "", "emit exactly one required tool call"
+    raise ValueError(f"unsupported Worker action protocol {protocol!r}")
+
+
+def worker_decision_call(response: Any, *, protocol: str = "tool_call") -> dict[str, Any]:
+    """Decode one Worker decision from a provider tool call or plain JSON text."""
+
+    if protocol == "tool_call":
+        return exactly_one_tool_call(response)
+    if protocol != "json":
+        raise ValueError(f"unsupported Worker action protocol {protocol!r}")
+    value = parse_json_object(getattr(response, "content", ""))
+    if set(value) != {"tool", "args"}:
+        raise ProtocolError("Worker decision JSON must contain exactly tool and args")
+    if not isinstance(value["tool"], str) or not (tool := value["tool"].strip()):
+        raise ProtocolError("Worker decision JSON tool must be a non-empty string")
+    if not isinstance(value["args"], dict):
+        raise ProtocolError("Worker decision JSON args must be an object")
+    return {"id": "json-decision", "name": tool, "args": value["args"]}
 
 
 def normalize_action_arguments(args: dict[str, Any]) -> dict[str, Any]:

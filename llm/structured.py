@@ -13,7 +13,7 @@ from langchain_openai import ChatOpenAI
 from openai import BadRequestError
 from pydantic import BaseModel, ValidationError
 
-from llm.provider_config import dashscope_extra_body
+from llm.provider_config import chat_request_kwargs
 
 ModelT = TypeVar("ModelT", bound=BaseModel)
 ReturnT = TypeVar("ReturnT")
@@ -88,11 +88,11 @@ def invoke_structured(
     _append_schema_instruction_trace(trace_sink, trace_label or schema.__name__, instruction)
 
     model_name = _llm_model_name(llm)
-    thinking_body = dashscope_extra_body(model_name)
+    request_kwargs = chat_request_kwargs(model_name)
     # Primary: json_object mode (constrained decoding) + model-aware thinking flag
     bound = llm.bind(
         response_format={"type": "json_object"},
-        extra_body=thinking_body,
+        **request_kwargs,
     )
     primary_error: Exception | None = None
     try:
@@ -122,7 +122,7 @@ def invoke_structured(
 
     # Fallback: plain text, let model output JSON freely (retry once on parse failure).
     # Re-bind enable_thinking so the fallback carries the same thinking flag as the primary.
-    fallback_llm = llm.bind(extra_body=thinking_body)
+    fallback_llm = llm.bind(**request_kwargs)
     fallback_msgs = _with_repair_instruction(msgs, schema, primary_error)
     for fallback_attempt in range(2):
         response = _invoke_counted_with_retry(
@@ -323,10 +323,8 @@ def _parse_structured_response(text: str, schema: type[ModelT]) -> ModelT:
     try:
         data: object = json.loads(_extract_json_object(text))
     except ValueError:
-        # 高频结构化失败:任务文案含字面双引号(如描述要设为 "3 customer(s) love it!"),模型在
-        # JSON 字符串字段里转义不干净 → json.loads 直接崩、decompose 抛异常、整个 run traceback 退出
-        # (webarena 544)。json_repair 是确定性修复器,对未转义内层引号/尾随逗号/轻度截断尽力恢复,
-        # 把"必崩"变"尽力恢复"。修复结果可能有轻微失真,所以只在严格解析失败时才走此兜底。
+        # Deterministically repair common quoting, trailing-comma, and truncation
+        # damage only after strict parsing fails.
         data = _repair_json_object(text)
         if data is None:
             raise
