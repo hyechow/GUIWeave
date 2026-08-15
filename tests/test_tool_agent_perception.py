@@ -10,7 +10,10 @@ from gui_agent.core.tool_agent.filter_state import (
 )
 from gui_agent.core.tool_agent.contracts import DataRequirement
 from gui_agent.core.tool_agent.data_store import RuntimeDataStore
-from gui_agent.core.tool_agent.perception import PerceptionMaterializer
+from gui_agent.core.tool_agent.perception import (
+    PerceptionMaterializer,
+    _visible_row_schema,
+)
 
 
 ROW_SCHEMA = {
@@ -116,12 +119,32 @@ def _materializer(tmp_path: Path, mode: str) -> PerceptionMaterializer:
     materializer.model = "fake"
     materializer._expected_totals = {}
     materializer._detail_collections = {}
+    materializer._visual_filter_states = {}
     materializer._vision_extract = lambda _requirement, _png, **_kwargs: {  # type: ignore[method-assign]
         "found": False,
         "rows": [],
         "end_visible": False,
     }
     return materializer
+
+
+def _observe_requirement(
+    materializer: PerceptionMaterializer,
+    requirement: DataRequirement,
+    frame_no: int,
+    *,
+    tables: list[dict] | None = None,
+    acquisition_filters: dict | None = None,
+    allow_linked_details: bool = True,
+):
+    return materializer.observe(
+        bundle=FakeBundle(tables or []),
+        platform=FakePlatform(),
+        requirements=[requirement],
+        acquisition_filters=acquisition_filters,
+        allow_linked_details=allow_linked_details,
+        frame_no=frame_no,
+    )[0]
 
 
 def _visible_region() -> SimpleNamespace:
@@ -544,6 +567,46 @@ def test_visual_values_use_complete_enhanced_surface_as_coverage_evidence(
     assert frame.chunks[0].coverage["end_visible"] is False
     assert frame.collections[0].row_count == 2
     assert frame.collections[0].coverage["status"] == "complete"
+
+
+def test_unmapped_structured_content_allows_visual_field_completion(
+    tmp_path: Path,
+) -> None:
+    properties = {
+        "name": {"type": "string"},
+        "modified": {"type": "string"},
+        "kind": {"type": "string"},
+    }
+    requirement = DataRequirement(
+        id="files",
+        description="Visible file rows",
+        row_schema={"type": "object", "properties": properties,
+                    "required": list(properties)},
+        field_sources={"name": "Name", "modified": "Modified", "kind": "Kind"},
+    )
+    materializer = _materializer(tmp_path, "enhanced")
+    materializer._vision_extract = lambda *_args, **_kwargs: {  # type: ignore[method-assign]
+        "found": True,
+        "rows": [{"name": "a.zip", "modified": "Jul 11", "kind": "ZIP archive"}],
+        "end_visible": True,
+        "scope_satisfied": True,
+    }
+    table = {
+        "headers": ["Name", "Details"],
+        "rows": [{"Name": "a.zip", "Details": ["Jul 11", "ZIP archive"]}],
+        "unmapped_visible_content": True,
+        "in_viewport": True,
+        "partial": False,
+        "traversal": {"type": "static"},
+    }
+
+    frame = _observe_requirement(materializer, requirement, 1, tables=[table])
+
+    assert frame.chunks[0].provider == "vision"
+    assert "detail_resolution" not in frame.requirement_scopes["files"]
+    assert materializer.data_store.collection_rows(frame.collections[0].ref) == [{
+        "name": "a.zip", "modified": "Jul 11", "kind": "ZIP archive",
+    }]
 
 
 def test_visual_bottom_does_not_override_enabled_surface_pagination(
@@ -1114,6 +1177,7 @@ def test_vision_only_never_invokes_platform_perception(tmp_path: Path) -> None:
     materializer._vision_extract = lambda _requirement, _png, **_kwargs: {  # type: ignore[method-assign]
         "found": True,
         "rows": [{"term": "visual-value", "uses": 2}],
+        "start_visible": True,
         "end_visible": True,
     }
 
@@ -1129,6 +1193,136 @@ def test_vision_only_never_invokes_platform_perception(tmp_path: Path) -> None:
     assert materializer.data_store.collection_chunks(frame.collections[0].ref) == [
         [{"term": "visual-value", "uses": 2}]
     ]
+    assert frame.collections[0].coverage["status"] == "incomplete"
+    assert materializer.data_store.mark_scroll_end(
+        frame.collections[0].ref
+    ).coverage["status"] == "complete"
+    clipped = _materializer(tmp_path, "vision-only")
+    clipped._vision_extract = lambda *_args, **_kwargs: {  # type: ignore[method-assign]
+        "found": True, "rows": [{"term": "visible", "uses": 2}],
+        "clipped_top_record_visible": True, "start_visible": True,
+        "end_visible": True,
+    }
+    frame = _observe_requirement(clipped, _requirement(), 2)
+    completed = clipped.data_store.mark_scroll_end(frame.collections[0].ref)
+    assert (frame.collections[0].coverage["start_seen"],
+            completed.coverage["status"]) == (False, "incomplete")
+
+
+def test_single_identity_candidates_assemble_linked_details(tmp_path: Path) -> None:
+    properties = {"name": {"type": "string"}, "content": {
+        "type": "array", "items": {"type": "string"},
+    }}
+    requirement = DataRequirement(
+        id="documents", description="Documents and their content",
+        row_schema={"type": "object", "properties": properties,
+                    "required": list(properties)},
+        field_sources={"name": "Name", "content": "Content"},
+        field_types={"name": "text", "content": "text_list"},
+    )
+    materializer = _materializer(tmp_path, "enhanced")
+    candidate_table = {
+        "headers": ["Name"],
+        "rows": [{"Name": "a.txt"}, {"Name": "b.txt"}],
+        "partial": True,
+        "traversal": {"type": "scroll"},
+    }
+    first = _observe_requirement(
+        materializer, requirement, 1, tables=[candidate_table],
+    )
+    assert first.missing_requirements == ["documents"]
+
+    def detail(name: str, content: str) -> dict:
+        return {
+            "source": "webview-document",
+            "headers": ["Name", "Content"],
+            "rows": [{"Name": name, "Content": content}],
+            "total_records": 1,
+            "partial": False,
+            "traversal": {"type": "static", "has_next_page": False},
+        }
+
+    second = _observe_requirement(
+        materializer, requirement, 2, tables=[detail("a.txt", "one\ntwo\n")],
+    )
+    assert second.missing_requirements == ["documents"]
+    assert second.requirement_scopes["documents"]["detail_resolution"]["status"] == "active"
+
+    completed = _observe_requirement(
+        materializer, requirement, 3, tables=[detail("b.txt", "three\n")],
+    )
+    collection = completed.collections[0]
+    assert collection.coverage["status"] == "complete"
+    assert materializer.data_store.collection_rows(collection.ref) == [
+        {"name": "a.txt", "content": ["one", "two"]},
+        {"name": "b.txt", "content": ["three"]},
+    ]
+
+
+def test_bound_acquisition_defers_and_nested_surface_owns_candidates(
+    tmp_path: Path,
+) -> None:
+    properties = {
+        "name": {"type": "string"},
+        "content": {"type": "array", "items": {"type": "string"}},
+    }
+    requirement = DataRequirement(
+        id="documents", description="Selected documents and their content",
+        row_schema={"type": "object", "properties": properties,
+                    "required": list(properties)},
+        field_sources={"name": "Name", "content": "Content"},
+        field_types={"name": "text", "content": "text_list"},
+    )
+    materializer = _materializer(tmp_path, "enhanced")
+
+    def candidates(location: str, *names: str) -> dict:
+        return {
+            "path": "native-list", "location": location, "headers": ["Name"],
+            "rows": [{"Name": name} for name in names],
+            "partial": True, "traversal": {"type": "scroll"},
+        }
+
+    deferred = _observe_requirement(
+        materializer, requirement, 1,
+        tables=[candidates("Downloads", "unrelated.zip")],
+        allow_linked_details=False,
+    )
+    assert "detail_resolution" not in deferred.requirement_scopes["documents"]
+
+    target = _observe_requirement(
+        materializer, requirement, 2,
+        tables=[candidates("Downloads", "target.zip")],
+    )
+    assert target.requirement_scopes["documents"]["detail_resolution"][
+        "next_unresolved_candidate"
+    ]["fields"] == {"name": "target.zip"}
+
+    overlay = _observe_requirement(
+        materializer, requirement, 3,
+        tables=[candidates("Open with", "OpenDocument Reader")],
+    )
+    assert overlay.requirement_scopes["documents"]["detail_resolution"][
+        "next_unresolved_candidate"
+    ]["fields"] == {"name": "target.zip"}
+
+    archive = _observe_requirement(
+        materializer, requirement, 4,
+        tables=[candidates("Downloads > target.zip", "a.txt", "b.txt")],
+    )
+    assert archive.requirement_scopes["documents"]["detail_resolution"][
+        "candidate_records"
+    ] == 2
+
+    parent = _observe_requirement(
+        materializer, requirement, 5,
+        tables=[candidates("Downloads", "unrelated.txt")],
+    )
+    assert parent.requirement_scopes["documents"]["detail_resolution"][
+        "candidate_records"
+    ] == 2
+    assert parent.requirement_scopes["documents"]["detail_resolution"][
+        "next_unresolved_candidate"
+    ]["fields"] == {"name": "a.txt"}
 
 
 def test_explicit_visual_empty_state_materializes_complete_empty_collection(
@@ -1157,6 +1351,33 @@ def test_explicit_visual_empty_state_materializes_complete_empty_collection(
     assert collection.coverage["coverage_evidence"] == "explicit_visual_empty_state"
     assert collection.coverage["empty_state_evidence"] == "No matching records"
     assert frame.missing_requirements == []
+
+
+def test_confirmed_visual_filter_supplies_exact_scope_fields(tmp_path: Path) -> None:
+    requirement = _requirement().model_copy(update={"filters": {"term": "fixed"}})
+    assert set(_visible_row_schema(requirement, requirement.filters)["properties"]) == {"uses"}
+
+    broader = _visible_row_schema(requirement, {"term": "fix"})
+    assert set(broader["properties"]) == {"term", "uses"}
+    materializer = _materializer(tmp_path, "vision-only")
+    extracts = iter([
+        {"filter_state_visible": True, "filter_commit_pending": True},
+        {"found": True, "rows": [{"uses": 20}], "start_visible": True,
+         "end_visible": True},
+    ])
+    materializer._vision_extract = lambda *_args, **_kwargs: next(extracts)  # type: ignore[method-assign]
+
+    _observe_requirement(
+        materializer, requirement, 1, acquisition_filters={"term": "fixed"},
+    )
+    frame = _observe_requirement(
+        materializer, requirement, 2, acquisition_filters={"term": "fixed"},
+    )
+
+    assert (frame.requirement_scopes["terms"]["status"],
+            materializer.data_store.collection_rows(frame.collections[0].ref)) == (
+                "met", [{"term": "fixed", "uses": 20}],
+            )
 
 
 def test_visual_empty_state_requires_explicit_evidence(tmp_path: Path) -> None:

@@ -187,7 +187,9 @@ def test_task214_empty_result_dispatches_a_new_physical_worker() -> None:
         original,
     )
 
-    assert outcome == recovered
+    assert outcome == recovered.model_copy(
+        update={"steps": empty.steps + recovered.steps}
+    )
     assert [worker_id for worker_id, _ in calls] == [
         case["logical_worker_id"],
         case["expected"]["physical_worker_id"],
@@ -248,7 +250,9 @@ def test_failed_operator_replans_only_its_local_execution_strategy() -> None:
         original,
     )
 
-    assert outcome == completed
+    assert outcome == completed.model_copy(
+        update={"steps": failed.steps + completed.steps}
+    )
     assert [worker_id for worker_id, _ in calls] == [
         "open_account_settings",
         "open_account_settings_replan_1",

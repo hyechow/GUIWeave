@@ -334,6 +334,9 @@ def test_scroll_three_units_uses_bounded_picker_coarse_speed(calls):
     dev.scroll("down", amount=3, x=540, y=576)
     _, *_coords, duration = [c for c in calls if c[0] == "swipe"][-1]
     assert duration == 0.45
+    dev.scroll("up", amount=4, x=540, y=1200)
+    _, *_coords, duration = [c for c in calls if c[0] == "swipe"][-1]
+    assert duration == 0.2
 
 
 def test_executor_denorm_maps_normalized_to_device_pixels(calls):
@@ -739,11 +742,15 @@ def test_executor_propagates_device_action_failures(action_kwargs, status_name, 
 
 
 @pytest.mark.parametrize(
-    ("target_control", "expected_x"),
-    [("Brightness slider", 1079), ("Canvas object", 1034.208)],
-    ids=("slider-snaps", "ordinary-drag-preserved"),
+    ("target_control", "description", "expected_x"),
+    [
+        ("Brightness slider", "向右拖动", 1079),
+        ("", "Drag the brightness slider to maximum", 1079),
+        ("Canvas object", "向右拖动", 1034.208),
+    ],
+    ids=("grounded-slider", "visual-slider", "ordinary-drag"),
 )
-def test_slider_endpoint_normalization(target_control, expected_x):
+def test_slider_endpoint_normalization(target_control, description, expected_x):
     from gui_agent.adapters.android.actions import AndroidAction
 
     action = AndroidAction(
@@ -752,7 +759,7 @@ def test_slider_endpoint_normalization(target_control, expected_x):
         y=93.8,
         to_x=957.6,
         to_y=93.8,
-        description="向右拖动",
+        description=description,
     )
     ok, client = _execute_android(action, target_control=target_control)
 

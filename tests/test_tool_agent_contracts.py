@@ -25,6 +25,7 @@ from gui_agent.core.tool_agent.protocol import (
     normalize_action_arguments,
     response_usage,
     worker_action_floor,
+    worker_attempt_contract,
 )
 
 
@@ -709,6 +710,27 @@ def test_worker_normalizes_string_action_input_shorthand() -> None:
     assert "text" not in spec.actions[0].exposed_args
     assert spec.actions[1].input_args == {}
     assert "text" in spec.actions[1].exposed_args
+
+
+def test_worker_attempt_contract_marks_unready_bound_action_as_deferred() -> None:
+    spec = WorkerSpec.model_validate({
+        "profile": "operator",
+        "goal": "Find the Runtime-bound target",
+        "success_criteria": ["The target is visible"],
+        "input_refs": {"target": "result:1"},
+        "actions": [{
+            "name": "enter_target",
+            "capability": "type",
+            "description": "Enter the Runtime-bound target",
+            "input_args": {"text": {"input": "target", "path": ["name"]}},
+        }],
+    })
+
+    contract = worker_attempt_contract(spec, worker_action_floor())
+
+    assert '"deferred_bound_actions"' in contract
+    assert '"name": "enter_target"' in contract
+    assert "not callable on this frame" in contract
 
 
 def test_worker_clamps_model_requested_steps_to_protocol_limit() -> None:

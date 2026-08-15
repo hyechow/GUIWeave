@@ -177,6 +177,22 @@ def test_android_short_button_label_snaps_boundary_point_to_center() -> None:
         "snapped": [777.3, 316.25],
         "info": "AM",
     }
+def test_android_named_menu_item_snaps_shared_edge_to_center() -> None:
+    controls = [
+        _android_button("Select all", 752.3, 238.75, 476.8, 52.5),
+        _android_button("Get info", 752.3, 291.25, 476.8, 52.5),
+    ]
+    original = AndroidActionDecision(action=AndroidAction(
+        action_type="tap",
+        x=990,
+        y=265,
+        description="Tap the Select all button in the popup menu",
+    ))
+
+    grounded = ground_action_to_android_control(original, controls)
+
+    assert (grounded.action.x, grounded.action.y) == (752.3, 238.75)
+    assert grounded.action.snap["info"] == "Select all"
 
 
 def test_android_common_short_word_does_not_override_named_control() -> None:
@@ -677,7 +693,7 @@ def test_action_guard_requires_observed_transient_authentication_code() -> None:
     ).blocked
 
 
-def test_action_guard_blocks_redundant_detail_scroll_and_unscoped_row() -> None:
+def test_action_guard_blocks_unscoped_row() -> None:
     breaker = WorkerActionCircuitBreaker()
     detail = MaterializedFrame(
         frame_id="detail",
@@ -690,13 +706,6 @@ def test_action_guard_blocks_redundant_detail_scroll_and_unscoped_row() -> None:
             },
         }},
     )
-    assert breaker.inspect(
-        tool="scroll",
-        capability="scroll",
-        args={"direction": "down", "description": "Reveal Material"},
-        frame=detail,
-    ).blocked
-
     row = detail.model_copy(update={
         "requirement_scopes": {"products": {"status": "unmet"}},
         "controls": [{

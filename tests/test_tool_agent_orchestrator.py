@@ -108,6 +108,36 @@ def test_master_review_requires_ref_strings_from_descriptors() -> None:
     assert any(item.code == "REF_VALUE_REQUIRED" for item in literal)
 
 
+def test_master_review_rejects_collection_ref_from_operator() -> None:
+    source = _program(
+        '''
+outcome = ctx.gui_worker(
+    worker_id="read_records",
+    profile="operator",
+    goal="Read the requested records",
+    success_criteria=["Every requested record was read"],
+    data_requirements=[],
+    actions=[{
+        "name": "open_records",
+        "capability": "tap",
+        "description": "Open a visible record",
+    }],
+)
+result = ctx.transform(
+    transform_id="count_records",
+    inputs=[outcome["collection_ref"]["ref"]],
+    source="def transform(inputs):\\n    return len(inputs[0])",
+    result_schema={"type": "integer"},
+)
+ctx.finish(result["ref"], effect="data")
+'''.strip()
+    )
+
+    diagnostics = validate_master_source(source)
+
+    assert any(item.code == "OPERATOR_COLLECTION_REF" for item in diagnostics)
+
+
 def test_master_review_explains_visual_only_worker_dependencies() -> None:
     source = _program(
         '''
@@ -1077,3 +1107,6 @@ ctx.finish(result["ref"], effect="mutation")
     assert execution.ok
     assert execution.terminal is not None
     assert store.result_value(execution.terminal.result_ref) is True
+
+    rejected = execute_master_program(source.replace('effect="mutation"', 'effect="data"'), ctx)
+    assert "requires a ResultRef derived from collected data" in rejected.error

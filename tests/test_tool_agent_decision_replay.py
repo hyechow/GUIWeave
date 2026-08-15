@@ -2,11 +2,15 @@ from __future__ import annotations
 
 import json
 from pathlib import Path
+from types import SimpleNamespace
 
 from langchain_core.messages import AIMessage
 
 from gui_agent.core.tool_agent.contracts import WorkerSpec
-from replay.decision import replay_master_decision, replay_worker_decision
+from replay.decision import (
+    replay_master_decision,
+    replay_worker_decision,
+)
 
 
 class _RecordedModel:
@@ -28,7 +32,12 @@ class _RecordedModel:
 
 
 def _snapshot(label: str, *, image: bool = False) -> dict:
-    human_parts = [{"label": "part_1", "type": "text", "text": "frozen frame"}]
+    text = (
+        "memory\n\n## Current MaterializedFrame (compact semantic projection)\n"
+        "instructions\n{\"title\": \"stale\"}"
+        if image else "frozen frame"
+    )
+    human_parts = [{"label": "part_1", "type": "text", "text": text}]
     if image:
         human_parts.append({"label": "screenshot", "type": "image", "text": "omitted"})
     return {
@@ -143,6 +152,9 @@ def test_worker_replay_compares_equivalent_actions_by_capability(tmp_path) -> No
         "complete",
         "fail",
     }
+    assert "recorded static prompt" not in model.calls[0][0].content
+    assert "Traverse the visible collection" in model.calls[0][0].content
+    assert "stale" not in model.calls[0][1].content[0]["text"]
 
 
 def test_worker_replay_applies_one_same_frame_protocol_repair(tmp_path) -> None:
@@ -169,7 +181,9 @@ def test_worker_replay_applies_one_same_frame_protocol_repair(tmp_path) -> None:
     assert "Protocol repair" in model.calls[1][-1].content
 
 
-def test_master_replay_uses_current_prompt_and_structural_expectation(tmp_path) -> None:
+def test_master_replay_uses_current_prompt_knowledge_and_structural_expectation(
+    monkeypatch, tmp_path,
+) -> None:
     source = """def run(ctx):
     outcome = ctx.gui_worker(
         worker_id="operate",
@@ -189,10 +203,17 @@ def test_master_replay_uses_current_prompt_and_structural_expectation(tmp_path) 
     )
     ctx.finish(result["ref"], effect="mutation")
 """
-    human = json.dumps({"task": {"platform": {}}})
+    human = json.dumps({"task": {
+        "platform": {},
+        "application_knowledge": "old fact",
+    }})
     report = _snapshot("tool_agent.master")
     report["roles"][1]["parts"][0]["text"] = human
-    (tmp_path / "context.json").write_text("{}", encoding="utf-8")
+    (tmp_path / "context.json").write_text(json.dumps({
+        "platform": "android",
+        "goal": "test",
+        "knowledge": {"app_name": "Files"},
+    }), encoding="utf-8")
     (tmp_path / "tool_agent_trace.json").write_text(json.dumps({"trace": [{
         "index": 1,
         "event": "master_compile_attempt",
@@ -201,6 +222,11 @@ def test_master_replay_uses_current_prompt_and_structural_expectation(tmp_path) 
         "diagnostics": [],
         "context_reports": [report],
     }]}), encoding="utf-8")
+    knowledge = SimpleNamespace(orchestrator_context=lambda _goal: "current fact")
+    monkeypatch.setattr(
+        "replay.decision.load_knowledge_for_app",
+        lambda _name, _platform: knowledge,
+    )
     model = _RecordedModel(AIMessage(content=source))
 
     result = replay_master_decision(
@@ -217,3 +243,5 @@ def test_master_replay_uses_current_prompt_and_structural_expectation(tmp_path) 
     assert result["status"] == "passed"
     assert "Coding Master" in model.calls[0][0].content
     assert "recorded static prompt" not in model.calls[0][0].content
+    assert "current fact" in model.calls[0][1].content
+    assert "old fact" not in model.calls[0][1].content

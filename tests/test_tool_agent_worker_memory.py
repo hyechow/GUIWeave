@@ -202,6 +202,13 @@ def test_worker_memory_tracks_collection_anchor_without_persisting_raw_cells() -
         result={"status": "executed", "action_type": "scroll", "no_effect": True},
     )
     assert journal.last_scroll_no_effect is True
+    assert journal.last_scroll_point == (500, 500)
+    assert journal.downward_scroll_reached_end(frame) is False
+
+    journal.last_scroll_direction = "down"
+    assert journal.downward_scroll_reached_end(frame) is True
+    journal.last_scroll_point = (500, 950)
+    assert journal.downward_scroll_reached_end(frame) is False
 
     journal.record_turn(
         step=2,

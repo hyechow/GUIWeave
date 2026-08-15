@@ -2,11 +2,81 @@ import pytest
 
 from gui_agent.adapters.android.accessibility import (
     collection_regions_from_uiautomator,
+    collection_tables_from_regions,
     form_controls_from_semantic_tree,
+    screen_title_from_semantic_tree,
     semantic_tree_from_uiautomator,
 )
 
+def test_android_screen_title_uses_navigation_outside_collection() -> None:
+    nodes = [
+        {"ref": "android:0", "role": "text", "key": "Downloads",
+         "resource": "breadcrumb_text", "rect": {"x": 100, "y": 100}},
+        {"ref": "android:1", "role": "list", "scrollable": True,
+         "rect": {"y": 600, "h": 800}},
+        {"ref": "android:1.0", "role": "text", "key": "archive.zip",
+         "resource": "title", "rect": {"x": 100, "y": 300}},
+    ]
+    assert screen_title_from_semantic_tree(nodes) == "Downloads"
 
+
+def test_android_screen_title_accepts_raw_semantic_rect_dimensions() -> None:
+    nodes = semantic_tree_from_uiautomator("""<hierarchy>
+      <node class="android.widget.TextView" text="Downloads"
+            bounds="[0,100][1080,200]"/>
+      <node class="android.widget.ListView" scrollable="true"
+            bounds="[0,300][1080,2200]">
+        <node class="android.widget.TextView" text="record"
+              bounds="[0,300][1080,500]"/>
+      </node>
+    </hierarchy>""", viewport_size=(1080, 2400))
+
+    assert screen_title_from_semantic_tree(nodes) == "Downloads"
+    nodes[0]["resource"] = ""
+    assert screen_title_from_semantic_tree(nodes) == "Downloads"
+
+
+def test_android_screen_title_keeps_breadcrumb_location_when_collapsed() -> None:
+    nodes = [
+        {"ref": "android:0", "role": "text", "key": "Downloads",
+         "resource": "breadcrumb_text", "in_viewport": False,
+         "rect": {"x": 100, "y": 100}},
+        {"ref": "android:1", "role": "text", "key": "archive.zip",
+         "resource": "breadcrumb_text", "in_viewport": False,
+         "rect": {"x": 300, "y": 100}},
+    ]
+
+    assert screen_title_from_semantic_tree(nodes) == "Downloads > archive.zip"
+
+
+def test_android_documents_header_preserves_folder_location() -> None:
+    nodes = [{
+        "ref": "android:0", "role": "text", "key": "Files in Downloads",
+        "resource": "header_title", "rect": {"x": 300, "y": 100},
+    }]
+
+    assert screen_title_from_semantic_tree(nodes) == "Downloads"
+
+
+def test_android_collection_projects_visible_item_text_without_format_guessing() -> None:
+    regions = [{
+        "surface_fingerprint": "android-collection:files",
+        "traversal": {"type": "scroll"},
+        "cells": [
+            {"texts": ["Jul 12, 2025, 2 kB, ZIP archive"], "clipped_top": True},
+            {"texts": ["archive.zip", "Jul 11, 2025, 1.3 kB, ZIP archive"]},
+        ],
+    }]
+
+    table = collection_tables_from_regions(regions, screen_title="Downloads")[0]
+    assert table["caption"] == "Downloads"
+    assert table["path"] == "android-collection:files"
+    assert table["location"] == "Downloads"
+    assert table["rows"] == [{"Name": "archive.zip", "Details": [
+        "Jul 11, 2025, 1.3 kB, ZIP archive",
+    ]}]
+    assert table["unmapped_visible_content"] is True
+    assert table["start_visible"] is False
 XML = """<?xml version="1.0" encoding="UTF-8"?>
 <hierarchy rotation="0">
   <node class="android.widget.FrameLayout" bounds="[0,0][1080,2400]">
@@ -124,6 +194,39 @@ def test_clickable_bottom_sheet_rows_are_named_controls_with_center_rects() -> N
         "w": 1000,
         "h": 50,
     })
+
+
+def test_adapter_collection_rows_are_actionable_and_buttons_keep_enabled_state() -> None:
+    xml = """<hierarchy>
+      <node class="android.widget.FrameLayout" bounds="[0,0][1080,2400]">
+        <node class="android.widget.ListView" resource-id="android:id/resolver_list"
+              clickable="false" scrollable="false" bounds="[0,1600][1080,2100]">
+          <node class="android.widget.LinearLayout" clickable="false" enabled="true"
+                bounds="[0,1600][1080,1800]">
+            <node class="android.widget.TextView" text="First viewer"
+                  bounds="[126,1650][400,1750]"/>
+          </node>
+          <node class="android.widget.LinearLayout" clickable="false" enabled="true"
+                bounds="[0,1800][1080,2000]">
+            <node class="android.widget.TextView" text="Second viewer"
+                  bounds="[126,1850][450,1950]"/>
+          </node>
+        </node>
+        <node class="android.widget.Button" text="Just once" clickable="true"
+              enabled="false" bounds="[600,2100][850,2300]"/>
+      </node>
+    </hierarchy>"""
+
+    controls = form_controls_from_semantic_tree(
+        semantic_tree_from_uiautomator(xml, viewport_size=(1080, 2400))
+    )
+
+    assert controls is not None
+    by_label = {control["label"]: control for control in controls}
+    assert by_label["First viewer"]["kind"] == "button"
+    assert by_label["First viewer"]["rect"]["y"] == pytest.approx(708.3333)
+    assert by_label["Second viewer"]["enabled"] is True
+    assert by_label["Just once"]["enabled"] is False
 
 
 def test_glyph_backed_multiselect_rows_expose_selection_action_points() -> None:
@@ -259,6 +362,34 @@ def test_android_autocomplete_search_is_text_input() -> None:
     assert controls[0]["value"] == "review"
 
 
+def test_android_search_button_opens_query_input() -> None:
+    controls = _form_controls("""
+      <node class="android.widget.ImageButton" content-desc="Search"
+            resource-id="option_menu_search" clickable="true"
+            bounds="[826,132][954,258]"/>""")
+
+    assert controls[0]["kind"] == "button"
+    assert controls[0]["query_action"] == "open"
+
+
+def test_android_search_clear_button_resets_query() -> None:
+    controls = _form_controls("""
+      <node class="android.widget.ImageButton" text="" content-desc="Clear query"
+            resource-id="com.android.documentsui:id/search_close_btn"
+            clickable="true" enabled="true" bounds="[900,100][1040,220]"/>""")
+
+    assert controls[0]["query_action"] == "reset"
+
+
+def test_android_clickable_image_is_actionable_button() -> None:
+    controls = _form_controls("""
+      <node class="android.widget.ImageView" content-desc="More options"
+            clickable="true" bounds="[954,132][1080,258]"/>""")
+
+    assert controls[0]["kind"] == "button"
+    assert controls[0]["label"] == "More options"
+
+
 def test_android_commit_metadata_requires_explicit_submission_semantics() -> None:
     xml = """<hierarchy>
       <node class="android.widget.FrameLayout" bounds="[0,0][1080,2400]">
@@ -275,6 +406,16 @@ def test_android_commit_metadata_requires_explicit_submission_semantics() -> Non
               clickable="true" bounds="[850,1950][1030,2070]"/>
         <node class="android.widget.Button" text="Create New Channel"
               clickable="true" bounds="[50,250][550,370]"/>
+        <node class="android.widget.Button" text="EXTRACT" resource-id="android:id/button1"
+              clickable="true" bounds="[360,2100][720,2250]"/>
+        <node class="android.widget.Button" text="Just once"
+              resource-id="android:id/button_once" clickable="true"
+              bounds="[360,1900][620,2050]"/>
+        <node class="android.widget.Button" text="Always"
+              resource-id="android:id/button_always" clickable="true"
+              bounds="[620,1900][900,2050]"/>
+        <node class="android.widget.Button" text="Next" resource-id="com.example:id/button1"
+              clickable="true" bounds="[50,2100][300,2250]"/>
       </node>
     </hierarchy>"""
 
@@ -289,6 +430,10 @@ def test_android_commit_metadata_requires_explicit_submission_semantics() -> Non
     assert by_label["Add Members"]["form_action"] == "commit"
     assert by_label["Send"]["form_action"] == "commit"
     assert "form_action" not in by_label["Create New Channel"]
+    assert by_label["EXTRACT"]["form_action"] == "commit"
+    assert by_label["Just once"]["form_action"] == "commit"
+    assert by_label["Always"]["form_action"] == "commit"
+    assert "form_action" not in by_label["Next"]
 
 
 def test_android_hides_trailing_action_occluded_by_row_controls() -> None:
