@@ -10,7 +10,10 @@ from gui_agent.core.tool_agent.filter_state import (
 )
 from gui_agent.core.tool_agent.contracts import DataRequirement
 from gui_agent.core.tool_agent.data_store import RuntimeDataStore
-from gui_agent.core.tool_agent.perception import PerceptionMaterializer
+from gui_agent.core.tool_agent.perception import (
+    PerceptionMaterializer,
+    _rows_satisfy_filters,
+)
 
 
 ROW_SCHEMA = {
@@ -316,8 +319,8 @@ def test_acquisition_scope_can_broaden_without_changing_logical_row_filter(
     }
     assert materializer.data_store.collection_rows(frame.collections[0].ref) == [
         {"product": "Erica Sports Bra", "title": "Target review"},
-        {"product": "Erica Training Top", "title": "Related review"},
     ]
+    assert frame.collections[0].coverage["status"] == "complete"
 
     stale, _ = materializer.observe(
         bundle=FakeBundle(
@@ -342,6 +345,53 @@ def test_acquisition_scope_can_broaden_without_changing_logical_row_filter(
         "unexpected_applied_filters"
     )
     assert stale.collections == []
+
+
+def test_visual_candidate_must_satisfy_immutable_logical_filter(
+    tmp_path: Path,
+) -> None:
+    requirement = DataRequirement(
+        id="target_record",
+        description="One exact requested record",
+        row_schema={"date": "string"},
+        filters={"date": "2026-08-15"},
+        coverage="first_match",
+    )
+    materializer = _materializer(tmp_path, "vision-only")
+    materializer._vision_extract = lambda *_args, **_kwargs: {  # type: ignore[method-assign]
+        "found": True,
+        "rows": [{"date": "2026-08-27"}],
+        "end_visible": False,
+        "scope_satisfied": True,
+    }
+
+    frame, _ = materializer.observe(
+        bundle=FakeBundle([]),
+        platform=FakePlatform(),
+        requirements=[requirement],
+        acquisition_filters={"date": "2026-08"},
+        frame_no=1,
+    )
+
+    scope = frame.requirement_scopes[requirement.id]
+    assert scope["status"] == "met"
+    assert scope["filter_rejected_rows"] == 1
+    assert frame.collections == []
+    assert frame.missing_requirements == [requirement.id]
+
+
+def test_known_filter_mismatch_wins_over_unknown_row() -> None:
+    requirement = DataRequirement(
+        id="records",
+        description="Filtered records",
+        row_schema={"date": "string", "content": "string"},
+        filters={"date": "2026-08-15"},
+    )
+
+    assert _rows_satisfy_filters(requirement, [
+        {"content": "Date not visible"},
+        {"date": "2026-08-16", "content": "Wrong date"},
+    ]) is False
 
 
 def test_incomplete_visual_candidates_keep_detail_collection_open(
@@ -438,18 +488,23 @@ def test_vision_extract_preserves_schema_rejected_rows_for_empty_classification(
     )
     materializer = _materializer(tmp_path, "vision-only")
     materializer._vision = vision
+    materializer.task_goal = "Return tomorrow's forecast"
 
     extracted = PerceptionMaterializer._vision_extract(
         materializer,
         requirement,
         b"png",
         acquisition_filters={},
+        page_identity={"url": "https://example.test/records", "title": "Records"},
     )
 
     assert len(extracted["rows"]) == 1
     assert extracted["rows"][0]["optional_source_metric"] is None
     human_text = observed_messages[-1].content[0]["text"]
+    assert "Original task temporal context: Return tomorrow's forecast" in human_text
     assert "Task reference time (frozen platform clock):" in human_text
+    assert 'Frozen relative calendar dates by day offset: {"-2":' in human_text
+    assert 'Current page identity: {"url": "https://example.test/records"' in human_text
 
 
 def test_optional_visual_null_is_omitted_instead_of_rejecting_row(
@@ -617,7 +672,7 @@ def test_detail_collection_keeps_candidate_total_and_survives_list_navigation(
             "rating": "Detailed Rating",
         },
         field_types={"product": "text", "title": "text", "rating": "number"},
-        filters={"product": "Requested Product"},
+        filters={"product": "Candidate Product"},
     )
     candidate_table = {
         "caption": "Reviews",

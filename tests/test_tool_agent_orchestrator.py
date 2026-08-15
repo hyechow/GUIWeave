@@ -471,6 +471,7 @@ reviews = ctx.gui_worker(
         "field_sources": {"rating": "Detailed Rating", "product": "Product"},
         "field_types": {"rating": "number", "product": "text"},
         "filters": {"product": "Target Product"},
+        "coverage": "complete",
     }],
     actions=[{
         "name": "filter_product",
@@ -794,6 +795,63 @@ def test_master_compiler_regenerates_only_during_static_review() -> None:
     assert events[1][1]["diagnostics"] == []
 
 
+def test_new_master_program_requires_explicit_worker_strategy() -> None:
+    source = _launch_app_program("settings").replace(
+        '    strategy="Launch the exact Runtime-provided application directly",\n',
+        "",
+    )
+
+    diagnostics = validate_master_source(
+        source,
+        require_explicit_strategy=True,
+    )
+
+    assert any(
+        item.code == "GUI_WORKER_LITERAL" and "strategy" in item.message
+        for item in diagnostics
+    )
+
+
+def test_master_review_keeps_unrequested_page_source_out_of_logical_contract() -> None:
+    source = _launch_app_program("settings").replace(
+        'goal="Open the requested application"',
+        'goal="Open the requested application using Google"',
+    )
+    context = {"url": "https://www.google.com.hk/"}
+
+    diagnostics = validate_master_source(
+        source,
+        page_context=context,
+        user_goal="打开目标应用",
+    )
+
+    assert any(item.code == "LOGICAL_SOURCE_PROVENANCE" for item in diagnostics)
+    assert not any(
+        item.code == "LOGICAL_SOURCE_PROVENANCE"
+        for item in validate_master_source(
+            source,
+            page_context=context,
+            user_goal="请使用 Google 打开目标应用",
+        )
+    )
+
+
+def test_master_review_allows_page_source_only_in_physical_strategy() -> None:
+    source = _launch_app_program("settings").replace(
+        "Launch the exact Runtime-provided application directly",
+        "Use the current Google surface before launching the requested application",
+    )
+
+    assert not any(
+        item.code == "LOGICAL_SOURCE_PROVENANCE"
+        for item in validate_master_source(
+            source,
+            page_context={"url": "https://www.google.com.hk/"},
+            user_goal="打开目标应用",
+        )
+    )
+
+
 def test_master_review_rejects_data_collection_for_destination_only_goal() -> None:
     source = _program(
         f'''\
@@ -835,6 +893,7 @@ ctx.gui_worker(
     worker_id="open_settings",
     profile="operator",
     goal="Open the requested application",
+    strategy="Launch the exact Runtime-provided application directly",
     success_criteria=["The requested application is visible"],
     data_requirements=[],
     actions=[{{
@@ -1031,6 +1090,44 @@ ctx.finish(result["ref"], effect="data")
     assert execution.terminal is not None
     assert execution.terminal.phase == "failed"
     assert execution.terminal.summary == "Unexpected access gate"
+
+
+def test_master_failure_preserves_latest_worker_blocker() -> None:
+    store = RuntimeDataStore()
+
+    def fail_gui_worker(_worker_id, _spec):
+        return WorkerOutcome(
+            phase="failed",
+            summary="The current public source denied access.",
+            steps=1,
+        )
+
+    ctx = WorkerOrchestrationContext(
+        data_store=store,
+        run_gui_worker=fail_gui_worker,
+        trace=lambda *args, **kwargs: None,
+    )
+    source = _program(
+        '''\
+outcome = ctx.gui_worker(
+    worker_id="open_page", profile="operator", goal="Open the requested page",
+    success_criteria=["The page is visible"],
+    actions=[{"name": "open_visible", "capability": "tap",
+              "description": "Open the visible page"}],
+)
+if outcome["phase"] != "completed":
+    ctx.fail("Could not retrieve the requested result")
+ctx.fail("unreachable")
+'''.strip()
+    )
+
+    execution = execute_master_program(source, ctx)
+
+    assert execution.terminal is not None
+    assert execution.terminal.summary == (
+        "Could not retrieve the requested result — "
+        "The current public source denied access."
+    )
 
 
 def test_operator_can_materialize_a_control_flow_result_without_fake_data() -> None:

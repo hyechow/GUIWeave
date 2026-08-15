@@ -76,6 +76,26 @@ def test_data_store_deduplicates_same_rows_across_observations() -> None:
     assert collection.chunk_refs == [first.ref]
 
 
+def test_first_match_collection_completes_without_exhaustive_traversal() -> None:
+    store = RuntimeDataStore()
+    _, collection, _ = store.put_chunk(
+        requirement_id="records",
+        frame_id="frame:1",
+        provider="vision",
+        rows=[{"label": "target", "metric": 3}],
+        row_schema=ROW_SCHEMA,
+        coverage={
+            "requested": "first_match",
+            "scope_status": "met",
+            "partial": True,
+            "at_end": False,
+        },
+    )
+
+    assert collection.coverage["requested"] == "first_match"
+    assert collection.coverage["status"] == "complete"
+
+
 def test_collection_rows_remove_overlap_between_visual_windows() -> None:
     store = RuntimeDataStore()
     _put_visual_window(

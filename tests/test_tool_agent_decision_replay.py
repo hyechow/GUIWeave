@@ -6,6 +6,8 @@ from pathlib import Path
 from langchain_core.messages import AIMessage
 
 from gui_agent.core.tool_agent.contracts import WorkerSpec
+from llm.provider_config import ChatProviderConfig
+import replay.decision as decision_module
 from replay.decision import replay_master_decision, replay_worker_decision
 
 
@@ -24,7 +26,10 @@ class _RecordedModel:
 
     def invoke(self, messages):
         self.calls.append(messages)
-        return self.responses.pop(0)
+        response = self.responses.pop(0)
+        if isinstance(response, Exception):
+            raise response
+        return response
 
 
 def _snapshot(label: str, *, image: bool = False) -> dict:
@@ -51,6 +56,7 @@ def _snapshot(label: str, *, image: bool = False) -> dict:
 def _state(status: str = "exploring") -> dict:
     return {
         "status": status,
+        "strategy_status": "advancing",
         "summary": "Replay decision",
         "established_facts": [],
         "next_instruction": "Continue the recorded subgoal",
@@ -145,6 +151,29 @@ def test_worker_replay_compares_equivalent_actions_by_capability(tmp_path) -> No
     }
 
 
+def test_worker_replay_finds_selected_strategy_attempt_spec() -> None:
+    spec = WorkerSpec.model_validate({
+        "goal": "Use a selected alternate path.",
+        "strategy": "Open the evidenced alternate entry.",
+        "success_criteria": ["The target surface is visible."],
+        "actions": [{
+            "name": "open_alternate",
+            "capability": "open_url",
+            "description": "Open the alternate entry.",
+            "fixed_args": {"url": "https://example.test"},
+        }],
+    })
+    selected = {"index": 2, "worker_id": "worker_replan_1"}
+    events = [{
+        "index": 1,
+        "event": "strategy_attempt_dispatched",
+        "worker_id": "worker_replan_1",
+        "spec": spec.model_dump(mode="json"),
+    }]
+
+    assert decision_module._worker_spec(events, selected) == spec
+
+
 def test_worker_replay_applies_one_same_frame_protocol_repair(tmp_path) -> None:
     run_dir = _worker_run(
         tmp_path,
@@ -169,12 +198,80 @@ def test_worker_replay_applies_one_same_frame_protocol_repair(tmp_path) -> None:
     assert "Protocol repair" in model.calls[1][-1].content
 
 
+def test_worker_replay_marks_redacted_value_action_unavailable(tmp_path) -> None:
+    run_dir = _worker_run(
+        tmp_path,
+        recorded_tool="continue_with_actions",
+        recorded_actions=[{
+            "name": "runtime_type_visible",
+            "args": {"text": "[session access value redacted]"},
+        }],
+    )
+    model = _RecordedModel()
+
+    result = replay_worker_decision(run_dir, frame=1, llm=model)
+
+    assert result["status"] == "unavailable"
+    assert result["uses_llm"] is False
+    assert model.calls == []
+
+
+def test_worker_replay_supports_plain_json_action_protocol(tmp_path, monkeypatch) -> None:
+    run_dir = _worker_run(
+        tmp_path,
+        recorded_tool="continue_with_actions",
+        recorded_actions=[
+            {"name": "runtime_scroll_visible", "args": {}},
+            {"name": "runtime_scroll_visible", "args": {}},
+        ],
+    )
+    model = _RecordedModel(
+        AIMessage(content="{}"),
+        AIMessage(content=json.dumps({
+            "tool": "continue_with_actions",
+            "args": {
+                "state": _state(),
+                "actions": [{
+                    "name": "scroll_content",
+                    "args": {
+                        "direction": "down",
+                        "amount": "medium",
+                        "description": "Scroll the visible collection downward",
+                    },
+                }],
+            },
+        })),
+    )
+    config = ChatProviderConfig(
+        provider="standard",
+        model="gpt-5.6-luna",
+        api_key="test",
+        base_url="http://standard.example/v1",
+        temperature=None,
+        reasoning_effort="low",
+        max_actions_per_call=1,
+        action_protocol="json",
+    )
+    monkeypatch.setattr(decision_module, "_model", lambda _name: (model, config))
+
+    result = replay_worker_decision(run_dir, frame=1)
+
+    assert result["status"] == "passed"
+    assert result["expectation"]["action_capabilities"] == ["scroll"]
+    assert result["samples"][0]["actions"] == ["scroll_content"]
+    assert result["samples"][0]["protocol_repairs"] == 1
+    assert model.bound_tools == []
+    assert any("Decision transport" in message.content for message in model.calls[0])
+    assert "JSON object with only tool and args" in model.calls[1][-1].content
+
+
 def test_master_replay_uses_current_prompt_and_structural_expectation(tmp_path) -> None:
     source = """def run(ctx):
     outcome = ctx.gui_worker(
         worker_id="operate",
         profile="operator",
         goal="Apply the target state.",
+        strategy="Open the visible target and apply its requested state.",
         success_criteria=["Target state is visible."],
         data_requirements=[],
         actions=[{"name": "open_target", "capability": "tap", "description": "Open target"}],
@@ -201,7 +298,10 @@ def test_master_replay_uses_current_prompt_and_structural_expectation(tmp_path) 
         "diagnostics": [],
         "context_reports": [report],
     }]}), encoding="utf-8")
-    model = _RecordedModel(AIMessage(content=source))
+    model = _RecordedModel(
+        AIMessage(content=source),
+        AIMessage(content='{"issues": [], "target_bindings": []}'),
+    )
 
     result = replay_master_decision(
         tmp_path,

@@ -6,11 +6,13 @@ from types import SimpleNamespace
 
 from gui_agent.core.tool_agent.contracts import (
     CollectionRef,
+    DynamicActionSpec,
     MaterializedFrame,
     WorkerOutcome,
     WorkerSpec,
 )
 from gui_agent.core.tool_agent.runtime import ToolAgentRuntime
+from gui_agent.core.tool_agent.strategy import StrategyPlanner
 
 
 _FIXTURE = (
@@ -21,9 +23,9 @@ _FIXTURE = (
 )
 
 
-class _RecordedRevisionMaster:
-    def __init__(self, replacement: dict) -> None:
-        self.replacement = replacement
+class _RecordedStrategyModel:
+    def __init__(self, response: dict) -> None:
+        self.response = response
         self.bind_kwargs: dict = {}
         self.messages = []
 
@@ -34,7 +36,7 @@ class _RecordedRevisionMaster:
     def invoke(self, messages):
         self.messages = messages
         return SimpleNamespace(
-            content=json.dumps({"worker_spec": self.replacement}),
+            content=json.dumps(self.response),
             tool_calls=[],
         )
 
@@ -43,13 +45,71 @@ def _case() -> dict:
     return json.loads(_FIXTURE.read_text(encoding="utf-8"))
 
 
-def test_task214_master_replays_a_materially_different_worker_spec() -> None:
+def _candidate(replacement: dict) -> dict:
+    return {
+        "hypothesis": "The alternate physical path can satisfy the unchanged subgoal.",
+        "invalidated_assumption": "The prior physical path is the only viable path.",
+        "strategy": replacement.get("strategy") or "Use the evidenced alternate path.",
+        "actions": replacement["actions"],
+        "expected_progress": "The target surface visibly advances toward the success criteria.",
+        "disconfirming_evidence": "The alternate path visibly fails or repeats the blocker.",
+        "evidence_basis": ["bounded execution experience"],
+        "estimated_steps": min(int(replacement.get("max_steps") or 12), 20),
+        "acquisition_filters": replacement.get("acquisition_filters"),
+    }
+
+
+def _revision_runtime(
+    replacement: dict,
+    *,
+    selection: dict | None = None,
+    **context,
+) -> ToolAgentRuntime:
+    runtime = object.__new__(ToolAgentRuntime)
+    proposer = _RecordedStrategyModel({"candidates": [_candidate(replacement)]})
+    selector = _RecordedStrategyModel(selection or {
+        "decision": "attempt",
+        "chosen_index": 0,
+        "reason": "The candidate is executable and materially different.",
+    })
+    runtime.__dict__.update({
+        "strategy_planner": StrategyPlanner(proposer, selector=selector),
+        "strategy_proposer": proposer,
+        "strategy_selector": selector,
+        "trace": [],
+        "_worker_last_frames": {},
+        "_master_knowledge": "",
+        "_worker_access_context": "",
+        "_status_cb": None,
+    }, **context)
+    return runtime
+
+
+def _revise(
+    runtime: ToolAgentRuntime,
+    worker_id: str,
+    original: WorkerSpec,
+    summary: str,
+) -> WorkerSpec:
+    revised, _reason = runtime._select_worker_strategy(
+        logical_worker_id=worker_id,
+        prior_worker_id=worker_id,
+        original_spec=original,
+        prior_outcome=WorkerOutcome(phase="failed", summary=summary, steps=1),
+        replan_reason="Use a different execution path",
+        replan_no=1,
+        prior_revisions=[original],
+        remaining_steps=20,
+    )
+    assert revised is not None
+    return revised
+
+
+def test_task214_strategy_planner_selects_a_materially_different_worker_spec() -> None:
     case = _case()
     original = WorkerSpec.model_validate(case["original_spec"])
     empty = WorkerOutcome.model_validate(case["empty_outcome"])
-    master = _RecordedRevisionMaster(case["replacement_spec"])
-    runtime = object.__new__(ToolAgentRuntime)
-    runtime.master = master
+    runtime = _revision_runtime(case["replacement_spec"])
     runtime.trace = [
         {
             "worker_id": case["logical_worker_id"],
@@ -64,7 +124,7 @@ def test_task214_master_replays_a_materially_different_worker_spec() -> None:
     )
     runtime._status_cb = None
 
-    revised = runtime._revise_worker_spec(
+    revised, reason = runtime._select_worker_strategy(
         logical_worker_id=case["logical_worker_id"],
         prior_worker_id=case["logical_worker_id"],
         original_spec=original,
@@ -72,7 +132,9 @@ def test_task214_master_replays_a_materially_different_worker_spec() -> None:
         replan_reason=runtime._worker_replan_reason(empty),
         replan_no=1,
         prior_revisions=[],
+        remaining_steps=20,
     )
+    assert revised is not None
 
     expected = case["expected"]
     assert original.data_requirements[0].filters["product"] == expected["first_query"]
@@ -85,10 +147,45 @@ def test_task214_master_replays_a_materially_different_worker_spec() -> None:
     assert revised.data_requirements[0].description == original.data_requirements[0].description
     assert revised.data_requirements[0].row_schema == original.data_requirements[0].row_schema
     assert revised != original
-    assert master.bind_kwargs["response_format"] == {"type": "json_object"}
-    prompt = str(master.messages)
-    assert "same logical subgoal" in prompt
+    assert reason
+    proposer = runtime.strategy_proposer
+    selector = runtime.strategy_selector
+    assert proposer.bind_kwargs["response_format"] == {"type": "json_object"}
+    assert selector.bind_kwargs["max_tokens"] == 500
+    prompt = str(proposer.messages)
+    assert "immutable logical GUI subgoal" in prompt
     assert "shorter literal" in prompt
+
+
+def test_strategy_selector_can_stop_without_dispatching_a_candidate() -> None:
+    case = _case()
+    original = WorkerSpec.model_validate(case["original_spec"])
+    runtime = _revision_runtime(
+        case["replacement_spec"],
+        selection={
+            "decision": "stop",
+            "chosen_index": None,
+            "reason": "The only candidate repeats the disproven entry path.",
+        },
+    )
+
+    revised, reason = runtime._select_worker_strategy(
+        logical_worker_id="collect_records",
+        prior_worker_id="collect_records",
+        original_spec=original,
+        prior_outcome=WorkerOutcome(
+            phase="failed", summary="The entry path is blocked", steps=2
+        ),
+        replan_reason="The entry path is blocked",
+        replan_no=1,
+        prior_revisions=[original],
+        remaining_steps=20,
+    )
+
+    assert revised is None
+    assert "repeats" in reason
+    selected = [event for event in runtime.trace if event["event"] == "strategy_selected"]
+    assert selected[0]["decision"] == "stop"
 
 
 def test_runtime_rejects_semantic_drift_during_local_worker_revision() -> None:
@@ -107,9 +204,23 @@ def test_runtime_rejects_semantic_drift_during_local_worker_revision() -> None:
 
     issues = ToolAgentRuntime._worker_revision_issues(original, drifted)
 
-    assert "goal is immutable across runtime redelegation" in issues
-    assert "success_criteria are immutable across runtime redelegation" in issues
+    assert "goal is immutable across strategy revision" in issues
+    assert "success_criteria are immutable across strategy revision" in issues
     assert "data_requirements[0].description is immutable" in issues
+
+
+def test_runtime_requires_redelegation_to_replace_explicit_strategy() -> None:
+    case = _case()
+    original = WorkerSpec.model_validate(case["original_spec"]).model_copy(
+        update={"strategy": "Use the current acquisition path"},
+    )
+    revised = WorkerSpec.model_validate(case["replacement_spec"]).model_copy(
+        update={"strategy": original.strategy},
+    )
+
+    issues = ToolAgentRuntime._worker_revision_issues(original, revised)
+
+    assert "strategy must materially change across strategy revision" in issues
 
 
 def test_authoritative_empty_result_requires_a_new_acquisition_scope() -> None:
@@ -132,6 +243,47 @@ def test_authoritative_empty_result_requires_a_new_acquisition_scope() -> None:
     )
 
 
+def test_source_free_revision_keeps_selected_public_origin_fixed() -> None:
+    case = _case()
+    original = WorkerSpec.model_validate(case["original_spec"])
+    replacement = case["replacement_spec"]
+    replacement["actions"] = [{
+        "name": "open_alternate_reference",
+        "capability": "open_url",
+        "description": "Open the selected alternate reference source",
+        "fixed_args": {"url": "https://alternate.example.test/"},
+    }]
+    runtime = _revision_runtime(
+        replacement,
+        _task_goal="Retrieve a public reference",
+    )
+    revised = _revise(
+        runtime, "retrieve_reference", original,
+        "The current source cannot provide the reference",
+    )
+
+    assert revised.actions[0].fixed_args == {
+        "url": "https://alternate.example.test/"
+    }
+    assert revised.actions[0].exposed_args == []
+
+
+def test_failed_execution_revision_preserves_acquisition_scope() -> None:
+    case = _case()
+    original = WorkerSpec.model_validate(case["original_spec"])
+    replacement = case["replacement_spec"]
+    replacement["acquisition_filters"] = {"invented_scope": "invented"}
+    runtime = _revision_runtime(replacement)
+
+    revised = _revise(
+        runtime, "collect_records", original,
+        "The first interaction path was blocked",
+    )
+
+    assert revised.acquisition_filters == original.acquisition_filters
+    assert revised.actions[0].name == replacement["actions"][0]["name"]
+
+
 def test_unfiltered_authoritative_empty_result_is_terminal_success() -> None:
     case = _case()
     filtered = WorkerOutcome.model_validate(case["empty_outcome"])
@@ -150,7 +302,7 @@ def test_unfiltered_authoritative_empty_result_is_terminal_success() -> None:
     assert ToolAgentRuntime._worker_replan_reason(unfiltered) == ""
 
 
-def test_task214_empty_result_dispatches_a_new_physical_worker() -> None:
+def test_task214_empty_result_dispatches_a_new_physical_worker(tmp_path: Path) -> None:
     case = _case()
     original = WorkerSpec.model_validate(case["original_spec"])
     revised = WorkerSpec.model_validate(case["replacement_spec"])
@@ -173,14 +325,22 @@ def test_task214_empty_result_dispatches_a_new_physical_worker() -> None:
     runtime.max_subgoal_replans = 1
     runtime.trace = []
     runtime._status_cb = None
+    runtime._worker_last_frames = {}
+    screenshot = tmp_path / "frame.png"
+    screenshot.write_bytes(b"png")
     calls: list[tuple[str, WorkerSpec]] = []
 
-    def run_worker(worker_id: str, spec: WorkerSpec) -> WorkerOutcome:
+    def run_worker(worker_id: str, spec: WorkerSpec):
         calls.append((worker_id, spec))
+        if len(calls) == 1:
+            runtime._worker_last_frames[worker_id] = MaterializedFrame(
+                frame_id="frame:empty",
+                screenshot_path=str(screenshot),
+            )
         return empty if len(calls) == 1 else recovered
 
     runtime._run_worker = run_worker
-    runtime._revise_worker_spec = lambda **_kwargs: revised
+    runtime._select_worker_strategy = lambda **_kwargs: (revised, "selected")
 
     outcome = runtime._run_worker_with_local_replanning(
         case["logical_worker_id"],
@@ -194,72 +354,33 @@ def test_task214_empty_result_dispatches_a_new_physical_worker() -> None:
     ]
     assert calls[0][1].acquisition_filters == {"product": "Erica Sports Bra"}
     assert calls[1][1].acquisition_filters == {"product": "Erica"}
-    assert any(event["event"] == "master_worker_redelegated" for event in runtime.trace)
+    assert any(event["event"] == "strategy_attempt_dispatched" for event in runtime.trace)
 
 
-def test_failed_operator_replans_only_its_local_execution_strategy() -> None:
-    original = WorkerSpec.model_validate({
-        "profile": "operator",
-        "goal": "Open account settings.",
-        "success_criteria": ["The account settings surface is visible."],
-        "actions": [{
-            "name": "open_settings_directly",
-            "capability": "tap",
-            "description": "Open the visible settings entry directly.",
-        }],
-        "max_steps": 8,
-    })
-    revised = WorkerSpec.model_validate({
-        "profile": "operator",
-        "goal": original.goal,
-        "success_criteria": original.success_criteria,
-        "actions": [{
-            "name": "open_account_menu",
-            "capability": "tap",
-            "description": "Open the account menu before navigating to settings.",
-        }],
-        "max_steps": 10,
-    })
-    failed = WorkerOutcome(
-        phase="failed",
-        summary="The direct settings entry was not available in the current layout.",
-        steps=4,
-    )
-    completed = WorkerOutcome(
-        phase="completed",
-        summary="Account settings is visible.",
-        steps=3,
-    )
+def test_strategy_stop_does_not_dispatch_another_worker() -> None:
+    original = WorkerSpec.model_validate(_case()["original_spec"])
     runtime = object.__new__(ToolAgentRuntime)
     runtime.max_subgoal_replans = 1
     runtime.trace = []
     runtime._status_cb = None
-    calls: list[tuple[str, WorkerSpec]] = []
+    calls: list[str] = []
 
-    def run_worker(worker_id: str, spec: WorkerSpec) -> WorkerOutcome:
-        calls.append((worker_id, spec))
-        return failed if len(calls) == 1 else completed
+    def fail(worker_id: str, _spec: WorkerSpec) -> WorkerOutcome:
+        calls.append(worker_id)
+        return WorkerOutcome(phase="failed", summary="Path disproven", steps=2)
 
-    runtime._run_worker = run_worker
-    runtime._revise_worker_spec = lambda **_kwargs: revised
-
-    outcome = runtime._run_worker_with_local_replanning(
-        "open_account_settings",
-        original,
+    runtime._run_worker = fail
+    runtime._select_worker_strategy = lambda **_kwargs: (
+        None,
+        "No materially different strategy remains.",
     )
 
-    assert outcome == completed
-    assert [worker_id for worker_id, _ in calls] == [
-        "open_account_settings",
-        "open_account_settings_replan_1",
-    ]
-    assert calls[1][1].goal == original.goal
-    assert calls[1][1].success_criteria == original.success_criteria
-    requested = next(
-        event for event in runtime.trace
-        if event["event"] == "master_worker_replan_requested"
-    )
-    assert "direct settings entry" in requested["reason"]
+    outcome = runtime._run_worker_with_local_replanning("collect_records", original)
+
+    assert calls == ["collect_records"]
+    assert outcome.steps == 2
+    assert "Strategy Planner stopped" in outcome.summary
+    assert runtime.trace[-1]["event"] == "strategy_stopped"
 
 
 def test_redelegation_shares_one_bounded_logical_step_budget() -> None:
@@ -297,7 +418,7 @@ def test_redelegation_shares_one_bounded_logical_step_budget() -> None:
         )
 
     runtime._run_worker = run_worker
-    runtime._revise_worker_spec = lambda **_kwargs: revised
+    runtime._select_worker_strategy = lambda **_kwargs: (revised, "selected")
 
     outcome = runtime._run_worker_with_local_replanning("apply_target", original)
 
@@ -308,7 +429,7 @@ def test_redelegation_shares_one_bounded_logical_step_budget() -> None:
     ]
     assert outcome.phase == "failed"
     assert outcome.steps == 40
-    assert "local strategy budget" in outcome.summary
+    assert outcome.summary == "No progress"
 
 
 def test_worker_returns_verified_empty_without_another_policy_call() -> None:

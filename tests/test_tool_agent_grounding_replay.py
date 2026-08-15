@@ -525,7 +525,7 @@ def test_action_guard_blocks_strict_two_state_cycle() -> None:
     actions = [
         (closed, {"x": 70, "y": 80}),
         (opened, {"x": 900, "y": 400}),
-    ] * 2
+    ]
     for frame, args in actions:
         decision = breaker.inspect(
             tool="tap", capability="tap", args=args, frame=frame,

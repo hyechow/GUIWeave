@@ -56,6 +56,25 @@ def test_agent_config_selects_sibling_yaml_by_filename(monkeypatch):
             "provider": "standard",
             "model": "qwen3.6-flash",
         }
+        worker = config.resolve_llm_config("tool_agent.worker")
+        assert worker.model == "gpt-5.6-luna"
+        assert worker.reasoning_effort == "low"
+        assert worker.temperature is None
+        assert worker.image_scale == 0.75
+        assert worker.max_actions_per_call == 1
+        assert worker.action_protocol == "json"
+        assert worker.use_responses_api is True
+        assert worker.timeout_s == 20
+        assert worker.max_retries == 1
+        perception = config.resolve_llm_config("tool_agent.perception")
+        assert perception.model == "gpt-5.6-luna"
+        assert perception.reasoning_effort == "low"
+        assert perception.image_scale == 1.0
+        assert perception.use_responses_api is True
+        selector = config.resolve_llm_config("tool_agent.strategy.selector")
+        assert selector.model == "qwen3.6-flash"
+        assert selector.timeout_s == 8
+        assert selector.max_retries == 0
     finally:
         config._load_raw.cache_clear()
         config.load_config.cache_clear()
@@ -92,11 +111,13 @@ def test_legacy_back_nav_config_falls_forward_to_recon_navigator(monkeypatch):
     assert config.resolve_llm_config("back_nav").model == "neutral-nav"
 
 
-def test_tokenplan_config_is_qwen37_token_plan(monkeypatch):
+def test_tokenplan_config_uses_luna_visual_slots_and_qwen_elsewhere(monkeypatch):
     # 可选配置基线 = qwen3.7-plus + tokenplan provider；qwen3.7-max 是纯文本所以不用。
     # 外围 flash 用 qwen3.6-flash（token-plan 无 qwen3.5-flash）。
     monkeypatch.setenv("AGENT_CONFIG", "config.tokenplan.yaml")
     monkeypatch.setenv("TOKENPLAN_API_KEY", "sk-test-tokenplan")
+    monkeypatch.setenv("STANDARD_API_KEY", "sk-test-luna")
+    monkeypatch.setenv("STANDARD_BASE_URL", "http://standard.example/v1")
     monkeypatch.delenv("TOKENPLAN_BASE_URL", raising=False)
     config.load_config.cache_clear()
     config._load_raw.cache_clear()
@@ -123,6 +144,26 @@ def test_tokenplan_config_is_qwen37_token_plan(monkeypatch):
         assert cfg.model == "qwen3.7-plus"
         assert cfg.base_url == token_plan
         assert cfg.api_key == "sk-test-tokenplan"
+        worker = config.resolve_llm_config("tool_agent.worker")
+        assert worker.provider == "standard"
+        assert worker.model == "gpt-5.6-luna"
+        assert worker.api_key == "sk-test-luna"
+        assert worker.base_url == "http://standard.example/v1"
+        assert worker.action_protocol == "json"
+        perception = config.resolve_llm_config("tool_agent.perception")
+        assert perception.provider == "standard"
+        assert perception.model == "gpt-5.6-luna"
+        assert perception.api_key == "sk-test-luna"
+        assert perception.image_scale == 1.0
+        assert perception.use_responses_api is True
+        proposer = config.resolve_llm_config("tool_agent.strategy.proposer")
+        selector = config.resolve_llm_config("tool_agent.strategy.selector")
+        assert proposer.model == "qwen3.7-max"
+        assert proposer.timeout_s == 25
+        assert proposer.max_retries == 0
+        assert selector.model == "qwen3.6-flash"
+        assert selector.timeout_s == 8
+        assert selector.max_retries == 0
         # 单价随模型登记（plus ≤256K 档官网价）
         assert config.model_price("qwen3.7-plus") == (2.0, 8.0)
         assert config.model_price("qwen3.7-max") == (12.0, 36.0)
@@ -154,3 +195,26 @@ def test_resolve_llm_config_passes_section_base_url_and_api_key(monkeypatch):
     assert cfg.model == "qwen3.7-plus"
     assert cfg.base_url == "https://token-plan.example/v1"
     assert cfg.api_key == "sk-test-from-yaml"
+
+
+@pytest.mark.parametrize(
+    ("field", "value", "message"),
+    [
+        ("image_scale", 0, "image_scale"),
+        *(("max_actions_per_call", value, "max_actions_per_call") for value in (
+            6, True, 1.5, float("nan"), float("inf"),
+        )),
+        ("action_protocol", "xml", "action_protocol"),
+    ],
+)
+def test_resolve_llm_config_rejects_invalid_model_options(
+    monkeypatch, field, value, message,
+) -> None:
+    monkeypatch.setattr(
+        config,
+        "load_config",
+        lambda: {"llm": {"tool_agent": {"worker": {field: value}}}},
+    )
+
+    with pytest.raises(ValueError, match=message):
+        config.resolve_llm_config("tool_agent.worker")
