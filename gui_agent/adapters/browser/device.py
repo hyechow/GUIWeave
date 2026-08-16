@@ -102,6 +102,7 @@ _SETTLE_POLL_S = 0.12        # poll cadence (raw-CDP evaluate is cheap)
 # and the next turn sees it further along. So keep the cap short; a page still busy at the cap
 # returns anyway (the log says 仍在加载) and the loop re-checks next turn.
 _SETTLE_CAP_S = 3.0
+_SETTLE_NAV_CAP_S = 6.0
 _FORM_VALUE_FINGERPRINT_JS = (
     "(()=>{const els=[...document.querySelectorAll('input,select,textarea')];"
     "const vals=els.map(e=>(e.type==='checkbox'||e.type==='radio')?(e.checked?'1':'0')"
@@ -121,7 +122,10 @@ _SETTLE_INSTALL = (
 _SETTLE_RESET = "(()=>{" + _SETTLE_INSTALL + "window.__q.t=performance.now();return 1;})()"
 _SETTLE_PROBE = (
     "(()=>{" + _SETTLE_INSTALL
-    + "return [document.readyState, Math.round(performance.now()-window.__q.t)];})()"
+    + "const b=document.body;const visible=!!b&&(b.innerText.trim().length>0||"
+    "[...b.querySelectorAll('a,button,input,textarea,select,img,canvas,svg,video,iframe')]"
+    ".some(e=>e.getClientRects().length>0&&getComputedStyle(e).visibility!=='hidden'));"
+    "return [document.readyState,Math.round(performance.now()-window.__q.t),visible];})()"
 )
 
 # Same-origin XHR/fetch feedback belongs to the executed GUI action's observable outcome.  Some
@@ -545,20 +549,31 @@ class PlaywrightDevice:
         while True:
             res = self._cdp_send("Runtime.evaluate", {"expression": _SETTLE_PROBE, "returnByValue": True})
             val = res.get("result", {}).get("value")
-            rs, q = (val[0], val[1]) if isinstance(val, list) and len(val) == 2 else ("complete", None)
+            rs, q, content_ready = (
+                (val[0], val[1], bool(val[2]))
+                if isinstance(val, list) and len(val) >= 3
+                else ("complete", None, True)
+            )
             # XHR/Fetch remains in flight until response headers, completion or failure.  A slow
             # persistence request must not become "quiet" merely because a local timer elapsed.
             now = time.monotonic()
             xhr_inflight = len(self._xhr_ids)
             net_quiet = xhr_inflight == 0 and (now - self._xhr_last) * 1000.0 >= _SETTLE_QUIET_MS
             elapsed = time.perf_counter() - t0
-            settled = rs != "loading" and (q or 0) >= _SETTLE_QUIET_MS and net_quiet
-            if settled or elapsed >= _SETTLE_CAP_S:
+            settled = bool(
+                rs != "loading"
+                and (q or 0) >= _SETTLE_QUIET_MS
+                and net_quiet
+                and (action_type != "navigate" or content_ready)
+            )
+            cap = _SETTLE_NAV_CAP_S if action_type == "navigate" else _SETTLE_CAP_S
+            if settled or elapsed >= cap:
                 # DOM never mutated after entry → quietMs climbed with elapsed (≈ equal).
                 no_effect = q is not None and q >= elapsed * 1000.0 - 150 and xhr_inflight == 0
                 tag = "settled" if settled else "达上限·仍在加载"
                 print(f"  [Settle] {elapsed:.1f}s (CDP {tag}: readyState={rs}, "
                       f"domQuiet={q}ms, xhr在飞={xhr_inflight}"
+                      + (f"，内容={'就绪' if content_ready else '空白'}" if action_type == "navigate" else "")
                       + ("，零效果" if no_effect else "") + ")")
                 return elapsed, no_effect
             self._ensure_net_tracking()  # re-arm if a poll rebuilt the session
@@ -1309,8 +1324,19 @@ class PlaywrightDevice:
         """
         self._follow_active_tab()
         page = self._require_page()
-        dist = max(1, int(amount)) * _SCROLL_PX_PER_AMOUNT
         d = (direction or "").strip().lower()
+        viewport_w, viewport_h = self.viewport_size
+        horizontal = d in (
+            "left", "right", "leftward", "rightward", "向左", "向右",
+        )
+        axis_extent = viewport_w if horizontal else viewport_h
+        # Keep context from the prior frame visible. A single wheel action larger
+        # than the viewport can skip table headers, section labels, and other
+        # identity evidence the next frame needs for grounding.
+        dist = min(
+            max(1, int(amount)) * _SCROLL_PX_PER_AMOUNT,
+            max(1, round(axis_extent * 0.9)),
+        )
         dx = dy = 0
         if d in ("down", "向下", "downward"):
             dy = dist

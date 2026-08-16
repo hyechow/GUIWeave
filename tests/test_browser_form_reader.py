@@ -25,6 +25,7 @@ def test_form_controls_js_is_serialized_expression():
     assert "fieldset-wrapper-content" in js
     assert "_hide" in js
     assert "a[href]" in js
+    assert "[role=option]" in js
     assert "tr[onclick]" in js
     assert "'[onclick]'" not in js
     assert "rowValuesOf" in js
@@ -40,6 +41,21 @@ def test_form_controls_js_is_serialized_expression():
     assert "document.elementFromPoint" in js
     assert "occluded: true" in js
     assert "effect_kind" not in js
+
+
+def test_normalize_form_controls_keeps_aria_suggestion_option() -> None:
+    controls = normalize_form_controls({"controls": [{
+        "label": "Exact requested value",
+        "kind": "option",
+        "rect": {"x": 360, "y": 180, "w": 400, "h": 32},
+        "in_viewport": True,
+    }]})
+
+    assert controls == [{
+        "kind": "option",
+        "label": "Exact requested value",
+        "rect": {"x": 360, "y": 180, "w": 400, "h": 32},
+    }]
 
 
 def test_form_progress_fingerprint_excludes_transient_focus() -> None:

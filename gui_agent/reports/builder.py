@@ -474,6 +474,7 @@ def _tool_agent_report_steps(
         spec = meta.get("spec") if isinstance(meta.get("spec"), dict) else {}
         profile = str(spec.get("profile") or meta.get("profile") or "operator")
         worker_goal = str(meta.get("goal") or spec.get("goal") or worker_id)
+        worker_strategy = str(spec.get("strategy") or meta.get("strategy") or "")
         criteria = list(spec.get("success_criteria") or meta.get("success_criteria") or [])
         result_event = worker_results.get(worker_id) or {}
         outcome = result_event.get("outcome") if isinstance(result_event.get("outcome"), dict) else {}
@@ -656,7 +657,9 @@ def _tool_agent_report_steps(
             }
 
         terminal_note = str(outcome.get("summary") or "")
-        description = f"{profile} · {worker_goal}"
+        description = f"{profile} · Goal: {worker_goal}"
+        if worker_strategy:
+            description += f" · Strategy: {worker_strategy}"
         if terminal_note and not steps:
             description += f" · {terminal_note}"
 

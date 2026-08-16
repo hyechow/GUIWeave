@@ -8,6 +8,7 @@ from dotenv import load_dotenv
 from mcp.server.fastmcp import FastMCP
 from mcp.types import ToolAnnotations
 
+from gui_agent.adapters.browser.factory import DEFAULT_BROWSER_START_URL
 from gui_agent.core.tool_agent.service import ToolAgentService
 from gui_agent.core.runtime.platforms import PlatformName
 from gui_agent.core.self_learning.document_ingest import KnowledgeImportService
@@ -91,6 +92,7 @@ def check_environment(
 def run_browser_task(
     goal: str,
     cdp_url: str | None = None,
+    start_url: str = DEFAULT_BROWSER_START_URL,
     headless: bool = False,
     perception: Literal["vision-only", "enhanced"] = "enhanced",
     max_turns: int = 50,
@@ -100,7 +102,8 @@ def run_browser_task(
     """Run an exact user-authorized goal in local Chrome.
 
     This broad tool may navigate, submit forms, send data or otherwise change
-    external state. Confirm consequential intent with the user before calling it.
+    external state. It starts at Google unless ``start_url`` is overridden.
+    Confirm consequential intent with the user before calling it.
     """
 
     return service.run(
@@ -112,6 +115,7 @@ def run_browser_task(
         show_hud=show_hud and not headless,
         mirror_stdio=False,
         cdp_url=cdp_url,
+        start_url=start_url,
         headless=headless,
     ).to_dict()
 

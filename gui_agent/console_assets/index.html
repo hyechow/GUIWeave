@@ -45,7 +45,7 @@
       <div id="chat-thread" class="chat-thread"><div class="chat-welcome"><span>GW</span><div><b>GUIWeave 已就绪</b><p>你可以直接对话；需要界面证据或操作时，我会自动启动 GUI 任务。</p></div></div></div>
       <aside id="chat-detail" class="chat-detail"><div class="chat-detail-empty"><span>⌁</span><b>TURN DETAIL</b><p>发送消息后，这里会显示路由判断和运行详情。</p></div></aside>
       <form id="chat-form" class="chat-composer">
-        <div class="chat-config"><label>GUI 平台<select id="chat-platform" name="platform"><option value="browser">Browser</option><option value="android">Android</option><option value="iphone">iPhone</option></select></label><label id="chat-android-field" class="hidden">设备<input id="chat-adb-serial" name="adb_serial" maxlength="200" autocomplete="off" placeholder="IP、IP:端口或 adb serial"></label><span id="chat-environment">Browser · 仅在需要 GUI 时检查</span></div>
+        <div class="chat-config"><label>GUI 平台<select id="chat-platform" name="platform"><option value="browser">Browser</option><option value="android">Android</option><option value="iphone">iPhone</option></select></label><label id="chat-browser-field">起始页<input id="chat-start-url" name="start_url" type="url" maxlength="2048" value="https://www.google.com/" autocomplete="url" spellcheck="false"></label><label id="chat-android-field" class="hidden">设备<input id="chat-adb-serial" name="adb_serial" maxlength="200" autocomplete="off" placeholder="IP、IP:端口或 adb serial"></label><span id="chat-environment">Browser · 仅在需要 GUI 时检查</span></div>
         <textarea id="chat-input" name="message" required maxlength="4000" placeholder="输入消息；Enter 发送，Shift + Enter 换行"></textarea>
         <footer><small>意图路由会先判断是否需要 GUI；界面任务使用 Enhanced 感知并在本机后台执行。</small><button id="chat-send" class="primary" type="submit" disabled>发送 ↗</button></footer>
       </form>
@@ -57,6 +57,10 @@
       <header><div><p class="kicker">NEW GUI RUN / MISSION SETUP</p><h2>新建 GUI 任务</h2></div><button type="button" id="close-dialog" aria-label="关闭">×</button></header>
       <label>任务目标<textarea name="goal" required maxlength="4000" placeholder="例如：打开订单列表，找到最新失败订单并返回订单号"></textarea></label>
       <div class="form-row"><label>平台<select id="task-platform" name="platform"><option value="browser">Browser</option><option value="android">Android</option><option value="iphone">iPhone</option></select></label><label>感知模式<select name="perception"><option value="enhanced">Enhanced</option><option value="vision-only">Vision only</option></select></label><label>最大轮次<input name="max_turns" type="number" min="1" max="50" value="50"></label></div>
+      <label id="browser-start-url-field" class="platform-field">Browser 起始页
+        <input id="start-url" name="start_url" type="url" maxlength="2048" value="https://www.google.com/" autocomplete="url" spellcheck="false">
+        <small>任务启动后首先打开此地址；留空时使用 Google。</small>
+      </label>
       <label id="android-device-field" class="platform-field hidden">Android 设备地址
         <input id="adb-serial" name="adb_serial" maxlength="200" autocomplete="off" spellcheck="false" placeholder="例如：192.168.1.50 或 192.168.1.50:5555">
         <small>支持设备 IP、IP:端口或 adb serial；只填 IP 时默认使用 5555 端口。成功连接后会在本机记住；清空则自动选择唯一已连接设备。</small>

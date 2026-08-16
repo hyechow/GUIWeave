@@ -9,12 +9,14 @@ from __future__ import annotations
 
 import ast
 import hashlib
+import ipaddress
 import json
 import re
 import sys
 import time
 from dataclasses import dataclass
 from typing import Any, Callable, Literal
+from urllib.parse import urlsplit
 
 from jsonschema import Draft202012Validator
 from langchain_core.messages import HumanMessage
@@ -38,6 +40,7 @@ from gui_agent.core.tool_agent.sandbox import (
     validate_transform_row_fields,
     validate_transform_source,
 )
+from llm.provider_config import chat_request_kwargs
 
 
 _MASTER_FILENAME = "<tool-agent-master>"
@@ -206,6 +209,53 @@ def _literal_keyword(call: ast.Call, name: str) -> Any:
         raise ValueError(f"keyword {name!r} must be a literal value") from exc
 
 
+def _page_source_identity(url: str) -> str:
+    """Return the registrable-looking host label without a site-name registry."""
+
+    host = (urlsplit(url).hostname or "").casefold().strip(".")
+    try:
+        ipaddress.ip_address(host)
+        return ""
+    except ValueError:
+        pass
+    labels = [part for part in host.split(".") if part and part != "www"]
+    if len(labels) < 2:
+        return ""
+    country_suffix = (
+        len(labels[-1]) == 2
+        and labels[-2] in {"ac", "co", "com", "edu", "gov", "net", "org"}
+    )
+    return labels[-3] if country_suffix and len(labels) >= 3 else labels[-2]
+
+
+def _logical_source_diagnostics(
+    call: ast.Call,
+    values: dict[str, Any],
+    *,
+    user_goal: str,
+    page_url: str,
+) -> list[MasterDiagnostic]:
+    identity = _page_source_identity(page_url)
+    if not identity:
+        return []
+    pattern = re.compile(
+        rf"(?<![a-z0-9]){re.escape(identity)}(?![a-z0-9])",
+    )
+    if pattern.search(user_goal.casefold()):
+        return []
+    diagnostics = []
+    for field in ("goal", "success_criteria", "data_requirements"):
+        rendered = json.dumps(values.get(field), ensure_ascii=False).casefold()
+        if pattern.search(rendered):
+            diagnostics.append(_diagnostic(
+                "LOGICAL_SOURCE_PROVENANCE",
+                f"logical {field} inherits current-page source {identity!r} without "
+                "a matching user constraint; keep source details in strategy/actions",
+                call,
+            ))
+    return diagnostics
+
+
 def _validate_worker_id(call: ast.Call) -> list[MasterDiagnostic]:
     try:
         worker_id = _literal_keyword(call, "worker_id")
@@ -220,6 +270,9 @@ def _validate_gui_worker_call(
     call: ast.Call,
     *,
     platform_context: dict[str, Any] | None = None,
+    user_goal: str = "",
+    page_url: str = "",
+    require_explicit_strategy: bool = False,
 ) -> list[MasterDiagnostic]:
     diagnostics = _validate_worker_id(call)
     required = {
@@ -227,6 +280,8 @@ def _validate_gui_worker_call(
         "success_criteria",
         "actions",
     }
+    if require_explicit_strategy:
+        required.add("strategy")
     values: dict[str, Any] = {}
     for name in required:
         try:
@@ -255,6 +310,24 @@ def _validate_gui_worker_call(
             ))
     if diagnostics:
         return diagnostics
+    diagnostics.extend(_logical_source_diagnostics(
+        call,
+        values,
+        user_goal=user_goal,
+        page_url=page_url,
+    ))
+    for requirement in values.get("data_requirements") or []:
+        if (
+            isinstance(requirement, dict)
+            and requirement.get("filters")
+            and "coverage" not in requirement
+        ):
+            diagnostics.append(_diagnostic(
+                "COLLECTION_COVERAGE",
+                "a filtered data requirement must explicitly choose coverage='complete' "
+                "or coverage='first_match'",
+                call,
+            ))
     max_steps = 12
     if any(item.arg == "max_steps" for item in call.keywords):
         try:
@@ -277,6 +350,12 @@ def _validate_gui_worker_call(
                 "max_steps": max_steps,
             }
         )
+        if require_explicit_strategy and not spec.strategy.strip():
+            diagnostics.append(_diagnostic(
+                "GUI_WORKER_STRATEGY",
+                "strategy must be a non-empty high-level execution approach",
+                call,
+            ))
         for requirement in spec.data_requirements:
             Draft202012Validator.check_schema(requirement.row_schema)
         runtime_applications = (
@@ -301,8 +380,8 @@ def _validate_gui_worker_call(
                         "launch_app fixed_args.app must exactly match a Runtime-provided "
                         f"application; got {candidate!r}. Choose an exact value from "
                         "task.platform.applications.",
-                        call,
-                    ))
+                    call,
+                ))
     except Exception as exc:  # noqa: BLE001 - surfaced as a compile diagnostic
         diagnostics.append(_diagnostic("GUI_WORKER_SPEC", str(exc), call))
     input_keyword = next((item for item in call.keywords if item.arg == "input_refs"), None)
@@ -851,7 +930,9 @@ def validate_master_source(
     source: str,
     *,
     platform_context: dict[str, Any] | None = None,
+    page_context: dict[str, Any] | None = None,
     user_goal: str = "",
+    require_explicit_strategy: bool = False,
 ) -> list[MasterDiagnostic]:
     """Validate one restricted Worker-orchestration program."""
     try:
@@ -918,6 +999,9 @@ def validate_master_source(
                 diagnostics.extend(_validate_gui_worker_call(
                     node,
                     platform_context=platform_context,
+                    user_goal=user_goal,
+                    page_url=str((page_context or {}).get("url") or ""),
+                    require_explicit_strategy=require_explicit_strategy,
                 ))
                 if destination_only:
                     try:
@@ -992,11 +1076,12 @@ def compile_master_program(
     cache_system_prompt: bool = False,
     on_event: Callable[[str, dict[str, Any]], None] | None = None,
 ) -> MasterProgram:
-    """Generate and deterministically review a complete orchestration program."""
+    """Generate and statically review one orchestration program."""
     if max_attempts < 1:
         raise ValueError("max_attempts must be positive")
+    model_name = getattr(llm, "model_name", None) or getattr(llm, "model", None)
     generator = (
-        llm.bind(max_tokens=12_000, extra_body={"enable_thinking": False})
+        llm.bind(max_tokens=12_000, **chat_request_kwargs(model_name))
         if callable(getattr(llm, "bind", None))
         else llm
     )
@@ -1019,12 +1104,15 @@ def compile_master_program(
         llm_elapsed_s = time.perf_counter() - started_at
         source = _extract_source(response.content)
         platform_context = task_context.get("platform")
+        page_context = task_context.get("page")
         diagnostics = validate_master_source(
             source,
             platform_context=(
                 platform_context if isinstance(platform_context, dict) else None
             ),
+            page_context=page_context if isinstance(page_context, dict) else None,
             user_goal=str(task_context.get("goal") or ""),
+            require_explicit_strategy=True,
         )
         if on_event is not None:
             on_event(
@@ -1112,6 +1200,7 @@ class WorkerOrchestrationContext:
         profile: Literal["operator", "collector"] | None = None,
         goal: str,
         success_criteria: list[str],
+        strategy: str = "",
         input_refs: dict[str, str] | None = None,
         data_requirements: list[dict[str, Any]] | None = None,
         actions: list[dict[str, Any]],
@@ -1127,6 +1216,7 @@ class WorkerOrchestrationContext:
             {
                 "profile": profile,
                 "goal": goal,
+                "strategy": strategy,
                 "success_criteria": success_criteria,
                 "input_refs": routed_inputs,
                 "data_requirements": data_requirements or [],
@@ -1144,6 +1234,7 @@ class WorkerOrchestrationContext:
             worker_id=worker_id,
             kind="gui",
             goal=goal,
+            strategy=spec.strategy,
             spec=spec.model_dump(mode="json"),
         )
         try:
@@ -1278,7 +1369,16 @@ class WorkerOrchestrationContext:
     def fail(self, reason: str) -> None:
         if not isinstance(reason, str) or not reason.strip():
             raise ValueError("fail requires a concrete reason")
-        self._terminal = MasterTerminal(phase="failed", summary=reason.strip())
+        summary = reason.strip()
+        latest = next(reversed(self._records.values()), None)
+        detail = (
+            latest.outcome.summary.strip()
+            if latest is not None and latest.outcome.phase == "failed"
+            else ""
+        )
+        if detail and detail.casefold() not in summary.casefold():
+            summary = f"{summary.rstrip('.')} — {detail}"
+        self._terminal = MasterTerminal(phase="failed", summary=summary)
         raise _ProgramHalt
 
     def reset_terminal(self) -> None:

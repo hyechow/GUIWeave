@@ -8,11 +8,11 @@ from collections.abc import Callable, Sequence
 from typing import Any, Literal
 
 from langchain_core.messages import HumanMessage, SystemMessage
-from langchain_openai import ChatOpenAI
 from pydantic import BaseModel, ConfigDict, Field, model_validator
 
 from gui_agent.core.config import resolve_llm_config
 from gui_agent.prompts import load_prompt_text
+from llm.provider_config import build_chat_model
 from llm.structured import invoke_structured
 
 
@@ -69,20 +69,13 @@ class ChatIntentRouter:
 
     def __init__(
         self,
-        llm: ChatOpenAI | None = None,
+        llm: Any | None = None,
         *,
         invoke: Callable[..., ChatRoute] = invoke_structured,
     ) -> None:
         if llm is None:
             cfg = resolve_llm_config("router")
-            llm = ChatOpenAI(
-                model=cfg.model,
-                api_key=cfg.api_key,
-                base_url=cfg.base_url,
-                timeout=cfg.timeout_s,
-                max_retries=cfg.max_retries,
-                temperature=0,
-            )
+            llm = build_chat_model(cfg, temperature=0)
         self._llm = llm
         self._invoke = invoke
         self._system = load_prompt_text("task.chat.router")

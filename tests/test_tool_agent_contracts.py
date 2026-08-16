@@ -1,11 +1,15 @@
 from __future__ import annotations
 
+import base64
+import json
+from io import BytesIO
 from types import SimpleNamespace
 
 import pytest
 from jsonschema import ValidationError, validate
 from langchain_core.messages import HumanMessage, SystemMessage
 from pydantic import ValidationError as PydanticValidationError
+from PIL import Image
 
 from gui_agent.core.tool_agent.contracts import (
     DataRequirement,
@@ -21,15 +25,34 @@ from gui_agent.core.tool_agent.protocol import (
     dynamic_action_tool,
     dynamic_worker_tools,
     exactly_one_tool_call,
+    image_message,
+    json_worker_decision_instruction,
     materialize_action_patch,
     normalize_action_arguments,
     response_usage,
+    worker_decision_call,
     worker_action_floor,
     worker_attempt_contract,
 )
 
 
 _TARGET_DESCRIPTION = "Target the visible named control"
+
+
+def test_image_message_resizes_without_changing_coordinate_contract() -> None:
+    source = BytesIO()
+    Image.new("RGB", (1280, 800), "white").save(source, format="PNG")
+
+    message = image_message("frame", source.getvalue(), scale=0.75)
+
+    encoded = message.content[1]["image_url"]["url"].split(",", 1)[1]
+    with Image.open(BytesIO(base64.b64decode(encoded))) as image:
+        assert image.size == (960, 600)
+
+
+def test_image_message_rejects_invalid_scale() -> None:
+    with pytest.raises(ValueError, match=r"image scale must be in \(0, 1\]"):
+        image_message("frame", b"png", scale=0)
 
 
 def test_action_envelope_preserves_dynamic_atomic_schemas() -> None:
@@ -54,8 +77,10 @@ def test_action_envelope_preserves_dynamic_atomic_schemas() -> None:
     assert "clear_text" not in description
     assert "select_option" not in description
     parameters = envelope["function"]["parameters"]
+    assert "strategy_status" in parameters["properties"]["state"]["required"]
     state = {
         "status": "exploring",
+        "strategy_status": "advancing",
         "summary": "The complete form is visible.",
         "established_facts": [],
         "next_instruction": "Fill and submit the form.",
@@ -89,6 +114,17 @@ def test_action_envelope_preserves_dynamic_atomic_schemas() -> None:
             },
             schema=parameters,
         )
+    limited = dynamic_worker_tools(
+        worker_action_floor(),
+        completion_mode="operator",
+        action_envelope=True,
+        max_ordered_actions=1,
+    )
+    envelope = next(
+        tool for tool in limited if tool["function"]["name"] == "continue_with_actions"
+    )
+    assert envelope["function"]["parameters"]["properties"]["actions"]["maxItems"] == 1
+    assert "exactly one action" in envelope["function"]["description"]
 
 
 def test_explicit_cache_marker_wraps_only_the_stable_system_prefix() -> None:
@@ -317,18 +353,19 @@ def test_runtime_action_floor_and_patch_tool_are_always_available() -> None:
     assert set(runtime_open_url["function"]["parameters"]["required"]) == {
         "state", "url"
     }
-    assert "Runtime rejects inferred routes" in (
+    assert "may require Strategy Planner revision" in (
         runtime_open_url["function"]["description"]
     )
     validate(
         instance={
             "state": {
                 "status": "exploring",
+                "strategy_status": "advancing",
                 "summary": "The exact target route is known.",
                 "established_facts": [],
                 "next_instruction": "Open it directly.",
             },
-            "url": "/admin/review/product/index/",
+            "url": "https://example.test/admin/review/product/index/",
         },
         schema=runtime_open_url["function"]["parameters"],
     )
@@ -416,6 +453,36 @@ def test_tool_call_accepts_json_encoded_argument_object() -> None:
     }]))
 
     assert call["args"] == {"x": 125, "y": 750}
+
+
+def test_json_worker_protocol_preserves_dynamic_action_contract() -> None:
+    tools = dynamic_worker_tools(
+        worker_action_floor({"tap"}),
+        completion_mode="operator",
+        action_envelope=True,
+        max_ordered_actions=1,
+    )
+    instruction = json_worker_decision_instruction(tools)
+    response = SimpleNamespace(content=(
+        '{"tool":"complete","args":{"state":{"status":"completed",'
+        '"summary":"Done","established_facts":[],"next_instruction":""},'
+        '"evidence":["Visible target state confirmed"]}}'
+    ))
+
+    call = worker_decision_call(response, protocol="json")
+
+    assert call["name"] == "complete"
+    assert call["args"]["state"]["status"] == "completed"
+    assert "continue_with_actions" in instruction
+    assert '"maxItems":1' in instruction
+    assert instruction.count("Compact semantic state paired with this atomic action.") == 1
+    contract = json.loads(instruction.split("Available contract:\n", 1)[1])
+    assert contract["shared_state"]["properties"]["strategy_status"]
+    assert all(
+        "state" not in action["parameters"]["properties"]
+        for action in contract["actions"].values()
+    )
+    assert "never inside `args.actions[*]`" in instruction
 
 
 def test_runtime_type_action_keeps_text_dynamic_and_coordinates_visual() -> None:
@@ -534,6 +601,7 @@ def test_worker_state_can_report_missing_action_without_abandoning_subgoal() -> 
 
     assert state.action_space_status == "missing_action"
     assert state.missing_action
+    assert state.strategy_status == "advancing"
 
 
 def test_dynamic_action_rejects_fixed_and_exposed_overlap() -> None:
@@ -629,6 +697,10 @@ def test_worker_profile_is_inferred_without_creating_distinct_worker_types() -> 
 
     assert operator.profile == "operator"
     assert collector.profile == "collector"
+    assert operator.strategy == ""
+    planned = operator.model_copy(update={"strategy": "Use the current direct route"})
+    assert planned.goal == operator.goal
+    assert planned.strategy == "Use the current direct route"
 
 
 def test_data_requirement_rejects_filter_missing_from_observable_row_schema() -> None:
@@ -737,6 +809,29 @@ def test_worker_attempt_contract_marks_unready_bound_action_as_deferred() -> Non
     assert '"deferred_bound_actions"' in contract
     assert '"name": "enter_target"' in contract
     assert "not callable on this frame" in contract
+
+
+def test_worker_recovers_missing_action_description_from_provider_shorthand() -> None:
+    spec = WorkerSpec.model_validate({
+        "profile": "operator",
+        "goal": "Search using another visible source",
+        "success_criteria": ["A relevant result is visible"],
+        "actions": [{
+            "name": "enter_alternative_query",
+            "capability": "type",
+            "fixed_args": {"text": "query"},
+            "input_args": {
+                "x": "search_x",
+                "y": "search_y",
+                "description": "Visible search field in the page header",
+            },
+        }],
+    })
+
+    action = spec.actions[0]
+    assert action.description == "Visible search field in the page header"
+    assert action.input_args == {}
+    assert action.exposed_args == ["x", "y", "description"]
 
 
 def test_worker_clamps_model_requested_steps_to_protocol_limit() -> None:

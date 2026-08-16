@@ -16,6 +16,7 @@ from fastapi.responses import FileResponse, HTMLResponse
 from dotenv import load_dotenv
 from pydantic import BaseModel, ConfigDict, Field, field_validator
 
+from gui_agent.adapters.browser.factory import DEFAULT_BROWSER_START_URL
 from gui_agent.core.chat_router import ChatIntentRouter, ChatRoute, ChatRouteName
 from gui_agent.core.tool_agent.service import ToolAgentService
 from gui_agent.core.runtime.platforms import PlatformName
@@ -48,6 +49,7 @@ class _ExecutionOptions(BaseModel):
     perception: Literal["vision-only", "enhanced"] = "enhanced"
     max_turns: int = Field(default=50, ge=1, le=50)
     cdp_url: str | None = Field(default=None, max_length=500)
+    start_url: str = Field(default=DEFAULT_BROWSER_START_URL, max_length=2048)
     adb_serial: str | None = Field(default=None, max_length=200)
     multi_action: bool = True
 
@@ -55,6 +57,11 @@ class _ExecutionOptions(BaseModel):
     @classmethod
     def normalize_adb_serial(cls, value: object) -> str | None:
         return _normalize_android_serial(None if value is None else str(value))
+
+    @field_validator("start_url", mode="before")
+    @classmethod
+    def normalize_start_url(cls, value: object) -> str:
+        return str(value or "").strip() or DEFAULT_BROWSER_START_URL
 
 
 class RunRequest(_ExecutionOptions):
@@ -179,7 +186,11 @@ class RunConsole:
         request = task.request
         options: dict[str, object]
         if request.platform == "browser":
-            options = {"cdp_url": request.cdp_url, "headless": request.headless}
+            options = {
+                "cdp_url": request.cdp_url,
+                "start_url": request.start_url,
+                "headless": request.headless,
+            }
         elif request.platform == "android":
             options = {"serial": request.adb_serial}
         else:

@@ -13,13 +13,13 @@ from pathlib import Path
 from typing import Any
 
 from langchain_core.messages import HumanMessage, SystemMessage
-from langchain_openai import ChatOpenAI
 from pydantic import BaseModel, ConfigDict, Field, model_validator
 
 from gui_agent.core.config import resolve_llm_config
 from gui_agent.core.runtime.platforms import PLATFORMS, PlatformName
 from gui_agent.core.self_learning.paths import get_user_knowledge_root
 from gui_agent.prompts import load_prompt_text
+from llm.provider_config import build_chat_model
 from llm.structured import invoke_structured
 
 
@@ -266,13 +266,7 @@ def _default_distiller(
     source_name: str,
 ) -> DistilledKnowledge:
     cfg = resolve_llm_config("knowledge.ingest")
-    llm = ChatOpenAI(
-        model=cfg.model,
-        api_key=cfg.api_key,
-        base_url=cfg.base_url,
-        timeout=cfg.timeout_s,
-        max_retries=cfg.max_retries,
-    )
+    llm = build_chat_model(cfg)
     payload = {
         "target": {"platform": platform, "app_name": app_name},
         "source_name": source_name,

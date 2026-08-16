@@ -3,8 +3,8 @@
 After a spatial action is dispatched, render its final point as a marker on the
 pre-action frame and ask a light vision LLM whether it landed on the element
 the instruction intended. Runs concurrently with the post-action settle, so it
-adds ~no silent latency; the result is carried to the next turn where off_target
-routes straight into replan (see runner + StatementSupervisorPolicy).
+adds ~no silent latency; the result reaches the next turn so the Worker can
+avoid repeating a visibly off-target action.
 
 It catches the "screen changed but to the wrong element" failure that SimStuck
 (screen-frozen) cannot detect.
@@ -16,12 +16,13 @@ import base64
 import io
 
 from langchain_core.messages import HumanMessage, SystemMessage
-from langchain_openai import ChatOpenAI
 from PIL import Image, ImageDraw
 
 from gui_agent.core.config import resolve_llm_config
+from gui_agent.core.runtime.action_settle import VERIFY_TIMEOUT_S
 from gui_agent.core.schemas import TargetVerify
 from gui_agent.prompts import load_prompt_text
+from llm.provider_config import build_chat_model
 from llm.structured import invoke_structured
 
 _SYSTEM = load_prompt_text("task.vision.target_verify")
@@ -50,18 +51,12 @@ def render_marker(png: bytes, nx: float, ny: float) -> bytes:
     return out.getvalue()
 
 
-def _verify_llm() -> ChatOpenAI:
-    from llm.provider_config import dashscope_extra_body
-
+def _verify_llm():
     cfg = resolve_llm_config("target_verify")
-    return ChatOpenAI(
-        model=cfg.model,
-        api_key=cfg.api_key,
-        base_url=cfg.base_url,
-        extra_body=dashscope_extra_body(cfg.model),
-        timeout=cfg.timeout_s,
-        max_retries=cfg.max_retries,
-        temperature=0,
+    return build_chat_model(
+        cfg,
+        timeout=min(cfg.timeout_s, max(1, VERIFY_TIMEOUT_S - 1)),
+        max_retries=0,
     )
 
 
@@ -88,4 +83,6 @@ def verify_target(png: bytes, snapped_x: float, snapped_y: float, instruction: s
             {"type": "image_url", "image_url": {"url": f"data:image/png;base64,{b64}"}},
         ]),
     ]
-    return invoke_structured(_verify_llm(), msgs, TargetVerify)
+    return invoke_structured(
+        _verify_llm(), msgs, TargetVerify, fallback_on_invalid=False,
+    )

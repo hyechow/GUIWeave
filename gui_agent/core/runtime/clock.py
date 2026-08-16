@@ -2,7 +2,7 @@
 
 from __future__ import annotations
 
-from datetime import datetime, timezone
+from datetime import datetime, timedelta, timezone
 from typing import Literal
 
 from pydantic import BaseModel, ConfigDict
@@ -23,6 +23,15 @@ class PlatformTimeSnapshot(BaseModel):
     confidence: Literal["authoritative", "fallback"]
     captured_at: str
     fallback_reason: str = ""
+
+    def relative_date_offsets(self) -> dict[str, str]:
+        """Map nearby calendar-day offsets to dates using this frozen clock."""
+
+        anchor = datetime.fromisoformat(self.local_datetime).date()
+        return {
+            str(offset): (anchor + timedelta(days=offset)).isoformat()
+            for offset in range(-2, 3)
+        }
 
 
 def _offset_text(now: datetime) -> str:

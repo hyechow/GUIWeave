@@ -8,6 +8,7 @@ from pathlib import Path
 
 from dotenv import load_dotenv
 
+from gui_agent.adapters.browser.factory import DEFAULT_BROWSER_START_URL
 from gui_agent.core.tool_agent.service import ToolAgentService
 from gui_agent.core.runtime.platforms import PLATFORMS
 
@@ -28,6 +29,11 @@ def _build_parser() -> argparse.ArgumentParser:
     run.add_argument("--perception", choices=("vision-only", "enhanced"), default="enhanced")
     run.add_argument("--max-turns", type=int, default=50)
     run.add_argument("--cdp-url")
+    run.add_argument(
+        "--start-url",
+        default=DEFAULT_BROWSER_START_URL,
+        help=f"browser initial URL (default: {DEFAULT_BROWSER_START_URL})",
+    )
     run.add_argument("--adb-serial")
     run.add_argument("--headless", action="store_true")
     run.add_argument("--no-hud", action="store_true")
@@ -46,7 +52,13 @@ def _build_parser() -> argparse.ArgumentParser:
 
 def _platform_options(args: argparse.Namespace) -> dict[str, object]:
     if args.platform == "browser":
-        return {"cdp_url": args.cdp_url, "headless": args.headless}
+        options: dict[str, object] = {
+            "cdp_url": args.cdp_url,
+            "headless": args.headless,
+        }
+        if hasattr(args, "start_url"):
+            options["start_url"] = args.start_url
+        return options
     if args.platform == "android":
         return {"serial": args.adb_serial}
     return {}

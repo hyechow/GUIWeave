@@ -16,6 +16,22 @@ from gui_agent.core.tool_agent.presentation import (
 from gui_agent.core.tool_agent.result import project_tool_agent_result
 
 
+def _present(value, reply: str, **envelope_fields):
+    return present_result(
+        goal="Return the requested result",
+        phase="completed",
+        result=value,
+        summary="computed",
+        replay={"status": "passed"},
+        llm=object(),
+        invoke=lambda _llm, _messages, schema, **_kwargs: schema(
+            reply=reply,
+            result_digest=result_digest(value),
+            **envelope_fields,
+        ),
+    )
+
+
 def test_presenter_turns_verified_result_into_natural_reply_without_capabilities() -> None:
     value = ["a@example.com", "b@example.com"]
     captured = {}
@@ -50,6 +66,7 @@ def test_presenter_turns_verified_result_into_natural_reply_without_capabilities
     prompt = "\n".join(str(message.content) for message in captured["messages"])
     assert "Return the matching customer emails" in prompt
     assert '"result"' in prompt
+    assert '"must_preserve_literals"' in prompt
     assert "browser" not in prompt.lower()
     assert "data_store" not in prompt
 
@@ -166,33 +183,38 @@ def test_presenter_accepts_natural_reordering_and_verbalized_comparison() -> Non
     assert presentation.error == ""
 
 
+def test_presenter_localizes_labels_but_preserves_result_values() -> None:
+    value = [{
+        "location": "North Harbor",
+        "period": "Next Day",
+        "state": "Available",
+        "capacity": "10 ~ 20",
+    }]
+    reply = (
+        "| 地点 | 日期 | 状态 | 容量 |\n|---|---|---|---|\n"
+        "| North Harbor | Next Day | Available | 10 ~ 20 |"
+    )
+
+    presentation = _present(value, reply)
+
+    assert presentation.status == "generated", presentation.error
+    assert presentation.reply == reply
+
+
 @pytest.mark.parametrize(
     ("result", "reply"),
     [
         ({"temperature": 3}, "温度为33℃。"),
         ({"wind": "<3级"}, "风力小于13级。"),
         ({"count": 20}, "共有120条。"),
+        ({"enabled": True}, "已处理。"),
     ],
 )
-def test_presenter_rejects_numeric_substrings_as_canonical_values(
+def test_presenter_rejects_missing_canonical_values(
     result: dict[str, object],
     reply: str,
 ) -> None:
-    def invoke(_llm, _messages, schema, **_kwargs):
-        return schema(
-            reply=reply,
-            result_digest=result_digest(result),
-        )
-
-    presentation = present_result(
-        goal="请返回准确结果",
-        phase="completed",
-        result=result,
-        summary="computed",
-        replay={"status": "passed"},
-        llm=object(),
-        invoke=invoke,
-    )
+    presentation = _present(result, reply)
 
     assert presentation.status == "fallback"
     assert "omitted canonical result" in presentation.error

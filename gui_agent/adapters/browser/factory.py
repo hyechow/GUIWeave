@@ -22,14 +22,17 @@ contract.
 
 from __future__ import annotations
 
+import asyncio
+from concurrent.futures import ThreadPoolExecutor
 from typing import Optional
 
 from gui_agent.core.runtime.factory import PlatformBundle, SetupCheckResult
 
 
-def _probe_headless_chromium() -> str:
-    """Launch and close Chromium once so preflight covers installed browser assets."""
+DEFAULT_BROWSER_START_URL = "https://www.google.com/"
 
+
+def _launch_headless_chromium() -> str:
     from playwright.sync_api import sync_playwright
 
     with sync_playwright() as playwright:
@@ -38,6 +41,20 @@ def _probe_headless_chromium() -> str:
             return playwright.chromium.executable_path
         finally:
             browser.close()
+
+
+def _probe_headless_chromium() -> str:
+    """Launch and close Chromium once so preflight covers installed browser assets."""
+
+    try:
+        asyncio.get_running_loop()
+    except RuntimeError:
+        return _launch_headless_chromium()
+    # Playwright's sync facade refuses to run on a thread with an active asyncio
+    # loop (for example FastMCP's request thread). Isolate only the probe; browser
+    # sessions continue to use their existing synchronous lifecycle.
+    with ThreadPoolExecutor(max_workers=1) as pool:
+        return pool.submit(_launch_headless_chromium).result()
 
 
 def _find_chrome_window() -> "tuple[int, int, int, int] | None":
@@ -160,7 +177,7 @@ def build_browser_bundle(
     *,
     backend: Optional[str] = None,
     cdp_url: Optional[str] = None,
-    start_url: Optional[str] = None,
+    start_url: Optional[str] = DEFAULT_BROWSER_START_URL,
     headless: bool | None = None,
     user_data_dir: Optional[str] = None,
     **_ignored: object,
@@ -168,7 +185,8 @@ def build_browser_bundle(
     """Construct the browser PlatformBundle.
 
     ``backend`` is reserved for future adapter backends. ``cdp_url`` / ``start_url`` / ``headless`` /
-    ``user_data_dir`` flow through to the session. CDP defaults to
+    ``user_data_dir`` flow through to the session. New browser tasks start at
+    Google unless ``start_url`` is overridden. CDP defaults to
     http://localhost:9222, overridable via env CHROME_CDP_URL; headless mode
     launches Chromium directly and can keep login state in ``user_data_dir``.
     """

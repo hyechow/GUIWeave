@@ -10,10 +10,10 @@ from pathlib import Path
 from typing import Any
 
 from langchain_core.messages import AIMessage, HumanMessage, SystemMessage
-from langchain_openai import ChatOpenAI
 from jsonschema import validate
 
 from gui_agent.core.config import resolve_llm_config
+from gui_agent.core.runtime.clock import PlatformTimeSnapshot
 from gui_agent.core.runtime.factory import build_platform
 from gui_agent.core.tool_agent.action_guard import (
     control_at_point,
@@ -31,14 +31,19 @@ from gui_agent.core.tool_agent.protocol import (
     available_worker_actions,
     constrain_worker_action_calls,
     ProtocolError,
+    bind_worker_decision_transport,
     dynamic_worker_tools,
-    exactly_one_tool_call,
     image_message,
+    worker_decision_call,
     worker_action_floor,
     worker_attempt_contract,
 )
 from gui_agent.core.tool_agent.worker_memory import _frame_payload
 from gui_agent.prompts import load_prompt_text
+from llm.provider_config import (
+    build_chat_model,
+    chat_request_kwargs,
+)
 
 
 _WORKER_DYNAMIC_SECTIONS = (
@@ -48,18 +53,19 @@ _WORKER_DYNAMIC_SECTIONS = (
     "## Ordered multi-action mode",
     "## Worker attempt contract",
 )
+_REDACTED_ACCESS_VALUE = "[session access value redacted]"
 
 
-def _model(name: str) -> tuple[Any, str]:
+def _model(name: str) -> tuple[Any, Any]:
     config = resolve_llm_config(name)
-    return ChatOpenAI(
-        model=config.model,
-        api_key=config.api_key,
-        base_url=config.base_url,
-        timeout=config.timeout_s,
-        max_retries=config.max_retries,
-        temperature=0,
-    ), config.model
+    return build_chat_model(config), config
+
+
+def _selected_model(name: str, llm: Any) -> tuple[Any, Any, str]:
+    if llm is not None:
+        return llm, None, type(llm).__name__
+    model, config = _model(name)
+    return model, config, config.model
 
 
 def _artifacts(run_dir: Path) -> tuple[list[dict[str, Any]], dict[str, Any]]:
@@ -94,6 +100,14 @@ def _master_task(event: dict[str, Any]) -> dict[str, Any]:
     task = payload.get("task")
     if not isinstance(task, dict):
         raise ValueError("Master replay prompt has no task context")
+    task = dict(task)
+    if "relative_date_offsets" not in task:
+        try:
+            snapshot = PlatformTimeSnapshot.model_validate(task["task_reference_time"])
+        except (KeyError, ValueError):
+            pass
+        else:
+            task["relative_date_offsets"] = snapshot.relative_date_offsets()
     return task
 
 
@@ -140,6 +154,7 @@ def _worker_messages(
     spec: WorkerSpec,
     actions: list[DynamicActionSpec],
     frame: MaterializedFrame,
+    image_scale: float = 1.0,
 ) -> list[Any]:
     messages: list[Any] = []
     frame_replaced = False
@@ -176,7 +191,7 @@ def _worker_messages(
             )
             frame_replaced = frame_replaced or replacements == 1
             messages.append(
-                image_message(text, screenshot)
+                image_message(text, screenshot, scale=image_scale)
                 if replacements == 1
                 and any(part.get("type") == "image" for part in parts)
                 else HumanMessage(content=text)
@@ -294,11 +309,8 @@ def replay_master_decision(
     selected = next((event for event in reversed(attempts) if not event.get("diagnostics")), None)
     if selected is None:
         raise ValueError("recording has no reviewed Master compile attempt")
-    expected = (
-        _master_shape(str(selected.get("source") or ""))
-        if expectation is None else expectation
-    )
-    model, model_name = (llm, type(llm).__name__) if llm is not None else _model("tool_agent.master")
+    expected = expectation or _master_shape(str(selected.get("source") or ""))
+    model, _, model_name = _selected_model("tool_agent.master", llm)
     results = []
     for number in range(1, samples + 1):
         try:
@@ -338,7 +350,11 @@ def _worker_spec(events: list[dict], selected: dict) -> WorkerSpec:
         event for event in reversed(events)
         if event.get("index", -1) < selected.get("index", 0)
         and event.get("worker_id") == selected.get("worker_id")
-        and event.get("event") in {"master_worker_dispatch", "master_worker_redelegated"}
+        and event.get("event") in {
+            "master_worker_dispatch",
+            "master_worker_redelegated",  # legacy recordings
+            "strategy_attempt_dispatched",
+        }
         and isinstance(event.get("spec"), dict)
     ), None)
     if candidate is None:
@@ -447,8 +463,10 @@ def _worker_decision(
     tools: dict[str, dict[str, Any]],
     frame: MaterializedFrame | None = None,
     constrain_actions: bool = False,
+    *,
+    action_protocol: str = "tool_call",
 ) -> dict[str, Any]:
-    call = exactly_one_tool_call(response)
+    call = worker_decision_call(response, protocol=action_protocol)
     tool = tools.get(call["name"])
     if tool is None:
         raise ProtocolError(f"unknown Worker tool {call['name']!r}")
@@ -513,6 +531,23 @@ def replay_worker_decision(
     frame_no = _frame_number(frame)
     events, context = _artifacts(run_dir)
     selected = _worker_event(events, frame_no)
+    if _REDACTED_ACCESS_VALUE in json.dumps(
+        selected.get("args") or {},
+        ensure_ascii=False,
+    ):
+        return {
+            "status": "unavailable",
+            "summary": "Worker decision replay requires a value redacted from run artifacts.",
+            "kind": "worker",
+            "model": "not invoked",
+            "frame_id": f"frame:{frame_no}",
+            "worker_id": selected.get("worker_id"),
+            "step": selected.get("step"),
+            "expectation": {},
+            "samples": [],
+            "uses_llm": False,
+            "uses_device": False,
+        }
     observation = json.loads(
         (run_dir / f"observation_tool_agent_{frame_no}.json").read_text(encoding="utf-8")
     )
@@ -557,6 +592,9 @@ def replay_worker_decision(
         for item in materialized.collections
     )
     completion = "operator" if spec.profile == "operator" else "collector" if ready else "unavailable"
+    model, model_config, model_name = _selected_model("tool_agent.worker", llm)
+    max_ordered_actions = int(getattr(model_config, "max_actions_per_call", 5))
+    action_protocol = str(getattr(model_config, "action_protocol", "tool_call"))
     frame_actions = available_worker_actions(
         spec,
         actions,
@@ -569,7 +607,18 @@ def replay_worker_decision(
         completion_mode=completion,
         action_envelope=bool(started.get("multi_action")),
         frame=materialized if enhanced else None,
+        max_ordered_actions=max_ordered_actions,
     )
+    capabilities = {action.name: action.capability for action in actions}
+    recorded_capabilities = [
+        capabilities.get(name, name) for name in _action_names(selected)
+    ]
+    if selected.get("tool") == "continue_with_actions":
+        recorded_capabilities = recorded_capabilities[:max_ordered_actions]
+    expected = expectation or {
+        "tool": str(selected.get("tool") or ""),
+        "action_capabilities": recorded_capabilities,
+    }
     messages = _worker_messages(
         _report(selected, "tool_agent.worker"),
         _screenshot(run_dir, frame_no, observation),
@@ -577,24 +626,20 @@ def replay_worker_decision(
         spec=spec,
         actions=frame_actions,
         frame=materialized,
+        image_scale=float(getattr(model_config, "image_scale", 1.0)),
     )
-    capabilities = {action.name: action.capability for action in actions}
-    expected = (
-        {
-            "tool": str(selected.get("tool") or ""),
-            "action_capabilities": [
-                capabilities.get(name, name) for name in _action_names(selected)
-            ],
-        }
-        if expectation is None else expectation
-    )
-    model, model_name = (llm, type(llm).__name__) if llm is not None else _model("tool_agent.worker")
-    bound = model.bind_tools(
+    request_model = getattr(model_config, "model", None)
+    if request_model is None:
+        request_model = getattr(model, "model_name", None) or getattr(model, "model", None)
+    bind_kwargs = chat_request_kwargs(request_model)
+    bound, decision_instruction, repair_instruction = bind_worker_decision_transport(
+        model,
         tools,
-        tool_choice="required",
-        parallel_tool_calls=False,
-        extra_body={"enable_thinking": False},
+        protocol=action_protocol,
+        bind_kwargs=bind_kwargs,
     )
+    if decision_instruction:
+        messages.append(HumanMessage(content=decision_instruction))
     tools_by_name = {tool["function"]["name"]: tool for tool in tools}
     results = []
     for number in range(1, samples + 1):
@@ -605,6 +650,7 @@ def replay_worker_decision(
                 decision = _worker_decision(
                     response, actions, tools_by_name, materialized,
                     constrain_actions=enhanced,
+                    action_protocol=action_protocol,
                 )
                 break
             except Exception as exc:  # noqa: BLE001 - mirrors one production repair
@@ -612,8 +658,9 @@ def replay_worker_decision(
                     raise
                 repairs += 1
                 replay_messages.extend([response, HumanMessage(content=(
-                    f"Protocol repair: {exc}. On this SAME frame, emit exactly one required "
-                    "tool call including its state field. No action was executed."
+                    f"Protocol repair: {exc}. On this SAME frame, "
+                    f"{repair_instruction} including its "
+                    "state field. No action was executed."
                 ))])
         errors = _mismatches(expected, decision)
         results.append({

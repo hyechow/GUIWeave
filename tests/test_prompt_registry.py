@@ -21,8 +21,9 @@ def test_prompt_registry_loads_all_assets() -> None:
     assert {prompt.id for prompt in prompts} == {
         "task.chat.router",
         "task.tool_agent.master",
-        "task.tool_agent.master_redelegate",
         "task.tool_agent.presentation",
+        "task.tool_agent.strategy_propose",
+        "task.tool_agent.strategy_select",
         "task.tool_agent.visual_transcription",
         "task.tool_agent.worker",
         "task.knowledge.document_ingest",
@@ -80,12 +81,13 @@ def test_master_exposes_only_tool_agent_runtime_api() -> None:
     assert "never require perception to invent a missing year" in prompt
     assert "When success criteria guarantee exactly one target record" in prompt
     assert "Source layout order is not a data contract" in prompt
-    assert "navigation, not data retrieval" in prompt
+    assert "surface itself is the requested outcome" in prompt
     assert "use a scalar JSON Schema" in prompt
     assert "does not convert a differently displayed source value" in prompt
     assert "Current, first, or visually prominent values are not extrema" in prompt
     assert 'Set `cardinality="one"` only' in prompt
     assert "the first visible candidate is not" in prompt
+    assert "execution experience" not in prompt
 
 
 def test_visual_transcription_uses_runtime_time_without_inventing_dates() -> None:
@@ -93,7 +95,7 @@ def test_visual_transcription_uses_runtime_time_without_inventing_dates() -> Non
 
     assert "provenance-bearing platform clock" in prompt
     assert "explicitly relative visible labels" in prompt
-    assert "omit it instead of returning null" in prompt
+    assert "Omit invisible optional properties" in prompt
 
 
 def test_presentation_requires_user_facing_prose() -> None:
@@ -161,6 +163,55 @@ def test_worker_handles_exhausted_candidate_sets_and_row_targets() -> None:
         "exclusive `required_interactions`", "perception-owned physical prerequisite",
     ):
         assert rule in prompt
+
+
+@pytest.mark.parametrize(
+    ("prompt_id", "phrases"),
+    [
+        ("task.tool_agent.master", (
+            "Keep each collector schema minimal", "never require perception to invent a missing year",
+            "surface itself is the requested outcome", "immutable logical `goal`",
+                "current-provider details belong only", "`relative_date_offsets`",
+            'coverage="first_match"', "ResultRefs cannot serve as hidden Worker memory",
+            "complete—not merely visible—candidate traversal", "Action `description` is static metadata",
+        )),
+        ("task.tool_agent.visual_transcription", (
+            "provenance-bearing platform clock", "Omit invisible optional properties",
+            "inside one visible record boundary", "scope context, not row evidence",
+            "no enabled pagination or further scrolling remains", "visible page-level identity",
+            "declared source semantics",
+        )),
+        ("task.tool_agent.presentation", (
+            "user-facing prose", "not serialized JSON", "compact Markdown table",
+            "Keep every row and column", "keep result values unchanged",
+        )),
+        ("task.tool_agent.worker", (
+            "Runtime data-reference values are private", "Never guess an authentication secret",
+                "human-presence challenge", "WorkerSpec-declared action that leaves", "otherwise call `fail`",
+            "Coordinates are normalized 0..999", "request_action_patch", "strategy_status = blocked",
+                "Treat autocomplete as pending state", "strongest leading result",
+            "candidate_set_state.status = exhausted", "complete application-declared identity",
+                "visible_collection_regions", "Loading, empty chrome, or a result region not yet visible",
+        )),
+        ("task.tool_agent.strategy_propose", (
+            "one to three genuinely different", "invalidated_assumption",
+            "observable expected progress", "Never invent credentials",
+            "public web origin", "authoritative empty result",
+        )),
+        ("task.tool_agent.strategy_select", (
+            "independent Strategy Selector", "chosen_index", "Otherwise stop",
+            "JSON object", "equivalent entry/actions", "One transport interruption",
+            "invented deep URL", "remaining budget", "Prefer fewer estimated steps",
+            "rather than demanding prior proof",
+        )),
+    ],
+)
+def test_tool_agent_prompts_keep_contract_rules(
+    prompt_id: str,
+    phrases: tuple[str, ...],
+) -> None:
+    prompt = load_prompt_text(prompt_id)
+    assert not [phrase for phrase in phrases if phrase not in prompt]
 
 
 def test_large_inline_prompt_constants_are_not_added() -> None:

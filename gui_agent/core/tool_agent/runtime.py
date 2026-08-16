@@ -15,7 +15,6 @@ from urllib.parse import urlsplit
 
 from jsonschema import Draft202012Validator, validate
 from langchain_core.messages import HumanMessage
-from langchain_openai import ChatOpenAI
 
 from gui_agent.core.config import resolve_llm_config
 from gui_agent.prompts import load_prompt_text
@@ -24,7 +23,10 @@ from gui_agent.core.runtime.action_settle import (
     has_snapped_point,
     settle_after_action,
 )
-from gui_agent.core.runtime.clock import PlatformTimeSnapshot, host_time_fallback
+from gui_agent.core.runtime.clock import (
+    PlatformTimeSnapshot,
+    host_time_fallback,
+)
 from gui_agent.core.schemas import BaseAction, BaseActionDecision, TargetVerify
 from gui_agent.core.tool_agent.contracts import (
     CollectionRef,
@@ -57,13 +59,13 @@ from gui_agent.core.tool_agent.protocol import (
     MAX_ORDERED_ACTIONS,
     ProtocolError,
     RequestActionPatchArgs,
+    bind_worker_decision_transport,
     cacheable_system_message,
     capability_parameters,
     constrain_worker_action_calls,
     diagnostic_prompt_reports,
     dynamic_worker_tools,
     dynamic_action_tool,
-    exactly_one_tool_call,
     image_message,
     materialize_action_patch,
     normalize_action_arguments,
@@ -71,19 +73,24 @@ from gui_agent.core.tool_agent.protocol import (
     response_usage,
     validate_dynamic_action_spec,
     validate_worker_tool_state,
+    worker_decision_call,
     worker_action_floor,
     worker_attempt_contract,
 )
 from gui_agent.core.tool_agent.replay import write_replay_artifact
+from gui_agent.core.tool_agent.strategy import StrategyPlanner
 from gui_agent.core.tool_agent.worker_memory import (
     WorkerJournal,
     build_worker_memory_view,
     project_worker_context,
 )
 from gui_agent.core.vision.target_verify import verify_target
+from llm.provider_config import (
+    build_chat_model,
+    chat_request_kwargs,
+)
 
 _MASTER_SYSTEM = load_prompt_text("task.tool_agent.master")
-_MASTER_REDELEGATE_SYSTEM = load_prompt_text("task.tool_agent.master_redelegate")
 _WORKER_SYSTEM = load_prompt_text("task.tool_agent.worker")
 _MAX_ACTION_PATCHES_PER_FRAME = 3
 _MAX_ACTION_GUARD_REPAIRS_PER_FRAME = 1
@@ -120,30 +127,31 @@ class _WorkerActionRejected(ValueError):
     """An action contract was rejected before any platform input was dispatched."""
 
 
+class _WorkerSpecExpansionRequired(RuntimeError):
+    """The selected baseline action would expand the Master-owned attempt contract."""
+
+
 _ACTION_TYPES = {"open_url": "navigate"}
 
 
-def _url_is_sourced(candidate: str, sources: list[str]) -> bool:
-    tokens = {
-        token.rstrip(".,;:)]}")
-        for source in sources
-        for token in re.findall(r"https?://[^\s`'\"<>]+|/[^\s`'\"<>]+", source, re.I)
-    }
-    if candidate in tokens:
-        return True
-
-    def parts(value: str) -> tuple[str, str]:
+def _http_origin(value: str) -> tuple[str, str, int | None] | None:
+    try:
         parsed = urlsplit(value)
-        route = (parsed.path or "") + (f"?{parsed.query}" if parsed.query else "")
-        return parsed.netloc.casefold(), route
+        port = parsed.port
+    except ValueError:
+        return None
+    scheme = parsed.scheme.casefold()
+    if (
+        scheme not in {"http", "https"}
+        or not parsed.hostname
+        or parsed.username
+        or parsed.password
+    ):
+        return None
+    default_port = 443 if scheme == "https" else 80
+    return scheme, parsed.hostname.casefold(), None if port == default_port else port
 
-    origin, route = parts(candidate)
-    supplied = [parts(token) for token in tokens]
-    return bool(
-        route
-        and route in {item[1] for item in supplied}
-        and (not origin or origin in {item[0] for item in supplied})
-    )
+
 _REDACTED_ACCESS_VALUE = "[session access value redacted]"
 _WORKER_VERIFY_POOL = ThreadPoolExecutor(
     max_workers=1,
@@ -173,6 +181,52 @@ def _worker_action_error(exc: Exception) -> dict[str, Any]:
     if isinstance(exc, _WorkerActionRejected):
         payload["reuse_current_frame"] = True
     return payload
+
+
+def _action_feedback(items: object, action_type: str) -> list[dict[str, Any]]:
+    """Normalize platform failures only for actions that can cause them."""
+    if action_type not in {"navigate", "tap", "press_enter"}:
+        return []
+    feedback: list[dict[str, Any]] = []
+    for item in items if isinstance(items, list) else []:
+        if not isinstance(item, dict):
+            continue
+        status = item.get("status")
+        body = str(item.get("body") or "").strip()
+        try:
+            decoded = json.loads(body) if body else None
+        except json.JSONDecodeError:
+            decoded = None
+        message = (
+            decoded.get("message") or decoded.get("error_message")
+            if isinstance(decoded, dict) else ""
+        )
+        rejected = bool(
+            isinstance(decoded, dict)
+            and (decoded.get("error") is True or decoded.get("success") is False)
+        )
+        http_error = isinstance(status, (int, float)) and int(status) >= 400
+        if message or rejected or http_error:
+            feedback.append({
+                "status": int(status or 0),
+                "url": str(item.get("url") or ""),
+                "rejected": rejected or http_error,
+                "message": str(message or body[:500]).strip(),
+            })
+    return feedback
+
+
+def _target_verification_result(future: Any) -> tuple[dict[str, Any] | None, Exception | None]:
+    try:
+        verification = TargetVerify.model_validate(future.result(timeout=VERIFY_TIMEOUT_S))
+    except Exception as exc:  # noqa: BLE001 - optional verifier fails open
+        future.cancel()
+        return None, exc
+    return {
+        "status": "on_target" if verification.on_target else "off_target",
+        "actual_element": verification.actual_element,
+        "reason": verification.reason,
+    }, None
 
 
 def _token_metric(
@@ -234,19 +288,9 @@ def _redact_log_value(value: Any, redactions: tuple[str, ...]) -> Any:
     return value
 
 
-def _llm(config_name: str, *, temperature: float = 0) -> tuple[ChatOpenAI, Any]:
+def _llm(config_name: str) -> tuple[Any, Any]:
     cfg = resolve_llm_config(config_name)
-    return (
-        ChatOpenAI(
-            model=cfg.model,
-            api_key=cfg.api_key,
-            base_url=cfg.base_url,
-            timeout=cfg.timeout_s,
-            max_retries=cfg.max_retries,
-            temperature=temperature,
-        ),
-        cfg,
-    )
+    return build_chat_model(cfg), cfg
 
 
 class ToolAgentRuntime:
@@ -303,11 +347,26 @@ class ToolAgentRuntime:
             self.platform_time = host_time_fallback(
                 bundle.platform,
                 reason="platform adapter does not expose a clock reader",
-            )
+        )
         self.data_store = RuntimeDataStore()
         self.master, self.master_cfg = _llm("tool_agent.master")
+        self.strategy_proposer, self.strategy_proposer_cfg = _llm(
+            "tool_agent.strategy.proposer"
+        )
+        self.strategy_selector, self.strategy_selector_cfg = _llm(
+            "tool_agent.strategy.selector"
+        )
         self.worker, self.worker_cfg = _llm("tool_agent.worker")
         self._master_explicit_cache = _supports_explicit_prompt_cache(self.master_cfg)
+        self.strategy_planner = StrategyPlanner(
+            self.strategy_proposer,
+            proposer_model=self.strategy_proposer_cfg.model,
+            selector=self.strategy_selector,
+            selector_model=self.strategy_selector_cfg.model,
+            explicit_cache=_supports_explicit_prompt_cache(
+                self.strategy_proposer_cfg
+            ),
+        )
         self._worker_explicit_cache = _supports_explicit_prompt_cache(self.worker_cfg)
         self.materializer = PerceptionMaterializer(
             mode=perception_mode,
@@ -355,7 +414,7 @@ class ToolAgentRuntime:
         self._master_knowledge = knowledge
         self._worker_knowledge = worker_knowledge or knowledge
         self._task_goal = goal
-        self._task_page_url = page_url
+        self.materializer.task_goal = goal
         self._access_log_redactions = _access_log_redactions(access_context)
         executor = getattr(self, "_executor", None)
         if executor is not None:
@@ -377,7 +436,7 @@ class ToolAgentRuntime:
             self._master_knowledge = ""
             self._worker_knowledge = ""
             self._task_goal = ""
-            self._task_page_url = ""
+            self.materializer.task_goal = ""
             self._access_log_redactions = ()
             if executor is not None:
                 setattr(executor, "sensitive_text_values", ())
@@ -390,6 +449,10 @@ class ToolAgentRuntime:
             platform_rejections = getattr(self, "_worker_platform_rejections", None)
             if platform_rejections is not None:
                 platform_rejections.clear()
+            for name in ("_worker_attempts", "_worker_action_breakers"):
+                state = getattr(self, name, None)
+                if isinstance(state, dict):
+                    state.clear()
 
     def _run(self, goal: str, *, knowledge: str = "", page_url: str = "", page_title: str = "") -> ToolAgentRun:
         if getattr(self, "platform_time", None) is None:
@@ -409,6 +472,14 @@ class ToolAgentRuntime:
             max_turns=int(getattr(self, "max_turns", 50)),
             multi_action=bool(getattr(self, "allow_multi_action", False)),
             master_model=self.master_cfg.model,
+            strategy_models={
+                "proposer": getattr(
+                    getattr(self, "strategy_proposer_cfg", None), "model", ""
+                ),
+                "selector": getattr(
+                    getattr(self, "strategy_selector_cfg", None), "model", ""
+                ),
+            },
             worker_model=self.worker_cfg.model,
             platform_time=self.platform_time.model_dump(mode="json"),
         )
@@ -416,6 +487,7 @@ class ToolAgentRuntime:
             "goal": goal,
             "page": {"url": page_url, "title": page_title},
             "task_reference_time": self.platform_time.model_dump(mode="json"),
+            "relative_date_offsets": self.platform_time.relative_date_offsets(),
             "platform": self._platform_prompt_context(),
             "application_knowledge": knowledge or "(none)",
         }
@@ -587,15 +659,20 @@ class ToolAgentRuntime:
         elif revised in (attempted_specs or []):
             issues.append("replacement WorkerSpec has already been attempted")
         if revised.profile != original.profile:
-            issues.append("profile is immutable across runtime redelegation")
+            issues.append("profile is immutable across strategy revision")
         if revised.goal != original.goal:
-            issues.append("goal is immutable across runtime redelegation")
+            issues.append("goal is immutable across strategy revision")
         if revised.success_criteria != original.success_criteria:
-            issues.append("success_criteria are immutable across runtime redelegation")
+            issues.append("success_criteria are immutable across strategy revision")
+        if original.strategy:
+            if not revised.strategy.strip():
+                issues.append("strategy is required across strategy revision")
+            elif revised.strategy.strip() == original.strategy.strip():
+                issues.append("strategy must materially change across strategy revision")
         if revised.input_refs != original.input_refs:
-            issues.append("input_refs are immutable across runtime redelegation")
+            issues.append("input_refs are immutable across strategy revision")
         if len(revised.data_requirements) != len(original.data_requirements):
-            issues.append("data requirement count is immutable across runtime redelegation")
+            issues.append("data requirement count is immutable across strategy revision")
             return issues
         immutable_fields = (
             "id",
@@ -698,7 +775,7 @@ class ToolAgentRuntime:
             }
         return {"events": events[-18:], "current_observation": current}
 
-    def _revise_worker_spec(
+    def _select_worker_strategy(
         self,
         *,
         logical_worker_id: str,
@@ -708,108 +785,59 @@ class ToolAgentRuntime:
         replan_reason: str,
         replan_no: int,
         prior_revisions: list[WorkerSpec],
-    ) -> WorkerSpec:
-        generator = self.master.bind(
-            response_format={"type": "json_object"},
-            max_tokens=6_000,
-            extra_body={"enable_thinking": False},
-        )
-        rejected: dict[str, Any] | None = None
-        validation_issues: list[str] = []
-        for attempt in range(1, 3):
-            payload: dict[str, Any] = {
-                "logical_worker_id": logical_worker_id,
-                "prior_worker_id": prior_worker_id,
-                "replan_no": replan_no,
-                "replan_reason": replan_reason,
-                "prior_worker_spec": original_spec.model_dump(mode="json"),
-                "prior_outcome": prior_outcome.model_dump(mode="json"),
-                "immutable_contract": {
-                    "profile": original_spec.profile,
-                    "goal": original_spec.goal,
-                    "success_criteria": original_spec.success_criteria,
-                    "input_refs": original_spec.input_refs,
-                    "data_requirements": [
-                        {
-                            "id": item.id,
-                            "description": item.description,
-                            "target_label": item.target_label,
-                            "scope": item.scope,
-                            "cardinality": item.cardinality,
-                            "row_schema": item.row_schema,
-                            "field_sources": item.field_sources,
-                            "field_types": item.field_types,
-                            "filters": item.filters,
-                            "coverage": item.coverage,
-                        }
-                        for item in original_spec.data_requirements
+        remaining_steps: int,
+    ) -> tuple[WorkerSpec | None, str]:
+        context = {
+            "logical_worker_id": logical_worker_id,
+            "prior_worker_id": prior_worker_id,
+            "replan_no": replan_no,
+            "replan_reason": replan_reason,
+            "remaining_step_budget": remaining_steps,
+            "prior_worker_spec": original_spec.model_dump(mode="json"),
+            "prior_outcome": prior_outcome.model_dump(mode="json"),
+            "application_knowledge": getattr(self, "_master_knowledge", "") or "(none)",
+            "platform": self._platform_prompt_context(),
+            "execution_experience": self._worker_recovery_experience(
+                prior_worker_id,
+                logical_worker_id=logical_worker_id,
+            ),
+            "attempted_strategies": [
+                {
+                    "strategy": item.strategy,
+                    "actions": [
+                        action.model_dump(mode="json") for action in item.actions
                     ],
-                },
-                "application_knowledge": getattr(self, "_master_knowledge", "") or "(none)",
-                "platform": self._platform_prompt_context(),
-                "execution_experience": self._worker_recovery_experience(
-                    prior_worker_id,
-                    logical_worker_id=logical_worker_id,
-                ),
-                "attempted_worker_specs": [
-                    item.model_dump(mode="json") for item in prior_revisions
-                ],
-            }
-            if rejected is not None:
-                payload["rejected_worker_spec"] = rejected
-                payload["validation_issues"] = validation_issues
-            messages = [
-                cacheable_system_message(
-                    _MASTER_REDELEGATE_SYSTEM,
-                    enabled=getattr(self, "_master_explicit_cache", False),
-                ),
-                HumanMessage(content=json.dumps(payload, ensure_ascii=False)),
-            ]
-            started_at = time.perf_counter()
-            response = generator.invoke(messages)
-            elapsed = time.perf_counter() - started_at
-            candidate_payload: dict[str, Any] = {}
-            try:
-                decoded = parse_json_object(response.content)
-                candidate_payload = decoded.get("worker_spec", decoded)
-                candidate = WorkerSpec.model_validate(candidate_payload)
-                validation_issues = self._worker_revision_issues(
-                    original_spec,
-                    candidate,
-                    prior_outcome=prior_outcome,
-                    attempted_specs=prior_revisions,
-                )
-            except Exception as exc:  # noqa: BLE001 - reviewed recovery protocol
-                candidate = None
-                validation_issues = [f"{type(exc).__name__}: {exc}"]
+                    "acquisition_filters": item.acquisition_filters,
+                }
+                for item in prior_revisions
+            ],
+        }
+
+        def validate(candidate: WorkerSpec) -> list[str]:
+            return self._worker_revision_issues(
+                original_spec,
+                candidate,
+                prior_outcome=prior_outcome,
+                attempted_specs=prior_revisions,
+            )
+
+        def trace(event: str, **payload: Any) -> None:
             self._trace(
-                "master_worker_revision_attempt",
+                event,
                 logical_worker_id=logical_worker_id,
                 prior_worker_id=prior_worker_id,
                 replan_no=replan_no,
-                attempt=attempt,
-                candidate=candidate_payload,
-                diagnostics=validation_issues,
-                llm_elapsed_s=round(elapsed, 3),
-                token_usage=response_usage(response),
-                context_reports=diagnostic_prompt_reports(
-                    "tool_agent.master_redelegate",
-                    messages,
-                    response,
-                    parsed={
-                        "worker_spec": candidate_payload,
-                        "diagnostics": validation_issues,
-                    },
-                    schema="Replacement WorkerSpec",
-                ),
+                **payload,
             )
-            if candidate is not None and not validation_issues:
-                return candidate
-            rejected = candidate_payload
-        raise ValueError(
-            "Master could not produce a valid replacement WorkerSpec: "
-            + "; ".join(validation_issues)
+
+        resolution = self.strategy_planner.choose(
+            context=context,
+            original_spec=original_spec,
+            preserve_acquisition_filters=not self._is_verified_empty(prior_outcome),
+            validate=validate,
+            on_event=trace,
         )
+        return resolution
 
     def _run_worker_with_local_replanning(
         self,
@@ -822,11 +850,6 @@ class ToolAgentRuntime:
         current_spec = spec
         prior_revisions: list[WorkerSpec] = [spec]
         max_replans = max(0, int(getattr(self, "max_subgoal_replans", 0)))
-        breakers = getattr(self, "_logical_action_breakers", None)
-        if breakers is None:
-            self._logical_action_breakers = {}
-            breakers = self._logical_action_breakers
-        breakers[worker_id] = WorkerActionCircuitBreaker()
         logical_step_budget = min(
             _MAX_LOGICAL_WORKER_STEPS,
             spec.max_steps + _LOCAL_REPLAN_EXTRA_STEPS,
@@ -859,24 +882,8 @@ class ToolAgentRuntime:
             replan_reason = self._worker_replan_reason(outcome)
             if not replan_reason:
                 return outcome.model_copy(update={"steps": consumed_steps})
-            self._trace(
-                "master_worker_replan_requested",
-                logical_worker_id=worker_id,
-                worker_id=current_id,
-                replan_no=replan_no,
-                reason=replan_reason,
-                spec=current_spec.model_dump(mode="json"),
-                outcome=outcome.model_dump(mode="json"),
-            )
             if replan_no >= max_replans:
-                return WorkerOutcome(
-                    phase="failed",
-                    summary=(
-                        "The Worker subgoal remained unsatisfied after the Master "
-                        f"exhausted its local strategy budget. Last outcome: {outcome.summary}"
-                    ),
-                    steps=consumed_steps,
-                )
+                return outcome.model_copy(update={"steps": consumed_steps})
             if consumed_steps >= logical_step_budget:
                 self._trace(
                     "master_worker_budget_exhausted",
@@ -895,6 +902,7 @@ class ToolAgentRuntime:
                 )
             if outcome.failure_kind == "step_window_exhausted":
                 revised = current_spec
+                selection_reason = "Continue the same strategy with a fresh step window."
                 self._trace(
                     "worker_attempt_continued",
                     logical_worker_id=worker_id,
@@ -904,8 +912,22 @@ class ToolAgentRuntime:
                     remaining_steps=logical_step_budget - consumed_steps,
                 )
             else:
+                self._trace(
+                    "strategy_planning_requested",
+                    logical_worker_id=worker_id,
+                    worker_id=current_id,
+                    replan_no=replan_no,
+                    reason=replan_reason,
+                    spec=current_spec.model_dump(mode="json"),
+                    outcome=outcome.model_dump(mode="json"),
+                )
                 try:
-                    revised = self._revise_worker_spec(
+                    global_remaining = max(
+                        0,
+                        int(getattr(self, "max_turns", 0))
+                        - int(getattr(self, "_frame_no", 0)),
+                    )
+                    revised, selection_reason = self._select_worker_strategy(
                         logical_worker_id=worker_id,
                         prior_worker_id=current_id,
                         original_spec=current_spec,
@@ -913,25 +935,42 @@ class ToolAgentRuntime:
                         replan_reason=replan_reason,
                         replan_no=replan_no + 1,
                         prior_revisions=prior_revisions,
+                        remaining_steps=min(
+                            logical_step_budget - consumed_steps,
+                            global_remaining,
+                        ),
                     )
                 except Exception as exc:  # noqa: BLE001 - becomes typed Worker failure
                     return WorkerOutcome(
                         phase="failed",
-                        summary=(
-                            "Master worker redelegation failed: "
-                            f"{type(exc).__name__}: {exc}"
-                        ),
+                        summary=f"Strategy planning failed: {type(exc).__name__}: {exc}",
                         steps=consumed_steps,
                     )
+                if revised is None:
+                    self._trace(
+                        "strategy_stopped",
+                        logical_worker_id=worker_id,
+                        worker_id=current_id,
+                        replan_no=replan_no + 1,
+                        reason=selection_reason,
+                    )
+                    return outcome.model_copy(update={
+                        "summary": (
+                            f"{outcome.summary.rstrip('.')} — Strategy Planner stopped: "
+                            f"{selection_reason}"
+                        ),
+                        "steps": consumed_steps,
+                    })
                 prior_revisions.append(revised)
             next_id = self._replanned_worker_id(worker_id, replan_no + 1)
             self._trace(
-                "master_worker_redelegated",
+                "strategy_attempt_dispatched",
                 logical_worker_id=worker_id,
                 prior_worker_id=current_id,
                 worker_id=next_id,
                 replan_no=replan_no + 1,
                 prior_outcome=outcome.model_dump(mode="json"),
+                selection_reason=selection_reason,
                 spec=revised.model_dump(mode="json"),
             )
             current_id = next_id
@@ -972,8 +1011,8 @@ class ToolAgentRuntime:
             self._worker_journals = {}
             journals = self._worker_journals
         journal = journals.setdefault(
-            logical_worker_id,
-            WorkerJournal(worker_id=logical_worker_id),
+            worker_id,
+            WorkerJournal(worker_id=worker_id),
         )
         attempts = getattr(self, "_worker_attempts", None)
         if attempts is None:
@@ -982,8 +1021,6 @@ class ToolAgentRuntime:
         attempt = int(attempts.get(logical_worker_id) or 0) + 1
         attempts[logical_worker_id] = attempt
         retained_events = len(journal.events)
-        if attempt > 1:
-            journal.record_replan(attempt=attempt)
         self._trace(
             "worker_started",
             worker_id=worker_id,
@@ -991,18 +1028,19 @@ class ToolAgentRuntime:
             retained_memory_events=retained_events,
             profile=spec.profile,
             goal=spec.goal,
+            strategy=spec.strategy,
             success_criteria=spec.success_criteria,
             requirement_ids=[item.id for item in spec.data_requirements],
             action_names=[item.name for item in spec.actions],
             max_steps=spec.max_steps,
         )
         active_actions = self._initial_worker_actions(spec)
-        breakers = getattr(self, "_logical_action_breakers", None)
+        breakers = getattr(self, "_worker_action_breakers", None)
         if breakers is None:
-            self._logical_action_breakers = {}
-            breakers = self._logical_action_breakers
+            self._worker_action_breakers = {}
+            breakers = self._worker_action_breakers
         circuit_breaker = breakers.setdefault(
-            logical_worker_id,
+            worker_id,
             WorkerActionCircuitBreaker(),
         )
         observed_auth_codes = {
@@ -1060,6 +1098,10 @@ class ToolAgentRuntime:
                     steps=step - 1,
                 )
             worker_tools = self._worker_tools_for_frame(spec, active_actions, frame)
+            action_limit = self._worker_action_limit()
+            action_protocol = str(
+                getattr(getattr(self, "worker_cfg", None), "action_protocol", "tool_call")
+            )
             patch_turn = 0
             guard_repair_turn = 0
             circuit_decision = None
@@ -1078,26 +1120,33 @@ class ToolAgentRuntime:
                 call = None
                 calls: list[dict[str, Any]] = []
                 protocol_schema = (
-                    "WorkerState + ordered actions"
+                    f"{action_protocol}: WorkerState + ordered actions"
                     if getattr(self, "allow_multi_action", False)
-                    else "WorkerState + exactly one tool call"
+                    else f"{action_protocol}: WorkerState + exactly one action"
                 )
                 llm_elapsed_s = 0.0
                 token_usage: dict[str, int] = {}
+                request_kwargs = chat_request_kwargs(
+                    getattr(getattr(self, "worker_cfg", None), "model", None)
+                )
+                transport = bind_worker_decision_transport(
+                    self.worker,
+                    worker_tools,
+                    protocol=action_protocol,
+                    bind_kwargs=request_kwargs,
+                )
+                bound_worker, decision_instruction, transport_repair = transport
+                if decision_instruction:
+                    messages.append(HumanMessage(content=decision_instruction))
                 for attempt in range(2):
                     started_at = time.perf_counter()
-                    response = self.worker.bind_tools(
-                        worker_tools,
-                        tool_choice="required",
-                        parallel_tool_calls=False,
-                        extra_body={"enable_thinking": False},
-                    ).invoke(messages)
-                    llm_elapsed_s = time.perf_counter() - started_at
+                    response = bound_worker.invoke(messages)
+                    llm_elapsed_s += time.perf_counter() - started_at
                     token_usage = response_usage(response)
                     try:
-                        call = exactly_one_tool_call(response)
-                        raw_state = call["args"].pop("state", None)
+                        call = worker_decision_call(response, protocol=action_protocol)
                         if call["name"] == "continue_with_actions":
+                            raw_state = call["args"].pop("state", None)
                             raw_actions = _decode_ordered_actions(
                                 call["args"].get("actions") or []
                             )
@@ -1112,6 +1161,7 @@ class ToolAgentRuntime:
                             if len(calls) != len(raw_actions):
                                 raise ProtocolError("every action item must be an object")
                         else:
+                            raw_state = call["args"].pop("state", None)
                             call["args"] = normalize_action_arguments(call["args"])
                             calls = [call]
                         constraint_frame = frame if getattr(
@@ -1125,7 +1175,11 @@ class ToolAgentRuntime:
                         else:
                             call = calls[0]
                         if call["name"] == "continue_with_actions":
-                            self._validate_multi_action_calls(calls, active_actions)
+                            self._validate_multi_action_calls(
+                                calls,
+                                active_actions,
+                                max_actions=action_limit,
+                            )
                         state, state_source, state_compatibility = self._decode_worker_state(
                             raw_state=raw_state,
                             content=getattr(response, "content", ""),
@@ -1160,9 +1214,9 @@ class ToolAgentRuntime:
                             )
                         messages = [*messages, response, HumanMessage(content=(
                             "Protocol repair: the previous response was invalid. On this SAME frame, "
-                            f"the Runtime reported: {exc}. Emit exactly one required tool call "
+                            f"the Runtime reported: {exc}. {transport_repair.capitalize()} "
                             "including its state field. If continue_with_actions is used, include "
-                            f"between 1 and {MAX_ORDERED_ACTIONS} executable actions. Only use a "
+                            f"between 1 and {action_limit} executable actions. Only use a "
                             "terminal tool when Runtime exposed that tool on this frame. "
                             "No action was executed."
                         ))]
@@ -1193,6 +1247,29 @@ class ToolAgentRuntime:
                     state_source=state_source,
                     state_compatibility=state_compatibility,
                 )
+                if state.strategy_status == "blocked":
+                    declared_actions = {action.name for action in spec.actions}
+                    declared_escape = bool(
+                        len(calls) == 1 and calls[0]["name"] in declared_actions
+                    )
+                    if call["name"] != "fail" and not declared_escape:
+                        reason = state.summary.strip() or (
+                            "The current Master-selected strategy cannot advance the goal."
+                        )
+                        self._trace(
+                            "worker_strategy_blocked",
+                            step=step,
+                            frame_id=frame.frame_id,
+                            attempted_tool=(
+                                calls[0]["name"] if calls else call["name"]
+                            ),
+                            reason=reason,
+                        )
+                        return WorkerOutcome(
+                            phase="failed",
+                            summary=reason,
+                            steps=step - 1,
+                        )
                 circuit_decision = None
                 if call["name"] == "request_action_patch":
                     patch_turn += 1
@@ -1371,6 +1448,18 @@ class ToolAgentRuntime:
                         png,
                         frame,
                     )
+            except _WorkerSpecExpansionRequired as exc:
+                self._trace(
+                    "worker_spec_expansion_required",
+                    step=step,
+                    frame_id=frame.frame_id,
+                    reason=str(exc),
+                )
+                return WorkerOutcome(
+                    phase="failed",
+                    summary=str(exc),
+                    steps=step,
+                )
             except Exception as exc:  # noqa: BLE001 - feed capability failure back into ReAct
                 result_payload = _worker_action_error(exc)
                 terminal = None
@@ -1443,13 +1532,13 @@ class ToolAgentRuntime:
             if terminal == "fail":
                 reason = FailWorkerArgs.model_validate(call["args"]).reason
                 return WorkerOutcome(phase="failed", summary=reason, steps=step)
-            if terminal == "platform_rejected":
+            if terminal in {"platform_rejected", "navigation_blocked"}:
                 reason = str(
                     result_payload.get("reason")
                     or "The platform rejected the requested action."
                 )
                 self._trace(
-                    "worker_platform_rejected",
+                    f"worker_{terminal}",
                     step=step,
                     profile=spec.profile,
                     reason=reason,
@@ -1458,7 +1547,7 @@ class ToolAgentRuntime:
                 return WorkerOutcome(
                     phase="failed",
                     summary=reason,
-                    failure_kind="platform_rejected",
+                    failure_kind=terminal,
                     steps=step,
                 )
         return WorkerOutcome(
@@ -1643,7 +1732,7 @@ class ToolAgentRuntime:
         active_actions: list[DynamicActionSpec],
     ) -> str:
         # Keep reusable runtime instructions and deployment context at the front.
-        # A redelegated Worker changes only the attempt contract at the suffix.
+        # A replacement Worker changes only the physical attempt contract at the suffix.
         prompt = _WORKER_SYSTEM
         application_knowledge = getattr(
             self, "_worker_knowledge", getattr(self, "_master_knowledge", ""),
@@ -1673,18 +1762,29 @@ class ToolAgentRuntime:
                 + access_context
             )
         if getattr(self, "allow_multi_action", False):
-            prompt += (
-                "\n\n## Ordered multi-action mode\n"
-                f"Continue through `continue_with_actions`. Use 2–{MAX_ORDERED_ACTIONS} actions when all targets "
-                "are already visible and no later action depends on newly revealed UI. A later "
-                "confirmation may depend on an earlier selection enabling that already-visible "
-                "control; "
-                "otherwise use one. Runtime executes serially and may discard a stale suffix. "
-                "Chain only actions whose targets can be rebound from current controls. Put "
-                "confirmation, traversal, and other surface-changing actions last. Include "
-                "all safe required operations on a fully visible form. Use patch, completion, "
-                "and failure tools separately."
-            )
+            action_limit = self._worker_action_limit()
+            prompt += "\n\n## Ordered multi-action mode\n"
+            if action_limit == 1:
+                prompt += (
+                    "Continue through `continue_with_actions` with exactly one action. "
+                    "Observe the next frame before choosing another action. Use patch, "
+                    "completion, and failure tools separately."
+                )
+            else:
+                prompt += (
+                    f"Continue through `continue_with_actions`. Use 2–{action_limit} actions when all targets "
+                    "are already visible and no later action depends on newly revealed UI; "
+                    "a later action may depend on an earlier selection or focus enabling another "
+                    "already-visible control; otherwise use one. Runtime executes serially and "
+                    "may discard a stale suffix. Chain only actions whose targets can be rebound "
+                    "from current controls. Put "
+                    "confirmation, traversal, and other surface-changing actions last. Include "
+                    "all safe required operations on a fully visible form. Use patch, completion, "
+                    "and failure tools separately."
+                )
+        task_goal = str(getattr(self, "_task_goal", "") or "").strip()
+        if task_goal and task_goal != spec.goal:
+            prompt += "\n\n## Original task goal\n" + task_goal
         prompt += "\n\n" + worker_attempt_contract(spec, active_actions)
         return prompt
 
@@ -1722,7 +1822,13 @@ class ToolAgentRuntime:
                 enabled=getattr(self, "_worker_explicit_cache", False),
                 suffix=(delimiter + attempt_prompt if delimiter else ""),
             ),
-            image_message(projection.text, png),
+            image_message(
+                projection.text,
+                png,
+                scale=float(
+                    getattr(getattr(self, "worker_cfg", None), "image_scale", 1.0)
+                ),
+            ),
         ]
         return messages, [projection.report]
 
@@ -1771,6 +1877,16 @@ class ToolAgentRuntime:
             completion_mode=completion_mode,
             action_envelope=bool(getattr(self, "allow_multi_action", False)),
             frame=frame if enhanced else None,
+            max_ordered_actions=self._worker_action_limit(),
+        )
+
+    def _worker_action_limit(self) -> int:
+        return int(
+            getattr(
+                getattr(self, "worker_cfg", None),
+                "max_actions_per_call",
+                MAX_ORDERED_ACTIONS,
+            )
         )
 
     def _active_platform_rejection(self) -> dict[str, Any] | None:
@@ -1798,6 +1914,8 @@ class ToolAgentRuntime:
             breaker.reset()
         else:
             breaker.record(decision)
+            if result.get("status") == "executed" and result.get("no_effect") is True:
+                breaker.record(decision)
 
     def _refreshable_action_suffix(
         self,
@@ -1851,9 +1969,11 @@ class ToolAgentRuntime:
     def _validate_multi_action_calls(
         calls: list[dict[str, Any]],
         actions: list[DynamicActionSpec],
+        *,
+        max_actions: int = MAX_ORDERED_ACTIONS,
     ) -> None:
-        if not 1 <= len(calls) <= MAX_ORDERED_ACTIONS:
-            raise ProtocolError(f"action envelope must contain 1–{MAX_ORDERED_ACTIONS} actions")
+        if not 1 <= len(calls) <= max_actions:
+            raise ProtocolError(f"action envelope must contain 1–{max_actions} actions")
         action_names = {action.name for action in actions}
         unknown = [call["name"] for call in calls if call["name"] not in action_names]
         if unknown:
@@ -2079,6 +2199,8 @@ class ToolAgentRuntime:
                     current_png,
                     frame,
                 )
+            except _WorkerSpecExpansionRequired:
+                raise
             except _WorkerActionRejected as exc:
                 result = _worker_action_error(exc)
                 terminal = None
@@ -2180,7 +2302,7 @@ class ToolAgentRuntime:
                     "status": "failed",
                     "reason": reason,
                     "platform_feedback": [rejection],
-                }, "platform_rejected"
+                }, str(rejection.get("failure_kind") or "platform_rejected")
             if spec.profile == "collector":
                 if frame is None:
                     raise ValueError("collector complete requires a current frame")
@@ -2216,7 +2338,7 @@ class ToolAgentRuntime:
                     "status": "failed",
                     "reason": reason,
                     "platform_feedback": [rejection],
-                }, "platform_rejected"
+                }, str(rejection.get("failure_kind") or "platform_rejected")
             return {"status": "failed", "reason": parsed.reason}, "fail"
         action_by_name = {item.name: item for item in actions}
         action_spec = action_by_name.get(call["name"])
@@ -2224,6 +2346,11 @@ class ToolAgentRuntime:
             raise ProtocolError(f"unknown Worker tool {call['name']!r}")
         parameters = dynamic_action_tool(action_spec)["function"]["parameters"]
         call_args = dict(call["args"])
+        for name in action_spec.fixed_args:
+            # Fixed Runtime-owned values are authoritative. Some providers echo
+            # them despite the reduced tool schema; ignore the duplicate rather
+            # than spending a visual turn repairing an already-known value.
+            call_args.pop(name, None)
         if "description" in parameters.get("properties", {}) and not str(
             call_args.get("description") or ""
         ).strip():
@@ -2236,8 +2363,10 @@ class ToolAgentRuntime:
         if action_spec.capability == "open_url":
             self._validate_runtime_open_url(
                 str(full_args.get("url") or ""),
-                spec=spec,
                 frame=frame,
+                master_delegated=any(
+                    item.name == action_spec.name for item in spec.actions
+                ),
             )
         if action_spec.capability == "launch_app":
             self._validate_runtime_launch_app(str(full_args.get("app") or ""))
@@ -2303,67 +2432,37 @@ class ToolAgentRuntime:
                     float(executed_action.y),
                     str(executed_action.description or ""),
                 )
-            if executed:
-                elapsed, no_effect = settle_after_action(
-                    self.platform,
-                    png,
-                    action_type=executed_action.action_type,
-                )
-            else:
-                elapsed, no_effect = 0.0, True
+            try:
+                if executed:
+                    elapsed, no_effect = settle_after_action(
+                        self.platform,
+                        png,
+                        action_type=executed_action.action_type,
+                    )
+                else:
+                    elapsed, no_effect = 0.0, True
+            except BaseException:
+                if verify_future is not None:
+                    verify_future.cancel()
+                raise
             target_signal: dict[str, Any] | None = None
             if verify_future is not None:
-                try:
-                    verification = TargetVerify.model_validate(
-                        verify_future.result(timeout=VERIFY_TIMEOUT_S)
-                    )
-                    target_signal = {
-                        "status": (
-                            "on_target" if verification.on_target else "off_target"
-                        ),
-                        "actual_element": verification.actual_element,
-                        "reason": verification.reason,
-                    }
-                except Exception as exc:  # noqa: BLE001 - optional verifier fails open
+                target_signal, verify_error = _target_verification_result(verify_future)
+                if verify_error is not None:
                     self._trace(
                         "worker_target_verify_error",
                         tool=call["name"],
-                        error=f"{type(exc).__name__}: {exc}",
+                        error=f"{type(verify_error).__name__}: {verify_error}",
                     )
-            platform_feedback: list[dict[str, Any]] = []
             feedback_reader = getattr(
                 getattr(self.platform, "client", None),
                 "consume_action_feedback",
                 None,
             )
-            if callable(feedback_reader):
-                for item in feedback_reader():
-                    if not isinstance(item, dict):
-                        continue
-                    status_code = item.get("status")
-                    body = str(item.get("body") or "").strip()
-                    decoded: Any = None
-                    try:
-                        decoded = json.loads(body) if body else None
-                    except json.JSONDecodeError:
-                        decoded = None
-                    if isinstance(decoded, dict):
-                        message = decoded.get("message") or decoded.get("error_message")
-                        rejected = decoded.get("error") is True or decoded.get("success") is False
-                        if rejected or message:
-                            platform_feedback.append({
-                                "status": int(status_code or 0),
-                                "url": str(item.get("url") or ""),
-                                "rejected": rejected,
-                                "message": str(message or "").strip(),
-                            })
-                    elif isinstance(status_code, (int, float)) and int(status_code) >= 400:
-                        platform_feedback.append({
-                            "status": int(status_code),
-                            "url": str(item.get("url") or ""),
-                            "rejected": True,
-                            "message": body[:500],
-                        })
+            platform_feedback = _action_feedback(
+                feedback_reader() if callable(feedback_reader) else [],
+                executed_action.action_type,
+            )
             rejected_feedback = any(
                 item.get("rejected") is True for item in platform_feedback
             )
@@ -2378,16 +2477,10 @@ class ToolAgentRuntime:
                         item for item in reversed(platform_feedback)
                         if item.get("rejected") is True
                     ))
-                    prior = rejections.get(worker_id)
-                    same_rejection = bool(
-                        isinstance(prior, dict)
-                        and prior.get("message") == rejection.get("message")
-                        and prior.get("url") == rejection.get("url")
-                    )
-                    rejection["occurrences"] = (
-                        int(prior.get("occurrences") or 1) + 1
-                        if same_rejection
-                        else 1
+                    rejection["failure_kind"] = (
+                        "navigation_blocked"
+                        if executed_action.action_type == "navigate"
+                        else "platform_rejected"
                     )
                     rejections[worker_id] = rejection
             elif executed:
@@ -2408,20 +2501,6 @@ class ToolAgentRuntime:
                 payload["target_signal"] = target_signal
             if platform_feedback:
                 payload["platform_feedback"] = platform_feedback
-            terminal = None
-            rejection = self._active_platform_rejection()
-            if (
-                rejected_feedback
-                and rejection is not None
-                and (
-                    int(rejection.get("status") or 0) == 0
-                    or int(rejection.get("occurrences") or 1) >= 2
-                )
-            ):
-                payload["reason"] = str(
-                    rejection.get("message") or "The platform rejected the action."
-                )
-                terminal = "platform_rejected"
             if frame is not None and payload["status"] == "executed" and (
                 payload["no_effect"] is False
                 and is_candidate_commit(
@@ -2436,37 +2515,32 @@ class ToolAgentRuntime:
                 profile=spec.profile,
                 **payload,
             )
-            return payload, terminal
+            return payload, None
         raise ProtocolError(f"unsupported capability {action_spec.capability!r}")
 
     def _validate_runtime_open_url(
         self,
         candidate: str,
         *,
-        spec: WorkerSpec,
         frame: MaterializedFrame | None,
+        master_delegated: bool = True,
     ) -> None:
-        """Require baseline direct navigation to copy an externally supplied route."""
+        """Allow Master navigation and keep Worker-owned direct navigation same-origin."""
 
         candidate = candidate.strip()
-        if not candidate:
-            raise ValueError("runtime_open_url requires a non-empty URL")
-        sources = [
-            str(getattr(self, "_task_goal", "") or ""),
-            str(getattr(self, "_task_page_url", "") or ""),
-            str(getattr(self, "_master_knowledge", "") or ""),
-            str(getattr(self, "_worker_access_context", "") or ""),
-            spec.goal,
-            *spec.success_criteria,
-            str(frame.url if frame is not None else ""),
-        ]
-        if _url_is_sourced(candidate, sources):
+        candidate_origin = _http_origin(candidate)
+        if candidate_origin is None:
+            raise ValueError(
+                "runtime_open_url requires an absolute HTTP(S) URL without credentials"
+            )
+        if master_delegated:
             return
-        raise ValueError(
-            "runtime_open_url rejected an inferred URL/route. Use only an exact URL "
-            "present in the task or application/deployment knowledge; otherwise "
-            "navigate visually."
-        )
+        current_origin = _http_origin(frame.url if frame is not None else "")
+        if current_origin and candidate_origin and current_origin != candidate_origin:
+            raise _WorkerSpecExpansionRequired(
+                "The active execution path cannot continue with a Worker-owned origin "
+                "change; Strategy Planner must declare the replacement path in a new WorkerSpec."
+            )
 
     @staticmethod
     def _validate_worker_spec(spec: WorkerSpec) -> None:
@@ -2626,11 +2700,19 @@ class ToolAgentRuntime:
         ]
         for action in task_actions:
             self._validate_platform_action(action)
+        if any(
+            action.capability == "open_url" and action.fixed_args.get("url")
+            for action in task_actions
+        ):
+            floor = [
+                action for action in floor
+                if action.capability not in {"open_url", "back"}
+            ]
         return [*task_actions, *floor]
 
     @staticmethod
     def _event_layer(event: str) -> str:
-        if event.startswith("master_"):
+        if event.startswith(("master_", "strategy_")):
             return "master"
         if event in {"observe", "perception_extract"}:
             return "observer"
@@ -2661,22 +2743,28 @@ class ToolAgentRuntime:
                 f"Dispatch {profile} GUI Worker {payload.get('worker_id', '?')}: "
                 f"{payload.get('goal', '')}"
             ).strip()
-        if event == "master_worker_replan_requested":
+        if event == "strategy_planning_requested":
             return (
                 f"Worker {payload.get('worker_id', '?')} did not satisfy its subgoal; "
-                "request a different local strategy"
+                "search for a different local strategy"
             )
-        if event == "master_worker_revision_attempt":
-            issues = list(payload.get("diagnostics") or [])
+        if event == "strategy_candidates_proposed":
+            candidates = list(payload.get("candidates") or [])
             return (
-                f"Review replacement WorkerSpec attempt {payload.get('attempt', '?')}: "
-                + (f"{len(issues)} issue(s)" if issues else "passed")
+                f"Strategy Proposer returned {len(candidates)} candidate(s)"
             )
-        if event == "master_worker_redelegated":
+        if event == "strategy_selected":
             return (
-                f"Redelegate {payload.get('logical_worker_id', '?')} to new GUI Worker "
+                f"Strategy Selector: {payload.get('decision', 'stop')} · "
+                f"{payload.get('reason', '')}"
+            ).strip()
+        if event == "strategy_attempt_dispatched":
+            return (
+                f"Dispatch a fresh GUI Worker for {payload.get('logical_worker_id', '?')}: "
                 f"{payload.get('worker_id', '?')}"
             )
+        if event == "strategy_stopped":
+            return f"Strategy Planner stopped: {payload.get('reason', '')}".strip()
         if event == "worker_started":
             return (
                 f"Start {payload.get('profile', 'operator')} Worker "
@@ -2818,19 +2906,18 @@ class ToolAgentRuntime:
             return (
                 f"\n--- GUI Worker {entry.get('worker_id', '?')} "
                 f"[{spec.get('profile', 'operator')}] ---\n"
-                f"Goal    : {entry.get('goal', '')}"
+                f"Goal    : {entry.get('goal', '')}\n"
+                f"Strategy: {spec.get('strategy') or entry.get('strategy', '')}"
                 + (f"\nSuccess :\n{criteria_text}" if criteria_text else "")
             )
-        if event == "master_worker_replan_requested":
+        if event == "strategy_planning_requested":
             return (
                 f"Worker result: subgoal unsatisfied · {entry.get('worker_id', '?')}\n"
                 f"Reason       : {entry.get('reason', '')}\n"
-                "Master       : revise only this Worker's execution strategy"
+                "Strategy     : search without changing the logical contract"
             )
-        if event == "master_worker_revision_attempt":
-            issues = list(entry.get("diagnostics") or [])
+        if event == "strategy_candidates_proposed":
             usage = entry.get("token_usage") if isinstance(entry.get("token_usage"), dict) else {}
-            verdict = f"failed · {issues[0]}" if issues else "passed"
             metrics = []
             if entry.get("llm_elapsed_s"):
                 metrics.append(f"{float(entry['llm_elapsed_s']):.1f}s")
@@ -2844,16 +2931,24 @@ class ToolAgentRuntime:
                 )
             suffix = f" ({' · '.join(metrics)})" if metrics else ""
             return (
-                f"  [Redelegate] attempt {entry.get('attempt', '?')} "
-                f"{verdict}{suffix}"
+                f"  [Strategy Proposer] {len(entry.get('candidates') or [])} "
+                f"candidate(s){suffix}"
             )
-        if event == "master_worker_redelegated":
+        if event == "strategy_selected":
+            return (
+                f"  [Strategy Selector] {entry.get('decision', 'stop')} · "
+                f"{entry.get('reason', '')}"
+            )
+        if event == "strategy_attempt_dispatched":
             spec = entry.get("spec") if isinstance(entry.get("spec"), dict) else {}
             return (
                 f"\n--- GUI Worker {entry.get('worker_id', '?')} "
-                f"[{spec.get('profile', 'operator')}] · Master redelegation ---\n"
-                f"Goal    : {spec.get('goal', '')}"
+                f"[{spec.get('profile', 'operator')}] · selected strategy ---\n"
+                f"Goal    : {spec.get('goal', '')}\n"
+                f"Strategy: {spec.get('strategy', '')}"
             )
+        if event == "strategy_stopped":
+            return f"  [Strategy Planner] stop · {entry.get('reason', '')}"
         if event == "observe":
             scopes = []
             for requirement_id, scope in (entry.get("requirement_scopes") or {}).items():
@@ -3022,10 +3117,14 @@ class ToolAgentRuntime:
                 f"({action.get('capability', '?')})"
             )
         if event == "worker_action_blocked":
-            return (
-                f"Action fuse: blocked {entry.get('tool', '?')} after "
-                f"{entry.get('prior_attempts', '?')} equivalent attempts"
-            )
+            prior_attempts = int(entry.get("prior_attempts") or 0)
+            reason = str(entry.get("reason") or "")
+            if prior_attempts:
+                return (
+                    f"Action fuse: blocked {entry.get('tool', '?')} after "
+                    f"{prior_attempts} equivalent attempts"
+                )
+            return f"Action guard: blocked {entry.get('tool', '?')} · {reason}"
         if event == "worker_complete":
             collection = (
                 entry.get("collection_ref")

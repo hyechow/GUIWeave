@@ -112,6 +112,27 @@ def test_tracked_request_keeps_browser_loading_until_response_headers():
     assert dev.is_loading() is False
 
 
+def test_navigation_settle_waits_for_visible_document_content():
+    dev = _device_with_session(_FakeSession())
+    dev._ensure_net_tracking = lambda: None
+    probes = iter((["complete", 500, False], ["complete", 500, True]))
+    probe_count = []
+
+    def cdp_send(_method, params):
+        if "return 1" in params["expression"]:
+            value = 1
+        else:
+            probe_count.append(True)
+            value = next(probes)
+        return {"result": {"value": value}}
+
+    dev._cdp_send = cdp_send
+
+    dev.wait_settled("navigate")
+
+    assert len(probe_count) == 2
+
+
 def test_cdp_navigation_surfaces_protocol_error_text():
     dev = PlaywrightDevice.__new__(PlaywrightDevice)
     dev.headless = False
@@ -167,6 +188,23 @@ def test_navigation_failure_feedback_skips_unresponsive_page_probe():
 
     assert len(feedback) == 1
     assert json.loads(feedback[0]["body"])["message"] == "navigation timed out"
+
+
+def test_browser_scroll_is_capped_below_one_viewport() -> None:
+    wheel_calls = []
+    page = SimpleNamespace(mouse=SimpleNamespace(
+        move=lambda *_args: None,
+        wheel=lambda dx, dy: wheel_calls.append((dx, dy)),
+    ))
+    dev = PlaywrightDevice.__new__(PlaywrightDevice)
+    dev._last_viewport = (1280, 800)
+    dev._follow_active_tab = lambda: None
+    dev._require_page = lambda: page
+
+    result = dev.scroll("down", amount=9, x=640, y=400)
+
+    assert wheel_calls == [(0, 720)]
+    assert "720px" in result
 
 
 def test_dom_snap_text_retarget_uses_interactive_accessible_names():

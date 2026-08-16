@@ -190,12 +190,15 @@ class RuntimeDataStore:
             and (known_total is None or row_count >= known_total)
         )
         totals_conflict = len(totals) > 1 or len(page_counts) > 1
+        requested = str(last_coverage.get("requested") or "complete")
         if scope_status != "met":
             coverage_status = "incomplete"
         elif totals_conflict or (
             known_total is not None and row_count > known_total
         ):
             coverage_status = "conflicting"
+        elif requested == "first_match" and row_count:
+            coverage_status = "complete"
         elif structured and (
             all_pages
             or page_count is None and (
@@ -224,7 +227,7 @@ class RuntimeDataStore:
         else:
             coverage_status = "unknown"
         combined_coverage = {
-            "requested": "complete",
+            "requested": requested,
             "scope_status": scope_status,
             "requested_filters": dict(last_coverage.get("requested_filters") or {}),
             "applied_filters": dict(last_coverage.get("applied_filters") or {}),
