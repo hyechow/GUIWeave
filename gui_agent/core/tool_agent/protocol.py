@@ -24,10 +24,23 @@ from gui_agent.core.tool_agent.contracts import (
 
 
 MAX_ORDERED_ACTIONS = 5
+_TERMINAL_TOOL_BY_STATE = {"completed": "complete", "failed": "fail"}
 
 
 class ProtocolError(RuntimeError):
     pass
+
+
+def validate_worker_tool_state(tool: str, state: WorkerState) -> None:
+    """Keep terminal state claims aligned with the selected protocol tool."""
+
+    if (
+        state.status in _TERMINAL_TOOL_BY_STATE
+        or tool in _TERMINAL_TOOL_BY_STATE.values()
+    ) and _TERMINAL_TOOL_BY_STATE.get(state.status) != tool:
+        raise ProtocolError(
+            f"terminal state/tool mismatch: state.status={state.status!r}, tool={tool!r}"
+        )
 
 
 class CompleteWorkerArgs(BaseModel):
@@ -538,8 +551,16 @@ def _with_worker_state(tool: dict[str, Any]) -> dict[str, Any]:
     """Add one compact common state carrier to a provider-facing tool schema."""
     wrapped = deepcopy(tool)
     parameters = wrapped["function"]["parameters"]
+    state_schema = deepcopy(_WORKER_STATE_SCHEMA)
+    terminal_state = next((
+        state for state, name in _TERMINAL_TOOL_BY_STATE.items()
+        if name == wrapped["function"]["name"]
+    ), None)
+    state_schema["properties"]["status"]["enum"] = (
+        [terminal_state] if terminal_state else ["exploring", "collecting"]
+    )
     parameters["properties"] = {
-        "state": deepcopy(_WORKER_STATE_SCHEMA),
+        "state": state_schema,
         **dict(parameters.get("properties") or {}),
     }
     parameters["required"] = [

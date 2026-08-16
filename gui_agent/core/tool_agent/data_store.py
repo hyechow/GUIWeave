@@ -28,6 +28,32 @@ def _boundary_overlap(left: list[Any], right: list[Any]) -> int:
     return 0
 
 
+def apply_cardinality_contract(
+    collection: CollectionRef,
+    cardinality: str,
+) -> CollectionRef:
+    """Apply logical result cardinality without weakening collection coverage."""
+
+    cardinality = "one" if cardinality == "one" else "many"
+    coverage = {**collection.coverage, "cardinality": cardinality}
+    if coverage.get("scope_status") == "met" and cardinality == "one":
+        movement = coverage.get("movement")
+        movement = movement if isinstance(movement, dict) else {}
+        proves_multiple = (
+            collection.row_count > 1
+            or any(
+                isinstance(value, (int, float)) and value > 1
+                for value in (coverage.get("known_total"), coverage.get("page_count"))
+            )
+            or movement.get("has_next_page") is True
+        )
+        if proves_multiple:
+            coverage["status"] = "conflicting"
+        elif collection.row_count == 1 and coverage.get("status") != "conflicting":
+            coverage["status"] = "complete"
+    return collection.model_copy(update={"coverage": coverage})
+
+
 class RuntimeDataStore:
     def __init__(self) -> None:
         self._values: dict[str, Any] = {}
@@ -233,6 +259,10 @@ class RuntimeDataStore:
             row_count=row_count,
             row_schema=row_schema,
             coverage=combined_coverage,
+        )
+        collection = apply_cardinality_contract(
+            collection,
+            last_coverage.get("cardinality") or "many",
         )
         self._collections[collection_id] = collection
         self._values[collection_id] = collection_rows

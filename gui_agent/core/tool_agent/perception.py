@@ -734,6 +734,7 @@ def _structured_coverage(
     }
     return {
         "scope": requirement.scope,
+        "cardinality": requirement.cardinality,
         "scope_status": scope["status"],
         "requested_filters": scope["requested_filters"],
         "applied_filters": scope["applied_filters"],
@@ -1159,6 +1160,7 @@ class PerceptionMaterializer:
                     )
                     coverage = {
                         "scope": requirement.scope,
+                        "cardinality": requirement.cardinality,
                         "scope_status": scope["status"],
                         "requested_filters": scope["requested_filters"],
                         "applied_filters": scope["applied_filters"],
@@ -1257,6 +1259,7 @@ class PerceptionMaterializer:
                     provider = "structured"
                     coverage = {
                         "scope": requirement.scope,
+                        "cardinality": requirement.cardinality,
                         "scope_status": "met",
                         "requested_filters": scope["requested_filters"],
                         "applied_filters": scope["applied_filters"],

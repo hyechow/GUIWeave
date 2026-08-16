@@ -70,6 +70,7 @@ from gui_agent.core.tool_agent.protocol import (
     parse_json_object,
     response_usage,
     validate_dynamic_action_spec,
+    validate_worker_tool_state,
     worker_action_floor,
     worker_attempt_contract,
 )
@@ -601,6 +602,7 @@ class ToolAgentRuntime:
             "description",
             "target_label",
             "scope",
+            "cardinality",
             "row_schema",
             "field_sources",
             "field_types",
@@ -733,6 +735,7 @@ class ToolAgentRuntime:
                             "description": item.description,
                             "target_label": item.target_label,
                             "scope": item.scope,
+                            "cardinality": item.cardinality,
                             "row_schema": item.row_schema,
                             "field_sources": item.field_sources,
                             "field_types": item.field_types,
@@ -1130,6 +1133,7 @@ class ToolAgentRuntime:
                             frame=frame,
                             spec=spec,
                         )
+                        validate_worker_tool_state(call["name"], state)
                         break
                     except Exception as exc:  # noqa: BLE001 - one same-frame protocol repair
                         self._trace(

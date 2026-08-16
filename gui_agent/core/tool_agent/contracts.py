@@ -28,6 +28,13 @@ class DataRequirement(StrictModel):
         description="Visible label/caption that identifies the data surface, when known.",
     )
     scope: Literal["collection"] = "collection"
+    cardinality: Literal["one", "many"] = Field(
+        default="many",
+        description=(
+            "Logical result cardinality. 'one' means the exact requested scope has "
+            "at most one authoritative source record; 'many' requires collection coverage."
+        ),
+    )
     row_schema: dict[str, Any]
     field_sources: dict[str, str] = Field(
         default_factory=dict,
