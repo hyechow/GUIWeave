@@ -73,7 +73,13 @@ def _tool_call(name: str, args: dict) -> AIMessage:
     )
 
 
-def _worker_run(tmp_path: Path, *, recorded_tool: str, recorded_actions: list[dict]) -> Path:
+def _worker_run(
+    tmp_path: Path,
+    *,
+    recorded_tool: str,
+    recorded_actions: list[dict],
+    repair_history: bool = False,
+) -> Path:
     spec = WorkerSpec.model_validate({
         "profile": "operator",
         "goal": "Traverse the visible collection.",
@@ -98,6 +104,20 @@ def _worker_run(tmp_path: Path, *, recorded_tool: str, recorded_actions: list[di
         "frame_id": "frame:1",
         "screenshot_path": str(tmp_path / "screenshot_tool_agent_1.png"),
     }), encoding="utf-8")
+    report = _snapshot("tool_agent.worker", image=True)
+    if repair_history:
+        invalid_call = {
+            "name": "continue_with_actions",
+            "args": {"state": _state("completed"), "actions": []},
+            "id": "recorded-invalid-call",
+        }
+        report["roles"].extend([
+            {"role": "assistant", "parts": [{
+                "label": "tool_calls", "type": "text",
+                "text": json.dumps([invalid_call]),
+            }]},
+            {"role": "human", "parts": [{"type": "text", "text": "Protocol repair"}]},
+        ])
     (tmp_path / "tool_agent_trace.json").write_text(json.dumps({"trace": [
         {"index": 1, "event": "runtime_started", "multi_action": True},
         {
@@ -114,7 +134,7 @@ def _worker_run(tmp_path: Path, *, recorded_tool: str, recorded_actions: list[di
             "step": 1,
             "tool": recorded_tool,
             "args": {"actions": recorded_actions},
-            "context_reports": [_snapshot("tool_agent.worker", image=True)],
+            "context_reports": [report],
         },
     ]}), encoding="utf-8")
     return tmp_path
@@ -181,6 +201,83 @@ def test_worker_replay_applies_one_same_frame_protocol_repair(tmp_path) -> None:
     assert "Protocol repair" in model.calls[1][-1].content
 
 
+def test_worker_replay_preserves_recorded_protocol_repair_history(tmp_path) -> None:
+    run_dir = _worker_run(
+        tmp_path,
+        recorded_tool="complete",
+        recorded_actions=[],
+        repair_history=True,
+    )
+    model = _RecordedModel(
+        _tool_call("complete", {"state": _state("completed"), "evidence": ["done"]}),
+    )
+
+    result = replay_worker_decision(run_dir, frame=1, llm=model)
+
+    assert result["status"] == "passed"
+    assert len(model.calls[0]) == 4
+    assert "Protocol repair" in model.calls[0][-1].content
+
+
+def test_worker_replay_applies_current_singleton_contract(tmp_path) -> None:
+    run_dir = _worker_run(
+        tmp_path,
+        recorded_tool="continue_with_actions",
+        recorded_actions=[{"name": "runtime_scroll_visible", "args": {}}],
+    )
+    spec = WorkerSpec.model_validate({
+        "profile": "collector",
+        "goal": "Collect the one authoritative value for the exact scope.",
+        "success_criteria": ["The authoritative value is visible."],
+        "data_requirements": [{
+            "id": "answer",
+            "description": "One authoritative value.",
+            "cardinality": "one",
+            "row_schema": {"value": "number"},
+        }],
+        "actions": [{
+            "name": "scroll_content",
+            "capability": "scroll",
+            "description": "Scroll the visible content.",
+            "exposed_args": ["direction", "amount"],
+        }],
+    })
+    observation = json.loads(
+        (run_dir / "observation_tool_agent_1.json").read_text(encoding="utf-8")
+    )
+    observation["collections"] = [{
+        "ref": "collection:answer",
+        "requirement_id": "answer",
+        "chunk_refs": ["chunk:answer:1"],
+        "row_count": 1,
+        "row_schema": spec.data_requirements[0].row_schema,
+        "coverage": {"scope_status": "met", "status": "incomplete"},
+    }]
+    (run_dir / "observation_tool_agent_1.json").write_text(
+        json.dumps(observation), encoding="utf-8",
+    )
+    model = _RecordedModel(
+        _tool_call("complete", {
+            "state": _state("completed"),
+            "evidence": ["one scope-matched row"],
+        }),
+    )
+
+    result = replay_worker_decision(
+        run_dir,
+        frame=1,
+        worker_spec=spec,
+        expectation={"tool": "complete", "state_status": "completed"},
+        llm=model,
+    )
+
+    assert result["status"] == "passed"
+    assert result["samples"][0]["tool"] == "complete"
+    assert "complete" in {
+        tool["function"]["name"] for tool in model.bound_tools
+    }
+
+
 def test_master_replay_uses_current_prompt_knowledge_and_structural_expectation(
     monkeypatch, tmp_path,
 ) -> None:
@@ -236,6 +333,7 @@ def test_master_replay_uses_current_prompt_knowledge_and_structural_expectation(
             "reviewed": True,
             "worker_count": 1,
             "worker_profiles": ["operator"],
+            "data_cardinalities": [],
             "finish_effect": "mutation",
         },
     )

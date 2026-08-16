@@ -1237,6 +1237,23 @@ def test_vision_only_never_invokes_platform_perception(tmp_path: Path) -> None:
             completed.coverage["status"]) == (False, "incomplete")
 
 
+def test_visual_singleton_completes_without_collection_boundary(tmp_path: Path) -> None:
+    requirement = _requirement().model_copy(update={"cardinality": "one"})
+    materializer = _materializer(tmp_path, "vision-only")
+    materializer._vision_extract = lambda *_args, **_kwargs: {  # type: ignore[method-assign]
+        "found": True,
+        "rows": [{"term": "authoritative summary", "uses": 27}],
+        "start_visible": True,
+        "end_visible": False,
+    }
+
+    frame = _observe_requirement(materializer, requirement, 1)
+
+    assert frame.collections[0].row_count == 1
+    assert frame.collections[0].coverage["status"] == "complete"
+    assert frame.collections[0].coverage["cardinality"] == "one"
+
+
 def test_single_identity_candidates_assemble_linked_details(tmp_path: Path) -> None:
     properties = {"name": {"type": "string"}, "content": {
         "type": "array", "items": {"type": "string"},

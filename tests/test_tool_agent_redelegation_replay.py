@@ -95,7 +95,10 @@ def test_runtime_rejects_semantic_drift_during_local_worker_revision() -> None:
     original = WorkerSpec.model_validate(_case()["original_spec"])
     revised = WorkerSpec.model_validate(_case()["replacement_spec"])
     drifted_requirement = revised.data_requirements[0].model_copy(
-        update={"description": "Collect any broadly related product reviews."}
+        update={
+            "description": "Collect any broadly related product reviews.",
+            "cardinality": "one",
+        }
     )
     drifted = revised.model_copy(
         update={
@@ -110,6 +113,7 @@ def test_runtime_rejects_semantic_drift_during_local_worker_revision() -> None:
     assert "goal is immutable across runtime redelegation" in issues
     assert "success_criteria are immutable across runtime redelegation" in issues
     assert "data_requirements[0].description is immutable" in issues
+    assert "data_requirements[0].cardinality is immutable" in issues
 
 
 def test_authoritative_empty_result_requires_a_new_acquisition_scope() -> None:

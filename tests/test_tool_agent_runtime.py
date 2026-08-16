@@ -949,11 +949,13 @@ class _MultiActionWorker:
     def __init__(
         self,
         action_batches: list[list[dict]] | None = None,
+        state_status: str = "exploring",
     ) -> None:
         self.calls = 0
         self.bound_names: set[str] = set()
         self.bound_schemas: list[str] = []
         self.action_batches = action_batches
+        self.state_status = state_status
         self.messages = []
 
     def bind_tools(self, tools, **kwargs):
@@ -975,7 +977,7 @@ class _MultiActionWorker:
             "name": "continue_with_actions",
             "args": {
                 "state": {
-                    "status": "exploring",
+                    "status": self.state_status,
                     "summary": "The complete login form is visible.",
                     "next_instruction": "Fill and submit the login form.",
                 },
@@ -1083,6 +1085,25 @@ def test_fused_worker_returns_typed_failure_after_repeated_empty_action_envelope
         for message in worker.messages
         if getattr(message, "type", "") == "human"
     )
+
+
+@pytest.mark.parametrize("state_status", ["completed", "failed"])
+def test_fused_worker_rejects_terminal_state_with_continuing_action(
+    monkeypatch, state_status: str,
+) -> None:
+    actions = [[{"name": "task_action", "args": {"x": 500, "y": 500}}]] * 2
+    worker = _MultiActionWorker(actions, state_status=state_status)
+    runtime = _run_fused_worker(
+        monkeypatch,
+        current_url="https://example.test/items",
+        worker=worker,
+    )
+
+    assert runtime.outcome.phase == "failed"
+    assert runtime.outcome.steps == 0
+    assert "terminal state/tool mismatch" in runtime.outcome.summary
+    assert len(runtime._executor.actions) == 0
+    assert worker.calls == 2
 
 
 def test_worker_repairs_rejected_launch_app_without_reobserving(monkeypatch) -> None:

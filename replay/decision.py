@@ -19,7 +19,12 @@ from gui_agent.core.tool_agent.action_guard import (
     control_at_point,
 )
 from gui_agent.core.self_learning.app_summary import load_knowledge_for_app
-from gui_agent.core.tool_agent.contracts import DynamicActionSpec, MaterializedFrame, WorkerSpec
+from gui_agent.core.tool_agent.contracts import (
+    DynamicActionSpec,
+    MaterializedFrame,
+    WorkerSpec,
+)
+from gui_agent.core.tool_agent.data_store import apply_cardinality_contract
 from gui_agent.core.tool_agent.orchestrator import compile_master_program
 from gui_agent.core.tool_agent.perception import derive_required_interactions
 from gui_agent.core.tool_agent.protocol import (
@@ -137,6 +142,7 @@ def _worker_messages(
     frame: MaterializedFrame,
 ) -> list[Any]:
     messages: list[Any] = []
+    frame_replaced = False
     for role in report.get("roles", []):
         name = str(role.get("role") or "")
         parts = [part for part in role.get("parts", []) if isinstance(part, dict)]
@@ -168,11 +174,11 @@ def _worker_messages(
                 ),
                 text, count=1, flags=re.DOTALL,
             )
-            if replacements != 1:
-                raise ValueError("recording has no replaceable Worker frame payload")
+            frame_replaced = frame_replaced or replacements == 1
             messages.append(
                 image_message(text, screenshot)
-                if any(part.get("type") == "image" for part in parts)
+                if replacements == 1
+                and any(part.get("type") == "image" for part in parts)
                 else HumanMessage(content=text)
             )
         elif name == "assistant":
@@ -188,6 +194,8 @@ def _worker_messages(
             messages.append(AIMessage(content=text, tool_calls=calls))
         else:
             raise ValueError(f"unsupported recorded prompt role {name!r}")
+    if not frame_replaced:
+        raise ValueError("recording has no replaceable Worker frame payload")
     return messages
 
 
@@ -222,14 +230,22 @@ def _master_shape(source: str, *, reviewed: bool = True) -> dict[str, Any]:
     calls = _ctx_calls(tree)
     workers = [call for call in calls if call.func.attr == "gui_worker"]
     profiles = []
+    cardinalities = []
     for call in workers:
         profile = _literal(call, "profile")
-        profiles.append(profile or ("collector" if _literal(call, "data_requirements", []) else "operator"))
+        requirements = _literal(call, "data_requirements", [])
+        profiles.append(profile or ("collector" if requirements else "operator"))
+        cardinalities.extend(
+            str(item.get("cardinality") or "many")
+            for item in requirements
+            if isinstance(item, dict)
+        )
     finish = next((call for call in calls if call.func.attr == "finish"), None)
     return {
         "reviewed": reviewed,
         "worker_count": len(workers),
         "worker_profiles": profiles,
+        "data_cardinalities": cardinalities,
         "api_calls": [call.func.attr for call in calls],
         "finish_effect": _literal(finish, "effect", ""),
     }
@@ -489,6 +505,7 @@ def replay_worker_decision(
     frame: str | int,
     samples: int = 1,
     expectation: dict[str, Any] | None = None,
+    worker_spec: WorkerSpec | None = None,
     llm: Any = None,
 ) -> dict[str, Any]:
     if samples < 1:
@@ -506,7 +523,7 @@ def replay_worker_decision(
         observation["controls"] = refresh_android_control_semantics(
             list(observation.get("controls") or [])
         )
-    spec = _worker_spec(events, selected)
+    spec = worker_spec or _worker_spec(events, selected)
     started = next((event for event in events if event.get("event") == "runtime_started"), {})
     enhanced = started.get("perception_mode") == "enhanced"
     if enhanced:
@@ -523,6 +540,15 @@ def replay_worker_decision(
             )
         ]
     materialized = MaterializedFrame.model_validate(observation)
+    if spec.data_requirements:
+        requirement = spec.data_requirements[0]
+        materialized = materialized.model_copy(update={
+            "collections": [
+                apply_cardinality_contract(item, requirement.cardinality)
+                if item.requirement_id == requirement.id else item
+                for item in materialized.collections
+            ],
+        })
     actions = _worker_actions(run_dir, events, context, selected, spec)
     ready = bool(spec.data_requirements) and any(
         item.requirement_id == spec.data_requirements[0].id

@@ -147,6 +147,40 @@ def test_static_unknown_total_stays_incomplete_with_a_clipped_start() -> None:
 
 
 @pytest.mark.parametrize(
+    ("rows", "source_metadata", "expected"),
+    [
+        ([{"label": "only", "metric": 27}], {}, "complete"),
+        (
+            [{"label": "a", "metric": 27}, {"label": "b", "metric": 23}],
+            {},
+            "conflicting",
+        ),
+        ([{"label": "only", "metric": 27}], {"total_records": 0}, "conflicting"),
+        ([{"label": "only", "metric": 27}], {"total_records": 2}, "conflicting"),
+        (
+            [{"label": "only", "metric": 27}],
+            {"movement": {"has_next_page": True}},
+            "conflicting",
+        ),
+    ],
+)
+def test_singleton_requires_exactly_one_authoritative_record(
+    rows: list[dict], source_metadata: dict, expected: str,
+) -> None:
+    store = RuntimeDataStore()
+    _, collection, _ = _put_window(
+        store, "frame:1", rows, context="summary",
+        partial=True,
+        scope_status="met",
+        cardinality="one",
+        start_visible=True,
+        **source_metadata,
+    )
+
+    assert collection.coverage["status"] == expected
+
+
+@pytest.mark.parametrize(
     ("contexts", "expected_count"),
     [
         (("detail:1", "detail:2"), 2),

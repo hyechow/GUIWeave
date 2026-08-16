@@ -82,6 +82,10 @@ def test_master_exposes_only_tool_agent_runtime_api() -> None:
     assert "Source layout order is not a data contract" in prompt
     assert "navigation, not data retrieval" in prompt
     assert "use a scalar JSON Schema" in prompt
+    assert "does not convert a differently displayed source value" in prompt
+    assert "Current, first, or visually prominent values are not extrema" in prompt
+    assert 'Set `cardinality="one"` only' in prompt
+    assert "the first visible candidate is not" in prompt
 
 
 def test_visual_transcription_uses_runtime_time_without_inventing_dates() -> None:
@@ -117,6 +121,7 @@ def test_worker_keeps_data_private_and_coordinates_normalized() -> None:
     assert "Coordinates are normalized 0..999" in prompt
     assert "request_action_patch" in prompt
     assert "Placeholder labels on collection rows never override" in prompt
+    assert "`state.status = completed | failed` is terminal" in prompt
 
 
 def test_master_keeps_visual_conditional_dependencies_in_one_worker() -> None:

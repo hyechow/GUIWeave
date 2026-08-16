@@ -372,6 +372,8 @@ def test_collector_completion_tool_is_frame_gated_and_runtime_bound() -> None:
 
     waiting = dynamic_worker_tools(floor, completion_mode="unavailable")
     assert "complete" not in {tool["function"]["name"] for tool in waiting}
+    action_state = waiting[0]["function"]["parameters"]["properties"]["state"]
+    assert action_state["properties"]["status"]["enum"] == ["exploring", "collecting"]
 
     ready = dynamic_worker_tools(floor, completion_mode="collector")
     complete = next(
@@ -380,6 +382,10 @@ def test_collector_completion_tool_is_frame_gated_and_runtime_bound() -> None:
     properties = complete["function"]["parameters"]["properties"]
     assert "collection_ref" not in properties
     assert set(properties) == {"state", "evidence"}
+    assert properties["state"]["properties"]["status"]["enum"] == ["completed"]
+    failure = next(tool for tool in ready if tool["function"]["name"] == "fail")
+    failure_state = failure["function"]["parameters"]["properties"]["state"]
+    assert failure_state["properties"]["status"]["enum"] == ["failed"]
 
 
 def test_provider_coordinate_variants_are_normalized_before_strict_validation() -> None:
