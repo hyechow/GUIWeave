@@ -135,6 +135,46 @@ def test_commit_label_inference_is_limited_to_buttons():
         assert control.get("form_action") == expected
 
 
+def test_traversal_action_marks_record_and_page_navigation() -> None:
+    controls = normalize_form_controls({"controls": [
+        {"label": "Next", "kind": "button"},
+        {"label": "Previous", "kind": "button"},
+        {"label": "Next page", "kind": "a"},
+        {"label": "Previous page", "kind": "button"},
+        {"label": "下一页", "kind": "button"},
+        {"label": "上一条", "kind": "button"},
+        {"label": "下一頁", "kind": "button"},
+        {"label": "上一條", "kind": "button"},
+    ]})
+
+    assert [c.get("traversal_action") for c in controls] == [
+        "record_next",
+        "record_previous",
+        "page_next",
+        "page_previous",
+        "page_next",
+        "record_previous",
+        "page_next",
+        "record_previous",
+    ]
+
+
+def test_traversal_action_never_marks_commit_filter_or_query_controls() -> None:
+    # "Save and Next" commits — the driver must never treat it as navigation.
+    controls = normalize_form_controls({"controls": [
+        {"label": "Save and Next", "kind": "button", "form_action": "commit"},
+        {"label": "Next", "kind": "button", "query_action": "submit"},
+        {"label": "Next", "kind": "button", "is_filter": True},
+        {"label": "Next", "kind": "text_input"},
+        {"label": "Save Attribute", "kind": "button"},
+        {"label": "", "kind": "button"},
+    ]})
+
+    assert all("traversal_action" not in c for c in controls)
+    assert controls[0]["form_action"] == "commit"
+    assert controls[4]["form_action"] == "commit"
+
+
 def test_normalize_form_controls_keeps_section_toggle_affordance():
     controls = normalize_form_controls({
         "controls": [{

@@ -43,6 +43,24 @@ ttl: session
   All** in every participating attribute (inherited checks are not the requested set), select
   only the requested values, then **Generate Products** and save the parent. On **Summary**,
   New Product Review rows must equal the Cartesian product of only those requested values.
+  If Summary shows a superset, the offending inherited check is usually **offscreen** in a long
+  checkbox list (the Runtime's authoritative choice state lists checked values outside the
+  viewport): do not re-verify visible boxes — go Back and apply **Deselect All** in **every**
+  attribute section, then re-select only the requested values. Worker specs for this flow must
+  phrase the selection contract as performed actions, not verified state: "Deselect All was
+  clicked in every attribute section during this pass, then exactly {requested values} were
+  checked" — visible boxes are not evidence that offscreen values are clear. A multi-section
+  selection mutation should be decomposed into **one operator per attribute section** whose
+  success criteria require (a) the section's Deselect All click and (b) the Runtime's
+  authoritative choice state showing zero checked values in that section outside the
+  requested set; a final operator verifies Summary rows equal the requested Cartesian product
+  before Generate Products, and must `fail` on any superset instead of rationalizing extra
+  rows as pre-existing. **Generate Products only stages the matrix inside the open editor**:
+  the Current Variations grid re-renders in-page before anything is persisted, so new rows
+  there are staging evidence, not persistence. The mutation exists only after the parent
+  editor's **Save** fires its POST and the page reloads with the "You saved the product"
+  message — never complete after Generate Products alone, and never treat the in-page grid
+  as the saved state.
 - Supplying one requested Configurations member appends that member and preserves unrelated
   existing members. Adding a Size to all existing Color variants is one mutation on the
   configurable parent, not a per-simple edit.

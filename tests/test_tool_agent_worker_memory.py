@@ -514,3 +514,80 @@ def test_worker_rebuilds_fresh_messages_each_frame_instead_of_replaying_chat_his
         )
         for event in decisions
     )
+
+
+def test_offscreen_checked_checkbox_surfaces_in_choice_state() -> None:
+    """An off-screen inherited check must be visible as authoritative state.
+
+    Task 550 looped because the wizard advanced with Red checked offscreen:
+    checkbox state lives in `value`, which the old selected_text-only gate
+    dropped from observed_choice_state.
+    """
+    import json
+    from pathlib import Path
+
+    fixture = json.loads(
+        (
+            Path(__file__).parent
+            / "fixtures"
+            / "tool_agent"
+            / "task550_wizard_color_checks.json"
+        ).read_text()
+    )
+    frame = MaterializedFrame(
+        frame_id="frame:550",
+        screenshot_path="",
+        controls=fixture["controls"],
+    )
+
+    projection = project_worker_context(
+        memory=build_worker_memory_view(WorkerJournal(worker_id="wizard")),
+        frame=frame,
+    )
+
+    choice_state = projection.text.split('"observed_choice_state"', 1)[1].split(
+        '"structured_surfaces"', 1,
+    )[0]
+    assert '"label": "Red"' in choice_state
+    assert '"value": "on"' in choice_state
+    # Offscreen unchecked boxes stay out: only checked/select state is exposed.
+    assert '"kind": "checkbox_input"' in choice_state
+    assert '"value": "off"' not in choice_state
+
+
+def test_offscreen_action_controls_expose_reveal_targets() -> None:
+    """The reveal capability is unusable unless the Worker can read off-screen
+    action targets' rects (live failure: 8-turn scroll oscillation hunting a
+    below-fold button that sat in the frame inventory the whole time)."""
+    import json
+    from pathlib import Path
+
+    fixture = json.loads(
+        (
+            Path(__file__).parent
+            / "fixtures"
+            / "tool_agent"
+            / "task550_product_editor_offscreen.json"
+        ).read_text()
+    )
+    frame = MaterializedFrame(
+        frame_id="frame:550p",
+        screenshot_path="",
+        controls=fixture["controls"],
+    )
+
+    projection = project_worker_context(
+        memory=build_worker_memory_view(WorkerJournal(worker_id="editor")),
+        frame=frame,
+    )
+
+    section = projection.text.split('"offscreen_action_controls"', 1)[1].split(
+        '"candidate_set_state"', 1,
+    )[0]
+    assert '"label": "Edit Configurations"' in section
+    assert '"y": 2647' in section
+    # Row links stay out and duplicate labels collapse: 89 offscreen
+    # controls compress to a compact actionable set.
+    assert section.count('"kind"') <= 24
+    assert '"label": "Nona Fitness Tank' not in section
+    assert section.count('"label": "Select"') <= 1

@@ -8,7 +8,7 @@ from dataclasses import dataclass
 from hashlib import sha256
 from typing import Any
 
-from gui_agent.core.tool_agent.contracts import MaterializedFrame
+from gui_agent.core.tool_agent.contracts import MaterializedFrame, positioned_rect
 
 
 _GUARDED_CAPABILITIES = {
@@ -85,12 +85,10 @@ def control_at_point(
         return None
     matches: list[tuple[float, dict[str, Any]]] = []
     for control in frame.controls:
-        rect = control.get("rect")
-        if (
-            control.get("in_viewport") is False
-            or not isinstance(rect, dict)
-            or not all(isinstance(rect.get(key), (int, float)) for key in ("x", "y"))
-        ):
+        if control.get("in_viewport") is False:
+            continue
+        rect = positioned_rect(control)
+        if rect is None:
             continue
         cx, cy = float(rect["x"]), float(rect["y"])
         width, height = float(rect.get("w") or 0), float(rect.get("h") or 0)
@@ -281,6 +279,14 @@ def progress_signature(frame: MaterializedFrame) -> str:
     return sha256(rendered.encode()).hexdigest()[:16]
 
 
+_CYCLE_WINDOW = 6
+# A traversal loop revisiting at most this many distinct surfaces inside the
+# window is stuck: progressing flows (form fill, collection scroll, detail
+# walk) mint a new progress hash per dispatch. Half the window keeps the fuse
+# tolerant of one legitimate back-and-forth (review a step, then continue).
+_CYCLE_MAX_DISTINCT = 3
+
+
 @dataclass(frozen=True)
 class ActionCircuitDecision:
     blocked: bool
@@ -298,6 +304,7 @@ class WorkerActionCircuitBreaker:
     _last_attempt: tuple[str, str] | None = None
     _consecutive_attempts: int = 0
     _recent_attempts: tuple[tuple[str, str], ...] = ()
+    _progress_window: tuple[str, ...] = ()
 
     def inspect(
         self,
@@ -330,10 +337,26 @@ class WorkerActionCircuitBreaker:
             and history[::2] == (attempt, attempt)
             and history[1] == history[3] != attempt
         )
-        blocked = guarded and (prior >= self.threshold or cycle)
+        # A coordinate/description jitter lets a Next/Back traversal loop dodge the
+        # exact-pair cycle above. The robust stuck signal is surface-level: a worker
+        # whose last N dispatches only revisited already-seen surfaces is cycling,
+        # regardless of which action moved it there. Progressing flows (form fill,
+        # collection scroll, detail walk) keep minting new progress hashes and never
+        # trip this fuse. record() trims the window to _CYCLE_WINDOW entries.
+        window = self._progress_window
+        surface_cycle = (
+            len(window) == _CYCLE_WINDOW
+            and len(set(window)) <= _CYCLE_MAX_DISTINCT
+        )
+        blocked = guarded and (prior >= self.threshold or cycle or surface_cycle)
         reason = ""
         if blocked:
             reason = (
+                "blocked surface cycle: recent dispatches only revisited already-seen "
+                "surfaces without new task-relevant state; stop the traversal loop and "
+                "change the pending state (perform the untried selection/mutation) or "
+                "fail with the concrete blocker"
+                if surface_cycle and not cycle else
                 "blocked two-state action cycle without task-relevant progress"
                 if cycle else
                 f"blocked repeated {capability} action after {prior} equivalent "
@@ -343,13 +366,20 @@ class WorkerActionCircuitBreaker:
             blocked=blocked,
             signature=signature,
             progress=progress,
-            prior_attempts=2 if cycle else prior,
+            prior_attempts=2 if cycle or surface_cycle else prior,
             reason=reason,
         )
 
     def record(self, decision: ActionCircuitDecision) -> None:
         attempt = (decision.signature, decision.progress)
         self._recent_attempts = (*self._recent_attempts[-3:], attempt)
+        # One surface visit per entry: a multi-action batch decided on a single
+        # frame (login = type, type, tap) repeats that frame's hash per atomic
+        # dispatch, but it is one decision, not a traversal loop.
+        if not self._progress_window or self._progress_window[-1] != decision.progress:
+            self._progress_window = (
+                *self._progress_window[-_CYCLE_WINDOW + 1:], decision.progress,
+            )
         self._consecutive_attempts = (
             self._consecutive_attempts + 1 if attempt == self._last_attempt else 1
         )
@@ -359,6 +389,7 @@ class WorkerActionCircuitBreaker:
         self._last_attempt = None
         self._consecutive_attempts = 0
         self._recent_attempts = ()
+        self._progress_window = ()
 
 
 __all__ = [

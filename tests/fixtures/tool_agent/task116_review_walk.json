@@ -1,0 +1,7435 @@
+{
+ "_source": "logs/gui_agent/tool_agent/webarena/browser/enhanced/20260815_143419 (task 116, killed run)",
+ "_note": "Trimmed real frames: 7 review-editor frames (t10,11,14,16,34,37,39) + 2 grid frames (t13,26).",
+ "candidate_rows": [
+  {
+   "nickname": "Mervin",
+   "product": "Erikssen CoolTech™ Fitness Tank"
+  },
+  {
+   "nickname": "Trey",
+   "product": "Erikssen CoolTech™ Fitness Tank"
+  },
+  {
+   "nickname": "Edmund",
+   "product": "Erikssen CoolTech™ Fitness Tank"
+  },
+  {
+   "nickname": "cand4",
+   "product": "p4"
+  },
+  {
+   "nickname": "cand5",
+   "product": "p5"
+  },
+  {
+   "nickname": "cand6",
+   "product": "p6"
+  },
+  {
+   "nickname": "cand7",
+   "product": "p7"
+  },
+  {
+   "nickname": "Merrie",
+   "product": "Antonia Racer Tank"
+  },
+  {
+   "nickname": "Shaunte",
+   "product": "Zoe Tank"
+  }
+ ],
+ "detail_fields": [
+  "detailed_rating"
+ ],
+ "field_sources": {
+  "detailed_rating": "Detailed Rating",
+  "nickname": "Nickname"
+ },
+ "expected_resolved_after": {
+  "10": [
+   1
+  ],
+  "11": [
+   1,
+   2
+  ],
+  "14": [
+   1,
+   2,
+   8
+  ],
+  "16": [
+   1,
+   2,
+   8
+  ],
+  "34": [
+   1,
+   2,
+   8,
+   9
+  ],
+  "37": [
+   1,
+   2,
+   8,
+   9
+  ],
+  "39": [
+   1,
+   2,
+   8,
+   9
+  ]
+ },
+ "frames": {
+  "10": {
+   "title": "Edit Review / Customer Reviews / User Content / Marketing / Magento Admin",
+   "controls": [
+    {
+     "kind": "a",
+     "rect": {
+      "x": 34,
+      "y": 47,
+      "w": 88,
+      "h": 75
+     }
+    },
+    {
+     "kind": "a",
+     "label": "DASHBOARD",
+     "value": "Dashboard",
+     "rect": {
+      "x": 34,
+      "y": 133,
+      "w": 88,
+      "h": 62
+     }
+    },
+    {
+     "kind": "a",
+     "label": "SALES",
+     "value": "Sales",
+     "rect": {
+      "x": 34,
+      "y": 210,
+      "w": 88,
+      "h": 62
+     }
+    },
+    {
+     "kind": "a",
+     "label": "CATALOG",
+     "value": "Catalog",
+     "rect": {
+      "x": 34,
+      "y": 288,
+      "w": 88,
+      "h": 62
+     }
+    },
+    {
+     "kind": "a",
+     "label": "CUSTOMERS",
+     "value": "Customers",
+     "rect": {
+      "x": 34,
+      "y": 365,
+      "w": 88,
+      "h": 62
+     }
+    },
+    {
+     "kind": "a",
+     "label": "MARKETING",
+     "value": "Marketing",
+     "rect": {
+      "x": 34,
+      "y": 443,
+      "w": 88,
+      "h": 62
+     }
+    },
+    {
+     "kind": "a",
+     "label": "CONTENT",
+     "value": "Content",
+     "rect": {
+      "x": 34,
+      "y": 520,
+      "w": 88,
+      "h": 62
+     }
+    },
+    {
+     "kind": "a",
+     "label": "REPORTS",
+     "value": "Reports",
+     "rect": {
+      "x": 34,
+      "y": 598,
+      "w": 88,
+      "h": 62
+     }
+    },
+    {
+     "kind": "a",
+     "label": "STORES",
+     "value": "Stores",
+     "rect": {
+      "x": 34,
+      "y": 675,
+      "w": 88,
+      "h": 62
+     }
+    },
+    {
+     "kind": "a",
+     "label": "SYSTEM",
+     "value": "System",
+     "rect": {
+      "x": 34,
+      "y": 753,
+      "w": 88,
+      "h": 62
+     }
+    },
+    {
+     "kind": "a",
+     "label": "FIND PARTNERS & EXTENSIONS",
+     "value": "Find Partners & Extensions",
+     "rect": {
+      "x": 34,
+      "y": 846,
+      "w": 88,
+      "h": 88
+     }
+    },
+    {
+     "kind": "a",
+     "label": "My Account",
+     "value": "[session access value redacted]",
+     "rect": {
+      "x": 935,
+      "y": 116,
+      "w": 106,
+      "h": 33
+     }
+    },
+    {
+     "kind": "a",
+     "label": "Notifications",
+     "rect": {
+      "x": 868,
+      "y": 116,
+      "w": 60,
+      "h": 33
+     }
+    },
+    {
+     "kind": "text_input",
+     "label": "search-global",
+     "in_viewport": false,
+     "rect": {
+      "x": 827,
+      "y": 117,
+      "w": 50,
+      "h": 35
+     }
+    },
+    {
+     "kind": "button",
+     "label": "Back",
+     "value": "Back",
+     "rect": {
+      "x": 180,
+      "y": 226,
+      "w": 101,
+      "h": 46
+     }
+    },
+    {
+     "kind": "button",
+     "label": "Reset",
+     "value": "Reset",
+     "rect": {
+      "x": 384,
+      "y": 226,
+      "w": 78,
+      "h": 46
+     }
+    },
+    {
+     "kind": "button",
+     "label": "Delete Review",
+     "value": "Delete Review",
+     "rect": {
+      "x": 286,
+      "y": 226,
+      "w": 146,
+      "h": 46
+     }
+    },
+    {
+     "kind": "button",
+     "label": "Save Review",
+     "value": "Save Review",
+     "form_action": "commit",
+     "rect": {
+      "x": 913,
+      "y": 226,
+      "w": 132,
+      "h": 46
+     }
+    },
+    {
+     "kind": "button",
+     "label": "Previous",
+     "value": "Previous",
+     "rect": {
+      "x": 466,
+      "y": 226,
+      "w": 104,
+      "h": 46
+     }
+    },
+    {
+     "kind": "button",
+     "label": "Save and Previous",
+     "value": "Save and Previous",
+     "form_action": "commit",
+     "rect": {
+      "x": 654,
+      "y": 226,
+      "w": 181,
+      "h": 46
+     }
+    },
+    {
+     "kind": "button",
+     "label": "Save and Next",
+     "value": "Save and Next",
+     "form_action": "commit",
+     "rect": {
+      "x": 793,
+      "y": 226,
+      "w": 149,
+      "h": 46
+     }
+    },
+    {
+     "kind": "button",
+     "label": "Next",
+     "value": "Next",
+     "rect": {
+      "x": 545,
+      "y": 226,
+      "w": 73,
+      "h": 46
+     }
+    },
+    {
+     "kind": "a",
+     "label": "Erikssen CoolTech™ Fitness Tank",
+     "value": "Erikssen CoolTech™ Fitness Tank",
+     "rect": {
+      "x": 404,
+      "y": 400,
+      "w": 217,
+      "h": 19
+     }
+    },
+    {
+     "kind": "native_select",
+     "label": "Status",
+     "value": "1",
+     "selected_text": "Approved",
+     "selected_text_primary": "Approved",
+     "rect": {
+      "x": 377,
+      "y": 710,
+      "w": 149,
+      "h": 33
+     }
+    },
+    {
+     "kind": "text_input",
+     "label": "Nickname",
+     "value": "Mervin",
+     "rect": {
+      "x": 534,
+      "y": 789,
+      "w": 551,
+      "h": 33
+     }
+    },
+    {
+     "kind": "text_input",
+     "label": "Summary of Review",
+     "value": "Keeps me comfortable",
+     "rect": {
+      "x": 534,
+      "y": 868,
+      "w": 551,
+      "h": 33
+     }
+    },
+    {
+     "kind": "textarea",
+     "label": "Review",
+     "value": "I've only worn it a few times so far, but it really keeps me comfortable at the…",
+     "in_viewport": false,
+     "rect": {
+      "x": 534,
+      "y": 1136,
+      "w": 551,
+      "h": 336
+     }
+    },
+    {
+     "kind": "a",
+     "label": "Magento",
+     "in_viewport": false,
+     "rect": {
+      "x": 101,
+      "y": 1488,
+      "w": 22,
+      "h": 25
+     }
+    },
+    {
+     "kind": "a",
+     "label": "Privacy Policy",
+     "value": "Privacy Policy",
+     "in_viewport": false,
+     "rect": {
+      "x": 752,
+      "y": 1514,
+      "w": 89,
+      "h": 19
+     }
+    },
+    {
+     "kind": "a",
+     "label": "Account Activity",
+     "value": "Account Activity",
+     "in_viewport": false,
+     "rect": {
+      "x": 839,
+      "y": 1514,
+      "w": 110,
+      "h": 19
+     }
+    },
+    {
+     "kind": "a",
+     "label": "Report an Issue",
+     "value": "Report an Issue",
+     "in_viewport": false,
+     "rect": {
+      "x": 936,
+      "y": 1514,
+      "w": 105,
+      "h": 19
+     }
+    },
+    {
+     "kind": "rating",
+     "label": "Detailed Rating",
+     "value": "19",
+     "selected_text": "4",
+     "selected_text_primary": "4",
+     "rect": {
+      "x": 471,
+      "y": 635,
+      "w": 18,
+      "h": 24
+     }
+    }
+   ],
+   "url": "http://192.168.1.103:7780/[session access value redacted]/review/product/edit/id/124/",
+   "requirement_scopes": {
+    "tank_reviews": {
+     "status": "unknown",
+     "detail_resolution": {
+      "status": "active",
+      "candidate_records": 7,
+      "current_observed_detail_fields": [
+       "detailed_rating"
+      ],
+      "resolved_candidate_ordinals": [
+       1
+      ],
+      "next_unresolved_candidate": {
+       "ordinal": 2,
+       "fields": {
+        "nickname": "Trey",
+        "product": "Erikssen CoolTech™ Fitness Tank"
+       }
+      },
+      "detail_fields": [
+       "detailed_rating"
+      ],
+      "pending_candidate_ordinal": null
+     }
+    }
+   }
+  },
+  "11": {
+   "title": "Edit Review / Customer Reviews / User Content / Marketing / Magento Admin",
+   "controls": [
+    {
+     "kind": "a",
+     "rect": {
+      "x": 34,
+      "y": 47,
+      "w": 88,
+      "h": 75
+     }
+    },
+    {
+     "kind": "a",
+     "label": "DASHBOARD",
+     "value": "Dashboard",
+     "rect": {
+      "x": 34,
+      "y": 133,
+      "w": 88,
+      "h": 62
+     }
+    },
+    {
+     "kind": "a",
+     "label": "SALES",
+     "value": "Sales",
+     "rect": {
+      "x": 34,
+      "y": 210,
+      "w": 88,
+      "h": 62
+     }
+    },
+    {
+     "kind": "a",
+     "label": "CATALOG",
+     "value": "Catalog",
+     "rect": {
+      "x": 34,
+      "y": 288,
+      "w": 88,
+      "h": 62
+     }
+    },
+    {
+     "kind": "a",
+     "label": "CUSTOMERS",
+     "value": "Customers",
+     "rect": {
+      "x": 34,
+      "y": 365,
+      "w": 88,
+      "h": 62
+     }
+    },
+    {
+     "kind": "a",
+     "label": "MARKETING",
+     "value": "Marketing",
+     "rect": {
+      "x": 34,
+      "y": 443,
+      "w": 88,
+      "h": 62
+     }
+    },
+    {
+     "kind": "a",
+     "label": "CONTENT",
+     "value": "Content",
+     "rect": {
+      "x": 34,
+      "y": 520,
+      "w": 88,
+      "h": 62
+     }
+    },
+    {
+     "kind": "a",
+     "label": "REPORTS",
+     "value": "Reports",
+     "rect": {
+      "x": 34,
+      "y": 598,
+      "w": 88,
+      "h": 62
+     }
+    },
+    {
+     "kind": "a",
+     "label": "STORES",
+     "value": "Stores",
+     "rect": {
+      "x": 34,
+      "y": 675,
+      "w": 88,
+      "h": 62
+     }
+    },
+    {
+     "kind": "a",
+     "label": "SYSTEM",
+     "value": "System",
+     "rect": {
+      "x": 34,
+      "y": 753,
+      "w": 88,
+      "h": 62
+     }
+    },
+    {
+     "kind": "a",
+     "label": "FIND PARTNERS & EXTENSIONS",
+     "value": "Find Partners & Extensions",
+     "rect": {
+      "x": 34,
+      "y": 846,
+      "w": 88,
+      "h": 88
+     }
+    },
+    {
+     "kind": "a",
+     "label": "My Account",
+     "value": "[session access value redacted]",
+     "rect": {
+      "x": 935,
+      "y": 116,
+      "w": 106,
+      "h": 33
+     }
+    },
+    {
+     "kind": "a",
+     "label": "Notifications",
+     "rect": {
+      "x": 868,
+      "y": 116,
+      "w": 60,
+      "h": 33
+     }
+    },
+    {
+     "kind": "text_input",
+     "label": "search-global",
+     "in_viewport": false,
+     "rect": {
+      "x": 827,
+      "y": 117,
+      "w": 50,
+      "h": 35
+     }
+    },
+    {
+     "kind": "button",
+     "label": "Back",
+     "value": "Back",
+     "rect": {
+      "x": 180,
+      "y": 226,
+      "w": 101,
+      "h": 46
+     }
+    },
+    {
+     "kind": "button",
+     "label": "Reset",
+     "value": "Reset",
+     "rect": {
+      "x": 384,
+      "y": 226,
+      "w": 78,
+      "h": 46
+     }
+    },
+    {
+     "kind": "button",
+     "label": "Delete Review",
+     "value": "Delete Review",
+     "rect": {
+      "x": 286,
+      "y": 226,
+      "w": 146,
+      "h": 46
+     }
+    },
+    {
+     "kind": "button",
+     "label": "Save Review",
+     "value": "Save Review",
+     "form_action": "commit",
+     "rect": {
+      "x": 913,
+      "y": 226,
+      "w": 132,
+      "h": 46
+     }
+    },
+    {
+     "kind": "button",
+     "label": "Previous",
+     "value": "Previous",
+     "rect": {
+      "x": 466,
+      "y": 226,
+      "w": 104,
+      "h": 46
+     }
+    },
+    {
+     "kind": "button",
+     "label": "Save and Previous",
+     "value": "Save and Previous",
+     "form_action": "commit",
+     "rect": {
+      "x": 654,
+      "y": 226,
+      "w": 181,
+      "h": 46
+     }
+    },
+    {
+     "kind": "button",
+     "label": "Save and Next",
+     "value": "Save and Next",
+     "form_action": "commit",
+     "rect": {
+      "x": 793,
+      "y": 226,
+      "w": 149,
+      "h": 46
+     }
+    },
+    {
+     "kind": "button",
+     "label": "Next",
+     "value": "Next",
+     "rect": {
+      "x": 545,
+      "y": 226,
+      "w": 73,
+      "h": 46
+     }
+    },
+    {
+     "kind": "a",
+     "label": "Erikssen CoolTech™ Fitness Tank",
+     "value": "Erikssen CoolTech™ Fitness Tank",
+     "rect": {
+      "x": 404,
+      "y": 400,
+      "w": 217,
+      "h": 19
+     }
+    },
+    {
+     "kind": "native_select",
+     "label": "Status",
+     "value": "1",
+     "selected_text": "Approved",
+     "selected_text_primary": "Approved",
+     "rect": {
+      "x": 377,
+      "y": 710,
+      "w": 149,
+      "h": 33
+     }
+    },
+    {
+     "kind": "text_input",
+     "label": "Nickname",
+     "value": "Trey",
+     "rect": {
+      "x": 534,
+      "y": 789,
+      "w": 551,
+      "h": 33
+     }
+    },
+    {
+     "kind": "text_input",
+     "label": "Summary of Review",
+     "value": "Nothing to write home about",
+     "rect": {
+      "x": 534,
+      "y": 868,
+      "w": 551,
+      "h": 33
+     }
+    },
+    {
+     "kind": "textarea",
+     "label": "Review",
+     "value": "I agree with the reviewer above. You can get this same tank in a million other …",
+     "in_viewport": false,
+     "rect": {
+      "x": 534,
+      "y": 1136,
+      "w": 551,
+      "h": 336
+     }
+    },
+    {
+     "kind": "a",
+     "label": "Magento",
+     "in_viewport": false,
+     "rect": {
+      "x": 101,
+      "y": 1488,
+      "w": 22,
+      "h": 25
+     }
+    },
+    {
+     "kind": "a",
+     "label": "Privacy Policy",
+     "value": "Privacy Policy",
+     "in_viewport": false,
+     "rect": {
+      "x": 752,
+      "y": 1514,
+      "w": 89,
+      "h": 19
+     }
+    },
+    {
+     "kind": "a",
+     "label": "Account Activity",
+     "value": "Account Activity",
+     "in_viewport": false,
+     "rect": {
+      "x": 839,
+      "y": 1514,
+      "w": 110,
+      "h": 19
+     }
+    },
+    {
+     "kind": "a",
+     "label": "Report an Issue",
+     "value": "Report an Issue",
+     "in_viewport": false,
+     "rect": {
+      "x": 936,
+      "y": 1514,
+      "w": 105,
+      "h": 19
+     }
+    },
+    {
+     "kind": "rating",
+     "label": "Detailed Rating",
+     "value": "18",
+     "selected_text": "3",
+     "selected_text_primary": "3",
+     "rect": {
+      "x": 471,
+      "y": 635,
+      "w": 18,
+      "h": 24
+     }
+    }
+   ],
+   "url": "http://192.168.1.103:7780/[session access value redacted]/review/product/edit/id/125/",
+   "requirement_scopes": {
+    "tank_reviews": {
+     "status": "unknown",
+     "detail_resolution": {
+      "status": "active",
+      "candidate_records": 7,
+      "current_observed_detail_fields": [
+       "detailed_rating"
+      ],
+      "resolved_candidate_ordinals": [
+       1,
+       2
+      ],
+      "next_unresolved_candidate": {
+       "ordinal": 3,
+       "fields": {
+        "nickname": "Edmund",
+        "product": "Erikssen CoolTech™ Fitness Tank"
+       }
+      },
+      "detail_fields": [
+       "detailed_rating"
+      ],
+      "pending_candidate_ordinal": null
+     }
+    }
+   }
+  },
+  "14": {
+   "title": "Edit Review / Customer Reviews / User Content / Marketing / Magento Admin",
+   "controls": [
+    {
+     "kind": "a",
+     "rect": {
+      "x": 34,
+      "y": 47,
+      "w": 88,
+      "h": 75
+     }
+    },
+    {
+     "kind": "a",
+     "label": "DASHBOARD",
+     "value": "Dashboard",
+     "rect": {
+      "x": 34,
+      "y": 133,
+      "w": 88,
+      "h": 62
+     }
+    },
+    {
+     "kind": "a",
+     "label": "SALES",
+     "value": "Sales",
+     "rect": {
+      "x": 34,
+      "y": 210,
+      "w": 88,
+      "h": 62
+     }
+    },
+    {
+     "kind": "a",
+     "label": "CATALOG",
+     "value": "Catalog",
+     "rect": {
+      "x": 34,
+      "y": 288,
+      "w": 88,
+      "h": 62
+     }
+    },
+    {
+     "kind": "a",
+     "label": "CUSTOMERS",
+     "value": "Customers",
+     "rect": {
+      "x": 34,
+      "y": 365,
+      "w": 88,
+      "h": 62
+     }
+    },
+    {
+     "kind": "a",
+     "label": "MARKETING",
+     "value": "Marketing",
+     "rect": {
+      "x": 34,
+      "y": 443,
+      "w": 88,
+      "h": 62
+     }
+    },
+    {
+     "kind": "a",
+     "label": "CONTENT",
+     "value": "Content",
+     "rect": {
+      "x": 34,
+      "y": 520,
+      "w": 88,
+      "h": 62
+     }
+    },
+    {
+     "kind": "a",
+     "label": "REPORTS",
+     "value": "Reports",
+     "rect": {
+      "x": 34,
+      "y": 598,
+      "w": 88,
+      "h": 62
+     }
+    },
+    {
+     "kind": "a",
+     "label": "STORES",
+     "value": "Stores",
+     "rect": {
+      "x": 34,
+      "y": 675,
+      "w": 88,
+      "h": 62
+     }
+    },
+    {
+     "kind": "a",
+     "label": "SYSTEM",
+     "value": "System",
+     "rect": {
+      "x": 34,
+      "y": 753,
+      "w": 88,
+      "h": 62
+     }
+    },
+    {
+     "kind": "a",
+     "label": "FIND PARTNERS & EXTENSIONS",
+     "value": "Find Partners & Extensions",
+     "rect": {
+      "x": 34,
+      "y": 846,
+      "w": 88,
+      "h": 88
+     }
+    },
+    {
+     "kind": "a",
+     "label": "My Account",
+     "value": "[session access value redacted]",
+     "rect": {
+      "x": 935,
+      "y": 116,
+      "w": 106,
+      "h": 33
+     }
+    },
+    {
+     "kind": "a",
+     "label": "Notifications",
+     "rect": {
+      "x": 868,
+      "y": 116,
+      "w": 60,
+      "h": 33
+     }
+    },
+    {
+     "kind": "text_input",
+     "label": "search-global",
+     "in_viewport": false,
+     "rect": {
+      "x": 827,
+      "y": 117,
+      "w": 50,
+      "h": 35
+     }
+    },
+    {
+     "kind": "button",
+     "label": "Back",
+     "value": "Back",
+     "rect": {
+      "x": 180,
+      "y": 226,
+      "w": 101,
+      "h": 46
+     }
+    },
+    {
+     "kind": "button",
+     "label": "Reset",
+     "value": "Reset",
+     "rect": {
+      "x": 384,
+      "y": 226,
+      "w": 78,
+      "h": 46
+     }
+    },
+    {
+     "kind": "button",
+     "label": "Delete Review",
+     "value": "Delete Review",
+     "rect": {
+      "x": 286,
+      "y": 226,
+      "w": 146,
+      "h": 46
+     }
+    },
+    {
+     "kind": "button",
+     "label": "Save Review",
+     "value": "Save Review",
+     "form_action": "commit",
+     "rect": {
+      "x": 913,
+      "y": 226,
+      "w": 132,
+      "h": 46
+     }
+    },
+    {
+     "kind": "button",
+     "label": "Previous",
+     "value": "Previous",
+     "rect": {
+      "x": 466,
+      "y": 226,
+      "w": 104,
+      "h": 46
+     }
+    },
+    {
+     "kind": "button",
+     "label": "Save and Previous",
+     "value": "Save and Previous",
+     "form_action": "commit",
+     "rect": {
+      "x": 654,
+      "y": 226,
+      "w": 181,
+      "h": 46
+     }
+    },
+    {
+     "kind": "button",
+     "label": "Save and Next",
+     "value": "Save and Next",
+     "form_action": "commit",
+     "rect": {
+      "x": 793,
+      "y": 226,
+      "w": 149,
+      "h": 46
+     }
+    },
+    {
+     "kind": "button",
+     "label": "Next",
+     "value": "Next",
+     "rect": {
+      "x": 545,
+      "y": 226,
+      "w": 73,
+      "h": 46
+     }
+    },
+    {
+     "kind": "a",
+     "label": "Antonia Racer Tank",
+     "value": "Antonia Racer Tank",
+     "rect": {
+      "x": 370,
+      "y": 400,
+      "w": 129,
+      "h": 19
+     }
+    },
+    {
+     "kind": "native_select",
+     "label": "Status",
+     "value": "1",
+     "selected_text": "Approved",
+     "selected_text_primary": "Approved",
+     "rect": {
+      "x": 377,
+      "y": 710,
+      "w": 149,
+      "h": 33
+     }
+    },
+    {
+     "kind": "text_input",
+     "label": "Nickname",
+     "value": "Merrie",
+     "rect": {
+      "x": 534,
+      "y": 789,
+      "w": 551,
+      "h": 33
+     }
+    },
+    {
+     "kind": "text_input",
+     "label": "Summary of Review",
+     "value": "Not for high impact",
+     "rect": {
+      "x": 534,
+      "y": 868,
+      "w": 551,
+      "h": 33
+     }
+    },
+    {
+     "kind": "textarea",
+     "label": "Review",
+     "value": "Definitely not good for anything high-impact, but it's very stylish for yoga or…",
+     "in_viewport": false,
+     "rect": {
+      "x": 534,
+      "y": 1136,
+      "w": 551,
+      "h": 336
+     }
+    },
+    {
+     "kind": "a",
+     "label": "Magento",
+     "in_viewport": false,
+     "rect": {
+      "x": 101,
+      "y": 1488,
+      "w": 22,
+      "h": 25
+     }
+    },
+    {
+     "kind": "a",
+     "label": "Privacy Policy",
+     "value": "Privacy Policy",
+     "in_viewport": false,
+     "rect": {
+      "x": 752,
+      "y": 1514,
+      "w": 89,
+      "h": 19
+     }
+    },
+    {
+     "kind": "a",
+     "label": "Account Activity",
+     "value": "Account Activity",
+     "in_viewport": false,
+     "rect": {
+      "x": 839,
+      "y": 1514,
+      "w": 110,
+      "h": 19
+     }
+    },
+    {
+     "kind": "a",
+     "label": "Report an Issue",
+     "value": "Report an Issue",
+     "in_viewport": false,
+     "rect": {
+      "x": 936,
+      "y": 1514,
+      "w": 105,
+      "h": 19
+     }
+    },
+    {
+     "kind": "rating",
+     "label": "Detailed Rating",
+     "value": "18",
+     "selected_text": "3",
+     "selected_text_primary": "3",
+     "rect": {
+      "x": 471,
+      "y": 635,
+      "w": 18,
+      "h": 24
+     }
+    }
+   ],
+   "url": "http://192.168.1.103:7780/[session access value redacted]/review/product/edit/id/338/",
+   "requirement_scopes": {
+    "tank_reviews": {
+     "status": "unknown",
+     "detail_resolution": {
+      "status": "active",
+      "candidate_records": 27,
+      "current_observed_detail_fields": [
+       "detailed_rating"
+      ],
+      "resolved_candidate_ordinals": [
+       1,
+       2,
+       8
+      ],
+      "next_unresolved_candidate": {
+       "ordinal": 3,
+       "fields": {
+        "nickname": "Edmund",
+        "product": "Erikssen CoolTech™ Fitness Tank"
+       }
+      },
+      "detail_fields": [
+       "detailed_rating"
+      ],
+      "pending_candidate_ordinal": null
+     }
+    }
+   }
+  },
+  "16": {
+   "title": "Edit Review / Customer Reviews / User Content / Marketing / Magento Admin",
+   "controls": [
+    {
+     "kind": "a",
+     "rect": {
+      "x": 34,
+      "y": 47,
+      "w": 88,
+      "h": 75
+     }
+    },
+    {
+     "kind": "a",
+     "label": "DASHBOARD",
+     "value": "Dashboard",
+     "rect": {
+      "x": 34,
+      "y": 133,
+      "w": 88,
+      "h": 62
+     }
+    },
+    {
+     "kind": "a",
+     "label": "SALES",
+     "value": "Sales",
+     "rect": {
+      "x": 34,
+      "y": 210,
+      "w": 88,
+      "h": 62
+     }
+    },
+    {
+     "kind": "a",
+     "label": "CATALOG",
+     "value": "Catalog",
+     "rect": {
+      "x": 34,
+      "y": 288,
+      "w": 88,
+      "h": 62
+     }
+    },
+    {
+     "kind": "a",
+     "label": "CUSTOMERS",
+     "value": "Customers",
+     "rect": {
+      "x": 34,
+      "y": 365,
+      "w": 88,
+      "h": 62
+     }
+    },
+    {
+     "kind": "a",
+     "label": "MARKETING",
+     "value": "Marketing",
+     "rect": {
+      "x": 34,
+      "y": 443,
+      "w": 88,
+      "h": 62
+     }
+    },
+    {
+     "kind": "a",
+     "label": "CONTENT",
+     "value": "Content",
+     "rect": {
+      "x": 34,
+      "y": 520,
+      "w": 88,
+      "h": 62
+     }
+    },
+    {
+     "kind": "a",
+     "label": "REPORTS",
+     "value": "Reports",
+     "rect": {
+      "x": 34,
+      "y": 598,
+      "w": 88,
+      "h": 62
+     }
+    },
+    {
+     "kind": "a",
+     "label": "STORES",
+     "value": "Stores",
+     "rect": {
+      "x": 34,
+      "y": 675,
+      "w": 88,
+      "h": 62
+     }
+    },
+    {
+     "kind": "a",
+     "label": "SYSTEM",
+     "value": "System",
+     "rect": {
+      "x": 34,
+      "y": 753,
+      "w": 88,
+      "h": 62
+     }
+    },
+    {
+     "kind": "a",
+     "label": "FIND PARTNERS & EXTENSIONS",
+     "value": "Find Partners & Extensions",
+     "rect": {
+      "x": 34,
+      "y": 846,
+      "w": 88,
+      "h": 88
+     }
+    },
+    {
+     "kind": "a",
+     "label": "My Account",
+     "value": "[session access value redacted]",
+     "rect": {
+      "x": 935,
+      "y": 116,
+      "w": 106,
+      "h": 33
+     }
+    },
+    {
+     "kind": "a",
+     "label": "Notifications",
+     "rect": {
+      "x": 868,
+      "y": 116,
+      "w": 60,
+      "h": 33
+     }
+    },
+    {
+     "kind": "text_input",
+     "label": "search-global",
+     "in_viewport": false,
+     "rect": {
+      "x": 827,
+      "y": 117,
+      "w": 50,
+      "h": 35
+     }
+    },
+    {
+     "kind": "button",
+     "label": "Back",
+     "value": "Back",
+     "rect": {
+      "x": 180,
+      "y": 226,
+      "w": 101,
+      "h": 46
+     }
+    },
+    {
+     "kind": "button",
+     "label": "Reset",
+     "value": "Reset",
+     "rect": {
+      "x": 384,
+      "y": 226,
+      "w": 78,
+      "h": 46
+     }
+    },
+    {
+     "kind": "button",
+     "label": "Delete Review",
+     "value": "Delete Review",
+     "rect": {
+      "x": 286,
+      "y": 226,
+      "w": 146,
+      "h": 46
+     }
+    },
+    {
+     "kind": "button",
+     "label": "Save Review",
+     "value": "Save Review",
+     "form_action": "commit",
+     "rect": {
+      "x": 913,
+      "y": 226,
+      "w": 132,
+      "h": 46
+     }
+    },
+    {
+     "kind": "button",
+     "label": "Previous",
+     "value": "Previous",
+     "rect": {
+      "x": 466,
+      "y": 226,
+      "w": 104,
+      "h": 46
+     }
+    },
+    {
+     "kind": "button",
+     "label": "Save and Previous",
+     "value": "Save and Previous",
+     "form_action": "commit",
+     "rect": {
+      "x": 654,
+      "y": 226,
+      "w": 181,
+      "h": 46
+     }
+    },
+    {
+     "kind": "button",
+     "label": "Save and Next",
+     "value": "Save and Next",
+     "form_action": "commit",
+     "rect": {
+      "x": 793,
+      "y": 226,
+      "w": 149,
+      "h": 46
+     }
+    },
+    {
+     "kind": "button",
+     "label": "Next",
+     "value": "Next",
+     "rect": {
+      "x": 545,
+      "y": 226,
+      "w": 73,
+      "h": 46
+     }
+    },
+    {
+     "kind": "a",
+     "label": "Antonia Racer Tank",
+     "value": "Antonia Racer Tank",
+     "rect": {
+      "x": 370,
+      "y": 400,
+      "w": 129,
+      "h": 19
+     }
+    },
+    {
+     "kind": "native_select",
+     "label": "Status",
+     "value": "1",
+     "selected_text": "Approved",
+     "selected_text_primary": "Approved",
+     "rect": {
+      "x": 377,
+      "y": 710,
+      "w": 149,
+      "h": 33
+     }
+    },
+    {
+     "kind": "text_input",
+     "label": "Nickname",
+     "value": "Merrie",
+     "rect": {
+      "x": 534,
+      "y": 789,
+      "w": 551,
+      "h": 33
+     }
+    },
+    {
+     "kind": "text_input",
+     "label": "Summary of Review",
+     "value": "Not for high impact",
+     "rect": {
+      "x": 534,
+      "y": 868,
+      "w": 551,
+      "h": 33
+     }
+    },
+    {
+     "kind": "textarea",
+     "label": "Review",
+     "value": "Definitely not good for anything high-impact, but it's very stylish for yoga or…",
+     "in_viewport": false,
+     "rect": {
+      "x": 534,
+      "y": 1136,
+      "w": 551,
+      "h": 336
+     }
+    },
+    {
+     "kind": "a",
+     "label": "Magento",
+     "in_viewport": false,
+     "rect": {
+      "x": 101,
+      "y": 1488,
+      "w": 22,
+      "h": 25
+     }
+    },
+    {
+     "kind": "a",
+     "label": "Privacy Policy",
+     "value": "Privacy Policy",
+     "in_viewport": false,
+     "rect": {
+      "x": 752,
+      "y": 1514,
+      "w": 89,
+      "h": 19
+     }
+    },
+    {
+     "kind": "a",
+     "label": "Account Activity",
+     "value": "Account Activity",
+     "in_viewport": false,
+     "rect": {
+      "x": 839,
+      "y": 1514,
+      "w": 110,
+      "h": 19
+     }
+    },
+    {
+     "kind": "a",
+     "label": "Report an Issue",
+     "value": "Report an Issue",
+     "in_viewport": false,
+     "rect": {
+      "x": 936,
+      "y": 1514,
+      "w": 105,
+      "h": 19
+     }
+    },
+    {
+     "kind": "rating",
+     "label": "Detailed Rating",
+     "value": "18",
+     "selected_text": "3",
+     "selected_text_primary": "3",
+     "rect": {
+      "x": 471,
+      "y": 635,
+      "w": 18,
+      "h": 24
+     }
+    }
+   ],
+   "url": "http://192.168.1.103:7780/[session access value redacted]/review/product/edit/id/338/",
+   "requirement_scopes": {
+    "tank_reviews": {
+     "status": "unknown",
+     "detail_resolution": {
+      "status": "active",
+      "candidate_records": 27,
+      "current_observed_detail_fields": [
+       "detailed_rating"
+      ],
+      "resolved_candidate_ordinals": [
+       1,
+       2,
+       8
+      ],
+      "next_unresolved_candidate": {
+       "ordinal": 3,
+       "fields": {
+        "nickname": "Edmund",
+        "product": "Erikssen CoolTech™ Fitness Tank"
+       }
+      },
+      "detail_fields": [
+       "detailed_rating"
+      ],
+      "pending_candidate_ordinal": null
+     }
+    }
+   }
+  },
+  "34": {
+   "title": "Edit Review / Customer Reviews / User Content / Marketing / Magento Admin",
+   "controls": [
+    {
+     "kind": "a",
+     "rect": {
+      "x": 34,
+      "y": 47,
+      "w": 88,
+      "h": 75
+     }
+    },
+    {
+     "kind": "a",
+     "label": "DASHBOARD",
+     "value": "Dashboard",
+     "rect": {
+      "x": 34,
+      "y": 133,
+      "w": 88,
+      "h": 62
+     }
+    },
+    {
+     "kind": "a",
+     "label": "SALES",
+     "value": "Sales",
+     "rect": {
+      "x": 34,
+      "y": 210,
+      "w": 88,
+      "h": 62
+     }
+    },
+    {
+     "kind": "a",
+     "label": "CATALOG",
+     "value": "Catalog",
+     "rect": {
+      "x": 34,
+      "y": 288,
+      "w": 88,
+      "h": 62
+     }
+    },
+    {
+     "kind": "a",
+     "label": "CUSTOMERS",
+     "value": "Customers",
+     "rect": {
+      "x": 34,
+      "y": 365,
+      "w": 88,
+      "h": 62
+     }
+    },
+    {
+     "kind": "a",
+     "label": "MARKETING",
+     "value": "Marketing",
+     "rect": {
+      "x": 34,
+      "y": 443,
+      "w": 88,
+      "h": 62
+     }
+    },
+    {
+     "kind": "a",
+     "label": "CONTENT",
+     "value": "Content",
+     "rect": {
+      "x": 34,
+      "y": 520,
+      "w": 88,
+      "h": 62
+     }
+    },
+    {
+     "kind": "a",
+     "label": "REPORTS",
+     "value": "Reports",
+     "rect": {
+      "x": 34,
+      "y": 598,
+      "w": 88,
+      "h": 62
+     }
+    },
+    {
+     "kind": "a",
+     "label": "STORES",
+     "value": "Stores",
+     "rect": {
+      "x": 34,
+      "y": 675,
+      "w": 88,
+      "h": 62
+     }
+    },
+    {
+     "kind": "a",
+     "label": "SYSTEM",
+     "value": "System",
+     "rect": {
+      "x": 34,
+      "y": 753,
+      "w": 88,
+      "h": 62
+     }
+    },
+    {
+     "kind": "a",
+     "label": "FIND PARTNERS & EXTENSIONS",
+     "value": "Find Partners & Extensions",
+     "rect": {
+      "x": 34,
+      "y": 846,
+      "w": 88,
+      "h": 88
+     }
+    },
+    {
+     "kind": "a",
+     "label": "My Account",
+     "value": "[session access value redacted]",
+     "rect": {
+      "x": 935,
+      "y": 116,
+      "w": 106,
+      "h": 33
+     }
+    },
+    {
+     "kind": "a",
+     "label": "Notifications",
+     "rect": {
+      "x": 868,
+      "y": 116,
+      "w": 60,
+      "h": 33
+     }
+    },
+    {
+     "kind": "text_input",
+     "label": "search-global",
+     "in_viewport": false,
+     "rect": {
+      "x": 827,
+      "y": 117,
+      "w": 50,
+      "h": 35
+     }
+    },
+    {
+     "kind": "button",
+     "label": "Back",
+     "value": "Back",
+     "rect": {
+      "x": 180,
+      "y": 226,
+      "w": 101,
+      "h": 46
+     }
+    },
+    {
+     "kind": "button",
+     "label": "Reset",
+     "value": "Reset",
+     "rect": {
+      "x": 384,
+      "y": 226,
+      "w": 78,
+      "h": 46
+     }
+    },
+    {
+     "kind": "button",
+     "label": "Delete Review",
+     "value": "Delete Review",
+     "rect": {
+      "x": 286,
+      "y": 226,
+      "w": 146,
+      "h": 46
+     }
+    },
+    {
+     "kind": "button",
+     "label": "Save Review",
+     "value": "Save Review",
+     "form_action": "commit",
+     "rect": {
+      "x": 913,
+      "y": 226,
+      "w": 132,
+      "h": 46
+     }
+    },
+    {
+     "kind": "button",
+     "label": "Previous",
+     "value": "Previous",
+     "rect": {
+      "x": 466,
+      "y": 226,
+      "w": 104,
+      "h": 46
+     }
+    },
+    {
+     "kind": "button",
+     "label": "Save and Previous",
+     "value": "Save and Previous",
+     "form_action": "commit",
+     "rect": {
+      "x": 654,
+      "y": 226,
+      "w": 181,
+      "h": 46
+     }
+    },
+    {
+     "kind": "button",
+     "label": "Save and Next",
+     "value": "Save and Next",
+     "form_action": "commit",
+     "rect": {
+      "x": 793,
+      "y": 226,
+      "w": 149,
+      "h": 46
+     }
+    },
+    {
+     "kind": "button",
+     "label": "Next",
+     "value": "Next",
+     "rect": {
+      "x": 545,
+      "y": 226,
+      "w": 73,
+      "h": 46
+     }
+    },
+    {
+     "kind": "a",
+     "label": "Antonia Racer Tank",
+     "value": "Antonia Racer Tank",
+     "rect": {
+      "x": 370,
+      "y": 400,
+      "w": 129,
+      "h": 19
+     }
+    },
+    {
+     "kind": "native_select",
+     "label": "Status",
+     "value": "1",
+     "selected_text": "Approved",
+     "selected_text_primary": "Approved",
+     "rect": {
+      "x": 377,
+      "y": 710,
+      "w": 149,
+      "h": 33
+     }
+    },
+    {
+     "kind": "text_input",
+     "label": "Nickname",
+     "value": "Shaunte",
+     "rect": {
+      "x": 534,
+      "y": 789,
+      "w": 551,
+      "h": 33
+     }
+    },
+    {
+     "kind": "text_input",
+     "label": "Summary of Review",
+     "value": "Zero support/modesty",
+     "rect": {
+      "x": 534,
+      "y": 868,
+      "w": 551,
+      "h": 33
+     }
+    },
+    {
+     "kind": "textarea",
+     "label": "Review",
+     "value": "I would never wear this bra to anything but a low impact class like yoga. There…",
+     "in_viewport": false,
+     "rect": {
+      "x": 534,
+      "y": 1136,
+      "w": 551,
+      "h": 336
+     }
+    },
+    {
+     "kind": "a",
+     "label": "Magento",
+     "in_viewport": false,
+     "rect": {
+      "x": 101,
+      "y": 1488,
+      "w": 22,
+      "h": 25
+     }
+    },
+    {
+     "kind": "a",
+     "label": "Privacy Policy",
+     "value": "Privacy Policy",
+     "in_viewport": false,
+     "rect": {
+      "x": 752,
+      "y": 1514,
+      "w": 89,
+      "h": 19
+     }
+    },
+    {
+     "kind": "a",
+     "label": "Account Activity",
+     "value": "Account Activity",
+     "in_viewport": false,
+     "rect": {
+      "x": 839,
+      "y": 1514,
+      "w": 110,
+      "h": 19
+     }
+    },
+    {
+     "kind": "a",
+     "label": "Report an Issue",
+     "value": "Report an Issue",
+     "in_viewport": false,
+     "rect": {
+      "x": 936,
+      "y": 1514,
+      "w": 105,
+      "h": 19
+     }
+    },
+    {
+     "kind": "rating",
+     "label": "Detailed Rating",
+     "value": "17",
+     "selected_text": "2",
+     "selected_text_primary": "2",
+     "rect": {
+      "x": 471,
+      "y": 635,
+      "w": 18,
+      "h": 24
+     }
+    }
+   ],
+   "url": "http://192.168.1.103:7780/[session access value redacted]/review/product/edit/id/337/",
+   "requirement_scopes": {
+    "tank_reviews": {
+     "status": "unknown",
+     "detail_resolution": {
+      "status": "active",
+      "candidate_records": 27,
+      "current_observed_detail_fields": [
+       "detailed_rating"
+      ],
+      "resolved_candidate_ordinals": [
+       1,
+       2,
+       8,
+       9
+      ],
+      "next_unresolved_candidate": {
+       "ordinal": 3,
+       "fields": {
+        "nickname": "Edmund",
+        "product": "Erikssen CoolTech™ Fitness Tank"
+       }
+      },
+      "detail_fields": [
+       "detailed_rating"
+      ],
+      "pending_candidate_ordinal": null
+     }
+    }
+   }
+  },
+  "37": {
+   "title": "Edit Review / Customer Reviews / User Content / Marketing / Magento Admin",
+   "controls": [
+    {
+     "kind": "a",
+     "rect": {
+      "x": 34,
+      "y": 47,
+      "w": 88,
+      "h": 75
+     }
+    },
+    {
+     "kind": "a",
+     "label": "DASHBOARD",
+     "value": "Dashboard",
+     "rect": {
+      "x": 34,
+      "y": 133,
+      "w": 88,
+      "h": 62
+     }
+    },
+    {
+     "kind": "a",
+     "label": "SALES",
+     "value": "Sales",
+     "rect": {
+      "x": 34,
+      "y": 210,
+      "w": 88,
+      "h": 62
+     }
+    },
+    {
+     "kind": "a",
+     "label": "CATALOG",
+     "value": "Catalog",
+     "rect": {
+      "x": 34,
+      "y": 288,
+      "w": 88,
+      "h": 62
+     }
+    },
+    {
+     "kind": "a",
+     "label": "CUSTOMERS",
+     "value": "Customers",
+     "rect": {
+      "x": 34,
+      "y": 365,
+      "w": 88,
+      "h": 62
+     }
+    },
+    {
+     "kind": "a",
+     "label": "MARKETING",
+     "value": "Marketing",
+     "rect": {
+      "x": 34,
+      "y": 443,
+      "w": 88,
+      "h": 62
+     }
+    },
+    {
+     "kind": "a",
+     "label": "CONTENT",
+     "value": "Content",
+     "rect": {
+      "x": 34,
+      "y": 520,
+      "w": 88,
+      "h": 62
+     }
+    },
+    {
+     "kind": "a",
+     "label": "REPORTS",
+     "value": "Reports",
+     "rect": {
+      "x": 34,
+      "y": 598,
+      "w": 88,
+      "h": 62
+     }
+    },
+    {
+     "kind": "a",
+     "label": "STORES",
+     "value": "Stores",
+     "rect": {
+      "x": 34,
+      "y": 675,
+      "w": 88,
+      "h": 62
+     }
+    },
+    {
+     "kind": "a",
+     "label": "SYSTEM",
+     "value": "System",
+     "rect": {
+      "x": 34,
+      "y": 753,
+      "w": 88,
+      "h": 62
+     }
+    },
+    {
+     "kind": "a",
+     "label": "FIND PARTNERS & EXTENSIONS",
+     "value": "Find Partners & Extensions",
+     "rect": {
+      "x": 34,
+      "y": 846,
+      "w": 88,
+      "h": 88
+     }
+    },
+    {
+     "kind": "a",
+     "label": "My Account",
+     "value": "[session access value redacted]",
+     "rect": {
+      "x": 935,
+      "y": 116,
+      "w": 106,
+      "h": 33
+     }
+    },
+    {
+     "kind": "a",
+     "label": "Notifications",
+     "rect": {
+      "x": 868,
+      "y": 116,
+      "w": 60,
+      "h": 33
+     }
+    },
+    {
+     "kind": "text_input",
+     "label": "search-global",
+     "in_viewport": false,
+     "rect": {
+      "x": 827,
+      "y": 117,
+      "w": 50,
+      "h": 35
+     }
+    },
+    {
+     "kind": "button",
+     "label": "Back",
+     "value": "Back",
+     "rect": {
+      "x": 180,
+      "y": 226,
+      "w": 101,
+      "h": 46
+     }
+    },
+    {
+     "kind": "button",
+     "label": "Reset",
+     "value": "Reset",
+     "rect": {
+      "x": 384,
+      "y": 226,
+      "w": 78,
+      "h": 46
+     }
+    },
+    {
+     "kind": "button",
+     "label": "Delete Review",
+     "value": "Delete Review",
+     "rect": {
+      "x": 286,
+      "y": 226,
+      "w": 146,
+      "h": 46
+     }
+    },
+    {
+     "kind": "button",
+     "label": "Save Review",
+     "value": "Save Review",
+     "form_action": "commit",
+     "rect": {
+      "x": 913,
+      "y": 226,
+      "w": 132,
+      "h": 46
+     }
+    },
+    {
+     "kind": "button",
+     "label": "Previous",
+     "value": "Previous",
+     "rect": {
+      "x": 466,
+      "y": 226,
+      "w": 104,
+      "h": 46
+     }
+    },
+    {
+     "kind": "button",
+     "label": "Save and Previous",
+     "value": "Save and Previous",
+     "form_action": "commit",
+     "rect": {
+      "x": 654,
+      "y": 226,
+      "w": 181,
+      "h": 46
+     }
+    },
+    {
+     "kind": "button",
+     "label": "Save and Next",
+     "value": "Save and Next",
+     "form_action": "commit",
+     "rect": {
+      "x": 793,
+      "y": 226,
+      "w": 149,
+      "h": 46
+     }
+    },
+    {
+     "kind": "button",
+     "label": "Next",
+     "value": "Next",
+     "rect": {
+      "x": 545,
+      "y": 226,
+      "w": 73,
+      "h": 46
+     }
+    },
+    {
+     "kind": "a",
+     "label": "Erikssen CoolTech™ Fitness Tank",
+     "value": "Erikssen CoolTech™ Fitness Tank",
+     "rect": {
+      "x": 404,
+      "y": 400,
+      "w": 217,
+      "h": 19
+     }
+    },
+    {
+     "kind": "native_select",
+     "label": "Status",
+     "value": "1",
+     "selected_text": "Approved",
+     "selected_text_primary": "Approved",
+     "rect": {
+      "x": 377,
+      "y": 710,
+      "w": 149,
+      "h": 33
+     }
+    },
+    {
+     "kind": "text_input",
+     "label": "Nickname",
+     "value": "Mervin",
+     "rect": {
+      "x": 534,
+      "y": 789,
+      "w": 551,
+      "h": 33
+     }
+    },
+    {
+     "kind": "text_input",
+     "label": "Summary of Review",
+     "value": "Keeps me comfortable",
+     "rect": {
+      "x": 534,
+      "y": 868,
+      "w": 551,
+      "h": 33
+     }
+    },
+    {
+     "kind": "textarea",
+     "label": "Review",
+     "value": "I've only worn it a few times so far, but it really keeps me comfortable at the…",
+     "in_viewport": false,
+     "rect": {
+      "x": 534,
+      "y": 1136,
+      "w": 551,
+      "h": 336
+     }
+    },
+    {
+     "kind": "a",
+     "label": "Magento",
+     "in_viewport": false,
+     "rect": {
+      "x": 101,
+      "y": 1488,
+      "w": 22,
+      "h": 25
+     }
+    },
+    {
+     "kind": "a",
+     "label": "Privacy Policy",
+     "value": "Privacy Policy",
+     "in_viewport": false,
+     "rect": {
+      "x": 752,
+      "y": 1514,
+      "w": 89,
+      "h": 19
+     }
+    },
+    {
+     "kind": "a",
+     "label": "Account Activity",
+     "value": "Account Activity",
+     "in_viewport": false,
+     "rect": {
+      "x": 839,
+      "y": 1514,
+      "w": 110,
+      "h": 19
+     }
+    },
+    {
+     "kind": "a",
+     "label": "Report an Issue",
+     "value": "Report an Issue",
+     "in_viewport": false,
+     "rect": {
+      "x": 936,
+      "y": 1514,
+      "w": 105,
+      "h": 19
+     }
+    },
+    {
+     "kind": "rating",
+     "label": "Detailed Rating",
+     "value": "19",
+     "selected_text": "4",
+     "selected_text_primary": "4",
+     "rect": {
+      "x": 471,
+      "y": 635,
+      "w": 18,
+      "h": 24
+     }
+    }
+   ],
+   "url": "http://192.168.1.103:7780/[session access value redacted]/review/product/edit/id/124/",
+   "requirement_scopes": {
+    "tank_reviews": {
+     "status": "unknown",
+     "detail_resolution": {
+      "status": "active",
+      "candidate_records": 27,
+      "current_observed_detail_fields": [
+       "detailed_rating"
+      ],
+      "resolved_candidate_ordinals": [
+       1,
+       2,
+       8,
+       9
+      ],
+      "next_unresolved_candidate": {
+       "ordinal": 3,
+       "fields": {
+        "nickname": "Edmund",
+        "product": "Erikssen CoolTech™ Fitness Tank"
+       }
+      },
+      "detail_fields": [
+       "detailed_rating"
+      ],
+      "pending_candidate_ordinal": null
+     }
+    }
+   }
+  },
+  "39": {
+   "title": "Edit Review / Customer Reviews / User Content / Marketing / Magento Admin",
+   "controls": [
+    {
+     "kind": "a",
+     "rect": {
+      "x": 34,
+      "y": 47,
+      "w": 88,
+      "h": 75
+     }
+    },
+    {
+     "kind": "a",
+     "label": "DASHBOARD",
+     "value": "Dashboard",
+     "rect": {
+      "x": 34,
+      "y": 133,
+      "w": 88,
+      "h": 62
+     }
+    },
+    {
+     "kind": "a",
+     "label": "SALES",
+     "value": "Sales",
+     "rect": {
+      "x": 34,
+      "y": 210,
+      "w": 88,
+      "h": 62
+     }
+    },
+    {
+     "kind": "a",
+     "label": "CATALOG",
+     "value": "Catalog",
+     "rect": {
+      "x": 34,
+      "y": 288,
+      "w": 88,
+      "h": 62
+     }
+    },
+    {
+     "kind": "a",
+     "label": "CUSTOMERS",
+     "value": "Customers",
+     "rect": {
+      "x": 34,
+      "y": 365,
+      "w": 88,
+      "h": 62
+     }
+    },
+    {
+     "kind": "a",
+     "label": "MARKETING",
+     "value": "Marketing",
+     "rect": {
+      "x": 34,
+      "y": 443,
+      "w": 88,
+      "h": 62
+     }
+    },
+    {
+     "kind": "a",
+     "label": "CONTENT",
+     "value": "Content",
+     "rect": {
+      "x": 34,
+      "y": 520,
+      "w": 88,
+      "h": 62
+     }
+    },
+    {
+     "kind": "a",
+     "label": "REPORTS",
+     "value": "Reports",
+     "rect": {
+      "x": 34,
+      "y": 598,
+      "w": 88,
+      "h": 62
+     }
+    },
+    {
+     "kind": "a",
+     "label": "STORES",
+     "value": "Stores",
+     "rect": {
+      "x": 34,
+      "y": 675,
+      "w": 88,
+      "h": 62
+     }
+    },
+    {
+     "kind": "a",
+     "label": "SYSTEM",
+     "value": "System",
+     "rect": {
+      "x": 34,
+      "y": 753,
+      "w": 88,
+      "h": 62
+     }
+    },
+    {
+     "kind": "a",
+     "label": "FIND PARTNERS & EXTENSIONS",
+     "value": "Find Partners & Extensions",
+     "rect": {
+      "x": 34,
+      "y": 846,
+      "w": 88,
+      "h": 88
+     }
+    },
+    {
+     "kind": "a",
+     "label": "My Account",
+     "value": "[session access value redacted]",
+     "rect": {
+      "x": 935,
+      "y": 116,
+      "w": 106,
+      "h": 33
+     }
+    },
+    {
+     "kind": "a",
+     "label": "Notifications",
+     "rect": {
+      "x": 868,
+      "y": 116,
+      "w": 60,
+      "h": 33
+     }
+    },
+    {
+     "kind": "text_input",
+     "label": "search-global",
+     "in_viewport": false,
+     "rect": {
+      "x": 827,
+      "y": 117,
+      "w": 50,
+      "h": 35
+     }
+    },
+    {
+     "kind": "button",
+     "label": "Back",
+     "value": "Back",
+     "rect": {
+      "x": 180,
+      "y": 226,
+      "w": 101,
+      "h": 46
+     }
+    },
+    {
+     "kind": "button",
+     "label": "Reset",
+     "value": "Reset",
+     "rect": {
+      "x": 384,
+      "y": 226,
+      "w": 78,
+      "h": 46
+     }
+    },
+    {
+     "kind": "button",
+     "label": "Delete Review",
+     "value": "Delete Review",
+     "rect": {
+      "x": 286,
+      "y": 226,
+      "w": 146,
+      "h": 46
+     }
+    },
+    {
+     "kind": "button",
+     "label": "Save Review",
+     "value": "Save Review",
+     "form_action": "commit",
+     "rect": {
+      "x": 913,
+      "y": 226,
+      "w": 132,
+      "h": 46
+     }
+    },
+    {
+     "kind": "button",
+     "label": "Previous",
+     "value": "Previous",
+     "rect": {
+      "x": 466,
+      "y": 226,
+      "w": 104,
+      "h": 46
+     }
+    },
+    {
+     "kind": "button",
+     "label": "Save and Previous",
+     "value": "Save and Previous",
+     "form_action": "commit",
+     "rect": {
+      "x": 654,
+      "y": 226,
+      "w": 181,
+      "h": 46
+     }
+    },
+    {
+     "kind": "button",
+     "label": "Save and Next",
+     "value": "Save and Next",
+     "form_action": "commit",
+     "rect": {
+      "x": 793,
+      "y": 226,
+      "w": 149,
+      "h": 46
+     }
+    },
+    {
+     "kind": "button",
+     "label": "Next",
+     "value": "Next",
+     "rect": {
+      "x": 545,
+      "y": 226,
+      "w": 73,
+      "h": 46
+     }
+    },
+    {
+     "kind": "a",
+     "label": "Erikssen CoolTech™ Fitness Tank",
+     "value": "Erikssen CoolTech™ Fitness Tank",
+     "rect": {
+      "x": 404,
+      "y": 400,
+      "w": 217,
+      "h": 19
+     }
+    },
+    {
+     "kind": "native_select",
+     "label": "Status",
+     "value": "1",
+     "selected_text": "Approved",
+     "selected_text_primary": "Approved",
+     "rect": {
+      "x": 377,
+      "y": 710,
+      "w": 149,
+      "h": 33
+     }
+    },
+    {
+     "kind": "text_input",
+     "label": "Nickname",
+     "value": "Mervin",
+     "rect": {
+      "x": 534,
+      "y": 789,
+      "w": 551,
+      "h": 33
+     }
+    },
+    {
+     "kind": "text_input",
+     "label": "Summary of Review",
+     "value": "Keeps me comfortable",
+     "rect": {
+      "x": 534,
+      "y": 868,
+      "w": 551,
+      "h": 33
+     }
+    },
+    {
+     "kind": "textarea",
+     "label": "Review",
+     "value": "I've only worn it a few times so far, but it really keeps me comfortable at the…",
+     "in_viewport": false,
+     "rect": {
+      "x": 534,
+      "y": 1136,
+      "w": 551,
+      "h": 336
+     }
+    },
+    {
+     "kind": "a",
+     "label": "Magento",
+     "in_viewport": false,
+     "rect": {
+      "x": 101,
+      "y": 1488,
+      "w": 22,
+      "h": 25
+     }
+    },
+    {
+     "kind": "a",
+     "label": "Privacy Policy",
+     "value": "Privacy Policy",
+     "in_viewport": false,
+     "rect": {
+      "x": 752,
+      "y": 1514,
+      "w": 89,
+      "h": 19
+     }
+    },
+    {
+     "kind": "a",
+     "label": "Account Activity",
+     "value": "Account Activity",
+     "in_viewport": false,
+     "rect": {
+      "x": 839,
+      "y": 1514,
+      "w": 110,
+      "h": 19
+     }
+    },
+    {
+     "kind": "a",
+     "label": "Report an Issue",
+     "value": "Report an Issue",
+     "in_viewport": false,
+     "rect": {
+      "x": 936,
+      "y": 1514,
+      "w": 105,
+      "h": 19
+     }
+    },
+    {
+     "kind": "rating",
+     "label": "Detailed Rating",
+     "value": "19",
+     "selected_text": "4",
+     "selected_text_primary": "4",
+     "rect": {
+      "x": 471,
+      "y": 635,
+      "w": 18,
+      "h": 24
+     }
+    }
+   ],
+   "url": "http://192.168.1.103:7780/[session access value redacted]/review/product/edit/id/124/",
+   "requirement_scopes": {
+    "tank_reviews": {
+     "status": "unknown",
+     "detail_resolution": {
+      "status": "active",
+      "candidate_records": 27,
+      "current_observed_detail_fields": [
+       "detailed_rating"
+      ],
+      "resolved_candidate_ordinals": [
+       1,
+       2,
+       8,
+       9
+      ],
+      "next_unresolved_candidate": {
+       "ordinal": 3,
+       "fields": {
+        "nickname": "Edmund",
+        "product": "Erikssen CoolTech™ Fitness Tank"
+       }
+      },
+      "detail_fields": [
+       "detailed_rating"
+      ],
+      "pending_candidate_ordinal": null
+     }
+    }
+   }
+  },
+  "13": {
+   "title": "Reviews / Customer Reviews / User Content / Marketing / Magento Admin",
+   "controls": [
+    {
+     "kind": "a",
+     "rect": {
+      "x": 34,
+      "y": 47,
+      "w": 88,
+      "h": 75
+     }
+    },
+    {
+     "kind": "a",
+     "label": "DASHBOARD",
+     "value": "Dashboard",
+     "rect": {
+      "x": 34,
+      "y": 133,
+      "w": 88,
+      "h": 62
+     }
+    },
+    {
+     "kind": "a",
+     "label": "SALES",
+     "value": "Sales",
+     "rect": {
+      "x": 34,
+      "y": 210,
+      "w": 88,
+      "h": 62
+     }
+    },
+    {
+     "kind": "a",
+     "label": "CATALOG",
+     "value": "Catalog",
+     "rect": {
+      "x": 34,
+      "y": 288,
+      "w": 88,
+      "h": 62
+     }
+    },
+    {
+     "kind": "a",
+     "label": "CUSTOMERS",
+     "value": "Customers",
+     "rect": {
+      "x": 34,
+      "y": 365,
+      "w": 88,
+      "h": 62
+     }
+    },
+    {
+     "kind": "a",
+     "label": "MARKETING",
+     "value": "Marketing",
+     "rect": {
+      "x": 34,
+      "y": 443,
+      "w": 88,
+      "h": 62
+     }
+    },
+    {
+     "kind": "a",
+     "label": "CONTENT",
+     "value": "Content",
+     "rect": {
+      "x": 34,
+      "y": 520,
+      "w": 88,
+      "h": 62
+     }
+    },
+    {
+     "kind": "a",
+     "label": "REPORTS",
+     "value": "Reports",
+     "rect": {
+      "x": 34,
+      "y": 598,
+      "w": 88,
+      "h": 62
+     }
+    },
+    {
+     "kind": "a",
+     "label": "STORES",
+     "value": "Stores",
+     "rect": {
+      "x": 34,
+      "y": 675,
+      "w": 88,
+      "h": 62
+     }
+    },
+    {
+     "kind": "a",
+     "label": "SYSTEM",
+     "value": "System",
+     "rect": {
+      "x": 34,
+      "y": 753,
+      "w": 88,
+      "h": 62
+     }
+    },
+    {
+     "kind": "a",
+     "label": "FIND PARTNERS & EXTENSIONS",
+     "value": "Find Partners & Extensions",
+     "rect": {
+      "x": 34,
+      "y": 846,
+      "w": 88,
+      "h": 88
+     }
+    },
+    {
+     "kind": "a",
+     "label": "My Account",
+     "value": "[session access value redacted]",
+     "rect": {
+      "x": 935,
+      "y": 116,
+      "w": 106,
+      "h": 33
+     }
+    },
+    {
+     "kind": "a",
+     "label": "Notifications",
+     "rect": {
+      "x": 868,
+      "y": 116,
+      "w": 60,
+      "h": 33
+     }
+    },
+    {
+     "kind": "text_input",
+     "label": "search-global",
+     "in_viewport": false,
+     "rect": {
+      "x": 827,
+      "y": 117,
+      "w": 50,
+      "h": 35
+     }
+    },
+    {
+     "kind": "button",
+     "label": "New Review",
+     "value": "New Review",
+     "rect": {
+      "x": 914,
+      "y": 226,
+      "w": 131,
+      "h": 46
+     }
+    },
+    {
+     "kind": "button",
+     "label": "Search",
+     "value": "Search",
+     "query_action": "submit",
+     "rect": {
+      "x": 122,
+      "y": 332,
+      "w": 76,
+      "h": 33
+     }
+    },
+    {
+     "kind": "button",
+     "label": "Reset Filter",
+     "value": "Reset Filter",
+     "query_action": "reset",
+     "rect": {
+      "x": 196,
+      "y": 332,
+      "w": 107,
+      "h": 33
+     }
+    },
+    {
+     "kind": "native_select",
+     "label": "reviewGrid_massaction-select",
+     "selected_text": "Actions",
+     "selected_text_primary": "Actions",
+     "rect": {
+      "x": 151,
+      "y": 387,
+      "w": 151,
+      "h": 33
+     }
+    },
+    {
+     "kind": "native_select",
+     "label": "Status",
+     "selected_text": "",
+     "selected_text_primary": "",
+     "rect": {
+      "x": 361,
+      "y": 533,
+      "w": 62,
+      "h": 28
+     }
+    },
+    {
+     "kind": "native_select",
+     "label": "per page",
+     "value": "20",
+     "selected_text": "20",
+     "selected_text_primary": "20",
+     "rect": {
+      "x": 689,
+      "y": 387,
+      "w": 85,
+      "h": 33
+     }
+    },
+    {
+     "kind": "button",
+     "label": "Previous page",
+     "value": "Previous page",
+     "in_viewport": false,
+     "rect": {
+      "x": 823,
+      "y": 387,
+      "w": 44,
+      "h": 33
+     }
+    },
+    {
+     "kind": "text_input",
+     "label": "of 2",
+     "value": "1",
+     "rect": {
+      "x": 880,
+      "y": 387,
+      "w": 44,
+      "h": 33
+     }
+    },
+    {
+     "kind": "button",
+     "label": "Next page",
+     "value": "Next page",
+     "rect": {
+      "x": 959,
+      "y": 387,
+      "w": 44,
+      "h": 33
+     }
+    },
+    {
+     "kind": "native_select",
+     "label": "massaction",
+     "selected_text": "Any",
+     "selected_text_primary": "Any",
+     "is_filter": true,
+     "rect": {
+      "x": 124,
+      "y": 533,
+      "w": 60,
+      "h": 28
+     }
+    },
+    {
+     "kind": "text_input",
+     "label": "ID",
+     "is_filter": true,
+     "rect": {
+      "x": 187,
+      "y": 533,
+      "w": 58,
+      "h": 28
+     }
+    },
+    {
+     "kind": "text_input",
+     "label": "Created",
+     "is_filter": true,
+     "rect": {
+      "x": 273,
+      "y": 554,
+      "w": 122,
+      "h": 28
+     }
+    },
+    {
+     "kind": "button",
+     "label": "Created",
+     "value": "undefined",
+     "is_filter": true,
+     "rect": {
+      "x": 307,
+      "y": 554,
+      "w": 28,
+      "h": 28
+     }
+    },
+    {
+     "kind": "text_input",
+     "label": "Created",
+     "is_filter": true,
+     "rect": {
+      "x": 273,
+      "y": 554,
+      "w": 122,
+      "h": 28
+     }
+    },
+    {
+     "kind": "button",
+     "label": "Created",
+     "value": "undefined",
+     "is_filter": true,
+     "rect": {
+      "x": 307,
+      "y": 554,
+      "w": 28,
+      "h": 28
+     }
+    },
+    {
+     "kind": "native_select",
+     "label": "Status",
+     "selected_text": "",
+     "selected_text_primary": "",
+     "is_filter": true,
+     "rect": {
+      "x": 361,
+      "y": 533,
+      "w": 62,
+      "h": 28
+     }
+    },
+    {
+     "kind": "text_input",
+     "label": "Title",
+     "is_filter": true,
+     "rect": {
+      "x": 447,
+      "y": 533,
+      "w": 115,
+      "h": 28
+     }
+    },
+    {
+     "kind": "text_input",
+     "label": "Nickname",
+     "is_filter": true,
+     "rect": {
+      "x": 538,
+      "y": 533,
+      "w": 76,
+      "h": 28
+     }
+    },
+    {
+     "kind": "text_input",
+     "label": "Review",
+     "is_filter": true,
+     "rect": {
+      "x": 621,
+      "y": 533,
+      "w": 93,
+      "h": 28
+     }
+    },
+    {
+     "kind": "native_select",
+     "label": "Visibility",
+     "selected_text": "",
+     "selected_text_primary": "",
+     "is_filter": true,
+     "rect": {
+      "x": 700,
+      "y": 533,
+      "w": 68,
+      "h": 28
+     }
+    },
+    {
+     "kind": "native_select",
+     "label": "Type",
+     "selected_text": "",
+     "selected_text_primary": "",
+     "is_filter": true,
+     "rect": {
+      "x": 764,
+      "y": 533,
+      "w": 54,
+      "h": 28
+     }
+    },
+    {
+     "kind": "text_input",
+     "label": "Product",
+     "value": "Tank",
+     "is_filter": true,
+     "rect": {
+      "x": 830,
+      "y": 533,
+      "w": 73,
+      "h": 28
+     }
+    },
+    {
+     "kind": "text_input",
+     "label": "SKU",
+     "is_filter": true,
+     "rect": {
+      "x": 898,
+      "y": 533,
+      "w": 58,
+      "h": 28
+     }
+    },
+    {
+     "kind": "checkbox_input",
+     "label": "338 Apr 19, 2023, 12:15:20 PM",
+     "value": "off",
+     "rect": {
+      "x": 123,
+      "y": 670,
+      "w": 13,
+      "h": 13
+     }
+    },
+    {
+     "kind": "a",
+     "label": "Edit",
+     "value": "Edit",
+     "rect": {
+      "x": 946,
+      "y": 4087,
+      "w": 23,
+      "h": 18
+     }
+    },
+    {
+     "kind": "checkbox_input",
+     "label": "337 Apr 19, 2023, 12:15:20 PM",
+     "value": "off",
+     "rect": {
+      "x": 123,
+      "y": 850,
+      "w": 13,
+      "h": 13
+     }
+    },
+    {
+     "kind": "a",
+     "label": "Edit",
+     "value": "Edit",
+     "rect": {
+      "x": 946,
+      "y": 4087,
+      "w": 23,
+      "h": 18
+     }
+    },
+    {
+     "kind": "checkbox_input",
+     "label": "335 Apr 19, 2023, 12:15:20 PM",
+     "value": "off",
+     "in_viewport": false,
+     "rect": {
+      "x": 123,
+      "y": 1029,
+      "w": 13,
+      "h": 13
+     }
+    },
+    {
+     "kind": "a",
+     "label": "Edit",
+     "value": "Edit",
+     "in_viewport": false,
+     "rect": {
+      "x": 946,
+      "y": 4087,
+      "w": 23,
+      "h": 18
+     }
+    },
+    {
+     "kind": "checkbox_input",
+     "label": "334 Apr 19, 2023, 12:15:20 PM",
+     "value": "off",
+     "in_viewport": false,
+     "rect": {
+      "x": 123,
+      "y": 1209,
+      "w": 13,
+      "h": 13
+     }
+    },
+    {
+     "kind": "a",
+     "label": "Edit",
+     "value": "Edit",
+     "in_viewport": false,
+     "rect": {
+      "x": 946,
+      "y": 4087,
+      "w": 23,
+      "h": 18
+     }
+    },
+    {
+     "kind": "checkbox_input",
+     "label": "333 Apr 19, 2023, 12:15:20 PM",
+     "value": "off",
+     "in_viewport": false,
+     "rect": {
+      "x": 123,
+      "y": 1389,
+      "w": 13,
+      "h": 13
+     }
+    },
+    {
+     "kind": "a",
+     "label": "Edit",
+     "value": "Edit",
+     "in_viewport": false,
+     "rect": {
+      "x": 946,
+      "y": 4087,
+      "w": 23,
+      "h": 18
+     }
+    },
+    {
+     "kind": "checkbox_input",
+     "label": "340 Apr 19, 2023, 12:15:20 PM",
+     "value": "off",
+     "in_viewport": false,
+     "rect": {
+      "x": 123,
+      "y": 1568,
+      "w": 13,
+      "h": 13
+     }
+    },
+    {
+     "kind": "a",
+     "label": "Edit",
+     "value": "Edit",
+     "in_viewport": false,
+     "rect": {
+      "x": 946,
+      "y": 4087,
+      "w": 23,
+      "h": 18
+     }
+    },
+    {
+     "kind": "checkbox_input",
+     "label": "339 Apr 19, 2023, 12:15:20 PM",
+     "value": "off",
+     "in_viewport": false,
+     "rect": {
+      "x": 123,
+      "y": 1748,
+      "w": 13,
+      "h": 13
+     }
+    },
+    {
+     "kind": "a",
+     "label": "Edit",
+     "value": "Edit",
+     "in_viewport": false,
+     "rect": {
+      "x": 946,
+      "y": 4087,
+      "w": 23,
+      "h": 18
+     }
+    },
+    {
+     "kind": "checkbox_input",
+     "label": "341 Apr 19, 2023, 12:15:20 PM",
+     "value": "off",
+     "in_viewport": false,
+     "rect": {
+      "x": 123,
+      "y": 1928,
+      "w": 13,
+      "h": 13
+     }
+    },
+    {
+     "kind": "a",
+     "label": "Edit",
+     "value": "Edit",
+     "in_viewport": false,
+     "rect": {
+      "x": 946,
+      "y": 4087,
+      "w": 23,
+      "h": 18
+     }
+    },
+    {
+     "kind": "checkbox_input",
+     "label": "342 Apr 19, 2023, 12:15:20 PM",
+     "value": "off",
+     "in_viewport": false,
+     "rect": {
+      "x": 123,
+      "y": 2107,
+      "w": 13,
+      "h": 13
+     }
+    },
+    {
+     "kind": "a",
+     "label": "Edit",
+     "value": "Edit",
+     "in_viewport": false,
+     "rect": {
+      "x": 946,
+      "y": 4087,
+      "w": 23,
+      "h": 18
+     }
+    },
+    {
+     "kind": "checkbox_input",
+     "label": "343 Apr 19, 2023, 12:15:20 PM",
+     "value": "off",
+     "in_viewport": false,
+     "rect": {
+      "x": 123,
+      "y": 2287,
+      "w": 13,
+      "h": 13
+     }
+    },
+    {
+     "kind": "a",
+     "label": "Edit",
+     "value": "Edit",
+     "in_viewport": false,
+     "rect": {
+      "x": 946,
+      "y": 4087,
+      "w": 23,
+      "h": 18
+     }
+    },
+    {
+     "kind": "checkbox_input",
+     "label": "344 Apr 19, 2023, 12:15:20 PM",
+     "value": "off",
+     "in_viewport": false,
+     "rect": {
+      "x": 123,
+      "y": 2466,
+      "w": 13,
+      "h": 13
+     }
+    },
+    {
+     "kind": "a",
+     "label": "Edit",
+     "value": "Edit",
+     "in_viewport": false,
+     "rect": {
+      "x": 946,
+      "y": 4087,
+      "w": 23,
+      "h": 18
+     }
+    },
+    {
+     "kind": "checkbox_input",
+     "label": "345 Apr 19, 2023, 12:15:20 PM",
+     "value": "off",
+     "in_viewport": false,
+     "rect": {
+      "x": 123,
+      "y": 2646,
+      "w": 13,
+      "h": 13
+     }
+    },
+    {
+     "kind": "a",
+     "label": "Edit",
+     "value": "Edit",
+     "in_viewport": false,
+     "rect": {
+      "x": 946,
+      "y": 4087,
+      "w": 23,
+      "h": 18
+     }
+    },
+    {
+     "kind": "checkbox_input",
+     "label": "346 Apr 19, 2023, 12:15:20 PM",
+     "value": "off",
+     "in_viewport": false,
+     "rect": {
+      "x": 123,
+      "y": 2826,
+      "w": 13,
+      "h": 13
+     }
+    },
+    {
+     "kind": "a",
+     "label": "Edit",
+     "value": "Edit",
+     "in_viewport": false,
+     "rect": {
+      "x": 946,
+      "y": 4087,
+      "w": 23,
+      "h": 18
+     }
+    },
+    {
+     "kind": "checkbox_input",
+     "label": "131 Apr 19, 2023, 12:15:14 PM",
+     "value": "off",
+     "in_viewport": false,
+     "rect": {
+      "x": 123,
+      "y": 3005,
+      "w": 13,
+      "h": 13
+     }
+    },
+    {
+     "kind": "a",
+     "label": "Edit",
+     "value": "Edit",
+     "in_viewport": false,
+     "rect": {
+      "x": 946,
+      "y": 4087,
+      "w": 23,
+      "h": 18
+     }
+    },
+    {
+     "kind": "checkbox_input",
+     "label": "132 Apr 19, 2023, 12:15:14 PM",
+     "value": "off",
+     "in_viewport": false,
+     "rect": {
+      "x": 123,
+      "y": 3185,
+      "w": 13,
+      "h": 13
+     }
+    },
+    {
+     "kind": "a",
+     "label": "Edit",
+     "value": "Edit",
+     "in_viewport": false,
+     "rect": {
+      "x": 946,
+      "y": 4087,
+      "w": 23,
+      "h": 18
+     }
+    },
+    {
+     "kind": "checkbox_input",
+     "label": "133 Apr 19, 2023, 12:15:14 PM",
+     "value": "off",
+     "in_viewport": false,
+     "rect": {
+      "x": 123,
+      "y": 3365,
+      "w": 13,
+      "h": 13
+     }
+    },
+    {
+     "kind": "a",
+     "label": "Edit",
+     "value": "Edit",
+     "in_viewport": false,
+     "rect": {
+      "x": 946,
+      "y": 4087,
+      "w": 23,
+      "h": 18
+     }
+    },
+    {
+     "kind": "checkbox_input",
+     "label": "134 Apr 19, 2023, 12:15:14 PM",
+     "value": "off",
+     "in_viewport": false,
+     "rect": {
+      "x": 123,
+      "y": 3544,
+      "w": 13,
+      "h": 13
+     }
+    },
+    {
+     "kind": "a",
+     "label": "Edit",
+     "value": "Edit",
+     "in_viewport": false,
+     "rect": {
+      "x": 946,
+      "y": 4087,
+      "w": 23,
+      "h": 18
+     }
+    },
+    {
+     "kind": "checkbox_input",
+     "label": "135 Apr 19, 2023, 12:15:14 PM",
+     "value": "off",
+     "in_viewport": false,
+     "rect": {
+      "x": 123,
+      "y": 3724,
+      "w": 13,
+      "h": 13
+     }
+    },
+    {
+     "kind": "a",
+     "label": "Edit",
+     "value": "Edit",
+     "in_viewport": false,
+     "rect": {
+      "x": 946,
+      "y": 4087,
+      "w": 23,
+      "h": 18
+     }
+    },
+    {
+     "kind": "checkbox_input",
+     "label": "136 Apr 19, 2023, 12:15:14 PM",
+     "value": "off",
+     "in_viewport": false,
+     "rect": {
+      "x": 123,
+      "y": 3903,
+      "w": 13,
+      "h": 13
+     }
+    },
+    {
+     "kind": "a",
+     "label": "Edit",
+     "value": "Edit",
+     "in_viewport": false,
+     "rect": {
+      "x": 946,
+      "y": 4087,
+      "w": 23,
+      "h": 18
+     }
+    },
+    {
+     "kind": "checkbox_input",
+     "label": "123 Apr 19, 2023, 12:15:13 PM",
+     "value": "off",
+     "in_viewport": false,
+     "rect": {
+      "x": 123,
+      "y": 4083,
+      "w": 13,
+      "h": 13
+     }
+    },
+    {
+     "kind": "a",
+     "label": "Edit",
+     "value": "Edit",
+     "in_viewport": false,
+     "rect": {
+      "x": 946,
+      "y": 4087,
+      "w": 23,
+      "h": 18
+     }
+    },
+    {
+     "kind": "a",
+     "label": "Magento",
+     "in_viewport": false,
+     "rect": {
+      "x": 101,
+      "y": 4316,
+      "w": 22,
+      "h": 25
+     }
+    },
+    {
+     "kind": "a",
+     "label": "Privacy Policy",
+     "value": "Privacy Policy",
+     "in_viewport": false,
+     "rect": {
+      "x": 752,
+      "y": 4342,
+      "w": 89,
+      "h": 19
+     }
+    },
+    {
+     "kind": "a",
+     "label": "Account Activity",
+     "value": "Account Activity",
+     "in_viewport": false,
+     "rect": {
+      "x": 839,
+      "y": 4342,
+      "w": 110,
+      "h": 19
+     }
+    },
+    {
+     "kind": "a",
+     "label": "Report an Issue",
+     "value": "Report an Issue",
+     "in_viewport": false,
+     "rect": {
+      "x": 936,
+      "y": 4342,
+      "w": 105,
+      "h": 19
+     }
+    }
+   ],
+   "url": "http://192.168.1.103:7780/[session access value redacted]/review/product/index/page/1/internal_reviews//form_key/oE3gRGumNigO6SpJ/",
+   "requirement_scopes": {
+    "tank_reviews": {
+     "status": "met",
+     "detail_resolution": {
+      "status": "active",
+      "candidate_records": 27,
+      "current_observed_detail_fields": [],
+      "resolved_candidate_ordinals": [
+       1,
+       2
+      ],
+      "next_unresolved_candidate": {
+       "ordinal": 3,
+       "fields": {
+        "nickname": "Edmund",
+        "product": "Erikssen CoolTech™ Fitness Tank"
+       }
+      },
+      "detail_fields": [
+       "detailed_rating"
+      ],
+      "pending_candidate_ordinal": null
+     }
+    }
+   }
+  },
+  "26": {
+   "title": "Reviews / Customer Reviews / User Content / Marketing / Magento Admin",
+   "controls": [
+    {
+     "kind": "a",
+     "rect": {
+      "x": 34,
+      "y": 47,
+      "w": 88,
+      "h": 75
+     }
+    },
+    {
+     "kind": "a",
+     "label": "DASHBOARD",
+     "value": "Dashboard",
+     "rect": {
+      "x": 34,
+      "y": 133,
+      "w": 88,
+      "h": 62
+     }
+    },
+    {
+     "kind": "a",
+     "label": "SALES",
+     "value": "Sales",
+     "rect": {
+      "x": 34,
+      "y": 210,
+      "w": 88,
+      "h": 62
+     }
+    },
+    {
+     "kind": "a",
+     "label": "CATALOG",
+     "value": "Catalog",
+     "rect": {
+      "x": 34,
+      "y": 288,
+      "w": 88,
+      "h": 62
+     }
+    },
+    {
+     "kind": "a",
+     "label": "CUSTOMERS",
+     "value": "Customers",
+     "rect": {
+      "x": 34,
+      "y": 365,
+      "w": 88,
+      "h": 62
+     }
+    },
+    {
+     "kind": "a",
+     "label": "MARKETING",
+     "value": "Marketing",
+     "rect": {
+      "x": 34,
+      "y": 443,
+      "w": 88,
+      "h": 62
+     }
+    },
+    {
+     "kind": "a",
+     "label": "CONTENT",
+     "value": "Content",
+     "rect": {
+      "x": 34,
+      "y": 520,
+      "w": 88,
+      "h": 62
+     }
+    },
+    {
+     "kind": "a",
+     "label": "REPORTS",
+     "value": "Reports",
+     "rect": {
+      "x": 34,
+      "y": 598,
+      "w": 88,
+      "h": 62
+     }
+    },
+    {
+     "kind": "a",
+     "label": "STORES",
+     "value": "Stores",
+     "rect": {
+      "x": 34,
+      "y": 675,
+      "w": 88,
+      "h": 62
+     }
+    },
+    {
+     "kind": "a",
+     "label": "SYSTEM",
+     "value": "System",
+     "rect": {
+      "x": 34,
+      "y": 753,
+      "w": 88,
+      "h": 62
+     }
+    },
+    {
+     "kind": "a",
+     "label": "FIND PARTNERS & EXTENSIONS",
+     "value": "Find Partners & Extensions",
+     "rect": {
+      "x": 34,
+      "y": 846,
+      "w": 88,
+      "h": 88
+     }
+    },
+    {
+     "kind": "a",
+     "label": "My Account",
+     "value": "[session access value redacted]",
+     "in_viewport": false,
+     "rect": {
+      "x": 935,
+      "y": -3313,
+      "w": 106,
+      "h": 33
+     }
+    },
+    {
+     "kind": "a",
+     "label": "Notifications",
+     "in_viewport": false,
+     "rect": {
+      "x": 868,
+      "y": -3313,
+      "w": 60,
+      "h": 33
+     }
+    },
+    {
+     "kind": "text_input",
+     "label": "search-global",
+     "in_viewport": false,
+     "rect": {
+      "x": 827,
+      "y": -3312,
+      "w": 50,
+      "h": 35
+     }
+    },
+    {
+     "kind": "button",
+     "label": "New Review",
+     "value": "New Review",
+     "rect": {
+      "x": 937,
+      "y": 49,
+      "w": 131,
+      "h": 46
+     }
+    },
+    {
+     "kind": "button",
+     "label": "Search",
+     "value": "Search",
+     "query_action": "submit",
+     "in_viewport": false,
+     "rect": {
+      "x": 122,
+      "y": -3096,
+      "w": 76,
+      "h": 33
+     }
+    },
+    {
+     "kind": "button",
+     "label": "Reset Filter",
+     "value": "Reset Filter",
+     "query_action": "reset",
+     "in_viewport": false,
+     "rect": {
+      "x": 196,
+      "y": -3096,
+      "w": 107,
+      "h": 33
+     }
+    },
+    {
+     "kind": "native_select",
+     "label": "reviewGrid_massaction-select",
+     "selected_text": "Actions",
+     "selected_text_primary": "Actions",
+     "in_viewport": false,
+     "rect": {
+      "x": 151,
+      "y": -3041,
+      "w": 151,
+      "h": 33
+     }
+    },
+    {
+     "kind": "native_select",
+     "label": "Status",
+     "selected_text": "",
+     "selected_text_primary": "",
+     "in_viewport": false,
+     "rect": {
+      "x": 361,
+      "y": -2896,
+      "w": 62,
+      "h": 28
+     }
+    },
+    {
+     "kind": "native_select",
+     "label": "per page",
+     "value": "20",
+     "selected_text": "20",
+     "selected_text_primary": "20",
+     "in_viewport": false,
+     "rect": {
+      "x": 689,
+      "y": -3041,
+      "w": 85,
+      "h": 33
+     }
+    },
+    {
+     "kind": "button",
+     "label": "Previous page",
+     "value": "Previous page",
+     "in_viewport": false,
+     "rect": {
+      "x": 823,
+      "y": -3041,
+      "w": 44,
+      "h": 33
+     }
+    },
+    {
+     "kind": "text_input",
+     "label": "of 2",
+     "value": "1",
+     "in_viewport": false,
+     "rect": {
+      "x": 880,
+      "y": -3041,
+      "w": 44,
+      "h": 33
+     }
+    },
+    {
+     "kind": "button",
+     "label": "Next page",
+     "value": "Next page",
+     "in_viewport": false,
+     "rect": {
+      "x": 959,
+      "y": -3041,
+      "w": 44,
+      "h": 33
+     }
+    },
+    {
+     "kind": "native_select",
+     "label": "massaction",
+     "selected_text": "Any",
+     "selected_text_primary": "Any",
+     "is_filter": true,
+     "in_viewport": false,
+     "rect": {
+      "x": 124,
+      "y": -2896,
+      "w": 60,
+      "h": 28
+     }
+    },
+    {
+     "kind": "text_input",
+     "label": "ID",
+     "is_filter": true,
+     "in_viewport": false,
+     "rect": {
+      "x": 187,
+      "y": -2896,
+      "w": 58,
+      "h": 28
+     }
+    },
+    {
+     "kind": "text_input",
+     "label": "Created",
+     "is_filter": true,
+     "in_viewport": false,
+     "rect": {
+      "x": 273,
+      "y": -2875,
+      "w": 122,
+      "h": 28
+     }
+    },
+    {
+     "kind": "button",
+     "label": "Created",
+     "value": "undefined",
+     "is_filter": true,
+     "in_viewport": false,
+     "rect": {
+      "x": 307,
+      "y": -2875,
+      "w": 28,
+      "h": 28
+     }
+    },
+    {
+     "kind": "text_input",
+     "label": "Created",
+     "is_filter": true,
+     "in_viewport": false,
+     "rect": {
+      "x": 273,
+      "y": -2875,
+      "w": 122,
+      "h": 28
+     }
+    },
+    {
+     "kind": "button",
+     "label": "Created",
+     "value": "undefined",
+     "is_filter": true,
+     "in_viewport": false,
+     "rect": {
+      "x": 307,
+      "y": -2875,
+      "w": 28,
+      "h": 28
+     }
+    },
+    {
+     "kind": "native_select",
+     "label": "Status",
+     "selected_text": "",
+     "selected_text_primary": "",
+     "is_filter": true,
+     "in_viewport": false,
+     "rect": {
+      "x": 361,
+      "y": -2896,
+      "w": 62,
+      "h": 28
+     }
+    },
+    {
+     "kind": "text_input",
+     "label": "Title",
+     "is_filter": true,
+     "in_viewport": false,
+     "rect": {
+      "x": 447,
+      "y": -2896,
+      "w": 115,
+      "h": 28
+     }
+    },
+    {
+     "kind": "text_input",
+     "label": "Nickname",
+     "is_filter": true,
+     "in_viewport": false,
+     "rect": {
+      "x": 538,
+      "y": -2896,
+      "w": 76,
+      "h": 28
+     }
+    },
+    {
+     "kind": "text_input",
+     "label": "Review",
+     "is_filter": true,
+     "in_viewport": false,
+     "rect": {
+      "x": 621,
+      "y": -2896,
+      "w": 93,
+      "h": 28
+     }
+    },
+    {
+     "kind": "native_select",
+     "label": "Visibility",
+     "selected_text": "",
+     "selected_text_primary": "",
+     "is_filter": true,
+     "in_viewport": false,
+     "rect": {
+      "x": 700,
+      "y": -2896,
+      "w": 68,
+      "h": 28
+     }
+    },
+    {
+     "kind": "native_select",
+     "label": "Type",
+     "selected_text": "",
+     "selected_text_primary": "",
+     "is_filter": true,
+     "in_viewport": false,
+     "rect": {
+      "x": 764,
+      "y": -2896,
+      "w": 54,
+      "h": 28
+     }
+    },
+    {
+     "kind": "text_input",
+     "label": "Product",
+     "value": "Tank",
+     "is_filter": true,
+     "in_viewport": false,
+     "rect": {
+      "x": 830,
+      "y": -2896,
+      "w": 73,
+      "h": 28
+     }
+    },
+    {
+     "kind": "text_input",
+     "label": "SKU",
+     "is_filter": true,
+     "in_viewport": false,
+     "rect": {
+      "x": 898,
+      "y": -2896,
+      "w": 58,
+      "h": 28
+     }
+    },
+    {
+     "kind": "checkbox_input",
+     "label": "338 Apr 19, 2023, 12:15:20 PM",
+     "value": "off",
+     "in_viewport": false,
+     "rect": {
+      "x": 123,
+      "y": -2759,
+      "w": 13,
+      "h": 13
+     }
+    },
+    {
+     "kind": "a",
+     "label": "Edit",
+     "value": "Edit",
+     "in_viewport": false,
+     "rect": {
+      "x": 946,
+      "y": 658,
+      "w": 23,
+      "h": 18
+     }
+    },
+    {
+     "kind": "checkbox_input",
+     "label": "337 Apr 19, 2023, 12:15:20 PM",
+     "value": "off",
+     "in_viewport": false,
+     "rect": {
+      "x": 123,
+      "y": -2579,
+      "w": 13,
+      "h": 13
+     }
+    },
+    {
+     "kind": "a",
+     "label": "Edit",
+     "value": "Edit",
+     "in_viewport": false,
+     "rect": {
+      "x": 946,
+      "y": 658,
+      "w": 23,
+      "h": 18
+     }
+    },
+    {
+     "kind": "checkbox_input",
+     "label": "335 Apr 19, 2023, 12:15:20 PM",
+     "value": "off",
+     "in_viewport": false,
+     "rect": {
+      "x": 123,
+      "y": -2399,
+      "w": 13,
+      "h": 13
+     }
+    },
+    {
+     "kind": "a",
+     "label": "Edit",
+     "value": "Edit",
+     "in_viewport": false,
+     "rect": {
+      "x": 946,
+      "y": 658,
+      "w": 23,
+      "h": 18
+     }
+    },
+    {
+     "kind": "checkbox_input",
+     "label": "334 Apr 19, 2023, 12:15:20 PM",
+     "value": "off",
+     "in_viewport": false,
+     "rect": {
+      "x": 123,
+      "y": -2220,
+      "w": 13,
+      "h": 13
+     }
+    },
+    {
+     "kind": "a",
+     "label": "Edit",
+     "value": "Edit",
+     "in_viewport": false,
+     "rect": {
+      "x": 946,
+      "y": 658,
+      "w": 23,
+      "h": 18
+     }
+    },
+    {
+     "kind": "checkbox_input",
+     "label": "333 Apr 19, 2023, 12:15:20 PM",
+     "value": "off",
+     "in_viewport": false,
+     "rect": {
+      "x": 123,
+      "y": -2040,
+      "w": 13,
+      "h": 13
+     }
+    },
+    {
+     "kind": "a",
+     "label": "Edit",
+     "value": "Edit",
+     "in_viewport": false,
+     "rect": {
+      "x": 946,
+      "y": 658,
+      "w": 23,
+      "h": 18
+     }
+    },
+    {
+     "kind": "checkbox_input",
+     "label": "340 Apr 19, 2023, 12:15:20 PM",
+     "value": "off",
+     "in_viewport": false,
+     "rect": {
+      "x": 123,
+      "y": -1860,
+      "w": 13,
+      "h": 13
+     }
+    },
+    {
+     "kind": "a",
+     "label": "Edit",
+     "value": "Edit",
+     "in_viewport": false,
+     "rect": {
+      "x": 946,
+      "y": 658,
+      "w": 23,
+      "h": 18
+     }
+    },
+    {
+     "kind": "checkbox_input",
+     "label": "339 Apr 19, 2023, 12:15:20 PM",
+     "value": "off",
+     "in_viewport": false,
+     "rect": {
+      "x": 123,
+      "y": -1681,
+      "w": 13,
+      "h": 13
+     }
+    },
+    {
+     "kind": "a",
+     "label": "Edit",
+     "value": "Edit",
+     "in_viewport": false,
+     "rect": {
+      "x": 946,
+      "y": 658,
+      "w": 23,
+      "h": 18
+     }
+    },
+    {
+     "kind": "checkbox_input",
+     "label": "341 Apr 19, 2023, 12:15:20 PM",
+     "value": "off",
+     "in_viewport": false,
+     "rect": {
+      "x": 123,
+      "y": -1501,
+      "w": 13,
+      "h": 13
+     }
+    },
+    {
+     "kind": "a",
+     "label": "Edit",
+     "value": "Edit",
+     "in_viewport": false,
+     "rect": {
+      "x": 946,
+      "y": 658,
+      "w": 23,
+      "h": 18
+     }
+    },
+    {
+     "kind": "checkbox_input",
+     "label": "342 Apr 19, 2023, 12:15:20 PM",
+     "value": "off",
+     "in_viewport": false,
+     "rect": {
+      "x": 123,
+      "y": -1322,
+      "w": 13,
+      "h": 13
+     }
+    },
+    {
+     "kind": "a",
+     "label": "Edit",
+     "value": "Edit",
+     "in_viewport": false,
+     "rect": {
+      "x": 946,
+      "y": 658,
+      "w": 23,
+      "h": 18
+     }
+    },
+    {
+     "kind": "checkbox_input",
+     "label": "343 Apr 19, 2023, 12:15:20 PM",
+     "value": "off",
+     "in_viewport": false,
+     "rect": {
+      "x": 123,
+      "y": -1142,
+      "w": 13,
+      "h": 13
+     }
+    },
+    {
+     "kind": "a",
+     "label": "Edit",
+     "value": "Edit",
+     "in_viewport": false,
+     "rect": {
+      "x": 946,
+      "y": 658,
+      "w": 23,
+      "h": 18
+     }
+    },
+    {
+     "kind": "checkbox_input",
+     "label": "344 Apr 19, 2023, 12:15:20 PM",
+     "value": "off",
+     "in_viewport": false,
+     "rect": {
+      "x": 123,
+      "y": -962,
+      "w": 13,
+      "h": 13
+     }
+    },
+    {
+     "kind": "a",
+     "label": "Edit",
+     "value": "Edit",
+     "in_viewport": false,
+     "rect": {
+      "x": 946,
+      "y": 658,
+      "w": 23,
+      "h": 18
+     }
+    },
+    {
+     "kind": "checkbox_input",
+     "label": "345 Apr 19, 2023, 12:15:20 PM",
+     "value": "off",
+     "in_viewport": false,
+     "rect": {
+      "x": 123,
+      "y": -783,
+      "w": 13,
+      "h": 13
+     }
+    },
+    {
+     "kind": "a",
+     "label": "Edit",
+     "value": "Edit",
+     "in_viewport": false,
+     "rect": {
+      "x": 946,
+      "y": 658,
+      "w": 23,
+      "h": 18
+     }
+    },
+    {
+     "kind": "checkbox_input",
+     "label": "346 Apr 19, 2023, 12:15:20 PM",
+     "value": "off",
+     "in_viewport": false,
+     "rect": {
+      "x": 123,
+      "y": -603,
+      "w": 13,
+      "h": 13
+     }
+    },
+    {
+     "kind": "a",
+     "label": "Edit",
+     "value": "Edit",
+     "in_viewport": false,
+     "rect": {
+      "x": 946,
+      "y": 658,
+      "w": 23,
+      "h": 18
+     }
+    },
+    {
+     "kind": "checkbox_input",
+     "label": "131 Apr 19, 2023, 12:15:14 PM",
+     "value": "off",
+     "in_viewport": false,
+     "rect": {
+      "x": 123,
+      "y": -423,
+      "w": 13,
+      "h": 13
+     }
+    },
+    {
+     "kind": "a",
+     "label": "Edit",
+     "value": "Edit",
+     "in_viewport": false,
+     "rect": {
+      "x": 946,
+      "y": 658,
+      "w": 23,
+      "h": 18
+     }
+    },
+    {
+     "kind": "checkbox_input",
+     "label": "132 Apr 19, 2023, 12:15:14 PM",
+     "value": "off",
+     "in_viewport": false,
+     "rect": {
+      "x": 123,
+      "y": -244,
+      "w": 13,
+      "h": 13
+     }
+    },
+    {
+     "kind": "a",
+     "label": "Edit",
+     "value": "Edit",
+     "in_viewport": false,
+     "rect": {
+      "x": 946,
+      "y": 658,
+      "w": 23,
+      "h": 18
+     }
+    },
+    {
+     "kind": "checkbox_input",
+     "label": "133 Apr 19, 2023, 12:15:14 PM",
+     "value": "off",
+     "in_viewport": false,
+     "rect": {
+      "x": 123,
+      "y": -64,
+      "w": 13,
+      "h": 13
+     }
+    },
+    {
+     "kind": "a",
+     "label": "Edit",
+     "value": "Edit",
+     "in_viewport": false,
+     "rect": {
+      "x": 946,
+      "y": 658,
+      "w": 23,
+      "h": 18
+     }
+    },
+    {
+     "kind": "checkbox_input",
+     "label": "134 Apr 19, 2023, 12:15:14 PM",
+     "value": "off",
+     "rect": {
+      "x": 123,
+      "y": 115,
+      "w": 13,
+      "h": 13
+     }
+    },
+    {
+     "kind": "a",
+     "label": "Edit",
+     "value": "Edit",
+     "rect": {
+      "x": 946,
+      "y": 658,
+      "w": 23,
+      "h": 18
+     }
+    },
+    {
+     "kind": "checkbox_input",
+     "label": "135 Apr 19, 2023, 12:15:14 PM",
+     "value": "off",
+     "rect": {
+      "x": 123,
+      "y": 295,
+      "w": 13,
+      "h": 13
+     }
+    },
+    {
+     "kind": "a",
+     "label": "Edit",
+     "value": "Edit",
+     "rect": {
+      "x": 946,
+      "y": 658,
+      "w": 23,
+      "h": 18
+     }
+    },
+    {
+     "kind": "checkbox_input",
+     "label": "136 Apr 19, 2023, 12:15:14 PM",
+     "value": "off",
+     "rect": {
+      "x": 123,
+      "y": 475,
+      "w": 13,
+      "h": 13
+     }
+    },
+    {
+     "kind": "a",
+     "label": "Edit",
+     "value": "Edit",
+     "rect": {
+      "x": 946,
+      "y": 658,
+      "w": 23,
+      "h": 18
+     }
+    },
+    {
+     "kind": "checkbox_input",
+     "label": "123 Apr 19, 2023, 12:15:13 PM",
+     "value": "off",
+     "rect": {
+      "x": 123,
+      "y": 654,
+      "w": 13,
+      "h": 13
+     }
+    },
+    {
+     "kind": "a",
+     "label": "Edit",
+     "value": "Edit",
+     "rect": {
+      "x": 946,
+      "y": 658,
+      "w": 23,
+      "h": 18
+     }
+    },
+    {
+     "kind": "a",
+     "label": "Magento",
+     "rect": {
+      "x": 101,
+      "y": 887,
+      "w": 22,
+      "h": 25
+     }
+    },
+    {
+     "kind": "a",
+     "label": "Privacy Policy",
+     "value": "Privacy Policy",
+     "rect": {
+      "x": 752,
+      "y": 913,
+      "w": 89,
+      "h": 19
+     }
+    },
+    {
+     "kind": "a",
+     "label": "Account Activity",
+     "value": "Account Activity",
+     "rect": {
+      "x": 839,
+      "y": 913,
+      "w": 110,
+      "h": 19
+     }
+    },
+    {
+     "kind": "a",
+     "label": "Report an Issue",
+     "value": "Report an Issue",
+     "rect": {
+      "x": 936,
+      "y": 913,
+      "w": 105,
+      "h": 19
+     }
+    }
+   ],
+   "url": "http://192.168.1.103:7780/[session access value redacted]/review/product/",
+   "requirement_scopes": {
+    "tank_reviews": {
+     "status": "met",
+     "detail_resolution": {
+      "status": "active",
+      "candidate_records": 27,
+      "current_observed_detail_fields": [],
+      "resolved_candidate_ordinals": [
+       1,
+       2,
+       8
+      ],
+      "next_unresolved_candidate": {
+       "ordinal": 3,
+       "fields": {
+        "nickname": "Edmund",
+        "product": "Erikssen CoolTech™ Fitness Tank"
+       }
+      },
+      "detail_fields": [
+       "detailed_rating"
+      ],
+      "pending_candidate_ordinal": null
+     }
+    }
+   }
+  },
+  "15": {
+   "title": "Reviews / Customer Reviews / User Content / Marketing / Magento Admin",
+   "url": "http://192.168.1.103:7780/[session access value redacted]/review/product/",
+   "controls": [
+    {
+     "kind": "a",
+     "rect": {
+      "x": 34,
+      "y": 47,
+      "w": 88,
+      "h": 75
+     }
+    },
+    {
+     "kind": "a",
+     "label": "DASHBOARD",
+     "value": "Dashboard",
+     "rect": {
+      "x": 34,
+      "y": 133,
+      "w": 88,
+      "h": 62
+     }
+    },
+    {
+     "kind": "a",
+     "label": "SALES",
+     "value": "Sales",
+     "rect": {
+      "x": 34,
+      "y": 210,
+      "w": 88,
+      "h": 62
+     }
+    },
+    {
+     "kind": "a",
+     "label": "CATALOG",
+     "value": "Catalog",
+     "rect": {
+      "x": 34,
+      "y": 288,
+      "w": 88,
+      "h": 62
+     }
+    },
+    {
+     "kind": "a",
+     "label": "CUSTOMERS",
+     "value": "Customers",
+     "rect": {
+      "x": 34,
+      "y": 365,
+      "w": 88,
+      "h": 62
+     }
+    },
+    {
+     "kind": "a",
+     "label": "MARKETING",
+     "value": "Marketing",
+     "rect": {
+      "x": 34,
+      "y": 443,
+      "w": 88,
+      "h": 62
+     }
+    },
+    {
+     "kind": "a",
+     "label": "CONTENT",
+     "value": "Content",
+     "rect": {
+      "x": 34,
+      "y": 520,
+      "w": 88,
+      "h": 62
+     }
+    },
+    {
+     "kind": "a",
+     "label": "REPORTS",
+     "value": "Reports",
+     "rect": {
+      "x": 34,
+      "y": 598,
+      "w": 88,
+      "h": 62
+     }
+    },
+    {
+     "kind": "a",
+     "label": "STORES",
+     "value": "Stores",
+     "rect": {
+      "x": 34,
+      "y": 675,
+      "w": 88,
+      "h": 62
+     }
+    },
+    {
+     "kind": "a",
+     "label": "SYSTEM",
+     "value": "System",
+     "rect": {
+      "x": 34,
+      "y": 753,
+      "w": 88,
+      "h": 62
+     }
+    },
+    {
+     "kind": "a",
+     "label": "FIND PARTNERS & EXTENSIONS",
+     "value": "Find Partners & Extensions",
+     "rect": {
+      "x": 34,
+      "y": 846,
+      "w": 88,
+      "h": 88
+     }
+    },
+    {
+     "kind": "a",
+     "label": "My Account",
+     "value": "[session access value redacted]",
+     "rect": {
+      "x": 935,
+      "y": 116,
+      "w": 106,
+      "h": 33
+     }
+    },
+    {
+     "kind": "a",
+     "label": "Notifications",
+     "rect": {
+      "x": 868,
+      "y": 116,
+      "w": 60,
+      "h": 33
+     }
+    },
+    {
+     "kind": "text_input",
+     "label": "search-global",
+     "in_viewport": false,
+     "rect": {
+      "x": 827,
+      "y": 117,
+      "w": 50,
+      "h": 35
+     }
+    },
+    {
+     "kind": "button",
+     "label": "New Review",
+     "value": "New Review",
+     "rect": {
+      "x": 914,
+      "y": 226,
+      "w": 131,
+      "h": 46
+     }
+    },
+    {
+     "kind": "button",
+     "label": "Search",
+     "value": "Search",
+     "query_action": "submit",
+     "rect": {
+      "x": 122,
+      "y": 332,
+      "w": 76,
+      "h": 33
+     }
+    },
+    {
+     "kind": "button",
+     "label": "Reset Filter",
+     "value": "Reset Filter",
+     "query_action": "reset",
+     "rect": {
+      "x": 196,
+      "y": 332,
+      "w": 107,
+      "h": 33
+     }
+    },
+    {
+     "kind": "native_select",
+     "label": "reviewGrid_massaction-select",
+     "selected_text": "Actions",
+     "selected_text_primary": "Actions",
+     "rect": {
+      "x": 151,
+      "y": 387,
+      "w": 151,
+      "h": 33
+     }
+    },
+    {
+     "kind": "native_select",
+     "label": "Status",
+     "selected_text": "",
+     "selected_text_primary": "",
+     "rect": {
+      "x": 113,
+      "y": 458,
+      "w": 52,
+      "h": 38
+     }
+    },
+    {
+     "kind": "native_select",
+     "label": "per page",
+     "value": "20",
+     "selected_text": "20",
+     "selected_text_primary": "20",
+     "rect": {
+      "x": 689,
+      "y": 387,
+      "w": 85,
+      "h": 33
+     }
+    },
+    {
+     "kind": "button",
+     "label": "Previous page",
+     "value": "Previous page",
+     "in_viewport": false,
+     "rect": {
+      "x": 823,
+      "y": 387,
+      "w": 44,
+      "h": 33
+     }
+    },
+    {
+     "kind": "text_input",
+     "label": "of 2",
+     "value": "1",
+     "rect": {
+      "x": 880,
+      "y": 387,
+      "w": 44,
+      "h": 33
+     }
+    },
+    {
+     "kind": "button",
+     "label": "Next page",
+     "value": "Next page",
+     "rect": {
+      "x": 959,
+      "y": 387,
+      "w": 44,
+      "h": 33
+     }
+    },
+    {
+     "kind": "native_select",
+     "label": "massaction",
+     "selected_text": "Any",
+     "selected_text_primary": "Any",
+     "is_filter": true,
+     "rect": {
+      "x": 124,
+      "y": 533,
+      "w": 60,
+      "h": 28
+     }
+    },
+    {
+     "kind": "text_input",
+     "label": "ID",
+     "is_filter": true,
+     "rect": {
+      "x": 187,
+      "y": 533,
+      "w": 58,
+      "h": 28
+     }
+    },
+    {
+     "kind": "text_input",
+     "label": "Created",
+     "is_filter": true,
+     "rect": {
+      "x": 273,
+      "y": 513,
+      "w": 122,
+      "h": 28
+     }
+    },
+    {
+     "kind": "button",
+     "label": "Created",
+     "value": "undefined",
+     "is_filter": true,
+     "rect": {
+      "x": 307,
+      "y": 513,
+      "w": 28,
+      "h": 28
+     }
+    },
+    {
+     "kind": "text_input",
+     "label": "Created",
+     "is_filter": true,
+     "rect": {
+      "x": 273,
+      "y": 554,
+      "w": 122,
+      "h": 28
+     }
+    },
+    {
+     "kind": "button",
+     "label": "Created",
+     "value": "undefined",
+     "is_filter": true,
+     "rect": {
+      "x": 307,
+      "y": 554,
+      "w": 28,
+      "h": 28
+     }
+    },
+    {
+     "kind": "native_select",
+     "label": "Status",
+     "selected_text": "",
+     "selected_text_primary": "",
+     "is_filter": true,
+     "rect": {
+      "x": 361,
+      "y": 533,
+      "w": 62,
+      "h": 28
+     }
+    },
+    {
+     "kind": "text_input",
+     "label": "Title",
+     "is_filter": true,
+     "rect": {
+      "x": 447,
+      "y": 533,
+      "w": 115,
+      "h": 28
+     }
+    },
+    {
+     "kind": "text_input",
+     "label": "Nickname",
+     "is_filter": true,
+     "rect": {
+      "x": 538,
+      "y": 533,
+      "w": 76,
+      "h": 28
+     }
+    },
+    {
+     "kind": "text_input",
+     "label": "Review",
+     "is_filter": true,
+     "rect": {
+      "x": 621,
+      "y": 533,
+      "w": 93,
+      "h": 28
+     }
+    },
+    {
+     "kind": "native_select",
+     "label": "Visibility",
+     "selected_text": "",
+     "selected_text_primary": "",
+     "is_filter": true,
+     "rect": {
+      "x": 700,
+      "y": 533,
+      "w": 68,
+      "h": 28
+     }
+    },
+    {
+     "kind": "native_select",
+     "label": "Type",
+     "selected_text": "",
+     "selected_text_primary": "",
+     "is_filter": true,
+     "rect": {
+      "x": 764,
+      "y": 533,
+      "w": 54,
+      "h": 28
+     }
+    },
+    {
+     "kind": "text_input",
+     "label": "Product",
+     "value": "Tank",
+     "is_filter": true,
+     "rect": {
+      "x": 830,
+      "y": 533,
+      "w": 73,
+      "h": 28
+     }
+    },
+    {
+     "kind": "text_input",
+     "label": "SKU",
+     "is_filter": true,
+     "rect": {
+      "x": 898,
+      "y": 533,
+      "w": 58,
+      "h": 28
+     }
+    },
+    {
+     "kind": "checkbox_input",
+     "label": "338 Apr 19, 2023, 12:15:20 PM",
+     "value": "off",
+     "rect": {
+      "x": 123,
+      "y": 670,
+      "w": 13,
+      "h": 13
+     }
+    },
+    {
+     "kind": "a",
+     "label": "Edit",
+     "value": "Edit",
+     "rect": {
+      "x": 946,
+      "y": 674,
+      "w": 23,
+      "h": 18
+     }
+    },
+    {
+     "kind": "checkbox_input",
+     "label": "337 Apr 19, 2023, 12:15:20 PM",
+     "value": "off",
+     "rect": {
+      "x": 123,
+      "y": 850,
+      "w": 13,
+      "h": 13
+     }
+    },
+    {
+     "kind": "a",
+     "label": "Edit",
+     "value": "Edit",
+     "rect": {
+      "x": 946,
+      "y": 853,
+      "w": 23,
+      "h": 18
+     }
+    },
+    {
+     "kind": "checkbox_input",
+     "label": "335 Apr 19, 2023, 12:15:20 PM",
+     "value": "off",
+     "in_viewport": false,
+     "rect": {
+      "x": 123,
+      "y": 1029,
+      "w": 13,
+      "h": 13
+     }
+    },
+    {
+     "kind": "a",
+     "label": "Edit",
+     "value": "Edit",
+     "in_viewport": false,
+     "rect": {
+      "x": 946,
+      "y": 1033,
+      "w": 23,
+      "h": 18
+     }
+    },
+    {
+     "kind": "checkbox_input",
+     "label": "334 Apr 19, 2023, 12:15:20 PM",
+     "value": "off",
+     "in_viewport": false,
+     "rect": {
+      "x": 123,
+      "y": 1209,
+      "w": 13,
+      "h": 13
+     }
+    },
+    {
+     "kind": "a",
+     "label": "Edit",
+     "value": "Edit",
+     "in_viewport": false,
+     "rect": {
+      "x": 946,
+      "y": 1213,
+      "w": 23,
+      "h": 18
+     }
+    },
+    {
+     "kind": "checkbox_input",
+     "label": "333 Apr 19, 2023, 12:15:20 PM",
+     "value": "off",
+     "in_viewport": false,
+     "rect": {
+      "x": 123,
+      "y": 1389,
+      "w": 13,
+      "h": 13
+     }
+    },
+    {
+     "kind": "a",
+     "label": "Edit",
+     "value": "Edit",
+     "in_viewport": false,
+     "rect": {
+      "x": 946,
+      "y": 1392,
+      "w": 23,
+      "h": 18
+     }
+    },
+    {
+     "kind": "checkbox_input",
+     "label": "340 Apr 19, 2023, 12:15:20 PM",
+     "value": "off",
+     "in_viewport": false,
+     "rect": {
+      "x": 123,
+      "y": 1568,
+      "w": 13,
+      "h": 13
+     }
+    },
+    {
+     "kind": "a",
+     "label": "Edit",
+     "value": "Edit",
+     "in_viewport": false,
+     "rect": {
+      "x": 946,
+      "y": 1572,
+      "w": 23,
+      "h": 18
+     }
+    },
+    {
+     "kind": "checkbox_input",
+     "label": "339 Apr 19, 2023, 12:15:20 PM",
+     "value": "off",
+     "in_viewport": false,
+     "rect": {
+      "x": 123,
+      "y": 1748,
+      "w": 13,
+      "h": 13
+     }
+    },
+    {
+     "kind": "a",
+     "label": "Edit",
+     "value": "Edit",
+     "in_viewport": false,
+     "rect": {
+      "x": 946,
+      "y": 1752,
+      "w": 23,
+      "h": 18
+     }
+    },
+    {
+     "kind": "checkbox_input",
+     "label": "341 Apr 19, 2023, 12:15:20 PM",
+     "value": "off",
+     "in_viewport": false,
+     "rect": {
+      "x": 123,
+      "y": 1928,
+      "w": 13,
+      "h": 13
+     }
+    },
+    {
+     "kind": "a",
+     "label": "Edit",
+     "value": "Edit",
+     "in_viewport": false,
+     "rect": {
+      "x": 946,
+      "y": 1931,
+      "w": 23,
+      "h": 18
+     }
+    },
+    {
+     "kind": "checkbox_input",
+     "label": "342 Apr 19, 2023, 12:15:20 PM",
+     "value": "off",
+     "in_viewport": false,
+     "rect": {
+      "x": 123,
+      "y": 2107,
+      "w": 13,
+      "h": 13
+     }
+    },
+    {
+     "kind": "a",
+     "label": "Edit",
+     "value": "Edit",
+     "in_viewport": false,
+     "rect": {
+      "x": 946,
+      "y": 2111,
+      "w": 23,
+      "h": 18
+     }
+    },
+    {
+     "kind": "checkbox_input",
+     "label": "343 Apr 19, 2023, 12:15:20 PM",
+     "value": "off",
+     "in_viewport": false,
+     "rect": {
+      "x": 123,
+      "y": 2287,
+      "w": 13,
+      "h": 13
+     }
+    },
+    {
+     "kind": "a",
+     "label": "Edit",
+     "value": "Edit",
+     "in_viewport": false,
+     "rect": {
+      "x": 946,
+      "y": 2291,
+      "w": 23,
+      "h": 18
+     }
+    },
+    {
+     "kind": "checkbox_input",
+     "label": "344 Apr 19, 2023, 12:15:20 PM",
+     "value": "off",
+     "in_viewport": false,
+     "rect": {
+      "x": 123,
+      "y": 2466,
+      "w": 13,
+      "h": 13
+     }
+    },
+    {
+     "kind": "a",
+     "label": "Edit",
+     "value": "Edit",
+     "in_viewport": false,
+     "rect": {
+      "x": 946,
+      "y": 2470,
+      "w": 23,
+      "h": 18
+     }
+    },
+    {
+     "kind": "checkbox_input",
+     "label": "345 Apr 19, 2023, 12:15:20 PM",
+     "value": "off",
+     "in_viewport": false,
+     "rect": {
+      "x": 123,
+      "y": 2646,
+      "w": 13,
+      "h": 13
+     }
+    },
+    {
+     "kind": "a",
+     "label": "Edit",
+     "value": "Edit",
+     "in_viewport": false,
+     "rect": {
+      "x": 946,
+      "y": 2650,
+      "w": 23,
+      "h": 18
+     }
+    },
+    {
+     "kind": "checkbox_input",
+     "label": "346 Apr 19, 2023, 12:15:20 PM",
+     "value": "off",
+     "in_viewport": false,
+     "rect": {
+      "x": 123,
+      "y": 2826,
+      "w": 13,
+      "h": 13
+     }
+    },
+    {
+     "kind": "a",
+     "label": "Edit",
+     "value": "Edit",
+     "in_viewport": false,
+     "rect": {
+      "x": 946,
+      "y": 2829,
+      "w": 23,
+      "h": 18
+     }
+    },
+    {
+     "kind": "checkbox_input",
+     "label": "131 Apr 19, 2023, 12:15:14 PM",
+     "value": "off",
+     "in_viewport": false,
+     "rect": {
+      "x": 123,
+      "y": 3005,
+      "w": 13,
+      "h": 13
+     }
+    },
+    {
+     "kind": "a",
+     "label": "Edit",
+     "value": "Edit",
+     "in_viewport": false,
+     "rect": {
+      "x": 946,
+      "y": 3009,
+      "w": 23,
+      "h": 18
+     }
+    },
+    {
+     "kind": "checkbox_input",
+     "label": "132 Apr 19, 2023, 12:15:14 PM",
+     "value": "off",
+     "in_viewport": false,
+     "rect": {
+      "x": 123,
+      "y": 3185,
+      "w": 13,
+      "h": 13
+     }
+    },
+    {
+     "kind": "a",
+     "label": "Edit",
+     "value": "Edit",
+     "in_viewport": false,
+     "rect": {
+      "x": 946,
+      "y": 3189,
+      "w": 23,
+      "h": 18
+     }
+    },
+    {
+     "kind": "checkbox_input",
+     "label": "133 Apr 19, 2023, 12:15:14 PM",
+     "value": "off",
+     "in_viewport": false,
+     "rect": {
+      "x": 123,
+      "y": 3365,
+      "w": 13,
+      "h": 13
+     }
+    },
+    {
+     "kind": "a",
+     "label": "Edit",
+     "value": "Edit",
+     "in_viewport": false,
+     "rect": {
+      "x": 946,
+      "y": 3368,
+      "w": 23,
+      "h": 18
+     }
+    },
+    {
+     "kind": "checkbox_input",
+     "label": "134 Apr 19, 2023, 12:15:14 PM",
+     "value": "off",
+     "in_viewport": false,
+     "rect": {
+      "x": 123,
+      "y": 3544,
+      "w": 13,
+      "h": 13
+     }
+    },
+    {
+     "kind": "a",
+     "label": "Edit",
+     "value": "Edit",
+     "in_viewport": false,
+     "rect": {
+      "x": 946,
+      "y": 3548,
+      "w": 23,
+      "h": 18
+     }
+    },
+    {
+     "kind": "checkbox_input",
+     "label": "135 Apr 19, 2023, 12:15:14 PM",
+     "value": "off",
+     "in_viewport": false,
+     "rect": {
+      "x": 123,
+      "y": 3724,
+      "w": 13,
+      "h": 13
+     }
+    },
+    {
+     "kind": "a",
+     "label": "Edit",
+     "value": "Edit",
+     "in_viewport": false,
+     "rect": {
+      "x": 946,
+      "y": 3728,
+      "w": 23,
+      "h": 18
+     }
+    },
+    {
+     "kind": "checkbox_input",
+     "label": "136 Apr 19, 2023, 12:15:14 PM",
+     "value": "off",
+     "in_viewport": false,
+     "rect": {
+      "x": 123,
+      "y": 3903,
+      "w": 13,
+      "h": 13
+     }
+    },
+    {
+     "kind": "a",
+     "label": "Edit",
+     "value": "Edit",
+     "in_viewport": false,
+     "rect": {
+      "x": 946,
+      "y": 3907,
+      "w": 23,
+      "h": 18
+     }
+    },
+    {
+     "kind": "checkbox_input",
+     "label": "123 Apr 19, 2023, 12:15:13 PM",
+     "value": "off",
+     "in_viewport": false,
+     "rect": {
+      "x": 123,
+      "y": 4083,
+      "w": 13,
+      "h": 13
+     }
+    },
+    {
+     "kind": "a",
+     "label": "Edit",
+     "value": "Edit",
+     "in_viewport": false,
+     "rect": {
+      "x": 946,
+      "y": 4087,
+      "w": 23,
+      "h": 18
+     }
+    },
+    {
+     "kind": "a",
+     "label": "Magento",
+     "in_viewport": false,
+     "rect": {
+      "x": 101,
+      "y": 4316,
+      "w": 22,
+      "h": 25
+     }
+    },
+    {
+     "kind": "a",
+     "label": "Privacy Policy",
+     "value": "Privacy Policy",
+     "in_viewport": false,
+     "rect": {
+      "x": 752,
+      "y": 4342,
+      "w": 89,
+      "h": 19
+     }
+    },
+    {
+     "kind": "a",
+     "label": "Account Activity",
+     "value": "Account Activity",
+     "in_viewport": false,
+     "rect": {
+      "x": 839,
+      "y": 4342,
+      "w": 110,
+      "h": 19
+     }
+    },
+    {
+     "kind": "a",
+     "label": "Report an Issue",
+     "value": "Report an Issue",
+     "in_viewport": false,
+     "rect": {
+      "x": 936,
+      "y": 4342,
+      "w": 105,
+      "h": 19
+     }
+    }
+   ],
+   "requirement_scopes": {
+    "tank_reviews": {
+     "status": "met",
+     "detail_resolution": {
+      "status": "active",
+      "candidate_records": 27,
+      "current_observed_detail_fields": [],
+      "resolved_candidate_ordinals": [
+       1,
+       2,
+       8
+      ],
+      "next_unresolved_candidate": {
+       "ordinal": 3,
+       "fields": {
+        "nickname": "Edmund",
+        "product": "Erikssen CoolTech™ Fitness Tank"
+       }
+      },
+      "detail_fields": [
+       "detailed_rating"
+      ],
+      "pending_candidate_ordinal": null
+     }
+    }
+   }
+  },
+  "35": {
+   "title": "Reviews / Customer Reviews / User Content / Marketing / Magento Admin",
+   "url": "http://192.168.1.103:7780/[session access value redacted]/review/product/",
+   "controls": [
+    {
+     "kind": "a",
+     "rect": {
+      "x": 34,
+      "y": 47,
+      "w": 88,
+      "h": 75
+     }
+    },
+    {
+     "kind": "a",
+     "label": "DASHBOARD",
+     "value": "Dashboard",
+     "rect": {
+      "x": 34,
+      "y": 133,
+      "w": 88,
+      "h": 62
+     }
+    },
+    {
+     "kind": "a",
+     "label": "SALES",
+     "value": "Sales",
+     "rect": {
+      "x": 34,
+      "y": 210,
+      "w": 88,
+      "h": 62
+     }
+    },
+    {
+     "kind": "a",
+     "label": "CATALOG",
+     "value": "Catalog",
+     "rect": {
+      "x": 34,
+      "y": 288,
+      "w": 88,
+      "h": 62
+     }
+    },
+    {
+     "kind": "a",
+     "label": "CUSTOMERS",
+     "value": "Customers",
+     "rect": {
+      "x": 34,
+      "y": 365,
+      "w": 88,
+      "h": 62
+     }
+    },
+    {
+     "kind": "a",
+     "label": "MARKETING",
+     "value": "Marketing",
+     "rect": {
+      "x": 34,
+      "y": 443,
+      "w": 88,
+      "h": 62
+     }
+    },
+    {
+     "kind": "a",
+     "label": "CONTENT",
+     "value": "Content",
+     "rect": {
+      "x": 34,
+      "y": 520,
+      "w": 88,
+      "h": 62
+     }
+    },
+    {
+     "kind": "a",
+     "label": "REPORTS",
+     "value": "Reports",
+     "rect": {
+      "x": 34,
+      "y": 598,
+      "w": 88,
+      "h": 62
+     }
+    },
+    {
+     "kind": "a",
+     "label": "STORES",
+     "value": "Stores",
+     "rect": {
+      "x": 34,
+      "y": 675,
+      "w": 88,
+      "h": 62
+     }
+    },
+    {
+     "kind": "a",
+     "label": "SYSTEM",
+     "value": "System",
+     "rect": {
+      "x": 34,
+      "y": 753,
+      "w": 88,
+      "h": 62
+     }
+    },
+    {
+     "kind": "a",
+     "label": "FIND PARTNERS & EXTENSIONS",
+     "value": "Find Partners & Extensions",
+     "rect": {
+      "x": 34,
+      "y": 846,
+      "w": 88,
+      "h": 88
+     }
+    },
+    {
+     "kind": "a",
+     "label": "My Account",
+     "value": "[session access value redacted]",
+     "rect": {
+      "x": 935,
+      "y": 116,
+      "w": 106,
+      "h": 33
+     }
+    },
+    {
+     "kind": "a",
+     "label": "Notifications",
+     "rect": {
+      "x": 868,
+      "y": 116,
+      "w": 60,
+      "h": 33
+     }
+    },
+    {
+     "kind": "text_input",
+     "label": "search-global",
+     "in_viewport": false,
+     "rect": {
+      "x": 827,
+      "y": 117,
+      "w": 50,
+      "h": 35
+     }
+    },
+    {
+     "kind": "button",
+     "label": "New Review",
+     "value": "New Review",
+     "rect": {
+      "x": 914,
+      "y": 226,
+      "w": 131,
+      "h": 46
+     }
+    },
+    {
+     "kind": "button",
+     "label": "Search",
+     "value": "Search",
+     "query_action": "submit",
+     "rect": {
+      "x": 122,
+      "y": 332,
+      "w": 76,
+      "h": 33
+     }
+    },
+    {
+     "kind": "button",
+     "label": "Reset Filter",
+     "value": "Reset Filter",
+     "query_action": "reset",
+     "rect": {
+      "x": 196,
+      "y": 332,
+      "w": 107,
+      "h": 33
+     }
+    },
+    {
+     "kind": "native_select",
+     "label": "reviewGrid_massaction-select",
+     "selected_text": "Actions",
+     "selected_text_primary": "Actions",
+     "rect": {
+      "x": 151,
+      "y": 387,
+      "w": 151,
+      "h": 33
+     }
+    },
+    {
+     "kind": "native_select",
+     "label": "Status",
+     "selected_text": "",
+     "selected_text_primary": "",
+     "rect": {
+      "x": 113,
+      "y": 458,
+      "w": 52,
+      "h": 38
+     }
+    },
+    {
+     "kind": "native_select",
+     "label": "per page",
+     "value": "20",
+     "selected_text": "20",
+     "selected_text_primary": "20",
+     "rect": {
+      "x": 689,
+      "y": 387,
+      "w": 85,
+      "h": 33
+     }
+    },
+    {
+     "kind": "button",
+     "label": "Previous page",
+     "value": "Previous page",
+     "in_viewport": false,
+     "rect": {
+      "x": 823,
+      "y": 387,
+      "w": 44,
+      "h": 33
+     }
+    },
+    {
+     "kind": "text_input",
+     "label": "of 2",
+     "value": "1",
+     "rect": {
+      "x": 880,
+      "y": 387,
+      "w": 44,
+      "h": 33
+     }
+    },
+    {
+     "kind": "button",
+     "label": "Next page",
+     "value": "Next page",
+     "rect": {
+      "x": 959,
+      "y": 387,
+      "w": 44,
+      "h": 33
+     }
+    },
+    {
+     "kind": "native_select",
+     "label": "massaction",
+     "selected_text": "Any",
+     "selected_text_primary": "Any",
+     "is_filter": true,
+     "rect": {
+      "x": 124,
+      "y": 533,
+      "w": 60,
+      "h": 28
+     }
+    },
+    {
+     "kind": "text_input",
+     "label": "ID",
+     "is_filter": true,
+     "rect": {
+      "x": 187,
+      "y": 533,
+      "w": 58,
+      "h": 28
+     }
+    },
+    {
+     "kind": "text_input",
+     "label": "Created",
+     "is_filter": true,
+     "rect": {
+      "x": 273,
+      "y": 513,
+      "w": 122,
+      "h": 28
+     }
+    },
+    {
+     "kind": "button",
+     "label": "Created",
+     "value": "undefined",
+     "is_filter": true,
+     "rect": {
+      "x": 307,
+      "y": 513,
+      "w": 28,
+      "h": 28
+     }
+    },
+    {
+     "kind": "text_input",
+     "label": "Created",
+     "is_filter": true,
+     "rect": {
+      "x": 273,
+      "y": 554,
+      "w": 122,
+      "h": 28
+     }
+    },
+    {
+     "kind": "button",
+     "label": "Created",
+     "value": "undefined",
+     "is_filter": true,
+     "rect": {
+      "x": 307,
+      "y": 554,
+      "w": 28,
+      "h": 28
+     }
+    },
+    {
+     "kind": "native_select",
+     "label": "Status",
+     "selected_text": "",
+     "selected_text_primary": "",
+     "is_filter": true,
+     "rect": {
+      "x": 361,
+      "y": 533,
+      "w": 62,
+      "h": 28
+     }
+    },
+    {
+     "kind": "text_input",
+     "label": "Title",
+     "is_filter": true,
+     "rect": {
+      "x": 447,
+      "y": 533,
+      "w": 115,
+      "h": 28
+     }
+    },
+    {
+     "kind": "text_input",
+     "label": "Nickname",
+     "is_filter": true,
+     "rect": {
+      "x": 538,
+      "y": 533,
+      "w": 76,
+      "h": 28
+     }
+    },
+    {
+     "kind": "text_input",
+     "label": "Review",
+     "is_filter": true,
+     "rect": {
+      "x": 621,
+      "y": 533,
+      "w": 93,
+      "h": 28
+     }
+    },
+    {
+     "kind": "native_select",
+     "label": "Visibility",
+     "selected_text": "",
+     "selected_text_primary": "",
+     "is_filter": true,
+     "rect": {
+      "x": 700,
+      "y": 533,
+      "w": 68,
+      "h": 28
+     }
+    },
+    {
+     "kind": "native_select",
+     "label": "Type",
+     "selected_text": "",
+     "selected_text_primary": "",
+     "is_filter": true,
+     "rect": {
+      "x": 764,
+      "y": 533,
+      "w": 54,
+      "h": 28
+     }
+    },
+    {
+     "kind": "text_input",
+     "label": "Product",
+     "value": "Tank",
+     "is_filter": true,
+     "rect": {
+      "x": 830,
+      "y": 533,
+      "w": 73,
+      "h": 28
+     }
+    },
+    {
+     "kind": "text_input",
+     "label": "SKU",
+     "is_filter": true,
+     "rect": {
+      "x": 898,
+      "y": 533,
+      "w": 58,
+      "h": 28
+     }
+    },
+    {
+     "kind": "checkbox_input",
+     "label": "338 Apr 19, 2023, 12:15:20 PM",
+     "value": "off",
+     "rect": {
+      "x": 123,
+      "y": 670,
+      "w": 13,
+      "h": 13
+     }
+    },
+    {
+     "kind": "a",
+     "label": "Edit",
+     "value": "Edit",
+     "rect": {
+      "x": 946,
+      "y": 674,
+      "w": 23,
+      "h": 18
+     }
+    },
+    {
+     "kind": "checkbox_input",
+     "label": "337 Apr 19, 2023, 12:15:20 PM",
+     "value": "off",
+     "rect": {
+      "x": 123,
+      "y": 850,
+      "w": 13,
+      "h": 13
+     }
+    },
+    {
+     "kind": "a",
+     "label": "Edit",
+     "value": "Edit",
+     "rect": {
+      "x": 946,
+      "y": 853,
+      "w": 23,
+      "h": 18
+     }
+    },
+    {
+     "kind": "checkbox_input",
+     "label": "335 Apr 19, 2023, 12:15:20 PM",
+     "value": "off",
+     "in_viewport": false,
+     "rect": {
+      "x": 123,
+      "y": 1029,
+      "w": 13,
+      "h": 13
+     }
+    },
+    {
+     "kind": "a",
+     "label": "Edit",
+     "value": "Edit",
+     "in_viewport": false,
+     "rect": {
+      "x": 946,
+      "y": 1033,
+      "w": 23,
+      "h": 18
+     }
+    },
+    {
+     "kind": "checkbox_input",
+     "label": "334 Apr 19, 2023, 12:15:20 PM",
+     "value": "off",
+     "in_viewport": false,
+     "rect": {
+      "x": 123,
+      "y": 1209,
+      "w": 13,
+      "h": 13
+     }
+    },
+    {
+     "kind": "a",
+     "label": "Edit",
+     "value": "Edit",
+     "in_viewport": false,
+     "rect": {
+      "x": 946,
+      "y": 1213,
+      "w": 23,
+      "h": 18
+     }
+    },
+    {
+     "kind": "checkbox_input",
+     "label": "333 Apr 19, 2023, 12:15:20 PM",
+     "value": "off",
+     "in_viewport": false,
+     "rect": {
+      "x": 123,
+      "y": 1389,
+      "w": 13,
+      "h": 13
+     }
+    },
+    {
+     "kind": "a",
+     "label": "Edit",
+     "value": "Edit",
+     "in_viewport": false,
+     "rect": {
+      "x": 946,
+      "y": 1392,
+      "w": 23,
+      "h": 18
+     }
+    },
+    {
+     "kind": "checkbox_input",
+     "label": "340 Apr 19, 2023, 12:15:20 PM",
+     "value": "off",
+     "in_viewport": false,
+     "rect": {
+      "x": 123,
+      "y": 1568,
+      "w": 13,
+      "h": 13
+     }
+    },
+    {
+     "kind": "a",
+     "label": "Edit",
+     "value": "Edit",
+     "in_viewport": false,
+     "rect": {
+      "x": 946,
+      "y": 1572,
+      "w": 23,
+      "h": 18
+     }
+    },
+    {
+     "kind": "checkbox_input",
+     "label": "339 Apr 19, 2023, 12:15:20 PM",
+     "value": "off",
+     "in_viewport": false,
+     "rect": {
+      "x": 123,
+      "y": 1748,
+      "w": 13,
+      "h": 13
+     }
+    },
+    {
+     "kind": "a",
+     "label": "Edit",
+     "value": "Edit",
+     "in_viewport": false,
+     "rect": {
+      "x": 946,
+      "y": 1752,
+      "w": 23,
+      "h": 18
+     }
+    },
+    {
+     "kind": "checkbox_input",
+     "label": "341 Apr 19, 2023, 12:15:20 PM",
+     "value": "off",
+     "in_viewport": false,
+     "rect": {
+      "x": 123,
+      "y": 1928,
+      "w": 13,
+      "h": 13
+     }
+    },
+    {
+     "kind": "a",
+     "label": "Edit",
+     "value": "Edit",
+     "in_viewport": false,
+     "rect": {
+      "x": 946,
+      "y": 1931,
+      "w": 23,
+      "h": 18
+     }
+    },
+    {
+     "kind": "checkbox_input",
+     "label": "342 Apr 19, 2023, 12:15:20 PM",
+     "value": "off",
+     "in_viewport": false,
+     "rect": {
+      "x": 123,
+      "y": 2107,
+      "w": 13,
+      "h": 13
+     }
+    },
+    {
+     "kind": "a",
+     "label": "Edit",
+     "value": "Edit",
+     "in_viewport": false,
+     "rect": {
+      "x": 946,
+      "y": 2111,
+      "w": 23,
+      "h": 18
+     }
+    },
+    {
+     "kind": "checkbox_input",
+     "label": "343 Apr 19, 2023, 12:15:20 PM",
+     "value": "off",
+     "in_viewport": false,
+     "rect": {
+      "x": 123,
+      "y": 2287,
+      "w": 13,
+      "h": 13
+     }
+    },
+    {
+     "kind": "a",
+     "label": "Edit",
+     "value": "Edit",
+     "in_viewport": false,
+     "rect": {
+      "x": 946,
+      "y": 2291,
+      "w": 23,
+      "h": 18
+     }
+    },
+    {
+     "kind": "checkbox_input",
+     "label": "344 Apr 19, 2023, 12:15:20 PM",
+     "value": "off",
+     "in_viewport": false,
+     "rect": {
+      "x": 123,
+      "y": 2466,
+      "w": 13,
+      "h": 13
+     }
+    },
+    {
+     "kind": "a",
+     "label": "Edit",
+     "value": "Edit",
+     "in_viewport": false,
+     "rect": {
+      "x": 946,
+      "y": 2470,
+      "w": 23,
+      "h": 18
+     }
+    },
+    {
+     "kind": "checkbox_input",
+     "label": "345 Apr 19, 2023, 12:15:20 PM",
+     "value": "off",
+     "in_viewport": false,
+     "rect": {
+      "x": 123,
+      "y": 2646,
+      "w": 13,
+      "h": 13
+     }
+    },
+    {
+     "kind": "a",
+     "label": "Edit",
+     "value": "Edit",
+     "in_viewport": false,
+     "rect": {
+      "x": 946,
+      "y": 2650,
+      "w": 23,
+      "h": 18
+     }
+    },
+    {
+     "kind": "checkbox_input",
+     "label": "346 Apr 19, 2023, 12:15:20 PM",
+     "value": "off",
+     "in_viewport": false,
+     "rect": {
+      "x": 123,
+      "y": 2826,
+      "w": 13,
+      "h": 13
+     }
+    },
+    {
+     "kind": "a",
+     "label": "Edit",
+     "value": "Edit",
+     "in_viewport": false,
+     "rect": {
+      "x": 946,
+      "y": 2829,
+      "w": 23,
+      "h": 18
+     }
+    },
+    {
+     "kind": "checkbox_input",
+     "label": "131 Apr 19, 2023, 12:15:14 PM",
+     "value": "off",
+     "in_viewport": false,
+     "rect": {
+      "x": 123,
+      "y": 3005,
+      "w": 13,
+      "h": 13
+     }
+    },
+    {
+     "kind": "a",
+     "label": "Edit",
+     "value": "Edit",
+     "in_viewport": false,
+     "rect": {
+      "x": 946,
+      "y": 3009,
+      "w": 23,
+      "h": 18
+     }
+    },
+    {
+     "kind": "checkbox_input",
+     "label": "132 Apr 19, 2023, 12:15:14 PM",
+     "value": "off",
+     "in_viewport": false,
+     "rect": {
+      "x": 123,
+      "y": 3185,
+      "w": 13,
+      "h": 13
+     }
+    },
+    {
+     "kind": "a",
+     "label": "Edit",
+     "value": "Edit",
+     "in_viewport": false,
+     "rect": {
+      "x": 946,
+      "y": 3189,
+      "w": 23,
+      "h": 18
+     }
+    },
+    {
+     "kind": "checkbox_input",
+     "label": "133 Apr 19, 2023, 12:15:14 PM",
+     "value": "off",
+     "in_viewport": false,
+     "rect": {
+      "x": 123,
+      "y": 3365,
+      "w": 13,
+      "h": 13
+     }
+    },
+    {
+     "kind": "a",
+     "label": "Edit",
+     "value": "Edit",
+     "in_viewport": false,
+     "rect": {
+      "x": 946,
+      "y": 3368,
+      "w": 23,
+      "h": 18
+     }
+    },
+    {
+     "kind": "checkbox_input",
+     "label": "134 Apr 19, 2023, 12:15:14 PM",
+     "value": "off",
+     "in_viewport": false,
+     "rect": {
+      "x": 123,
+      "y": 3544,
+      "w": 13,
+      "h": 13
+     }
+    },
+    {
+     "kind": "a",
+     "label": "Edit",
+     "value": "Edit",
+     "in_viewport": false,
+     "rect": {
+      "x": 946,
+      "y": 3548,
+      "w": 23,
+      "h": 18
+     }
+    },
+    {
+     "kind": "checkbox_input",
+     "label": "135 Apr 19, 2023, 12:15:14 PM",
+     "value": "off",
+     "in_viewport": false,
+     "rect": {
+      "x": 123,
+      "y": 3724,
+      "w": 13,
+      "h": 13
+     }
+    },
+    {
+     "kind": "a",
+     "label": "Edit",
+     "value": "Edit",
+     "in_viewport": false,
+     "rect": {
+      "x": 946,
+      "y": 3728,
+      "w": 23,
+      "h": 18
+     }
+    },
+    {
+     "kind": "checkbox_input",
+     "label": "136 Apr 19, 2023, 12:15:14 PM",
+     "value": "off",
+     "in_viewport": false,
+     "rect": {
+      "x": 123,
+      "y": 3903,
+      "w": 13,
+      "h": 13
+     }
+    },
+    {
+     "kind": "a",
+     "label": "Edit",
+     "value": "Edit",
+     "in_viewport": false,
+     "rect": {
+      "x": 946,
+      "y": 3907,
+      "w": 23,
+      "h": 18
+     }
+    },
+    {
+     "kind": "checkbox_input",
+     "label": "123 Apr 19, 2023, 12:15:13 PM",
+     "value": "off",
+     "in_viewport": false,
+     "rect": {
+      "x": 123,
+      "y": 4083,
+      "w": 13,
+      "h": 13
+     }
+    },
+    {
+     "kind": "a",
+     "label": "Edit",
+     "value": "Edit",
+     "in_viewport": false,
+     "rect": {
+      "x": 946,
+      "y": 4087,
+      "w": 23,
+      "h": 18
+     }
+    },
+    {
+     "kind": "a",
+     "label": "Magento",
+     "in_viewport": false,
+     "rect": {
+      "x": 101,
+      "y": 4316,
+      "w": 22,
+      "h": 25
+     }
+    },
+    {
+     "kind": "a",
+     "label": "Privacy Policy",
+     "value": "Privacy Policy",
+     "in_viewport": false,
+     "rect": {
+      "x": 752,
+      "y": 4342,
+      "w": 89,
+      "h": 19
+     }
+    },
+    {
+     "kind": "a",
+     "label": "Account Activity",
+     "value": "Account Activity",
+     "in_viewport": false,
+     "rect": {
+      "x": 839,
+      "y": 4342,
+      "w": 110,
+      "h": 19
+     }
+    },
+    {
+     "kind": "a",
+     "label": "Report an Issue",
+     "value": "Report an Issue",
+     "in_viewport": false,
+     "rect": {
+      "x": 936,
+      "y": 4342,
+      "w": 105,
+      "h": 19
+     }
+    }
+   ],
+   "requirement_scopes": {
+    "tank_reviews": {
+     "status": "met",
+     "detail_resolution": {
+      "status": "active",
+      "candidate_records": 27,
+      "current_observed_detail_fields": [],
+      "resolved_candidate_ordinals": [
+       1,
+       2,
+       8,
+       9
+      ],
+      "next_unresolved_candidate": {
+       "ordinal": 3,
+       "fields": {
+        "nickname": "Edmund",
+        "product": "Erikssen CoolTech™ Fitness Tank"
+       }
+      },
+      "detail_fields": [
+       "detailed_rating"
+      ],
+      "pending_candidate_ordinal": null
+     }
+    }
+   }
+  },
+  "38": {
+   "title": "Reviews / Customer Reviews / User Content / Marketing / Magento Admin",
+   "url": "http://192.168.1.103:7780/[session access value redacted]/review/product/",
+   "controls": [
+    {
+     "kind": "a",
+     "rect": {
+      "x": 34,
+      "y": 47,
+      "w": 88,
+      "h": 75
+     }
+    },
+    {
+     "kind": "a",
+     "label": "DASHBOARD",
+     "value": "Dashboard",
+     "rect": {
+      "x": 34,
+      "y": 133,
+      "w": 88,
+      "h": 62
+     }
+    },
+    {
+     "kind": "a",
+     "label": "SALES",
+     "value": "Sales",
+     "rect": {
+      "x": 34,
+      "y": 210,
+      "w": 88,
+      "h": 62
+     }
+    },
+    {
+     "kind": "a",
+     "label": "CATALOG",
+     "value": "Catalog",
+     "rect": {
+      "x": 34,
+      "y": 288,
+      "w": 88,
+      "h": 62
+     }
+    },
+    {
+     "kind": "a",
+     "label": "CUSTOMERS",
+     "value": "Customers",
+     "rect": {
+      "x": 34,
+      "y": 365,
+      "w": 88,
+      "h": 62
+     }
+    },
+    {
+     "kind": "a",
+     "label": "MARKETING",
+     "value": "Marketing",
+     "rect": {
+      "x": 34,
+      "y": 443,
+      "w": 88,
+      "h": 62
+     }
+    },
+    {
+     "kind": "a",
+     "label": "CONTENT",
+     "value": "Content",
+     "rect": {
+      "x": 34,
+      "y": 520,
+      "w": 88,
+      "h": 62
+     }
+    },
+    {
+     "kind": "a",
+     "label": "REPORTS",
+     "value": "Reports",
+     "rect": {
+      "x": 34,
+      "y": 598,
+      "w": 88,
+      "h": 62
+     }
+    },
+    {
+     "kind": "a",
+     "label": "STORES",
+     "value": "Stores",
+     "rect": {
+      "x": 34,
+      "y": 675,
+      "w": 88,
+      "h": 62
+     }
+    },
+    {
+     "kind": "a",
+     "label": "SYSTEM",
+     "value": "System",
+     "rect": {
+      "x": 34,
+      "y": 753,
+      "w": 88,
+      "h": 62
+     }
+    },
+    {
+     "kind": "a",
+     "label": "FIND PARTNERS & EXTENSIONS",
+     "value": "Find Partners & Extensions",
+     "rect": {
+      "x": 34,
+      "y": 846,
+      "w": 88,
+      "h": 88
+     }
+    },
+    {
+     "kind": "a",
+     "label": "My Account",
+     "value": "[session access value redacted]",
+     "rect": {
+      "x": 935,
+      "y": 116,
+      "w": 106,
+      "h": 33
+     }
+    },
+    {
+     "kind": "a",
+     "label": "Notifications",
+     "rect": {
+      "x": 868,
+      "y": 116,
+      "w": 60,
+      "h": 33
+     }
+    },
+    {
+     "kind": "text_input",
+     "label": "search-global",
+     "in_viewport": false,
+     "rect": {
+      "x": 827,
+      "y": 117,
+      "w": 50,
+      "h": 35
+     }
+    },
+    {
+     "kind": "button",
+     "label": "New Review",
+     "value": "New Review",
+     "rect": {
+      "x": 914,
+      "y": 226,
+      "w": 131,
+      "h": 46
+     }
+    },
+    {
+     "kind": "button",
+     "label": "Search",
+     "value": "Search",
+     "query_action": "submit",
+     "rect": {
+      "x": 122,
+      "y": 332,
+      "w": 76,
+      "h": 33
+     }
+    },
+    {
+     "kind": "button",
+     "label": "Reset Filter",
+     "value": "Reset Filter",
+     "query_action": "reset",
+     "rect": {
+      "x": 196,
+      "y": 332,
+      "w": 107,
+      "h": 33
+     }
+    },
+    {
+     "kind": "native_select",
+     "label": "reviewGrid_massaction-select",
+     "selected_text": "Actions",
+     "selected_text_primary": "Actions",
+     "rect": {
+      "x": 151,
+      "y": 387,
+      "w": 151,
+      "h": 33
+     }
+    },
+    {
+     "kind": "native_select",
+     "label": "Status",
+     "selected_text": "",
+     "selected_text_primary": "",
+     "rect": {
+      "x": 113,
+      "y": 458,
+      "w": 52,
+      "h": 38
+     }
+    },
+    {
+     "kind": "native_select",
+     "label": "per page",
+     "value": "20",
+     "selected_text": "20",
+     "selected_text_primary": "20",
+     "rect": {
+      "x": 689,
+      "y": 387,
+      "w": 85,
+      "h": 33
+     }
+    },
+    {
+     "kind": "button",
+     "label": "Previous page",
+     "value": "Previous page",
+     "rect": {
+      "x": 823,
+      "y": 387,
+      "w": 44,
+      "h": 33
+     }
+    },
+    {
+     "kind": "text_input",
+     "label": "of 2",
+     "value": "2",
+     "rect": {
+      "x": 880,
+      "y": 387,
+      "w": 44,
+      "h": 33
+     }
+    },
+    {
+     "kind": "button",
+     "label": "Next page",
+     "value": "Next page",
+     "in_viewport": false,
+     "rect": {
+      "x": 959,
+      "y": 387,
+      "w": 44,
+      "h": 33
+     }
+    },
+    {
+     "kind": "native_select",
+     "label": "massaction",
+     "selected_text": "Any",
+     "selected_text_primary": "Any",
+     "is_filter": true,
+     "rect": {
+      "x": 124,
+      "y": 533,
+      "w": 60,
+      "h": 28
+     }
+    },
+    {
+     "kind": "text_input",
+     "label": "ID",
+     "is_filter": true,
+     "rect": {
+      "x": 189,
+      "y": 533,
+      "w": 63,
+      "h": 28
+     }
+    },
+    {
+     "kind": "text_input",
+     "label": "Created",
+     "is_filter": true,
+     "rect": {
+      "x": 278,
+      "y": 513,
+      "w": 124,
+      "h": 28
+     }
+    },
+    {
+     "kind": "button",
+     "label": "Created",
+     "value": "undefined",
+     "is_filter": true,
+     "rect": {
+      "x": 312,
+      "y": 513,
+      "w": 28,
+      "h": 28
+     }
+    },
+    {
+     "kind": "text_input",
+     "label": "Created",
+     "is_filter": true,
+     "rect": {
+      "x": 278,
+      "y": 554,
+      "w": 124,
+      "h": 28
+     }
+    },
+    {
+     "kind": "button",
+     "label": "Created",
+     "value": "undefined",
+     "is_filter": true,
+     "rect": {
+      "x": 312,
+      "y": 554,
+      "w": 28,
+      "h": 28
+     }
+    },
+    {
+     "kind": "native_select",
+     "label": "Status",
+     "selected_text": "",
+     "selected_text_primary": "",
+     "is_filter": true,
+     "rect": {
+      "x": 368,
+      "y": 533,
+      "w": 65,
+      "h": 28
+     }
+    },
+    {
+     "kind": "text_input",
+     "label": "Title",
+     "is_filter": true,
+     "rect": {
+      "x": 445,
+      "y": 533,
+      "w": 89,
+      "h": 28
+     }
+    },
+    {
+     "kind": "text_input",
+     "label": "Nickname",
+     "is_filter": true,
+     "rect": {
+      "x": 524,
+      "y": 533,
+      "w": 74,
+      "h": 28
+     }
+    },
+    {
+     "kind": "text_input",
+     "label": "Review",
+     "is_filter": true,
+     "rect": {
+      "x": 606,
+      "y": 533,
+      "w": 93,
+      "h": 28
+     }
+    },
+    {
+     "kind": "native_select",
+     "label": "Visibility",
+     "selected_text": "",
+     "selected_text_primary": "",
+     "is_filter": true,
+     "rect": {
+      "x": 687,
+      "y": 533,
+      "w": 73,
+      "h": 28
+     }
+    },
+    {
+     "kind": "native_select",
+     "label": "Type",
+     "selected_text": "",
+     "selected_text_primary": "",
+     "is_filter": true,
+     "rect": {
+      "x": 754,
+      "y": 533,
+      "w": 57,
+      "h": 28
+     }
+    },
+    {
+     "kind": "text_input",
+     "label": "Product",
+     "value": "Tank",
+     "is_filter": true,
+     "rect": {
+      "x": 823,
+      "y": 533,
+      "w": 80,
+      "h": 28
+     }
+    },
+    {
+     "kind": "text_input",
+     "label": "SKU",
+     "is_filter": true,
+     "rect": {
+      "x": 896,
+      "y": 533,
+      "w": 63,
+      "h": 28
+     }
+    },
+    {
+     "kind": "checkbox_input",
+     "label": "124 Apr 19, 2023, 12:15:13 PM",
+     "value": "off",
+     "rect": {
+      "x": 123,
+      "y": 670,
+      "w": 13,
+      "h": 13
+     }
+    },
+    {
+     "kind": "a",
+     "label": "Edit",
+     "value": "Edit",
+     "rect": {
+      "x": 946,
+      "y": 674,
+      "w": 23,
+      "h": 18
+     }
+    },
+    {
+     "kind": "checkbox_input",
+     "label": "125 Apr 19, 2023, 12:15:13 PM",
+     "value": "off",
+     "rect": {
+      "x": 123,
+      "y": 850,
+      "w": 13,
+      "h": 13
+     }
+    },
+    {
+     "kind": "a",
+     "label": "Edit",
+     "value": "Edit",
+     "rect": {
+      "x": 946,
+      "y": 853,
+      "w": 23,
+      "h": 18
+     }
+    },
+    {
+     "kind": "checkbox_input",
+     "label": "126 Apr 19, 2023, 12:15:13 PM",
+     "value": "off",
+     "in_viewport": false,
+     "rect": {
+      "x": 123,
+      "y": 1029,
+      "w": 13,
+      "h": 13
+     }
+    },
+    {
+     "kind": "a",
+     "label": "Edit",
+     "value": "Edit",
+     "in_viewport": false,
+     "rect": {
+      "x": 946,
+      "y": 1033,
+      "w": 23,
+      "h": 18
+     }
+    },
+    {
+     "kind": "checkbox_input",
+     "label": "127 Apr 19, 2023, 12:15:13 PM",
+     "value": "off",
+     "in_viewport": false,
+     "rect": {
+      "x": 123,
+      "y": 1209,
+      "w": 13,
+      "h": 13
+     }
+    },
+    {
+     "kind": "a",
+     "label": "Edit",
+     "value": "Edit",
+     "in_viewport": false,
+     "rect": {
+      "x": 946,
+      "y": 1213,
+      "w": 23,
+      "h": 18
+     }
+    },
+    {
+     "kind": "checkbox_input",
+     "label": "128 Apr 19, 2023, 12:15:13 PM",
+     "value": "off",
+     "in_viewport": false,
+     "rect": {
+      "x": 123,
+      "y": 1389,
+      "w": 13,
+      "h": 13
+     }
+    },
+    {
+     "kind": "a",
+     "label": "Edit",
+     "value": "Edit",
+     "in_viewport": false,
+     "rect": {
+      "x": 946,
+      "y": 1392,
+      "w": 23,
+      "h": 18
+     }
+    },
+    {
+     "kind": "checkbox_input",
+     "label": "129 Apr 19, 2023, 12:15:13 PM",
+     "value": "off",
+     "in_viewport": false,
+     "rect": {
+      "x": 123,
+      "y": 1568,
+      "w": 13,
+      "h": 13
+     }
+    },
+    {
+     "kind": "a",
+     "label": "Edit",
+     "value": "Edit",
+     "in_viewport": false,
+     "rect": {
+      "x": 946,
+      "y": 1572,
+      "w": 23,
+      "h": 18
+     }
+    },
+    {
+     "kind": "checkbox_input",
+     "label": "130 Apr 19, 2023, 12:15:13 PM",
+     "value": "off",
+     "in_viewport": false,
+     "rect": {
+      "x": 123,
+      "y": 1748,
+      "w": 13,
+      "h": 13
+     }
+    },
+    {
+     "kind": "a",
+     "label": "Edit",
+     "value": "Edit",
+     "in_viewport": false,
+     "rect": {
+      "x": 946,
+      "y": 1752,
+      "w": 23,
+      "h": 18
+     }
+    },
+    {
+     "kind": "a",
+     "label": "Magento",
+     "in_viewport": false,
+     "rect": {
+      "x": 101,
+      "y": 1981,
+      "w": 22,
+      "h": 25
+     }
+    },
+    {
+     "kind": "a",
+     "label": "Privacy Policy",
+     "value": "Privacy Policy",
+     "in_viewport": false,
+     "rect": {
+      "x": 752,
+      "y": 2007,
+      "w": 89,
+      "h": 19
+     }
+    },
+    {
+     "kind": "a",
+     "label": "Account Activity",
+     "value": "Account Activity",
+     "in_viewport": false,
+     "rect": {
+      "x": 839,
+      "y": 2007,
+      "w": 110,
+      "h": 19
+     }
+    },
+    {
+     "kind": "a",
+     "label": "Report an Issue",
+     "value": "Report an Issue",
+     "in_viewport": false,
+     "rect": {
+      "x": 936,
+      "y": 2007,
+      "w": 105,
+      "h": 19
+     }
+    }
+   ],
+   "requirement_scopes": {
+    "tank_reviews": {
+     "status": "met",
+     "detail_resolution": {
+      "status": "active",
+      "candidate_records": 27,
+      "current_observed_detail_fields": [],
+      "resolved_candidate_ordinals": [
+       1,
+       2,
+       8,
+       9
+      ],
+      "next_unresolved_candidate": {
+       "ordinal": 3,
+       "fields": {
+        "nickname": "Edmund",
+        "product": "Erikssen CoolTech™ Fitness Tank"
+       }
+      },
+      "detail_fields": [
+       "detailed_rating"
+      ],
+      "pending_candidate_ordinal": null
+     }
+    }
+   }
+  }
+ }
+}

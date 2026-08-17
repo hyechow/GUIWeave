@@ -364,6 +364,22 @@ def test_android_runtime_action_floor_excludes_browser_only_capabilities() -> No
     }
     assert "runtime_open_url" not in actions
     assert "runtime_select_visible" not in actions
+    assert "runtime_reveal_control" not in actions
+
+
+def test_reveal_control_floor_and_offscreen_schema() -> None:
+    floor = worker_action_floor({"tap", "scroll", "reveal_control"})
+    reveal = next(
+        action for action in floor if action.name == "runtime_reveal_control"
+    )
+    assert reveal.capability == "reveal_control"
+
+    from gui_agent.core.tool_agent.protocol import _CAPABILITY_SCHEMAS
+
+    schema = _CAPABILITY_SCHEMAS["reveal_control"]
+    # Off-screen rect positions below the fold exceed 1000 by design.
+    validate({"x": 500, "y": 1650, "description": "Edit Configurations button below the fold"}, schema=schema)
+    validate({"x": 500, "y": -300, "description": "Section toggle above the fold"}, schema=schema)
 
 
 def test_collector_completion_tool_is_frame_gated_and_runtime_bound() -> None:

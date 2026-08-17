@@ -364,6 +364,17 @@ class BrowserExecutor(VisionExecutor):
             result = client.scroll_to_ref(action.target_ref)
             print(f"  结果: {result}")
             return self._result_succeeded(result, "精确滚动")
+        if at == "reveal_control":
+            # Deterministic reveal of a frame control (often off-viewport): the
+            # normalized rect centers it — no blind wheel hunting.
+            x, y = action.x, action.y
+            if x is None or y is None:
+                print("reveal_control 失败：缺少目标坐标")
+                return False
+            print(f"将控件移入视口 @({x:.0f},{y:.0f})")
+            result = client.reveal_control({"rect": {"x": x, "y": y}})
+            print(f"  结果: {result}")
+            return self._result_succeeded(result, "reveal_control")
         return None
 
 

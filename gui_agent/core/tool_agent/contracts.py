@@ -139,7 +139,32 @@ ToolActionCapability: TypeAlias = Literal[
     "home",
     "app_switch",
     "launch_app",
+    "reveal_control",
 ]
+
+# Viewport-normalized coordinate bounds for reveal_control. Standard spatial
+# capabilities target the visible viewport [0, 1000); reveal targets frame
+# controls whose positions legitimately exceed it when off-fold. Shared by the
+# protocol schema, the runtime arg check, and the browser adapter validator.
+REVEAL_COORD_MIN = -2000
+REVEAL_COORD_MAX = 4000
+
+# Capabilities whose x/y/description the screenshot-owning Worker must supply.
+_SPATIAL_ARG_CAPABILITIES = frozenset({
+    "tap", "type", "scroll", "drag", "long_press", "select_option",
+    "reveal_control",
+})
+
+
+def positioned_rect(control: dict[str, Any]) -> dict[str, Any] | None:
+    """Return the control's rect when it carries numeric x/y, else None."""
+
+    rect = control.get("rect") if isinstance(control, dict) else None
+    if isinstance(rect, dict) and all(
+        isinstance(rect.get(key), (int, float)) for key in ("x", "y")
+    ):
+        return rect
+    return None
 
 
 class RuntimeInputBinding(StrictModel):
@@ -183,9 +208,7 @@ class DynamicActionSpec(StrictModel):
         input_args = dict(normalized.get("input_args") or {})
         exposed_args = list(normalized.get("exposed_args") or [])
         capability = normalized.get("capability")
-        if capability in {
-            "tap", "type", "scroll", "drag", "long_press", "select_option",
-        }:
+        if capability in _SPATIAL_ARG_CAPABILITIES:
             # The screenshot-owning Worker supplies both the point and the
             # frame-specific target description used by enhanced grounding.
             for name in ("x", "y", "description"):

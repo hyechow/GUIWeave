@@ -27,8 +27,11 @@ ttl: session
   filter and projects **Action**. A rating threshold is not a grid filter; it is evaluated only
   after reading each candidate's detail. Product is an association filter literal, not a separate
   collection lookup. The control matches a contiguous substring of the stored product name.
-  An empty result means that literal does not occur in any stored name. Do not Reset-and-scan
-  the unfiltered grid, drop Product, or look up a Product entity first.
+  Stored product names use the singular form (`… Tank`, `… Tee`, `… Bag`): a plural or derived
+  task mention ("tanks", "tees") is not a stored literal — query the singular stem (`Tank`)
+  first, not the task's exact word form. An empty result means that literal does not occur in
+  any stored name. Do not Reset-and-scan the unfiltered grid, drop Product, or look up a
+  Product entity first.
 - A review status or deletion mutation only needs records not already in the requested terminal
   state. When the query explicitly targets pending reviews, use the **Status** filter to recall
   **Pending** candidates before following their Action links; already-approved reviews require no

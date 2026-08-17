@@ -58,6 +58,7 @@ class _DetailCollectionState:
     detail_fields: set[str]
     pending_index: int | None = None
     scope_key: str = ""
+    pending_related_identity: dict[str, Any] | None = None
 
 
 def _normalize_runtime_value(
@@ -334,51 +335,133 @@ def _nonempty(value: Any) -> bool:
     return value is not None and (not isinstance(value, str) or bool(value.strip()))
 
 
+def _identity_values(
+    row: dict[str, Any],
+    detail_fields: set[str],
+) -> dict[str, Any]:
+    return {
+        key: value
+        for key, value in row.items()
+        if key not in detail_fields and _nonempty(value)
+    }
+
+
+def _identity_match(row: dict[str, Any], identity: dict[str, Any]) -> bool:
+    shared = [key for key in identity if _nonempty(row.get(key))]
+    return bool(shared) and all(row[key] == identity[key] for key in shared)
+
+
+def _unique_identity_match(
+    rows: list[dict[str, Any]] | tuple[dict[str, Any], ...],
+    identity: dict[str, Any],
+) -> int | None:
+    matches = [
+        index for index, row in enumerate(rows) if _identity_match(row, identity)
+    ]
+    return matches[0] if len(matches) == 1 else None
+
+
+def _hierarchical_identity_match(
+    row: dict[str, Any],
+    identity: dict[str, Any],
+) -> bool:
+    """Recognize a strict delimiter-bound parent/child identifier relation."""
+
+    compared = related = False
+    for key, value in identity.items():
+        candidate = row.get(key)
+        if not (_nonempty(candidate) and _nonempty(value)):
+            continue
+        compared = True
+        if candidate == value:
+            continue
+        if not isinstance(candidate, str) or not isinstance(value, str):
+            return False
+        left, right = candidate.casefold().strip(), value.casefold().strip()
+        shorter, longer = sorted((left, right), key=len)
+        if not (
+            longer.startswith(shorter)
+            and len(longer) > len(shorter)
+            and longer[len(shorter)] in "-_/.:"
+        ):
+            return False
+        related = True
+    return compared and related
+
+
 def _apply_observed_detail(
     state: _DetailCollectionState,
     detail: dict[str, Any],
     observed: set[str],
-) -> None:
-    """Credit observed detail fields to the unique identity match or pending row."""
+) -> dict[str, Any] | None:
+    """Credit observed detail fields to the unique identity match or pending row.
+
+    Returns the engaged target as ``{"ordinal", "pre_resolved", "resolved"}``
+    so callers can tell whether the current detail surface belonged to an
+    already-complete candidate (``pre_resolved``), freshly completed one
+    (``resolved and not pre_resolved``), or sits on a record with gaps.
+    """
 
     if not observed.intersection(state.detail_fields):
-        return
-    scores = [
-        sum(
-            key not in state.detail_fields
-            and _nonempty(value)
-            and row.get(key) == value
-            for key, value in detail.items()
+        return None
+    identity = _identity_values(detail, state.detail_fields)
+    matching = _unique_identity_match(state.rows, identity) if identity else None
+    prior_pending = state.pending_index
+    used_related_identity = False
+    target = matching
+    if target is None and identity:
+        related = state.pending_related_identity
+        related_match = related is not None and _identity_match(related, identity)
+        pending_row = (
+            state.rows[prior_pending]
+            if prior_pending is not None and prior_pending < len(state.rows)
+            else None
         )
-        for row in state.rows
-    ]
-    best = max(scores, default=0)
-    matching = scores.index(best) if best and scores.count(best) == 1 else None
-    target = matching if matching is not None else state.pending_index
+        if prior_pending is None or (
+            not related_match
+            and not (
+                pending_row is not None
+                and _hierarchical_identity_match(pending_row, identity)
+            )
+        ):
+            return None
+        target = prior_pending
+        used_related_identity = True
     if target is None:
-        identity_observed = any(
-            key not in state.detail_fields and _nonempty(value)
-            for key, value in detail.items()
-        )
-        if identity_observed:
-            return
+        target = prior_pending
+    if target is None:
         unresolved = [
             index for index, row in enumerate(state.rows)
             if any(not _nonempty(row.get(field)) for field in state.detail_fields)
         ]
         target = unresolved[0] if unresolved else None
     if target is None:
-        return
+        return None
+    pre_resolved = all(
+        _nonempty(state.rows[target].get(field)) for field in state.detail_fields
+    )
     for key in state.detail_fields.intersection(observed):
         value = detail.get(key)
         if matching is not None or (
             _nonempty(value) and not _nonempty(state.rows[target].get(key))
         ):
             state.rows[target][key] = value
-    state.pending_index = target if any(
+    next_pending = target if any(
         not _nonempty(state.rows[target].get(field))
         for field in state.detail_fields
     ) else None
+    if (
+        next_pending is None
+        or target != prior_pending
+        or (identity and not used_related_identity)
+    ):
+        state.pending_related_identity = None
+    state.pending_index = next_pending
+    return {
+        "ordinal": target + 1,
+        "pre_resolved": pre_resolved,
+        "resolved": next_pending is None,
+    }
 
 
 def _normalize_visual_rows(
@@ -736,19 +819,11 @@ class PerceptionMaterializer:
 
             existing_ids = identities(state.rows) if state is not None else None
             incoming_ids = identities(candidate_rows)
-            filled = bool(
-                state is not None
-                and any(
-                    _nonempty(row.get(field))
-                    for row in state.rows
-                    for field in state.detail_fields
-                )
-            )
             if state is not None and existing_ids == incoming_ids:
                 state.detail_fields.update(detail_fields)
                 for row, candidate in zip(state.rows, candidate_rows, strict=True):
                     row.update(candidate)
-            elif state is not None and filled and incoming_ids:
+            elif state is not None and incoming_ids:
                 state.detail_fields.update(detail_fields)
                 for row, ident in zip(candidate_rows, incoming_ids, strict=True):
                     if ident not in existing_ids:
@@ -761,16 +836,35 @@ class PerceptionMaterializer:
                     scope_key=scope_key,
                 )
                 self._detail_collections[requirement.id] = state
+            state.pending_related_identity = None
+        elif (
+            state is not None
+            and state.pending_index is not None
+            and candidate_rows
+            and detail_fields
+            and scope_status == "unmet"
+        ):
+            related = [
+                identity
+                for row in candidate_rows
+                if (identity := _identity_values(
+                    row,
+                    detail_fields | state.detail_fields,
+                ))
+            ]
+            state.pending_related_identity = related[0] if len(related) == 1 else None
         if state is None or not state.rows or not state.detail_fields:
             return None
 
         detail, observed = _control_row(requirement, controls)
-        _apply_observed_detail(state, detail, observed)
+        current_editor = _apply_observed_detail(state, detail, observed)
         for extra in observed_rows or []:
             extra_fields = {
                 key for key in state.detail_fields if _nonempty(extra.get(key))
             }
-            _apply_observed_detail(state, extra, extra_fields)
+            combined = dict(extra)
+            combined.update(_identity_values(detail, state.detail_fields))
+            _apply_observed_detail(state, combined, extra_fields)
             observed = observed.union(extra_fields)
 
         unresolved_indexes = [
@@ -782,6 +876,7 @@ class PerceptionMaterializer:
             "current_observed_detail_fields": sorted(
                 state.detail_fields.intersection(observed)
             ),
+            "current_editor": current_editor,
             "resolved_candidate_ordinals": [
                 index + 1
                 for index in range(len(state.rows))
@@ -1091,6 +1186,17 @@ class PerceptionMaterializer:
                     "detail_fields": sorted(detail_state.detail_fields),
                     "pending_candidate_ordinal": pending_ordinal,
                 }
+                if (
+                    not ready_to_complete
+                    and detail_progress.get("next_unresolved_candidate") is None
+                    and expected_total is not None
+                    and int(detail_progress["candidate_records"]) < int(expected_total)
+                ):
+                    # Every observed candidate is resolved but the known total is
+                    # larger: the worker must see the deficit plainly instead of
+                    # concluding the collection is finished (fake-complete loop).
+                    scope["detail_resolution"]["window_exhausted"] = True
+                    scope["detail_resolution"]["known_total"] = int(expected_total)
                 if ready_to_complete and scope["status"] != "unmet":
                     existing = self.data_store.collection_for_requirement(requirement.id)
                     if existing is not None and (

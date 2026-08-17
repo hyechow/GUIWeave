@@ -1,0 +1,960 @@
+{
+ "_source": "logs/.../20260814_192611/observation_tool_agent_22.json (task 550 wizard Attribute Values)",
+ "_note": "Color checkbox group with inherited Red checked but offscreen — the loop root cause.",
+ "controls": [
+  {
+   "kind": "status_message",
+   "label": "warning: One or more of the Cache Types are invalidated: Page Cache, Blocks HTM…",
+   "value": "One or more of the Cache Types are invalidated: Page Cache, Blocks HTML output,…",
+   "in_viewport": false
+  },
+  {
+   "kind": "section_toggle",
+   "label": "Content",
+   "value": "false",
+   "in_viewport": false
+  },
+  {
+   "kind": "section_toggle",
+   "label": "Configurations",
+   "value": "true",
+   "in_viewport": false
+  },
+  {
+   "kind": "section_toggle",
+   "label": "Product Reviews",
+   "value": "false",
+   "in_viewport": false
+  },
+  {
+   "kind": "section_toggle",
+   "label": "Images And Videos",
+   "value": "false",
+   "in_viewport": false
+  },
+  {
+   "kind": "section_toggle",
+   "label": "Search Engine Optimization",
+   "value": "false",
+   "in_viewport": false
+  },
+  {
+   "kind": "section_toggle",
+   "label": "Related Products, Up-Sells, and Cross-Sells",
+   "value": "false",
+   "in_viewport": false
+  },
+  {
+   "kind": "section_toggle",
+   "label": "Customizable Options",
+   "value": "false",
+   "in_viewport": false
+  },
+  {
+   "kind": "section_toggle",
+   "label": "Product in Websites",
+   "value": "false",
+   "in_viewport": false
+  },
+  {
+   "kind": "section_toggle",
+   "label": "Design",
+   "value": "false",
+   "in_viewport": false
+  },
+  {
+   "kind": "section_toggle",
+   "label": "Schedule Design Update",
+   "value": "false",
+   "in_viewport": false
+  },
+  {
+   "kind": "section_toggle",
+   "label": "Gift Options",
+   "value": "false",
+   "in_viewport": false
+  },
+  {
+   "kind": "section_toggle",
+   "label": "Create Product Configurations"
+  },
+  {
+   "kind": "a",
+   "label": "Please wait...",
+   "in_viewport": false
+  },
+  {
+   "kind": "a",
+   "label": "DASHBOARD",
+   "value": "Dashboard",
+   "in_viewport": false
+  },
+  {
+   "kind": "a",
+   "label": "SALES",
+   "value": "Sales",
+   "in_viewport": false
+  },
+  {
+   "kind": "a",
+   "label": "CATALOG",
+   "value": "Catalog",
+   "in_viewport": false
+  },
+  {
+   "kind": "a",
+   "label": "CUSTOMERS",
+   "value": "Customers",
+   "in_viewport": false
+  },
+  {
+   "kind": "a",
+   "label": "MARKETING",
+   "value": "Marketing",
+   "in_viewport": false
+  },
+  {
+   "kind": "a",
+   "label": "CONTENT",
+   "value": "Content",
+   "in_viewport": false
+  },
+  {
+   "kind": "a",
+   "label": "REPORTS",
+   "value": "Reports",
+   "in_viewport": false
+  },
+  {
+   "kind": "a",
+   "label": "STORES",
+   "value": "Stores",
+   "in_viewport": false
+  },
+  {
+   "kind": "a",
+   "label": "SYSTEM",
+   "value": "System",
+   "in_viewport": false
+  },
+  {
+   "kind": "a",
+   "label": "FIND PARTNERS & EXTENSIONS",
+   "value": "Find Partners & Extensions",
+   "in_viewport": false
+  },
+  {
+   "kind": "button",
+   "label": "System Messages: 1",
+   "value": "System Messages: 1",
+   "in_viewport": false
+  },
+  {
+   "kind": "a",
+   "label": "Cache Management",
+   "value": "Cache Management",
+   "in_viewport": false
+  },
+  {
+   "kind": "a",
+   "label": "My Account",
+   "value": "[session access value redacted]",
+   "in_viewport": false
+  },
+  {
+   "kind": "a",
+   "label": "Notifications",
+   "in_viewport": false
+  },
+  {
+   "kind": "text_input",
+   "label": "search-global",
+   "in_viewport": false
+  },
+  {
+   "kind": "button",
+   "label": "Save",
+   "value": "Save",
+   "in_viewport": false
+  },
+  {
+   "kind": "button",
+   "label": "Save options",
+   "value": "Select",
+   "in_viewport": false
+  },
+  {
+   "kind": "button",
+   "label": "Back",
+   "value": "Back",
+   "in_viewport": false
+  },
+  {
+   "kind": "button",
+   "label": "Add Attribute",
+   "value": "Add Attribute",
+   "in_viewport": false
+  },
+  {
+   "kind": "checkbox_input",
+   "label": "Enable Product",
+   "value": "on",
+   "in_viewport": false
+  },
+  {
+   "kind": "text_input",
+   "label": "Product Name",
+   "value": "Nona Fitness Tank",
+   "in_viewport": false
+  },
+  {
+   "kind": "text_input",
+   "label": "SKU",
+   "value": "WT04",
+   "in_viewport": false
+  },
+  {
+   "kind": "text_input",
+   "label": "Price $",
+   "in_viewport": false
+  },
+  {
+   "kind": "native_select",
+   "label": "Tax Class",
+   "value": "2",
+   "selected_text": "Taxable Goods",
+   "selected_text_primary": "Taxable Goods",
+   "in_viewport": false
+  },
+  {
+   "kind": "text_input",
+   "label": "Quantity",
+   "in_viewport": false
+  },
+  {
+   "kind": "button",
+   "label": "Advanced Inventory",
+   "value": "Advanced Inventory",
+   "in_viewport": false
+  },
+  {
+   "kind": "native_select",
+   "label": "Stock Status",
+   "value": "1",
+   "selected_text": "In Stock",
+   "selected_text_primary": "In Stock",
+   "in_viewport": false
+  },
+  {
+   "kind": "text_input",
+   "label": "Weight lbs",
+   "in_viewport": false
+  },
+  {
+   "kind": "native_select",
+   "label": "notice-J5HT8LF",
+   "value": "1",
+   "selected_text": "This item has weight",
+   "selected_text_primary": "This item has weight",
+   "in_viewport": false
+  },
+  {
+   "kind": "button",
+   "label": "Close",
+   "value": "Close",
+   "in_viewport": false
+  },
+  {
+   "kind": "button",
+   "label": "Close",
+   "value": "Close",
+   "in_viewport": false
+  },
+  {
+   "kind": "button",
+   "label": "Close",
+   "value": "Close",
+   "in_viewport": false
+  },
+  {
+   "kind": "button",
+   "label": "New Category",
+   "value": "New Category",
+   "in_viewport": false
+  },
+  {
+   "kind": "native_select",
+   "label": "Visibility",
+   "value": "4",
+   "selected_text": "Catalog, Search",
+   "selected_text_primary": "Catalog, Search",
+   "in_viewport": false
+  },
+  {
+   "kind": "text_input",
+   "label": "Set Product as New From",
+   "in_viewport": false
+  },
+  {
+   "kind": "button",
+   "label": "undefined",
+   "value": "undefined",
+   "in_viewport": false
+  },
+  {
+   "kind": "text_input",
+   "label": "To",
+   "in_viewport": false
+  },
+  {
+   "kind": "button",
+   "label": "undefined",
+   "value": "undefined",
+   "in_viewport": false
+  },
+  {
+   "kind": "native_select",
+   "label": "Country of Manufacture",
+   "selected_text": "",
+   "selected_text_primary": "",
+   "in_viewport": false
+  },
+  {
+   "kind": "native_select",
+   "label": "Activity",
+   "selected_text": "",
+   "selected_text_primary": "",
+   "in_viewport": false
+  },
+  {
+   "kind": "native_select",
+   "label": "Style General",
+   "value": "134",
+   "selected_text": "Tank",
+   "selected_text_primary": "Tank",
+   "in_viewport": false
+  },
+  {
+   "kind": "native_select",
+   "label": "Material",
+   "value": "33",
+   "selected_text": "Cotton, Spandex",
+   "selected_text_primary": "Cotton",
+   "in_viewport": false
+  },
+  {
+   "kind": "native_select",
+   "label": "Sleeve",
+   "selected_text": "",
+   "selected_text_primary": "",
+   "in_viewport": false
+  },
+  {
+   "kind": "native_select",
+   "label": "Size",
+   "selected_text": "",
+   "selected_text_primary": "",
+   "in_viewport": false
+  },
+  {
+   "kind": "native_select",
+   "label": "Collar",
+   "selected_text": "",
+   "selected_text_primary": "",
+   "in_viewport": false
+  },
+  {
+   "kind": "native_select",
+   "label": "Pattern",
+   "value": "198",
+   "selected_text": "Striped",
+   "selected_text_primary": "Striped",
+   "in_viewport": false
+  },
+  {
+   "kind": "native_select",
+   "label": "Climate",
+   "value": "204",
+   "selected_text": "Indoor, Warm",
+   "selected_text_primary": "Indoor",
+   "in_viewport": false
+  },
+  {
+   "kind": "native_select",
+   "label": "Color",
+   "selected_text": "",
+   "selected_text_primary": "",
+   "in_viewport": false
+  },
+  {
+   "kind": "checkbox_input",
+   "label": "Eco Collection",
+   "value": "on",
+   "in_viewport": false
+  },
+  {
+   "kind": "checkbox_input",
+   "label": "Performance Fabric",
+   "value": "on",
+   "in_viewport": false
+  },
+  {
+   "kind": "checkbox_input",
+   "label": "Erin Recommends",
+   "value": "off",
+   "in_viewport": false
+  },
+  {
+   "kind": "checkbox_input",
+   "label": "New",
+   "value": "off",
+   "in_viewport": false
+  },
+  {
+   "kind": "checkbox_input",
+   "label": "Sale",
+   "value": "off",
+   "in_viewport": false
+  },
+  {
+   "kind": "button",
+   "label": "Add Products Manually",
+   "value": "Add Products Manually",
+   "in_viewport": false
+  },
+  {
+   "kind": "button",
+   "label": "Edit Configurations",
+   "value": "Edit Configurations",
+   "in_viewport": false
+  },
+  {
+   "kind": "native_select",
+   "label": "Current Variations",
+   "value": "20",
+   "selected_text": "20",
+   "selected_text_primary": "20",
+   "in_viewport": false
+  },
+  {
+   "kind": "button",
+   "label": "Previous Page",
+   "in_viewport": false
+  },
+  {
+   "kind": "number_input",
+   "label": "of 1",
+   "value": "1",
+   "in_viewport": false
+  },
+  {
+   "kind": "button",
+   "label": "Next Page",
+   "in_viewport": false
+  },
+  {
+   "kind": "a",
+   "label": "Nona Fitness Tank-XS-Blue",
+   "value": "Nona Fitness Tank-XS-Blue",
+   "in_viewport": false,
+   "group_id": "grid:0"
+  },
+  {
+   "kind": "button",
+   "label": "Select",
+   "value": "Select",
+   "in_viewport": false,
+   "group_id": "grid:0"
+  },
+  {
+   "kind": "a",
+   "label": "Nona Fitness Tank-XS-Purple",
+   "value": "Nona Fitness Tank-XS-Purple",
+   "in_viewport": false,
+   "group_id": "grid:1"
+  },
+  {
+   "kind": "button",
+   "label": "Select",
+   "value": "Select",
+   "in_viewport": false,
+   "group_id": "grid:1"
+  },
+  {
+   "kind": "a",
+   "label": "Nona Fitness Tank-XS-Red",
+   "value": "Nona Fitness Tank-XS-Red",
+   "in_viewport": false,
+   "group_id": "grid:2"
+  },
+  {
+   "kind": "button",
+   "label": "Select",
+   "value": "Select",
+   "in_viewport": false,
+   "group_id": "grid:2"
+  },
+  {
+   "kind": "a",
+   "label": "Nona Fitness Tank-S-Blue",
+   "value": "Nona Fitness Tank-S-Blue",
+   "in_viewport": false,
+   "group_id": "grid:3"
+  },
+  {
+   "kind": "button",
+   "label": "Select",
+   "value": "Select",
+   "in_viewport": false,
+   "group_id": "grid:3"
+  },
+  {
+   "kind": "a",
+   "label": "Nona Fitness Tank-S-Purple",
+   "value": "Nona Fitness Tank-S-Purple",
+   "in_viewport": false,
+   "group_id": "grid:4"
+  },
+  {
+   "kind": "button",
+   "label": "Select",
+   "value": "Select",
+   "in_viewport": false,
+   "group_id": "grid:4"
+  },
+  {
+   "kind": "a",
+   "label": "Nona Fitness Tank-S-Red",
+   "value": "Nona Fitness Tank-S-Red",
+   "in_viewport": false,
+   "group_id": "grid:5"
+  },
+  {
+   "kind": "button",
+   "label": "Select",
+   "value": "Select",
+   "in_viewport": false,
+   "group_id": "grid:5"
+  },
+  {
+   "kind": "a",
+   "label": "Nona Fitness Tank-M-Blue",
+   "value": "Nona Fitness Tank-M-Blue",
+   "in_viewport": false,
+   "group_id": "grid:6"
+  },
+  {
+   "kind": "button",
+   "label": "Select",
+   "value": "Select",
+   "in_viewport": false,
+   "group_id": "grid:6"
+  },
+  {
+   "kind": "a",
+   "label": "Nona Fitness Tank-M-Purple",
+   "value": "Nona Fitness Tank-M-Purple",
+   "in_viewport": false,
+   "group_id": "grid:7"
+  },
+  {
+   "kind": "button",
+   "label": "Select",
+   "value": "Select",
+   "in_viewport": false,
+   "group_id": "grid:7"
+  },
+  {
+   "kind": "a",
+   "label": "Nona Fitness Tank-M-Red",
+   "value": "Nona Fitness Tank-M-Red",
+   "in_viewport": false,
+   "group_id": "grid:8"
+  },
+  {
+   "kind": "button",
+   "label": "Select",
+   "value": "Select",
+   "in_viewport": false,
+   "group_id": "grid:8"
+  },
+  {
+   "kind": "a",
+   "label": "Nona Fitness Tank-L-Blue",
+   "value": "Nona Fitness Tank-L-Blue",
+   "in_viewport": false,
+   "group_id": "grid:9"
+  },
+  {
+   "kind": "button",
+   "label": "Select",
+   "value": "Select",
+   "in_viewport": false,
+   "group_id": "grid:9"
+  },
+  {
+   "kind": "a",
+   "label": "Nona Fitness Tank-L-Purple",
+   "value": "Nona Fitness Tank-L-Purple",
+   "in_viewport": false,
+   "group_id": "grid:10"
+  },
+  {
+   "kind": "button",
+   "label": "Select",
+   "value": "Select",
+   "in_viewport": false,
+   "group_id": "grid:10"
+  },
+  {
+   "kind": "a",
+   "label": "Nona Fitness Tank-L-Red",
+   "value": "Nona Fitness Tank-L-Red",
+   "in_viewport": false,
+   "group_id": "grid:11"
+  },
+  {
+   "kind": "button",
+   "label": "Select",
+   "value": "Select",
+   "in_viewport": false,
+   "group_id": "grid:11"
+  },
+  {
+   "kind": "a",
+   "label": "Nona Fitness Tank-XL-Blue",
+   "value": "Nona Fitness Tank-XL-Blue",
+   "in_viewport": false,
+   "group_id": "grid:12"
+  },
+  {
+   "kind": "button",
+   "label": "Select",
+   "value": "Select",
+   "in_viewport": false,
+   "group_id": "grid:12"
+  },
+  {
+   "kind": "a",
+   "label": "Nona Fitness Tank-XL-Purple",
+   "value": "Nona Fitness Tank-XL-Purple",
+   "in_viewport": false,
+   "group_id": "grid:13"
+  },
+  {
+   "kind": "button",
+   "label": "Select",
+   "value": "Select",
+   "in_viewport": false,
+   "group_id": "grid:13"
+  },
+  {
+   "kind": "a",
+   "label": "Nona Fitness Tank-XL-Red",
+   "value": "Nona Fitness Tank-XL-Red",
+   "in_viewport": false,
+   "group_id": "grid:14"
+  },
+  {
+   "kind": "button",
+   "label": "Select",
+   "value": "Select",
+   "in_viewport": false,
+   "group_id": "grid:14"
+  },
+  {
+   "kind": "a",
+   "label": "Magento",
+   "in_viewport": false
+  },
+  {
+   "kind": "a",
+   "label": "Privacy Policy",
+   "value": "Privacy Policy",
+   "in_viewport": false
+  },
+  {
+   "kind": "a",
+   "label": "Account Activity",
+   "value": "Account Activity",
+   "in_viewport": false
+  },
+  {
+   "kind": "a",
+   "label": "Report an Issue",
+   "value": "Report an Issue",
+   "in_viewport": false
+  },
+  {
+   "kind": "button",
+   "label": "Close",
+   "value": "Close"
+  },
+  {
+   "kind": "a",
+   "label": "Select Attributes",
+   "value": "Select Attributes"
+  },
+  {
+   "kind": "a",
+   "label": "Attribute Values",
+   "value": "Attribute Values"
+  },
+  {
+   "kind": "a",
+   "label": "Bulk Images & Price",
+   "value": "Bulk Images & Price"
+  },
+  {
+   "kind": "a",
+   "label": "Summary",
+   "value": "Summary"
+  },
+  {
+   "kind": "button",
+   "label": "Cancel",
+   "value": "Cancel"
+  },
+  {
+   "kind": "button",
+   "label": "Back",
+   "value": "Back"
+  },
+  {
+   "kind": "button",
+   "label": "Next",
+   "value": "Next"
+  },
+  {
+   "kind": "button",
+   "label": "Select All",
+   "value": "Select All"
+  },
+  {
+   "kind": "button",
+   "label": "Deselect All",
+   "value": "Deselect All"
+  },
+  {
+   "kind": "button",
+   "label": "Remove Attribute",
+   "value": "Remove Attribute"
+  },
+  {
+   "kind": "checkbox_input",
+   "label": "55 cm",
+   "value": "off",
+   "group_id": "collection:0"
+  },
+  {
+   "kind": "checkbox_input",
+   "label": "XS",
+   "value": "off",
+   "group_id": "collection:0"
+  },
+  {
+   "kind": "checkbox_input",
+   "label": "65 cm",
+   "value": "off",
+   "group_id": "collection:0"
+  },
+  {
+   "kind": "checkbox_input",
+   "label": "S",
+   "value": "off",
+   "group_id": "collection:0"
+  },
+  {
+   "kind": "checkbox_input",
+   "label": "75 cm",
+   "value": "off",
+   "group_id": "collection:0"
+  },
+  {
+   "kind": "checkbox_input",
+   "label": "M",
+   "value": "off",
+   "group_id": "collection:0"
+  },
+  {
+   "kind": "checkbox_input",
+   "label": "6 foot",
+   "value": "off",
+   "group_id": "collection:0"
+  },
+  {
+   "kind": "checkbox_input",
+   "label": "L",
+   "value": "off",
+   "group_id": "collection:0"
+  },
+  {
+   "kind": "checkbox_input",
+   "label": "8 foot",
+   "value": "off",
+   "group_id": "collection:0"
+  },
+  {
+   "kind": "checkbox_input",
+   "label": "XL",
+   "value": "off",
+   "group_id": "collection:0"
+  },
+  {
+   "kind": "checkbox_input",
+   "label": "10 foot",
+   "value": "off",
+   "group_id": "collection:0"
+  },
+  {
+   "kind": "checkbox_input",
+   "label": "28",
+   "value": "off",
+   "group_id": "collection:0"
+  },
+  {
+   "kind": "checkbox_input",
+   "label": "29",
+   "value": "off",
+   "group_id": "collection:0"
+  },
+  {
+   "kind": "checkbox_input",
+   "label": "30",
+   "value": "off",
+   "group_id": "collection:0"
+  },
+  {
+   "kind": "checkbox_input",
+   "label": "31",
+   "value": "off",
+   "group_id": "collection:0"
+  },
+  {
+   "kind": "checkbox_input",
+   "label": "32",
+   "value": "off",
+   "group_id": "collection:0"
+  },
+  {
+   "kind": "checkbox_input",
+   "label": "33",
+   "value": "off",
+   "group_id": "collection:0"
+  },
+  {
+   "kind": "checkbox_input",
+   "label": "34",
+   "value": "off",
+   "group_id": "collection:0"
+  },
+  {
+   "kind": "checkbox_input",
+   "label": "36",
+   "value": "off",
+   "group_id": "collection:0"
+  },
+  {
+   "kind": "checkbox_input",
+   "label": "38",
+   "value": "off",
+   "group_id": "collection:0"
+  },
+  {
+   "kind": "checkbox_input",
+   "label": "XXS",
+   "value": "on",
+   "group_id": "collection:0"
+  },
+  {
+   "kind": "button",
+   "label": "Select All",
+   "value": "Select All"
+  },
+  {
+   "kind": "button",
+   "label": "Deselect All",
+   "value": "Deselect All"
+  },
+  {
+   "kind": "button",
+   "label": "Remove Attribute",
+   "value": "Remove Attribute"
+  },
+  {
+   "kind": "checkbox_input",
+   "label": "Black",
+   "value": "off",
+   "group_id": "collection:0"
+  },
+  {
+   "kind": "checkbox_input",
+   "label": "Blue",
+   "value": "on",
+   "group_id": "collection:0"
+  },
+  {
+   "kind": "checkbox_input",
+   "label": "Brown",
+   "value": "off",
+   "group_id": "collection:0"
+  },
+  {
+   "kind": "checkbox_input",
+   "label": "Gray",
+   "value": "off",
+   "group_id": "collection:0"
+  },
+  {
+   "kind": "checkbox_input",
+   "label": "Green",
+   "value": "off",
+   "group_id": "collection:0"
+  },
+  {
+   "kind": "checkbox_input",
+   "label": "Lavender",
+   "value": "off",
+   "group_id": "collection:0"
+  },
+  {
+   "kind": "checkbox_input",
+   "label": "Multi",
+   "value": "off",
+   "group_id": "collection:0"
+  },
+  {
+   "kind": "checkbox_input",
+   "label": "Orange",
+   "value": "off",
+   "group_id": "collection:0"
+  },
+  {
+   "kind": "checkbox_input",
+   "label": "Purple",
+   "value": "on",
+   "group_id": "collection:0"
+  },
+  {
+   "kind": "checkbox_input",
+   "label": "Red",
+   "value": "on",
+   "in_viewport": false,
+   "group_id": "collection:0"
+  },
+  {
+   "kind": "checkbox_input",
+   "label": "White",
+   "value": "off",
+   "in_viewport": false,
+   "group_id": "collection:0"
+  },
+  {
+   "kind": "checkbox_input",
+   "label": "Yellow",
+   "value": "off",
+   "in_viewport": false,
+   "group_id": "collection:0"
+  }
+ ]
+}

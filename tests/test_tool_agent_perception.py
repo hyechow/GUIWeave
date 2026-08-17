@@ -1576,6 +1576,92 @@ def test_named_stranger_does_not_fill_first_unresolved(tmp_path: Path) -> None:
     assert stranger.collections == []
 
 
+def test_named_stranger_does_not_fill_pending_candidate(tmp_path: Path) -> None:
+    """An explicit mismatch must not be credited to the row with an empty detail."""
+
+    requirement = _review_requirement()
+    materializer = _materializer(tmp_path, "enhanced")
+    materializer._vision_extract = lambda *_a, **_k: (_ for _ in ()).throw(  # type: ignore[method-assign]
+        AssertionError("named editors should not fall through to vision")
+    )
+
+    def observe(frame_no: int, *, table=None, controls=None):
+        return materializer.observe(
+            bundle=FakeBundle([table] if table else [], controls=controls or []),
+            platform=FakePlatform(),
+            requirements=[requirement],
+            frame_no=frame_no,
+        )[0]
+
+    observe(
+        1,
+        table=_review_table(
+            [
+                {"Nickname": "Ann", "Product": "Tank A"},
+                {"Nickname": "Bob", "Product": "Tank B"},
+            ],
+            total=2,
+        ),
+    )
+    pending = observe(
+        2,
+        controls=[
+            {"label": "Nickname", "kind": "text_input", "value": "Ann"},
+            {"label": "Detailed Rating", "kind": "rating", "value": ""},
+        ],
+    )
+    assert pending.requirement_scopes["reviews"]["detail_resolution"][
+        "pending_candidate_ordinal"
+    ] == 1
+
+    stranger = observe(
+        3,
+        controls=[
+            {"label": "Nickname", "kind": "text_input", "value": "Cy"},
+            {"label": "Product", "kind": "text_input", "value": "Tank A"},
+            {"label": "Detailed Rating", "kind": "rating", "value": "5"},
+        ],
+    )
+    progress = stranger.requirement_scopes["reviews"]["detail_resolution"]
+    assert progress["pending_candidate_ordinal"] == 1
+    assert progress["resolved_candidate_ordinals"] == []
+    assert progress["next_unresolved_candidate"]["fields"]["nickname"] == "Ann"
+    assert stranger.collections == []
+
+
+def test_unresolved_candidates_accumulate_across_same_scope_pages(tmp_path: Path) -> None:
+    """A later window must extend the candidate set before any detail is resolved."""
+
+    requirement = _review_requirement()
+    materializer = _materializer(tmp_path, "enhanced")
+    materializer._vision_extract = lambda *_a, **_k: (_ for _ in ()).throw(  # type: ignore[method-assign]
+        AssertionError("structured pagination should not invoke visual extraction")
+    )
+
+    def observe(frame_no: int, rows: list[dict[str, str]]):
+        return materializer.observe(
+            bundle=FakeBundle([_review_table(rows, total=3)]),
+            platform=FakePlatform(),
+            requirements=[requirement],
+            frame_no=frame_no,
+        )[0]
+
+    observe(
+        1,
+        [
+            {"Nickname": "Ann", "Product": "Tank A"},
+            {"Nickname": "Bob", "Product": "Tank B"},
+        ],
+    )
+    later = observe(2, [{"Nickname": "Cy", "Product": "Tank C"}])
+
+    progress = later.requirement_scopes["reviews"]["detail_resolution"]
+    assert progress["candidate_records"] == 3
+    assert progress["resolved_candidate_ordinals"] == []
+    assert progress["next_unresolved_candidate"]["fields"]["nickname"] == "Ann"
+    assert later.collections == []
+
+
 def test_acquisition_scope_change_resets_detail_collection(tmp_path: Path) -> None:
     """A new physical query must not union rows assembled under a prior acquisition scope."""
 

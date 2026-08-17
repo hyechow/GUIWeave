@@ -14,6 +14,8 @@ from langchain_core.messages import HumanMessage, SystemMessage
 from pydantic import BaseModel, ConfigDict, Field
 
 from gui_agent.core.tool_agent.contracts import (
+    REVEAL_COORD_MAX,
+    REVEAL_COORD_MIN,
     DynamicActionSpec,
     ToolActionCapability,
     WorkerState,
@@ -156,6 +158,24 @@ _CAPABILITY_SCHEMAS: dict[str, dict[str, Any]] = {
             },
         },
         "required": ["direction"],
+        "additionalProperties": False,
+    },
+    "reveal_control": {
+        "type": "object",
+        "properties": {
+            "x": {"type": "number", "minimum": REVEAL_COORD_MIN, "maximum": REVEAL_COORD_MAX},
+            "y": {"type": "number", "minimum": REVEAL_COORD_MIN, "maximum": REVEAL_COORD_MAX},
+            "description": {
+                "type": "string",
+                "minLength": 5,
+                "maxLength": 240,
+                "description": (
+                    "The exact off-screen control to scroll into the viewport: its visible "
+                    "name, control type, and where it sits (above/below the fold)."
+                ),
+            },
+        },
+        "required": ["x", "y"],
         "additionalProperties": False,
     },
     "drag": {
@@ -304,6 +324,16 @@ def worker_action_floor(
             capability="scroll",
             description="Scroll a visible region to reveal content needed by the current Worker goal.",
             exposed_args=["direction", "amount", "target_area", "description"],
+        ),
+        DynamicActionSpec(
+            name="runtime_reveal_control",
+            capability="reveal_control",
+            description=(
+                "Deterministically scroll one known control into the viewport using its "
+                "frame rect (works for off-screen positions); prefer this over repeated "
+                "blind scrolling when the target control is already in the frame inventory."
+            ),
+            exposed_args=["description"],
         ),
         DynamicActionSpec(
             name="runtime_drag_visible",

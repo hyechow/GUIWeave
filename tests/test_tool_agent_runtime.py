@@ -80,6 +80,108 @@ def test_effective_scroll_resets_action_cycle_history() -> None:
     assert inspect().prior_attempts == 0
 
 
+def _wizard_frame(step_label: str, *, checked: str = "") -> MaterializedFrame:
+    controls = []
+    if checked:
+        controls.append({
+            "kind": "checkbox_input",
+            "label": checked,
+            "value": "on",
+            "rect": {"x": 326, "y": 873, "w": 20, "h": 20},
+        })
+    return MaterializedFrame(
+        frame_id=f"frame:{step_label}",
+        screenshot_path="frame.png",
+        title=f"Create Product Configurations: {step_label}",
+        controls=controls,
+    )
+
+
+def test_surface_cycle_blocks_traversal_loop_with_coordinate_jitter() -> None:
+    """Run 550 oscillated Next/Back across three wizard steps six times; each
+    tap used fresh coordinates, so the exact-pair cycle never matched."""
+    breaker = WorkerActionCircuitBreaker()
+    step2 = _wizard_frame("attribute values", checked="Blue")
+    step3 = _wizard_frame("bulk images")
+    step4 = _wizard_frame("summary")
+
+    sequence = [
+        ("back", {"x": 860, "y": 137}, step3),
+        ("tap", {"x": 789, "y": 137}, step2),
+        ("back", {"x": 861, "y": 140}, step3),
+        ("tap", {"x": 860, "y": 137}, step2),
+        ("tap", {"x": 855, "y": 139}, step3),
+        ("back", {"x": 790, "y": 138}, step4),
+    ]
+    for capability, args, frame in sequence:
+        decision = breaker.inspect(
+            tool="nav", capability=capability, args=args, frame=frame,
+        )
+        assert decision.blocked is False
+        breaker.record(decision)
+
+    stuck = breaker.inspect(
+        tool="nav", capability="tap", args={"x": 862, "y": 136}, frame=step2,
+    )
+    assert stuck.blocked is True
+    assert "surface cycle" in stuck.reason
+
+    # Progressing flows keep minting new surfaces and never trip the fuse.
+    breaker = WorkerActionCircuitBreaker()
+    frames = [
+        _wizard_frame("attribute values", checked=color)
+        for color in ("Blue", "Purple", "Green", "Red", "Black", "White")
+    ]
+    for index, frame in enumerate(frames):
+        decision = breaker.inspect(
+            tool="nav", capability="tap",
+            args={"x": 300 + index * 10, "y": 500}, frame=frame,
+        )
+        assert decision.blocked is False
+        breaker.record(decision)
+    assert breaker.inspect(
+        tool="nav", capability="tap", args={"x": 400, "y": 500},
+        frame=_wizard_frame("summary", checked="Blue"),
+    ).blocked is False
+
+    # Fewer than six dispatches can never be a surface cycle.
+    breaker = WorkerActionCircuitBreaker()
+    for x in (100, 125, 150, 175):
+        breaker.record(breaker.inspect(
+            tool="nav", capability="tap", args={"x": x, "y": 100}, frame=step2,
+        ))
+    assert breaker.inspect(
+        tool="nav", capability="tap", args={"x": 200, "y": 100}, frame=step2,
+    ).blocked is False
+
+
+def test_batched_actions_on_one_frame_do_not_fake_a_surface_cycle() -> None:
+    """A login batch (type, type, tap) is decided on ONE frame; per-atomic
+    progress hashes repeat the same surface and must not fill the window."""
+    breaker = WorkerActionCircuitBreaker()
+    login = _wizard_frame("login")
+    dashboard = _wizard_frame("dashboard")
+    grid = _wizard_frame("attribute grid")
+
+    for args in ({"text": "user"}, {"text": "pass"}, {"x": 500, "y": 450}):
+        capability = "type" if "text" in args else "tap"
+        breaker.record(breaker.inspect(
+            tool="auth", capability=capability, args=args, frame=login,
+        ))
+    breaker.record(breaker.inspect(
+        tool="nav", capability="open_url", args={"url": "/admin"}, frame=dashboard,
+    ))
+    for args in ({"text": "size"}, {}):
+        capability = "type" if "text" in args else "press_enter"
+        breaker.record(breaker.inspect(
+            tool="filter", capability=capability, args=args, frame=grid,
+        ))
+
+    assert breaker.inspect(
+        tool="open_row", capability="tap", args={"x": 320, "y": 600}, frame=grid,
+    ).blocked is False
+
+
 def test_runtime_rejects_spatial_target_inside_clipped_collection_cell() -> None:
     frame = MaterializedFrame(
         frame_id="frame:30",

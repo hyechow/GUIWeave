@@ -12,11 +12,12 @@ from typing import Literal, Optional
 from pydantic import Field, SerializeAsAny, model_validator
 
 from gui_agent.core.schemas import BaseAction, BaseActionDecision
+from gui_agent.core.tool_agent.contracts import REVEAL_COORD_MAX, REVEAL_COORD_MIN
 
 BrowserActionType = Literal[
     "tap", "type", "clear_text", "press_enter", "scroll", "drag",
     "navigate", "back", "new_tab", "select_tab", "close_tab", "upload",
-    "select_option", "scroll_to_ref",
+    "select_option", "scroll_to_ref", "reveal_control",
 ]
 
 
@@ -81,6 +82,13 @@ class BrowserAction(BaseAction):
         for field in ("x", "y", "to_x", "to_y"):
             value = getattr(self, field)
             if value is not None and not 0 <= value < 1000:
+                # reveal_control targets viewport-normalized positions of frame
+                # controls, which legitimately exceed the viewport when off-fold.
+                if (
+                    self.action_type == "reveal_control"
+                    and REVEAL_COORD_MIN <= value <= REVEAL_COORD_MAX
+                ):
+                    continue
                 raise ValueError(
                     f"{field}={value:g} is outside the normalized browser viewport [0, 1000)"
                 )

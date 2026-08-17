@@ -64,7 +64,13 @@ def _tool_call(name: str, args: dict) -> AIMessage:
     )
 
 
-def _worker_run(tmp_path: Path, *, recorded_tool: str, recorded_actions: list[dict]) -> Path:
+def _worker_run(
+    tmp_path: Path,
+    *,
+    recorded_tool: str,
+    recorded_actions: list[dict],
+    controls: list[dict] | None = None,
+) -> Path:
     spec = WorkerSpec.model_validate({
         "profile": "operator",
         "goal": "Traverse the visible collection.",
@@ -88,6 +94,7 @@ def _worker_run(tmp_path: Path, *, recorded_tool: str, recorded_actions: list[di
     (tmp_path / "observation_tool_agent_1.json").write_text(json.dumps({
         "frame_id": "frame:1",
         "screenshot_path": str(tmp_path / "screenshot_tool_agent_1.png"),
+        "controls": controls or [],
     }), encoding="utf-8")
     (tmp_path / "tool_agent_trace.json").write_text(json.dumps({"trace": [
         {"index": 1, "event": "runtime_started", "multi_action": True},
@@ -143,6 +150,45 @@ def test_worker_replay_compares_equivalent_actions_by_capability(tmp_path) -> No
         "complete",
         "fail",
     }
+
+
+def test_worker_replay_reports_grounded_visible_action_target(tmp_path) -> None:
+    run_dir = _worker_run(
+        tmp_path,
+        recorded_tool="continue_with_actions",
+        recorded_actions=[{"name": "runtime_tap_visible", "args": {"x": 180, "y": 246}}],
+        controls=[{
+            "kind": "button",
+            "label": "Back",
+            "value": "Back",
+            "rect": {"x": 180, "y": 246, "w": 100, "h": 46},
+        }],
+    )
+    model = _RecordedModel(_tool_call("continue_with_actions", {
+        "state": _state(),
+        "actions": [{
+            "name": "runtime_tap_visible",
+            "args": {
+                "x": 180,
+                "y": 246,
+                "description": "Activate the visible Back button",
+            },
+        }],
+    }))
+
+    result = replay_worker_decision(
+        run_dir,
+        frame=1,
+        llm=model,
+        expectation={
+            "tool": "continue_with_actions",
+            "action_capabilities": ["tap"],
+            "action_targets": ["Back"],
+        },
+    )
+
+    assert result["status"] == "passed"
+    assert result["samples"][0]["action_targets"] == ["Back"]
 
 
 def test_worker_replay_applies_one_same_frame_protocol_repair(tmp_path) -> None:

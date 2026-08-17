@@ -12,7 +12,11 @@ from gui_agent.context.blocks import (
     ContextCompressor,
     render_context_blocks,
 )
-from gui_agent.core.tool_agent.contracts import MaterializedFrame, WorkerState
+from gui_agent.core.tool_agent.contracts import (
+    MaterializedFrame,
+    WorkerState,
+    positioned_rect,
+)
 
 
 DEFAULT_WORKER_RECENT_K = 4
@@ -113,7 +117,13 @@ def _semantic_controls(controls: list[dict[str, Any]]) -> list[dict[str, Any]]:
 
 
 def _observed_choice_state(controls: list[dict[str, Any]]) -> list[dict[str, Any]]:
-    """Expose authoritative off-screen values without presenting action targets."""
+    """Expose authoritative off-screen values without presenting action targets.
+
+    A checked checkbox/radio carries its state in ``value`` (not
+    ``selected_text``); without the second gate an off-screen inherited check
+    is invisible everywhere in the Worker context (live failure: wizard
+    advanced with an unseen Red checked alongside the requested colors).
+    """
 
     return [
         {
@@ -124,7 +134,58 @@ def _observed_choice_state(controls: list[dict[str, Any]]) -> list[dict[str, Any
         for control in controls
         if isinstance(control, dict)
         and control.get("in_viewport") is False
-        and any(key in control for key in _CHOICE_STATE_FIELDS)
+        and (
+            any(key in control for key in _CHOICE_STATE_FIELDS)
+            or str(control.get("value") or "").casefold() == "on"
+        )
+    ]
+
+
+_OFFSCREEN_ACTION_KINDS = frozenset({"button", "section_toggle"})
+# Keeps the projection compact on long forms; sorted nearest-fold-first, so a
+# form with more distinct off-fold actions than this drops only the farthest.
+_OFFSCREEN_ACTION_LIMIT = 24
+
+
+def _offscreen_action_controls(controls: list[dict[str, Any]]) -> list[dict[str, Any]]:
+    """Off-screen actionable controls with reveal coordinates, nearest fold first.
+
+    ``_semantic_controls`` drops everything off-viewport, which made the
+    reveal capability unusable — the Worker had no way to read the target
+    rect. Row links (``a``) stay out: they are reached through collection
+    regions, not reveal. Duplicate labels (mass-action buttons on every row)
+    collapse to their nearest-fold instance so long forms stay compact.
+    """
+
+    def _fold_distance(control: dict[str, Any]) -> float:
+        rect = control.get("rect") or {}
+        y = rect.get("y")
+        if not isinstance(y, (int, float)):
+            return float("inf")
+        return abs(float(y)) if float(y) < 0 else abs(float(y) - 1000.0)
+
+    nearest: dict[tuple[str, str], dict[str, Any]] = {}
+    for control in controls:
+        if not (
+            isinstance(control, dict)
+            and control.get("in_viewport") is False
+            and str(control.get("kind") or "") in _OFFSCREEN_ACTION_KINDS
+            and str(control.get("label") or "").strip()
+            and positioned_rect(control) is not None
+        ):
+            continue
+        key = (str(control["kind"]), str(control["label"]).strip())
+        if _fold_distance(control) < _fold_distance(nearest.get(key) or {}):
+            nearest[key] = control
+    candidates = sorted(nearest.values(), key=_fold_distance)
+    return [
+        {
+            "kind": control["kind"],
+            "label": control["label"],
+            "rect": control["rect"],
+            **({"viewport_pos": control["viewport_pos"]} if control.get("viewport_pos") else {}),
+        }
+        for control in candidates[:_OFFSCREEN_ACTION_LIMIT]
     ]
 
 
@@ -455,6 +516,7 @@ def _frame_payload(
         "requirement_scopes": frame.requirement_scopes,
         "scope_blockers": scope_blockers,
         "observed_choice_state": _observed_choice_state(frame.controls),
+        "offscreen_action_controls": _offscreen_action_controls(frame.controls),
         "candidate_set_state": candidate_state,
         "visible_collection_regions": frame.visible_collection_regions,
         "structured_surfaces": frame.structured_surfaces,

@@ -200,6 +200,7 @@ def build_browser_bundle(
             "select_option",
             "open_url",
             "back",
+            "reveal_control",
         ),
     )
 

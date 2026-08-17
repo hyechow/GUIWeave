@@ -16,6 +16,20 @@ _COMMIT_LABEL_RE = re.compile(
     re.IGNORECASE,
 )
 _COMMIT_CONTROL_KINDS = frozenset({"button", "submit"})
+# Generic navigation vocabulary (language-level, not app-level). Commit/reset/filter/
+# query markers always win: "Save and Next" commits, it does not navigate.
+# The emitted ``record_*`` / ``page_*`` values are consumed by the deterministic
+# record-walk driver (core/tool_agent/record_walk.py) and the runtime walk gate;
+# renaming them here breaks both.
+_RECORD_NAV_LABEL_RE = re.compile(
+    r"^(?:next|previous|prev)$|^(?:下一条|上一条|下一條|上一條)$",
+    re.IGNORECASE,
+)
+_PAGE_NAV_LABEL_RE = re.compile(
+    r"^(?:next|previous|prev)\s+page$|^(?:下一页|上一页|下一頁|上一頁)$",
+    re.IGNORECASE,
+)
+_TRAVERSAL_CONTROL_KINDS = frozenset({"button", "a"})
 _FIELD_KINDS = frozenset({
     "text_input",
     "textarea",
@@ -76,6 +90,39 @@ def _is_choice_operation(control: dict[str, Any]) -> bool:
     if kind not in {"button", "a"}:
         return False
     return _alnum_key(control.get("label") or control.get("value")) in _CHOICE_OP_LABELS
+
+
+def traversal_action_of(control: dict[str, Any]) -> str | None:
+    """Semantic traversal role for a normalized control, else None.
+
+    Returns one of ``record_next`` / ``record_previous`` / ``page_next`` /
+    ``page_previous``. Record-level roles walk sibling records of an editor
+    surface; page-level roles walk list windows. Commit/reset/filter/query
+    controls are never traversal: "Save and Next" commits, it does not
+    navigate.
+    """
+
+    if str(control.get("kind") or "") not in _TRAVERSAL_CONTROL_KINDS:
+        return None
+    if (
+        control.get("form_action")
+        or control.get("query_action")
+        or control.get("is_filter")
+    ):
+        return None
+    label = re.sub(
+        r"\s+", " ", str(control.get("label") or control.get("value") or ""),
+    ).strip()
+    if not label:
+        return None
+    if _PAGE_NAV_LABEL_RE.match(label):
+        scope = "page"
+    elif _RECORD_NAV_LABEL_RE.match(label):
+        scope = "record"
+    else:
+        return None
+    direction = "previous" if re.match(r"(?:prev|上)", label, re.IGNORECASE) else "next"
+    return f"{scope}_{direction}"
 
 
 def form_controls_js() -> str:
@@ -793,6 +840,9 @@ def normalize_form_control_snapshot(
             )
         ):
             norm["form_action"] = "commit"
+        traversal = traversal_action_of(norm)
+        if traversal:
+            norm["traversal_action"] = traversal
         if item.get("is_datepicker") is True:
             norm["is_datepicker"] = True
         if item.get("required") is True:

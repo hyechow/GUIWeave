@@ -27,6 +27,8 @@ from gui_agent.core.runtime.action_settle import (
 from gui_agent.core.runtime.clock import PlatformTimeSnapshot, host_time_fallback
 from gui_agent.core.schemas import BaseAction, BaseActionDecision, TargetVerify
 from gui_agent.core.tool_agent.contracts import (
+    REVEAL_COORD_MAX,
+    REVEAL_COORD_MIN,
     CollectionRef,
     DynamicActionSpec,
     MaterializedFrame,
@@ -44,6 +46,11 @@ from gui_agent.core.tool_agent.action_guard import (
 )
 from gui_agent.core.tool_agent.data_store import RuntimeDataStore
 from gui_agent.core.tool_agent.filter_state import canonical_filter_value
+from gui_agent.core.tool_agent.record_walk import (
+    RecordWalkState,
+    record_walk_step,
+    walk_detail_scope,
+)
 from gui_agent.core.tool_agent.orchestrator import (
     MasterCompileError,
     WorkerOrchestrationContext,
@@ -106,6 +113,7 @@ _EXECUTABLE_CAPABILITIES = {
     "home",
     "app_switch",
     "launch_app",
+    "reveal_control",
 }
 
 
@@ -986,6 +994,7 @@ class ToolAgentRuntime:
             for code in auth_codes_from_text(str(text or ""))
         }
         step = 0
+        walk_state = RecordWalkState()
         reusable_observation: tuple[
             MaterializedFrame,
             bytes,
@@ -1031,6 +1040,113 @@ class ToolAgentRuntime:
                     collection_ref=ready_collection,
                     steps=step - 1,
                 )
+            walk_step = (
+                record_walk_step(frame, walk_state)
+                if (
+                    spec.profile == "collector"
+                    and initial_same_frame_feedback is None
+                    and any(
+                        action.capability == "tap"
+                        for action in active_actions
+                    )
+                )
+                else None
+            )
+            if walk_step is not None:
+                rect = walk_step.control["rect"]
+                walk_x = min(999.0, max(0.0, float(rect["x"])))
+                walk_y = min(999.0, max(0.0, float(rect["y"])))
+                walk_call = {
+                    "name": "runtime_tap_visible",
+                    "args": {
+                        "x": walk_x,
+                        "y": walk_y,
+                        "description": (
+                            "Next-record traversal control "
+                            f"({walk_step.reason})"
+                        ),
+                    },
+                }
+                self._trace(
+                    "record_walk_step",
+                    worker_id=worker_id,
+                    step=step,
+                    frame_id=frame.frame_id,
+                    resolved=list(walk_step.resolved),
+                    candidate_records=walk_step.candidate_records,
+                    walk_stalls=walk_state.stalls,
+                    x=walk_x,
+                    y=walk_y,
+                )
+                walk_result, _walk_terminal = self._execute_multi_action_calls(
+                    worker_id=worker_id,
+                    spec=spec,
+                    actions=active_actions,
+                    calls=[walk_call],
+                    state=WorkerState(
+                        status="collecting",
+                        summary=walk_step.reason,
+                        next_instruction=(
+                            "Resume the Worker goal once the deterministic "
+                            "record walk yields."
+                        ),
+                    ),
+                    step=step,
+                    frame=frame,
+                    png=png,
+                    journal=journal,
+                    circuit_breaker=circuit_breaker,
+                    observed_auth_codes=observed_auth_codes,
+                )
+                if walk_result.get("status") != "executed":
+                    # A blocked/failed traversal tap must not spin: yield the
+                    # next frame to Worker policy.
+                    walk_state.stalls += 1
+                    self._trace(
+                        "record_walk_step_aborted",
+                        worker_id=worker_id,
+                        step=step,
+                        frame_id=frame.frame_id,
+                        reason=walk_result.get("reason") or "",
+                    )
+                # Deterministic steps are not Worker decisions: refund the step
+                # budget so a long walk cannot exhaust max_steps (runaway is
+                # bounded by the driver's own stall/step cap). The global turn
+                # budget still applies.
+                step -= 1
+                continue
+            elif walk_state.engaged:
+                self._trace(
+                    "record_walk_yielded",
+                    worker_id=worker_id,
+                    step=step,
+                    frame_id=frame.frame_id,
+                    stalls=walk_state.stalls,
+                    no_credit_streak=walk_state.no_credit_streak,
+                    steps=walk_state.steps,
+                )
+                next_candidate = (
+                    (walk_detail_scope(frame) or {}).get("next_unresolved_candidate")
+                )
+                if isinstance(next_candidate, dict):
+                    fields = next_candidate.get("fields") or {}
+                    identity = ", ".join(
+                        f"{key}={value!r}" for key, value in fields.items()
+                    )
+                    journal.record_established_fact(
+                        event_ref=f"record_walk:yield:{step}",
+                        text=(
+                            "Runtime record walk yielded control after "
+                            f"{walk_state.steps} deterministic step(s) "
+                            f"(no-credit streak {walk_state.no_credit_streak}). "
+                            "Open the exact next unresolved candidate — ordinal "
+                            f"{next_candidate.get('ordinal')} ({identity}) — on "
+                            "the candidate surface; if its row is absent from "
+                            "the current list page, advance the list page first. "
+                            "Do not reopen already-resolved rows."
+                        ),
+                    )
+                walk_state.reset()
             worker_tools = self._worker_tools_for_frame(spec, active_actions, frame)
             patch_turn = 0
             guard_repair_turn = 0
@@ -2178,11 +2294,25 @@ class ToolAgentRuntime:
         if action_spec.capability == "launch_app":
             self._validate_runtime_launch_app(str(full_args.get("app") or ""))
         if action_spec.capability in _EXECUTABLE_CAPABILITIES:
+            # Standard spatial capabilities target the visible viewport;
+            # reveal_control also accepts off-screen frame positions.
             spatial = action_spec.capability in _SPATIAL_CAPABILITIES
+            coord_range = (
+                (float(REVEAL_COORD_MIN), float(REVEAL_COORD_MAX), True)
+                if action_spec.capability == "reveal_control"
+                else (0.0, 1000.0, False)
+                if spatial
+                else None
+            )
             for coordinate in ("x", "y"):
                 value = full_args.get(coordinate)
-                if spatial and value is not None and not 0 <= float(value) < 1000:
-                    raise ValueError(f"{action_spec.name}: {coordinate} must be in [0, 1000)")
+                if coord_range is None or value is None:
+                    continue
+                lo, hi, inclusive = coord_range
+                in_range = lo <= float(value) <= hi if inclusive else lo <= float(value) < hi
+                if not in_range:
+                    bound = f"[{lo:g}, {hi:g}]" if inclusive else f"[{lo:g}, {hi:g})"
+                    raise ValueError(f"{action_spec.name}: {coordinate} must be in {bound}")
             action_payload = {
                 "action_type": _ACTION_TYPES.get(
                     action_spec.capability,

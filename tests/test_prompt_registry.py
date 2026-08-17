@@ -144,6 +144,9 @@ def test_worker_handles_exhausted_candidate_sets_and_row_targets() -> None:
         "not record boundaries", "skip exact excluded matches", "viewport_tail_clipped = true",
         "repeated identity alone is insufficient", "Stable page chrome", "selector scrolls offscreen",
         "unobscured central viewport", "opening tap returns `no_effect`",
+        "If any field contradicts it", "return to the candidate surface",
+        "Runtime may advance next-record traversal deterministically",
+        "never re-walk resolved",
     ):
         assert rule in prompt
 

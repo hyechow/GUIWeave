@@ -14,6 +14,7 @@ from jsonschema import validate
 
 from gui_agent.core.config import resolve_llm_config
 from gui_agent.core.runtime.factory import build_platform
+from gui_agent.core.tool_agent.action_guard import control_at_point
 from gui_agent.core.tool_agent.contracts import DynamicActionSpec, MaterializedFrame, WorkerSpec
 from gui_agent.core.tool_agent.orchestrator import compile_master_program
 from gui_agent.core.tool_agent.protocol import (
@@ -299,10 +300,25 @@ def _action_names(event: dict) -> list[str]:
     ]
 
 
+def _visible_action_target(
+    action: dict[str, Any],
+    frame: MaterializedFrame,
+) -> str:
+    args = action.get("args") if isinstance(action.get("args"), dict) else {}
+    control = control_at_point(args, frame)
+    label = (
+        str(control.get("label") or control.get("value") or control.get("kind") or "")
+        if control is not None
+        else ""
+    )
+    return label or str(action.get("name") or "")
+
+
 def _worker_decision(
     response: Any,
     actions: list[DynamicActionSpec],
     tools: dict[str, dict[str, Any]],
+    frame: MaterializedFrame,
 ) -> dict[str, Any]:
     call = exactly_one_tool_call(response)
     tool = tools.get(call["name"])
@@ -311,6 +327,7 @@ def _worker_decision(
     validate(instance=call["args"], schema=tool["function"]["parameters"])
     state = call["args"].get("state")
     names = [call["name"]]
+    ordered = [{"name": call["name"], "args": call["args"]}]
     if call["name"] == "continue_with_actions":
         ordered = call["args"].get("actions") or []
         ordered = json.loads(ordered) if isinstance(ordered, str) else ordered
@@ -320,6 +337,11 @@ def _worker_decision(
         "tool": call["name"],
         "actions": names,
         "action_capabilities": [capabilities.get(name, name) for name in names],
+        "action_targets": [
+            _visible_action_target(action, frame)
+            for action in ordered
+            if isinstance(action, dict)
+        ],
         "state_status": str(state.get("status") or ""),
         "state_summary": str(state.get("summary") or ""),
         "args": call["args"],
@@ -386,7 +408,12 @@ def replay_worker_decision(
         for protocol_attempt in range(2):
             response = bound.invoke(replay_messages)
             try:
-                decision = _worker_decision(response, actions, tools_by_name)
+                decision = _worker_decision(
+                    response,
+                    actions,
+                    tools_by_name,
+                    materialized,
+                )
                 break
             except Exception as exc:  # noqa: BLE001 - mirrors one production repair
                 if protocol_attempt:
