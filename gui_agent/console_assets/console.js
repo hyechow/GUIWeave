@@ -6,7 +6,7 @@ const state = {
 };
 const $ = (id) => document.getElementById(id);
 const CONSOLE_HEADLESS = true;
-const DEFAULT_BROWSER_START_URL = "https://www.google.com/";
+const DEFAULT_BROWSER_START_URL = "https://cn.bing.com/";
 const ANDROID_DEVICE_STORAGE_KEY = "guiweave.android.device";
 const normalizeAndroidAddress = (value) => {
   const address = String(value || "").trim();

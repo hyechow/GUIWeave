@@ -4,7 +4,7 @@ from __future__ import annotations
 
 import re
 from copy import deepcopy
-from typing import Any, Literal, TypeAlias
+from typing import Any, Literal, TypeAlias, get_args
 
 from pydantic import BaseModel, ConfigDict, Field, model_validator
 
@@ -16,6 +16,47 @@ class StrictModel(BaseModel):
 DataFieldType = Literal[
     "text", "text_list", "number", "money", "datetime", "boolean"
 ]
+
+FailureKind: TypeAlias = Literal[
+    "worker_blocked",
+    "protocol_invalid",
+    "action_contract_invalid",
+    "platform_rejected",
+    "navigation_blocked",
+    "budget_exhausted",
+    "generator_invalid",
+]
+
+_ATOMIC_APPROACH_ACTION = re.compile(
+    r"\b(?:tap|click|press|type|scroll|swipe|drag|select|open|navigate|launch|switch|"
+    r"search|query|locate|find|extract|inspect|read)\b"
+    r"|(?:点击|按下|输入|滚动|滑动|拖动|选择|打开|导航|启动|切换|搜索|查询|查找|定位|提取|检查|读取)",
+    re.IGNORECASE,
+)
+_APPROACH_SEQUENCE = re.compile(
+    r"\b(?:then|afterwards?|subsequently|next)\b|(?:然后|随后|接着|再去|再通过)",
+    re.IGNORECASE,
+)
+_APPROACH_ACTION_SEQUENCE = re.compile(
+    rf"(?:{_ATOMIC_APPROACH_ACTION.pattern}).{{0,80}}"
+    rf"(?:\band\b|[,;]|并且?|再)\s*.{{0,20}}(?:{_ATOMIC_APPROACH_ACTION.pattern})",
+    re.IGNORECASE,
+)
+
+
+def approach_atomic_action_count(approach: str) -> int:
+    """Count adapter-scale action verbs in a Strategy approach."""
+
+    return len(_ATOMIC_APPROACH_ACTION.findall(approach))
+
+
+def approach_is_procedural(approach: str) -> bool:
+    """Return whether an approach encodes an ordered GUI procedure."""
+
+    return bool(
+        _APPROACH_SEQUENCE.search(approach)
+        or _APPROACH_ACTION_SEQUENCE.search(approach)
+    )
 
 
 class DataRequirement(StrictModel):
@@ -166,6 +207,16 @@ class RuntimeInputBinding(StrictModel):
     path: list[str | int] = Field(default_factory=list)
 
 
+class WorkerInputBinding(StrictModel):
+    """Bind one immutable Master-routed value to a semantic UI target."""
+
+    name: str = Field(pattern=r"^[a-z][a-z0-9_]{0,63}$")
+    input: str = Field(pattern=r"^[a-z][a-z0-9_]{0,63}$")
+    path: list[str | int] = Field(default_factory=list)
+    target: Literal["text_input", "choice", "url", "application"]
+    description: str = Field(min_length=1)
+
+
 class DynamicActionSpec(StrictModel):
     """One business-named action bound to a small runtime capability."""
 
@@ -268,24 +319,23 @@ class DynamicActionSpec(StrictModel):
         return self
 
 
+class WorkerStrategy(StrictModel):
+    """One replaceable, falsifiable execution approach for an immutable Worker goal."""
+
+    approach: str = Field(min_length=1)
+
+
 class WorkerSpec(StrictModel):
-    """A dynamic agentic execution unit created by the Master."""
+    """An immutable logical goal paired with one replaceable execution strategy."""
 
     profile: Literal["operator", "collector"] | None = Field(
         default=None,
         description=(
-            "General GUI decision strategy. When omitted, data requirements select "
-            "collector and all other goals select operator."
+            "Execution result contract. When omitted, data requirements select collector "
+            "and all other goals select operator."
         ),
     )
     goal: str
-    strategy: str = Field(
-        default="",
-        description=(
-            "Current physical execution approach. The logical goal and acceptance "
-            "contract stay fixed when Strategy Planner replaces it."
-        ),
-    )
     success_criteria: list[str] = Field(min_length=1)
     input_refs: dict[str, str] = Field(
         default_factory=dict,
@@ -294,77 +344,15 @@ class WorkerSpec(StrictModel):
             "for bound action arguments without exposing collection data."
         ),
     )
+    input_bindings: list[WorkerInputBinding] = Field(default_factory=list)
     data_requirements: list[DataRequirement] = Field(default_factory=list)
-    acquisition_filters: dict[str, Any] | None = Field(
-        default=None,
-        description=(
-            "Mutable UI scope used by this physical Worker attempt. Collector "
-            "attempts default to the immutable logical DataRequirement.filters."
-        ),
-    )
-    actions: list[DynamicActionSpec] = Field(min_length=1)
-    max_steps: int = Field(default=12, ge=1, le=20)
-
-    @model_validator(mode="before")
-    @classmethod
-    def _normalize_unambiguous_model_shapes(cls, data: object) -> object:
-        """Accept common provider formatting variants without weakening semantics."""
-        if not isinstance(data, dict):
-            return data
-        normalized = dict(data)
-        success_criteria = normalized.get("success_criteria")
-        if isinstance(success_criteria, str) and success_criteria.strip():
-            normalized["success_criteria"] = [success_criteria.strip()]
-        if normalized.get("input_refs") is None:
-            normalized["input_refs"] = {}
-        input_refs = normalized.get("input_refs")
-        input_names = set(input_refs) if isinstance(input_refs, dict) else set()
-        actions = list(normalized.get("actions") or [])
-        for index, raw_action in enumerate(actions):
-            if not isinstance(raw_action, dict):
-                continue
-            action = dict(raw_action)
-            input_args = dict(action.get("input_args") or {})
-            exposed_args = list(action.get("exposed_args") or [])
-            if not str(action.get("description") or "").strip():
-                visual_description = input_args.get("description")
-                action["description"] = (
-                    visual_description.strip()
-                    if isinstance(visual_description, str)
-                    and visual_description.strip()
-                    else str(action.get("name") or "proposed action").replace("_", " ")
-                )
-            for argument, binding in list(input_args.items()):
-                if not isinstance(binding, str):
-                    continue
-                if binding in input_names:
-                    input_args[argument] = {"input": binding}
-                    continue
-                input_args.pop(argument)
-                if argument not in exposed_args:
-                    # Providers sometimes use input_args as shorthand for a value
-                    # the visual Worker should supply. Only declared input_refs are
-                    # eligible for deterministic Runtime binding.
-                    exposed_args.append(argument)
-            action["input_args"] = input_args
-            action["exposed_args"] = exposed_args
-            actions[index] = action
-        if "actions" in normalized:
-            normalized["actions"] = actions
-        max_steps = normalized.get("max_steps")
-        if isinstance(max_steps, (int, float)) and not isinstance(max_steps, bool):
-            normalized["max_steps"] = min(int(max_steps), 20)
-
-        return normalized
+    strategy: WorkerStrategy
 
     @model_validator(mode="after")
     def _unique_ids(self) -> "WorkerSpec":
         if self.profile is None:
             self.profile = "collector" if self.data_requirements else "operator"
-        action_names = [item.name for item in self.actions]
         requirement_ids = [item.id for item in self.data_requirements]
-        if len(set(action_names)) != len(action_names):
-            raise ValueError("worker action names must be unique")
         if len(set(requirement_ids)) != len(requirement_ids):
             raise ValueError("data requirement ids must be unique")
         invalid_input_names = [
@@ -379,25 +367,37 @@ class WorkerSpec(StrictModel):
         ]
         if invalid_refs:
             raise ValueError("input_refs must contain ResultRef strings")
+        binding_names = [item.name for item in self.input_bindings]
+        if len(set(binding_names)) != len(binding_names):
+            raise ValueError("input binding names must be unique")
+        reserved = {
+            name for name in binding_names
+            if name in {
+                "complete", "report_blocked", "continue_with_actions",
+                *get_args(ToolActionCapability),
+            }
+            or name.startswith("runtime_")
+        }
+        if reserved:
+            raise ValueError(
+                f"input bindings use reserved Runtime action names: {sorted(reserved)}"
+            )
+        consumed_inputs = {item.input for item in self.input_bindings}
+        unknown_inputs = consumed_inputs.difference(self.input_refs)
+        if unknown_inputs:
+            raise ValueError(
+                f"input bindings reference unknown input_refs: {sorted(unknown_inputs)}"
+            )
+        unused_inputs = set(self.input_refs).difference(consumed_inputs)
+        if unused_inputs:
+            raise ValueError(
+                "input_refs must be consumed by deterministic input_bindings: "
+                f"{sorted(unused_inputs)}"
+            )
         if self.profile == "collector" and len(self.data_requirements) != 1:
             raise ValueError("collector profile requires exactly one logical data requirement")
         if self.profile == "operator" and self.data_requirements:
             raise ValueError("operator profile cannot declare data requirements")
-        if self.profile == "operator":
-            if self.acquisition_filters:
-                raise ValueError("operator profile cannot declare acquisition_filters")
-            self.acquisition_filters = {}
-        else:
-            requirement = self.data_requirements[0]
-            if self.acquisition_filters is None:
-                self.acquisition_filters = deepcopy(requirement.filters)
-            properties = set((requirement.row_schema.get("properties") or {}).keys())
-            unknown_filters = set(self.acquisition_filters).difference(properties)
-            if unknown_filters:
-                raise ValueError(
-                    "acquisition filter fields must be present in row_schema: "
-                    f"{sorted(unknown_filters)}"
-                )
         return self
 
 
@@ -405,15 +405,6 @@ class WorkerState(StrictModel):
     """Visible state-machine channel emitted in assistant ``content``."""
 
     status: Literal["exploring", "collecting", "completed", "failed"]
-    strategy_status: Literal["advancing", "blocked"] = Field(
-        default="advancing",
-        description=(
-            "Whether the current selected strategy can still make material "
-            "progress. Mark blocked only when visible evidence disproves the strategy "
-            "or every applicable action would repeat a failed path; incomplete or "
-            "loading observations remain unknown."
-        ),
-    )
     summary: str
     established_facts: list[str] = Field(
         default_factory=list,
@@ -427,8 +418,6 @@ class WorkerState(StrictModel):
     )
     open_gaps: list[str] = Field(default_factory=list)
     coverage: dict[str, str] = Field(default_factory=dict)
-    action_space_status: Literal["sufficient", "missing_action"] = "sufficient"
-    missing_action: str = ""
     next_instruction: str
 
 
@@ -460,15 +449,6 @@ class ResultRef(StrictModel):
     summary: str = ""
 
 
-class RequiredInteraction(StrictModel):
-    """One structured, currently mandatory physical interaction."""
-
-    capability: ToolActionCapability
-    args: dict[str, Any]
-    description: str
-    exclusive: bool = True
-
-
 class MaterializedFrame(StrictModel):
     frame_id: str
     screenshot_path: str
@@ -480,7 +460,6 @@ class MaterializedFrame(StrictModel):
     structured_surfaces: list[dict[str, Any]] = Field(default_factory=list)
     applied_filters: dict[str, Any] = Field(default_factory=dict)
     requirement_scopes: dict[str, dict[str, Any]] = Field(default_factory=dict)
-    required_interactions: list[RequiredInteraction] = Field(default_factory=list)
     chunks: list[DataChunkRef] = Field(default_factory=list)
     collections: list[CollectionRef] = Field(default_factory=list)
     missing_requirements: list[str] = Field(default_factory=list)
@@ -490,9 +469,7 @@ class WorkerOutcome(StrictModel):
     phase: Literal["completed", "failed"]
     summary: str
     collection_ref: CollectionRef | None = None
-    failure_kind: Literal[
-        "platform_rejected", "navigation_blocked", "step_window_exhausted"
-    ] | None = None
+    failure_kind: FailureKind | None = None
     steps: int
 
 

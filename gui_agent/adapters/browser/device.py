@@ -26,7 +26,6 @@ from __future__ import annotations
 import ipaddress
 import json
 import os
-import signal
 import threading
 import time
 from contextlib import contextmanager
@@ -39,7 +38,7 @@ from urllib.parse import urlsplit
 # None for the user's existing tab). Typical laptop content size.
 _DEFAULT_VIEWPORT_W = 1280
 _DEFAULT_VIEWPORT_H = 800
-_NAVIGATION_TIMEOUT_MS = 20_000
+_NAVIGATION_COMMIT_TIMEOUT_MS = 5_000
 TEXT_RETARGET_RADIUS_PX = 220
 _CDP_PROXY_ENV_LOCK = threading.Lock()
 
@@ -81,10 +80,6 @@ def _cdp_proxy_bypass(cdp_url: str) -> Iterator[None]:
                     os.environ.pop(name, None)
                 else:
                     os.environ[name] = value
-
-# Hard wall-clock cap for a single raw-CDP send. A non-responding Chrome would
-# otherwise hang the agent loop forever. Normal round-trips are well under a second.
-_CDP_SEND_TIMEOUT_S = 10.0
 
 # CDP settle (wait_settled): the page is "settled" once it is at least interactive AND both
 # the DOM and the network have been quiet for _SETTLE_QUIET_MS. This reads the page's real
@@ -196,13 +191,6 @@ _ACTION_FEEDBACK_CONSUME_JS = r"""
 """
 
 
-class _CDPTimeout(Exception):
-    """A raw-CDP send exceeded _CDP_SEND_TIMEOUT_S (Chrome did not respond)."""
-
-
-def _cdp_alarm(signum, frame):  # SIGALRM handler — interrupts the blocked send
-    raise _CDPTimeout()
-
 # Pixels of wheel scroll per unit of the iphone-style ``amount`` (amount=5 -> a
 # bit under one screen). Keeps the neutral scroll(direction, amount=5, ...)
 # signature identical to ScrollableDevice while mapping to real wheel deltas.
@@ -302,9 +290,21 @@ class PlaywrightDevice:
         self._tab_switched = False
         self._last_viewport = None
         self._dpr = None
-        if self.start_url:
-            self.navigate(self.start_url)
+        try:
+            self._navigate_to_start_url()
+        except Exception:
+            self.close()
+            raise
         return self
+
+    def _navigate_to_start_url(self) -> None:
+        """Open the configured initial page or fail before the first observation."""
+
+        if not self.start_url:
+            return
+        result = self.navigate(self.start_url)
+        if result.startswith("failed:"):
+            raise RuntimeError(f"browser start navigation failed: {result}")
 
     def close(self):
         """Close owned headless browsers; otherwise detach from Chrome.
@@ -443,8 +443,6 @@ class PlaywrightDevice:
             self._cdp = page.context.new_cdp_session(page)
         try:
             return self._timed_send(method, params)
-        except _CDPTimeout:
-            raise  # don't retry a hang into another hang — let the caller fall back
         except Exception:
             self._cdp = page.context.new_cdp_session(page)
             return self._timed_send(method, params)
@@ -1523,6 +1521,10 @@ class PlaywrightDevice:
 
     # ----- browser-only extras --------------------------------------------
     def _navigation_failure(self, url: str, error: object) -> str:
+        try:
+            self._cdp_send("Page.stopLoading", {})
+        except Exception:
+            pass
         message = (
             str(error or "unknown navigation error")
             .split("\nCall log:", 1)[0]
@@ -1543,7 +1545,7 @@ class PlaywrightDevice:
                 self._require_page().goto(
                     url,
                     wait_until="commit",
-                    timeout=_NAVIGATION_TIMEOUT_MS,
+                    timeout=_NAVIGATION_COMMIT_TIMEOUT_MS,
                 )
             else:
                 result = self._cdp_send("Page.navigate", {"url": url})

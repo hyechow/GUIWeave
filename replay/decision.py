@@ -5,40 +5,30 @@ from __future__ import annotations
 import argparse
 import ast
 import json
-import re
 from pathlib import Path
 from typing import Any
 
 from langchain_core.messages import AIMessage, HumanMessage, SystemMessage
-from jsonschema import validate
 
 from gui_agent.core.config import resolve_llm_config
 from gui_agent.core.runtime.clock import PlatformTimeSnapshot
-from gui_agent.core.runtime.factory import build_platform
-from gui_agent.core.tool_agent.action_guard import (
-    control_at_point,
-)
+from gui_agent.core.tool_agent.action_guard import assess_frame
 from gui_agent.core.self_learning.app_summary import load_knowledge_for_app
 from gui_agent.core.tool_agent.contracts import (
     DynamicActionSpec,
     MaterializedFrame,
     WorkerSpec,
+    approach_atomic_action_count,
+    approach_is_procedural,
 )
-from gui_agent.core.tool_agent.data_store import apply_cardinality_contract
 from gui_agent.core.tool_agent.orchestrator import compile_master_program
-from gui_agent.core.tool_agent.perception import derive_required_interactions
 from gui_agent.core.tool_agent.protocol import (
-    available_worker_actions,
-    constrain_worker_action_calls,
-    ProtocolError,
+    MAX_ORDERED_ACTIONS,
     bind_worker_decision_transport,
+    decode_worker_action,
     dynamic_worker_tools,
     image_message,
-    worker_decision_call,
-    worker_action_floor,
-    worker_attempt_contract,
 )
-from gui_agent.core.tool_agent.worker_memory import _frame_payload
 from gui_agent.prompts import load_prompt_text
 from llm.provider_config import (
     build_chat_model,
@@ -46,14 +36,15 @@ from llm.provider_config import (
 )
 
 
+_REDACTED_ACCESS_VALUE = "[session access value redacted]"
 _WORKER_DYNAMIC_SECTIONS = (
     "## Application knowledge",
     "## Installed applications",
     "## Session access context",
     "## Ordered multi-action mode",
+    "## Original task goal",
     "## Worker attempt contract",
 )
-_REDACTED_ACCESS_VALUE = "[session access value redacted]"
 
 
 def _model(name: str) -> tuple[Any, Any]:
@@ -111,89 +102,59 @@ def _master_task(event: dict[str, Any]) -> dict[str, Any]:
     return task
 
 
-def _current_knowledge(context: dict[str, Any], *, worker: bool) -> str:
+def _current_master_task(task: dict[str, Any], context: dict[str, Any]) -> dict[str, Any]:
+    """Refresh mutable knowledge while preserving the recorded task inputs."""
+
     platform = str(context.get("platform") or "browser")
     goal = str(context.get("goal") or "")
     summary = context.get("knowledge") or {}
     apps = summary.get("apps") or ([summary] if summary.get("app_name") else [])
-    return "\n\n".join(
-        knowledge.worker_context() if worker else knowledge.orchestrator_context(goal)
+    knowledge = "\n\n".join(
+        value.orchestrator_context(goal)
         for item in apps
         if isinstance(item, dict)
         and (name := str(item.get("app_name") or ""))
-        and (knowledge := load_knowledge_for_app(name, platform)) is not None
+        and (value := load_knowledge_for_app(name, platform)) is not None
     )
-
-
-def _current_master_task(task: dict[str, Any], context: dict[str, Any]) -> dict[str, Any]:
-    """Refresh mutable knowledge while preserving the recorded task inputs."""
-
     current = {key: value for key, value in task.items() if key != "application_knowledge"}
-    if knowledge := _current_knowledge(context, worker=False):
+    if isinstance(current.get("platform"), dict):
+        current["platform"] = {
+            key: value
+            for key, value in current["platform"].items()
+            if key != "action_contracts"
+        }
+    if knowledge:
         current["application_knowledge"] = knowledge
     return current
-
-
-def _prompt_section(text: str, heading: str) -> str:
-    start = text.find(heading)
-    if start < 0:
-        return ""
-    end = min(
-        (offset for marker in _WORKER_DYNAMIC_SECTIONS
-         if (offset := text.find(marker, start + len(heading))) >= 0),
-        default=len(text),
-    )
-    return text[start:end].strip()
 
 
 def _worker_messages(
     report: dict[str, Any],
     screenshot: bytes,
     *,
-    context: dict[str, Any],
-    spec: WorkerSpec,
-    actions: list[DynamicActionSpec],
-    frame: MaterializedFrame,
     image_scale: float = 1.0,
 ) -> list[Any]:
     messages: list[Any] = []
-    frame_replaced = False
     for role in report.get("roles", []):
         name = str(role.get("role") or "")
         parts = [part for part in role.get("parts", []) if isinstance(part, dict)]
         text = _text(parts, omit_calls=name == "assistant")
         if name == "system":
-            current = load_prompt_text("task.tool_agent.worker")
-            knowledge = _current_knowledge(context, worker=True)
-            sections = []
-            if knowledge:
-                sections.append(
-                    "## Application knowledge (read-only execution context)\n"
-                    "Use relevant application facts to choose efficient navigation and "
-                    "interaction strategies. Treat the current screenshot and Observer state "
-                    "as authoritative for what is presently visible.\n"
-                    + knowledge.rstrip()
-                )
-            sections.extend(
-                section for marker in _WORKER_DYNAMIC_SECTIONS[1:-1]
-                if (section := _prompt_section(text, marker))
+            dynamic_start = min(
+                (offset for marker in _WORKER_DYNAMIC_SECTIONS
+                 if (offset := text.find(marker)) >= 0),
+                default=len(text),
             )
-            sections.append(worker_attempt_contract(spec, actions))
-            messages.append(SystemMessage(content="\n\n".join([current.rstrip(), *sections])))
+            suffix = text[dynamic_start:].strip()
+            suffix = _without_section(suffix, "## Ordered multi-action mode")
+            current = load_prompt_text("task.tool_agent.worker").rstrip()
+            messages.append(SystemMessage(content=(
+                current + ("\n\n" + suffix if suffix else "")
+            )))
         elif name == "human":
-            text, replacements = re.subn(
-                r"(## Current MaterializedFrame \(compact semantic projection\)\n.*?\n)"
-                r"\{.*\}(?=\n\n## |\Z)",
-                lambda match: match.group(1) + json.dumps(
-                    _frame_payload(frame, candidate_committed=False), ensure_ascii=False,
-                ),
-                text, count=1, flags=re.DOTALL,
-            )
-            frame_replaced = frame_replaced or replacements == 1
             messages.append(
                 image_message(text, screenshot, scale=image_scale)
-                if replacements == 1
-                and any(part.get("type") == "image" for part in parts)
+                if any(part.get("type") == "image" for part in parts)
                 else HumanMessage(content=text)
             )
         elif name == "assistant":
@@ -209,9 +170,17 @@ def _worker_messages(
             messages.append(AIMessage(content=text, tool_calls=calls))
         else:
             raise ValueError(f"unsupported recorded prompt role {name!r}")
-    if not frame_replaced:
-        raise ValueError("recording has no replaceable Worker frame payload")
     return messages
+
+
+def _without_section(text: str, heading: str) -> str:
+    """Drop a retired dynamic prompt section from older recordings."""
+
+    start = text.find(heading)
+    if start < 0:
+        return text
+    end = text.find("\n\n## ", start + len(heading))
+    return (text[:start] + (text[end:] if end >= 0 else "")).strip()
 
 
 def _literal(call: ast.Call | None, name: str, default: Any = None) -> Any:
@@ -222,45 +191,54 @@ def _literal(call: ast.Call | None, name: str, default: Any = None) -> Any:
         return default
 
 
-def _ctx_calls(tree: ast.AST, method: str = "") -> list[ast.Call]:
-    return sorted(
-        (
-            node for node in ast.walk(tree)
-            if isinstance(node, ast.Call)
-            and isinstance(node.func, ast.Attribute)
-            and isinstance(node.func.value, ast.Name)
-            and node.func.value.id == "ctx"
-            and (not method or node.func.attr == method)
-        ),
-        key=lambda node: (node.lineno, node.col_offset),
-    )
-
-
 def _master_shape(source: str, *, reviewed: bool = True) -> dict[str, Any]:
     try:
         tree = ast.parse(source)
     except SyntaxError:
         tree = ast.parse("pass")
         reviewed = False
-    calls = _ctx_calls(tree)
+    calls = sorted((
+        node for node in ast.walk(tree)
+        if isinstance(node, ast.Call)
+        and isinstance(node.func, ast.Attribute)
+        and isinstance(node.func.value, ast.Name)
+        and node.func.value.id == "ctx"
+    ), key=lambda node: (node.lineno, node.col_offset))
     workers = [call for call in calls if call.func.attr == "gui_worker"]
     profiles = []
     cardinalities = []
+    field_counts = []
+    required_field_counts = []
+    procedural_approaches = []
+    approach_action_counts = []
     for call in workers:
         profile = _literal(call, "profile")
         requirements = _literal(call, "data_requirements", [])
+        approach = str(_literal(call, "approach", "") or "")
         profiles.append(profile or ("collector" if requirements else "operator"))
+        procedural_approaches.append(approach_is_procedural(approach))
+        approach_action_counts.append(approach_atomic_action_count(approach))
         cardinalities.extend(
             str(item.get("cardinality") or "many")
             for item in requirements
             if isinstance(item, dict)
         )
+        for item in requirements:
+            if not isinstance(item, dict):
+                continue
+            schema = item.get("row_schema") or {}
+            field_counts.append(len(schema.get("properties") or {}))
+            required_field_counts.append(len(schema.get("required") or []))
     finish = next((call for call in calls if call.func.attr == "finish"), None)
     return {
         "reviewed": reviewed,
         "worker_count": len(workers),
         "worker_profiles": profiles,
         "data_cardinalities": cardinalities,
+        "data_field_counts": field_counts,
+        "required_data_field_counts": required_field_counts,
+        "procedural_approaches": procedural_approaches,
+        "approach_action_counts": approach_action_counts,
         "api_calls": [call.func.attr for call in calls],
         "finish_effect": _literal(finish, "effect", ""),
     }
@@ -313,22 +291,37 @@ def replay_master_decision(
     model, _, model_name = _selected_model("tool_agent.master", llm)
     results = []
     for number in range(1, samples + 1):
+        compile_history = []
         try:
             program = compile_master_program(
                 llm=model,
                 system_prompt=load_prompt_text("task.tool_agent.master"),
                 task_context=_current_master_task(_master_task(selected), context),
                 max_attempts=5,
+                on_event=lambda event, payload: compile_history.append({
+                    "attempt": payload.get("attempt"),
+                    "source": str(payload.get("source") or ""),
+                    "diagnostics": list(payload.get("diagnostics") or []),
+                    "llm_elapsed_s": payload.get("llm_elapsed_s"),
+                    "token_usage": payload.get("token_usage") or {},
+                }) if event == "master_compile_attempt" else None,
             )
-            decision = _master_shape(program.source)
+            decision = {
+                **_master_shape(program.source),
+                "compile_attempts": program.attempts,
+            }
             source, diagnostics = program.source, []
         except Exception as exc:  # noqa: BLE001 - compile failure is a replay verdict
-            decision = _master_shape("", reviewed=False)
+            decision = {
+                **_master_shape("", reviewed=False),
+                "compile_attempts": 0,
+            }
             source, diagnostics = "", [f"{type(exc).__name__}: {exc}"]
         errors = _mismatches(expected, decision)
         results.append({
             "sample": number,
             **decision,
+            "compile_history": compile_history,
             "diagnostics": diagnostics,
             "source": source,
             "passed": not errors,
@@ -345,73 +338,6 @@ def _frame_number(value: str | int) -> int:
     return number
 
 
-def _worker_spec(events: list[dict], selected: dict) -> WorkerSpec:
-    candidate = next((
-        event for event in reversed(events)
-        if event.get("index", -1) < selected.get("index", 0)
-        and event.get("worker_id") == selected.get("worker_id")
-        and event.get("event") in {
-            "master_worker_dispatch",
-            "master_worker_redelegated",  # legacy recordings
-            "strategy_attempt_dispatched",
-        }
-        and isinstance(event.get("spec"), dict)
-    ), None)
-    if candidate is None:
-        raise ValueError(f"recording has no WorkerSpec for {selected.get('worker_id')!r}")
-    return WorkerSpec.model_validate(candidate["spec"])
-
-
-def _worker_actions(
-    run_dir: Path,
-    events: list[dict],
-    context: dict,
-    selected: dict,
-    spec: WorkerSpec,
-) -> list[DynamicActionSpec]:
-    store_path = run_dir / "tool_agent_data_store.json"
-    values = (
-        json.loads(store_path.read_text(encoding="utf-8")).get("values", {})
-        if store_path.is_file() else {}
-    )
-    actions = []
-    for action in spec.actions:
-        fixed = dict(action.fixed_args)
-        for argument, binding in action.input_args.items():
-            ref = spec.input_refs[binding.input]
-            if ref not in values:
-                raise ValueError(
-                    f"recording cannot bind current Worker input {binding.input!r}"
-                )
-            value = values[ref]
-            try:
-                for part in binding.path:
-                    value = value[part]
-            except (KeyError, IndexError, TypeError) as exc:
-                raise ValueError(
-                    f"recording cannot resolve current Worker input path "
-                    f"{binding.input!r}:{binding.path!r}"
-                ) from exc
-            fixed[argument] = value
-        actions.append(action.model_copy(update={"fixed_args": fixed, "input_args": {}}))
-    capabilities = build_platform(str(context.get("platform") or "browser")).tool_agent_capabilities
-    actions.extend(worker_action_floor(capabilities))
-    known = {action.name for action in actions}
-    for event in events:
-        if event.get("index", -1) >= selected.get("index", 0):
-            break
-        if (
-            event.get("event") == "worker_action_patch"
-            and event.get("worker_id") == selected.get("worker_id")
-            and isinstance(event.get("action"), dict)
-        ):
-            action = DynamicActionSpec.model_validate(event["action"])
-            if action.name not in known:
-                actions.append(action)
-                known.add(action.name)
-    return actions
-
-
 def _screenshot(run_dir: Path, frame: int, observation: dict) -> bytes:
     recorded = Path(str(observation.get("screenshot_path") or ""))
     candidates = (recorded, run_dir / recorded.name, run_dir / f"screenshot_tool_agent_{frame}.png")
@@ -421,39 +347,12 @@ def _screenshot(run_dir: Path, frame: int, observation: dict) -> bytes:
         raise FileNotFoundError(f"recording has no screenshot for frame:{frame}") from exc
 
 
-def _action_names(event: dict) -> list[str]:
-    if event.get("tool") != "continue_with_actions":
-        return [str(event.get("tool") or "")]
-    return [
-        str(item.get("name") or "")
-        for item in event.get("args", {}).get("actions", [])
-        if isinstance(item, dict)
-    ]
-
-
-def _worker_event(events: list[dict[str, Any]], frame_no: int) -> dict[str, Any]:
-    selected = next((
-        event for event in reversed(events)
-        if event.get("event") == "worker_decision"
-        and event.get("frame_id") == f"frame:{frame_no}"
-    ), None)
-    if selected is None:
-        raise ValueError(f"recording has no Worker decision for frame:{frame_no}")
-    return selected
-
-
-def _executed_tools(
-    events: list[dict[str, Any]], selected: dict[str, Any],
-) -> set[str]:
-    logical_id = re.sub(r"_replan_\d+$", "", str(selected.get("worker_id") or ""))
+def _unavailable(selected: dict[str, Any], frame_no: int, summary: str) -> dict[str, Any]:
     return {
-        str(event.get("tool") or "")
-        for event in events
-        if event.get("index", -1) < selected.get("index", 0)
-        and event.get("event") == "runtime_action"
-        and event.get("status") == "executed"
-        and re.sub(r"_replan_\d+$", "", str(event.get("worker_id") or ""))
-        == logical_id
+        "status": "unavailable", "summary": summary, "kind": "worker",
+        "model": "not invoked", "frame_id": f"frame:{frame_no}",
+        "worker_id": selected.get("worker_id"), "step": selected.get("step"),
+        "expectation": {}, "samples": [], "uses_llm": False, "uses_device": False,
     }
 
 
@@ -461,60 +360,26 @@ def _worker_decision(
     response: Any,
     actions: list[DynamicActionSpec],
     tools: dict[str, dict[str, Any]],
-    frame: MaterializedFrame | None = None,
-    constrain_actions: bool = False,
     *,
     action_protocol: str = "tool_call",
 ) -> dict[str, Any]:
-    call = worker_decision_call(response, protocol=action_protocol)
-    tool = tools.get(call["name"])
-    if tool is None:
-        raise ProtocolError(f"unknown Worker tool {call['name']!r}")
-    if call["name"] == "continue_with_actions":
-        ordered = call["args"].get("actions") or []
-        ordered = json.loads(ordered) if isinstance(ordered, str) else ordered
-        call["args"]["actions"] = constrain_worker_action_calls(
-            ordered, actions, frame if constrain_actions else None,
-        )
-    else:
-        call = constrain_worker_action_calls(
-            [call], actions, frame if constrain_actions else None,
-        )[0]
-    validate(instance=call["args"], schema=tool["function"]["parameters"])
-    state = call["args"].get("state")
+    call, state, calls = decode_worker_action(
+        response,
+        protocol=action_protocol,
+        tools=tools,
+    )
     names = [call["name"]]
     if call["name"] == "continue_with_actions":
-        ordered = call["args"].get("actions") or []
-        names = [str(item.get("name") or "") for item in ordered]
+        names = [str(item.get("name") or "") for item in calls]
     capabilities = {action.name: action.capability for action in actions}
-    decision = {
+    return {
         "tool": call["name"],
         "actions": names,
         "action_capabilities": [capabilities.get(name, name) for name in names],
         "state_status": str(state.get("status") or ""),
         "state_summary": str(state.get("summary") or ""),
-        "args": call["args"],
+        "args": {**call["args"], "state": state},
     }
-    if frame is not None:
-        action_by_name = {action.name: action for action in actions}
-        calls = (
-            call["args"].get("actions") or []
-            if call["name"] == "continue_with_actions"
-            else [call]
-        )
-        resolved = [
-            (action, {**action.fixed_args, **dict(item.get("args") or {})})
-            for item in calls if isinstance(item, dict)
-            if (action := action_by_name.get(str(item.get("name") or ""))) is not None
-        ]
-        decision["target_labels"] = [str(
-            (control_at_point(args, frame) or {}).get("label") or ""
-        ) for _, args in resolved]
-        decision["action_texts"] = [
-            str(args.get("text") or "")
-            for action, args in resolved if action.capability == "type"
-        ]
-    return decision
 
 
 def replay_worker_decision(
@@ -523,96 +388,66 @@ def replay_worker_decision(
     frame: str | int,
     samples: int = 1,
     expectation: dict[str, Any] | None = None,
-    worker_spec: WorkerSpec | None = None,
     llm: Any = None,
 ) -> dict[str, Any]:
     if samples < 1:
         raise ValueError("samples must be positive")
     frame_no = _frame_number(frame)
-    events, context = _artifacts(run_dir)
-    selected = _worker_event(events, frame_no)
+    events, _ = _artifacts(run_dir)
+    selected = next((
+        event for event in reversed(events)
+        if event.get("event") == "worker_decision"
+        and event.get("frame_id") == f"frame:{frame_no}"
+    ), None)
+    if selected is None:
+        raise ValueError(f"recording has no Worker decision for frame:{frame_no}")
+    replay_context = selected.get("replay_context")
+    if not isinstance(replay_context, dict) or replay_context.get("version") != 2:
+        return _unavailable(
+            selected, frame_no, "Worker decision replay requires trace schema v2."
+        )
     if _REDACTED_ACCESS_VALUE in json.dumps(
         selected.get("args") or {},
         ensure_ascii=False,
     ):
-        return {
-            "status": "unavailable",
-            "summary": "Worker decision replay requires a value redacted from run artifacts.",
-            "kind": "worker",
-            "model": "not invoked",
-            "frame_id": f"frame:{frame_no}",
-            "worker_id": selected.get("worker_id"),
-            "step": selected.get("step"),
-            "expectation": {},
-            "samples": [],
-            "uses_llm": False,
-            "uses_device": False,
-        }
+        return _unavailable(
+            selected, frame_no,
+            "Worker decision replay requires a value redacted from run artifacts.",
+        )
     observation = json.loads(
         (run_dir / f"observation_tool_agent_{frame_no}.json").read_text(encoding="utf-8")
     )
-    if str(context.get("platform") or "") == "android":
-        from gui_agent.adapters.android.accessibility import (
-            refresh_android_control_semantics,
-        )
-        observation["controls"] = refresh_android_control_semantics(
-            list(observation.get("controls") or [])
-        )
-    spec = worker_spec or _worker_spec(events, selected)
-    started = next((event for event in events if event.get("event") == "runtime_started"), {})
-    enhanced = started.get("perception_mode") == "enhanced"
-    if enhanced:
-        executed_tools = _executed_tools(events, selected)
-        observation["required_interactions"] = [
-            item.model_dump(mode="json")
-            for item in derive_required_interactions(
-                list(observation.get("controls") or []),
-                dict(observation.get("requirement_scopes") or {}),
-                pending_capabilities={
-                    action.capability for action in spec.actions
-                    if action.input_args and action.name not in executed_tools
-                },
-            )
-        ]
+    spec = WorkerSpec.model_validate(replay_context["worker_spec"])
     materialized = MaterializedFrame.model_validate(observation)
-    if spec.data_requirements:
-        requirement = spec.data_requirements[0]
-        materialized = materialized.model_copy(update={
-            "collections": [
-                apply_cardinality_contract(item, requirement.cardinality)
-                if item.requirement_id == requirement.id else item
-                for item in materialized.collections
-            ],
-        })
-    actions = _worker_actions(run_dir, events, context, selected, spec)
-    ready = bool(spec.data_requirements) and any(
-        item.requirement_id == spec.data_requirements[0].id
-        and item.coverage.get("scope_status") == "met"
-        and item.coverage.get("status") == "complete"
-        for item in materialized.collections
+    actions = [
+        DynamicActionSpec.model_validate(action)
+        for action in replay_context.get("actions") or []
+    ]
+    assessment = assess_frame(
+        spec, actions, materialized,
     )
-    completion = "operator" if spec.profile == "operator" else "collector" if ready else "unavailable"
     model, model_config, model_name = _selected_model("tool_agent.worker", llm)
-    max_ordered_actions = int(getattr(model_config, "max_actions_per_call", 5))
+    multi_action = bool(replay_context.get("multi_action"))
+    max_ordered_actions = MAX_ORDERED_ACTIONS if multi_action else 1
     action_protocol = str(getattr(model_config, "action_protocol", "tool_call"))
-    frame_actions = available_worker_actions(
-        spec,
-        actions,
-        materialized,
-        enhanced=enhanced,
-        executed_tools=_executed_tools(events, selected),
-    )
+    frame_actions = assessment.allowed_actions
     tools = dynamic_worker_tools(
         frame_actions,
-        completion_mode=completion,
-        action_envelope=bool(started.get("multi_action")),
-        frame=materialized if enhanced else None,
+        completion_mode=assessment.completion_mode,
+        action_envelope=multi_action,
         max_ordered_actions=max_ordered_actions,
     )
     capabilities = {action.name: action.capability for action in actions}
-    recorded_capabilities = [
-        capabilities.get(name, name) for name in _action_names(selected)
-    ]
+    action_names = (
+        [
+            str(item.get("name") or "")
+            for item in selected.get("args", {}).get("actions", [])
+            if isinstance(item, dict)
+        ]
+        if selected.get("tool") == "continue_with_actions"
+        else [str(selected.get("tool") or "")]
+    )
+    recorded_capabilities = [capabilities.get(name, name) for name in action_names]
     if selected.get("tool") == "continue_with_actions":
         recorded_capabilities = recorded_capabilities[:max_ordered_actions]
     expected = expectation or {
@@ -622,10 +457,6 @@ def replay_worker_decision(
     messages = _worker_messages(
         _report(selected, "tool_agent.worker"),
         _screenshot(run_dir, frame_no, observation),
-        context=context,
-        spec=spec,
-        actions=frame_actions,
-        frame=materialized,
         image_scale=float(getattr(model_config, "image_scale", 1.0)),
     )
     request_model = getattr(model_config, "model", None)
@@ -648,8 +479,7 @@ def replay_worker_decision(
             response = bound.invoke(replay_messages)
             try:
                 decision = _worker_decision(
-                    response, actions, tools_by_name, materialized,
-                    constrain_actions=enhanced,
+                    response, actions, tools_by_name,
                     action_protocol=action_protocol,
                 )
                 break

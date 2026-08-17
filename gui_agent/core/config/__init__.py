@@ -30,7 +30,6 @@ class _LLMOptions(BaseModel):
     temperature: float | None = Field(ge=0, le=2)
     reasoning_effort: str | None
     image_scale: float = Field(gt=0, le=1)
-    max_actions_per_call: int = Field(ge=1, le=5)
     action_protocol: Literal["tool_call", "json"]
     use_responses_api: bool
     timeout_s: float = Field(gt=0)
@@ -120,6 +119,11 @@ def resolve_llm_config(name: str) -> ChatProviderConfig:
         found, section = _lookup_llm_section(llm_config, candidate)
         if found:
             break
+    if "max_actions_per_call" in section:
+        raise ValueError(
+            f"gui_agent config llm.{name}: max_actions_per_call is a Runtime "
+            "execution policy; use the multi-action Runtime switch"
+        )
 
     config = resolve_chat_provider_config(
         provider=_optional_str(section.get("provider")),

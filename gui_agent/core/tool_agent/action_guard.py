@@ -3,12 +3,20 @@
 from __future__ import annotations
 
 import json
+import ipaddress
 import re
+import socket
 from dataclasses import dataclass
 from hashlib import sha256
-from typing import Any
+from typing import Any, Literal
+from urllib.parse import urlsplit
 
-from gui_agent.core.tool_agent.contracts import MaterializedFrame
+from gui_agent.core.tool_agent.contracts import (
+    CollectionRef,
+    DynamicActionSpec,
+    MaterializedFrame,
+    WorkerSpec,
+)
 
 
 _GUARDED_CAPABILITIES = {
@@ -45,6 +53,118 @@ _DEFAULT_BLOCK_INSTRUCTION = (
     "Treat the Runtime guard as authoritative. Do not retry the blocked action; "
     "advance from the current observation or choose a materially different capability."
 )
+_HTTP_URL = re.compile(r"https?://[^\s<>'\"`]+", re.IGNORECASE)
+
+
+@dataclass(frozen=True)
+class NavigationAdmission:
+    decision: Literal["allow", "abort"]
+    reason: str = ""
+
+
+@dataclass(frozen=True)
+class FrameAssessment:
+    allowed_actions: list[DynamicActionSpec]
+    ready_collection: CollectionRef | None = None
+    completion_mode: Literal["unavailable", "operator", "collector"] = "unavailable"
+
+
+def extract_http_urls(*values: Any) -> set[str]:
+    """Extract exact task-provided HTTP(S) destinations."""
+    pending, urls = list(values), set()
+    while pending:
+        value = pending.pop()
+        if isinstance(value, str):
+            urls.update(match.group(0).rstrip(".,;:!?)]}") for match in _HTTP_URL.finditer(value))
+        elif isinstance(value, dict):
+            pending.extend(value.values())
+        elif isinstance(value, (list, tuple, set, frozenset)):
+            pending.extend(value)
+    return urls
+
+
+def _http_origin(value: str, *, require_public: bool = False) -> tuple[str, str, int | None] | None:
+    try:
+        parsed = urlsplit(value)
+        scheme, host, port = parsed.scheme.casefold(), (parsed.hostname or "").casefold(), parsed.port
+    except ValueError:
+        return None
+    if scheme not in {"http", "https"} or not host or parsed.username or parsed.password:
+        return None
+    if require_public:
+        try:
+            address = ipaddress.ip_address(host.strip("[]"))
+        except ValueError:
+            try:
+                address = ipaddress.ip_address(socket.inet_ntoa(socket.inet_aton(host)))
+            except OSError:
+                address = None
+        if (
+            host == "localhost" or host.endswith((".localhost", ".local", ".internal"))
+            or address is not None and not address.is_global
+        ):
+            return None
+    default_port = 443 if scheme == "https" else 80
+    return scheme, host, None if port == default_port else port
+
+
+def assess_navigation_url(
+    candidate: str,
+    *,
+    authorized_urls: set[str] | frozenset[str] = frozenset(),
+    current_url: str = "",
+) -> NavigationAdmission:
+    """Admit safe discovery roots and evidenced or same-origin deep routes."""
+
+    candidate = candidate.strip()
+    origin = _http_origin(candidate)
+    if origin is None:
+        return NavigationAdmission(
+            "abort", "navigation requires an absolute HTTP(S) URL without credentials"
+        )
+    if _http_origin(candidate, require_public=True) is None:
+        return NavigationAdmission(
+            "abort", "navigation to private, loopback, link-local, or reserved destinations is denied"
+        )
+    parsed = urlsplit(candidate)
+    public_origin_root = (
+        parsed.path in {"", "/"} and not parsed.query and not parsed.fragment
+    )
+    if (
+        public_origin_root
+        or candidate in authorized_urls
+        or origin == _http_origin(current_url)
+    ):
+        return NavigationAdmission("allow")
+    return NavigationAdmission(
+        "abort",
+        "cross-origin deep navigation lacks exact task, knowledge, or start-page provenance",
+    )
+
+
+def ready_collection(spec: WorkerSpec, frame: MaterializedFrame) -> CollectionRef | None:
+    if spec.profile != "collector" or not spec.data_requirements:
+        return None
+    requirement_id = spec.data_requirements[0].id
+    return next((item for item in frame.collections
+        if item.requirement_id == requirement_id
+        and item.coverage.get("scope_status") == "met"
+        and item.coverage.get("status") == "complete"
+    ), None)
+
+
+def assess_frame(
+    spec: WorkerSpec,
+    actions: list[DynamicActionSpec],
+    frame: MaterializedFrame,
+) -> FrameAssessment:
+    collection = ready_collection(spec, frame)
+    mode: Literal["unavailable", "operator", "collector"] = (
+        "operator" if spec.profile == "operator"
+        else "collector" if collection is not None
+        else "unavailable"
+    )
+    return FrameAssessment(actions, collection, mode)
 
 
 def auth_codes_from_text(text: str) -> set[str]:
@@ -196,19 +316,6 @@ def _action_boundary_error(
     return ""
 
 
-def _action_boundary_instruction(
-    capability: str, args: dict[str, Any], frame: MaterializedFrame,
-) -> str:
-    control = control_at_point(args, frame)
-    if capability == "type" and control and control.get("query_action") == "open":
-        label = str(control.get("label") or "shown")
-        return (
-            f"Activate the visible query-entry control {label!r} to reveal its "
-            "editable input; do not choose a collection candidate."
-        )
-    return _DEFAULT_BLOCK_INSTRUCTION
-
-
 def _coordinate_bucket(value: Any, *, size: int = 50) -> int | None:
     if not isinstance(value, (int, float)) or isinstance(value, bool):
         return None
@@ -242,37 +349,23 @@ def action_signature(
 
 def progress_signature(frame: MaterializedFrame) -> str:
     """Hash task-relevant progress while ignoring unrelated visual mutations."""
+    control_fields = ("kind", "label", "value", "focused", "checked", "selected")
     payload = {
-        "url": frame.url,
-        "title": frame.title,
+        "page": (frame.url, frame.title),
         "scopes": {
-            key: {
-                "status": value.get("status"),
-                "applied_filters": value.get("applied_filters"),
-            }
+            key: (value.get("status"), value.get("applied_filters"))
             for key, value in sorted(frame.requirement_scopes.items())
         },
         "collections": [
-            {
-                "requirement_id": item.requirement_id,
-                "row_count": item.row_count,
-                "status": item.coverage.get("status"),
-                "pages_seen": item.coverage.get("pages_seen"),
-            }
+            (item.requirement_id, item.row_count, item.coverage.get("status"),
+             item.coverage.get("pages_seen"))
             for item in frame.collections
         ],
-        "visible_collections": frame.visible_collection_regions,
+        "visible": frame.visible_collection_regions,
         "controls": [
-            {
-                key: control.get(key)
-                for key in ("kind", "label", "value", "focused", "checked", "selected")
-                if control.get(key) not in (None, "")
-            }
+            tuple(control.get(key) for key in control_fields)
             for control in frame.controls
-            if any(
-                control.get(key) not in (None, "")
-                for key in ("value", "focused", "checked", "selected")
-            )
+            if any(control.get(key) not in (None, "") for key in control_fields[2:])
         ],
     }
     rendered = json.dumps(payload, ensure_ascii=False, sort_keys=True, default=str)
@@ -291,12 +384,9 @@ class ActionCircuitDecision:
 
 @dataclass
 class WorkerActionCircuitBreaker:
-    """Block repeated actions and strict two-state action cycles."""
+    """Block an identical action when task-relevant progress is unchanged."""
 
-    threshold: int = 2
     _last_attempt: tuple[str, str] | None = None
-    _consecutive_attempts: int = 0
-    _recent_attempts: tuple[tuple[str, str], ...] = ()
 
     def inspect(
         self,
@@ -310,8 +400,7 @@ class WorkerActionCircuitBreaker:
         signature = action_signature(tool=tool, capability=capability, args=args)
         progress = progress_signature(frame)
         attempt = (signature, progress)
-        history = self._recent_attempts
-        prior = self._consecutive_attempts if attempt == self._last_attempt else 0
+        repeated = attempt == self._last_attempt
         compatibility_error = _action_boundary_error(
             capability, args, frame, observed_auth_codes or set()
         )
@@ -320,55 +409,26 @@ class WorkerActionCircuitBreaker:
                 blocked=True,
                 signature=signature,
                 progress=progress,
-                prior_attempts=prior,
+                prior_attempts=int(repeated),
                 reason=compatibility_error,
-                instruction=_action_boundary_instruction(capability, args, frame),
+                instruction=_DEFAULT_BLOCK_INSTRUCTION,
             )
-        guarded = capability in _GUARDED_CAPABILITIES
-        cycle = (
-            len(history) >= 2
-            and history[-2] == attempt != history[-1]
-            and (len(history) < 3 or history[-3] != attempt)
+        blocked = capability in _GUARDED_CAPABILITIES and repeated
+        reason = (
+            f"blocked repeated {capability} action without task-relevant progress"
+            if blocked else ""
         )
-        blocked = guarded and (prior >= self.threshold or cycle)
-        reason = ""
-        if blocked:
-            reason = (
-                "blocked two-state action cycle without task-relevant progress"
-                if cycle else
-                f"blocked repeated {capability} action after {prior} equivalent "
-                "dispatches without task-relevant progress"
-            )
         return ActionCircuitDecision(
             blocked=blocked,
             signature=signature,
             progress=progress,
-            prior_attempts=2 if cycle else prior,
+            prior_attempts=int(repeated),
             reason=reason,
             instruction=_DEFAULT_BLOCK_INSTRUCTION if blocked else "",
         )
 
     def record(self, decision: ActionCircuitDecision) -> None:
-        attempt = (decision.signature, decision.progress)
-        self._recent_attempts = (*self._recent_attempts[-3:], attempt)
-        self._consecutive_attempts = (
-            self._consecutive_attempts + 1 if attempt == self._last_attempt else 1
-        )
-        self._last_attempt = attempt
+        self._last_attempt = (decision.signature, decision.progress)
 
     def reset(self) -> None:
         self._last_attempt = None
-        self._consecutive_attempts = 0
-        self._recent_attempts = ()
-
-
-__all__ = [
-    "ActionCircuitDecision",
-    "WorkerActionCircuitBreaker",
-    "action_signature",
-    "auth_codes_from_frame",
-    "auth_codes_from_text",
-    "is_candidate_commit",
-    "control_at_point",
-    "progress_signature",
-]

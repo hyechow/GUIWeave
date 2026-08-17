@@ -474,7 +474,6 @@ def _tool_agent_report_steps(
         spec = meta.get("spec") if isinstance(meta.get("spec"), dict) else {}
         profile = str(spec.get("profile") or meta.get("profile") or "operator")
         worker_goal = str(meta.get("goal") or spec.get("goal") or worker_id)
-        worker_strategy = str(spec.get("strategy") or meta.get("strategy") or "")
         criteria = list(spec.get("success_criteria") or meta.get("success_criteria") or [])
         result_event = worker_results.get(worker_id) or {}
         outcome = result_event.get("outcome") if isinstance(result_event.get("outcome"), dict) else {}
@@ -561,12 +560,6 @@ def _tool_agent_report_steps(
                         "chars": int(final_decision.get("context_chars") or 0),
                         "journal_events": int(
                             final_decision.get("memory_event_count") or 0
-                        ),
-                        "state_source": str(
-                            final_decision.get("state_source") or "legacy"
-                        ),
-                        "compatibility": list(
-                            final_decision.get("state_compatibility") or []
                         ),
                     },
                     **({"worker_actions": spec.get("actions") or []} if program_event is None else {}),
@@ -658,8 +651,6 @@ def _tool_agent_report_steps(
 
         terminal_note = str(outcome.get("summary") or "")
         description = f"{profile} · Goal: {worker_goal}"
-        if worker_strategy:
-            description += f" · Strategy: {worker_strategy}"
         if terminal_note and not steps:
             description += f" · {terminal_note}"
 

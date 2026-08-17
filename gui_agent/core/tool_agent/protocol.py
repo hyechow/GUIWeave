@@ -6,7 +6,6 @@ import base64
 from io import BytesIO
 import json
 import re
-from collections.abc import Collection
 from copy import deepcopy
 from typing import Any, Literal
 
@@ -17,16 +16,26 @@ from pydantic import BaseModel, ConfigDict, Field
 
 from gui_agent.core.tool_agent.contracts import (
     DynamicActionSpec,
-    MaterializedFrame,
-    RequiredInteraction,
-    ToolActionCapability,
+    RuntimeInputBinding,
     WorkerSpec,
     WorkerState,
+    WorkerInputBinding,
 )
 
 
 MAX_ORDERED_ACTIONS = 5
-_TERMINAL_TOOL_BY_STATE = {"completed": "complete", "failed": "fail"}
+_TERMINAL_TOOL_BY_STATE = {"completed": "complete", "failed": "report_blocked"}
+_INPUT_TARGETS = {
+    "text_input": ("type", "text"),
+    "choice": ("select_option", "text"),
+    "url": ("open_url", "url"),
+    "application": ("launch_app", "app"),
+}
+_NUMBER = r"-?\d+(?:\.\d+)?(?:[eE][+-]?\d+)?"
+_ENCODED_COORD_PAIR = re.compile(
+    rf'(?P<head>"(?P<prefix>to_)?x"\s*:\s*{_NUMBER}),\s*'
+    rf'(?P<y>{_NUMBER})(?=\s*[,}}])'
+)
 
 
 class ProtocolError(RuntimeError):
@@ -45,18 +54,6 @@ def validate_worker_tool_state(tool: str, state: WorkerState) -> None:
         )
 
 
-class CompleteWorkerArgs(BaseModel):
-    model_config = ConfigDict(extra="forbid")
-    collection_ref: str = Field(
-        default="",
-        description=(
-            "Complete CollectionRef for a collector Worker. Leave empty for an "
-            "operator Worker after its target UI state is confirmed."
-        ),
-    )
-    evidence: list[str] = Field(default_factory=list)
-
-
 class CompleteReadyWorkerArgs(BaseModel):
     """Completion evidence when Runtime owns any required data reference."""
 
@@ -69,221 +66,103 @@ class FailWorkerArgs(BaseModel):
     reason: str
 
 
-class RequestActionPatchArgs(BaseModel):
-    """One frame-driven addition selected from the runtime capability registry."""
-
-    model_config = ConfigDict(extra="forbid")
-    name: str = Field(pattern=r"^[a-z][a-z0-9_]{0,63}$")
-    capability: ToolActionCapability
-    description: str
-    input_text: str = Field(
-        default="",
-        description=(
-            "Exact goal-determined text for type when known; leave empty when the "
-            "Worker must choose it from current task context."
-        ),
-    )
-    option_text: str = Field(
-        default="",
-        description=(
-            "Exact visible option label for select_option when the subgoal determines it; "
-            "leave empty for tap/scroll or when the Worker must choose the label later."
-        ),
-    )
-    url: str = Field(
-        default="",
-        description=(
-            "Exact allowed URL for open_url when known; leave empty when the Worker "
-            "must choose it from its current context."
-        ),
-    )
-    reason: str
+_COORD = {"type": "number", "minimum": 0, "maximum": 999}
+_OPTIONAL_COORD = {**_COORD, "type": ["number", "null"]}
 
 
+def _description(text: str) -> dict[str, Any]:
+    return {"type": "string", "minLength": 5, "maxLength": 240, "description": text}
+
+
+def _args(
+    properties: dict[str, Any] | None = None,
+    required: tuple[str, ...] = (),
+) -> dict[str, Any]:
+    return {
+        "type": "object",
+        "properties": properties or {},
+        "required": list(required),
+        "additionalProperties": False,
+    }
+
+
+_EMPTY_ARGS = _args()
 _CAPABILITY_SCHEMAS: dict[str, dict[str, Any]] = {
-    "tap": {
-        "type": "object",
-        "properties": {
-            "x": {"type": "number", "minimum": 0, "maximum": 999},
-            "y": {"type": "number", "minimum": 0, "maximum": 999},
-            "description": {
-                "type": "string",
-                "minLength": 5,
-                "maxLength": 240,
-                "description": (
-                    "One atomic visible target: include its visible name, control type, "
-                    "and screen region; do not include later actions."
-                ),
-            },
-        },
-        "required": ["x", "y"],
-        "additionalProperties": False,
-    },
-    "type": {
-        "type": "object",
-        "properties": {
-            "x": {"type": "number", "minimum": 0, "maximum": 999},
-            "y": {"type": "number", "minimum": 0, "maximum": 999},
-            "text": {
-                "type": "string",
-                "minLength": 1,
-                "description": "Text to enter into the visible input control.",
-            },
-            "description": {
-                "type": "string",
-                "minLength": 5,
-                "maxLength": 240,
-                "description": (
-                    "One atomic visible input target: include its visible name and screen "
-                    "region; do not include later actions."
-                ),
-            },
-        },
-        "required": ["x", "y", "text"],
-        "additionalProperties": False,
-    },
-    "clear_text": {
-        "type": "object",
-        "properties": {},
-        "required": [],
-        "additionalProperties": False,
-    },
-    "press_enter": {
-        "type": "object",
-        "properties": {},
-        "required": [],
-        "additionalProperties": False,
-    },
-    "scroll": {
-        "type": "object",
-        "properties": {
-            "direction": {"type": "string", "enum": ["up", "down", "left", "right"]},
-            "amount": {"type": "string", "enum": ["small", "medium", "large"], "default": "medium"},
-            "target_area": {
-                "type": "string",
-                "enum": ["main_content", "left_panel", "right_panel", "top_content", "bottom_content"],
-                "default": "main_content",
-            },
-            "x": {"type": ["number", "null"], "minimum": 0, "maximum": 999},
-            "y": {"type": ["number", "null"], "minimum": 0, "maximum": 999},
-            "description": {
-                "type": "string",
-                "minLength": 5,
-                "maxLength": 240,
-                "description": "Describe only the current scroll region and purpose.",
-            },
-        },
-        "required": ["direction"],
-        "additionalProperties": False,
-    },
-    "drag": {
-        "type": "object",
-        "properties": {
-            "x": {"type": "number", "minimum": 0, "maximum": 999},
-            "y": {"type": "number", "minimum": 0, "maximum": 999},
-            "to_x": {"type": "number", "minimum": 0, "maximum": 999},
-            "to_y": {"type": "number", "minimum": 0, "maximum": 999},
-            "duration_ms": {"type": "integer", "minimum": 50, "maximum": 5000},
-            "description": {
-                "type": "string",
-                "minLength": 5,
-                "maxLength": 240,
-                "description": "Describe the visible object and its exact drag destination.",
-            },
-        },
-        "required": ["x", "y", "to_x", "to_y"],
-        "additionalProperties": False,
-    },
-    "long_press": {
-        "type": "object",
-        "properties": {
-            "x": {"type": "number", "minimum": 0, "maximum": 999},
-            "y": {"type": "number", "minimum": 0, "maximum": 999},
-            "duration_ms": {"type": "integer", "minimum": 300, "maximum": 3000},
-            "description": {
-                "type": "string",
-                "minLength": 5,
-                "maxLength": 240,
-                "description": "Describe the one visible control or item to hold.",
-            },
-        },
-        "required": ["x", "y"],
-        "additionalProperties": False,
-    },
-    "select_option": {
-        "type": "object",
-        "properties": {
-            "x": {"type": "number", "minimum": 0, "maximum": 999},
-            "y": {"type": "number", "minimum": 0, "maximum": 999},
-            "text": {
-                "type": "string",
-                "minLength": 1,
-                "description": "Visible option label to select.",
-            },
-            "description": {
-                "type": "string",
-                "minLength": 5,
-                "maxLength": 240,
-                "description": "Describe only the current visible choice control.",
-            },
-        },
-        "required": ["x", "y", "text"],
-        "additionalProperties": False,
-    },
-    "open_url": {
-        "type": "object",
-        "properties": {
-            "url": {
-                "type": "string",
-                "minLength": 1,
-                "maxLength": 2048,
-                "description": (
-                    "Absolute HTTP(S) URL to open in the current tab. Master-declared "
-                    "actions may change origin; baseline Worker navigation stays same-origin."
-                ),
-            },
-        },
-        "required": ["url"],
-        "additionalProperties": False,
-    },
-    "back": {
-        "type": "object",
-        "properties": {},
-        "required": [],
-        "additionalProperties": False,
-    },
-    "home": {
-        "type": "object",
-        "properties": {},
-        "required": [],
-        "additionalProperties": False,
-    },
-    "app_switch": {
-        "type": "object",
-        "properties": {},
-        "required": [],
-        "additionalProperties": False,
-    },
-    "launch_app": {
-        "type": "object",
-        "properties": {
-            "app": {
-                "type": "string",
-                "minLength": 1,
-                "maxLength": 120,
-                "description": "Exact installed application name exposed by Runtime.",
-            },
-        },
-        "required": ["app"],
-        "additionalProperties": False,
-    },
+    "tap": _args({
+        "x": _COORD, "y": _COORD,
+        "description": _description(
+            "One atomic visible target: include its visible name, control type, and "
+            "screen region; do not include later actions."
+        ),
+    }, ("x", "y")),
+    "type": _args({
+        "x": _COORD, "y": _COORD,
+        "text": {"type": "string", "minLength": 1,
+                 "description": "Text to enter into the visible input control."},
+        "description": _description(
+            "One atomic visible input target: include its visible name and screen "
+            "region; do not include later actions."
+        ),
+    }, ("x", "y", "text")),
+    "clear_text": _EMPTY_ARGS,
+    "press_enter": _EMPTY_ARGS,
+    "scroll": _args({
+        "direction": {"type": "string", "enum": ["up", "down", "left", "right"]},
+        "amount": {"type": "string", "enum": ["small", "medium", "large"],
+                   "default": "medium"},
+        "target_area": {"type": "string", "enum": [
+            "main_content", "left_panel", "right_panel", "top_content", "bottom_content",
+        ], "default": "main_content"},
+        "x": _OPTIONAL_COORD, "y": _OPTIONAL_COORD,
+        "description": _description("Describe only the current scroll region and purpose."),
+    }, ("direction",)),
+    "drag": _args({
+        "x": _COORD, "y": _COORD, "to_x": _COORD, "to_y": _COORD,
+        "duration_ms": {"type": "integer", "minimum": 50, "maximum": 5000},
+        "description": _description(
+            "Describe the visible object and its exact drag destination."
+        ),
+    }, ("x", "y", "to_x", "to_y")),
+    "long_press": _args({
+        "x": _COORD, "y": _COORD,
+        "duration_ms": {"type": "integer", "minimum": 300, "maximum": 3000},
+        "description": _description("Describe the one visible control or item to hold."),
+    }, ("x", "y")),
+    "select_option": _args({
+        "x": _COORD, "y": _COORD,
+        "text": {"type": "string", "minLength": 1,
+                 "description": "Visible option label to select."},
+        "description": _description("Describe only the current visible choice control."),
+    }, ("x", "y", "text")),
+    "open_url": _args({"url": {
+        "type": "string", "minLength": 1, "maxLength": 2048,
+        "description": "Absolute HTTP(S) URL to open in the current tab. Master-declared "
+                       "actions may change origin when the destination has task provenance.",
+    }}, ("url",)),
+    "back": _EMPTY_ARGS,
+    "home": _EMPTY_ARGS,
+    "app_switch": _EMPTY_ARGS,
+    "launch_app": _args({"app": {
+        "type": "string", "minLength": 1, "maxLength": 120,
+        "description": "Exact installed application name exposed by Runtime.",
+    }}, ("app",)),
 }
 
-_DEFAULT_WORKER_CAPABILITIES = {
-    "tap", "type", "clear_text", "press_enter", "scroll",
-    "select_option", "open_url", "back",
+_CAPABILITY_DESCRIPTIONS = {
+    "tap": "Tap one visible control that advances the current approach.",
+    "type": "Enter text into one visible input control.",
+    "clear_text": "Clear the currently focused text control.",
+    "press_enter": "Press Enter for the currently focused control.",
+    "scroll": "Scroll one visible content region.",
+    "drag": "Drag one visible object to one visible destination.",
+    "long_press": "Long-press one visible control or item.",
+    "select_option": "Select one visible option from one visible choice control.",
+    "open_url": "Open an absolute HTTP(S) URL that executes the current approach.",
+    "back": "Navigate back once within the current execution path.",
+    "home": "Return to the platform home surface.",
+    "app_switch": "Open the platform application switcher.",
+    "launch_app": "Launch one exact Runtime-provided installed application.",
 }
-
 
 def function_tool(name: str, description: str, parameters: dict[str, Any]) -> dict[str, Any]:
     return {
@@ -296,240 +175,22 @@ def model_tool(name: str, description: str, model: type[BaseModel]) -> dict[str,
     return function_tool(name, description, model.model_json_schema())
 
 
-def worker_action_floor(
-    capabilities: Collection[ToolActionCapability] | None = None,
-) -> list[DynamicActionSpec]:
-    """Return baseline affordances supported by the active platform adapter.
-
-    ``None`` preserves the browser-complete historical floor for callers that
-    validate the protocol in isolation.  Live runtimes pass the exact capability
-    set declared by their :class:`PlatformBundle`.
-    """
-    supported = (
-        set(capabilities)
-        if capabilities is not None
-        else set(_DEFAULT_WORKER_CAPABILITIES)
-    )
-    unknown = supported.difference(_CAPABILITY_SCHEMAS)
-    if unknown:
-        raise ValueError(f"unknown Tool Agent capabilities: {sorted(unknown)}")
-    actions = [
-        DynamicActionSpec(
-            name="runtime_tap_visible",
-            capability="tap",
-            description="Tap one visible control that advances the current Worker goal.",
-            exposed_args=["description"],
-        ),
-        DynamicActionSpec(
-            name="runtime_scroll_visible",
-            capability="scroll",
-            description="Traverse a target collection or reveal an uninspected surface.",
-            exposed_args=["direction", "amount", "target_area", "description"],
-        ),
-        DynamicActionSpec(
-            name="runtime_drag_visible",
-            capability="drag",
-            description="Drag one visible object to an exact visible destination.",
-            exposed_args=["duration_ms", "description"],
-        ),
-        DynamicActionSpec(
-            name="runtime_long_press_visible",
-            capability="long_press",
-            description="Long-press one visible control or item.",
-            exposed_args=["duration_ms", "description"],
-        ),
-        DynamicActionSpec(
-            name="runtime_type_visible",
-            capability="type",
-            description=(
-                "Enter task- or observation-determined text into one visible input control. "
-                "Use this when recovery needs a value different from a fixed-input action."
-            ),
-            exposed_args=["text", "description"],
-        ),
-        DynamicActionSpec(
-            name="runtime_clear_focused",
-            capability="clear_text",
-            description="Clear the currently focused visible text input.",
-        ),
-        DynamicActionSpec(
-            name="runtime_press_enter",
-            capability="press_enter",
-            description="Press Enter to submit or confirm the currently focused control.",
-        ),
-        DynamicActionSpec(
-            name="runtime_select_visible",
-            capability="select_option",
-            description="Choose one named option from a visible choice control.",
-            exposed_args=["text", "description"],
-        ),
-        DynamicActionSpec(
-            name="runtime_open_url",
-            capability="open_url",
-            description=(
-                "Open an allowed absolute HTTP(S) destination in the current browser tab. "
-                "Runtime may require Strategy Planner revision before changing the active origin."
-            ),
-            exposed_args=["url"],
-        ),
-        DynamicActionSpec(
-            name="runtime_browser_back",
-            capability="back",
-            description=(
-                "Go back once within a viable execution path. If the current path is "
-                "blocked or unusable, fail so Master can replace it instead of retrying it."
-            ),
-        ),
-        DynamicActionSpec(
-            name="runtime_home",
-            capability="home",
-            description="Go to the active mobile platform's home screen.",
-        ),
-        DynamicActionSpec(
-            name="runtime_app_switch",
-            capability="app_switch",
-            description="Open the active mobile platform's app switcher.",
-        ),
-        DynamicActionSpec(
-            name="runtime_launch_app",
-            capability="launch_app",
-            description="Launch one exact installed application by its Runtime-provided name.",
-        ),
-    ]
-    filtered = [action for action in actions if action.capability in supported]
-    if "back" in supported and "open_url" not in supported:
-        back_index = next(
-            index for index, action in enumerate(filtered)
-            if action.capability == "back"
-        )
-        filtered[back_index] = DynamicActionSpec(
-            name="runtime_back",
-            capability="back",
-            description="Go back once in the current platform navigation stack.",
-        )
-    return filtered
-
-
-def available_worker_actions(
-    spec: WorkerSpec,
-    actions: list[DynamicActionSpec],
-    frame: MaterializedFrame,
-    *,
-    enhanced: bool,
-    executed_tools: set[str] | frozenset[str] = frozenset(),
-) -> list[DynamicActionSpec]:
-    """Expose only actions consistent with current structured prerequisites."""
-
-    if not enhanced:
-        return actions
-    controls = [
-        item for item in frame.controls
-        if item.get("in_viewport") is not False and item.get("enabled") is not False
-    ]
-    editors = [
-        item for item in controls
-        if str(item.get("kind") or "").casefold()
-        in {"text_input", "textbox", "textarea", "editor"}
-    ]
-    query_editors = [item for item in editors if item.get("is_filter") is True]
-    pending_types = {
-        action.name for action in spec.actions
-        if action.input_args and action.name not in executed_tools
-        and action.capability == "type"
-        and "text" in action.input_args
-    }
-    unavailable: set[str] = set()
-    if required := _required_action(actions, frame):
-        interaction, action = required
-        return [action.model_copy(update={"description": interaction.description})]
-    if pending_types and query_editors and len(editors) == len(query_editors):
-        private_names = {action.name for action in spec.actions}
-        unavailable.update(
-            action.name for action in actions
-            if action.capability == "type" and action.name not in private_names
-        )
-    return [action for action in actions if action.name not in unavailable]
-
-
-def _required_action(
-    actions: list[DynamicActionSpec],
-    frame: MaterializedFrame | None,
-) -> tuple[RequiredInteraction, DynamicActionSpec] | None:
-    """Resolve one perception-owned interaction to one Runtime floor action."""
-
-    if frame is None or len(frame.required_interactions) != 1:
-        return None
-    interaction = frame.required_interactions[0]
-    matches = [
-        action for action in actions
-        if interaction.exclusive
-        and action.name.startswith("runtime_")
-        and action.capability == interaction.capability
-    ]
-    return (interaction, matches[0]) if len(matches) == 1 else None
-
-
-def constrain_worker_action_calls(
-    calls: list[dict[str, Any]],
-    actions: list[DynamicActionSpec],
-    frame: MaterializedFrame | None,
-) -> list[dict[str, Any]]:
-    """Ground a uniquely determined structured prerequisite without model geometry."""
-
-    required = _required_action(actions, frame)
-    interaction, action = required if required is not None else (None, None)
-    return [
-        {
-            **call,
-            "args": {
-                **dict(call.get("args") or {}),
-                **(
-                    interaction.args
-                    if interaction is not None and call.get("name") == action.name
-                    else {}
-                ),
-            },
-        }
-        for call in calls
-    ]
-
-
 def worker_attempt_contract(spec: WorkerSpec, actions: list[DynamicActionSpec]) -> str:
     """Serialize the immutable Worker contract shared by live and replay prompts."""
 
-    payload = spec.model_dump(mode="json", exclude={"actions"})
-    private = {action.name: action for action in spec.actions if action.input_args}
-    available = {action.name for action in actions}
-    payload["action_contracts"] = [
-        private.get(action.name, action).model_dump(
-            mode="json",
-            include={"name", "fixed_args", "input_args"},
-            exclude_defaults=True,
-        )
+    payload = spec.model_dump(mode="json", exclude={"input_refs"})
+    payload["input_names"] = sorted(spec.input_refs)
+    payload["available_actions"] = [
+        {"name": action.name, "capability": action.capability}
         for action in actions
     ]
-    deferred = [
-        {
-            **action.model_dump(
-                mode="json",
-                include={"name", "capability", "description", "input_args"},
-                exclude_defaults=True,
-            ),
-            "status": "deferred_until_matching_control_is_ready",
-        }
-        for action in spec.actions
-        if action.input_args and action.name not in available
-    ]
-    if deferred:
-        payload["deferred_bound_actions"] = deferred
     return (
         "## Worker attempt contract\n"
-        "The bound tools are the authoritative action descriptions and argument "
-        "schemas. This compact contract supplies the immutable subgoal, acceptance/data "
-        "contract, and Runtime-bound action descriptors. Preserve its constraints while "
-        "pursuing the subgoal. A deferred bound action is not callable on this frame: "
-        "complete the perception-provided required interaction that exposes its matching "
-        "input, then use the bound action when Runtime exposes it.\n"
+        "The immutable goal and data contract define what must remain unchanged. The "
+        "current Strategy supplies only the approach. Runtime supplies the platform's "
+        "generic atomic actions; choose among them from the current screenshot. Named "
+        "input bindings inject private Master-routed values and must be used only for "
+        "their described target.\n"
         + json.dumps(payload, ensure_ascii=False)
     )
 
@@ -542,11 +203,6 @@ _WORKER_STATE_SCHEMA: dict[str, Any] = {
             "type": "string",
             "enum": ["exploring", "collecting", "completed", "failed"],
         },
-        "strategy_status": {
-            "type": "string",
-            "enum": ["advancing", "blocked"],
-            "description": WorkerState.model_fields["strategy_status"].description,
-        },
         "summary": {"type": "string", "maxLength": 320},
         "established_facts": {
             "type": "array",
@@ -557,7 +213,7 @@ _WORKER_STATE_SCHEMA: dict[str, Any] = {
         "next_instruction": {"type": "string", "maxLength": 240},
     },
     "required": [
-        "status", "strategy_status", "summary", "established_facts", "next_instruction",
+        "status", "summary", "established_facts", "next_instruction",
     ],
     "additionalProperties": False,
 }
@@ -590,13 +246,12 @@ def dynamic_worker_tools(
     actions: list[DynamicActionSpec],
     *,
     completion_mode: Literal[
-        "legacy", "unavailable", "operator", "collector"
-    ] = "legacy",
+        "unavailable", "operator", "collector"
+    ] = "operator",
     action_envelope: bool = False,
-    frame: MaterializedFrame | None = None,
     max_ordered_actions: int = MAX_ORDERED_ACTIONS,
+    allow_failure: bool = True,
 ) -> list[dict[str, Any]]:
-    constrained = _required_action(actions, frame) is not None
     tools = (
         [_with_worker_state(dynamic_action_envelope_tool(
             actions,
@@ -605,26 +260,9 @@ def dynamic_worker_tools(
         if action_envelope
         else [_with_worker_state(dynamic_action_tool(item)) for item in actions]
     )
-    if not constrained:
-        tools.append(_with_worker_state(model_tool(
-            "request_action_patch",
-            (
-                "Add one missing frame-driven GUI action from the registered capability set, "
-                "then reason again on the same screenshot. This does not execute a GUI action."
-            ),
-            RequestActionPatchArgs,
-        )))
     if completion_mode != "unavailable":
-        complete_model = (
-            CompleteWorkerArgs
-            if completion_mode == "legacy"
-            else CompleteReadyWorkerArgs
-        )
         description = (
-            "Complete this GUI Worker. A collector must provide its complete "
-            "CollectionRef; an operator leaves collection_ref empty."
-            if completion_mode == "legacy"
-            else "Complete this operator after its target UI state is visibly confirmed."
+            "Complete this operator after its target UI state is visibly confirmed."
             if completion_mode == "operator"
             else (
                 "Complete this collector using the valid complete CollectionRef already "
@@ -634,14 +272,15 @@ def dynamic_worker_tools(
         tools.append(_with_worker_state(model_tool(
             "complete",
             description,
-            complete_model,
+            CompleteReadyWorkerArgs,
         )))
-    tools.append(_with_worker_state(model_tool(
-        "fail",
-        "Stop with an explicit blocker only when no applicable WorkerSpec-declared "
-        "action can address it.",
-        FailWorkerArgs,
-    )))
+    if allow_failure:
+        tools.append(_with_worker_state(model_tool(
+            "report_blocked",
+            "Report concrete execution evidence that the current approach cannot "
+            "continue. Strategy, not Worker, decides whether to replace the approach.",
+            FailWorkerArgs,
+        )))
     return tools
 
 
@@ -703,36 +342,6 @@ def dynamic_action_envelope_tool(
     )
 
 
-def materialize_action_patch(args: RequestActionPatchArgs) -> DynamicActionSpec:
-    """Materialize semantics through registry-owned capability parameter contracts."""
-    fixed_args: dict[str, Any] = {}
-    exposed_args: list[str] = []
-    if args.capability == "scroll":
-        exposed_args = ["direction", "amount", "target_area", "description"]
-    elif args.capability == "type":
-        if args.input_text.strip():
-            fixed_args["text"] = args.input_text.strip()
-        else:
-            exposed_args.append("text")
-    elif args.capability == "select_option":
-        if args.option_text.strip():
-            fixed_args["text"] = args.option_text.strip()
-        else:
-            exposed_args.append("text")
-    elif args.capability == "open_url":
-        if args.url.strip():
-            fixed_args["url"] = args.url.strip()
-        else:
-            exposed_args.append("url")
-    return DynamicActionSpec(
-        name=args.name,
-        capability=args.capability,
-        description=args.description,
-        fixed_args=fixed_args,
-        exposed_args=exposed_args,
-    )
-
-
 def dynamic_action_tool(action: DynamicActionSpec) -> dict[str, Any]:
     schema = deepcopy(_CAPABILITY_SCHEMAS[action.capability])
     properties = schema["properties"]
@@ -749,8 +358,7 @@ def dynamic_action_tool(action: DynamicActionSpec) -> dict[str, Any]:
     if action.fixed_args:
         description += (
             " Runtime has fixed this tool's non-spatial input values; it cannot execute a "
-            "different recovery value. Choose a value-bearing baseline tool when the value "
-            "must change."
+            "different recovery value. Fail this strategy when that value must change."
         )
     return function_tool(action.name, description, schema)
 
@@ -760,6 +368,39 @@ def capability_parameters(capability: str) -> dict[str, Any]:
         return deepcopy(_CAPABILITY_SCHEMAS[capability])
     except KeyError as exc:
         raise ValueError(f"unknown capability {capability!r}") from exc
+
+
+def generic_action_spec(capability: str) -> DynamicActionSpec:
+    """Expose one adapter capability without asking Master or Strategy to enumerate it."""
+
+    parameters = capability_parameters(capability)
+    return DynamicActionSpec(
+        name=capability,
+        capability=capability,
+        description=_CAPABILITY_DESCRIPTIONS[capability],
+        exposed_args=list((parameters.get("properties") or {}).keys()),
+    )
+
+
+def input_binding_action(binding: WorkerInputBinding) -> DynamicActionSpec:
+    """Lower one semantic input binding into a private-value Runtime action."""
+
+    capability, argument = _INPUT_TARGETS[binding.target]
+    properties = capability_parameters(capability).get("properties") or {}
+    action = DynamicActionSpec(
+        name=binding.name,
+        capability=capability,
+        description=binding.description,
+        input_args={
+            argument: RuntimeInputBinding(
+                input=binding.input,
+                path=binding.path,
+            )
+        },
+        exposed_args=[name for name in properties if name != argument],
+    )
+    validate_dynamic_action_spec(action)
+    return action
 
 
 def validate_dynamic_action_spec(action: DynamicActionSpec) -> None:
@@ -1034,36 +675,23 @@ def exactly_one_tool_call(response: Any) -> dict[str, Any]:
 def json_worker_decision_instruction(tools: list[dict[str, Any]]) -> str:
     """Describe the same dynamic action contract without provider tool calling."""
 
-    catalog: dict[str, dict[str, Any]] = {}
-    shared_state: dict[str, Any] = {}
-    for tool in tools:
-        function = tool.get("function")
-        if not isinstance(function, dict):
-            continue
-        parameters = deepcopy(function["parameters"])
-        properties = parameters.get("properties") or {}
-        state_schema = properties.pop("state", None)
-        if isinstance(state_schema, dict) and not shared_state:
-            shared_state = state_schema
-        parameters["properties"] = properties
-        parameters["required"] = [
-            name for name in parameters.get("required", []) if name != "state"
-        ]
-        catalog[function["name"]] = {
+    catalog = {
+        function["name"]: {
             "description": function.get("description", ""),
-            "parameters": parameters,
+            "parameters": function["parameters"],
         }
-    contract = {"shared_state": shared_state, "actions": catalog}
+        for tool in tools
+        if isinstance((function := tool.get("function")), dict)
+    }
     return (
         "Decision transport: return only one JSON object with exactly two keys: "
         '`{"tool": "<exact action name>", "args": {<arguments>}}`. '
         "Do not emit a function/tool call, Markdown, commentary, or a JSON Schema. "
         "Choose exactly one listed action. `state` must occur exactly once as a direct "
-        "member of the outer `args`, never inside `args.actions[*]` or another nested "
-        "object. It must match `shared_state`; the remaining args must satisfy the "
-        "selected action's schema. "
+        "member of the outer `args`, never inside `args.actions[*]`. The outer args "
+        "must satisfy the selected action's schema. "
         "Available contract:\n"
-        + json.dumps(contract, ensure_ascii=False, separators=(",", ":"))
+        + json.dumps(catalog, ensure_ascii=False, separators=(",", ":"))
     )
 
 
@@ -1093,21 +721,56 @@ def bind_worker_decision_transport(
     raise ValueError(f"unsupported Worker action protocol {protocol!r}")
 
 
-def worker_decision_call(response: Any, *, protocol: str = "tool_call") -> dict[str, Any]:
-    """Decode one Worker decision from a provider tool call or plain JSON text."""
+def decode_worker_action(
+    response: Any,
+    *,
+    protocol: str = "tool_call",
+    tools: dict[str, dict[str, Any]] | None = None,
+) -> tuple[dict[str, Any], Any, list[dict[str, Any]]]:
+    """Decode one transport response into normalized executable calls."""
 
     if protocol == "tool_call":
-        return exactly_one_tool_call(response)
-    if protocol != "json":
+        call = exactly_one_tool_call(response)
+    elif protocol == "json":
+        value = parse_json_object(getattr(response, "content", ""))
+        if set(value) != {"tool", "args"} or not isinstance(value["args"], dict):
+            raise ProtocolError("Worker decision JSON requires exactly tool and object args")
+        if not isinstance(value["tool"], str) or not value["tool"].strip():
+            raise ProtocolError("Worker decision JSON tool must be a non-empty string")
+        call = {"id": "json-decision", "name": value["tool"].strip(), "args": value["args"]}
+    else:
         raise ValueError(f"unsupported Worker action protocol {protocol!r}")
-    value = parse_json_object(getattr(response, "content", ""))
-    if set(value) != {"tool", "args"}:
-        raise ProtocolError("Worker decision JSON must contain exactly tool and args")
-    if not isinstance(value["tool"], str) or not (tool := value["tool"].strip()):
-        raise ProtocolError("Worker decision JSON tool must be a non-empty string")
-    if not isinstance(value["args"], dict):
-        raise ProtocolError("Worker decision JSON args must be an object")
-    return {"id": "json-decision", "name": tool, "args": value["args"]}
+    if tools is not None:
+        tool = tools.get(call["name"])
+        if tool is None:
+            raise ProtocolError(f"unknown Worker tool {call['name']!r}")
+        validate(instance=call["args"], schema=tool["function"]["parameters"])
+    raw_state = call["args"].pop("state", None)
+    if call["name"] == "continue_with_actions":
+        raw = call["args"].get("actions") or []
+        raw = decode_ordered_actions(raw)
+        if not isinstance(raw, list) or not all(isinstance(item, dict) for item in raw):
+            raise ProtocolError("actions must be an ordered list of objects")
+        calls = [{
+            "name": str(item.get("name") or ""),
+            "args": normalize_action_arguments(dict(item.get("args") or {})),
+        } for item in raw]
+    else:
+        call["args"] = normalize_action_arguments(call["args"])
+        calls = [call]
+    if call["name"] == "continue_with_actions":
+        call["args"]["actions"] = calls
+    else:
+        call = calls[0]
+    return call, raw_state, calls
+
+
+def decode_ordered_actions(value: object) -> object:
+    """Decode a provider string with one common unkeyed coordinate repair."""
+
+    return json.loads(_ENCODED_COORD_PAIR.sub(
+        r'\g<head>,"\g<prefix>y":\g<y>', value,
+    )) if isinstance(value, str) else value
 
 
 def normalize_action_arguments(args: dict[str, Any]) -> dict[str, Any]:

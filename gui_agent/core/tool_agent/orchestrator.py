@@ -9,14 +9,12 @@ from __future__ import annotations
 
 import ast
 import hashlib
-import ipaddress
 import json
 import re
 import sys
 import time
 from dataclasses import dataclass
 from typing import Any, Callable, Literal
-from urllib.parse import urlsplit
 
 from jsonschema import Draft202012Validator
 from langchain_core.messages import HumanMessage
@@ -26,14 +24,15 @@ from gui_agent.core.tool_agent.contracts import (
     ResultRef,
     WorkerOutcome,
     WorkerSpec,
+    approach_is_procedural,
 )
 from gui_agent.core.tool_agent.data_store import RuntimeDataStore
 from gui_agent.core.tool_agent.protocol import (
     cacheable_system_message,
     diagnostic_prompt_reports,
+    input_binding_action,
     message_text,
     response_usage,
-    validate_dynamic_action_spec,
 )
 from gui_agent.core.tool_agent.sandbox import (
     execute_transform,
@@ -54,12 +53,35 @@ _DESTINATION_ONLY_GOAL = re.compile(
     r"(?:page|screen|list|details|settings|dashboard|section|panel))$",
     re.IGNORECASE,
 )
+_METHOD_BOUND_GOAL = re.compile(
+    r"\b(?:using|from|through|via)\s+(?:the\s+)?current\s+.{0,80}"
+    r"(?:page|site|app|application|search|screen|interface)\b"
+    r"|(?:使用|来自|通过)当前.{0,40}(?:页面|站点|网站|应用|搜索|界面)",
+    re.IGNORECASE,
+)
+_ACTION_SHAPED_SUCCESS = re.compile(
+    r"\b(?:button|control|link|field|input|query|search)\b.{0,60}"
+    r"\b(?:clicked|tapped|pressed|typed|entered|executed|submitted)\b"
+    r"|\b(?:clicked|tapped|pressed|typed|entered|executed|submitted)\b.{0,60}"
+    r"\b(?:button|control|link|field|input|query|search)\b"
+    r"|(?:按钮|控件|链接|字段|输入框|查询|搜索).{0,30}"
+    r"(?:已点击|已按下|已输入|已执行|已提交)",
+    re.IGNORECASE,
+)
+_UI_SURFACE_SUCCESS = re.compile(
+    r"\b(?:page|screen|interface|search results?|widget|card|table|dialog)\b.{0,60}"
+    r"\b(?:visible|shown|open|opened|loaded|displayed)\b"
+    r"|(?:页面|界面|搜索结果|组件|卡片|表格|弹窗).{0,30}(?:可见|显示|打开|已加载)",
+    re.IGNORECASE,
+)
+_EXACT_SCOPE_LITERAL = re.compile(
+    r"\b\d{4}-\d{2}-\d{2}\b|(?P<quote>['\"])(?P<quoted>[^'\"\n]{1,80})(?P=quote)"
+)
 _CTX_METHODS = {
     "gui_worker",
     "transform",
     "worker_result",
     "finish",
-    "replan",
     "fail",
 }
 _SAFE_METHODS = {
@@ -164,7 +186,7 @@ class MasterProgram:
 
 @dataclass(frozen=True)
 class MasterTerminal:
-    phase: Literal["completed", "failed", "replan"]
+    phase: Literal["completed", "failed"]
     summary: str
     result_ref: str = ""
     effect: Literal["mutation", "data", "ui_state", "none"] = "none"
@@ -199,6 +221,77 @@ def _diagnostic(code: str, message: str, node: ast.AST | None = None) -> MasterD
     return MasterDiagnostic(code=code, message=message, line=getattr(node, "lineno", 0))
 
 
+class _StaticScalarFolder(ast.NodeTransformer):
+    """Resolve earlier top-level scalar aliases without executing Master code."""
+
+    def __init__(self, values: dict[str, str | int | float | bool | None]) -> None:
+        self.values = values
+
+    def visit_Name(self, node: ast.Name) -> ast.AST:
+        if isinstance(node.ctx, ast.Load) and node.id in self.values:
+            return ast.copy_location(ast.Constant(self.values[node.id]), node)
+        return node
+
+    def visit_JoinedStr(self, node: ast.JoinedStr) -> ast.AST:
+        node = self.generic_visit(node)
+        pieces: list[str] = []
+        for item in node.values:
+            if isinstance(item, ast.Constant) and isinstance(item.value, str):
+                pieces.append(item.value)
+                continue
+            if not isinstance(item, ast.FormattedValue) or not isinstance(
+                item.value, ast.Constant
+            ):
+                return node
+            value = item.value.value
+            if item.conversion == ord("r"):
+                value = repr(value)
+            elif item.conversion == ord("a"):
+                value = ascii(value)
+            elif item.conversion == ord("s"):
+                value = str(value)
+            elif item.conversion != -1:
+                return node
+            if item.format_spec is not None:
+                spec = self.visit(item.format_spec)
+                if not isinstance(spec, ast.Constant) or not isinstance(spec.value, str):
+                    return node
+                try:
+                    value = format(value, spec.value)
+                except (TypeError, ValueError):
+                    return node
+            pieces.append(str(value))
+        return ast.copy_location(ast.Constant("".join(pieces)), node)
+
+
+def _fold_static_scalar_aliases(tree: ast.Module) -> None:
+    functions = [item for item in tree.body if isinstance(item, ast.FunctionDef)]
+    if len(functions) != 1 or functions[0].name != "run":
+        return
+    values: dict[str, str | int | float | bool | None] = {}
+    folder = _StaticScalarFolder(values)
+    for statement in functions[0].body:
+        folder.visit(statement)
+        targets: list[ast.expr] = []
+        value_node: ast.expr | None = None
+        if isinstance(statement, ast.Assign):
+            targets, value_node = statement.targets, statement.value
+        elif isinstance(statement, ast.AnnAssign):
+            targets, value_node = [statement.target], statement.value
+        names = [target.id for target in targets if isinstance(target, ast.Name)]
+        if len(names) != 1 or value_node is None:
+            continue
+        try:
+            value = ast.literal_eval(value_node)
+        except (ValueError, TypeError, SyntaxError, MemoryError, RecursionError):
+            values.pop(names[0], None)
+        else:
+            if value is None or isinstance(value, (str, int, float, bool)):
+                values[names[0]] = value
+            else:
+                values.pop(names[0], None)
+
+
 def _literal_keyword(call: ast.Call, name: str) -> Any:
     keyword = next((item for item in call.keywords if item.arg == name), None)
     if keyword is None:
@@ -207,53 +300,6 @@ def _literal_keyword(call: ast.Call, name: str) -> Any:
         return ast.literal_eval(keyword.value)
     except (ValueError, TypeError, SyntaxError, MemoryError, RecursionError) as exc:
         raise ValueError(f"keyword {name!r} must be a literal value") from exc
-
-
-def _page_source_identity(url: str) -> str:
-    """Return the registrable-looking host label without a site-name registry."""
-
-    host = (urlsplit(url).hostname or "").casefold().strip(".")
-    try:
-        ipaddress.ip_address(host)
-        return ""
-    except ValueError:
-        pass
-    labels = [part for part in host.split(".") if part and part != "www"]
-    if len(labels) < 2:
-        return ""
-    country_suffix = (
-        len(labels[-1]) == 2
-        and labels[-2] in {"ac", "co", "com", "edu", "gov", "net", "org"}
-    )
-    return labels[-3] if country_suffix and len(labels) >= 3 else labels[-2]
-
-
-def _logical_source_diagnostics(
-    call: ast.Call,
-    values: dict[str, Any],
-    *,
-    user_goal: str,
-    page_url: str,
-) -> list[MasterDiagnostic]:
-    identity = _page_source_identity(page_url)
-    if not identity:
-        return []
-    pattern = re.compile(
-        rf"(?<![a-z0-9]){re.escape(identity)}(?![a-z0-9])",
-    )
-    if pattern.search(user_goal.casefold()):
-        return []
-    diagnostics = []
-    for field in ("goal", "success_criteria", "data_requirements"):
-        rendered = json.dumps(values.get(field), ensure_ascii=False).casefold()
-        if pattern.search(rendered):
-            diagnostics.append(_diagnostic(
-                "LOGICAL_SOURCE_PROVENANCE",
-                f"logical {field} inherits current-page source {identity!r} without "
-                "a matching user constraint; keep source details in strategy/actions",
-                call,
-            ))
-    return diagnostics
 
 
 def _validate_worker_id(call: ast.Call) -> list[MasterDiagnostic]:
@@ -271,17 +317,14 @@ def _validate_gui_worker_call(
     *,
     platform_context: dict[str, Any] | None = None,
     user_goal: str = "",
-    page_url: str = "",
-    require_explicit_strategy: bool = False,
 ) -> list[MasterDiagnostic]:
+    del platform_context
     diagnostics = _validate_worker_id(call)
     required = {
         "goal",
         "success_criteria",
-        "actions",
+        "approach",
     }
-    if require_explicit_strategy:
-        required.add("strategy")
     values: dict[str, Any] = {}
     for name in required:
         try:
@@ -290,6 +333,37 @@ def _validate_gui_worker_call(
             diagnostics.append(_diagnostic("GUI_WORKER_LITERAL", str(exc), call))
     if diagnostics:
         return diagnostics
+    goal = str(values["goal"] or "")
+    success_criteria = values["success_criteria"]
+    approach = str(values["approach"] or "")
+    if _METHOD_BOUND_GOAL.search(goal) and goal.casefold() != user_goal.casefold():
+        diagnostics.append(_diagnostic(
+            "WORKER_GOAL_BOUNDARY",
+            "immutable goal contains a current implementation method; keep the semantic "
+            "goal provider-neutral and move the initial source or mechanism to approach",
+            call,
+        ))
+    criteria = (
+        [success_criteria]
+        if isinstance(success_criteria, str)
+        else success_criteria
+        if isinstance(success_criteria, list)
+        else []
+    )
+    if any(_ACTION_SHAPED_SUCCESS.search(str(item or "")) for item in criteria):
+        diagnostics.append(_diagnostic(
+            "WORKER_SUCCESS_BOUNDARY",
+            "success_criteria contain an action or query execution step; keep only "
+            "externally checkable semantic outcomes",
+            call,
+        ))
+    if approach_is_procedural(approach):
+        diagnostics.append(_diagnostic(
+            "WORKER_APPROACH_BOUNDARY",
+            "approach enumerates multiple atomic GUI actions; state one source or "
+            "implementation method and leave action choice to Worker",
+            call,
+        ))
     if any(item.arg == "data_requirements" for item in call.keywords):
         try:
             values["data_requirements"] = _literal_keyword(call, "data_requirements")
@@ -308,80 +382,94 @@ def _validate_gui_worker_call(
                 "missing required keyword 'data_requirements' unless profile='operator'",
                 call,
             ))
-    if diagnostics:
-        return diagnostics
-    diagnostics.extend(_logical_source_diagnostics(
-        call,
-        values,
-        user_goal=user_goal,
-        page_url=page_url,
-    ))
+    if values.get("data_requirements") and any(
+        _UI_SURFACE_SUCCESS.search(str(item or "")) for item in criteria
+    ):
+        diagnostics.append(_diagnostic(
+            "WORKER_SUCCESS_BOUNDARY",
+            "collector success_criteria must state collected semantic evidence, not an "
+            "intermediate page, search result, widget, card, table, or dialog state",
+            call,
+        ))
+    if any(item.arg == "input_bindings" for item in call.keywords):
+        try:
+            values["input_bindings"] = _literal_keyword(call, "input_bindings")
+        except ValueError as exc:
+            diagnostics.append(_diagnostic("GUI_WORKER_LITERAL", str(exc), call))
+            values["input_bindings"] = []
+    else:
+        values["input_bindings"] = []
+    contract_criteria = (
+        [str(values["success_criteria"])]
+        if isinstance(values["success_criteria"], str)
+        else [str(item) for item in values["success_criteria"]]
+        if isinstance(values["success_criteria"], list)
+        else []
+    )
     for requirement in values.get("data_requirements") or []:
-        if (
-            isinstance(requirement, dict)
-            and requirement.get("filters")
-            and "coverage" not in requirement
-        ):
+        if not isinstance(requirement, dict):
+            continue
+        contract_text = "\n".join([
+            str(values["goal"]),
+            *(
+                criterion for criterion in contract_criteria
+                if not _ACTION_SHAPED_SUCCESS.search(criterion)
+            ),
+            str(requirement.get("description") or ""),
+        ])
+        filter_text = json.dumps(
+            requirement.get("filters") or {},
+            ensure_ascii=False,
+        ).casefold()
+        exact_literals = {
+            (match.group("quoted") or match.group(0)).strip()
+            for match in _EXACT_SCOPE_LITERAL.finditer(contract_text)
+        }
+        unbound_literals = {
+            item for item in exact_literals
+            if item.casefold() not in filter_text
+        }
+        if unbound_literals:
             diagnostics.append(_diagnostic(
-                "COLLECTION_COVERAGE",
-                "a filtered data requirement must explicitly choose coverage='complete' "
-                "or coverage='first_match'",
+                "DATA_FILTER_BOUNDARY",
+                "exact record-selection values must be frozen in data requirement "
+                f"filters, not only prose or a later transform: {sorted(unbound_literals)}",
                 call,
             ))
-    max_steps = 12
-    if any(item.arg == "max_steps" for item in call.keywords):
-        try:
-            max_steps = _literal_keyword(call, "max_steps")
-        except ValueError as exc:
-            return [_diagnostic("GUI_WORKER_LITERAL", str(exc), call)]
     try:
         profile = None
         if any(item.arg == "profile" for item in call.keywords):
             profile = _literal_keyword(call, "profile")
-        acquisition_filters = None
-        if any(item.arg == "acquisition_filters" for item in call.keywords):
-            acquisition_filters = _literal_keyword(call, "acquisition_filters")
+        binding_inputs = {
+            str(item.get("input") or "")
+            for item in values["input_bindings"]
+            if isinstance(item, dict)
+        }
         spec = WorkerSpec.model_validate(
             {
-                **values,
                 "profile": profile,
-                "input_refs": {},
-                "acquisition_filters": acquisition_filters,
-                "max_steps": max_steps,
+                "goal": values["goal"],
+                "success_criteria": (
+                    [values["success_criteria"]]
+                    if isinstance(values["success_criteria"], str)
+                    else values["success_criteria"]
+                ),
+                "input_refs": {
+                    name: f"result:static:{name}"
+                    for name in binding_inputs
+                    if name
+                },
+                "input_bindings": values["input_bindings"],
+                "data_requirements": values.get("data_requirements") or [],
+                "strategy": {
+                    "approach": values["approach"],
+                },
             }
         )
-        if require_explicit_strategy and not spec.strategy.strip():
-            diagnostics.append(_diagnostic(
-                "GUI_WORKER_STRATEGY",
-                "strategy must be a non-empty high-level execution approach",
-                call,
-            ))
         for requirement in spec.data_requirements:
             Draft202012Validator.check_schema(requirement.row_schema)
-        runtime_applications = (
-            None
-            if platform_context is None or "applications" not in platform_context
-            else {
-                str(item).strip()
-                for item in (platform_context.get("applications") or [])
-                if str(item).strip()
-            }
-        )
-        for action in spec.actions:
-            validate_dynamic_action_spec(action)
-            if (
-                runtime_applications is not None
-                and action.capability == "launch_app"
-            ):
-                candidate = str(action.fixed_args.get("app") or "").strip()
-                if candidate and candidate not in runtime_applications:
-                    diagnostics.append(_diagnostic(
-                        "LAUNCH_APP_NAME",
-                        "launch_app fixed_args.app must exactly match a Runtime-provided "
-                        f"application; got {candidate!r}. Choose an exact value from "
-                        "task.platform.applications.",
-                    call,
-                ))
+        for binding in spec.input_bindings:
+            input_binding_action(binding)
     except Exception as exc:  # noqa: BLE001 - surfaced as a compile diagnostic
         diagnostics.append(_diagnostic("GUI_WORKER_SPEC", str(exc), call))
     input_keyword = next((item for item in call.keywords if item.arg == "input_refs"), None)
@@ -417,27 +505,23 @@ def _validate_gui_worker_call(
                         "GUI branch must stay inside one cohesive operator",
                         value,
                     ))
-    action_input_names = {
+    binding_input_names = {
         str(binding.get("input") or "")
-        for action in values.get("actions") or []
-        if isinstance(action, dict)
-        for bindings in [action.get("input_args")]
-        if isinstance(bindings, dict)
-        for binding in bindings.values()
+        for binding in values.get("input_bindings") or []
         if isinstance(binding, dict)
     }
-    unknown_inputs = action_input_names.difference(input_names)
+    unknown_inputs = binding_input_names.difference(input_names)
     if unknown_inputs:
         diagnostics.append(_diagnostic(
             "GUI_WORKER_INPUT_BINDING",
-            f"action input_args reference undeclared input_refs: {sorted(unknown_inputs)}",
+            f"input_bindings reference undeclared input_refs: {sorted(unknown_inputs)}",
             call,
         ))
-    unused_inputs = input_names.difference(action_input_names)
+    unused_inputs = input_names.difference(binding_input_names)
     if unused_inputs:
         diagnostics.append(_diagnostic(
             "GUI_WORKER_INPUT_BINDING",
-            "input_refs must be consumed by deterministic action input_args: "
+            "input_refs must be consumed by deterministic input_bindings: "
             f"{sorted(unused_inputs)}; merge visual-only or conditional dependencies "
             "into one cohesive operator",
             call,
@@ -547,166 +631,118 @@ def _collector_requirements(call: ast.Call) -> list[dict[str, Any]]:
     return requirements if profile != "operator" and isinstance(requirements, list) else []
 
 
-def _static_transform_input_diagnostics(tree: ast.AST) -> list[MasterDiagnostic]:
-    """Review transform row fields against statically routed Worker schemas."""
+def _static_flow_diagnostics(tree: ast.AST) -> list[MasterDiagnostic]:
+    """Build one ordered symbol flow for Worker and transform contracts."""
 
-    row_schemas: dict[str, dict[str, Any]] = {}
-    row_filters: dict[str, dict[str, Any]] = {}
-    # The value represented by each row schema is reached through this exact path.
-    # A local alias such as ``rows_ref = outcome["collection_ref"]["ref"]`` has
-    # already resolved the descriptor path, so its expected path is empty.
-    ref_paths: dict[str, tuple[str, ...]] = {}
-    transform_calls: list[ast.Call] = []
-    assignments = _named_assignments(tree)
-    for name, assignment in assignments:
-        worker_call = _ctx_call(assignment.value, "gui_worker")
-        if worker_call is not None:
-            try:
-                requirements = _collector_requirements(worker_call)
-                if not requirements:
-                    continue
-                requirement = requirements[0]
-                if isinstance(requirement, dict) and isinstance(
-                    requirement.get("row_schema"), dict
-                ):
-                    contract = DataRequirement.model_validate(requirement)
-                    row_schemas[name] = contract.row_schema
-                    row_filters[name] = contract.filters
-                    ref_paths[name] = ("collection_ref", "ref")
-            except Exception:
-                # The ordinary WorkerSpec review reports malformed requirements.
-                continue
-            continue
-        transform_call = _ctx_call(assignment.value, "transform")
-        if transform_call is None:
-            base, path = _subscript_path(assignment.value)
-            if base in row_schemas and path == ref_paths.get(base):
-                row_schemas[name] = row_schemas[base]
-                row_filters[name] = row_filters.get(base, {})
-                ref_paths[name] = ()
-            elif (
-                isinstance(assignment.value, ast.Name)
-                and assignment.value.id in row_schemas
-                and ref_paths.get(assignment.value.id) == ()
-            ):
-                row_schemas[name] = row_schemas[assignment.value.id]
-                row_filters[name] = row_filters.get(assignment.value.id, {})
-                ref_paths[name] = ()
-            continue
-        transform_calls.append(transform_call)
-        try:
-            result_schema = _literal_keyword(transform_call, "result_schema")
-        except ValueError:
-            continue
-        if not isinstance(result_schema, dict):
-            continue
-        items = result_schema.get("items")
-        if result_schema.get("type") == "array" and isinstance(items, dict):
-            row_schemas[name] = items
-            ref_paths[name] = ("ref",)
-
-    diagnostics: list[MasterDiagnostic] = []
-    for call in transform_calls:
-        inputs_node = next(
-            (item.value for item in call.keywords if item.arg == "inputs"),
-            None,
-        )
-        if not isinstance(inputs_node, (ast.List, ast.Tuple)):
-            continue
-        schemas = []
-        filters: dict[str, Any] = {}
-        for item in inputs_node.elts:
-            name, path = _subscript_path(item)
-            if name in row_schemas and path == ref_paths.get(name):
-                schemas.append(row_schemas[name])
-                filters.update(row_filters.get(name, {}))
-        if not schemas:
-            continue
-        combined = {
-            "type": "object",
-            "properties": {
-                key: value
-                for schema in schemas
-                for key, value in (schema.get("properties") or {}).items()
-            },
-        }
-        try:
-            source = _literal_keyword(call, "source")
-            validate_transform_row_fields(
-                source, combined, literal_filters=filters,
-            )
-        except Exception as exc:  # noqa: BLE001 - one static diagnostic channel
-            diagnostics.append(
-                _diagnostic("TRANSFORM_INPUT_SCHEMA", str(exc), call)
-            )
-    return diagnostics
-
-
-def _static_collector_consumption_diagnostics(tree: ast.AST) -> list[MasterDiagnostic]:
-    """Require every collector to feed observed rows into deterministic data flow.
-
-    A collector is not a navigation primitive.  If its CollectionRef is never consumed by a
-    transform, splitting it from a later operator only forces visual navigation state through an
-    unrepresentable data handle.  The cohesive operator should own that branch instead.
-    """
-
+    # name -> (row schema, unresolved descriptor path, collector)
+    rows: dict[str, tuple[dict[str, Any], tuple[str, ...], str]] = {}
     collectors: dict[str, ast.Call] = {}
-    ref_aliases: dict[str, str] = {}
-    consumed: set[str] = set()
-    assignments = _named_assignments(tree)
-    for name, assignment in assignments:
-        call = _ctx_call(assignment.value, "gui_worker")
-        if call is None:
-            continue
-        if _collector_requirements(call):
-            collectors[name] = call
-
-    for alias, assignment in assignments:
-        base, path = _subscript_path(assignment.value)
-        if base in collectors and path == ("collection_ref", "ref"):
-            ref_aliases[alias] = base
-        elif (
-            isinstance(assignment.value, ast.Name)
-            and assignment.value.id in ref_aliases
-        ):
-            ref_aliases[alias] = ref_aliases[assignment.value.id]
-
-    for node in ast.walk(tree):
-        call = _ctx_call(node, "transform")
-        if call is None:
-            continue
-        inputs = next((item.value for item in call.keywords if item.arg == "inputs"), None)
-        if not isinstance(inputs, (ast.List, ast.Tuple)):
-            continue
-        for item in inputs.elts:
-            base, path = _subscript_path(item)
-            if base in collectors and path == ("collection_ref", "ref"):
-                consumed.add(base)
-            elif base in ref_aliases and not path:
-                consumed.add(ref_aliases[base])
-
-    return [
-        _diagnostic(
-            "COLLECTOR_RESULT_UNUSED",
-            f"collector {name!r} must route its collection_ref into ctx.transform; "
-            "use one cohesive operator when the Worker only locates/navigates to a record",
-            call,
-        )
-        for name, call in collectors.items()
-        if name not in consumed
-    ]
-
-
-def _static_worker_output_diagnostics(tree: ast.AST) -> list[MasterDiagnostic]:
-    """Reject collection data flow from Workers that cannot produce a collection."""
-
     operators: dict[str, ast.Call] = {}
-    for name, assignment in _named_assignments(tree):
-        call = _ctx_call(assignment.value, "gui_worker")
-        if call is not None and not _collector_requirements(call):
-            operators[name] = call
-
+    transforms: set[str] = set()
+    array_results: set[str] = set()
+    pending_results: set[str] = set()
+    consumed_collectors: set[str] = set()
     diagnostics: list[MasterDiagnostic] = []
+
+    for name, assignment in _named_assignments(tree):
+        worker = _ctx_call(assignment.value, "gui_worker")
+        if worker is not None:
+            requirements = _collector_requirements(worker)
+            if requirements:
+                collectors[name] = worker
+                try:
+                    requirement = DataRequirement.model_validate(requirements[0])
+                    rows[name] = (
+                        requirement.row_schema,
+                        ("collection_ref", "ref"),
+                        name,
+                    )
+                except Exception:
+                    pass
+            else:
+                operators[name] = worker
+            keyword = next(
+                (item for item in worker.keywords if item.arg == "input_refs"), None,
+            )
+            routed = {
+                _base_name(value) for value in keyword.value.values
+            } if keyword is not None and isinstance(keyword.value, ast.Dict) else set()
+            missing = pending_results.difference(routed)
+            if missing:
+                diagnostics.append(_diagnostic(
+                    "RESULT_REF_UNROUTED",
+                    "ResultRefs computed before a GUI Worker must be routed through "
+                    f"that call's input_refs: {sorted(missing)}",
+                    worker,
+                ))
+            routed_arrays = sorted(routed.intersection(array_results))
+            if routed_arrays:
+                diagnostics.append(_diagnostic(
+                    "WORKER_ARRAY_INPUT_UNSUPPORTED",
+                    "GUI Worker cannot consume private array ResultRefs "
+                    f"from {routed_arrays}; do not join or serialize them into a scalar; "
+                    "keep the multi-record observe/branch/act loop inside one cohesive "
+                    "operator and use a bulk/group editor when available",
+                    worker,
+                ))
+            pending_results.difference_update(routed)
+            continue
+
+        transform = _ctx_call(assignment.value, "transform")
+        if transform is not None:
+            transforms.add(name)
+            inputs = next(
+                (item.value for item in transform.keywords if item.arg == "inputs"), None,
+            )
+            schemas: list[dict[str, Any]] = []
+            if isinstance(inputs, (ast.List, ast.Tuple)):
+                pending_results.difference_update(_base_name(item) for item in inputs.elts)
+                for item in inputs.elts:
+                    base, path = _subscript_path(item)
+                    if base in rows and path == rows[base][1]:
+                        schema, _, collector = rows[base]
+                        schemas.append(schema)
+                        if collector:
+                            consumed_collectors.add(collector)
+            if schemas:
+                combined = {
+                    "type": "object",
+                    "properties": {
+                        key: value
+                        for schema in schemas
+                        for key, value in (schema.get("properties") or {}).items()
+                    },
+                }
+                try:
+                    validate_transform_row_fields(
+                        _literal_keyword(transform, "source"), combined,
+                    )
+                except Exception as exc:
+                    diagnostics.append(_diagnostic(
+                        "TRANSFORM_INPUT_SCHEMA", str(exc), transform,
+                    ))
+            try:
+                schema = _literal_keyword(transform, "result_schema")
+            except ValueError:
+                schema = None
+            if isinstance(schema, dict):
+                items = schema.get("items")
+                if schema.get("type") == "array" and isinstance(items, dict):
+                    rows[name] = (items, ("ref",), "")
+                if _schema_contains_array(schema):
+                    array_results.add(name)
+            pending_results.add(name)
+            continue
+
+        base, path = _subscript_path(assignment.value)
+        if base in rows and path == rows[base][1]:
+            schema, _, collector = rows[base]
+            rows[name] = (schema, (), collector)
+        elif isinstance(assignment.value, ast.Name):
+            source = rows.get(assignment.value.id)
+            if source is not None and source[1] == ():
+                rows[name] = source
+
     for node in ast.walk(tree):
         base, path = _subscript_path(node)
         if base in operators and path and path[0] == "collection_ref":
@@ -717,80 +753,59 @@ def _static_worker_output_diagnostics(tree: ast.AST) -> list[MasterDiagnostic]:
                 "needs observed rows",
                 node,
             ))
-    return diagnostics
-
-
-def _static_result_routing_diagnostics(tree: ast.AST) -> list[MasterDiagnostic]:
-    """Require computed ResultRefs to reach the next physical-effect Worker explicitly."""
-
-    pending_results: set[str] = set()
-    diagnostics: list[MasterDiagnostic] = []
-    for assigned_name, assignment in _named_assignments(tree):
-        transform_call = _ctx_call(assignment.value, "transform")
-        if transform_call is not None:
-            inputs = next(
-                (item.value for item in transform_call.keywords if item.arg == "inputs"),
-                None,
+        finish = _ctx_call(node, "finish")
+        if finish is None:
+            continue
+        value: ast.AST | None = finish.args[0] if finish.args else None
+        keyword = next((item for item in finish.keywords if item.arg == "result_ref"), None)
+        value = keyword.value if keyword is not None else value
+        if value is not None:
+            base, path = _subscript_path(value)
+            row = rows.get(base)
+            collector = (
+                row[2]
+                if row is not None and path == row[1] and row[2]
+                else base
+                if base in collectors and path == ("collection_ref", "ref")
+                else ""
             )
-            if isinstance(inputs, (ast.List, ast.Tuple)):
-                pending_results.difference_update(
-                    _base_name(value) for value in inputs.elts
+            if collector:
+                effect = next(
+                    (
+                        item.value.value
+                        for item in finish.keywords
+                        if item.arg == "effect"
+                        and isinstance(item.value, ast.Constant)
+                        and isinstance(item.value.value, str)
+                    ),
+                    None,
                 )
-            pending_results.add(assigned_name)
-            continue
-        worker_call = _ctx_call(assignment.value, "gui_worker")
-        if worker_call is None or not pending_results:
-            continue
-        keyword = next(
-            (item for item in worker_call.keywords if item.arg == "input_refs"),
-            None,
-        )
-        routed = {
-            _base_name(value)
-            for value in keyword.value.values
-            if keyword is not None and isinstance(keyword.value, ast.Dict)
-        } if keyword is not None and isinstance(keyword.value, ast.Dict) else set()
-        missing = pending_results.difference(routed)
-        if missing:
+                if effect == "data":
+                    consumed_collectors.add(collector)
+                else:
+                    diagnostics.append(_diagnostic(
+                        "COLLECTION_FINISH_EFFECT",
+                        "a CollectionRef may be finished directly only with effect='data'",
+                        finish,
+                    ))
+        if isinstance(value, ast.Name) and value.id in transforms:
             diagnostics.append(_diagnostic(
-                "RESULT_REF_UNROUTED",
-                "ResultRefs computed before a GUI Worker must be routed through "
-                f"that call's input_refs: {sorted(missing)}",
-                worker_call,
+                "REF_VALUE_REQUIRED",
+                f"ctx.finish requires {value.id}['ref'], not the ResultRef descriptor",
+                value,
             ))
-        pending_results.difference_update(routed)
-    return diagnostics
-
-
-def _static_data_program_worker_diagnostics(
-    tree: ast.AST,
-) -> list[MasterDiagnostic]:
-    """Require every GUI effect in a data program to belong to a collector."""
-
-    data_terminal = any(
-        any(
-            item.arg == "effect"
-            and isinstance(item.value, ast.Constant)
-            and item.value.value == "data"
-            for item in call.keywords
-        )
-        for node in ast.walk(tree)
-        if (call := _ctx_call(node, "finish")) is not None
-    )
-    if not data_terminal:
-        return []
-    return [
+    diagnostics.extend(
         _diagnostic(
-            "DATA_PROGRAM_OPERATOR",
-            "a data-returning program cannot contain a standalone operator because it "
-            "produces no typed data or scope output; keep prerequisite GUI effects in "
-            "the collector that materializes the dependent rows",
+            "COLLECTOR_RESULT_UNUSED",
+            f"collector {name!r} must route its collection_ref into ctx.transform "
+            "or finish it directly as data; use one cohesive operator when the Worker "
+            "only locates/navigates to a record",
             call,
         )
-        for _, assignment in _named_assignments(tree)
-        if (call := _ctx_call(assignment.value, "gui_worker")) is not None
-        and not _collector_requirements(call)
-    ]
+        for name, call in collectors.items()
+        if name not in consumed_collectors
+    )
+    return diagnostics
 
 
 def _schema_contains_array(value: Any) -> bool:
@@ -799,79 +814,6 @@ def _schema_contains_array(value: Any) -> bool:
             _schema_contains_array(item) for item in value.values()
         )
     return isinstance(value, list) and any(map(_schema_contains_array, value))
-
-
-def _static_worker_array_input_diagnostics(tree: ast.AST) -> list[MasterDiagnostic]:
-    """Reject private arrays routed directly into one visual Worker.
-
-    ResultRefs deliberately hide their values from the model. The runtime can bind one scalar
-    value into one selected action, but it has no implicit map/foreach operation that expands a
-    private array into repeated GUI actions. The Master must compute one scalar/object target or
-    delegate the cohesive mutation to the application's own bulk/group editor.
-    """
-
-    array_results: set[str] = set()
-    for name, assignment in _named_assignments(tree):
-        call = _ctx_call(assignment.value, "transform")
-        if call is None:
-            continue
-        try:
-            schema = _literal_keyword(call, "result_schema")
-        except ValueError:
-            continue
-        if _schema_contains_array(schema):
-            array_results.add(name)
-
-    diagnostics: list[MasterDiagnostic] = []
-    for node in ast.walk(tree):
-        worker_call = _ctx_call(node, "gui_worker")
-        if worker_call is None:
-            continue
-        keyword = next(
-            (item for item in worker_call.keywords if item.arg == "input_refs"),
-            None,
-        )
-        if keyword is None or not isinstance(keyword.value, ast.Dict):
-            continue
-        routed_arrays = sorted({
-            name for value in keyword.value.values
-            if (name := _base_name(value)) in array_results
-        })
-        if routed_arrays:
-            diagnostics.append(_diagnostic(
-                "WORKER_ARRAY_INPUT_UNSUPPORTED",
-                "GUI Worker cannot consume private array ResultRefs "
-                f"from {routed_arrays}; do not join or serialize them into a scalar; "
-                "keep the multi-record observe/branch/act "
-                "loop inside one cohesive operator and use a bulk/group editor when available",
-                worker_call,
-            ))
-    return diagnostics
-
-
-def _static_finish_ref_diagnostics(tree: ast.AST) -> list[MasterDiagnostic]:
-    """Reject transform descriptor objects passed where finish requires their ref string."""
-
-    transform_descriptors = {
-        name for name, assignment in _named_assignments(tree)
-        if _ctx_call(assignment.value, "transform") is not None
-    }
-    diagnostics: list[MasterDiagnostic] = []
-    for node in ast.walk(tree):
-        call = _ctx_call(node, "finish")
-        if call is None:
-            continue
-        value: ast.AST | None = call.args[0] if call.args else None
-        keyword = next((item for item in call.keywords if item.arg == "result_ref"), None)
-        if keyword is not None:
-            value = keyword.value
-        if isinstance(value, ast.Name) and value.id in transform_descriptors:
-            diagnostics.append(_diagnostic(
-                "REF_VALUE_REQUIRED",
-                f"ctx.finish requires {value.id}['ref'], not the ResultRef descriptor",
-                value,
-            ))
-    return diagnostics
 
 
 def _validate_finish_call(call: ast.Call) -> list[MasterDiagnostic]:
@@ -897,16 +839,17 @@ def _validate_finish_call(call: ast.Call) -> list[MasterDiagnostic]:
         value = keyword.value
     if value is None:
         diagnostics.append(_diagnostic(
-            "FINISH_SIGNATURE", "ctx.finish requires a result ref string", call
+            "FINISH_SIGNATURE", "ctx.finish requires a runtime data ref string", call
         ))
     elif _subscript_key(value) != "ref":
         descriptor = _subscript_key(value) in {"collection_ref", "result_ref"}
         diagnostics.append(_diagnostic(
             "REF_VALUE_REQUIRED",
-            "ctx.finish requires result_ref['ref'], not the result_ref descriptor"
+            "ctx.finish requires descriptor['ref'], not the descriptor itself"
             if descriptor
-            else "ctx.finish requires an exact ResultRef string expression such as "
-            "result['ref']; literals, None, descriptors, and unproven aliases are invalid",
+            else "ctx.finish requires an exact ResultRef or CollectionRef string expression "
+            "such as result['ref'] or outcome['collection_ref']['ref']; literals, None, "
+            "descriptors, and unproven aliases are invalid",
             value,
         ))
     effect_keyword = next((item for item in call.keywords if item.arg == "effect"), None)
@@ -930,15 +873,14 @@ def validate_master_source(
     source: str,
     *,
     platform_context: dict[str, Any] | None = None,
-    page_context: dict[str, Any] | None = None,
     user_goal: str = "",
-    require_explicit_strategy: bool = False,
 ) -> list[MasterDiagnostic]:
     """Validate one restricted Worker-orchestration program."""
     try:
         tree = ast.parse(source, mode="exec")
     except SyntaxError as exc:
         return [MasterDiagnostic("SYNTAX", str(exc), exc.lineno or 0)]
+    _fold_static_scalar_aliases(tree)
 
     diagnostics: list[MasterDiagnostic] = []
     goal = user_goal.strip().rstrip("。.!！?").strip()
@@ -1000,8 +942,6 @@ def validate_master_source(
                     node,
                     platform_context=platform_context,
                     user_goal=user_goal,
-                    page_url=str((page_context or {}).get("url") or ""),
-                    require_explicit_strategy=require_explicit_strategy,
                 ))
                 if destination_only:
                     try:
@@ -1022,7 +962,7 @@ def validate_master_source(
                             ))
             elif method == "transform":
                 diagnostics.extend(_validate_transform_call(node))
-            elif method in {"finish", "replan", "fail"}:
+            elif method in {"finish", "fail"}:
                 terminal_calls += 1
                 if method == "finish":
                     diagnostics.extend(_validate_finish_call(node))
@@ -1044,13 +984,7 @@ def validate_master_source(
 
     if terminal_calls == 0:
         diagnostics.append(_diagnostic("TERMINAL_REQUIRED", "program must call ctx.finish or ctx.fail"))
-    diagnostics.extend(_static_transform_input_diagnostics(tree))
-    diagnostics.extend(_static_collector_consumption_diagnostics(tree))
-    diagnostics.extend(_static_worker_output_diagnostics(tree))
-    diagnostics.extend(_static_result_routing_diagnostics(tree))
-    diagnostics.extend(_static_data_program_worker_diagnostics(tree))
-    diagnostics.extend(_static_worker_array_input_diagnostics(tree))
-    diagnostics.extend(_static_finish_ref_diagnostics(tree))
+    diagnostics.extend(_static_flow_diagnostics(tree))
     unique: list[MasterDiagnostic] = []
     seen: set[tuple[str, str, int]] = set()
     for item in diagnostics:
@@ -1104,15 +1038,12 @@ def compile_master_program(
         llm_elapsed_s = time.perf_counter() - started_at
         source = _extract_source(response.content)
         platform_context = task_context.get("platform")
-        page_context = task_context.get("page")
         diagnostics = validate_master_source(
             source,
             platform_context=(
                 platform_context if isinstance(platform_context, dict) else None
             ),
-            page_context=page_context if isinstance(page_context, dict) else None,
             user_goal=str(task_context.get("goal") or ""),
-            require_explicit_strategy=True,
         )
         if on_event is not None:
             on_event(
@@ -1177,14 +1108,6 @@ class WorkerOrchestrationContext:
                 f"worker_id {worker_id!r} is already bound to a different specification; "
                 "use a new worker_id for a changed subgoal"
             )
-        if record.outcome.phase == "failed":
-            self._trace(
-                "master_worker_retry",
-                worker_id=worker_id,
-                kind="gui",
-                prior_outcome=record.outcome.model_dump(mode="json"),
-            )
-            return None
         self._trace(
             "master_worker_reuse",
             worker_id=worker_id,
@@ -1199,13 +1122,11 @@ class WorkerOrchestrationContext:
         worker_id: str,
         profile: Literal["operator", "collector"] | None = None,
         goal: str,
-        success_criteria: list[str],
-        strategy: str = "",
+        success_criteria: list[str] | str,
+        approach: str,
         input_refs: dict[str, str] | None = None,
+        input_bindings: list[dict[str, Any]] | None = None,
         data_requirements: list[dict[str, Any]] | None = None,
-        actions: list[dict[str, Any]],
-        acquisition_filters: dict[str, Any] | None = None,
-        max_steps: int = 12,
     ) -> dict[str, Any]:
         if _WORKER_ID_PATTERN.fullmatch(worker_id) is None:
             raise ValueError("worker_id must be a stable snake_case identifier")
@@ -1216,13 +1137,17 @@ class WorkerOrchestrationContext:
             {
                 "profile": profile,
                 "goal": goal,
-                "strategy": strategy,
-                "success_criteria": success_criteria,
+                "success_criteria": (
+                    [success_criteria]
+                    if isinstance(success_criteria, str)
+                    else success_criteria
+                ),
                 "input_refs": routed_inputs,
+                "input_bindings": input_bindings or [],
                 "data_requirements": data_requirements or [],
-                "acquisition_filters": acquisition_filters,
-                "actions": actions,
-                "max_steps": max_steps,
+                "strategy": {
+                    "approach": approach,
+                },
             }
         )
         signature = hashlib.sha256(_canonical(spec.model_dump(mode="json")).encode()).hexdigest()
@@ -1234,7 +1159,6 @@ class WorkerOrchestrationContext:
             worker_id=worker_id,
             kind="gui",
             goal=goal,
-            strategy=spec.strategy,
             spec=spec.model_dump(mode="json"),
         )
         try:
@@ -1341,11 +1265,31 @@ class WorkerOrchestrationContext:
     ) -> None:
         if not isinstance(result_ref, str):
             raise ValueError(
-                "finish requires a ResultRef string such as result['ref'], "
+                "finish requires a ref string such as result['ref'] or "
+                "outcome['collection_ref']['ref'], "
                 f"got {type(result_ref).__name__}"
             )
-        descriptor = self._data_store.result_descriptor(result_ref)
-        if effect == "data" and not self._data_store.is_data_result(result_ref):
+        try:
+            descriptor = self._data_store.result_descriptor(result_ref)
+        except KeyError as result_error:
+            try:
+                collection = self._data_store.collection_descriptor(result_ref)
+            except KeyError:
+                raise result_error
+            if effect != "data":
+                raise ValueError(
+                    "finish accepts a CollectionRef only with effect='data'"
+                )
+            descriptor = self._data_store.put_result(
+                self._data_store.collection_rows(collection.ref),
+                {"type": "array", "items": collection.row_schema},
+                summary=(
+                    f"Collected {collection.row_count} row(s) for "
+                    f"{collection.requirement_id}."
+                ),
+                source_refs=[collection.ref],
+            )
+        if effect == "data" and not self._data_store.is_data_result(descriptor.ref):
             raise ValueError(
                 "effect='data' requires a ResultRef derived from collected data"
             )
@@ -1355,15 +1299,6 @@ class WorkerOrchestrationContext:
             result_ref=descriptor.ref,
             effect=effect,
         )
-        raise _ProgramHalt
-
-    def replan(self, reason: str) -> None:
-        if not isinstance(reason, str) or not reason.strip():
-            raise ValueError("replan requires a concrete reason")
-        # Backward-compatible seal for already-recorded programs. Local strategy
-        # revision now happens inside gui_worker before its outcome returns, so a
-        # frozen program must never replay itself to retry the same logical Worker.
-        self._terminal = MasterTerminal(phase="failed", summary=reason.strip())
         raise _ProgramHalt
 
     def fail(self, reason: str) -> None:

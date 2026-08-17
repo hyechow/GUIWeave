@@ -362,53 +362,30 @@ def screen_title_from_semantic_tree(
     nodes: list[dict[str, Any]] | None,
 ) -> str:
     """Return visible top-level navigation identity from Android accessibility."""
-
     def at(node: dict[str, Any], axis: str) -> float:
-        aliases = {"w": "width", "h": "height"}
-        return float(node["rect"].get(axis) or node["rect"].get(aliases.get(axis, "")) or 0)
+        alias = {"w": "width", "h": "height"}.get(axis, "")
+        return float(node["rect"].get(axis) or node["rect"].get(alias) or 0)
 
-    text_nodes = [
-        node for node in nodes or []
-        if node.get("role") == "text"
-        and str(node.get("key") or "").strip()
+    text = [node for node in nodes or () if (
+        node.get("role") == "text" and str(node.get("key") or "").strip()
         and isinstance(node.get("rect"), dict)
-    ]
-    collections = [
-        node for node in nodes or []
-        if node.get("scrollable") is True and node.get("role") == "list"
-        and isinstance(node.get("rect"), dict)
-    ]
-    breadcrumbs = [
-        node for node in text_nodes
-        if "breadcrumb" in str(node.get("resource") or "").casefold()
-    ]
+    )]
+    breadcrumbs = [node for node in text if "breadcrumb" in str(
+        node.get("resource") or ""
+    ).casefold()]
     if breadcrumbs:
-        labels = (str(node["key"]).strip() for node in sorted(
-            breadcrumbs, key=lambda item: at(item, "x")
+        return " > ".join(dict.fromkeys(
+            str(node["key"]).strip() for node in sorted(breadcrumbs, key=lambda item: at(item, "x"))
         ))
-        return " > ".join(dict.fromkeys(labels))
-    collection_refs = {str(node.get("ref") or "") for node in collections}
-    candidates = [
-        node for node in text_nodes if node.get("in_viewport") is not False
-        if not any(
-            str(node.get("ref") or "").startswith(ref + ".")
-            for ref in collection_refs
-        )
-    ]
-    titles = [
-        node for node in candidates
-        if "title" in str(node.get("resource") or "").casefold()
-    ]
-    collection_top = min(
-        (at(node, "y") - at(node, "h") / 2 for node in collections),
-        default=float("inf"),
-    )
-    title = (
-        min(titles, key=lambda node: at(node, "y"))
-        if titles else max(
-            (node for node in candidates if at(node, "y") < collection_top),
-            key=lambda node: at(node, "y"), default=None,
-        )
+    candidates = [node for node in text if node.get("in_viewport") is not False]
+    titles = [node for node in candidates if "title" in str(node.get("resource") or "").casefold()]
+    list_top = min((at(node, "y") - at(node, "h") / 2 for node in nodes or () if (
+        node.get("role") == "list" and node.get("scrollable") is True
+        and isinstance(node.get("rect"), dict)
+    )), default=float("inf"))
+    title = min(titles, key=lambda node: at(node, "y"), default=None) or max(
+        (node for node in candidates if at(node, "y") < list_top),
+        key=lambda node: at(node, "y"), default=None,
     )
     value = str((title or {}).get("key") or "").strip()
     return value[len("Files in "):].strip() if (
@@ -743,6 +720,12 @@ def form_controls_from_semantic_tree(
             item["selection_mode"] = "multiple"
             item.pop("selected", None)
             item.pop("value", None)
+        if kind == "text_input" and identity_words & {"search", "filter", "query"}:
+            item["is_filter"] = True
+        if kind == "button" and identity_words & {"search", "filter", "query"}:
+            item["query_action"] = (
+                "reset" if identity_words & {"clear", "close", "remove", "reset"} else "open"
+            )
         if persistence:
             item["form_action"] = "commit"
         if "in_viewport" in node:
@@ -800,31 +783,7 @@ def form_controls_from_semantic_tree(
             float(existing_rect["w"]) * float(existing_rect["h"])
         ):
             deduplicated[duplicate_index] = control
-    return refresh_android_control_semantics(deduplicated)
-
-
-def refresh_android_control_semantics(
-    controls: list[dict[str, Any]],
-) -> list[dict[str, Any]]:
-    """Apply current resource-owned semantics to live or recorded controls."""
-
-    refreshed = [dict(control) for control in controls]
-    for control in refreshed:
-        words = set(re.findall(
-            r"[a-z0-9]+",
-            " ".join(str(control.get(key) or "") for key in ("label", "resource"))
-            .casefold(),
-        ))
-        kind = str(control.get("kind") or "").casefold()
-        if kind in {"text_input", "textbox", "textarea", "editor"} and words & {
-            "search", "filter", "query",
-        }:
-            control["is_filter"] = True
-        if kind == "button" and words & {"search", "filter", "query"}:
-            control["query_action"] = (
-                "reset" if words & {"clear", "close", "remove", "reset"} else "open"
-            )
-    return refreshed
+    return deduplicated
 
 
 def collection_regions_from_uiautomator(
@@ -924,43 +883,7 @@ def collection_regions_from_uiautomator(
     return regions
 
 
-def collection_tables_from_regions(
-    regions: list[dict[str, Any]] | None,
-    *,
-    screen_title: str = "",
-) -> list[dict[str, Any]]:
-    """Project labelled Android collection items as provider-neutral rows."""
-    tables: list[dict[str, Any]] = []
-    for region in regions or []:
-        cells = list(region.get("cells") or [])
-        rows = [
-            {
-                "Name": texts[0],
-                **({"Details": texts[1:]} if len(texts) > 1 else {}),
-            }
-            for cell in cells
-            if not cell.get("clipped_top") and not cell.get("clipped_bottom")
-            if (texts := list(cell.get("texts") or []))
-        ]
-        if not rows:
-            continue
-        traversal = dict(region.get("traversal") or {})
-        tables.append({
-            "caption": str(region.get("caption") or screen_title or "Collection"),
-            "path": str(region.get("surface_fingerprint") or region.get("ref") or ""),
-            "location": screen_title,
-            "rows": rows,
-            "unmapped_visible_content": any("Details" in row for row in rows),
-            "in_viewport": True,
-            "partial": traversal.get("type") == "scroll",
-            "start_visible": not bool(cells and cells[0].get("clipped_top")),
-            "traversal": traversal,
-        })
-    return tables
-
-
 __all__ = [
-    "collection_tables_from_regions",
     "collection_regions_from_uiautomator",
     "form_controls_from_semantic_tree",
     "semantic_tree_from_uiautomator",

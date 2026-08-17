@@ -16,6 +16,51 @@ from jsonschema import validate
 from gui_agent.core.tool_agent.contracts import CollectionRef, DataChunkRef, ResultRef
 
 
+def _coverage_status(**evidence: Any) -> str:
+    if evidence["scope_status"] != "met":
+        return "incomplete"
+    row_count = evidence["row_count"]
+    known_total = evidence.get("known_total")
+    page_count = evidence.get("page_count")
+    if evidence.get("totals_conflict") or (
+        known_total is not None and row_count > known_total
+    ):
+        return "conflicting"
+    if evidence["requested"] == "first_match" and row_count:
+        return "complete"
+    if evidence["structured"] and (
+        evidence.get("all_pages")
+        or page_count is None and (
+            evidence.get("contiguous_to_end")
+            or known_total is not None
+            and row_count >= known_total
+            and not evidence.get("partial")
+            or evidence.get("surface_complete")
+        )
+    ):
+        return "complete"
+    if not evidence["structured"] and (
+        page_count is None or evidence.get("all_pages")
+    ) and (
+        known_total is not None and row_count >= known_total
+        or evidence.get("at_end")
+        and known_total is None
+        and evidence.get("start_seen") is not False
+    ):
+        return "complete"
+    if (
+        evidence.get("has_next_page") is True
+        or page_count is not None and not evidence.get("all_pages")
+        or known_total is not None and row_count < known_total
+        or evidence.get("partial")
+        or evidence.get("start_seen") is False
+        and page_count is None
+        and known_total is None
+    ):
+        return "incomplete"
+    return "unknown"
+
+
 def _canonical(value: Any) -> str:
     return json.dumps(value, ensure_ascii=False, sort_keys=True, separators=(",", ":"))
 
@@ -26,32 +71,6 @@ def _boundary_overlap(left: list[Any], right: list[Any]) -> int:
         if left[-size:] == right[:size]:
             return size
     return 0
-
-
-def apply_cardinality_contract(
-    collection: CollectionRef,
-    cardinality: str,
-) -> CollectionRef:
-    """Apply logical result cardinality without weakening collection coverage."""
-
-    cardinality = "one" if cardinality == "one" else "many"
-    coverage = {**collection.coverage, "cardinality": cardinality}
-    if coverage.get("scope_status") == "met" and cardinality == "one":
-        movement = coverage.get("movement")
-        movement = movement if isinstance(movement, dict) else {}
-        proves_multiple = (
-            collection.row_count > 1
-            or any(
-                isinstance(value, (int, float)) and value > 1
-                for value in (coverage.get("known_total"), coverage.get("page_count"))
-            )
-            or movement.get("has_next_page") is True
-        )
-        if proves_multiple:
-            coverage["status"] = "conflicting"
-        elif collection.row_count == 1 and coverage.get("status") != "conflicting":
-            coverage["status"] = "complete"
-    return collection.model_copy(update={"coverage": coverage})
 
 
 class RuntimeDataStore:
@@ -191,41 +210,22 @@ class RuntimeDataStore:
         )
         totals_conflict = len(totals) > 1 or len(page_counts) > 1
         requested = str(last_coverage.get("requested") or "complete")
-        if scope_status != "met":
-            coverage_status = "incomplete"
-        elif totals_conflict or (
-            known_total is not None and row_count > known_total
-        ):
-            coverage_status = "conflicting"
-        elif requested == "first_match" and row_count:
-            coverage_status = "complete"
-        elif structured and (
-            all_pages
-            or page_count is None and (
-                contiguous_to_end
-                or known_total is not None
-                and row_count >= known_total
-                and not last_coverage.get("partial")
-                or surface_complete
-            )
-        ):
-            coverage_status = "complete"
-        elif not structured and (page_count is None or all_pages) and (
-            known_total is not None and row_count >= known_total
-            or at_end and known_total is None and start_seen is not False
-        ):
-            coverage_status = "complete"
-        elif start_seen is False and page_count is None and known_total is None:
-            coverage_status = "incomplete"
-        elif (
-            last_coverage.get("has_next_page") is True
-            or (page_count is not None and not all_pages)
-            or (known_total is not None and row_count < known_total)
-            or last_coverage.get("partial")
-        ):
-            coverage_status = "incomplete"
-        else:
-            coverage_status = "unknown"
+        coverage_status = _coverage_status(
+            scope_status=scope_status,
+            requested=requested,
+            row_count=row_count,
+            structured=structured,
+            known_total=known_total,
+            page_count=page_count,
+            all_pages=all_pages,
+            contiguous_to_end=contiguous_to_end,
+            surface_complete=surface_complete,
+            at_end=at_end,
+            start_seen=start_seen,
+            totals_conflict=totals_conflict,
+            has_next_page=last_coverage.get("has_next_page"),
+            partial=bool(last_coverage.get("partial")),
+        )
         combined_coverage = {
             "requested": requested,
             "scope_status": scope_status,
@@ -255,6 +255,17 @@ class RuntimeDataStore:
         for key in ("coverage_evidence", "empty_state_evidence"):
             if last_coverage.get(key) not in (None, ""):
                 combined_coverage[key] = last_coverage[key]
+        cardinality = "one" if last_coverage.get("cardinality") == "one" else "many"
+        combined_coverage["cardinality"] = cardinality
+        if scope_status == "met" and cardinality == "one":
+            proves_multiple = row_count > 1 or any(
+                isinstance(value, (int, float)) and value > 1
+                for value in (known_total, page_count)
+            ) or combined_coverage["movement"].get("has_next_page") is True
+            if proves_multiple:
+                combined_coverage["status"] = "conflicting"
+            elif row_count == 1 and coverage_status != "conflicting":
+                combined_coverage["status"] = "complete"
         collection = CollectionRef(
             ref=collection_id,
             requirement_id=requirement_id,
@@ -262,10 +273,6 @@ class RuntimeDataStore:
             row_count=row_count,
             row_schema=row_schema,
             coverage=combined_coverage,
-        )
-        collection = apply_cardinality_contract(
-            collection,
-            last_coverage.get("cardinality") or "many",
         )
         self._collections[collection_id] = collection
         self._values[collection_id] = collection_rows
@@ -303,8 +310,25 @@ class RuntimeDataStore:
             "at_end": True,
             "coverage_evidence": "downward_scroll_no_effect"
             + ("" if started else "_without_start"),
-            **({"status": "complete"} if started else {}),
         }
+        structured = coverage.get("source_scope") == "structured_collection"
+        coverage["status"] = _coverage_status(
+            scope_status=str(coverage.get("scope_status") or "met"),
+            requested=str(coverage.get("requested") or "complete"),
+            row_count=collection.row_count,
+            structured=structured,
+            known_total=coverage.get("known_total"),
+            page_count=coverage.get("page_count"),
+            all_pages=bool(
+                coverage.get("page_count") is not None
+                and coverage.get("pages_seen")
+                == list(range(1, int(coverage["page_count"]) + 1))
+            ),
+            surface_complete=bool(started and structured),
+            at_end=True,
+            start_seen=coverage.get("start_seen"),
+            has_next_page=False,
+        )
         collection = collection.model_copy(update={"coverage": coverage})
         self._collections[ref] = collection
         return collection

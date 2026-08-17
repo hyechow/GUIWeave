@@ -32,8 +32,6 @@ from gui_agent.prompts import load_prompt_text
 from gui_agent.core.tool_agent.contracts import (
     DataRequirement,
     MaterializedFrame,
-    RequiredInteraction,
-    ToolActionCapability,
 )
 from gui_agent.core.tool_agent.data_store import RuntimeDataStore
 from gui_agent.core.tool_agent.protocol import (
@@ -62,61 +60,6 @@ class _DetailCollectionState:
     surface: str
     location: str
     pending_index: int | None = None
-
-
-_EDITOR_KINDS = {"text_input", "textbox", "textarea", "editor"}
-
-
-def derive_required_interactions(
-    controls: list[dict[str, Any]],
-    requirement_scopes: dict[str, dict[str, Any]],
-    *,
-    pending_capabilities: (
-        set[ToolActionCapability] | frozenset[ToolActionCapability]
-    ) = frozenset(),
-) -> list[RequiredInteraction]:
-    """Materialize a unique structured prerequisite for the current frame."""
-
-    unresolved = any(
-        isinstance(detail := scope.get("detail_resolution"), dict)
-        and detail.get("status") == "active"
-        and detail.get("next_unresolved_candidate")
-        for scope in requirement_scopes.values()
-    )
-    visible = [
-        item for item in controls
-        if item.get("in_viewport") is not False and item.get("enabled") is not False
-    ]
-    if not (unresolved or "type" in pending_capabilities) or any(
-        item.get("is_filter") is True
-        and str(item.get("kind") or "").casefold() in _EDITOR_KINDS
-        for item in visible
-    ):
-        return []
-    openers = [item for item in visible if item.get("query_action") == "open"]
-    if len(openers) != 1:
-        return []
-    opener = openers[0]
-    point = opener.get("action_point")
-    if not isinstance(point, dict):
-        point = opener.get("rect")
-    if not isinstance(point, dict) or not all(
-        isinstance(point.get(key), (int, float)) for key in ("x", "y")
-    ):
-        return []
-    label = str(opener.get("label") or "query")
-    return [RequiredInteraction(
-        capability="tap",
-        args={
-            "x": float(point["x"]),
-            "y": float(point["y"]),
-            "description": f"Activate visible query-entry control {label!r}",
-        },
-        description=(
-            f"Activate the visible query-entry control {label!r} to expose the "
-            "required editable input."
-        ),
-    )]
 
 
 def _normalize_runtime_value(
@@ -469,17 +412,12 @@ def _visible_row_schema(
     filters: dict[str, Any],
 ) -> dict[str, Any]:
     """Omit only row fields proven by the logical filter and confirmed UI scope."""
-
     supplied = set(_exact_filter_row_values(requirement, filters))
-    # Vision transcribes what this frame exposes; full requirement validation below
-    # remains authoritative and rejects partial rows until their details are opened.
     return {
         **requirement.row_schema,
-        "properties": {
-            field: schema
-            for field, schema in (requirement.row_schema.get("properties") or {}).items()
-            if field not in supplied
-        },
+        "properties": {field: schema for field, schema in (
+            requirement.row_schema.get("properties") or {}
+        ).items() if field not in supplied},
         "required": [],
     }
 
@@ -493,25 +431,19 @@ def _visual_scope_state(
 ) -> bool | None:
     """Advance one filter scope from visible selection through committed results."""
 
-    visible = extracted.get("filter_state_visible") is True
     if extracted.get("scope_satisfied") is False:
         states.pop(key, None)
         return False
-    if visible and extracted.get("filter_commit_pending") is True:
-        states[key] = "pending"
-    elif visible or (states.get(key) == "pending" and has_result):
+    visible = extracted.get("filter_state_visible") is True
+    if visible:
+        states[key] = (
+            "pending" if extracted.get("filter_commit_pending") is True else "confirmed"
+        )
+    elif states.get(key) == "pending" and has_result:
         states[key] = "confirmed"
     elif states.get(key) == "confirmed" and not has_result:
         states.pop(key)
     return True if states.get(key) == "confirmed" else None
-
-
-def _visual_filter_key(
-    state_scope: str,
-    requirement: DataRequirement,
-    filters: dict[str, Any],
-) -> tuple[str, str, str]:
-    return state_scope, requirement.id, _fingerprint(filters)
 
 
 def _compare_values(
@@ -612,66 +544,137 @@ def _logical_rows(
     *,
     keep_unknown: bool = False,
 ) -> list[dict[str, Any]]:
-    return [
-        row
-        for row in rows
-        if (match := _rows_satisfy_filters(requirement, [row])) is True
-        or keep_unknown and match is None
-    ]
+    return [row for row in rows
+            if (match := _rows_satisfy_filters(requirement, [row])) is True
+            or keep_unknown and match is None]
+
+
+_TEXT_QUERY_CONTROL_KINDS = {
+    "text_input", "textbox", "searchbox", "combobox", "editable_text",
+}
+
+
+def _text_query_fields(controls: list[dict[str, Any]]) -> set[str]:
+    """Return UI fields whose values are recall queries, not exact predicates."""
+
+    fields: set[str] = set()
+    for control in controls:
+        if (
+            control.get("is_filter") is not True
+            or control.get("is_datepicker") is True
+            or str(control.get("kind") or "").casefold()
+            not in _TEXT_QUERY_CONTROL_KINDS
+        ):
+            continue
+        for key in ("label", "name", "placeholder"):
+            field = canonical_filter_field(control.get(key))
+            if field:
+                fields.add(field)
+    return fields
+
+
+def _is_text_query_field(field: str, query_fields: set[str]) -> bool:
+    return any(
+        field == candidate or field in candidate or candidate in field
+        for candidate in query_fields
+    )
 
 
 def _scope_descriptor(
     requirement: DataRequirement,
     *,
-    acquisition_filters: dict[str, Any],
+    required_predicates: dict[str, Any],
     applied_filter_state: Any,
     applied_filters: dict[str, Any],
+    text_query_fields: set[str],
     rows: list[dict[str, Any]],
     visual_scope_satisfied: bool | None = None,
 ) -> dict[str, Any]:
-    requested_ui_filters = {
+    required_ui_predicates = {
         requirement.field_sources.get(field, field): value
-        for field, value in acquisition_filters.items()
+        for field, value in required_predicates.items()
     }
-    if not requested_ui_filters:
-        has_applied_filters = bool(applied_filters)
+    required = compile_filter_predicates(required_ui_predicates)
+    applied = (
+        dict(applied_filter_state.predicates)
+        if applied_filter_state is not None
+        and getattr(applied_filter_state, "coverage", "") == "complete"
+        else compile_filter_predicates(applied_filters)
+    )
+    query_fields = {
+        canonical_filter_field(field) for field in text_query_fields if field
+    }
+    query_state = {
+        "filters": dict(applied_filters),
+        "text_fields": sorted(query_fields),
+    }
+    if not required:
+        has_applied_filters = bool(applied)
         return {
             "status": "unmet" if has_applied_filters else "met",
             "requested_filters": {},
+            "required_predicates": {},
             "applied_filters": dict(applied_filters),
+            "query_state": query_state,
+            "query_outcome": "unobserved",
+            "empty_authoritative": not has_applied_filters,
             "evidence": (
                 "unexpected_applied_filters"
                 if has_applied_filters
                 else "no_filter_required"
             ),
         }
-    requested = compile_filter_predicates(requested_ui_filters)
-    if applied_filter_state is not None:
-        match = match_filter_state(requested, applied_filter_state)
-        if match in {"met", "unmet"}:
-            return {
-                "status": match,
-                "requested_filters": requested_ui_filters,
-                "applied_filters": dict(applied_filters),
-                "evidence": "applied_filter_state",
-            }
-    if visual_scope_satisfied is not None:
-        return {
-            "status": "met" if visual_scope_satisfied else "unmet",
-            "requested_filters": requested_ui_filters,
-            "applied_filters": dict(applied_filters),
-            "evidence": "visual_filter_state",
-        }
-    row_match = _rows_satisfy_filters(
-        requirement,
-        rows,
-        filters=acquisition_filters,
+    exact_applied_scope = match_filter_state(required, applied_filter_state) == "met"
+    required_fields = set(required)
+    applied_fields = set(applied)
+    conflicting = {
+        field for field in required_fields.intersection(applied_fields)
+        if required[field] != applied[field]
+    }
+    extra = applied_fields.difference(required_fields)
+    hard_conflicts = {
+        field for field in conflicting
+        if not _is_text_query_field(field, query_fields)
+    }
+    hard_extras = {
+        field for field in extra
+        if not _is_text_query_field(field, query_fields)
+    }
+    hard_blocked = bool(hard_conflicts or hard_extras)
+    has_valid_candidate = any(
+        _rows_satisfy_filters(requirement, [row]) is True for row in rows
     )
+    exact_scope_is_query = any(
+        _is_text_query_field(field, query_fields) for field in required_fields
+    )
+    empty_authoritative = bool(
+        exact_applied_scope and not exact_scope_is_query and not hard_blocked
+    )
+    if hard_blocked or visual_scope_satisfied is False:
+        status, evidence = "unmet", (
+            "conflicting_non_query_filters"
+            if hard_blocked
+            else "visual_filter_state"
+        )
+    elif has_valid_candidate:
+        status, evidence = "met", "validated_candidates"
+    elif exact_applied_scope:
+        status, evidence = "met", (
+            "text_query_state" if exact_scope_is_query else "applied_filter_state"
+        )
+    else:
+        status, evidence = "unknown", (
+            "query_recall_state" if applied or query_fields else "unavailable"
+        )
     return {
-        "status": "met" if row_match is True else "unmet" if row_match is False else "unknown",
-        "requested_filters": requested_ui_filters,
+        "status": status,
+        "requested_filters": required_ui_predicates,
+        "required_predicates": required_ui_predicates,
         "applied_filters": dict(applied_filters),
-        "evidence": "row_values" if row_match is not None else "unavailable",
+        "query_state": query_state,
+        "query_outcome": "unobserved",
+        "empty_authoritative": empty_authoritative,
+        "evidence": evidence,
     }
 
 
@@ -943,11 +946,7 @@ class PerceptionMaterializer:
         bundle: Any,
         platform: Any,
         requirements: list[DataRequirement],
-        acquisition_filters: dict[str, Any] | None = None,
         allow_linked_details: bool = True,
-        pending_capabilities: (
-            set[ToolActionCapability] | frozenset[ToolActionCapability]
-        ) = frozenset(),
         state_scope: str = "",
         frame_no: int,
     ) -> tuple[MaterializedFrame, bytes]:
@@ -996,13 +995,10 @@ class PerceptionMaterializer:
         missing = []
         expected_totals = self._expected_totals
         requirement_scopes: dict[str, dict[str, Any]] = {}
+        text_query_fields = _text_query_fields(controls)
         for requirement in requirements:
             detail_key = (state_scope, requirement.id)
-            attempt_filters = (
-                dict(acquisition_filters)
-                if acquisition_filters is not None and len(requirements) == 1
-                else dict(requirement.filters)
-            )
+            required_predicates = dict(requirement.filters)
             rows: list[dict[str, Any]] = []
             scope_rows: list[dict[str, Any]] = []
             provider: Literal["vision", "structured"] = "vision"
@@ -1040,21 +1036,30 @@ class PerceptionMaterializer:
             if table_complete or empty_complete or candidate_rows:
                 scope = _scope_descriptor(
                     requirement,
-                    acquisition_filters=attempt_filters,
+                    required_predicates=required_predicates,
                     applied_filter_state=applied_filter_state,
                     applied_filters=applied_filters,
+                    text_query_fields=text_query_fields,
                     rows=scope_rows,
                 )
+                scope["query_outcome"] = (
+                    "empty" if empty_complete else "candidates"
+                )
                 requirement_scopes[requirement.id] = scope
-                if attempt_filters and scope["status"] in {"met", "unmet"}:
-                    filter_key = _visual_filter_key(
-                        state_scope, requirement, attempt_filters,
+                if required_predicates and scope["status"] in {"met", "unmet"}:
+                    filter_key = (
+                        state_scope,
+                        requirement.id,
+                        _fingerprint(required_predicates),
                     )
                     if scope["status"] == "met":
                         self._visual_filter_states[filter_key] = "confirmed"
                     else:
                         self._visual_filter_states.pop(filter_key, None)
-                if scope["status"] == "met" and (table_complete or empty_complete):
+                if (
+                    scope["status"] == "met"
+                    and (rows or empty_complete and scope["empty_authoritative"])
+                ):
                     provider = "structured"
                     coverage = _structured_coverage(
                         table,
@@ -1086,7 +1091,7 @@ class PerceptionMaterializer:
                 extracted = self._vision_extract(
                     requirement,
                     png,
-                    acquisition_filters=attempt_filters,
+                    query_filters=applied_filters,
                     page_identity={"url": url, "title": title},
                 )
                 visually_found = bool(extracted.get("found"))
@@ -1098,40 +1103,51 @@ class PerceptionMaterializer:
                 empty_state_evidence = str(
                     extracted.get("empty_state_evidence") or ""
                 ).strip()
-                authoritative_visual_empty = bool(
+                visible_empty = bool(
                     extracted.get("empty_state_visible")
                     and not raw_visual_rows
                     and end_visible
                     and empty_state_evidence
                 )
                 visual_scope = extracted.get("scope_satisfied")
-                if attempt_filters:
+                if required_predicates:
                     visual_scope = _visual_scope_state(
                         self._visual_filter_states,
-                        _visual_filter_key(state_scope, requirement, attempt_filters),
+                        (
+                            state_scope,
+                            requirement.id,
+                            _fingerprint(required_predicates),
+                        ),
                         extracted,
-                        has_result=visually_found or authoritative_visual_empty,
+                        has_result=visually_found or visible_empty,
                     )
-                    if visual_scope is True:
-                        supplied = _exact_filter_row_values(
-                            requirement, attempt_filters
-                        )
-                        raw_visual_rows = [
-                            {**row, **supplied} if isinstance(row, dict) else row
-                            for row in raw_visual_rows
-                        ]
                 scope = _scope_descriptor(
                     requirement,
-                    acquisition_filters=attempt_filters,
+                    required_predicates=required_predicates,
                     applied_filter_state=applied_filter_state,
                     applied_filters=applied_filters,
+                    text_query_fields=text_query_fields,
                     rows=raw_visual_rows,
                     visual_scope_satisfied=(
                         visual_scope if isinstance(visual_scope, bool) else None
                     ),
                 )
+                scope["query_outcome"] = (
+                    "empty" if visible_empty else "candidates" if visually_found else "unknown"
+                )
+                if visual_scope is True and scope["empty_authoritative"]:
+                    supplied = _exact_filter_row_values(
+                        requirement, required_predicates
+                    )
+                    raw_visual_rows = [
+                        {**row, **supplied} if isinstance(row, dict) else row
+                        for row in raw_visual_rows
+                    ]
+                authoritative_visual_empty = bool(
+                    visible_empty and scope["empty_authoritative"]
+                )
                 requirement_scopes[requirement.id] = scope
-                if visually_found or authoritative_visual_empty:
+                if visually_found or visible_empty:
                     valid_visual_rows = _normalize_visual_rows(
                         requirement,
                         raw_visual_rows,
@@ -1235,9 +1251,10 @@ class PerceptionMaterializer:
                 requirement.id,
                 _scope_descriptor(
                     requirement,
-                    acquisition_filters=attempt_filters,
+                    required_predicates=required_predicates,
                     applied_filter_state=applied_filter_state,
                     applied_filters=applied_filters,
+                    text_query_fields=text_query_fields,
                     rows=[],
                 ),
             )
@@ -1383,11 +1400,6 @@ class PerceptionMaterializer:
             ],
             applied_filters=applied_filters,
             requirement_scopes=requirement_scopes,
-            required_interactions=derive_required_interactions(
-                controls,
-                requirement_scopes,
-                pending_capabilities=pending_capabilities,
-            ) if self.mode == "enhanced" else [],
             chunks=chunks,
             collections=collections,
             missing_requirements=missing,
@@ -1399,7 +1411,7 @@ class PerceptionMaterializer:
         requirement: DataRequirement,
         png: bytes,
         *,
-        acquisition_filters: dict[str, Any],
+        query_filters: dict[str, Any],
         page_identity: dict[str, str] | None = None,
     ) -> dict[str, Any]:
         reference_time = (
@@ -1415,12 +1427,13 @@ class PerceptionMaterializer:
             f"{json.dumps(reference_time.model_dump(mode='json'), ensure_ascii=False)}\n"
             "Frozen relative calendar dates by day offset: "
             f"{json.dumps(reference_time.relative_date_offsets(), ensure_ascii=False)}\n"
-            f"Logical row filters: {json.dumps(requirement.filters, ensure_ascii=False)}\n"
-            f"Current UI acquisition filters: "
-            f"{json.dumps(acquisition_filters, ensure_ascii=False)}\n"
-            "Visible row JSON Schema (confirmed logical equality-filter fields are supplied "
-            "by Runtime; never copy acquisition-filter values into rows): "
-            f"{json.dumps(_visible_row_schema(requirement, acquisition_filters), ensure_ascii=False)}"
+            "Immutable required predicates: "
+            f"{json.dumps(requirement.filters, ensure_ascii=False)}\n"
+            f"Current UI query state: {json.dumps(query_filters, ensure_ascii=False)}\n"
+            "A visible empty state proves only that the current query returned no candidates; "
+            "do not infer that the immutable required result set is empty.\n"
+            "Visible row JSON Schema (transcribe every visible required field): "
+            f"{json.dumps(_visible_row_schema(requirement, {}), ensure_ascii=False)}"
         )
         started_at = time.perf_counter()
         config = getattr(self, "_vision_cfg", None)

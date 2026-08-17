@@ -156,7 +156,7 @@ class WorkerJournal:
     executed_tools: set[str] = field(default_factory=set, repr=False)
 
     def observe_collection(self, frame: MaterializedFrame) -> str:
-        """Track the visible collection and return a proven terminal ref, if any."""
+        """Return the collection ref carrying downward-scroll end evidence, if any."""
 
         if len(frame.visible_collection_regions) != 1:
             self.collection_ref = ""
@@ -187,12 +187,12 @@ class WorkerJournal:
         return (
             self.collection_ref
             if self.collection_ref == self.last_scroll_collection_ref
-            and self.downward_scroll_reached_end(frame)
+            and self.has_downward_scroll_end_evidence(frame)
             else ""
         )
 
-    def downward_scroll_reached_end(self, frame: MaterializedFrame) -> bool:
-        """Whether the last no-effect scroll targeted this frame's sole collection."""
+    def has_downward_scroll_end_evidence(self, frame: MaterializedFrame) -> bool:
+        """Whether facts show a no-effect downward scroll on the sole collection."""
 
         if not (
             self.last_scroll_no_effect
@@ -219,37 +219,6 @@ class WorkerJournal:
             event_ref=event_ref,
             kind="established_fact",
             durable_text=f"Worker-established visual fact: {fact}",
-        ))
-
-    def record_replan(self, *, attempt: int) -> None:
-        self.events.append(WorkerJournalEvent(
-            event_ref=f"replan:{attempt}",
-            kind="subgoal_replan",
-            durable_text=(
-                f"local GUI subgoal attempt {attempt} started with prior runtime "
-                "experience retained"
-            ),
-        ))
-
-    def record_patch(
-        self,
-        *,
-        step: int,
-        patch_turn: int,
-        payload: dict[str, Any],
-    ) -> None:
-        status = str(payload.get("status") or "unknown")
-        action = payload.get("action") if isinstance(payload.get("action"), dict) else {}
-        name = str(action.get("name") or "unknown")
-        capability = str(action.get("capability") or "unknown")
-        error = str(payload.get("error") or "")
-        detail = f"; error={error}" if error else ""
-        self.events.append(WorkerJournalEvent(
-            event_ref=f"step:{step}:patch:{patch_turn}",
-            kind="action_patch",
-            durable_text=(
-                f"action patch {status}: {name} ({capability}){detail}"
-            ),
         ))
 
     def record_turn(
@@ -284,8 +253,11 @@ class WorkerJournal:
                     result.get("direction") or args.get("direction") or ""
                 )
                 self.last_scroll_collection_ref = self.collection_ref
+                x = args.get("x")
+                y = args.get("y")
                 self.last_scroll_point = (
-                    float(args.get("x", 500)), float(args.get("y", 500))
+                    float(x) if isinstance(x, (int, float)) else 500.0,
+                    float(y) if isinstance(y, (int, float)) else 500.0,
                 )
             else:
                 self.collection_context = ""
@@ -502,9 +474,6 @@ def _frame_payload(
         "title": frame.title,
         "applied_filters": frame.applied_filters,
         "requirement_scopes": frame.requirement_scopes,
-        "required_interactions": [
-            item.model_dump(mode="json") for item in frame.required_interactions
-        ],
         "scope_blockers": scope_blockers,
         "observed_choice_state": _observed_choice_state(frame.controls),
         "candidate_set_state": candidate_state,
@@ -588,7 +557,7 @@ def project_worker_context(
             ContextBlock(
                 id="tool_agent.worker.same_frame_feedback",
                 source_type="runtime_feedback",
-                source="action_patch",
+                source="runtime_feedback",
                 ttl="turn",
                 budget="required",
                 priority=5,

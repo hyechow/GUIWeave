@@ -69,20 +69,8 @@ llm:
     master:
       <<: *standard
       model: qwen3.7-max
-    strategy:
-      proposer:
-        <<: *standard
-        model: qwen3.7-max
-        timeout_s: 25
-        max_retries: 0
-      selector:
-        <<: *standard
-        model: qwen3.6-flash
-        timeout_s: 8
-        max_retries: 0
     worker:
       <<: *luna
-      max_actions_per_call: 1
       action_protocol: json
     perception:
       <<: *luna

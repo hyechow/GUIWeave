@@ -29,7 +29,7 @@ from typing import Optional
 from gui_agent.core.runtime.factory import PlatformBundle, SetupCheckResult
 
 
-DEFAULT_BROWSER_START_URL = "https://www.google.com/"
+DEFAULT_BROWSER_START_URL = "https://cn.bing.com/"
 
 
 def _launch_headless_chromium() -> str:
@@ -186,7 +186,7 @@ def build_browser_bundle(
 
     ``backend`` is reserved for future adapter backends. ``cdp_url`` / ``start_url`` / ``headless`` /
     ``user_data_dir`` flow through to the session. New browser tasks start at
-    Google unless ``start_url`` is overridden. CDP defaults to
+    Bing unless ``start_url`` is overridden. CDP defaults to
     http://localhost:9222, overridable via env CHROME_CDP_URL; headless mode
     launches Chromium directly and can keep login state in ``user_data_dir``.
     """
