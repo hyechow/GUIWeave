@@ -190,7 +190,6 @@ def test_tool_agent_report_exposes_coding_master_and_worker_boundaries(tmp_path:
                 "worker_id": "collect",
                 "kind": "gui",
                 "goal": "Collect one result",
-                "strategy": "Read the current structured result surface",
             },
             {
                 "index": 3,
@@ -244,9 +243,6 @@ def test_tool_agent_report_exposes_coding_master_and_worker_boundaries(tmp_path:
 
     assert data.pages[0].title == "GUI Worker · collect"
     assert "Goal: Collect one result" in data.pages[0].statement_description
-    assert "Strategy: Read the current structured result surface" in (
-        data.pages[0].statement_description
-    )
     assert "Coding Master · Python orchestration" in html
     assert "GUI Worker · collect" in html
     assert "def run(ctx)" in html

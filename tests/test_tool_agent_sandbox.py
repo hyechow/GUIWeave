@@ -68,31 +68,6 @@ def test_transform_reads_normalized_schema_fields_not_display_headers() -> None:
         validate_transform_row_fields(display_header, schema)
 
 
-def test_transform_rejects_undeclared_free_text_enum_comparison() -> None:
-    schema = {
-        "type": "object",
-        "properties": {
-            "name": {"type": "string"},
-            "kind": {"type": "string"},
-        },
-    }
-    guessed_enum = (
-        "def transform(inputs):\n"
-        "    rows = inputs[0]\n"
-        "    return [row for row in rows if row['kind'].lower() == 'zip']"
-    )
-    structural = guessed_enum.replace(
-        "row['kind'].lower() == 'zip'", "row['name'].lower().endswith('.zip')"
-    )
-
-    with pytest.raises(TransformValidationError, match="free-form text field 'kind'"):
-        validate_transform_row_fields(guessed_enum, schema)
-    validate_transform_row_fields(structural, schema)
-    validate_transform_row_fields(
-        guessed_enum, schema, literal_filters={"kind": "zip"},
-    )
-
-
 def test_transform_timeout_remains_enforced_with_live_runtime_startup_budget() -> None:
     source = "def transform(rows):\n    for _ in range(1000000000000):\n        pass\n    return []"
 

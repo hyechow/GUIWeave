@@ -2,9 +2,10 @@ import json
 import os
 from types import SimpleNamespace
 
+import pytest
+
 from gui_agent.adapters.browser.device import (
     PlaywrightDevice,
-    _CDPTimeout,
     _cdp_proxy_bypass,
     _direct_cdp_host,
 )
@@ -81,7 +82,7 @@ def test_ensure_net_tracking_timeout_degrades_without_retrying_same_session():
 
     def timed_send(sess, method, params):
         calls.append((sess, method, params))
-        raise _CDPTimeout()
+        raise TimeoutError()
 
     dev._timed_cdp_send = timed_send
 
@@ -163,8 +164,17 @@ def test_headless_navigation_uses_bounded_commit_wait():
     assert dev.navigate("https://example.test/") == "OK navigate https://example.test/"
     assert calls == [(
         "https://example.test/",
-        {"wait_until": "commit", "timeout": 20_000},
+        {"wait_until": "commit", "timeout": 5_000},
     )]
+
+
+def test_failed_start_navigation_stops_before_first_observation() -> None:
+    dev = PlaywrightDevice.__new__(PlaywrightDevice)
+    dev.start_url = "https://unreachable.example/"
+    dev.navigate = lambda url: f"failed: navigate {url}: net::ERR_TIMED_OUT"
+
+    with pytest.raises(RuntimeError, match="browser start navigation failed"):
+        dev._navigate_to_start_url()
 
 
 def test_navigation_failure_feedback_skips_unresponsive_page_probe():
@@ -176,10 +186,13 @@ def test_navigation_failure_feedback_skips_unresponsive_page_probe():
             TimeoutError("navigation timed out\nCall log:\n  - internal detail")
         )
     )
+    stop_calls = []
+    dev._cdp_send = lambda method, params: stop_calls.append((method, params)) or {}
 
     result = dev.navigate("https://example.test/")
     assert "navigation timed out" in result
     assert "internal detail" not in result
+    assert stop_calls == [("Page.stopLoading", {})]
     dev._follow_active_tab = lambda: None
     dev._cdp_send = lambda *_args, **_kwargs: (_ for _ in ()).throw(
         AssertionError("native navigation failure must bypass the page probe")

@@ -34,16 +34,9 @@
         "filters": {"product": "Erica Sports Bra"}
       }
     ],
-    "acquisition_filters": {"product": "Erica Sports Bra"},
-    "actions": [
-      {
-        "name": "filter_by_product",
-        "capability": "select_option",
-        "description": "Filter reviews by the exact product name",
-        "fixed_args": {"text": "Erica Sports Bra"}
-      }
-    ],
-    "max_steps": 20
+    "strategy": {
+      "approach": "Filter reviews by the exact product name."
+    }
   },
   "empty_outcome": {
     "phase": "completed",
@@ -72,60 +65,6 @@
     },
     "steps": 5
   },
-  "execution_experience": [
-    {
-      "event": "worker_decision",
-      "step": 3,
-      "tool": "filter_by_product",
-      "args": {},
-      "state": {
-        "status": "exploring",
-        "summary": "The Product filter needs to be applied.",
-        "next_instruction": "Apply the exact Product filter."
-      }
-    },
-    {
-      "event": "runtime_action",
-      "tool": "filter_by_product",
-      "action_type": "select_option",
-      "status": "failed",
-      "no_effect": true
-    },
-    {
-      "event": "worker_decision",
-      "step": 4,
-      "tool": "runtime_type_visible",
-      "args": {"text": "Erica Sports Bra"},
-      "state": {
-        "status": "exploring",
-        "summary": "The Product filter is a text input, not a choice control.",
-        "next_instruction": "Type the exact Product query."
-      }
-    },
-    {
-      "event": "worker_decision",
-      "step": 5,
-      "tool": "runtime_tap_visible",
-      "args": {"description": "Apply the exact Product filter"},
-      "state": {
-        "status": "exploring",
-        "summary": "The exact text query is ready to submit.",
-        "next_instruction": "Submit the Product query."
-      }
-    },
-    {
-      "event": "observe",
-      "requirement_scopes": {
-        "erica_review_details": {
-          "status": "met",
-          "applied_filters": {"Product": "Erica Sports Bra"}
-        }
-      },
-      "collections": [
-        {"requirement_id": "erica_review_details", "row_count": 0}
-      ]
-    }
-  ],
   "replacement_spec": {
     "profile": "collector",
     "goal": "Collect title and detailed rating for all reviews of 'Erica Sports Bra'.",
@@ -159,21 +98,13 @@
         "filters": {"product": "Erica Sports Bra"}
       }
     ],
-    "acquisition_filters": {"product": "Erica"},
-    "actions": [
-      {
-        "name": "query_product_candidates",
-        "capability": "type",
-        "description": "Enter the exact replacement Product query",
-        "fixed_args": {"text": "Erica"}
-      }
-    ],
-    "max_steps": 20
+    "strategy": {
+      "approach": "Reach the same exact product-scoped reviews through a different visible navigation path."
+    }
   },
   "expected": {
     "first_query": "Erica Sports Bra",
-    "replacement_query": "Erica",
-    "physical_worker_id": "collect_erica_review_details_replan_1",
+    "physical_worker_id": "collect_erica_review_details_strategy_1",
     "same_downstream_requirement_id": "erica_review_details"
   }
 }

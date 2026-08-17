@@ -53,7 +53,7 @@ def test_headless_probe_leaves_an_active_asyncio_thread(monkeypatch) -> None:
     assert probe_threads and probe_threads[0] != caller_thread
 
 
-def test_browser_bundle_defaults_start_url_to_google(monkeypatch) -> None:
+def test_browser_bundle_defaults_start_url_to_bing(monkeypatch) -> None:
     captured: list[dict[str, object]] = []
     session = object()
     monkeypatch.setattr(
@@ -64,6 +64,7 @@ def test_browser_bundle_defaults_start_url_to_google(monkeypatch) -> None:
 
     assert factory.build_browser_bundle().open_session() is session
     assert captured[-1]["start_url"] == factory.DEFAULT_BROWSER_START_URL
+    assert captured[-1]["start_url"] == "https://cn.bing.com/"
 
     assert factory.build_browser_bundle(start_url="https://example.com/").open_session() is session
     assert captured[-1]["start_url"] == "https://example.com/"

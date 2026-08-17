@@ -2,7 +2,6 @@ import pytest
 
 from gui_agent.adapters.android.accessibility import (
     collection_regions_from_uiautomator,
-    collection_tables_from_regions,
     form_controls_from_semantic_tree,
     screen_title_from_semantic_tree,
     semantic_tree_from_uiautomator,
@@ -58,25 +57,6 @@ def test_android_documents_header_preserves_folder_location() -> None:
     assert screen_title_from_semantic_tree(nodes) == "Downloads"
 
 
-def test_android_collection_projects_visible_item_text_without_format_guessing() -> None:
-    regions = [{
-        "surface_fingerprint": "android-collection:files",
-        "traversal": {"type": "scroll"},
-        "cells": [
-            {"texts": ["Jul 12, 2025, 2 kB, ZIP archive"], "clipped_top": True},
-            {"texts": ["archive.zip", "Jul 11, 2025, 1.3 kB, ZIP archive"]},
-        ],
-    }]
-
-    table = collection_tables_from_regions(regions, screen_title="Downloads")[0]
-    assert table["caption"] == "Downloads"
-    assert table["path"] == "android-collection:files"
-    assert table["location"] == "Downloads"
-    assert table["rows"] == [{"Name": "archive.zip", "Details": [
-        "Jul 11, 2025, 1.3 kB, ZIP archive",
-    ]}]
-    assert table["unmapped_visible_content"] is True
-    assert table["start_visible"] is False
 XML = """<?xml version="1.0" encoding="UTF-8"?>
 <hierarchy rotation="0">
   <node class="android.widget.FrameLayout" bounds="[0,0][1080,2400]">

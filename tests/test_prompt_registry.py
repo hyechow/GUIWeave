@@ -22,8 +22,7 @@ def test_prompt_registry_loads_all_assets() -> None:
         "task.chat.router",
         "task.tool_agent.master",
         "task.tool_agent.presentation",
-        "task.tool_agent.strategy_propose",
-        "task.tool_agent.strategy_select",
+        "task.tool_agent.strategy_decide",
         "task.tool_agent.visual_transcription",
         "task.tool_agent.worker",
         "task.knowledge.document_ingest",
@@ -76,7 +75,8 @@ def test_master_exposes_only_tool_agent_runtime_api() -> None:
     assert "merely useful supplemental metrics" in prompt
     assert "A collector only acquires raw source records" in prompt
     assert "A collector may perform prerequisite navigation or mutation" in prompt
-    assert "one invocation of one capability against one control" in prompt
+    assert "Do not enumerate atomic GUI actions" in prompt
+    assert "Runtime supplies the active adapter's generic capabilities" in prompt
     assert "Never guess enum/status labels" in prompt
     assert "never require perception to invent a missing year" in prompt
     assert "When success criteria guarantee exactly one target record" in prompt
@@ -121,7 +121,9 @@ def test_worker_keeps_data_private_and_coordinates_normalized() -> None:
     assert "goal and success criteria fully bound this attempt" in prompt
     assert "call `complete` immediately" in prompt
     assert "Coordinates are normalized 0..999" in prompt
-    assert "request_action_patch" in prompt
+    assert "Runtime-supplied adapter actions" in prompt
+    assert "Generic actions are execution capabilities" in prompt
+    assert "request_action_patch" not in prompt
     assert "Placeholder labels on collection rows never override" in prompt
     assert "`state.status = completed | failed` is terminal" in prompt
 
@@ -135,8 +137,8 @@ def test_master_keeps_visual_conditional_dependencies_in_one_worker() -> None:
         "authorized authentication method", "exact acceptance set", "never prescribe per-record commits",
         "traverses every prerequisite collection", "compares each candidate", "mutates only nonmatches",
         "candidate-local evidence", "complete—not merely visible—candidate traversal",
-        "excluded/already-processed identities", "never emit an empty list", "intermediate identities",
-        "UI transitions/mutations", "clean environment", "Action `description` is static metadata",
+        "excluded/already-processed identities", "intermediate identities",
+        "UI transitions/mutations", "clean environment", "Do not enumerate atomic GUI actions",
         "such as `type.text`", "finishing with `effect=\"data\"`",
         "neither typed data nor a transferable scope",
     ):
@@ -150,7 +152,7 @@ def test_worker_handles_exhausted_candidate_sets_and_row_targets() -> None:
         "an exhausted candidate set is direct", "the same unfiltered selector",
         "latest selected batch's commit produced a confirmed transition",
         "candidate_set_state.status = exhausted", "An initially empty selector, a filtered zero-result view",
-        "describe the row/button itself", "adjacent child icon or decoration", "named action does not prove",
+        "describe the row/button itself", "adjacent child icon or decoration", "An action does not prove",
         "never relabel another visible control", "retain processed identities",
         "explicitly remaining candidate", "durable completion fact means processed", "without reopening",
         "comparison evidence", "implement `state.next_instruction`",
@@ -160,7 +162,6 @@ def test_worker_handles_exhausted_candidate_sets_and_row_targets() -> None:
         "not record boundaries", "skip exact excluded matches", "viewport_tail_clipped = true",
         "repeated identity alone is insufficient", "Stable page chrome", "selector scrolls offscreen",
         "unobscured central viewport", "opening tap returns `no_effect`",
-        "exclusive `required_interactions`", "perception-owned physical prerequisite",
     ):
         assert rule in prompt
 
@@ -170,10 +171,10 @@ def test_worker_handles_exhausted_candidate_sets_and_row_targets() -> None:
     [
         ("task.tool_agent.master", (
             "Keep each collector schema minimal", "never require perception to invent a missing year",
-            "surface itself is the requested outcome", "immutable logical `goal`",
-                "current-provider details belong only", "`relative_date_offsets`",
+            "surface itself is the requested outcome", "immutable Worker goal/output contract",
+                "initial `approach`", "`relative_date_offsets`",
             'coverage="first_match"', "ResultRefs cannot serve as hidden Worker memory",
-            "complete—not merely visible—candidate traversal", "Action `description` is static metadata",
+            "complete—not merely visible—candidate traversal", "Do not enumerate atomic GUI actions",
         )),
         ("task.tool_agent.visual_transcription", (
             "provenance-bearing platform clock", "Omit invisible optional properties",
@@ -187,22 +188,18 @@ def test_worker_handles_exhausted_candidate_sets_and_row_targets() -> None:
         )),
         ("task.tool_agent.worker", (
             "Runtime data-reference values are private", "Never guess an authentication secret",
-                "human-presence challenge", "WorkerSpec-declared action that leaves", "otherwise call `fail`",
-            "Coordinates are normalized 0..999", "request_action_patch", "strategy_status = blocked",
-                "Treat autocomplete as pending state", "strongest leading result",
+                "human-presence challenge", "Runtime-supplied adapter actions", "`report_blocked`",
+            "Coordinates are normalized 0..999", "Generic actions are execution capabilities",
+                "Treat autocomplete as pending state", "relevance-ordered non-empty discovery surface",
             "candidate_set_state.status = exhausted", "complete application-declared identity",
-                "visible_collection_regions", "Loading, empty chrome, or a result region not yet visible",
+                "visible_collection_regions", "Query formulation is an action-level decision",
+                "empty_authoritative = false",
         )),
-        ("task.tool_agent.strategy_propose", (
-            "one to three genuinely different", "invalidated_assumption",
-            "observable expected progress", "Never invent credentials",
-            "public web origin", "authoritative empty result",
-        )),
-        ("task.tool_agent.strategy_select", (
-            "independent Strategy Selector", "chosen_index", "Otherwise stop",
-            "JSON object", "equivalent entry/actions", "One transport interruption",
-            "invented deep URL", "remaining budget", "Prefer fewer estimated steps",
-            "rather than demanding prior proof",
+        ("task.tool_agent.strategy_decide", (
+            "materially different, falsifiable implementation approach",
+            "Do not emit actions, action arguments, budgets, data filters",
+            "Never invent credentials", "Worker chooses atomic actions",
+            "Goal, success criteria, profile, inputs, data requirements",
         )),
     ],
 )

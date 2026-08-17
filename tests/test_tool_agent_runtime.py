@@ -13,6 +13,7 @@ from gui_agent.core.tool_agent.contracts import (
     WorkerOutcome,
     WorkerSpec,
     WorkerState,
+    WorkerStrategy,
 )
 from gui_agent.core.tool_agent.action_guard import (
     WorkerActionCircuitBreaker,
@@ -24,17 +25,15 @@ from gui_agent.core.tool_agent.data_store import RuntimeDataStore
 from gui_agent.core.tool_agent.protocol import (
     MAX_ORDERED_ACTIONS,
     ProtocolError,
-    capability_parameters,
-    constrain_worker_action_calls,
-    worker_action_floor,
+    decode_ordered_actions,
 )
 from gui_agent.core.tool_agent.runtime import (
     ToolAgentRuntime,
-    _WorkerSpecExpansionRequired,
+    _WorkerActionRejected,
     _action_feedback,
-    _decode_ordered_actions,
     _target_verification_result,
 )
+from gui_agent.core.tool_agent.strategy import Strategy
 from gui_agent.core.schemas import TargetVerify
 from gui_agent.core.tool_agent.worker_memory import (
     WorkerJournal,
@@ -53,11 +52,85 @@ def _state(*, missing: bool) -> str:
             "established_facts": [],
             "open_gaps": ["Apply the configured filter"] if missing else [],
             "coverage": {},
-            "action_space_status": "missing_action" if missing else "sufficient",
-            "missing_action": "Tap the visible apply control" if missing else "",
             "next_instruction": "Continue the same subgoal on this frame.",
         }
     )
+
+
+def _worker_spec(
+    *,
+    actions: list[DynamicActionSpec],
+    max_steps: int = 12,
+    approach: str = "Execute the declared test actions.",
+    required_filters: dict | None = None,
+    **goal_contract,
+) -> WorkerSpec:
+    data_requirements = list(goal_contract.get("data_requirements") or [])
+    if required_filters is not None and data_requirements:
+        data_requirements[0] = {
+            **data_requirements[0],
+            "filters": required_filters,
+        }
+        goal_contract["data_requirements"] = data_requirements
+    input_bindings = [
+        {
+            "name": (
+                action.name
+                if len(action.input_args) == 1
+                else f"{action.name}_{argument}"
+            ),
+            "input": binding.input,
+            "path": binding.path,
+            "target": {
+                ("type", "text"): "text_input",
+                ("select_option", "text"): "choice",
+                ("open_url", "url"): "url",
+                ("launch_app", "app"): "application",
+            }[(action.capability, argument)],
+            "description": action.description,
+        }
+        for action in actions
+        for argument, binding in action.input_args.items()
+    ]
+    spec = WorkerSpec(
+        **goal_contract,
+        input_bindings=input_bindings,
+        strategy=WorkerStrategy(approach=approach),
+    )
+    object.__setattr__(spec, "_test_actions", actions)
+    object.__setattr__(spec, "_test_max_steps", max_steps)
+    return spec
+
+
+def _validated_worker_spec(data: dict) -> WorkerSpec:
+    values = dict(data)
+    actions = values.pop("actions")
+    return _worker_spec(
+        actions=[
+            action if isinstance(action, DynamicActionSpec)
+            else DynamicActionSpec.model_validate(action)
+            for action in actions
+        ],
+        max_steps=values.pop("max_steps", 12),
+        required_filters=values.pop("required_filters", None),
+        **values,
+    )
+
+
+def _install_test_worker_contract(
+    runtime: ToolAgentRuntime,
+    spec: WorkerSpec,
+) -> None:
+    runtime._initial_worker_actions = lambda _spec: list(spec._test_actions)
+    observe = runtime._observe
+    runtime.max_turns = spec._test_max_steps
+    runtime._frame_no = 0
+
+    def counted_observe(inner_spec):
+        runtime._frame_no += 1
+        return observe(inner_spec)
+
+    runtime._observe = counted_observe
 
 
 def test_runtime_rejects_max_turns_above_50(tmp_path) -> None:
@@ -81,7 +154,7 @@ def test_action_guard_canonicalizes_equivalent_actions() -> None:
     assert signature("tap", x=210, y=150) == signature("tap", x=219, y=151)
 
 
-def test_action_guard_blocks_repeats_and_two_state_cycles() -> None:
+def test_action_guard_blocks_one_unchanged_repeat() -> None:
     frame = MaterializedFrame(frame_id="frame:stable", screenshot_path="frame.png")
     breaker = WorkerActionCircuitBreaker()
     first = breaker.inspect(
@@ -93,24 +166,36 @@ def test_action_guard_blocks_repeats_and_two_state_cycles() -> None:
         tool="scroll", capability="scroll",
         args={"direction": "down", "amount": 9}, frame=frame,
     )
-    assert not second.blocked
-    breaker.record(second)
-    repeated = breaker.inspect(
-        tool="scroll", capability="scroll",
-        args={"direction": "down", "amount": 3}, frame=frame,
-    )
-    assert repeated.blocked and repeated.prior_attempts == 2
+    assert second.blocked and second.prior_attempts == 1
 
+
+def test_action_guard_allows_same_action_after_progress() -> None:
     breaker = WorkerActionCircuitBreaker()
-    for direction in ("down", "up"):
-        decision = breaker.inspect(
-            tool="scroll", capability="scroll", args={"direction": direction}, frame=frame,
-        )
-        breaker.record(decision)
-    cycle = breaker.inspect(
-        tool="scroll", capability="scroll", args={"direction": "down"}, frame=frame,
+    first = breaker.inspect(
+        tool="open_url",
+        capability="open_url",
+        args={"url": "https://example.test/"},
+        frame=MaterializedFrame(
+            frame_id="frame:1",
+            screenshot_path="frame:1.png",
+            url="https://before.example/",
+        ),
     )
-    assert cycle.blocked and "two-state action cycle" in cycle.reason
+    breaker.record(first)
+
+    repeated = breaker.inspect(
+        tool="open_url",
+        capability="open_url",
+        args={"url": "https://example.test/"},
+        frame=MaterializedFrame(
+            frame_id="frame:2",
+            screenshot_path="frame:2.png",
+            url="https://redirected.example/",
+        ),
+    )
+
+    assert not repeated.blocked
+    assert repeated.prior_attempts == 0
 
 
 def test_explicit_no_effect_exhausts_an_unchanged_action_retry() -> None:
@@ -141,7 +226,7 @@ def test_explicit_no_effect_exhausts_an_unchanged_action_retry() -> None:
     )
 
     assert repeated.blocked
-    assert repeated.prior_attempts == 2
+    assert repeated.prior_attempts == 1
 
 
 def test_runtime_blocks_disabled_structured_control() -> None:
@@ -161,7 +246,7 @@ def test_runtime_blocks_disabled_structured_control() -> None:
     assert "disabled control" in decision.reason
 
 
-def test_runtime_guard_returns_query_entry_recovery_without_runtime_inference() -> None:
+def test_runtime_guard_does_not_choose_query_entry_recovery() -> None:
     frame = MaterializedFrame(
         frame_id="frame:query", screenshot_path="frame.png",
         controls=[{
@@ -175,7 +260,7 @@ def test_runtime_guard_returns_query_entry_recovery_without_runtime_inference() 
     )
 
     assert decision.blocked is True
-    assert "query-entry control 'Search'" in decision.instruction
+    assert "Runtime guard as authoritative" in decision.instruction
 
 
 def test_runtime_rejects_spatial_target_inside_clipped_collection_cell() -> None:
@@ -290,7 +375,7 @@ def test_action_guard_allows_typing_into_editable_aria_combobox() -> None:
 
 
 def test_runtime_decodes_provider_encoded_coordinate_pair() -> None:
-    assert _decode_ordered_actions(
+    assert decode_ordered_actions(
         '[{"name":"tap","args":{"x":499,499,"description":"Tap splash"}}]'
     ) == [{
         "name": "tap",
@@ -298,12 +383,12 @@ def test_runtime_decodes_provider_encoded_coordinate_pair() -> None:
     }]
 
 
-def test_android_runtime_rejects_browser_only_worker_action() -> None:
+def test_runtime_exposes_only_active_adapter_capabilities() -> None:
     runtime = object.__new__(ToolAgentRuntime)
     runtime.bundle = SimpleNamespace(platform="android")
     runtime._platform_capabilities = frozenset({"tap", "scroll", "back"})
     runtime.data_store = RuntimeDataStore()
-    spec = WorkerSpec(
+    spec = _worker_spec(
         goal="Choose the required visible option",
         success_criteria=["The requested option is selected"],
         actions=[DynamicActionSpec(
@@ -314,8 +399,9 @@ def test_android_runtime_rejects_browser_only_worker_action() -> None:
         )],
     )
 
-    with pytest.raises(ProtocolError, match="unavailable on the android adapter"):
-        runtime._initial_worker_actions(spec)
+    actions = runtime._initial_worker_actions(spec)
+
+    assert {action.capability for action in actions} == {"tap", "scroll", "back"}
 
 
 def _browser_runtime(**overrides) -> ToolAgentRuntime:
@@ -323,17 +409,19 @@ def _browser_runtime(**overrides) -> ToolAgentRuntime:
     runtime.__dict__.update({
         "bundle": SimpleNamespace(platform="browser"),
         "_platform_capabilities": frozenset({"scroll", "open_url", "back"}),
-        "_task_goal": "Read a public reference",
+        "_task_goal": "Read https://initial.example.test/ as a public reference",
         "_master_knowledge": "",
+        "_worker_knowledge": "",
+        "_start_page_url": "",
         "_worker_access_context": "",
         "data_store": RuntimeDataStore(),
     }, **overrides)
     return runtime
 
 
-def test_master_fixed_navigation_replaces_worker_owned_navigation() -> None:
+def test_runtime_supplies_generic_navigation_without_master_actions() -> None:
     runtime = _browser_runtime()
-    fixed_spec = WorkerSpec(
+    fixed_spec = _worker_spec(
         goal="Reach the replacement reference path",
         success_criteria=["The replacement reference is visible"],
         actions=[DynamicActionSpec(
@@ -346,12 +434,10 @@ def test_master_fixed_navigation_replaces_worker_owned_navigation() -> None:
 
     actions = runtime._initial_worker_actions(fixed_spec)
 
-    assert "open_replacement_reference" in {action.name for action in actions}
-    assert "runtime_open_url" not in {action.name for action in actions}
-    assert "runtime_browser_back" not in {action.name for action in actions}
+    assert {action.name for action in actions} == {"back", "open_url", "scroll"}
 
 
-def test_worker_owned_navigation_cannot_replace_an_active_web_origin() -> None:
+def test_navigation_allows_public_root_but_requires_deep_route_provenance() -> None:
     runtime = _browser_runtime()
     neutral = MaterializedFrame(
         frame_id="frame:neutral",
@@ -364,27 +450,36 @@ def test_worker_owned_navigation_cannot_replace_an_active_web_origin() -> None:
     })
 
     runtime._validate_runtime_open_url(
-        "https://initial.example.test/", frame=neutral, master_delegated=False,
+        "https://initial.example.test/", frame=neutral,
     )
     runtime._validate_runtime_open_url(
-        "https://active.example.test/next", frame=active, master_delegated=False,
+        "https://active.example.test/next", frame=active,
     )
-    with pytest.raises(_WorkerSpecExpansionRequired, match="Strategy Planner must declare"):
-        runtime._validate_runtime_open_url(
-            "https://replacement.example.test/",
-            frame=active,
-            master_delegated=False,
-        )
     runtime._validate_runtime_open_url(
         "https://replacement.example.test/",
         frame=active,
-        master_delegated=True,
+    )
+    with pytest.raises(_WorkerActionRejected, match="lacks exact task"):
+        runtime._validate_runtime_open_url(
+            "https://replacement.example.test/deep/path",
+            frame=active,
+        )
+    runtime._master_knowledge = (
+        "Use https://replacement.example.test/deep/path when needed."
+    )
+    runtime._validate_runtime_open_url(
+        "https://replacement.example.test/deep/path",
+        frame=active,
     )
     for invalid in ("/relative", "ftp://example.test/file", "https://user@example.test/"):
         with pytest.raises(ValueError, match="absolute HTTP"):
             runtime._validate_runtime_open_url(
-                invalid, frame=neutral, master_delegated=True,
+                invalid, frame=neutral,
             )
+    with pytest.raises(ValueError, match="private, loopback"):
+        runtime._validate_runtime_open_url(
+            "http://127.0.0.1/internal", frame=neutral,
+        )
 
 
 def test_android_runtime_discovers_installed_apps_for_worker_prompt() -> None:
@@ -393,7 +488,7 @@ def test_android_runtime_discovers_installed_apps_for_worker_prompt() -> None:
     runtime.platform = SimpleNamespace(list_apps=lambda: ["Settings", "Calendar"])
     runtime._master_knowledge = ""
     runtime._worker_access_context = ""
-    spec = WorkerSpec(
+    spec = _worker_spec(
         goal="Open Calendar",
         success_criteria=["Calendar is visible"],
         actions=[DynamicActionSpec(
@@ -410,7 +505,7 @@ def test_android_runtime_discovers_installed_apps_for_worker_prompt() -> None:
     assert '"Settings"' in prompt
 
 
-def test_multi_action_worker_prompt_is_platform_neutral() -> None:
+def test_worker_prompt_defines_safe_batching_once() -> None:
     runtime = object.__new__(ToolAgentRuntime)
     runtime.allow_multi_action = True
     runtime._platform_capabilities = frozenset({"tap"})
@@ -419,7 +514,7 @@ def test_multi_action_worker_prompt_is_platform_neutral() -> None:
     runtime._worker_access_context = ""
 
     prompt = runtime._worker_system_prompt(
-        WorkerSpec(
+        _worker_spec(
             goal="Complete the visible operation",
             success_criteria=["The requested state is visible"],
             actions=[DynamicActionSpec(
@@ -431,43 +526,45 @@ def test_multi_action_worker_prompt_is_platform_neutral() -> None:
         [],
     )
 
-    for capability in (
-        "clear_text",
-        "press_enter",
-        "select_option",
-        "open_url",
-        "launch_app",
-        "app_switch",
-        "long_press",
-    ):
-        assert capability not in prompt
+    assert "Batch only actions grounded in the current frame" in prompt
+    assert "batch `type` followed by `press_enter`" in prompt
+    assert "## Ordered multi-action mode" not in prompt
 
 
 @pytest.mark.parametrize(
-    ("platform_name", "capabilities", "applications", "expected", "excluded"),
+    ("enabled", "expected"),
+    [(False, 1), (True, MAX_ORDERED_ACTIONS)],
+)
+def test_worker_action_limit_is_owned_by_runtime(
+    enabled: bool,
+    expected: int,
+) -> None:
+    runtime = object.__new__(ToolAgentRuntime)
+    runtime.allow_multi_action = enabled
+    runtime.worker_cfg = SimpleNamespace(max_actions_per_call=1)
+
+    assert runtime._worker_action_limit() == expected
+
+
+@pytest.mark.parametrize(
+    ("platform_name", "capabilities", "applications"),
     [
         (
             "android",
             {"tap", "drag", "launch_app"},
             ["Settings", "Calendar"],
-            {"tap", "drag", "launch_app"},
-            {"open_url", "select_option"},
         ),
         (
             "browser",
             {"tap", "open_url", "select_option"},
             [],
-            {"tap", "open_url", "select_option"},
-            {"drag", "launch_app"},
         ),
     ],
 )
-def test_platform_prompt_context_contains_only_active_adapter_contracts(
+def test_master_platform_context_excludes_runtime_action_contracts(
     platform_name: str,
     capabilities: set[str],
     applications: list[str],
-    expected: set[str],
-    excluded: set[str],
 ) -> None:
     runtime = object.__new__(ToolAgentRuntime)
     runtime.bundle = SimpleNamespace(platform=platform_name)
@@ -476,12 +573,7 @@ def test_platform_prompt_context_contains_only_active_adapter_contracts(
 
     context = runtime._platform_prompt_context()
 
-    assert context["name"] == platform_name
-    assert set(context["action_contracts"]) == expected
-    assert excluded.isdisjoint(context["action_contracts"])
-    assert context["applications"] == applications
-    for capability, schema in context["action_contracts"].items():
-        assert schema == capability_parameters(capability)
+    assert context == {"name": platform_name, "applications": applications}
 
 
 def test_private_access_context_reaches_worker_but_is_redacted_from_trace() -> None:
@@ -496,7 +588,7 @@ def test_private_access_context_reaches_worker_but_is_redacted_from_trace() -> N
     runtime._master_knowledge = "Account settings are available from the profile menu."
     runtime._access_log_redactions = _access_log_redactions(access_context)
     runtime.trace = []
-    spec = WorkerSpec(
+    spec = _worker_spec(
         goal="Reach the authenticated page",
         success_criteria=["The authenticated page is visible"],
         actions=[DynamicActionSpec(
@@ -506,7 +598,7 @@ def test_private_access_context_reaches_worker_but_is_redacted_from_trace() -> N
         )],
     )
 
-    prompt = runtime._worker_system_prompt(spec, spec.actions)
+    prompt = runtime._worker_system_prompt(spec, spec._test_actions)
 
     assert "Session access context" in prompt
     assert "runtime-user-73" in prompt
@@ -532,9 +624,8 @@ def test_worker_prompt_keeps_stable_context_before_compact_attempt_contract() ->
     runtime = object.__new__(ToolAgentRuntime)
     runtime._master_knowledge = "The settings page is reached from the profile menu."
     runtime._worker_access_context = "Use the active authenticated session."
-    first = WorkerSpec(
+    first = _worker_spec(
         goal="Find the requested record",
-        strategy="Search the current visible record grid",
         success_criteria=["The record is visible"],
         actions=[DynamicActionSpec(
             name="search_record",
@@ -542,32 +633,33 @@ def test_worker_prompt_keeps_stable_context_before_compact_attempt_contract() ->
             description="Search the visible record grid using the requested literal.",
             fixed_args={"text": "record-17"},
         )],
+        approach="Search the visible record grid for record-17.",
     )
-    revised = WorkerSpec(
+    revised = _worker_spec(
         goal="Find the requested record",
-        strategy="Open the records surface before locating the record",
         success_criteria=["The record is visible"],
         actions=[DynamicActionSpec(
             name="open_records",
             capability="tap",
             description="Open the visible records control.",
         )],
+        approach="Open the records surface through its visible navigation.",
     )
 
-    first_prompt = runtime._worker_system_prompt(first, first.actions)
-    revised_prompt = runtime._worker_system_prompt(revised, revised.actions)
+    first_prompt = runtime._worker_system_prompt(first, first._test_actions)
+    revised_prompt = runtime._worker_system_prompt(revised, revised._test_actions)
     delimiter = "## Worker attempt contract"
 
     assert first_prompt.split(delimiter, 1)[0] == revised_prompt.split(delimiter, 1)[0]
     assert first_prompt.index("Application knowledge") < first_prompt.index(delimiter)
     assert first_prompt.index("Session access context") < first_prompt.index(delimiter)
-    assert '"fixed_args": {"text": "record-17"}' in first_prompt
+    assert '"approach": "Search the visible record grid for record-17."' in first_prompt
     assert '"goal": "Find the requested record"' in first_prompt
-    assert '"strategy": "Search the current visible record grid"' in first_prompt
-    assert '"strategy": "Open the records surface before locating the record"' in revised_prompt
+    assert '"name": "search_record"' in first_prompt
+    assert '"name": "open_records"' in revised_prompt
     assert "Search the visible record grid using the requested literal." not in first_prompt
     attempt_contract = first_prompt.split(delimiter, 1)[1]
-    assert '"capability"' not in attempt_contract
+    assert '"capability": "type"' in attempt_contract
     assert '"exposed_args"' not in attempt_contract
 
 
@@ -587,7 +679,7 @@ def test_runtime_materializes_result_ref_into_fixed_action_argument() -> None:
             "required": ["description"],
         },
     )
-    spec = WorkerSpec.model_validate({
+    spec = _validated_worker_spec({
         "profile": "operator",
         "goal": "Apply the computed description",
         "success_criteria": ["The computed description is saved"],
@@ -608,7 +700,7 @@ def test_runtime_materializes_result_ref_into_fixed_action_argument() -> None:
     assert bound.fixed_args == {"text": "3 customer(s) love it!"}
     assert bound.input_args == {}
     assert "text" not in bound.exposed_args
-    assert any(item.name == "runtime_type_visible" for item in actions)
+    assert "enter_computed_description" in {item.name for item in actions}
     runtime._active_worker_id = "apply_description"
     runtime._worker_journals = {
         "apply_description": WorkerJournal(worker_id="apply_description")
@@ -618,7 +710,7 @@ def test_runtime_materializes_result_ref_into_fixed_action_argument() -> None:
         actions,
         MaterializedFrame(frame_id="frame:2", screenshot_path="frame.png"),
     )
-    assert "runtime_type_visible" in {
+    assert "enter_computed_description" in {
         tool["function"]["name"] for tool in tools
     }
     prompt = runtime._worker_system_prompt(spec, actions)
@@ -628,7 +720,40 @@ def test_runtime_materializes_result_ref_into_fixed_action_argument() -> None:
     assert '"task_goal"' not in prompt
 
 
-def test_bound_type_waits_until_structured_query_input_is_open() -> None:
+def test_worker_reports_blocker_without_deciding_strategy_failure() -> None:
+    runtime = object.__new__(ToolAgentRuntime)
+    runtime.perception_mode = "enhanced"
+    runtime.allow_multi_action = False
+    runtime._active_worker_id = "replacement_worker"
+    journal = WorkerJournal(worker_id="replacement_worker")
+    runtime._worker_journals = {"replacement_worker": journal}
+    spec = _validated_worker_spec({
+        "profile": "operator",
+        "goal": "Reach the replacement surface",
+        "success_criteria": ["The replacement surface is visible"],
+        "actions": [{
+            "name": "open_replacement",
+            "capability": "open_url",
+            "description": "Open the Strategy-bound replacement surface",
+            "fixed_args": {"url": "https://replacement.example.test/"},
+        }],
+    })
+    frame = MaterializedFrame(
+        frame_id="frame:replacement",
+        screenshot_path="replacement.png",
+        url="https://blocked.example.test/",
+    )
+
+    pending = runtime._worker_tools_for_frame(spec, spec._test_actions, frame)
+    journal.executed_tools.add("open_replacement")
+    attempted = runtime._worker_tools_for_frame(spec, spec._test_actions, frame)
+
+    assert "report_blocked" in {tool["function"]["name"] for tool in pending}
+    assert "report_blocked" in {tool["function"]["name"] for tool in attempted}
+    assert "fail" not in {tool["function"]["name"] for tool in pending}
+
+
+def test_bound_type_remains_a_worker_choice_on_closed_query_surface() -> None:
     runtime = object.__new__(ToolAgentRuntime)
     runtime.perception_mode = "enhanced"
     runtime.allow_multi_action = False
@@ -636,7 +761,7 @@ def test_bound_type_waits_until_structured_query_input_is_open() -> None:
     runtime._worker_journals = {
         "search_records": WorkerJournal(worker_id="search_records")
     }
-    spec = WorkerSpec.model_validate({
+    spec = _validated_worker_spec({
         "profile": "operator",
         "goal": "Find the computed record",
         "success_criteria": ["The computed record is visible"],
@@ -653,7 +778,6 @@ def test_bound_type_waits_until_structured_query_input_is_open() -> None:
             name="enter_query", capability="type",
             description="Enter the computed query", fixed_args={"text": "private"},
         ),
-        *worker_action_floor(runtime._supported_capabilities()),
     ]
     opener = MaterializedFrame(
         frame_id="frame:1", screenshot_path="frame.png",
@@ -663,102 +787,18 @@ def test_bound_type_waits_until_structured_query_input_is_open() -> None:
             "rect": {"x": 500, "y": 80, "w": 120, "h": 50},
             "action_point": {"x": 510, "y": 85},
         }],
-        required_interactions=[{
-            "capability": "tap",
-            "args": {
-                "x": 510, "y": 85,
-                "description": "Activate visible query-entry control 'Search'",
-            },
-            "description": (
-                "Activate the visible query-entry control 'Search' to expose the input"
-            ),
-        }],
     )
-    editable = MaterializedFrame(
-        frame_id="frame:2", screenshot_path="frame.png",
-        controls=[{
-            "kind": "text_input", "label": "Search", "enabled": True,
-            "in_viewport": True, "is_filter": True,
-        }],
-    )
-
-    closed_names = {
+    names = {
         tool["function"]["name"]
         for tool in runtime._worker_tools_for_frame(spec, list(actions), opener)
     }
-    open_names = {
-        tool["function"]["name"]
-        for tool in runtime._worker_tools_for_frame(spec, list(actions), editable)
-    }
-
-    assert "enter_query" not in closed_names
-    assert "runtime_tap_visible" in closed_names
-    assert "enter_query" in open_names
-    assert "runtime_type_visible" not in open_names
-
-    linked_opener = opener
-    linked_names = {
-        tool["function"]["name"]
-        for tool in runtime._worker_tools_for_frame(spec, list(actions), linked_opener)
-    }
-    assert "runtime_tap_visible" in linked_names
-    assert "runtime_scroll_visible" not in linked_names
-    assert "runtime_type_visible" not in linked_names
-    assert "runtime_press_enter" not in linked_names
-    assert "request_action_patch" not in linked_names
-    linked_tap = next(
-        tool for tool in runtime._worker_tools_for_frame(
-            spec, list(actions), linked_opener,
-        )
-        if tool["function"]["name"] == "runtime_tap_visible"
-    )
-    assert "query-entry control 'Search'" in linked_tap["function"]["description"]
-    constrained = constrain_worker_action_calls([{
-        "name": "runtime_tap_visible",
-        "args": {"x": 500, "y": 700, "description": "Tap an unrelated row"},
-    }], actions, linked_opener)
-    assert constrained[0]["args"] == {
-        "x": 510.0,
-        "y": 85.0,
-        "description": "Activate visible query-entry control 'Search'",
-    }
-
-    linked_editable = linked_opener.model_copy(update={
-        "controls": [*linked_opener.controls, *editable.controls],
-        "required_interactions": [],
-    })
-    linked_editable_tools = runtime._worker_tools_for_frame(
-        spec, list(actions), linked_editable,
-    )
-    linked_editable_names = {
-        tool["function"]["name"] for tool in linked_editable_tools
-    }
-    assert "enter_query" in linked_editable_names
-    assert "request_action_patch" in linked_editable_names
-
-    mixed = editable.model_copy(update={"controls": [
-        *editable.controls,
-        {"kind": "text_input", "label": "Email", "enabled": True,
-         "in_viewport": True},
-    ]})
-    mixed_names = {
-        tool["function"]["name"]
-        for tool in runtime._worker_tools_for_frame(spec, list(actions), mixed)
-    }
-    assert {"enter_query", "runtime_type_visible"}.issubset(mixed_names)
-
-    runtime._worker_journals["search_records"].executed_tools.add("enter_query")
-    after_bound_names = {
-        tool["function"]["name"]
-        for tool in runtime._worker_tools_for_frame(spec, list(actions), editable)
-    }
-    assert "runtime_type_visible" in after_bound_names
+    assert names == {"enter_query", "complete", "report_blocked"}
 
 
 def test_global_turn_budget_is_shared_across_logical_workers() -> None:
     runtime = object.__new__(ToolAgentRuntime)
     runtime.max_turns = 2
-    runtime.max_subgoal_replans = 2
+    runtime.max_strategy_replacements = 2
     runtime._frame_no = 0
     runtime.trace = []
     events = []
@@ -775,7 +815,7 @@ def test_global_turn_budget_is_shared_across_logical_workers() -> None:
         )
 
     runtime._run_worker = run_worker
-    spec = WorkerSpec.model_validate({
+    spec = _validated_worker_spec({
         "profile": "operator",
         "goal": "Complete one UI subgoal",
         "success_criteria": ["The subgoal is complete"],
@@ -786,9 +826,9 @@ def test_global_turn_budget_is_shared_across_logical_workers() -> None:
         }],
     })
 
-    first = runtime._run_worker_with_local_replanning("first_worker", spec)
-    second = runtime._run_worker_with_local_replanning("second_worker", spec)
-    blocked = runtime._run_worker_with_local_replanning("third_worker", spec)
+    first = runtime._run_logical_worker("first_worker", spec)
+    second = runtime._run_logical_worker("second_worker", spec)
+    blocked = runtime._run_logical_worker("third_worker", spec)
 
     assert first.phase == second.phase == "completed"
     assert blocked.phase == "failed"
@@ -803,10 +843,10 @@ def test_global_turn_budget_is_shared_across_logical_workers() -> None:
     }]
 
 
-def test_strategy_planner_receives_actual_global_remaining_turns() -> None:
+def test_strategy_does_not_receive_or_control_runtime_turn_budget() -> None:
     runtime = object.__new__(ToolAgentRuntime)
     runtime.max_turns = 10
-    runtime.max_subgoal_replans = 1
+    runtime.max_strategy_replacements = 1
     runtime._frame_no = 8
     runtime._trace = lambda *_args, **_kwargs: None
 
@@ -814,16 +854,15 @@ def test_strategy_planner_receives_actual_global_remaining_turns() -> None:
         runtime._frame_no += 1
         return WorkerOutcome(phase="failed", summary="Try a distinct path", steps=1)
 
-    remaining = []
+    requests = []
     runtime._run_worker = fail_worker
-    runtime._select_worker_strategy = lambda **kwargs: (
-        remaining.append(kwargs["remaining_steps"]) or None,
+    runtime._request_strategy_decision = lambda **kwargs: (
+        requests.append(kwargs) or None,
         "No feasible attempt remains",
     )
-    spec = WorkerSpec.model_validate({
+    spec = _validated_worker_spec({
         "profile": "operator",
         "goal": "Complete one UI subgoal",
-        "strategy": "Use the current route",
         "success_criteria": ["The subgoal is complete"],
         "actions": [{
             "name": "advance_subgoal",
@@ -832,15 +871,16 @@ def test_strategy_planner_receives_actual_global_remaining_turns() -> None:
         }],
     })
 
-    runtime._run_worker_with_local_replanning("logical_worker", spec)
+    runtime._run_logical_worker("logical_worker", spec)
 
-    assert remaining == [1]
+    assert len(requests) == 1
+    assert "remaining_steps" not in requests[0]
 
 
 def test_redelegation_failure_reports_all_consumed_worker_steps() -> None:
     runtime = object.__new__(ToolAgentRuntime)
     runtime.max_turns = 50
-    runtime.max_subgoal_replans = 2
+    runtime.max_strategy_replacements = 2
     runtime._frame_no = 0
     runtime._trace = lambda *_args, **_kwargs: None
     attempts = iter((3, 4))
@@ -855,11 +895,13 @@ def test_redelegation_failure_reports_all_consumed_worker_steps() -> None:
         nonlocal revisions
         revisions += 1
         if revisions == 1:
-            return spec, "selected"
+            return spec.strategy.model_copy(
+                update={"approach": "Use the alternate visible path."}
+            ), "selected"
         raise ValueError("replacement is invalid")
 
-    runtime._select_worker_strategy = revise
-    spec = WorkerSpec.model_validate({
+    runtime._request_strategy_decision = revise
+    spec = _validated_worker_spec({
         "profile": "operator",
         "goal": "Complete one UI subgoal",
         "success_criteria": ["The subgoal is complete"],
@@ -870,26 +912,26 @@ def test_redelegation_failure_reports_all_consumed_worker_steps() -> None:
         }],
     })
 
-    outcome = runtime._run_worker_with_local_replanning("logical_worker", spec)
+    outcome = runtime._run_logical_worker("logical_worker", spec)
 
     assert outcome.phase == "failed"
     assert outcome.steps == 7
-    assert "Strategy planning failed" in outcome.summary
+    assert "Strategy decision failed" in outcome.summary
 
 
-def test_step_window_exhaustion_continues_without_master_revision() -> None:
+def test_worker_blocked_requires_a_replacement_strategy() -> None:
     runtime = object.__new__(ToolAgentRuntime)
     runtime.max_turns = 50
-    runtime.max_subgoal_replans = 1
+    runtime.max_strategy_replacements = 1
     runtime._frame_no = 0
     events = []
     runtime._trace = lambda event, **payload: events.append({"event": event, **payload})
     outcomes = iter((
         WorkerOutcome(
-            phase="failed", summary="Worker exceeded 2 steps",
-            failure_kind="step_window_exhausted", steps=2,
+            phase="failed", summary="The current source is blocked",
+            failure_kind="worker_blocked", steps=2,
         ),
-        WorkerOutcome(phase="completed", summary="Completed after continuation", steps=1),
+        WorkerOutcome(phase="completed", summary="Completed with replacement", steps=1),
     ))
     worker_ids = []
 
@@ -898,10 +940,13 @@ def test_step_window_exhaustion_continues_without_master_revision() -> None:
         return next(outcomes)
 
     runtime._run_worker = run_worker
-    runtime._revise_worker_spec = lambda **_kwargs: pytest.fail(
-        "natural step-window continuation must not call the Master"
+    runtime._request_strategy_decision = lambda **_kwargs: (
+        spec.strategy.model_copy(update={
+            "approach": "Use an evidenced alternative traversal.",
+        }),
+        "The original source is blocked.",
     )
-    spec = WorkerSpec.model_validate({
+    spec = _validated_worker_spec({
         "profile": "operator",
         "goal": "Complete one cohesive UI traversal",
         "success_criteria": ["The traversal is complete"],
@@ -913,53 +958,12 @@ def test_step_window_exhaustion_continues_without_master_revision() -> None:
         "max_steps": 2,
     })
 
-    outcome = runtime._run_worker_with_local_replanning("logical_worker", spec)
+    outcome = runtime._run_logical_worker("logical_worker", spec)
 
     assert outcome.phase == "completed"
     assert outcome.steps == 3
-    assert worker_ids == ["logical_worker", "logical_worker_replan_1"]
-    assert any(event["event"] == "worker_attempt_continued" for event in events)
-
-
-class _Worker:
-    def __init__(self) -> None:
-        self.responses = [
-            SimpleNamespace(
-                content=_state(missing=True),
-                tool_calls=[
-                    {
-                        "id": "patch-1",
-                        "name": "request_action_patch",
-                        "args": {
-                            "name": "apply_visible_filter",
-                            "capability": "tap",
-                            "description": "Apply the currently configured visible filter",
-                            "reason": "The current frame shows a separate apply control.",
-                        },
-                    }
-                ],
-            ),
-            SimpleNamespace(
-                content=_state(missing=False),
-                tool_calls=[
-                    {
-                        "id": "tap-1",
-                        "name": "apply_visible_filter",
-                        "args": {"x": 900, "y": 650},
-                    }
-                ],
-            ),
-        ]
-        self.bound_tool_names: list[set[str]] = []
-
-    def bind_tools(self, tools, **kwargs):
-        del kwargs
-        self.bound_tool_names.append({tool["function"]["name"] for tool in tools})
-        return self
-
-    def invoke(self, messages):
-        del messages
-        return self.responses.pop(0)
+    assert worker_ids == ["logical_worker", "logical_worker_strategy_1"]
+    assert any(event["event"] == "strategy_worker_dispatched" for event in events)
 
 
 class _Executor:
@@ -1035,11 +1039,22 @@ class _EmptyContentWorker:
                 content="",
                 tool_calls=[{
                     "id": "tap-1",
-                    "name": "runtime_tap_visible",
-                    "args": {"x": 400, "y": 300, "description": "Advance"},
+                    "name": "activate_visible_control",
+                    "args": {
+                        "state": json.loads(_state(missing=False)),
+                        "x": 400, "y": 300, "description": "Advance",
+                    },
                 }],
             )
         return SimpleNamespace(content=_state(missing=False), tool_calls=[])
+
+
+class _MissingStateWorker(_EmptyContentWorker):
+    def invoke(self, messages):
+        response = super().invoke(messages)
+        for call in response.tool_calls:
+            call["args"].pop("state", None)
+        return response
 
 
 class _ArrayCoordinateWorker:
@@ -1053,7 +1068,7 @@ class _ArrayCoordinateWorker:
             content="",
             tool_calls=[{
                 "id": "type-1",
-                "name": "runtime_type_visible",
+                "name": "enter_value",
                 "args": {
                     "state": {
                         "status": "exploring",
@@ -1091,14 +1106,14 @@ class _RepeatedThenGroundedWorker:
             "text": "05/31/2023",
             "description": "Enter the end date into the Purchase Date to input",
         }
-        if self.calls == 4:
+        if self.calls >= 3:
             args["x"] = 207
             args["y"] = 448
         return SimpleNamespace(
             content="",
             tool_calls=[{
                 "id": f"type-{self.calls}",
-                "name": "runtime_type_visible",
+                "name": "enter_end_date",
                 "args": args,
             }],
         )
@@ -1133,9 +1148,9 @@ class _RepeatedEffectiveScrollWorker:
 
 
 _LOGIN_ACTIONS = [
-    {"name": "runtime_type_visible", "args": {"x": 500, "y": 400, "text": "demo-user", "description": "Enter Username"}},
-    {"name": "runtime_type_visible", "args": {"x": 500, "y": 500, "text": "demo-pass", "description": "Enter Password"}},
-    {"name": "runtime_tap_visible", "args": {"x": 500, "y": 600, "description": "Tap Sign in"}},
+    {"name": "enter_username", "args": {"x": 500, "y": 400, "text": "demo-user", "description": "Enter Username"}},
+    {"name": "enter_password", "args": {"x": 500, "y": 500, "text": "demo-pass", "description": "Enter Password"}},
+    {"name": "submit_login", "args": {"x": 500, "y": 600, "description": "Tap Sign in"}},
 ]
 
 
@@ -1151,7 +1166,6 @@ class _MultiActionWorker:
         self.action_batches = action_batches
         self.state_status = state_status
         self.messages = []
-        self.strategy_status = "advancing"
         self.state_summary = "The complete login form is visible."
 
     def bind_tools(self, tools, **kwargs):
@@ -1174,8 +1188,8 @@ class _MultiActionWorker:
             "args": {
                 "state": {
                     "status": self.state_status,
-                    "strategy_status": self.strategy_status,
                     "summary": self.state_summary,
+                    "established_facts": [],
                     "next_instruction": "Fill and submit the login form.",
                 },
                 "actions": actions,
@@ -1222,16 +1236,31 @@ def _run_fused_worker(
         "gui_agent.core.tool_agent.runtime.settle_after_action",
         lambda platform, png, *, action_type: (0.0, False),
     )
-    spec = WorkerSpec(
+    spec = _worker_spec(
         goal="Complete the visible local interaction",
         success_criteria=["The requested interface state is reached"],
-        actions=actions or [DynamicActionSpec(
-            name="task_action",
-            capability="tap",
-            description="Complete the visible local interaction",
-        )],
+        actions=actions or [
+            DynamicActionSpec(
+                name="enter_username",
+                capability="type",
+                description="Enter the visible username",
+                exposed_args=["text"],
+            ),
+            DynamicActionSpec(
+                name="enter_password",
+                capability="type",
+                description="Enter the visible password",
+                exposed_args=["text"],
+            ),
+            DynamicActionSpec(
+                name="submit_login",
+                capability="tap",
+                description="Submit the visible login form",
+            ),
+        ],
         max_steps=1,
     )
+    _install_test_worker_contract(runtime, spec)
     runtime.outcome = runtime._run_worker("fused-worker", spec)
     return runtime
 
@@ -1253,84 +1282,46 @@ def test_fused_worker_executes_ordered_actions_and_discards_invalid_suffix(
 
     assert runtime.worker.calls == 1
     assert "continue_with_actions" in runtime.worker.bound_names
-    assert "runtime_type_visible" not in runtime.worker.bound_names
+    assert all(
+        name in runtime.worker.bound_schemas[-1]
+        for name in ("enter_username", "enter_password", "submit_login")
+    )
     assert len(runtime._executor.actions) == expected_actions
     assert any(event["event"] == expected_event for event in runtime.trace)
     if expected_actions == 3:
         assert any(status.startswith("Action · 2/3 · type") for status in runtime.statuses)
 
 
-def test_fused_worker_escalates_baseline_origin_change_without_dispatch(
+def test_fused_worker_repairs_unsourced_deep_navigation_on_same_frame(
     monkeypatch,
 ) -> None:
-    worker = _MultiActionWorker([[
-        {
-            "name": "runtime_open_url",
+    worker = _MultiActionWorker([
+        [{
+            "name": "open_replacement",
+            "args": {"url": "https://replacement.example.test/deep/path"},
+        }],
+        [{
+            "name": "open_replacement",
             "args": {"url": "https://replacement.example.test/"},
-        }
-    ]])
+        }],
+    ])
 
     runtime = _run_fused_worker(
         monkeypatch,
         current_url="https://active.example.test/current",
         worker=worker,
-    )
-
-    assert runtime.outcome.phase == "failed"
-    assert "Strategy Planner must declare" in runtime.outcome.summary
-    assert runtime._executor.actions == []
-    assert any(
-        event["event"] == "worker_spec_expansion_required"
-        for event in runtime.trace
-    )
-
-
-def test_blocked_strategy_escalates_before_baseline_back_dispatch(monkeypatch) -> None:
-    worker = _MultiActionWorker([[
-        {"name": "runtime_browser_back", "args": {}}
-    ]])
-    worker.strategy_status = "blocked"
-    worker.state_summary = "The current acquisition route is blocked."
-
-    runtime = _run_fused_worker(
-        monkeypatch,
-        current_url="https://example.test/unavailable",
-        worker=worker,
-    )
-
-    assert runtime.outcome.phase == "failed"
-    assert runtime.outcome.steps == 0
-    assert runtime.outcome.summary == "The current acquisition route is blocked."
-    assert runtime._executor.actions == []
-    assert any(
-        event["event"] == "worker_strategy_blocked"
-        and event["attempted_tool"] == "runtime_browser_back"
-        for event in runtime.trace
-    )
-
-
-def test_blocked_strategy_allows_one_master_declared_escape_action(monkeypatch) -> None:
-    worker = _MultiActionWorker([[
-        {"name": "leave_failed_route", "args": {"x": 500, "y": 400}}
-    ]])
-    worker.strategy_status = "blocked"
-    worker.state_summary = "The current route is blocked; the delegated exit is available."
-
-    runtime = _run_fused_worker(
-        monkeypatch,
-        current_url="https://example.test/unavailable",
-        worker=worker,
         actions=[DynamicActionSpec(
-            name="leave_failed_route",
-            capability="tap",
-            description="Use the Master-delegated exit from the failed route",
+            name="open_replacement",
+            capability="open_url",
+            description="Open the replacement reference",
         )],
     )
 
-    assert runtime.outcome.steps == 1
+    assert worker.calls == 2
     assert len(runtime._executor.actions) == 1
-    assert not any(
-        event["event"] == "worker_strategy_blocked"
+    assert runtime._executor.actions[0].action_type == "navigate"
+    assert any(
+        event["event"] == "worker_same_frame_action_repair"
         for event in runtime.trace
     )
 
@@ -1363,7 +1354,10 @@ def test_fused_worker_returns_typed_failure_after_repeated_empty_action_envelope
 def test_fused_worker_rejects_terminal_state_with_continuing_action(
     monkeypatch, state_status: str,
 ) -> None:
-    actions = [[{"name": "task_action", "args": {"x": 500, "y": 500}}]] * 2
+    actions = [[{
+        "name": "submit_login",
+        "args": {"x": 500, "y": 500, "description": "Submit the login form"},
+    }]] * 2
     worker = _MultiActionWorker(actions, state_status=state_status)
     runtime = _run_fused_worker(
         monkeypatch,
@@ -1419,7 +1413,7 @@ def test_worker_repairs_rejected_launch_app_without_reobserving(monkeypatch) -> 
         "gui_agent.core.tool_agent.runtime.settle_after_action",
         lambda platform, png, *, action_type: (0.0, False),
     )
-    spec = WorkerSpec(
+    spec = _worker_spec(
         goal="Open system settings",
         success_criteria=["System settings is visible"],
         actions=[DynamicActionSpec(
@@ -1431,6 +1425,7 @@ def test_worker_repairs_rejected_launch_app_without_reobserving(monkeypatch) -> 
         max_steps=1,
     )
 
+    _install_test_worker_contract(runtime, spec)
     runtime._run_worker("open-settings", spec)
 
     assert runtime.observe_calls == 1
@@ -1442,94 +1437,38 @@ def test_worker_repairs_rejected_launch_app_without_reobserving(monkeypatch) -> 
     )
 
 
-def test_multi_action_suffix_requires_stable_visible_targets() -> None:
+def test_multi_action_continuation_uses_adapter_and_control_facts() -> None:
     runtime = object.__new__(ToolAgentRuntime)
-    specs = {
-        name: DynamicActionSpec(name=name, capability=capability, description=name)
-        for name, capability in {
-            "tap": "tap", "clear": "clear_text", "type": "type", "scroll": "scroll"
-        }.items()
-    }
-    type_call = {"name": "type", "args": {"x": 500, "y": 400}}
+    runtime.perception_mode = "enhanced"
+    runtime._executor = SimpleNamespace(
+        type_suffix_safe=False,
+        refresh_controls=lambda: [],
+    )
+    tap = DynamicActionSpec(name="tap", capability="tap", description="Tap")
+    type_action = DynamicActionSpec(name="type", capability="type", description="Type")
+    scroll = DynamicActionSpec(name="scroll", capability="scroll", description="Scroll")
+    actions = {item.name: item for item in (tap, type_action, scroll)}
+    remaining = [{"name": "type", "args": {}, "_control_ref": "input"}]
+    selection = MaterializedFrame(
+        frame_id="selection", screenshot_path="frame.png", controls=[{
+            "kind": "checkbox", "selection_mode": "multiple",
+            "rect": {"x": 500, "y": 500, "w": 100, "h": 100},
+        }],
+    )
 
-    assert runtime._suffix_requires_reobservation(
-        call={"name": "tap", "args": {"x": 500, "y": 400}},
-        action=specs["tap"],
-        remaining=[{"name": "clear", "args": {}}, type_call],
-        action_by_name=specs,
-    ) == ""
-    assert "invalidate coordinates" in runtime._suffix_requires_reobservation(
-        call={"name": "scroll", "args": {}},
-        action=specs["scroll"],
-        remaining=[type_call],
-        action_by_name=specs,
+    assert runtime._can_continue_batch(
+        tap, {"x": 500, "y": 500}, remaining, actions, selection,
+    )
+    assert not runtime._can_continue_batch(
+        scroll, {}, remaining, actions, selection,
+    )
+    runtime.perception_mode = "vision-only"
+    assert not runtime._can_continue_batch(
+        type_action, {"x": 500, "y": 500}, remaining, actions, selection,
     )
 
 
-def test_android_focus_requires_reobservation_before_type() -> None:
-    runtime = object.__new__(ToolAgentRuntime)
-    runtime._executor = type("AndroidExecutorStub", (), {
-        "tap_type_suffix_safe": False,
-        "type_suffix_safe": False,
-    })()
-    tap = DynamicActionSpec(name="tap", capability="tap", description="focus")
-    type_action = DynamicActionSpec(name="type", capability="type", description="type")
-
-    focus_reason = runtime._suffix_requires_reobservation(
-        call={"name": "tap", "args": {"x": 500, "y": 900}},
-        action=tap,
-        remaining=[{"name": "type", "args": {"x": 500, "y": 900}}],
-        action_by_name={"tap": tap, "type": type_action},
-    )
-    type_reason = runtime._suffix_requires_reobservation(
-        call={"name": "type", "args": {"x": 500, "y": 900}},
-        action=type_action,
-        remaining=[{"name": "tap", "args": {"x": 500, "y": 700}}],
-        action_by_name={"tap": tap, "type": type_action},
-    )
-
-    assert "invalidate coordinates" in focus_reason
-    assert "reflow" in type_reason
-
-
-@pytest.mark.parametrize("selectable_kind", ["checkbox", "button"])
-def test_multi_action_suffix_allows_distinct_visible_noncommit_taps(
-    selectable_kind: str,
-) -> None:
-    runtime = object.__new__(ToolAgentRuntime)
-    tap = DynamicActionSpec(name="tap", capability="tap", description="tap")
-    frame = MaterializedFrame(
-        frame_id="frame:members",
-        screenshot_path="frame.png",
-        controls=[{
-            "kind": "button" if label == "Add Members" else selectable_kind,
-            "label": label,
-            "selection_mode": "multiple",
-            "rect": {"x": 500, "y": y, "w": 1000, "h": 60},
-            **({"form_action": "commit"} if label == "Add Members" else {}),
-        } for label, y in (("alex", 240), ("arjun", 320), ("Add Members", 900))],
-    )
-
-    stable = runtime._suffix_requires_reobservation(
-        call={"name": "tap", "args": {"x": 900, "y": 240}},
-        action=tap,
-        remaining=[{"name": "tap", "args": {"x": 900, "y": 320}}],
-        action_by_name={"tap": tap},
-        frame=frame,
-    )
-    commit = runtime._suffix_requires_reobservation(
-        call={"name": "tap", "args": {"x": 900, "y": 320}},
-        action=tap,
-        remaining=[{"name": "tap", "args": {"x": 500, "y": 900}}],
-        action_by_name={"tap": tap},
-        frame=frame,
-    )
-
-    assert stable == ""
-    assert "invalidate coordinates" in commit
-
-
-def test_android_form_suffix_rebinds_after_keyboard_reflow() -> None:
+def test_action_suffix_rebinds_after_layout_change() -> None:
     controls = [
         {"kind": kind, "ref": ref, "rect": {"x": 500, "y": y, "w": 500, "h": 60}}
         for kind, ref, y in (
@@ -1541,16 +1480,11 @@ def test_android_form_suffix_rebinds_after_keyboard_reflow() -> None:
         for item in controls
     ]
     runtime = object.__new__(ToolAgentRuntime)
-    runtime._executor = SimpleNamespace(
-        tap_type_suffix_safe=False,
-        type_suffix_safe=False,
-        refresh_controls=lambda: shifted,
-    )
+    runtime._executor = SimpleNamespace(refresh_controls=lambda: shifted)
     tap = DynamicActionSpec(name="tap", capability="tap", description="Tap")
     type_action = DynamicActionSpec(
         name="type", capability="type", description="Type", exposed_args=["text"],
     )
-    actions = {"tap": tap, "type": type_action}
     remaining = [
         {"name": "type", "args": {"x": 500, "y": 400, "text": "user"}},
         {"name": "tap", "args": {"x": 500, "y": 600}},
@@ -1561,75 +1495,9 @@ def test_android_form_suffix_rebinds_after_keyboard_reflow() -> None:
     for call, ref in zip(remaining, ("username", "submit"), strict=True):
         call["_control_ref"] = ref
 
-    runtime.perception_mode = "enhanced"
-    assert runtime._refreshable_action_suffix("tap", remaining, actions)
     assert runtime._refresh_next_action(remaining[0], type_action, frame)
     assert runtime._refresh_next_action(remaining[1], tap, frame)
     assert [call["args"]["y"] for call in remaining] == [350, 550]
-
-
-def test_enhanced_tap_suffix_rebinds_an_already_visible_enabled_confirmation() -> None:
-    controls = [
-        {"kind": "button", "ref": "choice", "enabled": True,
-         "selection_mode": "single",
-         "rect": {"x": 500, "y": 500, "w": 400, "h": 80}},
-        {"kind": "button", "ref": "confirm", "enabled": False,
-         "form_action": "commit",
-         "rect": {"x": 700, "y": 800, "w": 200, "h": 80}},
-    ]
-    refreshed = [
-        controls[0],
-        {**controls[1], "enabled": True,
-         "rect": {**controls[1]["rect"], "y": 780}},
-    ]
-    runtime = object.__new__(ToolAgentRuntime)
-    runtime.perception_mode = "enhanced"
-    runtime._executor = SimpleNamespace(refresh_controls=lambda: refreshed)
-    tap = DynamicActionSpec(name="tap", capability="tap", description="Tap")
-    remaining = [{
-        "name": "tap",
-        "args": {"x": 700, "y": 800},
-        "_control_ref": "confirm",
-    }]
-    frame = MaterializedFrame(
-        frame_id="frame:chooser", screenshot_path="chooser.png", controls=controls,
-    )
-
-    assert runtime._refreshable_action_suffix("tap", remaining, {"tap": tap})
-    assert runtime._suffix_requires_reobservation(
-        call={"name": "tap", "args": {"x": 500, "y": 500}},
-        action=tap,
-        remaining=remaining,
-        action_by_name={"tap": tap},
-        frame=frame,
-    ) == ""
-    assert runtime._refresh_next_action(remaining[0], tap, frame)
-    assert remaining[0]["args"]["y"] == 780
-
-
-def test_enhanced_navigation_button_still_aborts_action_suffix() -> None:
-    runtime = object.__new__(ToolAgentRuntime)
-    runtime.perception_mode = "enhanced"
-    runtime._executor = SimpleNamespace(refresh_controls=lambda: [])
-    tap = DynamicActionSpec(name="tap", capability="tap", description="Tap")
-    frame = MaterializedFrame(
-        frame_id="frame:wizard", screenshot_path="wizard.png", controls=[{
-            "kind": "button", "ref": "next", "label": "Next",
-            "rect": {"x": 800, "y": 900, "w": 200, "h": 80},
-        }],
-    )
-
-    reason = runtime._suffix_requires_reobservation(
-        call={"name": "tap", "args": {"x": 800, "y": 900}},
-        action=tap,
-        remaining=[{
-            "name": "tap", "args": {"x": 800, "y": 900},
-            "_control_ref": "next",
-        }],
-        action_by_name={"tap": tap}, frame=frame,
-    )
-
-    assert "invalidate coordinates" in reason
 
 
 def _candidate_frame(
@@ -1679,69 +1547,20 @@ def test_multi_action_runtime_accepts_five_and_rejects_six_calls() -> None:
         capability="tap",
         description="Tap a target",
     )]
-    calls = [{"name": "tap", "args": {}}] * MAX_ORDERED_ACTIONS
+    calls = [{
+        "name": "tap",
+        "args": {"x": 100, "y": 100, "description": "Visible test button"},
+    }] * MAX_ORDERED_ACTIONS
 
     ToolAgentRuntime._validate_multi_action_calls(calls, actions)
     with pytest.raises(ProtocolError, match=f"1–{MAX_ORDERED_ACTIONS} actions"):
         ToolAgentRuntime._validate_multi_action_calls([*calls, calls[0]], actions)
 
 
-def test_worker_patches_action_space_and_acts_on_same_frame(monkeypatch) -> None:
+def test_worker_rejects_missing_tool_state_without_executing(monkeypatch) -> None:
     runtime = object.__new__(ToolAgentRuntime)
     runtime.trace = []
-    runtime.worker = _Worker()
-    runtime._executor = _Executor()
-    runtime.platform = object()
-    observe_calls = []
-
-    def _observe(spec):
-        observe_calls.append(spec)
-        return (
-            MaterializedFrame(
-                frame_id="frame:1",
-                screenshot_path="frame.png",
-            ),
-            b"png",
-        )
-
-    runtime._observe = _observe
-    monkeypatch.setattr(
-        "gui_agent.core.tool_agent.runtime.settle_after_action",
-        lambda platform, png, *, action_type: (0.0, False),
-    )
-    spec = WorkerSpec(
-        goal="Complete one cohesive filtered-data subgoal",
-        success_criteria=["The configured filter is applied"],
-        actions=[
-            DynamicActionSpec(
-                name="reveal_more",
-                capability="scroll",
-                description="Reveal more content",
-                fixed_args={"direction": "down"},
-            )
-        ],
-        max_steps=1,
-    )
-
-    outcome = runtime._run_worker("filtered_subgoal", spec)
-
-    assert outcome.steps == 1
-    assert len(observe_calls) == 1
-    assert "apply_visible_filter" not in runtime.worker.bound_tool_names[0]
-    assert "apply_visible_filter" in runtime.worker.bound_tool_names[1]
-    assert len(runtime._executor.actions) == 1
-    assert runtime._executor.actions[0].action_type == "tap"
-    assert runtime._executor.actions[0].x == 900
-    assert runtime._executor.actions[0].y == 650
-    patches = [event for event in runtime.trace if event["event"] == "worker_action_patch"]
-    assert len(patches) == 1
-    assert patches[0]["frame_id"] == "frame:1"
-
-
-def test_worker_compatibly_accepts_missing_content_without_another_llm_call(monkeypatch) -> None:
-    runtime = object.__new__(ToolAgentRuntime)
-    runtime.trace = []
-    runtime.worker = _EmptyContentWorker()
+    runtime.worker = _MissingStateWorker()
     runtime._executor = _Executor()
     runtime.platform = object()
     runtime._observe = lambda spec: (
@@ -1752,33 +1571,29 @@ def test_worker_compatibly_accepts_missing_content_without_another_llm_call(monk
         "gui_agent.core.tool_agent.runtime.settle_after_action",
         lambda platform, png, *, action_type: (0.0, False),
     )
-    spec = WorkerSpec(
+    spec = _worker_spec(
         goal="Advance one cohesive subgoal",
         success_criteria=["The visible control is activated"],
         actions=[DynamicActionSpec(
-            name="reveal_more",
-            capability="scroll",
-            description="Reveal more content",
-            fixed_args={"direction": "down"},
+            name="activate_visible_control",
+            capability="tap",
+            description="Activate the visible control",
         )],
         max_steps=1,
     )
 
+    _install_test_worker_contract(runtime, spec)
     outcome = runtime._run_worker("advance_subgoal", spec)
 
     assert outcome.phase == "failed"
-    assert len(runtime._executor.actions) == 1
-    assert runtime._executor.actions[0].x == 400
-    recovered = [event for event in runtime.trace if event["event"] == "worker_state_recovered"]
-    assert recovered == []
-    decisions = [event for event in runtime.trace if event["event"] == "worker_decision"]
-    assert decisions[0]["state_source"] == "runtime_compat"
-    assert "assistant content state unavailable" in " ".join(
-        decisions[0]["state_compatibility"]
-    )
+    assert outcome.failure_kind == "protocol_invalid"
+    assert runtime._executor.actions == []
+    assert len([
+        event for event in runtime.trace if event["event"] == "worker_protocol_error"
+    ]) == 2
 
 
-def test_replanned_gui_worker_starts_with_fresh_journal(monkeypatch) -> None:
+def test_replacement_strategy_starts_with_fresh_journal(monkeypatch) -> None:
     runtime = object.__new__(ToolAgentRuntime)
     runtime.trace = []
     runtime.worker = _EmptyContentWorker()
@@ -1792,34 +1607,35 @@ def test_replanned_gui_worker_starts_with_fresh_journal(monkeypatch) -> None:
         "gui_agent.core.tool_agent.runtime.settle_after_action",
         lambda platform, png, *, action_type: (0.0, False),
     )
-    spec = WorkerSpec(
+    spec = _worker_spec(
         goal="Advance one cohesive subgoal",
         success_criteria=["The visible control is activated"],
         actions=[DynamicActionSpec(
-            name="reveal_more",
-            capability="scroll",
-            description="Reveal more content",
-            fixed_args={"direction": "down"},
+            name="activate_visible_control",
+            capability="tap",
+            description="Activate the visible control",
         )],
         max_steps=1,
     )
 
+    _install_test_worker_contract(runtime, spec)
     first = runtime._run_worker("advance_subgoal", spec)
-    second = runtime._run_worker("advance_subgoal_replan_1", spec)
+    runtime._frame_no = 0
+    second = runtime._run_worker("advance_subgoal_strategy_1", spec)
 
     assert first.phase == second.phase == "failed"
     starts = [event for event in runtime.trace if event["event"] == "worker_started"]
-    assert [(event["attempt"], event["retained_memory_events"]) for event in starts] == [
-        (1, 0),
-        (2, 0),
-    ]
+    assert [event["retained_memory_events"] for event in starts] == [0, 0]
     decisions = [event for event in runtime.trace if event["event"] == "worker_decision"]
     assert [event["memory_event_count"] for event in decisions] == [0, 0]
     assert set(runtime._worker_journals) == {
         "advance_subgoal",
-        "advance_subgoal_replan_1",
+        "advance_subgoal_strategy_1",
     }
     assert set(runtime._worker_action_breakers) == set(runtime._worker_journals)
+    assert runtime._active_worker_journal() is runtime._worker_journals[
+        "advance_subgoal_strategy_1"
+    ]
 
 
 def test_worker_normalizes_provider_point_schema_and_executes_type(monkeypatch) -> None:
@@ -1836,18 +1652,19 @@ def test_worker_normalizes_provider_point_schema_and_executes_type(monkeypatch) 
         "gui_agent.core.tool_agent.runtime.settle_after_action",
         lambda platform, png, *, action_type: (0.0, False),
     )
-    spec = WorkerSpec(
+    spec = _worker_spec(
         goal="Enter a required value",
         success_criteria=["The value is entered"],
         actions=[DynamicActionSpec(
-            name="reveal_more",
-            capability="scroll",
-            description="Reveal more content",
-            fixed_args={"direction": "down"},
+            name="enter_value",
+            capability="type",
+            description="Enter the required value",
+            exposed_args=["text"],
         )],
         max_steps=1,
     )
 
+    _install_test_worker_contract(runtime, spec)
     runtime._run_worker("type_value", spec)
 
     assert len(runtime._executor.actions) == 1
@@ -1859,12 +1676,11 @@ def test_worker_normalizes_provider_point_schema_and_executes_type(monkeypatch) 
     decision = next(
         event for event in runtime.trace if event["event"] == "worker_decision"
     )
-    assert decision["state_source"] == "tool_args"
     assert decision["args"]["x"] == 200
     assert decision["args"]["y"] == 380
 
 
-def test_worker_fuses_third_repeated_action_and_accepts_same_frame_ref_repair(
+def test_worker_blocks_unchanged_repeat_and_accepts_same_frame_ref_repair(
     monkeypatch,
 ) -> None:
     runtime = object.__new__(ToolAgentRuntime)
@@ -1902,24 +1718,25 @@ def test_worker_fuses_third_repeated_action_and_accepts_same_frame_ref_repair(
         "gui_agent.core.tool_agent.runtime.settle_after_action",
         lambda platform, png, *, action_type: (0.0, False),
     )
-    spec = WorkerSpec(
+    spec = _worker_spec(
         goal="Set the order end date",
         success_criteria=["The end date is set"],
         actions=[DynamicActionSpec(
-            name="reveal_more",
-            capability="scroll",
-            description="Reveal more content",
-            fixed_args={"direction": "down"},
+            name="enter_end_date",
+            capability="type",
+            description="Enter the order end date",
+            exposed_args=["text"],
         )],
-        max_steps=3,
+        max_steps=2,
     )
 
+    _install_test_worker_contract(runtime, spec)
     outcome = runtime._run_worker("ground_date", spec)
 
     assert outcome.phase == "failed"
-    assert len(observed) == 3
-    assert runtime.worker.calls == 4
-    assert len(runtime._executor.actions) == 3
+    assert len(observed) == 2
+    assert runtime.worker.calls == 3
+    assert len(runtime._executor.actions) == 2
     assert (runtime._executor.actions[-1].x, runtime._executor.actions[-1].y) == (
         212,
         428,
@@ -1931,7 +1748,7 @@ def test_worker_fuses_third_repeated_action_and_accepts_same_frame_ref_repair(
     ]
     blocked = [event for event in runtime.trace if event["event"] == "worker_action_blocked"]
     assert len(blocked) == 1
-    assert blocked[0]["prior_attempts"] == 2
+    assert blocked[0]["prior_attempts"] == 1
 
 
 def test_worker_allows_effective_scrolls_until_bounded_step_limit(
@@ -1960,7 +1777,7 @@ def test_worker_allows_effective_scrolls_until_bounded_step_limit(
         "gui_agent.core.tool_agent.runtime.settle_after_action",
         lambda platform, png, *, action_type: (0.0, False),
     )
-    spec = WorkerSpec(
+    spec = _worker_spec(
         goal="Collect a long visual surface",
         success_criteria=["All relevant visible records are collected"],
         actions=[DynamicActionSpec(
@@ -1973,6 +1790,7 @@ def test_worker_allows_effective_scrolls_until_bounded_step_limit(
         max_steps=3,
     )
 
+    _install_test_worker_contract(runtime, spec)
     outcome = runtime._run_worker("visual_collection", spec)
 
     assert outcome.phase == "failed"
@@ -2002,7 +1820,7 @@ def test_vision_only_execution_does_not_use_enhanced_control_geometry(
         description="Enter the value into the visible input",
         exposed_args=["text", "description"],
     )
-    spec = WorkerSpec(
+    spec = _worker_spec(
         goal="Enter a visible value",
         success_criteria=["The value is entered"],
         actions=[action],
@@ -2058,11 +1876,11 @@ def test_worker_action_returns_flash_off_target_signal(monkeypatch) -> None:
         lambda platform, png, *, action_type: (0.0, False),
     )
     action = DynamicActionSpec(
-        name="runtime_tap_visible",
+        name="open_named_menu_item",
         capability="tap",
         description="Tap a visible control",
     )
-    spec = WorkerSpec(
+    spec = _worker_spec(
         goal="Open the named menu item",
         success_criteria=["The named menu item opens"],
         actions=[action],
@@ -2119,17 +1937,17 @@ def test_multi_action_aborts_suffix_after_flash_off_target(monkeypatch) -> None:
         lambda platform, png, *, action_type: (0.0, False),
     )
     type_action = DynamicActionSpec(
-        name="runtime_type_visible",
+        name="enter_password",
         capability="type",
         description="Type into a visible input",
         exposed_args=["text"],
     )
     tap_action = DynamicActionSpec(
-        name="runtime_tap_visible",
+        name="submit_login",
         capability="tap",
         description="Tap a visible button",
     )
-    spec = WorkerSpec(
+    spec = _worker_spec(
         goal="Complete the login form",
         success_criteria=["The login form is submitted"],
         actions=[type_action, tap_action],
@@ -2194,12 +2012,12 @@ def test_runtime_recovers_missing_exposed_action_description(monkeypatch) -> Non
         lambda platform, png, *, action_type: (0.0, False),
     )
     action = DynamicActionSpec(
-        name="runtime_scroll_visible",
+        name="reveal_required_detail",
         capability="scroll",
         description="Scroll the main content to reveal the required detail",
         exposed_args=["direction", "amount", "target_area", "description"],
     )
-    spec = WorkerSpec(
+    spec = _worker_spec(
         goal="Reveal the required detail",
         success_criteria=["The detail is visible"],
         actions=[action],
@@ -2253,7 +2071,7 @@ def test_runtime_executes_nonspatial_browser_capabilities_through_adapter_action
         description=f"Execute {capability} for the current subgoal",
         exposed_args=list(args),
     )
-    spec = WorkerSpec(
+    spec = _worker_spec(
         goal="Advance the browser subgoal",
         success_criteria=["The browser state advances"],
         actions=[action],
@@ -2328,7 +2146,7 @@ def test_runtime_executes_android_device_capabilities(
         description=f"Execute {capability} for the current Android subgoal",
         exposed_args=list(args),
     )
-    spec = WorkerSpec(
+    spec = _worker_spec(
         goal="Advance the Android subgoal",
         success_criteria=["The Android state advances"],
         actions=[action],
@@ -2366,7 +2184,7 @@ def test_runtime_rejects_launching_an_unlisted_android_app() -> None:
         description="Open the Settings application",
         fixed_args={"app": "Settings"},
     )
-    spec = WorkerSpec(
+    spec = _worker_spec(
         goal="Open Settings",
         success_criteria=["Settings is visible"],
         actions=[action],
@@ -2396,7 +2214,6 @@ def _browser_execution_runtime(
     runtime._executor = _Executor()
     runtime._visualizer = runtime._target_verify_pool = None
     runtime._active_worker_id = worker_id
-    runtime._worker_platform_rejections = {}
     runtime.platform = SimpleNamespace(client=SimpleNamespace(
         consume_action_feedback=feedback_reader,
     ))
@@ -2418,7 +2235,7 @@ def test_runtime_ignores_provider_echo_of_fixed_action_argument(monkeypatch) -> 
         description="Enter the fixed query",
         fixed_args={"text": "authoritative query"},
     )
-    spec = WorkerSpec(
+    spec = _worker_spec(
         goal="Search for the requested information",
         success_criteria=["Relevant results are visible"],
         actions=[action],
@@ -2442,7 +2259,7 @@ def test_runtime_ignores_provider_echo_of_fixed_action_argument(monkeypatch) -> 
     assert runtime._executor.actions[-1].text == "authoritative query"
 
 
-def test_runtime_surfaces_same_origin_platform_rejection(monkeypatch) -> None:
+def test_runtime_terminates_on_same_origin_platform_rejection(monkeypatch) -> None:
     rejection_feedback = [{
         "kind": "xhr",
         "url": "https://example.test/action",
@@ -2458,7 +2275,7 @@ def test_runtime_surfaces_same_origin_platform_rejection(monkeypatch) -> None:
         capability="tap",
         description="Submit the requested change",
     )
-    spec = WorkerSpec(
+    spec = _worker_spec(
         goal="Submit the requested change",
         success_criteria=["The change is accepted"],
         actions=[action],
@@ -2479,39 +2296,27 @@ def test_runtime_surfaces_same_origin_platform_rejection(monkeypatch) -> None:
         "rejected": True,
         "message": "The action is not allowed.",
     }]
-    assert terminal is None
-
-    completed_payload, completed_terminal = runtime._execute_worker_tool(
-        spec,
-        [action],
-        {"name": "complete", "args": {}},
-        b"png",
-        MaterializedFrame(frame_id="frame:2", screenshot_path="frame.png"),
-    )
-
-    assert completed_terminal == "platform_rejected"
-    assert completed_payload["reason"] == "The action is not allowed."
+    assert terminal == "platform_rejected"
 
     recovered_payload, recovered_terminal = runtime._execute_worker_tool(
         spec,
         [action],
         {"name": action.name, "args": {"x": 500, "y": 500}},
         b"png",
-        MaterializedFrame(frame_id="frame:3", screenshot_path="frame.png"),
+        MaterializedFrame(frame_id="frame:2", screenshot_path="frame.png"),
     )
     completed_payload, completed_terminal = runtime._execute_worker_tool(
         spec,
         [action],
         {"name": "complete", "args": {}},
         b"png",
-        MaterializedFrame(frame_id="frame:4", screenshot_path="frame.png"),
+        MaterializedFrame(frame_id="frame:3", screenshot_path="frame.png"),
     )
 
     assert recovered_payload["status"] == "executed"
     assert recovered_terminal is None
     assert completed_payload == {"status": "completed"}
     assert completed_terminal == "complete"
-    assert runtime._worker_platform_rejections == {}
 
 
 def test_scroll_ignores_background_request_rejection() -> None:
@@ -2535,7 +2340,6 @@ def test_failed_transport_action_skips_settle_and_returns_control(monkeypatch) -
     runtime._target_verify_pool = None
     runtime._active_worker_id = "navigation_worker"
     runtime._validate_runtime_open_url = lambda *_args, **_kwargs: None
-    runtime._worker_platform_rejections = {}
     runtime.platform = SimpleNamespace(
         client=SimpleNamespace(consume_action_feedback=lambda: [{
             "kind": "navigation",
@@ -2557,7 +2361,7 @@ def test_failed_transport_action_skips_settle_and_returns_control(monkeypatch) -
         description="Open the requested page",
         fixed_args={"url": "https://example.test/"},
     )
-    spec = WorkerSpec(
+    spec = _worker_spec(
         profile="operator",
         goal="Activate the requested state",
         success_criteria=["The requested state is visible"],
@@ -2572,27 +2376,19 @@ def test_failed_transport_action_skips_settle_and_returns_control(monkeypatch) -
         b"unchanged",
         frame,
     )
-    assert terminal is None
+    assert terminal == "navigation_blocked"
     assert payload["status"] == "failed"
     assert payload["platform_feedback"][0]["message"] == "navigation timed out"
     assert payload["settle_seconds"] == 0.0
     assert payload["no_effect"] is True
 
-    failed, failed_terminal = runtime._execute_worker_tool(
-        spec,
-        [action],
-        {"name": "fail", "args": {"reason": "The route is blocked."}},
-        b"unchanged",
-        frame,
-    )
-    assert failed_terminal == "navigation_blocked"
     outcome = WorkerOutcome(
         phase="failed",
-        summary=failed["reason"],
+        summary=payload["platform_feedback"][0]["message"],
         failure_kind="navigation_blocked",
         steps=1,
     )
-    assert "failed to satisfy" in runtime._worker_replan_reason(outcome)
+    assert Strategy.route(outcome) == "replace"
 
 
 def test_timed_out_target_verification_is_cancelled() -> None:
@@ -2631,7 +2427,7 @@ def test_collector_completion_is_unavailable_until_collection_is_ready() -> None
             "partial": True,
         },
     )
-    spec = WorkerSpec(
+    spec = _worker_spec(
         profile="collector",
         goal="Collect all records",
         success_criteria=["Collection coverage is complete"],
@@ -2659,13 +2455,13 @@ def test_collector_completion_is_unavailable_until_collection_is_ready() -> None
         collections=[collection],
         requirement_scopes={"records": {"status": "met"}},
     )
-    tools = runtime._worker_tools_for_frame(spec, spec.actions, frame)
+    tools = runtime._worker_tools_for_frame(spec, spec._test_actions, frame)
     assert "complete" not in {tool["function"]["name"] for tool in tools}
 
     with pytest.raises(ValueError, match="complete is unavailable"):
         runtime._execute_worker_tool(
             spec,
-            spec.actions,
+            spec._test_actions,
             {
                 "name": "complete",
                 "args": {},
@@ -2698,7 +2494,7 @@ def test_ready_collector_completion_uses_runtime_bound_collection_ref() -> None:
             "at_end": True,
         },
     )
-    spec = WorkerSpec(
+    spec = _worker_spec(
         profile="collector",
         goal="Collect all records",
         success_criteria=["Collection coverage is complete"],
@@ -2721,12 +2517,12 @@ def test_ready_collector_completion_uses_runtime_bound_collection_ref() -> None:
         requirement_scopes={"records": {"status": "met"}},
     )
 
-    tools = runtime._worker_tools_for_frame(spec, spec.actions, frame)
+    tools = runtime._worker_tools_for_frame(spec, spec._test_actions, frame)
     complete = next(tool for tool in tools if tool["function"]["name"] == "complete")
     assert "collection_ref" not in complete["function"]["parameters"]["properties"]
     payload, terminal = runtime._execute_worker_tool(
         spec,
-        spec.actions,
+        spec._test_actions,
         {"name": "complete", "args": {"evidence": ["coverage complete"]}},
         b"png",
         frame,
@@ -2759,7 +2555,7 @@ def test_runtime_streams_live_logs_and_observation_artifacts(tmp_path) -> None:
             b"png",
         ),
     )
-    spec = WorkerSpec(
+    spec = _worker_spec(
         profile="operator",
         goal="Reach the requested state",
         success_criteria=["The state is reached"],
@@ -2820,7 +2616,7 @@ def test_runtime_defers_detail_candidates_until_bound_action_runs(tmp_path) -> N
         ), b"png"
 
     runtime.materializer = SimpleNamespace(observe=observe)
-    spec = WorkerSpec(
+    spec = _worker_spec(
         profile="collector",
         goal="Collect the selected target details",
         success_criteria=["Every selected target has its details"],
@@ -2880,7 +2676,6 @@ def _coding_program() -> str:
         worker_id="collect_records",
         profile="collector",
         goal="Collect the requested records",
-        strategy="Traverse the current records surface to collect the requested rows",
         success_criteria=["The requested records are collected"],
         data_requirements=[{
             "id": "records",
@@ -2892,14 +2687,7 @@ def _coding_program() -> str:
                 "additionalProperties": False,
             },
         }],
-        actions=[{
-            "name": "reveal_more",
-            "capability": "scroll",
-            "description": "Reveal more records",
-            "fixed_args": {"direction": "down"},
-            "exposed_args": ["amount"],
-        }],
-        max_steps=4,
+        approach="Traverse the requested collection from the current UI.",
     )
     if result["phase"] != "completed":
         ctx.fail(result["summary"])
@@ -2913,47 +2701,22 @@ def _coding_program() -> str:
 '''
 
 
-def test_runtime_replans_inside_worker_call_without_replaying_program(tmp_path) -> None:
+def test_runtime_replaces_strategy_inside_worker_call_without_replaying_program(tmp_path) -> None:
     runtime = object.__new__(ToolAgentRuntime)
-    runtime.max_subgoal_replans = 1
+    runtime.max_strategy_replacements = 1
     runtime.max_compile_attempts = 1
     runtime.data_store = RuntimeDataStore()
     runtime.trace = []
-    replacement = {
-        "profile": "collector",
-        "goal": "Collect the requested records",
-        "strategy": "Use a larger traversal window on the current records surface",
-        "success_criteria": ["The requested records are collected"],
-        "data_requirements": [{
-            "id": "records",
-            "description": "Requested records",
-            "row_schema": {
-                "type": "object",
-                "properties": {"value": {"type": "integer"}},
-                "required": ["value"],
-                "additionalProperties": False,
-            },
-        }],
-        "actions": [{
-            "name": "reveal_more_aggressively",
-            "capability": "scroll",
-            "description": "Reveal a larger window of records",
-            "fixed_args": {
-                "direction": "down",
-                "amount": "large",
-                "target_area": "main_content",
-            },
-        }],
-        "max_steps": 4,
-    }
+    replacement = WorkerStrategy(
+        approach="Use a different visible collection traversal path.",
+    )
     runtime.master = _CodingMaster(_coding_program())
     runtime.master_cfg = SimpleNamespace(model="coding-master")
     runtime.worker_cfg = SimpleNamespace(model="visual-worker")
     runtime.materializer = SimpleNamespace(model="perception")
     runtime.perception_mode = "enhanced"
     runtime.log_dir = tmp_path
-    revised = WorkerSpec.model_validate(replacement)
-    runtime._select_worker_strategy = lambda **_kwargs: (revised, "selected")
+    runtime._request_strategy_decision = lambda **_kwargs: (replacement, "selected")
     worker_calls = []
 
     def run_worker(worker_id, spec):
@@ -2980,7 +2743,7 @@ def test_runtime_replans_inside_worker_call_without_replaying_program(tmp_path) 
         )
         return WorkerOutcome(
             phase="completed",
-            summary="Collected after local replan",
+            summary="Collected after Strategy replacement",
             collection_ref=descriptor,
             steps=2,
         )
@@ -2994,11 +2757,14 @@ def test_runtime_replans_inside_worker_call_without_replaying_program(tmp_path) 
     assert len(worker_calls) == 2
     assert [worker_id for worker_id, _ in worker_calls] == [
         "collect_records",
-        "collect_records_replan_1",
+        "collect_records_strategy_1",
+    ]
+    assert [spec.strategy.approach for _, spec in worker_calls] == [
+        "Traverse the requested collection from the current UI.",
+        "Use a different visible collection traversal path.",
     ]
     assert runtime.master.sources == []
-    assert any(event["event"] == "strategy_attempt_dispatched" for event in run.trace)
-    assert not any(event["event"] == "subgoal_replan" for event in run.trace)
+    assert any(event["event"] == "strategy_worker_dispatched" for event in run.trace)
     assert (tmp_path / "tool_agent_trace.json").is_file()
     replay = json.loads(
         (tmp_path / "tool_agent_replay.json").read_text(encoding="utf-8")
@@ -3014,7 +2780,7 @@ def test_runtime_does_not_replay_frozen_program_after_local_budget_failure(
     tmp_path,
 ) -> None:
     runtime = object.__new__(ToolAgentRuntime)
-    runtime.max_subgoal_replans = 2
+    runtime.max_strategy_replacements = 2
     runtime.max_compile_attempts = 1
     runtime.data_store = RuntimeDataStore()
     runtime.trace = []
@@ -3053,7 +2819,7 @@ def test_runtime_does_not_replay_frozen_program_after_local_budget_failure(
 
 def test_runtime_interruption_is_sealed_as_a_reportable_failed_run(tmp_path) -> None:
     runtime = object.__new__(ToolAgentRuntime)
-    runtime.max_subgoal_replans = 0
+    runtime.max_strategy_replacements = 0
     runtime.max_compile_attempts = 1
     runtime.data_store = RuntimeDataStore()
     runtime.trace = []

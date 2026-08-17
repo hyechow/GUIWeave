@@ -9,7 +9,6 @@ from gui_agent.adapters.iphone.executor import IPhoneExecutor
 from gui_agent.adapters.iphone.perception import IPhoneSession
 from gui_agent.core.runtime.factory import build_platform
 from gui_agent.core.runtime.platforms import PLATFORMS
-from gui_agent.core.tool_agent.protocol import worker_action_floor
 
 
 def test_iphone_bundle_matches_shared_platform_contract() -> None:
@@ -25,10 +24,6 @@ def test_iphone_bundle_matches_shared_platform_contract() -> None:
         "action_type": "home",
         "description": "return home",
     }), IPhoneAction)
-    floor = worker_action_floor(bundle.tool_agent_capabilities)
-    assert {action.capability for action in floor} == set(
-        bundle.tool_agent_capabilities
-    )
 
 
 def test_all_registered_platforms_expose_the_same_bundle_contract() -> None:

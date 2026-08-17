@@ -13,9 +13,7 @@ def test_webview_document_preserves_text_lines() -> None:
     )
 
     assert snapshot is not None
-    assert snapshot["tables"][0]["rows"] == [{
-        "Content": "first\n\nthird\n", "Name": "notes.txt",
-    }]
+    assert snapshot["tables"][0]["rows"] == [{"Content": "first\n\nthird\n"}]
     assert snapshot["tables"][0]["partial"] is False
 
 

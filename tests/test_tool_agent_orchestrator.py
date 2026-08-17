@@ -31,14 +31,7 @@ ctx.gui_worker(
         "description": "Requested records",
         "row_schema": {ROW_SCHEMA!r},
     }}],
-    actions=[{{
-        "name": "reveal_more",
-        "capability": "scroll",
-        "description": "Reveal more records when needed",
-        "fixed_args": {{"direction": "down", "target_area": "main_content"}},
-        "exposed_args": ["amount"],
-    }}],
-    max_steps=8,
+    approach="Execute the declared actions.",
 )
 """.strip()
 
@@ -88,6 +81,136 @@ def test_master_review_rejects_gui_micro_actions() -> None:
     assert any(item.code == "UNKNOWN_CTX_API" for item in diagnostics)
 
 
+def test_master_review_keeps_method_out_of_immutable_worker_contract() -> None:
+    source = _program(
+        '''
+outcome = ctx.gui_worker(
+    worker_id="collect_weather",
+    profile="collector",
+    goal="Retrieve weather for 2026-08-18 using the current Bing search page",
+    success_criteria=[
+        "The search query 'Shenzhen weather' has been executed",
+        "Weather for 2026-08-18 is collected",
+    ],
+    data_requirements=[{
+        "id": "weather",
+        "description": "Tomorrow's weather",
+        "row_schema": {"value": "string"},
+    }],
+    approach="Type the query and press Enter in Bing search",
+)
+ctx.fail(outcome["summary"])
+'''.strip()
+    )
+
+    diagnostics = validate_master_source(
+        source,
+        user_goal="明天的天气",
+    )
+
+    assert {item.code for item in diagnostics} >= {
+        "DATA_FILTER_BOUNDARY",
+        "WORKER_GOAL_BOUNDARY",
+        "WORKER_SUCCESS_BOUNDARY",
+        "WORKER_APPROACH_BOUNDARY",
+    }
+    filter_issue = next(
+        item for item in diagnostics if item.code == "DATA_FILTER_BOUNDARY"
+    )
+    assert "2026-08-18" in filter_issue.message
+    assert "Shenzhen weather" not in filter_issue.message
+
+
+def test_master_review_accepts_semantic_contract_and_source_approach() -> None:
+    source = _program(
+        '''
+outcome = ctx.gui_worker(
+    worker_id="collect_weather",
+    profile="collector",
+    goal="Retrieve tomorrow's weather",
+    success_criteria=["Tomorrow's weather is collected"],
+    data_requirements=[{
+        "id": "weather",
+        "description": "Tomorrow's weather",
+        "row_schema": {"value": "string"},
+    }],
+    approach="Use Bing weather results as the initial source",
+)
+ctx.fail(outcome["summary"])
+'''.strip()
+    )
+
+    diagnostics = validate_master_source(
+        source,
+        user_goal="明天的天气",
+    )
+
+    assert not any(item.code.startswith("WORKER_") for item in diagnostics)
+
+
+def test_master_review_rejects_collector_surface_success() -> None:
+    source = _program(
+        '''
+outcome = ctx.gui_worker(
+    worker_id="collect_weather",
+    profile="collector",
+    goal="Retrieve tomorrow's weather",
+    success_criteria=["The search results page is visible"],
+    approach="Public weather index",
+    data_requirements=[{
+        "id": "weather",
+        "description": "Tomorrow's weather",
+        "cardinality": "one",
+        "row_schema": {
+            "type": "object",
+            "properties": {
+                "date": {"type": "string"},
+                "temperature": {"type": "string"},
+                "condition": {"type": "string"},
+            },
+            "required": ["date", "temperature", "condition"],
+        },
+        "field_sources": {"date": "Date", "temperature": "Temperature", "condition": "Condition"},
+        "field_types": {"date": "text", "temperature": "text", "condition": "text"},
+        "filters": {"date": "2026-08-18"},
+        "coverage": "first_match",
+    }],
+)
+ctx.fail(outcome["summary"])
+'''.strip()
+    )
+
+    codes = {
+        item.code for item in validate_master_source(source, user_goal="明天深圳的天气")
+    }
+
+    assert "WORKER_SUCCESS_BOUNDARY" in codes
+
+
+def test_master_review_rejects_current_source_method_in_goal() -> None:
+    source = _program(
+        '''
+outcome = ctx.gui_worker(
+    worker_id="collect_weather",
+    profile="collector",
+    goal="Retrieve the forecast from the current search results page",
+    success_criteria=["The requested forecast is collected"],
+    data_requirements=[{
+        "id": "weather",
+        "description": "Requested forecast",
+        "row_schema": {"value": "string"},
+    }],
+    approach="Use the current search provider as the initial source",
+)
+ctx.fail(outcome["summary"])
+'''.strip()
+    )
+
+    diagnostics = validate_master_source(source, user_goal="明天的天气")
+
+    assert any(item.code == "WORKER_GOAL_BOUNDARY" for item in diagnostics)
+
+
 def test_master_review_requires_ref_strings_from_descriptors() -> None:
     descriptor_access = validate_master_source(
         "def run(ctx):\n"
@@ -117,11 +240,7 @@ outcome = ctx.gui_worker(
     goal="Read the requested records",
     success_criteria=["Every requested record was read"],
     data_requirements=[],
-    actions=[{
-        "name": "open_records",
-        "capability": "tap",
-        "description": "Open a visible record",
-    }],
+    approach="Execute the declared actions.",
 )
 result = ctx.transform(
     transform_id="count_records",
@@ -150,11 +269,7 @@ outcome = ctx.gui_worker(
     success_criteria=["The visual branch is complete"],
     input_refs={"target": target_ref},
     data_requirements=[],
-    actions=[{
-        "name": "continue_branch",
-        "capability": "tap",
-        "description": "Continue the visual branch",
-    }],
+    approach="Execute the declared actions.",
 )
 if outcome["phase"] != "completed":
     ctx.fail(outcome["summary"])
@@ -224,12 +339,7 @@ reviews = ctx.gui_worker(
             "required": ["title"],
         },
     }],
-    actions=[{
-        "name": "collect_visible_reviews",
-        "capability": "scroll",
-        "description": "Collect all review rows",
-        "fixed_args": {"direction": "down"},
-    }],
+    approach="Execute the declared actions.",
 )
 result = ctx.transform(
     transform_id="filter_reviews",
@@ -264,12 +374,7 @@ reviews = ctx.gui_worker(
             "required": ["title"],
         },
     }],
-    actions=[{
-        "name": "collect_visible_reviews",
-        "capability": "scroll",
-        "description": "Collect all review rows",
-        "fixed_args": {"direction": "down"},
-    }],
+    approach="Execute the declared actions.",
 )
 reviews_ref = reviews["collection_ref"]["ref"]
 result = ctx.transform(
@@ -306,12 +411,7 @@ reviews = ctx.gui_worker(
             "required": ["title"],
         },
     }],
-    actions=[{
-        "name": "collect_visible_reviews",
-        "capability": "scroll",
-        "description": "Collect all review rows",
-        "fixed_args": {"direction": "down"},
-    }],
+    approach="Execute the declared actions.",
 )
 reviews_ref = reviews["collection_ref"]["ref"]
 result = ctx.transform(
@@ -353,12 +453,7 @@ updated = ctx.gui_worker(
     goal="Apply the computed target text",
     success_criteria=["The computed target text is saved"],
     data_requirements=[],
-    actions=[{
-        "name": "enter_target_text",
-        "capability": "type",
-        "description": "Enter the computed target text",
-        "exposed_args": ["text"],
-    }],
+    approach="Execute the declared actions.",
 )
 if updated["phase"] != "completed":
     ctx.fail(updated["summary"])
@@ -389,11 +484,7 @@ located = ctx.gui_worker(
         },
         "field_types": {"action": "text"},
     }],
-    actions=[{
-        "name": "open_record",
-        "capability": "tap",
-        "description": "Open the matching record",
-    }],
+    approach="Execute the declared actions.",
 )
 if located["phase"] != "completed":
     ctx.fail(located["summary"])
@@ -403,11 +494,7 @@ updated = ctx.gui_worker(
     goal="Update the currently open record",
     success_criteria=["The record is saved"],
     data_requirements=[],
-    actions=[{
-        "name": "save_record",
-        "capability": "tap",
-        "description": "Save the record",
-    }],
+    approach="Execute the declared actions.",
 )
 done = ctx.transform(
     transform_id="done",
@@ -447,12 +534,7 @@ updated = ctx.gui_worker(
     success_criteria=["Every target is saved"],
     input_refs={"targets": rows["ref"]},
     data_requirements=[],
-    actions=[{
-        "name": "locate_target",
-        "capability": "type",
-        "description": "Locate one target",
-        "input_args": {"text": {"input": "targets", "path": ["id"]}},
-    }],
+    approach="Execute the declared actions.",
 )
 if updated["phase"] != "completed":
     ctx.fail(updated["summary"])
@@ -479,14 +561,14 @@ def test_master_review_finds_array_nested_in_private_schema() -> None:
     )
 
 
-def test_master_review_normalizes_lossless_task544_schema_variants() -> None:
+def test_master_review_accepts_explicit_task544_contract() -> None:
     source = _program(
         '''
 reviews = ctx.gui_worker(
     worker_id="collect_reviews",
     profile="collector",
     goal="Collect reviews for one product",
-    success_criteria="All matching review ratings are collected.",
+    success_criteria=["All matching review ratings are collected."],
     data_requirements=[{
         "id": "reviews",
         "description": "Matching review ratings",
@@ -503,13 +585,7 @@ reviews = ctx.gui_worker(
         "filters": {"product": "Target Product"},
         "coverage": "complete",
     }],
-    actions=[{
-        "name": "filter_product",
-        "capability": "type",
-        "description": "Filter by product",
-        "fixed_args": {"text": "Target Product"},
-    }],
-    max_steps=20,
+    approach="Execute the declared actions.",
 )
 if reviews["phase"] != "completed":
     ctx.fail(reviews["summary"])
@@ -527,24 +603,17 @@ updated = ctx.gui_worker(
     worker_id="update_product",
     profile="operator",
     goal="Apply the computed text to the target product",
-    success_criteria="The product is saved successfully.",
+    success_criteria=["The product is saved successfully."],
     input_refs={"computed": computed["ref"]},
     data_requirements=[],
-    actions=[
-        {
-            "name": "search_product",
-            "capability": "type",
-            "description": "Search the product grid",
-            "fixed_args": {"text": "Target Product"},
-        },
-        {
-            "name": "enter_text",
-            "capability": "type",
-            "description": "Enter the computed text",
-            "input_args": {"text": {"input": "computed", "path": ["text"]}},
-        },
-    ],
-    max_steps=20,
+    approach="Execute the declared actions.",
+    input_bindings=[{
+        "name": "enter_text",
+        "input": "computed",
+        "path": ["text"],
+        "target": "text_input",
+        "description": "Enter the computed text",
+    }],
 )
 if updated["phase"] != "completed":
     ctx.fail(updated["summary"])
@@ -563,11 +632,7 @@ outcome = ctx.gui_worker(
     profile="operator",
     goal="Save the target",
     success_criteria=["The target is saved"],
-    actions=[{
-        "name": "save",
-        "capability": "tap",
-        "description": "Save the target",
-    }],
+    approach="Execute the declared actions.",
 )
 if outcome["phase"] != "completed":
     ctx.fail(outcome["summary"])
@@ -589,6 +654,59 @@ ctx.finish(done["ref"], effect="mutation")
     )
 
 
+def test_master_review_accepts_static_scalar_aliases_in_worker_contract() -> None:
+    source = _program(
+        '''
+target_date = "2026-08-18"
+outcome = ctx.gui_worker(
+    worker_id="collect_forecast",
+    profile="collector",
+    goal=f"Collect the forecast for {target_date}",
+    success_criteria=f"The forecast for {target_date} is collected",
+    data_requirements=[{
+        "id": "forecast",
+        "description": f"Forecast for {target_date}",
+        "row_schema": {
+            "type": "object",
+            "properties": {"date": {"type": "string"}},
+            "required": ["date"],
+            "additionalProperties": False,
+        },
+        "field_sources": {"date": "Date"},
+        "filters": {"date": target_date},
+        "coverage": "first_match",
+    }],
+    approach=f"Find the forecast for {target_date}.",
+)
+if outcome["phase"] != "completed":
+    ctx.fail(outcome["summary"])
+result = ctx.transform(
+    transform_id="forecast_result",
+    inputs=[outcome["collection_ref"]["ref"]],
+    source="def transform(inputs):\\n    return inputs[0]",
+    result_schema={"type": "array"},
+)
+ctx.finish(result["ref"], effect="data")
+'''.strip()
+    )
+
+    assert validate_master_source(source) == []
+    captured = []
+    ctx = WorkerOrchestrationContext(
+        data_store=RuntimeDataStore(),
+        run_gui_worker=lambda _worker_id, spec: (
+            captured.append(spec.success_criteria)
+            or WorkerOutcome(phase="failed", summary="stop after validation", steps=0)
+        ),
+        trace=lambda *args, **kwargs: None,
+    )
+
+    execution = execute_master_program(source, ctx)
+
+    assert execution.ok
+    assert captured == [["The forecast for 2026-08-18 is collected"]]
+
+
 def test_master_review_accepts_explicit_null_input_refs_as_empty() -> None:
     source = _program(
         '''
@@ -599,11 +717,7 @@ outcome = ctx.gui_worker(
     success_criteria=["The target is saved"],
     input_refs=None,
     data_requirements=[],
-    actions=[{
-        "name": "save",
-        "capability": "tap",
-        "description": "Save the target",
-    }],
+    approach="Execute the declared actions.",
 )
 if outcome["phase"] != "completed":
     ctx.fail(outcome["summary"])
@@ -659,15 +773,15 @@ updated = ctx.gui_worker(
     goal="Apply the computed target text",
     success_criteria=["The computed target text is saved"],
     input_refs={"target": computed["ref"]},
-    data_requirements=[],
-    actions=[{
+    input_bindings=[{
         "name": "enter_target_text",
-        "capability": "type",
-        "description": "Enter the Runtime-bound target text",
-        "input_args": {
-            "text": {"input": "target", "path": ["text"]},
-        },
+        "input": "target",
+        "path": ["text"],
+        "target": "text_input",
+        "description": "Enter the computed target text",
     }],
+    data_requirements=[],
+    approach="Execute the declared actions.",
 )
 if updated["phase"] != "completed":
     ctx.fail(updated["summary"])
@@ -681,12 +795,12 @@ ctx.finish(computed["ref"], effect="mutation")
     assert execution.ok
     assert len(specs) == 1
     assert specs[0].input_refs == {"target": "result:2"}
-    binding = specs[0].actions[0].input_args["text"]
+    binding = specs[0].input_bindings[0]
     assert binding.input == "target"
     assert binding.path == ["text"]
 
 
-def test_static_review_rejects_task551_missing_type_text_before_dispatch() -> None:
+def test_static_review_does_not_require_master_to_declare_type_text() -> None:
     source = _program(
         '''
 records = ctx.gui_worker(
@@ -703,11 +817,7 @@ records = ctx.gui_worker(
             "required": ["name"],
         },
     }],
-    actions=[{
-        "name": "search_products",
-        "capability": "type",
-        "description": "Search for products by name in the catalog grid",
-    }],
+    approach="Execute the declared actions.",
 )
 ctx.fail("fixture stops after review")
 '''.strip()
@@ -715,15 +825,10 @@ ctx.fail("fixture stops after review")
 
     diagnostics = validate_master_source(source)
 
-    assert any(
-        item.code == "GUI_WORKER_SPEC"
-        and "search_products" in item.message
-        and "'text'" in item.message
-        for item in diagnostics
-    )
+    assert not any(item.code == "GUI_WORKER_SPEC" for item in diagnostics)
 
 
-def test_static_review_rejects_unknown_runtime_bound_action_argument() -> None:
+def test_static_review_rejects_unknown_input_binding_target() -> None:
     source = _program(
         '''
 result = ctx.transform(
@@ -742,13 +847,15 @@ updated = ctx.gui_worker(
     goal="Open the target",
     success_criteria=["Target is open"],
     input_refs={"target": result["ref"]},
-    data_requirements=[],
-    actions=[{
-        "name": "open_target",
-        "capability": "tap",
-        "description": "Open the target",
-        "input_args": {"target": {"input": "target", "path": ["url"]}},
+    input_bindings=[{
+        "name": "open_bound_target",
+        "input": "target",
+        "path": ["url"],
+        "target": "unsupported_target",
+        "description": "Open the computed target URL",
     }],
+    data_requirements=[],
+    approach="Execute the declared actions.",
 )
 ctx.finish(result["ref"], effect="ui_state")
 '''.strip()
@@ -758,12 +865,12 @@ ctx.finish(result["ref"], effect="ui_state")
 
     assert any(
         item.code == "GUI_WORKER_SPEC"
-        and "unknown runtime-bound args ['target']" in item.message
+        and "target" in item.message
         for item in diagnostics
     )
 
 
-def test_static_review_explains_that_result_ids_cannot_bind_tap_coordinates() -> None:
+def test_static_review_rejects_spatial_input_binding_target() -> None:
     source = _program(
         '''
 target = ctx.transform(
@@ -782,14 +889,15 @@ opened = ctx.gui_worker(
     goal="Open the target record",
     success_criteria=["The target record is open"],
     input_refs={"target": target["ref"]},
-    data_requirements=[],
-    actions=[{
-        "name": "open_target",
-        "capability": "tap",
-        "description": "Open the target record",
-        "input_args": {"x": {"input": "target", "path": ["id"]}},
-        "exposed_args": ["y"],
+    input_bindings=[{
+        "name": "tap_bound_target",
+        "input": "target",
+        "path": ["id"],
+        "target": "tap_point",
+        "description": "Tap the computed target",
     }],
+    data_requirements=[],
+    approach="Launch {app} and confirm that its requested surface is visible.",
 )
 ctx.finish(target["ref"], effect="ui_state")
 '''.strip()
@@ -799,7 +907,7 @@ ctx.finish(target["ref"], effect="ui_state")
 
     assert any(
         item.code == "GUI_WORKER_SPEC"
-        and "bind that value to type.text" in item.message
+        and "target" in item.message
         for item in diagnostics
     )
 
@@ -823,63 +931,6 @@ def test_master_compiler_regenerates_only_during_static_review() -> None:
     assert llm.bind_kwargs["extra_body"] == {"enable_thinking": False}
     assert events[0][1]["diagnostics"]
     assert events[1][1]["diagnostics"] == []
-
-
-def test_new_master_program_requires_explicit_worker_strategy() -> None:
-    source = _launch_app_program("settings").replace(
-        '    strategy="Launch the exact Runtime-provided application directly",\n',
-        "",
-    )
-
-    diagnostics = validate_master_source(
-        source,
-        require_explicit_strategy=True,
-    )
-
-    assert any(
-        item.code == "GUI_WORKER_LITERAL" and "strategy" in item.message
-        for item in diagnostics
-    )
-
-
-def test_master_review_keeps_unrequested_page_source_out_of_logical_contract() -> None:
-    source = _launch_app_program("settings").replace(
-        'goal="Open the requested application"',
-        'goal="Open the requested application using Google"',
-    )
-    context = {"url": "https://www.google.com.hk/"}
-
-    diagnostics = validate_master_source(
-        source,
-        page_context=context,
-        user_goal="打开目标应用",
-    )
-
-    assert any(item.code == "LOGICAL_SOURCE_PROVENANCE" for item in diagnostics)
-    assert not any(
-        item.code == "LOGICAL_SOURCE_PROVENANCE"
-        for item in validate_master_source(
-            source,
-            page_context=context,
-            user_goal="请使用 Google 打开目标应用",
-        )
-    )
-
-
-def test_master_review_allows_page_source_only_in_physical_strategy() -> None:
-    source = _launch_app_program("settings").replace(
-        "Launch the exact Runtime-provided application directly",
-        "Use the current Google surface before launching the requested application",
-    )
-
-    assert not any(
-        item.code == "LOGICAL_SOURCE_PROVENANCE"
-        for item in validate_master_source(
-            source,
-            page_context={"url": "https://www.google.com.hk/"},
-            user_goal="打开目标应用",
-        )
-    )
 
 
 def test_master_review_rejects_data_collection_for_destination_only_goal() -> None:
@@ -923,15 +974,9 @@ ctx.gui_worker(
     worker_id="open_settings",
     profile="operator",
     goal="Open the requested application",
-    strategy="Launch the exact Runtime-provided application directly",
     success_criteria=["The requested application is visible"],
     data_requirements=[],
-    actions=[{{
-        "name": "launch_requested_app",
-        "capability": "launch_app",
-        "description": "Launch the requested application",
-        "fixed_args": {{"app": {app!r}}},
-    }}],
+    approach="Execute the declared actions.",
 )
 done = ctx.transform(
     transform_id="confirm_application_open",
@@ -944,19 +989,14 @@ ctx.finish(done["ref"], effect="ui_state")
     )
 
 
-def test_master_review_rejects_non_runtime_launch_app_name() -> None:
-    diagnostics = validate_master_source(
+def test_master_review_leaves_launch_argument_validation_to_runtime() -> None:
+    assert validate_master_source(
         _launch_app_program("Settings"),
         platform_context={
             "name": "android",
             "applications": ["com.android.settings/.HWSettings"],
         },
-    )
-
-    assert any(
-        item.code == "LAUNCH_APP_NAME" and "'Settings'" in item.message
-        for item in diagnostics
-    )
+    ) == []
     assert validate_master_source(
         _launch_app_program("com.android.settings/.HWSettings"),
         platform_context={
@@ -966,10 +1006,9 @@ def test_master_review_rejects_non_runtime_launch_app_name() -> None:
     ) == []
 
 
-def test_master_compiler_repairs_non_runtime_launch_app_name() -> None:
-    invalid = _launch_app_program("Settings")
-    valid = _launch_app_program("com.android.settings/.HWSettings")
-    llm = _SequenceLLM(invalid, valid)
+def test_master_compiler_does_not_regenerate_for_runtime_action_choice() -> None:
+    source = _launch_app_program("Settings")
+    llm = _SequenceLLM(source)
     events = []
 
     program = compile_master_program(
@@ -985,10 +1024,9 @@ def test_master_compiler_repairs_non_runtime_launch_app_name() -> None:
         on_event=lambda event, payload: events.append((event, payload)),
     )
 
-    assert program.source == valid
-    assert program.attempts == 2
-    assert any("LAUNCH_APP_NAME" in item for item in events[0][1]["diagnostics"])
-    assert events[1][1]["diagnostics"] == []
+    assert program.source == source
+    assert program.attempts == 1
+    assert events[0][1]["diagnostics"] == []
 
 
 def test_coding_master_orchestrates_gui_then_runtime_transform() -> None:
@@ -1045,6 +1083,90 @@ ctx.finish(total["ref"], effect="data")
     ]
 
 
+def test_coding_master_finishes_plain_collection_without_transform() -> None:
+    store = RuntimeDataStore()
+    rows = [{"amount": 2}, {"amount": 3}]
+
+    def run_gui_worker(worker_id, spec):
+        assert worker_id == "collect_records"
+        assert spec.profile == "collector"
+        return WorkerOutcome(
+            phase="completed",
+            summary="Collected records",
+            collection_ref=_put_complete_collection(store, rows),
+            steps=1,
+        )
+
+    ctx = WorkerOrchestrationContext(
+        data_store=store,
+        run_gui_worker=run_gui_worker,
+        trace=lambda *args, **kwargs: None,
+    )
+    source = _program(
+        f'''\
+records = {GUI_CALL}
+if records["phase"] != "completed":
+    ctx.fail(records["summary"])
+ctx.finish(records["collection_ref"]["ref"], effect="data")
+'''.strip()
+    )
+
+    assert validate_master_source(source) == []
+    execution = execute_master_program(source, ctx)
+
+    assert execution.ok
+    assert execution.terminal is not None
+    assert execution.terminal.effect == "data"
+    assert store.result_value(execution.terminal.result_ref) == rows
+    assert store.result_descriptor(execution.terminal.result_ref).value_schema == {
+        "type": "array",
+        "items": ROW_SCHEMA,
+    }
+    assert store.is_data_result(execution.terminal.result_ref)
+
+
+def test_collection_ref_can_only_finish_as_data() -> None:
+    source = _program(
+        f'''\
+records = {GUI_CALL}
+ctx.finish(records["collection_ref"]["ref"], effect="mutation")
+'''.strip()
+    )
+
+    diagnostics = validate_master_source(source)
+
+    assert any(item.code == "COLLECTION_FINISH_EFFECT" for item in diagnostics)
+
+
+def test_invalid_collector_finished_as_data_reports_only_its_contract_error() -> None:
+    source = _program(
+        '''
+records = ctx.gui_worker(
+    worker_id="collect_records",
+    profile="collector",
+    goal="Collect the requested records",
+    success_criteria="The requested records are collected",
+    approach="current data source",
+    data_requirements=[{
+        "id": "records",
+        "description": "Requested records",
+        "row_schema": {
+            "type": "object",
+            "properties": {"value": {"type": "string"}},
+        },
+        "filters": {"scope": "requested"},
+    }],
+)
+ctx.finish(records["collection_ref"]["ref"], effect="data")
+'''.strip()
+    )
+
+    diagnostics = validate_master_source(source)
+
+    assert any(item.code == "GUI_WORKER_SPEC" for item in diagnostics)
+    assert not any(item.code == "COLLECTOR_RESULT_UNUSED" for item in diagnostics)
+
+
 def test_reexecuted_frozen_program_reuses_completed_gui_worker_and_transform() -> None:
     store = RuntimeDataStore()
     gui_calls = []
@@ -1086,24 +1208,27 @@ ctx.finish(result["ref"], effect="data")
     assert ctx.worker_result("collect_records")["phase"] == "completed"
 
 
-def test_legacy_program_replan_is_sealed_as_failure_without_reexecution() -> None:
+def test_reexecuted_frozen_program_reuses_failed_gui_worker() -> None:
     store = RuntimeDataStore()
+    gui_calls = []
+    trace = []
 
     def fail_gui_worker(worker_id, spec):
         assert worker_id == "collect_records"
+        gui_calls.append(worker_id)
         del spec
         return WorkerOutcome(phase="failed", summary="Unexpected access gate", steps=1)
 
     ctx = WorkerOrchestrationContext(
         data_store=store,
         run_gui_worker=fail_gui_worker,
-        trace=lambda *args, **kwargs: None,
+        trace=lambda event, **payload: trace.append({"event": event, **payload}),
     )
     source = _program(
         f"""
 records = {GUI_CALL}
 if records["phase"] != "completed":
-    ctx.replan(records["summary"])
+    ctx.fail(records["summary"])
 result = ctx.transform(
     transform_id="unreachable_count",
     inputs=[records["collection_ref"]["ref"]],
@@ -1114,12 +1239,15 @@ ctx.finish(result["ref"], effect="data")
 """.strip()
     )
 
-    execution = execute_master_program(source, ctx)
+    first = execute_master_program(source, ctx)
+    second = execute_master_program(source, ctx)
 
-    assert execution.ok
-    assert execution.terminal is not None
-    assert execution.terminal.phase == "failed"
-    assert execution.terminal.summary == "Unexpected access gate"
+    assert first.ok and second.ok
+    assert first.terminal is not None and second.terminal is not None
+    assert first.terminal.phase == second.terminal.phase == "failed"
+    assert first.terminal.summary == second.terminal.summary == "Unexpected access gate"
+    assert gui_calls == ["collect_records"]
+    assert any(item["event"] == "master_worker_reuse" for item in trace)
 
 
 def test_master_failure_preserves_latest_worker_blocker() -> None:
@@ -1142,8 +1270,7 @@ def test_master_failure_preserves_latest_worker_blocker() -> None:
 outcome = ctx.gui_worker(
     worker_id="open_page", profile="operator", goal="Open the requested page",
     success_criteria=["The page is visible"],
-    actions=[{"name": "open_visible", "capability": "tap",
-              "description": "Open the visible page"}],
+    approach="Execute the declared actions.",
 )
 if outcome["phase"] != "completed":
     ctx.fail("Could not retrieve the requested result")
@@ -1181,11 +1308,7 @@ updated = ctx.gui_worker(
     goal="Update the requested setting",
     success_criteria=["The requested state is visibly confirmed"],
     data_requirements=[],
-    actions=[{
-        "name": "activate_setting",
-        "capability": "tap",
-        "description": "Activate the visible requested setting",
-    }],
+    approach="Execute the declared actions.",
 )
 if updated["phase"] != "completed":
     ctx.fail(updated["summary"])
@@ -1206,4 +1329,57 @@ ctx.finish(result["ref"], effect="mutation")
     assert store.result_value(execution.terminal.result_ref) is True
 
     rejected = execute_master_program(source.replace('effect="mutation"', 'effect="data"'), ctx)
-    assert "produces no typed data or scope output" in rejected.error
+    assert "derived from collected data" in rejected.error
+
+
+def test_data_program_allows_guarded_operator_before_dependent_collector() -> None:
+    source = _program(f'''\
+opened = ctx.gui_worker(
+    worker_id="open_records",
+    profile="operator",
+    goal="Open the records surface",
+    success_criteria=["The records surface is visible"],
+    data_requirements=[],
+    approach="Execute the declared actions.",
+)
+if opened["phase"] != "completed":
+    ctx.fail(opened["summary"])
+records = {GUI_CALL}
+result = ctx.transform(
+    transform_id="sum_records",
+    inputs=[records["collection_ref"]["ref"]],
+    source="def transform(inputs):\\n    return sum(row['amount'] for row in inputs[0])",
+    result_schema={{"type": "number"}},
+)
+ctx.finish(result["ref"], effect="data")
+'''.strip())
+
+    diagnostics = validate_master_source(source)
+
+    assert not [
+        item for item in diagnostics
+        if item.code.startswith("DATA_OPERATOR")
+    ]
+
+
+def test_master_review_does_not_interpret_operator_control_flow() -> None:
+    source = _program(f'''\
+opened = ctx.gui_worker(
+    worker_id="open_records",
+    profile="operator",
+    goal="Open the records surface",
+    success_criteria=["The records surface is visible"],
+    data_requirements=[],
+    approach="Execute the declared actions.",
+)
+records = {GUI_CALL}
+result = ctx.transform(
+    transform_id="sum_records",
+    inputs=[records["collection_ref"]["ref"]],
+    source="def transform(inputs):\\n    return sum(row['amount'] for row in inputs[0])",
+    result_schema={{"type": "number"}},
+)
+ctx.finish(result["ref"], effect="data")
+'''.strip())
+
+    assert validate_master_source(source) == []

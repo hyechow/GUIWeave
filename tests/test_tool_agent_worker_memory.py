@@ -3,7 +3,6 @@ from __future__ import annotations
 from types import SimpleNamespace
 
 from gui_agent.core.tool_agent.contracts import (
-    DynamicActionSpec,
     MaterializedFrame,
     WorkerSpec,
     WorkerState,
@@ -198,17 +197,17 @@ def test_worker_memory_tracks_collection_anchor_without_persisting_raw_cells() -
         frame_id="frame:7",
         state=_state(1),
         tool="scroll_records",
-        args={},
+        args={"x": None, "y": None},
         result={"status": "executed", "action_type": "scroll", "no_effect": True},
     )
     assert journal.last_scroll_no_effect is True
     assert journal.last_scroll_point == (500, 500)
-    assert journal.downward_scroll_reached_end(frame) is False
+    assert journal.has_downward_scroll_end_evidence(frame) is False
 
     journal.last_scroll_direction = "down"
-    assert journal.downward_scroll_reached_end(frame) is True
+    assert journal.has_downward_scroll_end_evidence(frame) is True
     journal.last_scroll_point = (500, 950)
-    assert journal.downward_scroll_reached_end(frame) is False
+    assert journal.has_downward_scroll_end_evidence(frame) is False
 
     journal.record_turn(
         step=2,
@@ -456,13 +455,17 @@ def test_worker_rebuilds_fresh_messages_each_frame_instead_of_replaying_chat_his
     runtime._executor = _Executor()
     runtime.platform = object()
     frames = iter(range(1, 4))
-    runtime._observe = lambda spec: (
-        MaterializedFrame(
-            frame_id=f"frame:{next(frames)}",
-            screenshot_path="frame.png",
-        ),
-        b"png",
-    )
+    def observe(_spec):
+        runtime._frame_no += 1
+        return (
+            MaterializedFrame(
+                frame_id=f"frame:{next(frames)}",
+                screenshot_path="frame.png",
+            ),
+            b"png",
+        )
+
+    runtime._observe = observe
     monkeypatch.setattr(
         "gui_agent.core.tool_agent.runtime.settle_after_action",
         lambda platform, png, *, action_type: (0.0, False),
@@ -470,14 +473,11 @@ def test_worker_rebuilds_fresh_messages_each_frame_instead_of_replaying_chat_his
     spec = WorkerSpec(
         goal="Advance through three visual states",
         success_criteria=["The final state is visible"],
-        actions=[DynamicActionSpec(
-            name="reveal_more",
-            capability="scroll",
-            description="Reveal more content",
-            fixed_args={"direction": "down"},
-        )],
-        max_steps=3,
+        strategy={"approach": "Advance through the visible states."},
     )
+    runtime._platform_capabilities = frozenset({"scroll"})
+    runtime.max_turns = 3
+    runtime._frame_no = 0
 
     outcome = runtime._run_worker("bounded_worker", spec)
 
@@ -503,7 +503,6 @@ def test_worker_rebuilds_fresh_messages_each_frame_instead_of_replaying_chat_his
         event for event in runtime.trace if event["event"] == "worker_decision"
     ]
     assert [event["memory_event_count"] for event in decisions] == [0, 1, 2]
-    assert [event["state_source"] for event in decisions] == ["tool_args"] * 3
     assert all(
         kwargs["tool_choice"] == "required"
         and kwargs["extra_body"] == {"enable_thinking": False}
@@ -513,7 +512,6 @@ def test_worker_rebuilds_fresh_messages_each_frame_instead_of_replaying_chat_his
     human_log = runtime._human_line(decisions[-1])
     assert "Context    : rebuilt for frame" in human_log
     assert "2 journal events" in human_log
-    assert "Protocol   : state=tool_args" in human_log
     assert all(
         any(
             report.get("kind") == "context_compression"
