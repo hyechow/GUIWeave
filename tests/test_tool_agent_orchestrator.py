@@ -676,7 +676,7 @@ outcome = ctx.gui_worker(
         "filters": {"date": target_date},
         "coverage": "first_match",
     }],
-    approach=f"Find the forecast for {target_date}.",
+    approach="public forecast source",
 )
 if outcome["phase"] != "completed":
     ctx.fail(outcome["summary"])

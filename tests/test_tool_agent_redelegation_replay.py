@@ -241,13 +241,17 @@ def test_task214_authoritative_empty_does_not_dispatch_strategy() -> None:
     original = WorkerSpec.model_validate(case["original_spec"])
     empty = WorkerOutcome.model_validate(case["empty_outcome"])
     runtime = object.__new__(ToolAgentRuntime)
-    runtime.max_strategy_replacements = 1
     runtime.trace = []
     runtime._status_cb = None
     runtime._worker_last_frames = {}
     calls: list[tuple[str, WorkerSpec]] = []
 
-    def run_worker(worker_id: str, spec: WorkerSpec):
+    def run_worker(
+        worker_id: str,
+        spec: WorkerSpec,
+        *,
+        require_attempt: bool = False,
+    ):
         calls.append((worker_id, spec))
         return empty
 
@@ -271,12 +275,16 @@ def test_task214_authoritative_empty_does_not_dispatch_strategy() -> None:
 def test_strategy_stop_does_not_dispatch_another_worker() -> None:
     original = WorkerSpec.model_validate(_case()["original_spec"])
     runtime = object.__new__(ToolAgentRuntime)
-    runtime.max_strategy_replacements = 1
     runtime.trace = []
     runtime._status_cb = None
     calls: list[str] = []
 
-    def fail(worker_id: str, _spec: WorkerSpec) -> WorkerOutcome:
+    def fail(
+        worker_id: str,
+        _spec: WorkerSpec,
+        *,
+        require_attempt: bool = False,
+    ) -> WorkerOutcome:
         calls.append(worker_id)
         return WorkerOutcome(phase="failed", summary="Path disproven", steps=2)
 

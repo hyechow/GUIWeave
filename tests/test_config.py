@@ -106,13 +106,11 @@ def test_legacy_back_nav_config_falls_forward_to_recon_navigator(monkeypatch):
     assert config.resolve_llm_config("back_nav").model == "neutral-nav"
 
 
-def test_tokenplan_config_uses_luna_visual_slots_and_qwen_elsewhere(monkeypatch):
+def test_tokenplan_config_uses_qwen_visual_slots(monkeypatch):
     # 可选配置基线 = qwen3.7-plus + tokenplan provider；qwen3.7-max 是纯文本所以不用。
     # 外围 flash 用 qwen3.6-flash（token-plan 无 qwen3.5-flash）。
     monkeypatch.setenv("AGENT_CONFIG", "config.tokenplan.yaml")
     monkeypatch.setenv("TOKENPLAN_API_KEY", "sk-test-tokenplan")
-    monkeypatch.setenv("STANDARD_API_KEY", "sk-test-luna")
-    monkeypatch.setenv("STANDARD_BASE_URL", "http://standard.example/v1")
     monkeypatch.delenv("TOKENPLAN_BASE_URL", raising=False)
     config.load_config.cache_clear()
     config._load_raw.cache_clear()
@@ -140,17 +138,18 @@ def test_tokenplan_config_uses_luna_visual_slots_and_qwen_elsewhere(monkeypatch)
         assert cfg.base_url == token_plan
         assert cfg.api_key == "sk-test-tokenplan"
         worker = config.resolve_llm_config("tool_agent.worker")
-        assert worker.provider == "standard"
-        assert worker.model == "gpt-5.6-luna"
-        assert worker.api_key == "sk-test-luna"
-        assert worker.base_url == "http://standard.example/v1"
-        assert worker.action_protocol == "json"
+        assert worker.provider == "tokenplan"
+        assert worker.model == "qwen3.7-plus"
+        assert worker.api_key == "sk-test-tokenplan"
+        assert worker.base_url == token_plan
+        assert worker.action_protocol == "tool_call"
         perception = config.resolve_llm_config("tool_agent.perception")
-        assert perception.provider == "standard"
-        assert perception.model == "gpt-5.6-luna"
-        assert perception.api_key == "sk-test-luna"
+        assert perception.provider == "tokenplan"
+        assert perception.model == "qwen3.7-plus"
+        assert perception.api_key == "sk-test-tokenplan"
+        assert perception.base_url == token_plan
         assert perception.image_scale == 1.0
-        assert perception.use_responses_api is True
+        assert perception.use_responses_api is False
         # 单价随模型登记（plus ≤256K 档官网价）
         assert config.model_price("qwen3.7-plus") == (2.0, 8.0)
         assert config.model_price("qwen3.7-max") == (12.0, 36.0)

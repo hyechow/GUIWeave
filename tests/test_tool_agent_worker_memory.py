@@ -20,9 +20,6 @@ def _state(step: int) -> WorkerState:
         status="exploring",
         summary=f"Observed state {step}",
         established_facts=[],
-        open_gaps=[f"Complete subgoal {step}"],
-        coverage={},
-        next_instruction=f"Take action {step + 1}",
     )
 
 
@@ -50,11 +47,11 @@ def test_worker_memory_is_a_bounded_projection_of_append_only_runtime_facts() ->
     assert len(memory.compressed_history) == 6
     assert memory.compressed_history[0].startswith("[step:3]")
     assert memory.compressed_history[-1].startswith("[step:8]")
-    assert memory.pending_subgoal == "Complete subgoal 12"
     rendered = memory.render_prompt_section()
+    assert "Pending subgoal" not in rendered
     assert "runtime reported no_effect" in rendered
     assert "[step:1]" not in rendered
-    assert "Worker-established visual facts" in rendered
+    assert "Worker observations" in rendered
 
 
 def test_worker_memory_omits_spatial_and_execution_metadata() -> None:
@@ -148,8 +145,12 @@ def test_worker_memory_accumulates_explicit_visual_facts() -> None:
 
     assert "author=pupper; content=Border Collie" in rendered
     assert "author=demo; content=Golden Retriever" in rendered
-    assert rendered.index("author=demo") < rendered.index("author=pupper")
-    assert sum(event.kind == "established_fact" for event in journal.events) == 2
+    assert rendered.index("author=pupper") < rendered.index("author=demo")
+    assert sum(event.kind == "worker_observation" for event in journal.events) == 2
+    assert not [
+        event for event in build_worker_memory_view(journal).durable_facts
+        if "author=" in event.durable_text
+    ]
 
 
 def test_worker_memory_tracks_collection_anchor_without_persisting_raw_cells() -> None:
@@ -226,6 +227,8 @@ def test_worker_context_always_uses_compact_semantic_frame() -> None:
     frame = MaterializedFrame.model_validate({
         "frame_id": "frame:1",
         "screenshot_path": "frame.png",
+        "readiness": "blank",
+        "readiness_reason": "no visible structure",
         "controls": [{
             "kind": "button",
             "label": "Apply",
@@ -256,6 +259,10 @@ def test_worker_context_always_uses_compact_semantic_frame() -> None:
     projection = project_worker_context(
         memory=build_worker_memory_view(journal),
         frame=frame,
+        attempt_contract=(
+            "## Current Worker attempt\n"
+            '{"approach": "Inspect the requested records"}'
+        ),
         max_chars=4_000,
     )
 
@@ -265,12 +272,21 @@ def test_worker_context_always_uses_compact_semantic_frame() -> None:
     )
     assert frame_decision["action"] == "kept"
     assert "collection:records" in projection.text
+    assert '"readiness": "blank"' in projection.text
+    assert '"readiness_reason": "no visible structure"' in projection.text
     assert "x" * 100 not in projection.text
     assert "private-dom-id" not in projection.text
     assert "private-control-name" not in projection.text
     assert "private-group-id" not in projection.text
     assert '"form_action": "commit"' in projection.text
     assert '"rect": {"x": 100, "y": 200, "w": 80, "h": 30}' in projection.text
+    assert projection.text.index("## Current MaterializedFrame") < projection.text.index(
+        "## Current Worker attempt"
+    )
+    assert next(
+        item for item in projection.report["blocks"]
+        if item["id"] == "tool_agent.worker.current_attempt"
+    )["action"] == "kept"
 
 
 def test_worker_context_hides_offscreen_inventory_but_keeps_choice_state() -> None:
@@ -395,7 +411,7 @@ def test_worker_context_projects_extra_filter_as_authoritative_scope_blocker() -
 
     assert '"status": "unmet"' in projection.text
     assert '"extra_applied_filters": ["Purchase Date"]' in projection.text
-    assert "before collecting or completing" in projection.text
+    assert '"instruction"' not in projection.text
 
 
 class _RecordingWorker:
@@ -421,7 +437,6 @@ class _RecordingWorker:
                     "state": {
                         "status": "exploring",
                         "summary": f"Observed state {self.step}",
-                        "next_instruction": f"Take action {self.step + 1}",
                     },
                     "x": 100 + self.step * 30,
                     "y": 200 + self.step * 30,

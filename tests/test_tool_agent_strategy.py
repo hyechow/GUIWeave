@@ -3,6 +3,8 @@ from __future__ import annotations
 import json
 from types import SimpleNamespace
 
+import pytest
+
 from gui_agent.core.tool_agent.contracts import WorkerOutcome, WorkerSpec, WorkerStrategy
 from gui_agent.core.tool_agent.strategy import Strategy
 
@@ -86,29 +88,21 @@ def test_strategy_repairs_one_invalid_candidate() -> None:
     assert model.calls == 2
 
 
-def test_strategy_repairs_an_atomic_action_sequence() -> None:
+@pytest.mark.parametrize("invalid", [
+    "Navigate to the source, select Shenzhen, then inspect it.",
+    "Use one source, then inspect its result list.",
+    "open_url https://weather.example/forecast/location-id",
+])
+def test_strategy_repairs_procedural_approaches(invalid: str) -> None:
     model = _JsonModel(
-        _replace(_candidate("Navigate to the source, select Shenzhen, then inspect it.")),
-        _replace(_candidate("Use a different public weather source.")),
+        _replace(_candidate(invalid)),
+        _replace(_candidate("Different public forecast source")),
     )
 
     _original, selected, _reason, _events = _decide(model)
 
     assert selected is not None
-    assert selected.approach == "Use a different public weather source."
-    assert model.calls == 2
-
-
-def test_strategy_repairs_an_ordered_procedure() -> None:
-    model = _JsonModel(
-        _replace(_candidate("Use one source, then inspect its result list.")),
-        _replace(_candidate("Use a different public forecast source.")),
-    )
-
-    _original, selected, _reason, _events = _decide(model)
-
-    assert selected is not None
-    assert selected.approach == "Use a different public forecast source."
+    assert selected.approach == "Different public forecast source"
     assert model.calls == 2
 
 

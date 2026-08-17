@@ -41,6 +41,7 @@ _TARGET_DESCRIPTION = "Target the visible named control"
     [
         "web search engine weather query",
         "Bing search results page weather card",
+        "tianqi.com weather forecast page",
     ],
 )
 def test_approach_noun_phrases_are_not_procedures(approach: str) -> None:
@@ -53,9 +54,14 @@ def test_approach_noun_phrases_are_not_procedures(approach: str) -> None:
         "Type the query and press Enter",
         "Open the page, search for the record",
         "Use the current source then switch applications",
+        "open_url https://weather.example/forecast/location-id",
+        "https://weather.example/ forecast source",
+        "Navigate to the public weather source",
+        "direct navigation to China Weather Net (weather.com.cn) Shenzhen city page",
+        "direct navigation to a dedicated weather service website",
     ],
 )
-def test_approach_action_sequences_are_procedures(approach: str) -> None:
+def test_approach_execution_details_are_procedural(approach: str) -> None:
     assert approach_is_procedural(approach)
 
 
@@ -113,11 +119,19 @@ def test_action_envelope_preserves_dynamic_atomic_schemas() -> None:
     assert "clear_text" not in description
     assert "select_option" not in description
     parameters = envelope["function"]["parameters"]
+    variants = parameters["properties"]["actions"]["items"]["oneOf"]
+    assert [variant["description"] for variant in variants] == [
+        "Enter a value in the visible input",
+        "Submit the visible form",
+    ]
+    state_schema = parameters["properties"]["state"]
+    assert set(state_schema["properties"]) == {
+        "status", "summary", "established_facts",
+    }
     state = {
         "status": "exploring",
         "summary": "The complete form is visible.",
         "established_facts": [],
-        "next_instruction": "Fill and submit the form.",
     }
     actions = [
         {
@@ -139,6 +153,14 @@ def test_action_envelope_preserves_dynamic_atomic_schemas() -> None:
         },
     ]
     validate(instance={"state": state, "actions": actions}, schema=parameters)
+    with pytest.raises(ValidationError):
+        validate(
+            instance={
+                "state": {**state, "next_instruction": "Use a different source"},
+                "actions": actions,
+            },
+            schema=parameters,
+        )
     assert parameters["properties"]["actions"]["maxItems"] == MAX_ORDERED_ACTIONS
     with pytest.raises(ValidationError):
         validate(
@@ -159,6 +181,11 @@ def test_action_envelope_preserves_dynamic_atomic_schemas() -> None:
     )
     assert envelope["function"]["parameters"]["properties"]["actions"]["maxItems"] == 1
     assert "exactly one action" in envelope["function"]["description"]
+    assert [tool["function"]["name"] for tool in dynamic_worker_tools(
+        [], completion_mode="unavailable", action_envelope=True,
+    )] == [
+        "report_blocked",
+    ]
 
 
 def test_explicit_cache_marker_wraps_only_the_stable_system_prefix() -> None:
@@ -407,7 +434,7 @@ def test_json_worker_protocol_preserves_dynamic_action_contract() -> None:
     instruction = json_worker_decision_instruction(tools)
     response = SimpleNamespace(content=(
         '{"tool":"complete","args":{"state":{"status":"completed",'
-        '"summary":"Done","established_facts":[],"next_instruction":""},'
+        '"summary":"Done","established_facts":[]},'
         '"evidence":["Visible target state confirmed"]}}'
     ))
 
@@ -424,6 +451,39 @@ def test_json_worker_protocol_preserves_dynamic_action_contract() -> None:
         for action in contract.values()
     )
     assert "never inside `args.actions[*]`" in instruction
+
+
+def test_worker_protocol_normalizes_flat_ordered_action_arguments() -> None:
+    raw_action = {
+        "name": "tap", "x": 500, "y": 76,
+        "description": "Tap the visible city selector at the top",
+    }
+    tools = dynamic_worker_tools(
+        [DynamicActionSpec(
+            name="tap", capability="tap", description="Tap one visible control.",
+        )],
+        completion_mode="unavailable",
+        action_envelope=True,
+    )
+    response = SimpleNamespace(tool_calls=[{
+        "name": "continue_with_actions",
+        "args": {
+            "state": {
+                "status": "exploring",
+                "summary": "The city selector is visible.",
+                "established_facts": [],
+            },
+            "actions": [raw_action],
+        },
+    }])
+    call, state, calls = decode_worker_action(
+        response,
+        tools={tool["function"]["name"]: tool for tool in tools},
+    )
+
+    expected = {"name": "tap", "args": {k: v for k, v in raw_action.items() if k != "name"}}
+    assert state["status"] == "exploring"
+    assert calls == call["args"]["actions"] == [expected]
 
 
 def test_declared_type_action_keeps_text_dynamic_and_coordinates_visual() -> None:
@@ -532,15 +592,12 @@ def test_data_requirement_accepts_nullable_runtime_type() -> None:
     ]
 
 
-def test_worker_profile_is_inferred_without_creating_distinct_worker_types() -> None:
+def test_worker_profile_inference_selects_relevant_attempt_rules() -> None:
     common = {
         "goal": "Reach the requested outcome",
         "success_criteria": ["The outcome is reached"],
-        "strategy": {
-            "approach": "Advance through the visible interface.",
-        },
+        "strategy": {"approach": "Visible task surface"},
     }
-
     operator = WorkerSpec.model_validate(common)
     collector = WorkerSpec.model_validate({
         **common,
@@ -553,6 +610,15 @@ def test_worker_profile_is_inferred_without_creating_distinct_worker_types() -> 
 
     assert operator.profile == "operator"
     assert collector.profile == "collector"
+    collector_contract = worker_attempt_contract(collector)
+    operator_contract = worker_attempt_contract(operator)
+    for rule in (
+        "natural relative-date term", "never scroll or paginate",
+        "empty_authoritative = false",
+    ):
+        assert rule in collector_contract and rule not in operator_contract
+    for rule in ("candidate_set_state.status = exhausted", "Finish comparison evidence"):
+        assert rule in operator_contract and rule not in collector_contract
 
 
 def test_data_requirement_rejects_filter_missing_from_observable_row_schema() -> None:
@@ -644,7 +710,7 @@ def test_worker_attempt_contract_keeps_input_binding_in_immutable_contract() -> 
         },
     })
 
-    contract = worker_attempt_contract(spec, [])
+    contract = worker_attempt_contract(spec)
 
     assert '"input_bindings"' in contract
     assert '"name": "enter_target"' in contract

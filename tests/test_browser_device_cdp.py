@@ -95,7 +95,7 @@ def test_ensure_net_tracking_timeout_degrades_without_retrying_same_session():
     assert session.handlers == {}
 
 
-def test_tracked_request_keeps_browser_loading_until_response_headers():
+def test_tracked_request_does_not_override_document_readiness():
     session = _FakeSession()
     dev = _device_with_session(session)
     dev._timed_cdp_send = lambda *_args: {}
@@ -105,16 +105,26 @@ def test_tracked_request_keeps_browser_loading_until_response_headers():
 
     request({"requestId": "save", "type": "XHR"})
     dev._cdp_send = lambda *_args, **_kwargs: {
-        "result": {"value": "complete"}
+        "result": {"value": ["complete", True]}
     }
-    assert dev.is_loading() is True
+    assert dev.is_loading() is False
 
     response({"requestId": "save", "type": "XHR"})
     assert dev.is_loading() is False
 
 
-def test_navigation_settle_waits_for_visible_document_content():
+def test_empty_semantic_main_remains_loading_after_document_complete():
     dev = _device_with_session(_FakeSession())
+    dev._cdp_send = lambda *_args, **_kwargs: {
+        "result": {"value": ["complete", False]}
+    }
+
+    assert dev.is_loading() is True
+
+
+def test_settle_waits_for_content_but_not_background_requests():
+    dev = _device_with_session(_FakeSession())
+    dev._xhr_ids = {"background": 1.0}
     dev._ensure_net_tracking = lambda: None
     probes = iter((["complete", 500, False], ["complete", 500, True]))
     probe_count = []

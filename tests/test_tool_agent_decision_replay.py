@@ -64,7 +64,6 @@ def _state(status: str = "exploring") -> dict:
         "status": status,
         "summary": "Replay decision",
         "established_facts": [],
-        "next_instruction": "Continue the recorded subgoal",
     }
 
 
@@ -83,9 +82,9 @@ def _worker_run(
     repair_history: bool = False,
 ) -> Path:
     actions = [DynamicActionSpec(
-        name="scroll_content",
+        name="scroll",
         capability="scroll",
-        description="Scroll the visible collection.",
+        description="recorded static action description",
         exposed_args=["direction", "amount"],
     )]
     spec = WorkerSpec.model_validate({
@@ -158,12 +157,12 @@ def test_worker_replay_compares_equivalent_actions_by_capability(tmp_path) -> No
     run_dir = _worker_run(
         tmp_path,
         recorded_tool="continue_with_actions",
-        recorded_actions=[{"name": "scroll_content", "args": {}}],
+        recorded_actions=[{"name": "scroll", "args": {}}],
     )
     model = _RecordedModel(_tool_call("continue_with_actions", {
         "state": _state(),
         "actions": [{
-            "name": "scroll_content",
+            "name": "scroll",
             "args": {
                 "direction": "down",
                 "amount": "medium",
@@ -179,7 +178,7 @@ def test_worker_replay_compares_equivalent_actions_by_capability(tmp_path) -> No
         "tool": "continue_with_actions",
         "action_capabilities": ["scroll"],
     }
-    assert result["samples"][0]["actions"] == ["scroll_content"]
+    assert result["samples"][0]["actions"] == ["scroll"]
     assert result["samples"][0]["action_capabilities"] == ["scroll"]
     assert {tool["function"]["name"] for tool in model.bound_tools} >= {
         "continue_with_actions",
@@ -187,9 +186,28 @@ def test_worker_replay_compares_equivalent_actions_by_capability(tmp_path) -> No
         "report_blocked",
     }
     assert "recorded static prompt" not in model.calls[0][0].content
-    assert "Execute the supplied current approach" in model.calls[0][0].content
-    assert "## Worker attempt contract\n{}" in model.calls[0][0].content
-    assert "stale" in model.calls[0][1].content[0]["text"]
+    assert "Execute the binding `approach`" in model.calls[0][0].content
+    assert "## Worker attempt contract" not in model.calls[0][0].content
+    turn_context = model.calls[0][1].content[0]["text"]
+    assert "stale" in turn_context
+    assert turn_context.index("Current MaterializedFrame") < turn_context.index(
+        "Current Worker attempt"
+    )
+    assert turn_context.index('"approach"') < turn_context.index('"goal"')
+    assert '"approach": "Traverse the visible collection."' in turn_context
+    envelope = next(
+        tool for tool in model.bound_tools
+        if tool["function"]["name"] == "continue_with_actions"
+    )
+    variants = envelope["function"]["parameters"]["properties"]["actions"]["items"]["oneOf"]
+    scroll_variant = next(
+        item for item in variants
+        if item["properties"]["name"]["const"] == "scroll"
+    )
+    assert "Never use this on a relevance-ordered web/search result page" in (
+        scroll_variant["description"]
+    )
+    assert "recorded static action description" not in scroll_variant["description"]
 
 
 def test_worker_replay_applies_one_same_frame_protocol_repair(tmp_path) -> None:
@@ -238,7 +256,7 @@ def test_worker_replay_preserves_recorded_singleton_contract(tmp_path) -> None:
     run_dir = _worker_run(
         tmp_path,
         recorded_tool="continue_with_actions",
-        recorded_actions=[{"name": "scroll_content", "args": {}}],
+        recorded_actions=[{"name": "scroll", "args": {}}],
     )
     spec = WorkerSpec.model_validate({
         "profile": "collector",
@@ -316,7 +334,7 @@ def test_worker_replay_supports_plain_json_action_protocol(tmp_path, monkeypatch
         tmp_path,
         recorded_tool="continue_with_actions",
         recorded_actions=[
-            {"name": "scroll_content", "args": {}},
+            {"name": "scroll", "args": {}},
         ],
     )
     model = _RecordedModel(
@@ -326,7 +344,7 @@ def test_worker_replay_supports_plain_json_action_protocol(tmp_path, monkeypatch
             "args": {
                 "state": _state(),
                 "actions": [{
-                    "name": "scroll_content",
+                    "name": "scroll",
                     "args": {
                         "direction": "down",
                         "amount": "medium",
@@ -351,7 +369,7 @@ def test_worker_replay_supports_plain_json_action_protocol(tmp_path, monkeypatch
 
     assert result["status"] == "passed"
     assert result["expectation"]["action_capabilities"] == ["scroll"]
-    assert result["samples"][0]["actions"] == ["scroll_content"]
+    assert result["samples"][0]["actions"] == ["scroll"]
     assert result["samples"][0]["protocol_repairs"] == 1
     assert model.bound_tools == []
     assert any("Decision transport" in message.content for message in model.calls[0])
@@ -369,7 +387,7 @@ def test_master_replay_uses_current_prompt_knowledge_and_structural_expectation(
         goal="Apply the target state.",
         success_criteria=["Target state is visible."],
         data_requirements=[],
-        approach="Open the target through the visible interface.",
+        approach="visible target interface",
     )
     if outcome["phase"] != "completed":
         ctx.fail("worker failed")

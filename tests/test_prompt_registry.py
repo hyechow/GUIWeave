@@ -78,6 +78,7 @@ def test_master_exposes_only_tool_agent_runtime_api() -> None:
     assert "Do not enumerate atomic GUI actions" in prompt
     assert "Runtime supplies the active adapter's generic capabilities" in prompt
     assert "Never guess enum/status labels" in prompt
+    assert "Preserve every user-supplied string predicate verbatim" in prompt
     assert "never require perception to invent a missing year" in prompt
     assert "When success criteria guarantee exactly one target record" in prompt
     assert "Source layout order is not a data contract" in prompt
@@ -111,21 +112,24 @@ def test_presentation_requires_user_facing_prose() -> None:
 def test_worker_keeps_data_private_and_coordinates_normalized() -> None:
     prompt = load_prompt_text("task.tool_agent.worker")
 
-    assert "A successful mutation does not prove that the UI navigated" in prompt
-    assert "Runtime data-reference values are private" in prompt
-    assert "Values visibly read during this Worker's own cohesive GUI branch" in prompt
-    assert "Never guess an authentication secret" in prompt
-    assert "transient verification code on its delivery surface" in prompt
-    assert "visible required acknowledgement" in prompt
-    assert "select all matching records before committing" in prompt
-    assert "goal and success criteria fully bound this attempt" in prompt
-    assert "call `complete` immediately" in prompt
+    assert "A successful mutation does not prove navigation" in prompt
+    assert "Runtime-owned ResultRef and collection values are private" in prompt
+    assert "bounded cross-frame reasoning" in prompt
+    assert "Never guess credentials" in prompt
+    assert "transient code from its delivery surface" in prompt
+    assert "immutable goal, success criteria" in prompt
+    assert "Complete an operator only" in prompt
     assert "Coordinates are normalized 0..999" in prompt
-    assert "Runtime-supplied adapter actions" in prompt
-    assert "Generic actions are execution capabilities" in prompt
+    assert "Use only Runtime-supplied actions" in prompt
     assert "request_action_patch" not in prompt
-    assert "Placeholder labels on collection rows never override" in prompt
     assert "`state.status = completed | failed` is terminal" in prompt
+
+
+def test_worker_prompt_stays_a_compact_role_contract() -> None:
+    prompt = load_prompt_text("task.tool_agent.worker")
+
+    assert len(prompt) < 8_000
+    assert sum(line.startswith("-") for line in prompt.splitlines()) <= 30
 
 
 def test_master_keeps_visual_conditional_dependencies_in_one_worker() -> None:
@@ -145,23 +149,14 @@ def test_master_keeps_visual_conditional_dependencies_in_one_worker() -> None:
         assert rule in prompt
 
 
-def test_worker_handles_exhausted_candidate_sets_and_row_targets() -> None:
+def test_worker_keeps_action_grounding_and_memory_boundaries() -> None:
     prompt = load_prompt_text("task.tool_agent.worker")
 
     for rule in (
-        "an exhausted candidate set is direct", "the same unfiltered selector",
-        "latest selected batch's commit produced a confirmed transition",
-        "candidate_set_state.status = exhausted", "An initially empty selector, a filtered zero-result view",
-        "describe the row/button itself", "adjacent child icon or decoration", "An action does not prove",
-        "never relabel another visible control", "retain processed identities",
-        "explicitly remaining candidate", "durable completion fact means processed", "without reopening",
-        "comparison evidence", "implement `state.next_instruction`",
-        "never an internal step such as compare/evaluate/determine", "excluded match permits traversal",
-        "complete application-declared identity", "repeated, prefixed, ellipsized, or partial",
-        "complete identity and confirmed effect", "this item/record", "visible_collection_regions",
-        "not record boundaries", "skip exact excluded matches", "viewport_tail_clipped = true",
-        "repeated identity alone is insufficient", "Stable page chrome", "selector scrolls offscreen",
-        "unobscured central viewport", "opening tap returns `no_effect`",
+        "exactly one visible control", "do not relabel a nearby or generic control",
+        "complete task-relevant record identities", "bounded cross-frame reasoning",
+        "Stable page identity",
+        "A `no_effect` result requires inspecting the next frame",
     ):
         assert rule in prompt
 
@@ -175,6 +170,7 @@ def test_worker_handles_exhausted_candidate_sets_and_row_targets() -> None:
                 "initial `approach`", "`relative_date_offsets`",
             'coverage="first_match"', "ResultRefs cannot serve as hidden Worker memory",
             "complete—not merely visible—candidate traversal", "Do not enumerate atomic GUI actions",
+            "Preserve every user-supplied string predicate verbatim",
         )),
         ("task.tool_agent.visual_transcription", (
             "provenance-bearing platform clock", "Omit invisible optional properties",
@@ -187,13 +183,11 @@ def test_worker_handles_exhausted_candidate_sets_and_row_targets() -> None:
             "Keep every row and column", "keep result values unchanged",
         )),
         ("task.tool_agent.worker", (
-            "Runtime data-reference values are private", "Never guess an authentication secret",
-                "human-presence challenge", "Runtime-supplied adapter actions", "`report_blocked`",
-            "Coordinates are normalized 0..999", "Generic actions are execution capabilities",
-                "Treat autocomplete as pending state", "relevance-ordered non-empty discovery surface",
-            "candidate_set_state.status = exhausted", "complete application-declared identity",
-                "visible_collection_regions", "Query formulation is an action-level decision",
-                "empty_authoritative = false",
+            "ResultRef and collection values are private", "Never guess credentials",
+                "human-presence challenge", "Runtime-supplied actions", "`report_blocked`",
+            "Coordinates are normalized 0..999", "binding approach",
+                "Worker observations and recent steps", "Do not interact with residue",
+                "Do not claim completion from visible pixels alone",
         )),
         ("task.tool_agent.strategy_decide", (
             "materially different, falsifiable implementation approach",

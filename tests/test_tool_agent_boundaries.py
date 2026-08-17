@@ -63,14 +63,23 @@ def test_action_guard_owns_collector_readiness() -> None:
     assert assessment.completion_mode == "collector"
 
 
-def test_frame_guard_preserves_runtime_capabilities() -> None:
+def test_frame_guard_preserves_capabilities_until_an_unready_attempt() -> None:
     spec = _collector()
     frame = MaterializedFrame(frame_id="frame:1", screenshot_path="frame.png")
-    actions = [generic_action_spec("scroll"), generic_action_spec("tap")]
+    actions = [generic_action_spec("scroll"), generic_action_spec("open_url")]
 
-    assessment = assess_frame(spec, actions, frame)
+    ready = assess_frame(spec, actions, frame)
+    unready_frame = frame.model_copy(update={
+        "readiness": "loading",
+        "readiness_reason": "main content has not materialized",
+    })
+    initial = assess_frame(spec, actions, unready_frame)
+    attempted = assess_frame(spec, actions, unready_frame, attempted_action=True)
 
-    assert assessment.allowed_actions == actions
+    assert ready.allowed_actions == actions
+    assert [action.capability for action in initial.allowed_actions] == ["open_url"]
+    assert attempted.allowed_actions == []
+    assert attempted.completion_mode == "unavailable"
 
 
 @pytest.mark.parametrize(
@@ -101,19 +110,14 @@ def test_authoritative_empty_is_a_completed_immutable_data_contract() -> None:
     assert Strategy.route(unfiltered) == "complete"
 
 
-def test_navigation_guard_allows_public_root_exact_or_same_origin() -> None:
-    exact = "https://docs.example.test/reference?id=7"
-
+def test_navigation_guard_allows_any_public_http_destination() -> None:
     assert assess_navigation_url("https://search.example.test/").decision == "allow"
-    assert assess_navigation_url(exact, authorized_urls={exact}).decision == "allow"
     assert assess_navigation_url(
-        "https://active.example.test/next",
-        current_url="https://active.example.test/current",
+        "https://docs.example.test/reference?id=7",
     ).decision == "allow"
     assert assess_navigation_url(
         "https://other.example.test/deep/path",
-        current_url="https://active.example.test/current",
-    ).decision == "abort"
+    ).decision == "allow"
 
 
 @pytest.mark.parametrize("url", [
@@ -124,4 +128,4 @@ def test_navigation_guard_allows_public_root_exact_or_same_origin() -> None:
     "http://10.0.0.7/internal",
 ])
 def test_navigation_guard_rejects_non_public_destinations(url: str) -> None:
-    assert assess_navigation_url(url, authorized_urls={url}).decision == "abort"
+    assert assess_navigation_url(url).decision == "abort"

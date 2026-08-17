@@ -65,7 +65,6 @@ def test_tool_agent_trace_populates_report_timeline(tmp_path: Path) -> None:
                 "state": {
                     "status": "collecting",
                     "summary": "Reveal the remaining labels",
-                        "next_instruction": "Scroll the label list",
                     },
                     "token_usage": {
                         "input": 1000,
@@ -320,7 +319,6 @@ def test_tool_agent_report_groups_ordered_actions_and_safe_suffix_abort(
     state = {
         "status": "exploring",
         "summary": "Continue through the visible controls",
-        "next_instruction": "Execute the local action sequence",
     }
     batches = [
         ([

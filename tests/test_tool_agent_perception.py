@@ -1,8 +1,12 @@
 from __future__ import annotations
 
 import json
+from io import BytesIO
 from pathlib import Path
 from types import SimpleNamespace
+
+import pytest
+from PIL import Image
 
 from gui_agent.core.tool_agent.filter_state import (
     AppliedFilterState,
@@ -59,6 +63,7 @@ class FakePerception:
         applied_filters: dict[str, str] | None = None,
         applied_filter_state: AppliedFilterState | None = None,
         collection_regions: list | None = None,
+        observation: dict | None = None,
     ) -> None:
         self.tables = tables
         self.controls = controls or []
@@ -66,10 +71,12 @@ class FakePerception:
         self.applied_filters = applied_filters or {}
         self.applied_filter_state = applied_filter_state
         self.collection_regions = collection_regions
+        self.observation = observation or {}
 
     def observe(self):
-        return SimpleNamespace(
+        values = dict(
             png_bytes=b"png",
+            loading=None,
             tables=self.tables,
             form_controls=self.controls,
             form_control_state=self.control_state,
@@ -79,6 +86,7 @@ class FakePerception:
             url="https://example.test",
             title="Example",
         )
+        return SimpleNamespace(**(values | self.observation))
 
 
 class FakeBundle:
@@ -91,6 +99,7 @@ class FakeBundle:
         applied_filters: dict[str, str] | None = None,
         applied_filter_state: AppliedFilterState | None = None,
         collection_regions: list | None = None,
+        observation: dict | None = None,
     ) -> None:
         self.tables = tables
         self.controls = controls or []
@@ -98,6 +107,7 @@ class FakeBundle:
         self.applied_filters = applied_filters or {}
         self.applied_filter_state = applied_filter_state
         self.collection_regions = collection_regions
+        self.observation = observation
         self.make_perception_calls = 0
 
     def make_perception(self, _platform, _path):
@@ -109,6 +119,7 @@ class FakeBundle:
             applied_filters=self.applied_filters,
             applied_filter_state=self.applied_filter_state,
             collection_regions=self.collection_regions,
+            observation=self.observation,
         )
 
 
@@ -161,6 +172,12 @@ def _visible_region() -> SimpleNamespace:
     )
 
 
+def _blank_png() -> bytes:
+    output = BytesIO()
+    Image.new("RGB", (1280, 800), "white").save(output, format="PNG")
+    return output.getvalue()
+
+
 def test_operator_projects_exact_visible_collection_cell_text(tmp_path: Path) -> None:
     materializer = _materializer(tmp_path, "enhanced")
 
@@ -197,6 +214,35 @@ def test_collector_does_not_project_collection_cell_values(tmp_path: Path) -> No
     )
 
     assert frame.visible_collection_regions == []
+
+
+@pytest.mark.parametrize(
+    ("platform_loading", "expected_readiness"),
+    [(True, "loading"), (False, "blank")],
+)
+def test_unready_frame_skips_visual_collection_extraction(
+    tmp_path: Path,
+    platform_loading: bool,
+    expected_readiness: str,
+) -> None:
+    materializer = _materializer(tmp_path, "enhanced")
+    materializer._vision_extract = lambda *_args, **_kwargs: (_ for _ in ()).throw(  # type: ignore[method-assign]
+        AssertionError("unready frame must not invoke visual extraction")
+    )
+
+    frame, _ = materializer.observe(
+        bundle=FakeBundle([], observation={
+            "loading": platform_loading, "png_bytes": _blank_png(),
+        }),
+        platform=FakePlatform(),
+        requirements=[_requirement()],
+        frame_no=1,
+    )
+
+    assert frame.readiness == expected_readiness
+    assert frame.chunks == []
+    assert frame.collections == []
+    assert frame.missing_requirements == ["terms"]
 
 
 def test_operator_marks_a_clipped_collection_tail(tmp_path: Path) -> None:

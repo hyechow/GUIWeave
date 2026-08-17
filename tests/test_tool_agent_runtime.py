@@ -26,6 +26,7 @@ from gui_agent.core.tool_agent.protocol import (
     MAX_ORDERED_ACTIONS,
     ProtocolError,
     decode_ordered_actions,
+    worker_attempt_contract,
 )
 from gui_agent.core.tool_agent.runtime import (
     ToolAgentRuntime,
@@ -44,15 +45,12 @@ from gui_agent.core.tool_agent.worker_memory import (
 from gui_agent.adapters.browser.control_grounding import ground_action_to_nearest_control
 
 
-def _state(*, missing: bool) -> str:
+def _state() -> str:
     return json.dumps(
         {
             "status": "exploring",
             "summary": "A separate apply control is visible.",
             "established_facts": [],
-            "open_gaps": ["Apply the configured filter"] if missing else [],
-            "coverage": {},
-            "next_instruction": "Continue the same subgoal on this frame.",
         }
     )
 
@@ -315,7 +313,6 @@ def test_runtime_blocks_navigation_outside_unfinished_scroll_collection() -> Non
     state = WorkerState(
         status="collecting",
         summary="Collection is complete.",
-        next_instruction="Navigate away.",
     )
     journal = WorkerJournal("collection")
     journal.collection_context = "Bookmarks"
@@ -437,49 +434,54 @@ def test_runtime_supplies_generic_navigation_without_master_actions() -> None:
     assert {action.name for action in actions} == {"back", "open_url", "scroll"}
 
 
-def test_navigation_allows_public_root_but_requires_deep_route_provenance() -> None:
+def test_navigation_validates_transport_safety_without_approach_semantics() -> None:
     runtime = _browser_runtime()
-    neutral = MaterializedFrame(
-        frame_id="frame:neutral",
-        screenshot_path="neutral.png",
-        url="about:blank",
-    )
-    active = neutral.model_copy(update={
-        "frame_id": "frame:active",
-        "url": "https://active.example.test/current",
-    })
-
-    runtime._validate_runtime_open_url(
-        "https://initial.example.test/", frame=neutral,
-    )
-    runtime._validate_runtime_open_url(
-        "https://active.example.test/next", frame=active,
-    )
-    runtime._validate_runtime_open_url(
-        "https://replacement.example.test/",
-        frame=active,
-    )
-    with pytest.raises(_WorkerActionRejected, match="lacks exact task"):
-        runtime._validate_runtime_open_url(
-            "https://replacement.example.test/deep/path",
-            frame=active,
-        )
-    runtime._master_knowledge = (
-        "Use https://replacement.example.test/deep/path when needed."
-    )
-    runtime._validate_runtime_open_url(
-        "https://replacement.example.test/deep/path",
-        frame=active,
-    )
+    runtime._validate_runtime_open_url("https://initial.example.test/")
+    runtime._validate_runtime_open_url("https://active.example.test/next")
+    runtime._validate_runtime_open_url("https://replacement.example.test/deep/path")
     for invalid in ("/relative", "ftp://example.test/file", "https://user@example.test/"):
         with pytest.raises(ValueError, match="absolute HTTP"):
-            runtime._validate_runtime_open_url(
-                invalid, frame=neutral,
-            )
+            runtime._validate_runtime_open_url(invalid)
     with pytest.raises(ValueError, match="private, loopback"):
-        runtime._validate_runtime_open_url(
-            "http://127.0.0.1/internal", frame=neutral,
-        )
+        runtime._validate_runtime_open_url("http://127.0.0.1/internal")
+
+
+@pytest.mark.parametrize("readiness", ["loading", "blank"])
+def test_runtime_passes_unready_frame_to_worker_without_waiting(
+    tmp_path, readiness: str,
+) -> None:
+    runtime = object.__new__(ToolAgentRuntime)
+    runtime._frame_no = 0
+    runtime._active_worker_id = "worker"
+    runtime._worker_journals = {}
+    runtime._access_log_redactions = ()
+    runtime.perception_mode = "enhanced"
+    runtime.log_dir = tmp_path
+    runtime.bundle = SimpleNamespace()
+    runtime.platform = SimpleNamespace(
+        wait_settled=lambda _action_type: (_ for _ in ()).throw(
+            AssertionError("Runtime must not wait before Worker decision")
+        ),
+    )
+    frame = MaterializedFrame(
+        frame_id="frame:1",
+        screenshot_path=f"{readiness}.png",
+        readiness=readiness,
+        readiness_reason="surface is not ready",
+    )
+    runtime.materializer = SimpleNamespace(
+        observe=lambda **_kwargs: (frame, b"png"),
+    )
+    runtime._trace = lambda *_args, **_kwargs: None
+
+    observed, _ = runtime._observe(_worker_spec(
+        actions=[],
+        goal="Inspect the current surface",
+        success_criteria=["The current surface is actionable"],
+    ))
+
+    assert observed.readiness == readiness
+    assert runtime._frame_no == 1
 
 
 def test_android_runtime_discovers_installed_apps_for_worker_prompt() -> None:
@@ -499,7 +501,7 @@ def test_android_runtime_discovers_installed_apps_for_worker_prompt() -> None:
         )],
     )
 
-    prompt = runtime._worker_system_prompt(spec, runtime._initial_worker_actions(spec))
+    prompt = runtime._worker_system_prompt()
 
     assert '"Calendar"' in prompt
     assert '"Settings"' in prompt
@@ -513,21 +515,10 @@ def test_worker_prompt_defines_safe_batching_once() -> None:
     runtime._master_knowledge = ""
     runtime._worker_access_context = ""
 
-    prompt = runtime._worker_system_prompt(
-        _worker_spec(
-            goal="Complete the visible operation",
-            success_criteria=["The requested state is visible"],
-            actions=[DynamicActionSpec(
-                name="activate_visible_control",
-                capability="tap",
-                description="Activate the visible control",
-            )],
-        ),
-        [],
-    )
+    prompt = runtime._worker_system_prompt()
 
-    assert "Batch only actions grounded in the current frame" in prompt
-    assert "batch `type` followed by `press_enter`" in prompt
+    assert "actions grounded in the current frame" in prompt
+    assert "batch `type` then `press_enter`" in prompt
     assert "## Ordered multi-action mode" not in prompt
 
 
@@ -598,7 +589,7 @@ def test_private_access_context_reaches_worker_but_is_redacted_from_trace() -> N
         )],
     )
 
-    prompt = runtime._worker_system_prompt(spec, spec._test_actions)
+    prompt = runtime._worker_system_prompt()
 
     assert "Session access context" in prompt
     assert "runtime-user-73" in prompt
@@ -620,7 +611,7 @@ def test_private_access_context_reaches_worker_but_is_redacted_from_trace() -> N
     assert "session access value redacted" in rendered_trace
 
 
-def test_worker_prompt_keeps_stable_context_before_compact_attempt_contract() -> None:
+def test_worker_attempt_contract_is_dynamic_and_approach_first() -> None:
     runtime = object.__new__(ToolAgentRuntime)
     runtime._master_knowledge = "The settings page is reached from the profile menu."
     runtime._worker_access_context = "Use the active authenticated session."
@@ -635,32 +626,20 @@ def test_worker_prompt_keeps_stable_context_before_compact_attempt_contract() ->
         )],
         approach="Search the visible record grid for record-17.",
     )
-    revised = _worker_spec(
-        goal="Find the requested record",
-        success_criteria=["The record is visible"],
-        actions=[DynamicActionSpec(
-            name="open_records",
-            capability="tap",
-            description="Open the visible records control.",
-        )],
-        approach="Open the records surface through its visible navigation.",
-    )
 
-    first_prompt = runtime._worker_system_prompt(first, first._test_actions)
-    revised_prompt = runtime._worker_system_prompt(revised, revised._test_actions)
-    delimiter = "## Worker attempt contract"
+    system_prompt = runtime._worker_system_prompt()
+    first_contract = worker_attempt_contract(first)
 
-    assert first_prompt.split(delimiter, 1)[0] == revised_prompt.split(delimiter, 1)[0]
-    assert first_prompt.index("Application knowledge") < first_prompt.index(delimiter)
-    assert first_prompt.index("Session access context") < first_prompt.index(delimiter)
-    assert '"approach": "Search the visible record grid for record-17."' in first_prompt
-    assert '"goal": "Find the requested record"' in first_prompt
-    assert '"name": "search_record"' in first_prompt
-    assert '"name": "open_records"' in revised_prompt
-    assert "Search the visible record grid using the requested literal." not in first_prompt
-    attempt_contract = first_prompt.split(delimiter, 1)[1]
-    assert '"capability": "type"' in attempt_contract
-    assert '"exposed_args"' not in attempt_contract
+    assert "Application knowledge" in system_prompt
+    assert "Session access context" in system_prompt
+    assert "Current Worker attempt" not in system_prompt
+    assert first_contract.index('"approach"') < first_contract.index('"goal"')
+    assert first_contract.index('"approach"') < first_contract.index('"phase"')
+    assert '"phase": "start"' in first_contract
+    assert '"approach": "Search the visible record grid for record-17."' in first_contract
+    assert '"goal": "Find the requested record"' in first_contract
+    assert "Search the visible record grid using the requested literal." not in first_contract
+    assert '"exposed_args"' not in first_contract
 
 
 def test_runtime_materializes_result_ref_into_fixed_action_argument() -> None:
@@ -713,11 +692,12 @@ def test_runtime_materializes_result_ref_into_fixed_action_argument() -> None:
     assert "enter_computed_description" in {
         tool["function"]["name"] for tool in tools
     }
-    prompt = runtime._worker_system_prompt(spec, actions)
-    assert "3 customer(s) love it!" not in prompt
-    assert '"input": "computed"' in prompt
-    assert '"path": ["description"]' in prompt
-    assert '"task_goal"' not in prompt
+    system_prompt = runtime._worker_system_prompt()
+    attempt_contract = worker_attempt_contract(spec)
+    assert "3 customer(s) love it!" not in system_prompt
+    assert '"input": "computed"' in attempt_contract
+    assert '"path": ["description"]' in attempt_contract
+    assert '"task_goal"' not in attempt_contract
 
 
 def test_worker_reports_blocker_without_deciding_strategy_failure() -> None:
@@ -744,11 +724,13 @@ def test_worker_reports_blocker_without_deciding_strategy_failure() -> None:
         url="https://blocked.example.test/",
     )
 
-    pending = runtime._worker_tools_for_frame(spec, spec._test_actions, frame)
+    pending = runtime._worker_tools_for_frame(
+        spec, spec._test_actions, frame, allow_failure=False,
+    )
     journal.executed_tools.add("open_replacement")
     attempted = runtime._worker_tools_for_frame(spec, spec._test_actions, frame)
 
-    assert "report_blocked" in {tool["function"]["name"] for tool in pending}
+    assert "report_blocked" not in {tool["function"]["name"] for tool in pending}
     assert "report_blocked" in {tool["function"]["name"] for tool in attempted}
     assert "fail" not in {tool["function"]["name"] for tool in pending}
 
@@ -798,14 +780,13 @@ def test_bound_type_remains_a_worker_choice_on_closed_query_surface() -> None:
 def test_global_turn_budget_is_shared_across_logical_workers() -> None:
     runtime = object.__new__(ToolAgentRuntime)
     runtime.max_turns = 2
-    runtime.max_strategy_replacements = 2
     runtime._frame_no = 0
     runtime.trace = []
     events = []
     runtime._trace = lambda event, **payload: events.append({"event": event, **payload})
     calls = []
 
-    def run_worker(worker_id, _spec):
+    def run_worker(worker_id, _spec, *, require_attempt=False):
         calls.append(worker_id)
         runtime._frame_no += 1
         return WorkerOutcome(
@@ -846,11 +827,10 @@ def test_global_turn_budget_is_shared_across_logical_workers() -> None:
 def test_strategy_does_not_receive_or_control_runtime_turn_budget() -> None:
     runtime = object.__new__(ToolAgentRuntime)
     runtime.max_turns = 10
-    runtime.max_strategy_replacements = 1
     runtime._frame_no = 8
     runtime._trace = lambda *_args, **_kwargs: None
 
-    def fail_worker(_worker_id, _spec):
+    def fail_worker(_worker_id, _spec, *, require_attempt=False):
         runtime._frame_no += 1
         return WorkerOutcome(phase="failed", summary="Try a distinct path", steps=1)
 
@@ -880,11 +860,10 @@ def test_strategy_does_not_receive_or_control_runtime_turn_budget() -> None:
 def test_redelegation_failure_reports_all_consumed_worker_steps() -> None:
     runtime = object.__new__(ToolAgentRuntime)
     runtime.max_turns = 50
-    runtime.max_strategy_replacements = 2
     runtime._frame_no = 0
     runtime._trace = lambda *_args, **_kwargs: None
     attempts = iter((3, 4))
-    runtime._run_worker = lambda _worker_id, _spec: WorkerOutcome(
+    runtime._run_worker = lambda _worker_id, _spec, *, require_attempt=False: WorkerOutcome(
         phase="failed",
         summary="Try another local strategy",
         steps=next(attempts),
@@ -922,7 +901,6 @@ def test_redelegation_failure_reports_all_consumed_worker_steps() -> None:
 def test_worker_blocked_requires_a_replacement_strategy() -> None:
     runtime = object.__new__(ToolAgentRuntime)
     runtime.max_turns = 50
-    runtime.max_strategy_replacements = 1
     runtime._frame_no = 0
     events = []
     runtime._trace = lambda event, **payload: events.append({"event": event, **payload})
@@ -935,8 +913,11 @@ def test_worker_blocked_requires_a_replacement_strategy() -> None:
     ))
     worker_ids = []
 
-    def run_worker(worker_id, _spec):
+    attempt_requirements = []
+
+    def run_worker(worker_id, _spec, *, require_attempt=False):
         worker_ids.append(worker_id)
+        attempt_requirements.append(require_attempt)
         return next(outcomes)
 
     runtime._run_worker = run_worker
@@ -963,7 +944,52 @@ def test_worker_blocked_requires_a_replacement_strategy() -> None:
     assert outcome.phase == "completed"
     assert outcome.steps == 3
     assert worker_ids == ["logical_worker", "logical_worker_strategy_1"]
+    assert attempt_requirements == [False, True]
     assert any(event["event"] == "strategy_worker_dispatched" for event in events)
+
+
+def test_strategy_replacements_use_only_the_global_turn_budget() -> None:
+    runtime = object.__new__(ToolAgentRuntime)
+    runtime.max_turns = 4
+    runtime._frame_no = 0
+    runtime._trace = lambda *_args, **_kwargs: None
+    outcomes = iter([
+        *(WorkerOutcome(
+            phase="failed", summary="source rejected navigation",
+            failure_kind="navigation_blocked", steps=1,
+        ) for _ in range(3)),
+        WorkerOutcome(phase="completed", summary="source four completed", steps=1),
+    ])
+    calls = []
+
+    def run_worker(worker_id, _spec, *, require_attempt=False):
+        calls.append(("worker", worker_id))
+        runtime._frame_no += 1
+        return next(outcomes)
+
+    def replace(**kwargs):
+        attempt = kwargs["attempt_no"]
+        calls.append(("strategy", attempt))
+        return WorkerStrategy(approach=f"alternative source {attempt}"), "selected"
+
+    runtime._run_worker = run_worker
+    runtime._request_strategy_decision = replace
+    spec = _worker_spec(
+        profile="operator",
+        goal="Complete one cohesive UI traversal",
+        success_criteria=["The traversal is complete"],
+        actions=[],
+    )
+
+    outcome = runtime._run_logical_worker("logical_worker", spec)
+
+    assert (outcome.phase, outcome.steps) == ("completed", 4)
+    assert calls == [
+        ("worker", "logical_worker"),
+        ("strategy", 1), ("worker", "logical_worker_strategy_1"),
+        ("strategy", 2), ("worker", "logical_worker_strategy_2"),
+        ("strategy", 3), ("worker", "logical_worker_strategy_3"),
+    ]
 
 
 class _Executor:
@@ -1041,12 +1067,12 @@ class _EmptyContentWorker:
                     "id": "tap-1",
                     "name": "activate_visible_control",
                     "args": {
-                        "state": json.loads(_state(missing=False)),
+                        "state": json.loads(_state()),
                         "x": 400, "y": 300, "description": "Advance",
                     },
                 }],
             )
-        return SimpleNamespace(content=_state(missing=False), tool_calls=[])
+        return SimpleNamespace(content=_state(), tool_calls=[])
 
 
 class _MissingStateWorker(_EmptyContentWorker):
@@ -1073,7 +1099,6 @@ class _ArrayCoordinateWorker:
                     "state": {
                         "status": "exploring",
                         "summary": "The date input is visible.",
-                        "next_instruction": "Enter the required date.",
                     },
                     "x": [200, 380],
                     "y": [200, 380],
@@ -1099,7 +1124,6 @@ class _RepeatedThenGroundedWorker:
             "state": {
                 "status": "exploring",
                 "summary": "The Purchase Date to field is empty.",
-                "next_instruction": "Enter the end date.",
             },
             "x": 207,
             "y": 550,
@@ -1139,7 +1163,6 @@ class _RepeatedEffectiveScrollWorker:
                     "state": {
                         "status": "collecting",
                         "summary": "More visual content remains below.",
-                        "next_instruction": "Continue scrolling to collect it.",
                     },
                     "amount": "medium",
                 },
@@ -1190,7 +1213,6 @@ class _MultiActionWorker:
                     "status": self.state_status,
                     "summary": self.state_summary,
                     "established_facts": [],
-                    "next_instruction": "Fill and submit the login form.",
                 },
                 "actions": actions,
             },
@@ -1292,19 +1314,13 @@ def test_fused_worker_executes_ordered_actions_and_discards_invalid_suffix(
         assert any(status.startswith("Action · 2/3 · type") for status in runtime.statuses)
 
 
-def test_fused_worker_repairs_unsourced_deep_navigation_on_same_frame(
+def test_fused_worker_dispatches_public_deep_navigation_without_semantic_review(
     monkeypatch,
 ) -> None:
-    worker = _MultiActionWorker([
-        [{
+    worker = _MultiActionWorker([[{
             "name": "open_replacement",
             "args": {"url": "https://replacement.example.test/deep/path"},
-        }],
-        [{
-            "name": "open_replacement",
-            "args": {"url": "https://replacement.example.test/"},
-        }],
-    ])
+        }]])
 
     runtime = _run_fused_worker(
         monkeypatch,
@@ -1317,10 +1333,10 @@ def test_fused_worker_repairs_unsourced_deep_navigation_on_same_frame(
         )],
     )
 
-    assert worker.calls == 2
+    assert worker.calls == 1
     assert len(runtime._executor.actions) == 1
     assert runtime._executor.actions[0].action_type == "navigate"
-    assert any(
+    assert not any(
         event["event"] == "worker_same_frame_action_repair"
         for event in runtime.trace
     )
@@ -1981,7 +1997,6 @@ def test_multi_action_aborts_suffix_after_flash_off_target(monkeypatch) -> None:
         state=WorkerState(
             status="exploring",
             summary="The login form is visible.",
-            next_instruction="Fill and submit it.",
         ),
         step=1,
         frame=MaterializedFrame(frame_id="frame:1", screenshot_path="frame.png"),
@@ -2259,7 +2274,7 @@ def test_runtime_ignores_provider_echo_of_fixed_action_argument(monkeypatch) -> 
     assert runtime._executor.actions[-1].text == "authoritative query"
 
 
-def test_runtime_terminates_on_same_origin_platform_rejection(monkeypatch) -> None:
+def test_runtime_keeps_page_request_rejection_observational(monkeypatch) -> None:
     rejection_feedback = [{
         "kind": "xhr",
         "url": "https://example.test/action",
@@ -2289,43 +2304,28 @@ def test_runtime_terminates_on_same_origin_platform_rejection(monkeypatch) -> No
         MaterializedFrame(frame_id="frame:1", screenshot_path="frame.png"),
     )
 
-    assert payload["status"] == "failed"
+    assert payload["status"] == "executed"
     assert payload["platform_feedback"] == [{
         "status": 200,
         "url": "https://example.test/action",
-        "rejected": True,
+        "rejected": False,
         "message": "The action is not allowed.",
     }]
-    assert terminal == "platform_rejected"
-
-    recovered_payload, recovered_terminal = runtime._execute_worker_tool(
-        spec,
-        [action],
-        {"name": action.name, "args": {"x": 500, "y": 500}},
-        b"png",
-        MaterializedFrame(frame_id="frame:2", screenshot_path="frame.png"),
-    )
-    completed_payload, completed_terminal = runtime._execute_worker_tool(
-        spec,
-        [action],
-        {"name": "complete", "args": {}},
-        b"png",
-        MaterializedFrame(frame_id="frame:3", screenshot_path="frame.png"),
-    )
-
-    assert recovered_payload["status"] == "executed"
-    assert recovered_terminal is None
-    assert completed_payload == {"status": "completed"}
-    assert completed_terminal == "complete"
+    assert terminal is None
 
 
-def test_scroll_ignores_background_request_rejection() -> None:
-    feedback = [{
-        "status": 200,
-        "body": '{"error":true,"message":"No recommendations found"}',
-    }]
+@pytest.mark.parametrize(
+    ("status", "body"),
+    [
+        (200, '{"error":true,"message":"Not allowed"}'),
+        (404, '{"errors":[{"error":{"message":"Not found"}}]}'),
+    ],
+)
+def test_page_request_errors_are_observational(status: int, body: str) -> None:
+    feedback = [{"kind": "fetch", "status": status, "body": body}]
+
     assert _action_feedback(feedback, "scroll") == []
-    assert _action_feedback(feedback, "tap")[0]["rejected"] is True
+    assert _action_feedback(feedback, "tap")[0]["rejected"] is False
 
 
 def test_failed_transport_action_skips_settle_and_returns_control(monkeypatch) -> None:
@@ -2378,6 +2378,7 @@ def test_failed_transport_action_skips_settle_and_returns_control(monkeypatch) -
     )
     assert terminal == "navigation_blocked"
     assert payload["status"] == "failed"
+    assert payload["reason"] == "navigation timed out"
     assert payload["platform_feedback"][0]["message"] == "navigation timed out"
     assert payload["settle_seconds"] == 0.0
     assert payload["no_effect"] is True
@@ -2703,7 +2704,6 @@ def _coding_program() -> str:
 
 def test_runtime_replaces_strategy_inside_worker_call_without_replaying_program(tmp_path) -> None:
     runtime = object.__new__(ToolAgentRuntime)
-    runtime.max_strategy_replacements = 1
     runtime.max_compile_attempts = 1
     runtime.data_store = RuntimeDataStore()
     runtime.trace = []
@@ -2719,7 +2719,7 @@ def test_runtime_replaces_strategy_inside_worker_call_without_replaying_program(
     runtime._request_strategy_decision = lambda **_kwargs: (replacement, "selected")
     worker_calls = []
 
-    def run_worker(worker_id, spec):
+    def run_worker(worker_id, spec, *, require_attempt=False):
         worker_calls.append((worker_id, spec))
         if len(worker_calls) == 1:
             return WorkerOutcome(
@@ -2780,7 +2780,6 @@ def test_runtime_does_not_replay_frozen_program_after_local_budget_failure(
     tmp_path,
 ) -> None:
     runtime = object.__new__(ToolAgentRuntime)
-    runtime.max_strategy_replacements = 2
     runtime.max_compile_attempts = 1
     runtime.data_store = RuntimeDataStore()
     runtime.trace = []
@@ -2792,7 +2791,7 @@ def test_runtime_does_not_replay_frozen_program_after_local_budget_failure(
     runtime.log_dir = tmp_path
     worker_calls = []
 
-    def fail_worker(worker_id, spec):
+    def fail_worker(worker_id, spec, *, require_attempt=False):
         worker_calls.append((worker_id, spec))
         return WorkerOutcome(
             phase="failed",
@@ -2819,7 +2818,6 @@ def test_runtime_does_not_replay_frozen_program_after_local_budget_failure(
 
 def test_runtime_interruption_is_sealed_as_a_reportable_failed_run(tmp_path) -> None:
     runtime = object.__new__(ToolAgentRuntime)
-    runtime.max_strategy_replacements = 0
     runtime.max_compile_attempts = 1
     runtime.data_store = RuntimeDataStore()
     runtime.trace = []
