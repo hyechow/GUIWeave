@@ -19,6 +19,7 @@ def test_unsafe_scroll_selector_covers_magento_choice_widgets() -> None:
 def _device_with_page(page) -> PlaywrightDevice:
     dev = PlaywrightDevice.__new__(PlaywrightDevice)
     dev._page = page
+    dev._last_viewport = (1280, 800)
     dev._follow_active_tab = lambda: None
     dev._require_page = lambda: page
     dev._cdp_send = lambda *args, **kwargs: (_ for _ in ()).throw(

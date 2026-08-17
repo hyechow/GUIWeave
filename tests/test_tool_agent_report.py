@@ -65,7 +65,6 @@ def test_tool_agent_trace_populates_report_timeline(tmp_path: Path) -> None:
                 "state": {
                     "status": "collecting",
                     "summary": "Reveal the remaining labels",
-                        "next_instruction": "Scroll the label list",
                     },
                     "token_usage": {
                         "input": 1000,
@@ -242,6 +241,7 @@ def test_tool_agent_report_exposes_coding_master_and_worker_boundaries(tmp_path:
     html = save_report(data, tmp_path / "report.html").read_text(encoding="utf-8")
 
     assert data.pages[0].title == "GUI Worker · collect"
+    assert "Goal: Collect one result" in data.pages[0].statement_description
     assert "Coding Master · Python orchestration" in html
     assert "GUI Worker · collect" in html
     assert "def run(ctx)" in html
@@ -319,7 +319,6 @@ def test_tool_agent_report_groups_ordered_actions_and_safe_suffix_abort(
     state = {
         "status": "exploring",
         "summary": "Continue through the visible controls",
-        "next_instruction": "Execute the local action sequence",
     }
     batches = [
         ([

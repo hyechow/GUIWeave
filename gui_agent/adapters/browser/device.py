@@ -26,7 +26,6 @@ from __future__ import annotations
 import ipaddress
 import json
 import os
-import signal
 import threading
 import time
 from contextlib import contextmanager
@@ -39,7 +38,7 @@ from urllib.parse import urlsplit
 # None for the user's existing tab). Typical laptop content size.
 _DEFAULT_VIEWPORT_W = 1280
 _DEFAULT_VIEWPORT_H = 800
-_NAVIGATION_TIMEOUT_MS = 20_000
+_NAVIGATION_COMMIT_TIMEOUT_MS = 5_000
 TEXT_RETARGET_RADIUS_PX = 220
 _CDP_PROXY_ENV_LOCK = threading.Lock()
 
@@ -163,10 +162,6 @@ def _cdp_proxy_bypass(cdp_url: str) -> Iterator[None]:
                 else:
                     os.environ[name] = value
 
-# Hard wall-clock cap for a single raw-CDP send. A non-responding Chrome would
-# otherwise hang the agent loop forever. Normal round-trips are well under a second.
-_CDP_SEND_TIMEOUT_S = 10.0
-
 # CDP settle (wait_settled): the page is "settled" once it is at least interactive AND both
 # the DOM and the network have been quiet for _SETTLE_QUIET_MS. This reads the page's real
 # load/DOM/network state instead of diffing pixels, so a canvas/requestAnimationFrame render
@@ -183,6 +178,7 @@ _SETTLE_POLL_S = 0.12        # poll cadence (raw-CDP evaluate is cheap)
 # and the next turn sees it further along. So keep the cap short; a page still busy at the cap
 # returns anyway (the log says 仍在加载) and the loop re-checks next turn.
 _SETTLE_CAP_S = 3.0
+_SETTLE_NAV_CAP_S = 6.0
 _FORM_VALUE_FINGERPRINT_JS = (
     "(()=>{const els=[...document.querySelectorAll('input,select,textarea')];"
     "const vals=els.map(e=>(e.type==='checkbox'||e.type==='radio')?(e.checked?'1':'0')"
@@ -190,10 +186,26 @@ _FORM_VALUE_FINGERPRINT_JS = (
     "return els.length+'|'+vals.join('\\u0001');})()"
 )
 
+# Prefer the semantic main-content root when present. A completed document may expose only
+# page chrome while its main surface is still an empty skeleton. Controls or media count only
+# when they carry usable content; layout-only descendants do not.
+_CONTENT_READY = (
+    "(()=>{const b=document.body;if(!b)return false;"
+    "const r=document.querySelector('main,[role=main]')||b;"
+    "if((r.innerText||'').trim().length>0)return true;"
+    "return [...r.querySelectorAll('button,input,textarea,select,img,canvas,video,iframe,a')]"
+    ".some(e=>{if(e.getClientRects().length===0||getComputedStyle(e).visibility==='hidden')"
+    "return false;if(e.matches('img'))return e.complete&&e.naturalWidth>1;"
+    "if(e.matches('a'))return !!((e.innerText||e.getAttribute('aria-label')||'').trim());"
+    "return true;});})()"
+)
+_DOCUMENT_READINESS = (
+    "(()=>{return [document.readyState," + _CONTENT_READY + "];})()"
+)
+
 # A MutationObserver storing the time of the last DOM change on window.__q.t (installed once
 # per document, guarded; re-installs after a navigation wipes window.__q). _SETTLE_RESET sets
-# the baseline to now (called on wait_settled entry, so quiet is measured FROM THE ACTION);
-# _SETTLE_PROBE returns [readyState, msSinceLastMutation] in one round-trip.
+# the baseline to now (called on wait_settled entry, so quiet is measured FROM THE ACTION).
 _SETTLE_INSTALL = (
     "if(!window.__q){window.__q={t:performance.now()};"
     "new MutationObserver(()=>{window.__q.t=performance.now();}).observe(document.documentElement||document,"
@@ -202,13 +214,12 @@ _SETTLE_INSTALL = (
 _SETTLE_RESET = "(()=>{" + _SETTLE_INSTALL + "window.__q.t=performance.now();return 1;})()"
 _SETTLE_PROBE = (
     "(()=>{" + _SETTLE_INSTALL
-    + "return [document.readyState, Math.round(performance.now()-window.__q.t)];})()"
+    + "return [document.readyState,Math.round(performance.now()-window.__q.t),"
+    + _CONTENT_READY + "];})()"
 )
 
-# Same-origin XHR/fetch feedback belongs to the executed GUI action's observable outcome.  Some
-# web widgets return a structured rejection without rendering its message into the current
-# viewport.  Install a page-local, bounded monitor immediately before dispatch and consume it
-# after settle; it observes existing application requests without issuing any request itself.
+# Observe bounded same-origin XHR/fetch feedback without issuing requests. Page traffic remains
+# context; only native browser navigation feedback can reject a dispatched GUI action.
 _ACTION_FEEDBACK_INSTALL_JS = r"""
 (() => {
   window.__guiAgentActionFeedback = [];
@@ -272,13 +283,6 @@ _ACTION_FEEDBACK_CONSUME_JS = r"""
 })()
 """
 
-
-class _CDPTimeout(Exception):
-    """A raw-CDP send exceeded _CDP_SEND_TIMEOUT_S (Chrome did not respond)."""
-
-
-def _cdp_alarm(signum, frame):  # SIGALRM handler — interrupts the blocked send
-    raise _CDPTimeout()
 
 # Pixels of wheel scroll per unit of the iphone-style ``amount`` (amount=5 -> a
 # bit under one screen). Keeps the neutral scroll(direction, amount=5, ...)
@@ -379,9 +383,21 @@ class PlaywrightDevice:
         self._tab_switched = False
         self._last_viewport = None
         self._dpr = None
-        if self.start_url:
-            self.navigate(self.start_url)
+        try:
+            self._navigate_to_start_url()
+        except Exception:
+            self.close()
+            raise
         return self
+
+    def _navigate_to_start_url(self) -> None:
+        """Open the configured initial page or fail before the first observation."""
+
+        if not self.start_url:
+            return
+        result = self.navigate(self.start_url)
+        if result.startswith("failed:"):
+            raise RuntimeError(f"browser start navigation failed: {result}")
 
     def close(self):
         """Close owned headless browsers; otherwise detach from Chrome.
@@ -520,8 +536,6 @@ class PlaywrightDevice:
             self._cdp = page.context.new_cdp_session(page)
         try:
             return self._timed_send(method, params)
-        except _CDPTimeout:
-            raise  # don't retry a hang into another hang — let the caller fall back
         except Exception:
             self._cdp = page.context.new_cdp_session(page)
             return self._timed_send(method, params)
@@ -550,17 +564,16 @@ class PlaywrightDevice:
         return base64.b64decode(result["data"])
 
     def is_loading(self) -> bool:
-        """Whether the document or a tracked one-shot request is still pending."""
+        """Whether the document or its semantic main surface is still loading."""
         try:
-            self._ensure_net_tracking()
             res = self._cdp_send(
                 "Runtime.evaluate",
-                {"expression": "document.readyState", "returnByValue": True},
+                {"expression": _DOCUMENT_READINESS, "returnByValue": True},
             )
-            return (
-                (res.get("result", {}) or {}).get("value") == "loading"
-                or bool(self._xhr_ids)
-            )
+            value = (res.get("result", {}) or {}).get("value")
+            if isinstance(value, list) and len(value) >= 2:
+                return value[0] == "loading" or not bool(value[1])
+            return value == "loading"
         except Exception:
             return False
 
@@ -626,20 +639,32 @@ class PlaywrightDevice:
         while True:
             res = self._cdp_send("Runtime.evaluate", {"expression": _SETTLE_PROBE, "returnByValue": True})
             val = res.get("result", {}).get("value")
-            rs, q = (val[0], val[1]) if isinstance(val, list) and len(val) == 2 else ("complete", None)
-            # XHR/Fetch remains in flight until response headers, completion or failure.  A slow
-            # persistence request must not become "quiet" merely because a local timer elapsed.
+            rs, q, content_ready = (
+                (val[0], val[1], bool(val[2]))
+                if isinstance(val, list) and len(val) >= 3
+                else ("complete", None, True)
+            )
+            # Long-lived telemetry and session requests do not prevent an already materialized
+            # surface from settling. Network quiet means no new XHR/Fetch activity in the quiet
+            # window; semantic content and DOM quiet independently guard visible readiness.
             now = time.monotonic()
             xhr_inflight = len(self._xhr_ids)
-            net_quiet = xhr_inflight == 0 and (now - self._xhr_last) * 1000.0 >= _SETTLE_QUIET_MS
+            net_quiet = (now - self._xhr_last) * 1000.0 >= _SETTLE_QUIET_MS
             elapsed = time.perf_counter() - t0
-            settled = rs != "loading" and (q or 0) >= _SETTLE_QUIET_MS and net_quiet
-            if settled or elapsed >= _SETTLE_CAP_S:
+            settled = bool(
+                rs != "loading"
+                and (q or 0) >= _SETTLE_QUIET_MS
+                and net_quiet
+                and content_ready
+            )
+            cap = _SETTLE_NAV_CAP_S if action_type == "navigate" else _SETTLE_CAP_S
+            if settled or elapsed >= cap:
                 # DOM never mutated after entry → quietMs climbed with elapsed (≈ equal).
-                no_effect = q is not None and q >= elapsed * 1000.0 - 150 and xhr_inflight == 0
-                tag = "settled" if settled else "达上限·仍在加载"
+                no_effect = q is not None and q >= elapsed * 1000.0 - 150
+                tag = "settled" if settled else "达上限·内容未就绪"
                 print(f"  [Settle] {elapsed:.1f}s (CDP {tag}: readyState={rs}, "
                       f"domQuiet={q}ms, xhr在飞={xhr_inflight}"
+                      + f"，内容={'就绪' if content_ready else '空白'}"
                       + ("，零效果" if no_effect else "") + ")")
                 return elapsed, no_effect
             self._ensure_net_tracking()  # re-arm if a poll rebuilt the session
@@ -1500,8 +1525,19 @@ class PlaywrightDevice:
         """
         self._follow_active_tab()
         page = self._require_page()
-        dist = max(1, int(amount)) * _SCROLL_PX_PER_AMOUNT
         d = (direction or "").strip().lower()
+        viewport_w, viewport_h = self.viewport_size
+        horizontal = d in (
+            "left", "right", "leftward", "rightward", "向左", "向右",
+        )
+        axis_extent = viewport_w if horizontal else viewport_h
+        # Keep context from the prior frame visible. A single wheel action larger
+        # than the viewport can skip table headers, section labels, and other
+        # identity evidence the next frame needs for grounding.
+        dist = min(
+            max(1, int(amount)) * _SCROLL_PX_PER_AMOUNT,
+            max(1, round(axis_extent * 0.9)),
+        )
         dx = dy = 0
         if d in ("down", "向下", "downward"):
             dy = dist
@@ -1693,6 +1729,10 @@ class PlaywrightDevice:
 
     # ----- browser-only extras --------------------------------------------
     def _navigation_failure(self, url: str, error: object) -> str:
+        try:
+            self._cdp_send("Page.stopLoading", {})
+        except Exception:
+            pass
         message = (
             str(error or "unknown navigation error")
             .split("\nCall log:", 1)[0]
@@ -1713,7 +1753,7 @@ class PlaywrightDevice:
                 self._require_page().goto(
                     url,
                     wait_until="commit",
-                    timeout=_NAVIGATION_TIMEOUT_MS,
+                    timeout=_NAVIGATION_COMMIT_TIMEOUT_MS,
                 )
             else:
                 result = self._cdp_send("Page.navigate", {"url": url})

@@ -112,7 +112,7 @@ def test_files_mail_use_physical_folder_and_single_file_picker() -> None:
         assert fact in mail_context
 
 
-def test_files_archive_content_keeps_intermediate_names_in_one_branch() -> None:
+def test_files_archive_content_exposes_only_application_facts() -> None:
     knowledge = load_knowledge_for_app("Files", "android")
     assert knowledge is not None
 
@@ -122,8 +122,9 @@ def test_files_archive_content_keeps_intermediate_names_in_one_branch() -> None:
 
     for fact in (
         "Downloads top-bar search", "not a tap target",
-        "one uninterrupted Files interaction", "match only those names",
-        "separate branch", "candidate identities", "substitute every/recent",
+        "Entry names identify the same-named", "leaves the archive",
+        "return to Downloads", "not scoped to the latest extraction",
+        "may also contain unrelated prior files", "identity link", "detail field",
     ):
         assert fact in context
 

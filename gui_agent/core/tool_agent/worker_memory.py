@@ -43,6 +43,7 @@ _CONTROL_PROMPT_FIELDS = (
     "selected_text_primary",
     "options",
     "focused",
+    "enabled",
     "required",
     "is_filter",
     "query_action",
@@ -191,13 +192,12 @@ def _offscreen_action_controls(controls: list[dict[str, Any]]) -> list[dict[str,
 
 @dataclass(frozen=True)
 class WorkerJournalEvent:
-    """One append-only Worker event; durable text must come from runtime facts."""
+    """One append-only event; only Runtime evidence may be durable."""
 
     event_ref: str
     kind: str
     durable_text: str = ""
     narrative_text: str = ""
-    pending_subgoal: str = ""
 
 
 @dataclass
@@ -207,12 +207,23 @@ class WorkerJournal:
     worker_id: str
     events: list[WorkerJournalEvent] = field(default_factory=list)
     collection_context: str = ""
+    collection_ref: str = ""
     last_scroll_no_effect: bool = False
+    last_scroll_direction: str = ""
+    last_scroll_collection_ref: str = ""
+    last_scroll_point: tuple[float, float] | None = None
     established_fact_texts: set[str] = field(default_factory=set, repr=False)
+    executed_tools: set[str] = field(default_factory=set, repr=False)
 
-    def observe_collection(self, frame: MaterializedFrame) -> None:
+    def observe_collection(self, frame: MaterializedFrame) -> str:
+        """Return the collection ref carrying downward-scroll end evidence, if any."""
+
         if len(frame.visible_collection_regions) != 1:
-            return
+            self.collection_ref = ""
+            return ""
+        self.collection_ref = (
+            frame.collections[0].ref if len(frame.collections) == 1 else ""
+        )
         region = frame.visible_collection_regions[0]
         bounds = region.get("bounds")
         context = str(region.get("caption") or "").strip()
@@ -233,47 +244,43 @@ class WorkerJournal:
                 )["label"]).strip()
         if context:
             self.collection_context = context[:120]
+        return (
+            self.collection_ref
+            if self.collection_ref == self.last_scroll_collection_ref
+            and self.has_downward_scroll_end_evidence(frame)
+            else ""
+        )
+
+    def has_downward_scroll_end_evidence(self, frame: MaterializedFrame) -> bool:
+        """Whether facts show a no-effect downward scroll on the sole collection."""
+
+        if not (
+            self.last_scroll_no_effect
+            and self.last_scroll_direction == "down"
+            and self.last_scroll_point is not None
+            and len(frame.visible_collection_regions) == 1
+        ):
+            return False
+        bounds = frame.visible_collection_regions[0].get("bounds") or ()
+        if len(bounds) != 4:
+            return False
+        x, y = self.last_scroll_point
+        return (
+            float(bounds[0]) <= x <= float(bounds[2])
+            and float(bounds[1]) <= y <= float(bounds[3])
+        )
 
     def record_established_fact(self, *, event_ref: str, text: str) -> None:
+        """Retain a model observation as bounded narrative, never durable evidence."""
+
         fact = " ".join(str(text or "").split())
         if not fact or fact in self.established_fact_texts:
             return
         self.established_fact_texts.add(fact)
         self.events.append(WorkerJournalEvent(
             event_ref=event_ref,
-            kind="established_fact",
-            durable_text=f"Worker-established visual fact: {fact}",
-        ))
-
-    def record_replan(self, *, attempt: int) -> None:
-        self.events.append(WorkerJournalEvent(
-            event_ref=f"replan:{attempt}",
-            kind="subgoal_replan",
-            durable_text=(
-                f"local GUI subgoal attempt {attempt} started with prior runtime "
-                "experience retained"
-            ),
-        ))
-
-    def record_patch(
-        self,
-        *,
-        step: int,
-        patch_turn: int,
-        payload: dict[str, Any],
-    ) -> None:
-        status = str(payload.get("status") or "unknown")
-        action = payload.get("action") if isinstance(payload.get("action"), dict) else {}
-        name = str(action.get("name") or "unknown")
-        capability = str(action.get("capability") or "unknown")
-        error = str(payload.get("error") or "")
-        detail = f"; error={error}" if error else ""
-        self.events.append(WorkerJournalEvent(
-            event_ref=f"step:{step}:patch:{patch_turn}",
-            kind="action_patch",
-            durable_text=(
-                f"action patch {status}: {name} ({capability}){detail}"
-            ),
+            kind="worker_observation",
+            narrative_text=f"Worker-observed visual context: {fact}",
         ))
 
     def record_turn(
@@ -301,11 +308,26 @@ class WorkerJournal:
             else ""
         )
         if result_status == "executed":
+            self.executed_tools.add(tool)
             if result.get("action_type") == "scroll":
                 self.last_scroll_no_effect = bool(result.get("no_effect"))
+                self.last_scroll_direction = str(
+                    result.get("direction") or args.get("direction") or ""
+                )
+                self.last_scroll_collection_ref = self.collection_ref
+                x = args.get("x")
+                y = args.get("y")
+                self.last_scroll_point = (
+                    float(x) if isinstance(x, (int, float)) else 500.0,
+                    float(y) if isinstance(y, (int, float)) else 500.0,
+                )
             else:
                 self.collection_context = ""
+                self.collection_ref = ""
                 self.last_scroll_no_effect = False
+                self.last_scroll_direction = ""
+                self.last_scroll_collection_ref = ""
+                self.last_scroll_point = None
         is_exception = isinstance(result, dict) and bool(result.get("error"))
         is_no_effect = isinstance(result, dict) and bool(result.get("no_effect"))
         candidate_commit = isinstance(result, dict) and bool(result.get("candidate_commit"))
@@ -368,13 +390,7 @@ class WorkerJournal:
             durable_text=durable_text,
             narrative_text=(
                 f"state={state.status}; tool={tool}{args_text}; "
-                f"result={_bounded_json(memory_result, limit=260)}; "
-                f"next={state.next_instruction[:200]}"
-            ),
-            pending_subgoal=(
-                state.open_gaps[0]
-                if state.open_gaps
-                else state.next_instruction
+                f"result={_bounded_json(memory_result, limit=260)}"
             ),
         ))
 
@@ -399,16 +415,13 @@ class WorkerMemoryView:
     durable_facts: tuple[WorkerJournalEvent, ...]
     recent_steps: tuple[WorkerJournalEvent, ...]
     compressed_history: tuple[str, ...]
-    pending_subgoal: str = ""
 
     def render_prompt_section(self) -> str:
         lines = [
             "## WorkerMemory (runtime-projected; not conversation history)",
-            "Runtime results and explicitly Worker-established visual facts below may be "
-            "used. Recent steps are narrative guidance, not completion evidence.",
+            "Durable facts come only from Runtime evidence. Worker observations and recent "
+            "steps are bounded narrative context, not completion evidence or instructions.",
         ]
-        if self.pending_subgoal:
-            lines.extend(["### Pending subgoal", f"- {self.pending_subgoal}"])
         if self.durable_facts:
             lines.append("### Durable runtime facts")
             lines.extend(
@@ -446,7 +459,6 @@ def build_worker_memory_view(
         f"[{event.event_ref}] {event.narrative_text}"
         for event in compressed_events
     )
-    pending = recent[-1].pending_subgoal if recent else ""
     durable_by_key: dict[tuple[str, str], WorkerJournalEvent] = {}
     for event in journal.events:
         if event.durable_text:
@@ -456,7 +468,6 @@ def build_worker_memory_view(
         durable_facts=tuple(durable_by_key.values()),
         recent_steps=tuple(recent),
         compressed_history=compressed,
-        pending_subgoal=pending,
     )
 
 
@@ -485,10 +496,6 @@ def _frame_payload(
                 for key in set(requested).intersection(applied)
                 if requested[key] != applied[key]
             ),
-            "instruction": (
-                "Resolve every missing, conflicting, or extra applied filter through "
-                "the visible UI before collecting or completing."
-            ),
         }
     candidate_state: dict[str, Any] = {}
     if candidate_committed:
@@ -509,6 +516,8 @@ def _frame_payload(
                 candidate_state = {"status": "exhausted"}
     return {
         "frame_id": frame.frame_id,
+        "readiness": frame.readiness,
+        "readiness_reason": frame.readiness_reason,
         "task_reference_time": frame.platform_time,
         "url": frame.url,
         "title": frame.title,
@@ -554,6 +563,7 @@ def project_worker_context(
     *,
     memory: WorkerMemoryView,
     frame: MaterializedFrame,
+    attempt_contract: str = "",
     same_frame_feedback: dict[str, Any] | None = None,
     max_chars: int = DEFAULT_WORKER_CONTEXT_MAX_CHARS,
 ) -> WorkerContextProjection:
@@ -566,6 +576,22 @@ def project_worker_context(
         ),
     ), ensure_ascii=False)
     blocks = [
+        (
+            ContextBlock(
+                id="tool_agent.worker.same_frame_feedback",
+                source_type="runtime_feedback",
+                source="runtime_feedback",
+                ttl="turn",
+                budget="required",
+                priority=5,
+                content=(
+                    "## Same-frame runtime feedback\n"
+                    + json.dumps(same_frame_feedback, ensure_ascii=False, default=str)
+                ),
+            )
+            if same_frame_feedback
+            else None
+        ),
         ContextBlock(
             id="tool_agent.worker.memory",
             source_type="runtime_state",
@@ -596,18 +622,18 @@ def project_worker_context(
         ),
         (
             ContextBlock(
-                id="tool_agent.worker.same_frame_feedback",
-                source_type="runtime_feedback",
-                source="action_patch",
+                id="tool_agent.worker.current_attempt",
+                source_type="runtime_contract",
+                source="worker_spec",
                 ttl="turn",
                 budget="required",
                 priority=5,
-                content=(
-                    "## Same-frame runtime feedback\n"
-                    + json.dumps(same_frame_feedback, ensure_ascii=False, default=str)
-                ),
+                authoritative_for=("goal", "output_contract", "approach"),
+                freshness="turn",
+                coverage="complete",
+                content=attempt_contract,
             )
-            if same_frame_feedback
+            if attempt_contract.strip()
             else None
         ),
     ]

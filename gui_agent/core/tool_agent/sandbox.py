@@ -79,7 +79,10 @@ def validate_transform_source(source: str) -> None:
             raise TransformValidationError("private/dunder attribute access is disallowed")
 
 
-def validate_transform_row_fields(source: str, row_schema: dict[str, Any]) -> None:
+def validate_transform_row_fields(
+    source: str,
+    row_schema: dict[str, Any],
+) -> None:
     """Require transforms to read normalized schema keys, not display labels."""
     validate_transform_source(source)
     tree = ast.parse(source, mode="exec")
@@ -127,8 +130,14 @@ def validate_transform_row_fields(source: str, row_schema: dict[str, Any]) -> No
         if isinstance(node, ast.comprehension) and collection_expression(node.iter):
             add_targets(node.target)
 
-    used_fields: set[str] = set()
-    for node in ast.walk(function):
+    def row_field(node: ast.AST) -> str:
+        while (
+            isinstance(node, ast.Call)
+            and isinstance(node.func, ast.Attribute)
+            and not node.args
+            and node.func.attr in {"casefold", "lower", "strip", "upper"}
+        ):
+            node = node.func.value
         if (
             isinstance(node, ast.Call)
             and isinstance(node.func, ast.Attribute)
@@ -139,7 +148,7 @@ def validate_transform_row_fields(source: str, row_schema: dict[str, Any]) -> No
             and isinstance(node.args[0], ast.Constant)
             and isinstance(node.args[0].value, str)
         ):
-            used_fields.add(node.args[0].value)
+            return node.args[0].value
         if (
             isinstance(node, ast.Subscript)
             and isinstance(node.value, ast.Name)
@@ -147,16 +156,17 @@ def validate_transform_row_fields(source: str, row_schema: dict[str, Any]) -> No
             and isinstance(node.slice, ast.Constant)
             and isinstance(node.slice.value, str)
         ):
-            used_fields.add(node.slice.value)
+            return node.slice.value
+        return ""
 
     properties = set((row_schema.get("properties") or {}).keys())
-    unknown = used_fields.difference(properties)
+    used_fields = {field for node in ast.walk(function) if (field := row_field(node))}
+    unknown = used_fields - properties
     if unknown:
         raise TransformValidationError(
             "transform reads fields outside normalized row_schema: "
             f"{sorted(unknown)}; available fields are {sorted(properties)}"
         )
-
 
 def _sandbox_child(connection: Any, source: str, rows: Any) -> None:
     try:

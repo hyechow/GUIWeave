@@ -1,4 +1,7 @@
 from llm.provider_config import (
+    ChatProviderConfig,
+    chat_model_kwargs,
+    chat_request_kwargs,
     dashscope_extra_body,
     enable_thinking_for_model,
     resolve_chat_provider_config,
@@ -15,6 +18,28 @@ def test_enable_thinking_is_off_for_all_models():
     assert enable_thinking_for_model(None) is False
     assert dashscope_extra_body("qwen3.7-plus") == {"enable_thinking": False}
     assert dashscope_extra_body(None) == {"enable_thinking": False}
+
+
+def test_model_capabilities_keep_qwen_fields_out_of_luna_requests():
+    luna = ChatProviderConfig(
+        provider="standard",
+        model="gpt-5.6-luna",
+        api_key="test",
+        base_url="http://standard.example/v1",
+        temperature=None,
+        reasoning_effort="low",
+        image_scale=0.75,
+        use_responses_api=True,
+    )
+
+    assert chat_model_kwargs(luna) == {
+        "reasoning_effort": "low",
+        "use_responses_api": True,
+    }
+    assert chat_request_kwargs(luna.model) == {}
+    assert chat_request_kwargs("qwen3.7-plus") == {
+        "extra_body": {"enable_thinking": False}
+    }
 
 
 def test_standard_provider_reads_standard_environment(monkeypatch):

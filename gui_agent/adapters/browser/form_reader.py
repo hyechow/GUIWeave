@@ -258,7 +258,7 @@ def form_controls_js() -> str:
     const rowSemantic = rowSemanticLabelOf(el);
     if (rowSemantic) return rowSemantic;
     const role = clean(el.getAttribute('role')).toLowerCase();
-    if (el.tagName === 'BUTTON' || el.tagName === 'A' || ['button', 'link'].includes(role)) {
+    if (el.tagName === 'BUTTON' || el.tagName === 'A' || ['button', 'link', 'option'].includes(role)) {
       const ownText = clean(el.innerText || el.textContent);
       if (ownText) return ownText;
     }
@@ -548,7 +548,7 @@ def form_controls_js() -> str:
   }
   const selector = [
     'input', 'select', 'textarea', 'button', 'a[href]',
-    '[role=button]', '[role=link]', '[role=combobox]', '[role=listbox]',
+    '[role=button]', '[role=link]', '[role=combobox]', '[role=listbox]', '[role=option]',
     'tr[onclick]', '[role=row][onclick]', '[data-role=row][onclick]',
     'tr[data-href]', 'tr[data-url]',
     '[role=row][data-href]', '[role=row][data-url]',
@@ -798,7 +798,10 @@ def normalize_form_control_snapshot(
         ]):
             continue
         norm: dict[str, Any] = {"kind": kind or "control"}
-        select_like = kind in {"native_select", "select", "selectmenu", "combobox", "listbox"}
+        select_like = kind in {
+            "native_select", "select", "selectmenu", "combobox", "listbox",
+            "aria_listbox",
+        }
         if label:
             norm["label"] = label
         if name:

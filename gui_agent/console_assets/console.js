@@ -6,6 +6,7 @@ const state = {
 };
 const $ = (id) => document.getElementById(id);
 const CONSOLE_HEADLESS = true;
+const DEFAULT_BROWSER_START_URL = "https://cn.bing.com/";
 const ANDROID_DEVICE_STORAGE_KEY = "guiweave.android.device";
 const normalizeAndroidAddress = (value) => {
   const address = String(value || "").trim();
@@ -81,6 +82,7 @@ function updateChatSend() {
 
 function updateChatPlatform() {
   const platform = $("chat-platform").value;
+  $("chat-browser-field").classList.toggle("hidden", platform !== "browser");
   const android = platform === "android";
   $("chat-android-field").classList.toggle("hidden", !android);
   $("chat-environment").className = "";
@@ -90,6 +92,7 @@ function updateChatPlatform() {
 async function loadPlatformEnvironment() {
   const check = ++state.platformCheck;
   const platform = $("task-platform").value;
+  $("browser-start-url-field").classList.toggle("hidden", platform !== "browser");
   const androidField = $("android-device-field");
   androidField.classList.toggle("hidden", platform !== "android");
   const notice = $("platform-notice");
@@ -469,6 +472,8 @@ $("chat-form").onsubmit = async (event) => {
   if (!message || !state.modelReady) return;
   const platform = $("chat-platform").value;
   const address = platform === "android" ? normalizeAndroidAddress($("chat-adb-serial").value) : null;
+  const startUrl = platform === "browser"
+    ? $("chat-start-url").value.trim() || DEFAULT_BROWSER_START_URL : null;
   $("chat-send").disabled = true;
   $("chat-send").textContent = "判断中…";
   try {
@@ -476,7 +481,7 @@ $("chat-form").onsubmit = async (event) => {
       method: "POST", headers: { "content-type": "application/json" },
       body: JSON.stringify({
         message, platform, perception: "enhanced", max_turns: 50,
-        adb_serial: address, multi_action: true,
+        start_url: startUrl, adb_serial: address, multi_action: true,
       }),
     });
     state.chatTurn = response.turn.turn_id;
@@ -508,6 +513,8 @@ $("cancel-run").onclick = cancelTask;
 $("task-form").onsubmit = async (event) => {
   event.preventDefault();
   const data = Object.fromEntries(new FormData(event.target));
+  data.start_url = data.platform === "browser"
+    ? String(data.start_url || "").trim() || DEFAULT_BROWSER_START_URL : null;
   data.adb_serial = normalizeAndroidAddress(data.adb_serial) || null;
   Object.assign(data, { max_turns: Number(data.max_turns), headless: CONSOLE_HEADLESS, multi_action: true, show_hud: false });
   try {

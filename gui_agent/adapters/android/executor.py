@@ -106,7 +106,7 @@ class AndroidExecutor(VisionExecutor):
         action = decision.action
         if (
             action.action_type == "drag"
-            and _SLIDER_CONTROL.search(target_control)
+            and _SLIDER_CONTROL.search(f"{target_control} {action.description}")
             and action.x is not None
             and action.y is not None
             and action.to_x is not None

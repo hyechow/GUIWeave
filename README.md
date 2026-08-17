@@ -75,9 +75,10 @@ STANDARD_API_KEY=your-secret
 `config.standard.yaml` assigns models to the Master, Worker, Perception,
 Presentation, Loading, and Target Verify slots. Worker, Perception, and visual
 verification send screenshots, so their configured models must accept
-OpenAI-compatible image input. `config.tokenplan.yaml` with `TOKENPLAN_BASE_URL` and
-`TOKENPLAN_API_KEY` is also supported. Never commit provider keys, and restart the
-Run Console or Codex after changing `.env`.
+OpenAI-compatible image input. `config.tokenplan.yaml` uses Token Plan for its Qwen
+slots and the `STANDARD_*` gateway for the Luna Worker and Perception, so that hybrid
+configuration requires both sets of credentials. Never commit provider keys, and
+restart the Run Console or Codex after changing `.env`.
 
 The shared preflight checks both model configuration and the selected platform:
 Browser checks Chrome CDP unless headless; Android checks the `adb` device and reports
@@ -129,6 +130,13 @@ For a headed Chrome session, launch the dedicated CDP profile first:
 ```bash
 bin/launch_chrome_cdp
 uv run guiweave run browser "Open the account page and report the visible plan"
+```
+
+Browser tasks start at `https://www.google.com/` by default. Use `--start-url` to
+open a different initial page:
+
+```bash
+uv run guiweave run browser "Report the page title" --start-url https://example.com/
 ```
 
 Headless browser and Android examples:

@@ -1,8 +1,8 @@
 # LLM settings for gui_agent（默认 = qwen3.7 + token-plan 端点）。
 # AGENT_MODEL 选 profile（默认 qwen37=下方基线，不覆盖）。对比回退可加 profiles。
 #
-# Provider：全部走阿里云 MaaS token-plan（OpenAI 兼容），不是 dashscope 公网。
-# api_key / base_url 不入库——设 TOKENPLAN_API_KEY（及可选 TOKENPLAN_BASE_URL）。
+# Provider：全部走阿里云 MaaS token-plan（OpenAI 兼容）。
+# api_key / base_url 不入库——设置 TOKENPLAN_API_KEY（及可选 TOKENPLAN_BASE_URL）。
 # 核心推理用 qwen3.7-plus：token-plan 端点实测 qwen3.7-max 是纯文本
 #（拒收 image_url），进不了 action_policy/navigator/supervisor 等截图槽位；
 # plus 支持视觉 + enable_thinking=false（见 tmp_scripts/test_qwen_models_think_vision.py）。
@@ -53,8 +53,7 @@ llm:
     <<: *token_plan
     model: qwen3.6-flash
   tool_agent:
-    # Experimental dynamic Master/Worker runtime. Master is text-only; Worker and
-    # perception receive screenshots and therefore use the multimodal plus model.
+    # Master is text-only. Worker and perception use multimodal Qwen.
     master:
       <<: *token_plan
       model: qwen3.7-max

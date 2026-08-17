@@ -5,7 +5,7 @@ from types import SimpleNamespace
 from gui_agent.adapters.android.device import AndroidDevice
 from gui_agent.adapters.browser.device import PlaywrightDevice
 from gui_agent.adapters.iphone.perception import IPhoneSession
-from gui_agent.core.runtime.clock import host_time_fallback
+from gui_agent.core.runtime.clock import PlatformTimeSnapshot, host_time_fallback
 
 
 def test_browser_clock_uses_cdp_timezone_and_offset() -> None:
@@ -60,3 +60,20 @@ def test_host_fallback_keeps_provenance() -> None:
     assert snapshot.local_datetime
     assert snapshot.utc_offset
     assert snapshot.fallback_reason == "test fallback"
+
+
+def test_relative_date_offsets_use_frozen_platform_day() -> None:
+    snapshot = PlatformTimeSnapshot(
+        platform="browser",
+        local_datetime="2026-08-14T23:59:59+08:00",
+        timezone="Asia/Shanghai",
+        utc_offset="+08:00",
+        source="browser_cdp",
+        confidence="authoritative",
+        captured_at="2026-08-14T16:00:00.000+00:00",
+    )
+
+    offsets = snapshot.relative_date_offsets()
+    assert offsets["-1"] == "2026-08-13"
+    assert offsets["0"] == "2026-08-14"
+    assert offsets["1"] == "2026-08-15"

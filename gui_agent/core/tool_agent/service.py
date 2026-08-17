@@ -215,6 +215,7 @@ class ToolAgentService:
                         f"active={app_route.active_app or 'unknown'}"
                     )
                     effective_knowledge = knowledge
+                    worker_knowledge = knowledge or ""
                     effective_access = access_context
                     knowledge_summary = None
                     if app_knowledges:
@@ -223,6 +224,10 @@ class ToolAgentService:
                                 context
                                 for item in app_knowledges
                                 if (context := item.orchestrator_context(goal))
+                            )
+                        if not worker_knowledge:
+                            worker_knowledge = "\n\n".join(
+                                item.worker_context() for item in app_knowledges
                             )
                         if effective_access is None:
                             effective_access = "\n\n".join(
@@ -254,6 +259,7 @@ class ToolAgentService:
                         knowledge_summary=knowledge_summary,
                         app_router=route_payload,
                         knowledge=effective_knowledge or "",
+                        worker_knowledge=worker_knowledge,
                         access_context=effective_access or "",
                         page_url=page_url,
                         page_title=page_title,

@@ -74,6 +74,9 @@ Mac, executable bundled helpers that macOS can run, and a visible Mirroring wind
 Quarantined helpers rejected by Gatekeeper are a hard preflight failure. No API key
 value is returned by the check.
 
+`run_browser_task` starts at `https://www.google.com/` by default and accepts a
+`start_url` override for tasks that should begin on a specific page.
+
 ## Before publishing
 
 Run the repository tests and both validators:

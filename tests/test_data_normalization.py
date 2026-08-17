@@ -30,6 +30,7 @@ def test_declared_types_are_lossless_and_json_serializable() -> None:
     assert parsed == datetime.fromisoformat("1900-07-11 00:00:00+00:00")
     assert json_value(parsed) == "1900-07-11T00:00:00+00:00"
     assert normalize_table_value("amount", "￥ 367 .25", "money") == 367.25
+    assert normalize_table_value("Content", "first\nsecond", "text_list") == ["first", "second"]
 
 
 def test_invalid_declared_number_is_rejected() -> None:

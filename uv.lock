@@ -566,6 +566,7 @@ dependencies = [
     { name = "scikit-image" },
     { name = "uvicorn" },
     { name = "webarena-verified" },
+    { name = "websocket-client" },
 ]
 
 [package.dev-dependencies]
@@ -594,6 +595,7 @@ requires-dist = [
     { name = "scikit-image", specifier = ">=0.26.0" },
     { name = "uvicorn", specifier = ">=0.44.0" },
     { name = "webarena-verified", specifier = ">=1.2.3" },
+    { name = "websocket-client", specifier = ">=1.8.0" },
 ]
 
 [package.metadata.requires-dev]
@@ -2599,6 +2601,15 @@ dependencies = [
 sdist = { url = "https://files.pythonhosted.org/packages/29/94/f6188ad5de7d299368c55aa0e57fb0ae07dbfc5065f56fab7b58cc800f93/webarena_verified-1.2.3.tar.gz", hash = "sha256:668ff976ec000f60592ca14e3d935df48facb0482bc81d3c077258cb2f139869", size = 303911, upload-time = "2026-02-07T22:56:07.048Z" }
 wheels = [
     { url = "https://files.pythonhosted.org/packages/d0/d6/f69571f12c96f7ae74335a0e48e165ed2bcedd981808e3fe3f64c70ac396/webarena_verified-1.2.3-py3-none-any.whl", hash = "sha256:91a0297a096a343a13ff5e0ebc35c39b3d926b27c4d5a8a57c833681acbc6b7a", size = 349324, upload-time = "2026-02-07T22:56:05.058Z" },
+]
+
+[[package]]
+name = "websocket-client"
+version = "1.9.0"
+source = { registry = "https://pypi.org/simple" }
+sdist = { url = "https://files.pythonhosted.org/packages/2c/41/aa4bf9664e4cda14c3b39865b12251e8e7d239f4cd0e3cc1b6c2ccde25c1/websocket_client-1.9.0.tar.gz", hash = "sha256:9e813624b6eb619999a97dc7958469217c3176312b3a16a4bd1bc7e08a46ec98", size = 70576, upload-time = "2025-10-07T21:16:36.495Z" }
+wheels = [
+    { url = "https://files.pythonhosted.org/packages/34/db/b10e48aa8fff7407e67470363eac595018441cf32d5e1001567a7aeba5d2/websocket_client-1.9.0-py3-none-any.whl", hash = "sha256:af248a825037ef591efbf6ed20cc5faa03d3b47b9e5a2230a529eeee1c1fc3ef", size = 82616, upload-time = "2025-10-07T21:16:34.951Z" },
 ]
 
 [[package]]

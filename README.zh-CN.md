@@ -127,6 +127,13 @@ bin/launch_chrome_cdp
 uv run guiweave run browser "打开账户页面并报告当前套餐"
 ```
 
+Browser 任务默认从 `https://www.google.com/` 启动；可通过 `--start-url` 指定其他
+起始页：
+
+```bash
+uv run guiweave run browser "返回页面标题" --start-url https://example.com/
+```
+
 headless browser 和 Android 示例：
 
 ```bash

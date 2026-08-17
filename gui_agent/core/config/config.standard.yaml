@@ -7,11 +7,21 @@
 # internal address while system proxies are enabled, also set NO_PROXY for its
 # hostname.
 #
-# Live verification on 2026-08-11 confirmed qwen3.7-plus text/image input,
-# qwen3.7-max text input, and qwen3.6-flash text input on this endpoint.
+# Live verification confirmed Qwen text/image support and GPT-5.6 Luna visual
+# decisions on this endpoint.
 
 _standard: &standard
   provider: standard
+
+_luna: &luna
+  <<: *standard
+  model: gpt-5.6-luna
+  reasoning_effort: low
+  temperature: null
+  image_scale: 0.75
+  use_responses_api: true
+  timeout_s: 20
+  max_retries: 1
 
 llm:
   # Screenshot-bearing core reasoning slots use the verified multimodal model.
@@ -60,11 +70,11 @@ llm:
       <<: *standard
       model: qwen3.7-max
     worker:
-      <<: *standard
-      model: qwen3.7-plus
+      <<: *luna
+      action_protocol: json
     perception:
-      <<: *standard
-      model: qwen3.7-plus
+      <<: *luna
+      image_scale: 1.0
     presentation:
       # Final wording only; receives no screenshot, browser handle, or private data.
       <<: *standard

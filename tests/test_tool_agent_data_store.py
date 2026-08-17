@@ -16,24 +16,27 @@ ROW_SCHEMA = {
 }
 
 
-def _put_visual_window(
+def _put_window(
     store: RuntimeDataStore,
     frame_id: str,
     rows: list[dict],
     *,
     context: str,
     partial: bool,
+    provider: str = "vision",
+    **coverage,
 ):
     return store.put_chunk(
         requirement_id="records",
         frame_id=frame_id,
-        provider="vision",
+        provider=provider,
         rows=rows,
         row_schema=ROW_SCHEMA,
         coverage={
             "window_context": context,
             "partial": partial,
             "at_end": not partial,
+            **coverage,
         },
     )
 
@@ -76,16 +79,36 @@ def test_data_store_deduplicates_same_rows_across_observations() -> None:
     assert collection.chunk_refs == [first.ref]
 
 
+def test_first_match_collection_completes_without_exhaustive_traversal() -> None:
+    store = RuntimeDataStore()
+    _, collection, _ = store.put_chunk(
+        requirement_id="records",
+        frame_id="frame:1",
+        provider="vision",
+        rows=[{"label": "target", "metric": 3}],
+        row_schema=ROW_SCHEMA,
+        coverage={
+            "requested": "first_match",
+            "scope_status": "met",
+            "partial": True,
+            "at_end": False,
+        },
+    )
+
+    assert collection.coverage["requested"] == "first_match"
+    assert collection.coverage["status"] == "complete"
+
+
 def test_collection_rows_remove_overlap_between_visual_windows() -> None:
     store = RuntimeDataStore()
-    _put_visual_window(
+    _put_window(
         store,
         "frame:1",
         [{"label": "alpha", "metric": 3}, {"label": "beta", "metric": 2}],
         context="surface",
         partial=True,
     )
-    _, collection, _ = _put_visual_window(
+    _, collection, _ = _put_window(
         store,
         "frame:2",
         [{"label": "beta", "metric": 2}, {"label": "gamma", "metric": 1}],
@@ -102,6 +125,81 @@ def test_collection_rows_remove_overlap_between_visual_windows() -> None:
     assert collection.coverage["may_contain_duplicates"] is True
 
 
+def test_visual_collection_backfills_rows_above_initial_bottom_window() -> None:
+    store = RuntimeDataStore()
+    rows = [{"label": "first", "metric": 1}, {"label": "second", "metric": 2}]
+    _, bottom, _ = _put_window(
+        store, "frame:1",
+        rows=rows[1:],
+        context="surface", partial=True, start_visible=False, end_visible=True,
+    )
+
+    assert store.mark_scroll_end(bottom.ref).coverage["status"] == "incomplete"
+
+    _, backfilled, _ = _put_window(
+        store, "frame:2",
+        rows=rows,
+        context="surface", partial=True, start_visible=True, end_visible=True,
+    )
+
+    assert store.collection_rows(backfilled.ref) == rows
+    assert store.mark_scroll_end(backfilled.ref).coverage["status"] == "complete"
+    structured = RuntimeDataStore()
+    _, collection, _ = _put_window(
+        structured, "frame:1", rows=rows[:1], context="surface", partial=True,
+        provider="structured", source_scope="structured_surface", scope_status="met",
+        start_visible=True, movement={"type": "scroll"},
+    )
+    assert structured.mark_scroll_end(collection.ref).coverage["status"] == "complete"
+
+
+def test_static_unknown_total_stays_incomplete_with_a_clipped_start() -> None:
+    store = RuntimeDataStore()
+    _, collection, _ = _put_window(
+        store, "frame:1", [{"label": "middle", "metric": 2}],
+        context="surface", partial=False, provider="structured",
+        source_scope="structured_surface", scope_status="met",
+        start_visible=False, movement={"type": "static"},
+        traversal_type="static",
+    )
+
+    assert collection.coverage["status"] == "incomplete"
+
+
+@pytest.mark.parametrize(
+    ("rows", "source_metadata", "expected"),
+    [
+        ([{"label": "only", "metric": 27}], {}, "complete"),
+        (
+            [{"label": "a", "metric": 27}, {"label": "b", "metric": 23}],
+            {},
+            "conflicting",
+        ),
+        ([{"label": "only", "metric": 27}], {"total_records": 0}, "conflicting"),
+        ([{"label": "only", "metric": 27}], {"total_records": 2}, "conflicting"),
+        (
+            [{"label": "only", "metric": 27}],
+            {"movement": {"has_next_page": True}},
+            "conflicting",
+        ),
+    ],
+)
+def test_singleton_requires_exactly_one_authoritative_record(
+    rows: list[dict], source_metadata: dict, expected: str,
+) -> None:
+    store = RuntimeDataStore()
+    _, collection, _ = _put_window(
+        store, "frame:1", rows, context="summary",
+        partial=True,
+        scope_status="met",
+        cardinality="one",
+        start_visible=True,
+        **source_metadata,
+    )
+
+    assert collection.coverage["status"] == expected
+
+
 @pytest.mark.parametrize(
     ("contexts", "expected_count"),
     [
@@ -116,10 +214,10 @@ def test_visual_collection_merges_identical_rows_by_window_context(
 ) -> None:
     store = RuntimeDataStore()
     rows = [{"label": "same", "metric": 1}]
-    _put_visual_window(
+    _put_window(
         store, "frame:1", rows, context=contexts[0], partial=True
     )
-    _, collection, _ = _put_visual_window(
+    _, collection, _ = _put_window(
         store, "frame:2", rows, context=contexts[1], partial=False
     )
 

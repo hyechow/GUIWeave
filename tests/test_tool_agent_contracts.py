@@ -1,46 +1,112 @@
 from __future__ import annotations
 
+import base64
+import json
+from io import BytesIO
 from types import SimpleNamespace
 
 import pytest
 from jsonschema import ValidationError, validate
 from langchain_core.messages import HumanMessage, SystemMessage
 from pydantic import ValidationError as PydanticValidationError
+from PIL import Image
 
 from gui_agent.core.tool_agent.contracts import (
     DataRequirement,
     DynamicActionSpec,
     WorkerSpec,
-    WorkerState,
+    approach_is_procedural,
 )
 from gui_agent.core.tool_agent.protocol import (
     MAX_ORDERED_ACTIONS,
-    RequestActionPatchArgs,
     cacheable_system_message,
     diagnostic_prompt_reports,
+    decode_worker_action,
     dynamic_action_tool,
     dynamic_worker_tools,
     exactly_one_tool_call,
-    materialize_action_patch,
+    image_message,
+    json_worker_decision_instruction,
     normalize_action_arguments,
     response_usage,
-    worker_action_floor,
+    worker_attempt_contract,
 )
 
 
 _TARGET_DESCRIPTION = "Target the visible named control"
 
 
+@pytest.mark.parametrize(
+    "approach",
+    [
+        "web search engine weather query",
+        "Bing search results page weather card",
+        "tianqi.com weather forecast page",
+    ],
+)
+def test_approach_noun_phrases_are_not_procedures(approach: str) -> None:
+    assert not approach_is_procedural(approach)
+
+
+@pytest.mark.parametrize(
+    "approach",
+    [
+        "Type the query and press Enter",
+        "Open the page, search for the record",
+        "Use the current source then switch applications",
+        "open_url https://weather.example/forecast/location-id",
+        "https://weather.example/ forecast source",
+        "Navigate to the public weather source",
+        "direct navigation to China Weather Net (weather.com.cn) Shenzhen city page",
+        "direct navigation to a dedicated weather service website",
+    ],
+)
+def test_approach_execution_details_are_procedural(approach: str) -> None:
+    assert approach_is_procedural(approach)
+
+
+def _declared_form_actions() -> list[DynamicActionSpec]:
+    return [
+        DynamicActionSpec(
+            name="enter_visible_value",
+            capability="type",
+            description="Enter a value in the visible input",
+            exposed_args=["text"],
+        ),
+        DynamicActionSpec(
+            name="submit_visible_form",
+            capability="tap",
+            description="Submit the visible form",
+        ),
+    ]
+
+
+def test_image_message_resizes_without_changing_coordinate_contract() -> None:
+    source = BytesIO()
+    Image.new("RGB", (1280, 800), "white").save(source, format="PNG")
+
+    message = image_message("frame", source.getvalue(), scale=0.75)
+
+    encoded = message.content[1]["image_url"]["url"].split(",", 1)[1]
+    with Image.open(BytesIO(base64.b64decode(encoded))) as image:
+        assert image.size == (960, 600)
+
+
+def test_image_message_rejects_invalid_scale() -> None:
+    with pytest.raises(ValueError, match=r"image scale must be in \(0, 1\]"):
+        image_message("frame", b"png", scale=0)
+
+
 def test_action_envelope_preserves_dynamic_atomic_schemas() -> None:
     tools = dynamic_worker_tools(
-        worker_action_floor(),
+        _declared_form_actions(),
         completion_mode="operator",
         action_envelope=True,
     )
     names = {tool["function"]["name"] for tool in tools}
 
     assert "continue_with_actions" in names
-    assert "runtime_type_visible" not in names
+    assert "enter_visible_value" not in names
     envelope = next(
         tool for tool in tools
         if tool["function"]["name"] == "continue_with_actions"
@@ -53,15 +119,23 @@ def test_action_envelope_preserves_dynamic_atomic_schemas() -> None:
     assert "clear_text" not in description
     assert "select_option" not in description
     parameters = envelope["function"]["parameters"]
+    variants = parameters["properties"]["actions"]["items"]["oneOf"]
+    assert [variant["description"] for variant in variants] == [
+        "Enter a value in the visible input",
+        "Submit the visible form",
+    ]
+    state_schema = parameters["properties"]["state"]
+    assert set(state_schema["properties"]) == {
+        "status", "summary", "established_facts",
+    }
     state = {
         "status": "exploring",
         "summary": "The complete form is visible.",
         "established_facts": [],
-        "next_instruction": "Fill and submit the form.",
     }
     actions = [
         {
-            "name": "runtime_type_visible",
+            "name": "enter_visible_value",
             "args": {
                 "x": 500,
                 "y": 400,
@@ -70,7 +144,7 @@ def test_action_envelope_preserves_dynamic_atomic_schemas() -> None:
             },
         },
         {
-            "name": "runtime_tap_visible",
+            "name": "submit_visible_form",
             "args": {
                 "x": 500,
                 "y": 600,
@@ -79,6 +153,14 @@ def test_action_envelope_preserves_dynamic_atomic_schemas() -> None:
         },
     ]
     validate(instance={"state": state, "actions": actions}, schema=parameters)
+    with pytest.raises(ValidationError):
+        validate(
+            instance={
+                "state": {**state, "next_instruction": "Use a different source"},
+                "actions": actions,
+            },
+            schema=parameters,
+        )
     assert parameters["properties"]["actions"]["maxItems"] == MAX_ORDERED_ACTIONS
     with pytest.raises(ValidationError):
         validate(
@@ -88,6 +170,22 @@ def test_action_envelope_preserves_dynamic_atomic_schemas() -> None:
             },
             schema=parameters,
         )
+    limited = dynamic_worker_tools(
+        _declared_form_actions(),
+        completion_mode="operator",
+        action_envelope=True,
+        max_ordered_actions=1,
+    )
+    envelope = next(
+        tool for tool in limited if tool["function"]["name"] == "continue_with_actions"
+    )
+    assert envelope["function"]["parameters"]["properties"]["actions"]["maxItems"] == 1
+    assert "exactly one action" in envelope["function"]["description"]
+    assert [tool["function"]["name"] for tool in dynamic_worker_tools(
+        [], completion_mode="unavailable", action_envelope=True,
+    )] == [
+        "report_blocked",
+    ]
 
 
 def test_explicit_cache_marker_wraps_only_the_stable_system_prefix() -> None:
@@ -269,111 +367,7 @@ def test_select_option_exposes_value_when_master_does_not_bind_it() -> None:
     )
 
 
-def test_runtime_action_floor_and_patch_tool_are_always_available() -> None:
-    floor = worker_action_floor()
-    tools = dynamic_worker_tools(floor)
-    names = {tool["function"]["name"] for tool in tools}
-
-    assert {
-        "runtime_tap_visible",
-        "runtime_type_visible",
-        "runtime_scroll_visible",
-        "runtime_clear_focused",
-        "runtime_press_enter",
-        "runtime_select_visible",
-        "runtime_open_url",
-        "runtime_browser_back",
-    }.issubset(names)
-    assert {"request_action_patch", "complete", "fail"}.issubset(names)
-    for tool in tools:
-        parameters = tool["function"]["parameters"]
-        assert "state" in parameters["properties"]
-        assert "state" in parameters["required"]
-        facts = parameters["properties"]["state"]["properties"]["established_facts"]
-        assert facts["type"] == "array"
-        assert "not already present in WorkerMemory" in facts["description"]
-        assert "Before leaving a record" in facts["description"]
-        assert "confirmed effect together" in facts["description"]
-        assert "without pronouns" in facts["description"]
-        assert "established_facts" in parameters["properties"]["state"]["required"]
-    runtime_tap = next(
-        tool for tool in tools
-        if tool["function"]["name"] == "runtime_tap_visible"
-    )
-    assert "description" in runtime_tap["function"]["parameters"]["required"]
-
-    runtime_select = next(
-        tool for tool in tools
-        if tool["function"]["name"] == "runtime_select_visible"
-    )
-    assert set(runtime_select["function"]["parameters"]["required"]) == {
-        "state", "x", "y", "text", "description"
-    }
-    runtime_open_url = next(
-        tool for tool in tools
-        if tool["function"]["name"] == "runtime_open_url"
-    )
-    assert set(runtime_open_url["function"]["parameters"]["required"]) == {
-        "state", "url"
-    }
-    assert "Runtime rejects inferred routes" in (
-        runtime_open_url["function"]["description"]
-    )
-    validate(
-        instance={
-            "state": {
-                "status": "exploring",
-                "summary": "The exact target route is known.",
-                "established_facts": [],
-                "next_instruction": "Open it directly.",
-            },
-            "url": "/admin/review/product/index/",
-        },
-        schema=runtime_open_url["function"]["parameters"],
-    )
-
-
-def test_android_runtime_action_floor_excludes_browser_only_capabilities() -> None:
-    floor = worker_action_floor({
-        "tap",
-        "type",
-        "clear_text",
-        "press_enter",
-        "scroll",
-        "drag",
-        "long_press",
-        "back",
-        "home",
-        "app_switch",
-        "launch_app",
-    })
-    actions = {action.name: action.capability for action in floor}
-
-    assert actions == {
-        "runtime_tap_visible": "tap",
-        "runtime_scroll_visible": "scroll",
-        "runtime_drag_visible": "drag",
-        "runtime_long_press_visible": "long_press",
-        "runtime_type_visible": "type",
-        "runtime_clear_focused": "clear_text",
-        "runtime_press_enter": "press_enter",
-        "runtime_back": "back",
-        "runtime_home": "home",
-        "runtime_app_switch": "app_switch",
-        "runtime_launch_app": "launch_app",
-    }
-    assert "runtime_open_url" not in actions
-    assert "runtime_select_visible" not in actions
-    assert "runtime_reveal_control" not in actions
-
-
-def test_reveal_control_floor_and_offscreen_schema() -> None:
-    floor = worker_action_floor({"tap", "scroll", "reveal_control"})
-    reveal = next(
-        action for action in floor if action.name == "runtime_reveal_control"
-    )
-    assert reveal.capability == "reveal_control"
-
+def test_reveal_control_schema_accepts_offscreen_coordinates() -> None:
     from gui_agent.core.tool_agent.protocol import _CAPABILITY_SCHEMAS
 
     schema = _CAPABILITY_SCHEMAS["reveal_control"]
@@ -383,18 +377,26 @@ def test_reveal_control_floor_and_offscreen_schema() -> None:
 
 
 def test_collector_completion_tool_is_frame_gated_and_runtime_bound() -> None:
-    floor = worker_action_floor()
+    actions = _declared_form_actions()
 
-    waiting = dynamic_worker_tools(floor, completion_mode="unavailable")
+    waiting = dynamic_worker_tools(actions, completion_mode="unavailable")
     assert "complete" not in {tool["function"]["name"] for tool in waiting}
+    action_state = waiting[0]["function"]["parameters"]["properties"]["state"]
+    assert action_state["properties"]["status"]["enum"] == ["exploring", "collecting"]
 
-    ready = dynamic_worker_tools(floor, completion_mode="collector")
+    ready = dynamic_worker_tools(actions, completion_mode="collector")
     complete = next(
         tool for tool in ready if tool["function"]["name"] == "complete"
     )
     properties = complete["function"]["parameters"]["properties"]
     assert "collection_ref" not in properties
     assert set(properties) == {"state", "evidence"}
+    assert properties["state"]["properties"]["status"]["enum"] == ["completed"]
+    failure = next(
+        tool for tool in ready if tool["function"]["name"] == "report_blocked"
+    )
+    failure_state = failure["function"]["parameters"]["properties"]["state"]
+    assert failure_state["properties"]["status"]["enum"] == ["failed"]
 
 
 def test_provider_coordinate_variants_are_normalized_before_strict_validation() -> None:
@@ -427,10 +429,78 @@ def test_tool_call_accepts_json_encoded_argument_object() -> None:
     assert call["args"] == {"x": 125, "y": 750}
 
 
-def test_runtime_type_action_keeps_text_dynamic_and_coordinates_visual() -> None:
-    action = next(
-        item for item in worker_action_floor()
-        if item.name == "runtime_type_visible"
+def test_json_worker_protocol_preserves_dynamic_action_contract() -> None:
+    tools = dynamic_worker_tools(
+        [DynamicActionSpec(
+            name="activate_visible_target",
+            capability="tap",
+            description="Activate the visible target",
+        )],
+        completion_mode="operator",
+        action_envelope=True,
+        max_ordered_actions=1,
+    )
+    instruction = json_worker_decision_instruction(tools)
+    response = SimpleNamespace(content=(
+        '{"tool":"complete","args":{"state":{"status":"completed",'
+        '"summary":"Done","established_facts":[]},'
+        '"evidence":["Visible target state confirmed"]}}'
+    ))
+
+    call, state, _calls = decode_worker_action(response, protocol="json")
+
+    assert call["name"] == "complete"
+    assert state["status"] == "completed"
+    assert "continue_with_actions" in instruction
+    assert '"maxItems":1' in instruction
+    contract = json.loads(instruction.split("Available contract:\n", 1)[1])
+    assert all(
+        "state" in action["parameters"]["properties"]
+        and "strategy_status" not in action["parameters"]["properties"]["state"]["properties"]
+        for action in contract.values()
+    )
+    assert "never inside `args.actions[*]`" in instruction
+
+
+def test_worker_protocol_normalizes_flat_ordered_action_arguments() -> None:
+    raw_action = {
+        "name": "tap", "x": 500, "y": 76,
+        "description": "Tap the visible city selector at the top",
+    }
+    tools = dynamic_worker_tools(
+        [DynamicActionSpec(
+            name="tap", capability="tap", description="Tap one visible control.",
+        )],
+        completion_mode="unavailable",
+        action_envelope=True,
+    )
+    response = SimpleNamespace(tool_calls=[{
+        "name": "continue_with_actions",
+        "args": {
+            "state": {
+                "status": "exploring",
+                "summary": "The city selector is visible.",
+                "established_facts": [],
+            },
+            "actions": [raw_action],
+        },
+    }])
+    call, state, calls = decode_worker_action(
+        response,
+        tools={tool["function"]["name"]: tool for tool in tools},
+    )
+
+    expected = {"name": "tap", "args": {k: v for k, v in raw_action.items() if k != "name"}}
+    assert state["status"] == "exploring"
+    assert calls == call["args"]["actions"] == [expected]
+
+
+def test_declared_type_action_keeps_text_dynamic_and_coordinates_visual() -> None:
+    action = DynamicActionSpec(
+        name="enter_visible_value",
+        capability="type",
+        description="Enter a value in the visible input",
+        exposed_args=["text"],
     )
 
     assert action.capability == "type"
@@ -440,7 +510,7 @@ def test_runtime_type_action_keeps_text_dynamic_and_coordinates_visual() -> None
     }
     parameters = dynamic_action_tool(action)["function"]["parameters"]
     description = dynamic_action_tool(action)["function"]["description"]
-    assert "recovery needs a value different" in description
+    assert description == "Enter a value in the visible input"
     validate(
         instance={
             "x": 200,
@@ -450,21 +520,6 @@ def test_runtime_type_action_keeps_text_dynamic_and_coordinates_visual() -> None
         },
         schema=parameters,
     )
-
-
-def test_worker_can_materialize_registered_frame_driven_action() -> None:
-    patch = RequestActionPatchArgs(
-        name="choose_visible_status",
-        capability="select_option",
-        description="Choose the status required by the subgoal",
-        option_text="Complete",
-        reason="The current screenshot shows a named choice control.",
-    )
-
-    action = materialize_action_patch(patch)
-
-    assert action.fixed_args == {"text": "Complete"}
-    assert set(action.exposed_args) == {"x", "y", "description"}
 
 
 def test_open_url_can_bind_a_sourced_url() -> None:
@@ -478,59 +533,6 @@ def test_open_url_can_bind_a_sourced_url() -> None:
     assert "url" not in spec.exposed_args
 
 
-def test_open_url_is_worker_owned_or_can_be_bound_by_action_patch() -> None:
-    dynamic = DynamicActionSpec(
-        name="open_goal_url",
-        capability="open_url",
-        description="Open the URL required by the current subgoal",
-    )
-    assert dynamic.fixed_args == {}
-    assert dynamic.exposed_args == ["url"]
-
-    bound = materialize_action_patch(RequestActionPatchArgs(
-        name="open_known_url",
-        capability="open_url",
-        description="Open the known URL required by the current subgoal",
-        url="https://example.test/records",
-        reason="The exact target URL is present in task knowledge.",
-    ))
-    assert bound.fixed_args == {"url": "https://example.test/records"}
-    assert bound.exposed_args == []
-
-
-def test_worker_action_patch_registry_owns_scroll_parameters() -> None:
-    patch = RequestActionPatchArgs(
-        name="reveal_missing_region",
-        capability="scroll",
-        description="Reveal another part of the current subgoal surface",
-        reason="Required content is outside the current viewport.",
-    )
-
-    action = materialize_action_patch(patch)
-
-    assert action.fixed_args == {}
-    assert set(action.exposed_args) == {
-        "direction",
-        "amount",
-        "target_area",
-        "description",
-        "x",
-        "y",
-    }
-
-
-def test_worker_action_patch_cannot_expand_into_python_execution() -> None:
-    with pytest.raises(PydanticValidationError):
-        RequestActionPatchArgs.model_validate(
-            {
-                "name": "invent_transform",
-                "capability": "python_transform",
-                "description": "not allowed",
-                "reason": "not allowed",
-            }
-        )
-
-
 def test_gui_action_contract_rejects_python_transform() -> None:
     with pytest.raises(PydanticValidationError):
         DynamicActionSpec(
@@ -538,22 +540,6 @@ def test_gui_action_contract_rejects_python_transform() -> None:
             capability="python_transform",
             description="Shape collected rows",
         )
-
-
-def test_worker_state_can_report_missing_action_without_abandoning_subgoal() -> None:
-    state = WorkerState.model_validate(
-        {
-            "status": "exploring",
-            "summary": "A named choice control is visible.",
-            "open_gaps": ["Need a select capability"],
-            "action_space_status": "missing_action",
-            "missing_action": "Select a named option from the visible control",
-            "next_instruction": "Request the missing registered action on this frame.",
-        }
-    )
-
-    assert state.action_space_status == "missing_action"
-    assert state.missing_action
 
 
 def test_dynamic_action_rejects_fixed_and_exposed_overlap() -> None:
@@ -626,17 +612,12 @@ def test_data_requirement_accepts_nullable_runtime_type() -> None:
     ]
 
 
-def test_worker_profile_is_inferred_without_creating_distinct_worker_types() -> None:
+def test_worker_profile_inference_selects_relevant_attempt_rules() -> None:
     common = {
         "goal": "Reach the requested outcome",
         "success_criteria": ["The outcome is reached"],
-        "actions": [DynamicActionSpec(
-            name="advance",
-            capability="tap",
-            description="Advance the current goal",
-        )],
+        "strategy": {"approach": "Visible task surface"},
     }
-
     operator = WorkerSpec.model_validate(common)
     collector = WorkerSpec.model_validate({
         **common,
@@ -649,6 +630,28 @@ def test_worker_profile_is_inferred_without_creating_distinct_worker_types() -> 
 
     assert operator.profile == "operator"
     assert collector.profile == "collector"
+    collector_contract = worker_attempt_contract(collector)
+    operator_contract = worker_attempt_contract(operator)
+    for rule in (
+        "natural relative-date term", "never scroll or paginate",
+        "empty_authoritative = false",
+    ):
+        assert rule in collector_contract and rule not in operator_contract
+    for rule in ("candidate_set_state.status = exhausted", "Finish comparison evidence"):
+        assert rule in operator_contract and rule not in collector_contract
+    for rule in (
+        "scope_blockers", "evidence against that query",
+        "detail_resolution.status = active", "next_unresolved_candidate",
+        "load more candidates instead of declaring completion",
+    ):
+        assert rule in collector_contract and rule not in operator_contract
+    for rule in (
+        "platform_feedback", "unobscured central viewport",
+        "advance, never retype",
+    ):
+        assert rule in operator_contract and rule not in collector_contract
+    for rule in ("observed_choice_state", "offscreen_action_controls", "bulk-clear"):
+        assert rule in collector_contract and rule in operator_contract
 
 
 def test_data_requirement_rejects_filter_missing_from_observable_row_schema() -> None:
@@ -677,104 +680,124 @@ def test_data_requirement_rejects_declared_fields_missing_from_row_schema() -> N
         )
 
 
-def test_worker_repairs_string_success_criteria_to_single_item_list() -> None:
-    spec = WorkerSpec.model_validate({
-        "profile": "operator",
-        "goal": "Save the target",
-        "success_criteria": "The target is saved successfully.",
-        "data_requirements": [],
-        "actions": [{
-            "name": "save_target",
-            "capability": "tap",
-            "description": "Save the target",
-        }],
-    })
-
-    assert spec.success_criteria == ["The target is saved successfully."]
+def test_worker_rejects_string_success_criteria() -> None:
+    with pytest.raises(PydanticValidationError):
+        WorkerSpec.model_validate({
+            "profile": "operator",
+            "goal": "Save the target",
+            "success_criteria": "The target is saved successfully.",
+            "strategy": {
+                "approach": "Save through the visible editor.",
+            },
+        })
 
 
-def test_worker_normalizes_explicit_null_input_refs_to_empty_mapping() -> None:
-    spec = WorkerSpec.model_validate({
-        "profile": "operator",
-        "goal": "Save the target",
-        "success_criteria": ["The target is saved"],
-        "input_refs": None,
-        "data_requirements": [],
-        "actions": [{
-            "name": "save_target",
-            "capability": "tap",
-            "description": "Save the target",
-        }],
-    })
-
-    assert spec.input_refs == {}
+def test_worker_rejects_null_input_refs() -> None:
+    with pytest.raises(PydanticValidationError):
+        WorkerSpec.model_validate({
+            "profile": "operator",
+            "goal": "Save the target",
+            "success_criteria": ["The target is saved"],
+            "input_refs": None,
+            "strategy": {
+                "approach": "Save through the visible editor.",
+            },
+        })
 
 
-def test_worker_normalizes_string_action_input_shorthand() -> None:
-    spec = WorkerSpec.model_validate({
-        "profile": "operator",
-        "goal": "Search for the next record",
-        "success_criteria": ["The record is visible"],
-        "input_refs": {"known_query": "result:query"},
-        "actions": [
-            {
+def test_worker_rejects_string_action_input_shorthand() -> None:
+    with pytest.raises(PydanticValidationError):
+        WorkerSpec.model_validate({
+            "profile": "operator",
+            "goal": "Search for the next record",
+            "success_criteria": ["The record is visible"],
+            "input_refs": {"known_query": "result:query"},
+            "input_bindings": [{
                 "name": "search_known",
-                "capability": "type",
+                "input": "known_query",
+                "path": "name",
+                "target": "text_input",
                 "description": "Search using a Runtime-owned value",
-                "input_args": {"text": "known_query"},
+            }],
+            "strategy": {
+                "approach": "Search for the Runtime-owned target.",
             },
-            {
-                "name": "search_observed",
-                "capability": "type",
-                "description": "Search using a value derived from the current UI",
-                "input_args": {"text": "derived_query"},
-            },
-        ],
-    })
-
-    assert spec.actions[0].input_args["text"].input == "known_query"
-    assert "text" not in spec.actions[0].exposed_args
-    assert spec.actions[1].input_args == {}
-    assert "text" in spec.actions[1].exposed_args
+        })
 
 
-def test_worker_clamps_model_requested_steps_to_protocol_limit() -> None:
+def test_worker_attempt_contract_keeps_input_binding_in_immutable_contract() -> None:
     spec = WorkerSpec.model_validate({
         "profile": "operator",
-        "goal": "Complete a multi-page workflow",
-        "success_criteria": ["The workflow is saved"],
-        "data_requirements": [],
-        "actions": [{
-            "name": "advance",
-            "capability": "tap",
-            "description": "Advance the workflow",
+        "goal": "Find the Runtime-bound target",
+        "success_criteria": ["The target is visible"],
+        "input_refs": {"target": "result:1"},
+        "input_bindings": [{
+            "name": "enter_target",
+            "input": "target",
+            "path": ["name"],
+            "target": "text_input",
+            "description": "Enter the Runtime-bound target",
         }],
-        "max_steps": 30,
+        "strategy": {
+            "approach": "Search for the Runtime-bound target.",
+        },
     })
 
-    assert spec.max_steps == 20
+    contract = worker_attempt_contract(spec)
+
+    assert '"input_bindings"' in contract
+    assert '"name": "enter_target"' in contract
+    assert '"approach": "Search for the Runtime-bound target."' in contract
 
 
-def test_operator_rejects_acquisition_filters_even_when_action_has_same_value() -> None:
+def test_worker_rejects_missing_input_binding_description() -> None:
+    with pytest.raises(PydanticValidationError):
+        WorkerSpec.model_validate({
+            "profile": "operator",
+            "goal": "Search using another visible source",
+            "success_criteria": ["A relevant result is visible"],
+            "input_refs": {"query": "result:query"},
+            "input_bindings": [{
+                "name": "enter_alternative_query",
+                "input": "query",
+                "target": "text_input",
+            }],
+            "strategy": {
+                "approach": "Use another visible source.",
+            },
+        })
+
+
+def test_worker_strategy_rejects_runtime_budget_fields() -> None:
+    with pytest.raises(PydanticValidationError):
+        WorkerSpec.model_validate({
+            "profile": "operator",
+            "goal": "Complete a multi-page workflow",
+            "success_criteria": ["The workflow is saved"],
+            "strategy": {
+                "approach": "Advance through the workflow.",
+                "max_steps": 30,
+            },
+        })
+
+
+def test_worker_strategy_rejects_acquisition_filters() -> None:
     common = {
         "profile": "operator",
         "goal": "Open one product",
         "success_criteria": ["The product editor is open"],
         "data_requirements": [],
-        "actions": [{
-            "name": "search_product",
-            "capability": "type",
-            "description": "Search the product grid",
-            "fixed_args": {"text": "Selene Yoga Hoodie"},
-        }],
     }
 
     for acquisition_filters in (
         {"Name": "Selene Yoga Hoodie"},
         {"Type": "Configurable Product"},
     ):
-        with pytest.raises(ValueError, match="operator profile cannot declare"):
+        with pytest.raises(ValueError, match="acquisition_filters"):
             WorkerSpec.model_validate({
                 **common,
-                "acquisition_filters": acquisition_filters,
+                "strategy": {
+                    "approach": "Search the product grid.",
+                    "acquisition_filters": acquisition_filters,
+                },
             })

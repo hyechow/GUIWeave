@@ -1,10 +1,10 @@
-"""Shared API provider resolution for ChatQwen clients."""
+"""Shared provider and model-capability resolution for chat clients."""
 
 from __future__ import annotations
 
 import os
 from dataclasses import dataclass
-from typing import Dict, Mapping, Optional
+from typing import Any, Dict, Mapping, Optional
 
 SUPPORTED_CHAT_PROVIDERS = (
     "modelscope",
@@ -88,12 +88,13 @@ class ChatProviderConfig:
     model: str
     api_key: Optional[str]
     base_url: str
-    # Per-request wall-clock timeout (s) + retry count for the chat HTTP call. Without an explicit
-    # timeout the OpenAI SDK default (~600s) lets a single stalled request hang the agent for
-    # minutes, and with retries for tens of minutes — the observed WebArena "hang" (a frozen log at
-    # an LLM-call boundary). Normal checker/planner calls are 3–9s, so 60s is ~10x headroom: a
-    # stalled call fails fast and retries instead of blocking the run. Override via CHAT_TIMEOUT_S /
-    # CHAT_MAX_RETRIES.
+    temperature: float | None = 0.0
+    reasoning_effort: str | None = None
+    image_scale: float = 1.0
+    max_actions_per_call: int = 5
+    action_protocol: str = "tool_call"
+    use_responses_api: bool = False
+    # Bound stalled requests; slower endpoints can override these defaults.
     timeout_s: float = 60.0
     max_retries: int = 2
 
@@ -101,11 +102,8 @@ class ChatProviderConfig:
 def enable_thinking_for_model(model: Optional[str]) -> bool:
     """Whether DashScope-compatible chat must send enable_thinking=True for this model.
 
-    Agent calls want thinking off (latency/cost), and that is the default for every model
-    now. qwen3.7-* used to be force-enabled here on the belief the family rejects False,
-    but live verification (2026-08-04, token-plan cn-beijing endpoint) showed qwen3.7-max
-    and qwen3.7-plus both accept enable_thinking=false. Add a model only if an endpoint
-    provably rejects False.
+    Agent calls default to thinking off for latency and cost. Add a model only when its
+    endpoint demonstrably requires another value.
     """
     del model  # No known model currently forces thinking on; keep the hook signature.
     return False
@@ -114,6 +112,47 @@ def enable_thinking_for_model(model: Optional[str]) -> bool:
 def dashscope_extra_body(model: Optional[str] = None) -> dict:
     """extra_body for DashScope OpenAI-compatible chat, including enable_thinking."""
     return {"enable_thinking": enable_thinking_for_model(model)}
+
+
+def chat_model_kwargs(config: ChatProviderConfig) -> dict[str, Any]:
+    """Return constructor parameters supported by the configured model family."""
+
+    kwargs: dict[str, Any] = {}
+    if config.temperature is not None:
+        kwargs["temperature"] = config.temperature
+    if config.reasoning_effort:
+        kwargs["reasoning_effort"] = config.reasoning_effort
+    if config.use_responses_api:
+        kwargs["use_responses_api"] = True
+    return kwargs
+
+
+def build_chat_model(config: ChatProviderConfig, **overrides: Any) -> Any:
+    """Build one configured ChatOpenAI client without duplicating provider policy."""
+
+    from langchain_openai import ChatOpenAI
+
+    kwargs = {
+        "timeout": config.timeout_s, "max_retries": config.max_retries,
+        **chat_model_kwargs(config), **overrides,
+    }
+    return ChatOpenAI(
+        model=config.model, api_key=config.api_key, base_url=config.base_url, **kwargs,
+    )
+
+
+def chat_request_kwargs(model: Optional[str]) -> dict[str, Any]:
+    """Return per-request compatibility fields for one model family.
+
+    ``enable_thinking`` belongs to Qwen-compatible endpoints and must not leak
+    into OpenAI GPT requests. An unknown model keeps the historical Qwen behavior
+    so model-less test doubles and legacy callers remain backward compatible.
+    """
+
+    normalized = str(model or "").strip().casefold()
+    if not normalized or normalized.startswith("qwen") or "/qwen" in normalized:
+        return {"extra_body": dashscope_extra_body(model)}
+    return {}
 
 
 def resolve_chat_provider_config(

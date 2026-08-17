@@ -1,8 +1,12 @@
 from __future__ import annotations
 
 import json
+from io import BytesIO
 from pathlib import Path
 from types import SimpleNamespace
+
+import pytest
+from PIL import Image
 
 from gui_agent.core.tool_agent.filter_state import (
     AppliedFilterState,
@@ -10,7 +14,11 @@ from gui_agent.core.tool_agent.filter_state import (
 )
 from gui_agent.core.tool_agent.contracts import DataRequirement
 from gui_agent.core.tool_agent.data_store import RuntimeDataStore
-from gui_agent.core.tool_agent.perception import PerceptionMaterializer
+from gui_agent.core.tool_agent.perception import (
+    PerceptionMaterializer,
+    _visible_row_schema,
+    _rows_satisfy_filters,
+)
 
 
 ROW_SCHEMA = {
@@ -55,6 +63,7 @@ class FakePerception:
         applied_filters: dict[str, str] | None = None,
         applied_filter_state: AppliedFilterState | None = None,
         collection_regions: list | None = None,
+        observation: dict | None = None,
     ) -> None:
         self.tables = tables
         self.controls = controls or []
@@ -62,10 +71,12 @@ class FakePerception:
         self.applied_filters = applied_filters or {}
         self.applied_filter_state = applied_filter_state
         self.collection_regions = collection_regions
+        self.observation = observation or {}
 
     def observe(self):
-        return SimpleNamespace(
+        values = dict(
             png_bytes=b"png",
+            loading=None,
             tables=self.tables,
             form_controls=self.controls,
             form_control_state=self.control_state,
@@ -75,6 +86,7 @@ class FakePerception:
             url="https://example.test",
             title="Example",
         )
+        return SimpleNamespace(**(values | self.observation))
 
 
 class FakeBundle:
@@ -87,6 +99,7 @@ class FakeBundle:
         applied_filters: dict[str, str] | None = None,
         applied_filter_state: AppliedFilterState | None = None,
         collection_regions: list | None = None,
+        observation: dict | None = None,
     ) -> None:
         self.tables = tables
         self.controls = controls or []
@@ -94,6 +107,7 @@ class FakeBundle:
         self.applied_filters = applied_filters or {}
         self.applied_filter_state = applied_filter_state
         self.collection_regions = collection_regions
+        self.observation = observation
         self.make_perception_calls = 0
 
     def make_perception(self, _platform, _path):
@@ -105,6 +119,7 @@ class FakeBundle:
             applied_filters=self.applied_filters,
             applied_filter_state=self.applied_filter_state,
             collection_regions=self.collection_regions,
+            observation=self.observation,
         )
 
 
@@ -116,12 +131,30 @@ def _materializer(tmp_path: Path, mode: str) -> PerceptionMaterializer:
     materializer.model = "fake"
     materializer._expected_totals = {}
     materializer._detail_collections = {}
+    materializer._visual_filter_states = {}
     materializer._vision_extract = lambda _requirement, _png, **_kwargs: {  # type: ignore[method-assign]
         "found": False,
         "rows": [],
         "end_visible": False,
     }
     return materializer
+
+
+def _observe_requirement(
+    materializer: PerceptionMaterializer,
+    requirement: DataRequirement,
+    frame_no: int,
+    *,
+    tables: list[dict] | None = None,
+    allow_linked_details: bool = True,
+):
+    return materializer.observe(
+        bundle=FakeBundle(tables or []),
+        platform=FakePlatform(),
+        requirements=[requirement],
+        allow_linked_details=allow_linked_details,
+        frame_no=frame_no,
+    )[0]
 
 
 def _visible_region() -> SimpleNamespace:
@@ -137,6 +170,12 @@ def _visible_region() -> SimpleNamespace:
             clipped_bottom=False,
         )],
     )
+
+
+def _blank_png() -> bytes:
+    output = BytesIO()
+    Image.new("RGB", (1280, 800), "white").save(output, format="PNG")
+    return output.getvalue()
 
 
 def test_operator_projects_exact_visible_collection_cell_text(tmp_path: Path) -> None:
@@ -175,6 +214,35 @@ def test_collector_does_not_project_collection_cell_values(tmp_path: Path) -> No
     )
 
     assert frame.visible_collection_regions == []
+
+
+@pytest.mark.parametrize(
+    ("platform_loading", "expected_readiness"),
+    [(True, "loading"), (False, "blank")],
+)
+def test_unready_frame_skips_visual_collection_extraction(
+    tmp_path: Path,
+    platform_loading: bool,
+    expected_readiness: str,
+) -> None:
+    materializer = _materializer(tmp_path, "enhanced")
+    materializer._vision_extract = lambda *_args, **_kwargs: (_ for _ in ()).throw(  # type: ignore[method-assign]
+        AssertionError("unready frame must not invoke visual extraction")
+    )
+
+    frame, _ = materializer.observe(
+        bundle=FakeBundle([], observation={
+            "loading": platform_loading, "png_bytes": _blank_png(),
+        }),
+        platform=FakePlatform(),
+        requirements=[_requirement()],
+        frame_no=1,
+    )
+
+    assert frame.readiness == expected_readiness
+    assert frame.chunks == []
+    assert frame.collections == []
+    assert frame.missing_requirements == ["terms"]
 
 
 def test_operator_marks_a_clipped_collection_tail(tmp_path: Path) -> None:
@@ -265,7 +333,7 @@ def test_structured_surface_resolves_caption_qualified_field(tmp_path: Path) -> 
     assert frame.collections[0].coverage["status"] == "complete"
 
 
-def test_acquisition_scope_can_broaden_without_changing_logical_row_filter(
+def test_text_query_can_broaden_without_changing_required_predicates(
     tmp_path: Path,
 ) -> None:
     requirement = DataRequirement(
@@ -298,6 +366,12 @@ def test_acquisition_scope_can_broaden_without_changing_logical_row_filter(
     frame, _ = materializer.observe(
         bundle=FakeBundle(
             tables,
+            controls=[{
+                "kind": "text_input",
+                "label": "Product",
+                "value": "Erica",
+                "is_filter": True,
+            }],
             applied_filters={"Product": "Erica"},
             applied_filter_state=AppliedFilterState(
                 predicates=compile_filter_predicates({"Product": "Erica"}),
@@ -307,41 +381,87 @@ def test_acquisition_scope_can_broaden_without_changing_logical_row_filter(
         ),
         platform=FakePlatform(),
         requirements=[requirement],
-        acquisition_filters={"product": "Erica"},
         frame_no=1,
     )
 
     assert frame.requirement_scopes["reviews"]["requested_filters"] == {
+        "Product": "Erica Sports Bra"
+    }
+    assert frame.requirement_scopes["reviews"]["query_state"]["filters"] == {
         "Product": "Erica"
     }
     assert materializer.data_store.collection_rows(frame.collections[0].ref) == [
         {"product": "Erica Sports Bra", "title": "Target review"},
-        {"product": "Erica Training Top", "title": "Related review"},
     ]
+    assert frame.collections[0].coverage["status"] == "complete"
 
     stale, _ = materializer.observe(
         bundle=FakeBundle(
             tables,
-            applied_filters={"Product": "Erica Sports Bra"},
+            applied_filters={"Status": "Complete"},
             applied_filter_state=AppliedFilterState(
-                predicates=compile_filter_predicates({
-                    "Product": "Erica Sports Bra"
-                }),
+                predicates=compile_filter_predicates({"Status": "Complete"}),
                 coverage="complete",
                 source="filter_indicator",
             ),
         ),
         platform=FakePlatform(),
         requirements=[requirement],
-        acquisition_filters={},
         frame_no=2,
     )
 
     assert stale.requirement_scopes["reviews"]["status"] == "unmet"
     assert stale.requirement_scopes["reviews"]["evidence"] == (
-        "unexpected_applied_filters"
+        "conflicting_non_query_filters"
     )
     assert stale.collections == []
+
+
+def test_visual_candidate_must_satisfy_immutable_logical_filter(
+    tmp_path: Path,
+) -> None:
+    requirement = DataRequirement(
+        id="target_record",
+        description="One exact requested record",
+        row_schema={"date": "string"},
+        filters={"date": "2026-08-15"},
+        coverage="first_match",
+    )
+    materializer = _materializer(tmp_path, "vision-only")
+    materializer._vision_extract = lambda *_args, **_kwargs: {  # type: ignore[method-assign]
+        "found": True,
+        "rows": [{"date": "2026-08-27"}],
+        "end_visible": False,
+        "filter_state_visible": True,
+        "scope_satisfied": True,
+    }
+
+    frame, _ = materializer.observe(
+        bundle=FakeBundle([]),
+        platform=FakePlatform(),
+        requirements=[requirement],
+        frame_no=1,
+    )
+
+    scope = frame.requirement_scopes[requirement.id]
+    assert scope["status"] == "unknown"
+    assert scope["filter_rejected_rows"] == 1
+    assert frame.collections == []
+    assert frame.missing_requirements == [requirement.id]
+
+
+def test_known_filter_mismatch_wins_over_unknown_row() -> None:
+    requirement = DataRequirement(
+        id="records",
+        description="Filtered records",
+        row_schema={"date": "string", "content": "string"},
+        filters={"date": "2026-08-15"},
+    )
+
+    assert _rows_satisfy_filters(requirement, [
+        {"content": "Date not visible"},
+        {"date": "2026-08-16", "content": "Wrong date"},
+    ]) is False
 
 
 def test_incomplete_visual_candidates_keep_detail_collection_open(
@@ -438,18 +558,23 @@ def test_vision_extract_preserves_schema_rejected_rows_for_empty_classification(
     )
     materializer = _materializer(tmp_path, "vision-only")
     materializer._vision = vision
+    materializer.task_goal = "Return tomorrow's forecast"
 
     extracted = PerceptionMaterializer._vision_extract(
         materializer,
         requirement,
         b"png",
-        acquisition_filters={},
+        query_filters={},
+        page_identity={"url": "https://example.test/records", "title": "Records"},
     )
 
     assert len(extracted["rows"]) == 1
     assert extracted["rows"][0]["optional_source_metric"] is None
     human_text = observed_messages[-1].content[0]["text"]
+    assert "Original task temporal context: Return tomorrow's forecast" in human_text
     assert "Task reference time (frozen platform clock):" in human_text
+    assert 'Frozen relative calendar dates by day offset: {"-2":' in human_text
+    assert 'Current page identity: {"url": "https://example.test/records"' in human_text
 
 
 def test_optional_visual_null_is_omitted_instead_of_rejecting_row(
@@ -546,6 +671,46 @@ def test_visual_values_use_complete_enhanced_surface_as_coverage_evidence(
     assert frame.collections[0].coverage["status"] == "complete"
 
 
+def test_unmapped_structured_content_allows_visual_field_completion(
+    tmp_path: Path,
+) -> None:
+    properties = {
+        "name": {"type": "string"},
+        "modified": {"type": "string"},
+        "kind": {"type": "string"},
+    }
+    requirement = DataRequirement(
+        id="files",
+        description="Visible file rows",
+        row_schema={"type": "object", "properties": properties,
+                    "required": list(properties)},
+        field_sources={"name": "Name", "modified": "Modified", "kind": "Kind"},
+    )
+    materializer = _materializer(tmp_path, "enhanced")
+    materializer._vision_extract = lambda *_args, **_kwargs: {  # type: ignore[method-assign]
+        "found": True,
+        "rows": [{"name": "a.zip", "modified": "Jul 11", "kind": "ZIP archive"}],
+        "end_visible": True,
+        "scope_satisfied": True,
+    }
+    table = {
+        "headers": ["Name", "Details"],
+        "rows": [{"Name": "a.zip", "Details": ["Jul 11", "ZIP archive"]}],
+        "unmapped_visible_content": True,
+        "in_viewport": True,
+        "partial": False,
+        "traversal": {"type": "static"},
+    }
+
+    frame = _observe_requirement(materializer, requirement, 1, tables=[table])
+
+    assert frame.chunks[0].provider == "vision"
+    assert "detail_resolution" not in frame.requirement_scopes["files"]
+    assert materializer.data_store.collection_rows(frame.collections[0].ref) == [{
+        "name": "a.zip", "modified": "Jul 11", "kind": "ZIP archive",
+    }]
+
+
 def test_visual_bottom_does_not_override_enabled_surface_pagination(
     tmp_path: Path,
 ) -> None:
@@ -617,7 +782,7 @@ def test_detail_collection_keeps_candidate_total_and_survives_list_navigation(
             "rating": "Detailed Rating",
         },
         field_types={"product": "text", "title": "text", "rating": "number"},
-        filters={"product": "Requested Product"},
+        filters={"product": "Candidate Product"},
     )
     candidate_table = {
         "caption": "Reviews",
@@ -656,6 +821,12 @@ def test_detail_collection_keeps_candidate_total_and_survives_list_navigation(
     materializer._vision_extract = lambda *_args, **_kwargs: next(extracts)  # type: ignore[method-assign]
     scoped_list = FakeBundle(
         [candidate_table],
+        controls=[{
+            "kind": "text_input",
+            "label": "Product",
+            "value": "Candidate",
+            "is_filter": True,
+        }],
         applied_filters={"Product": "Candidate"},
         applied_filter_state=AppliedFilterState(
             predicates=compile_filter_predicates({"Product": "Candidate"}),
@@ -666,7 +837,6 @@ def test_detail_collection_keeps_candidate_total_and_survives_list_navigation(
     observe_args = {
         "platform": FakePlatform(),
         "requirements": [requirement],
-        "acquisition_filters": {"product": "Candidate"},
     }
 
     initial, _ = materializer.observe(bundle=scoped_list, frame_no=1, **observe_args)
@@ -945,11 +1115,28 @@ def test_assembled_details_replace_a_stale_empty_collection(tmp_path: Path) -> N
         "traversal": {"type": "static"},
     }
     materializer = _materializer(tmp_path, "enhanced")
-    materializer._vision_extract = lambda *_a, **_k: (_ for _ in ()).throw(  # type: ignore[method-assign]
-        AssertionError("structured list/detail evidence must not invoke visual extraction")
-    )
+    vision_calls = []
+
+    def vision_only_for_empty_query(*_a, **_k):
+        vision_calls.append(1)
+        if len(vision_calls) > 1:
+            raise AssertionError(
+                "structured list/detail evidence must not invoke visual extraction"
+            )
+        return {
+            "found": False,
+            "rows": [],
+            "empty_state_visible": True,
+            "empty_state_evidence": "No records found",
+            "end_visible": True,
+            "filter_state_visible": True,
+            "scope_satisfied": True,
+        }
+
+    materializer._vision_extract = vision_only_for_empty_query  # type: ignore[method-assign]
 
     def observe(frame_no: int, *, table=None, controls=None, applied=None, query=None):
+        scoped = requirement.model_copy(update={"filters": query or {}})
         return materializer.observe(
             bundle=FakeBundle(
                 [table] if table else [],
@@ -966,25 +1153,23 @@ def test_assembled_details_replace_a_stale_empty_collection(tmp_path: Path) -> N
                 ),
             ),
             platform=FakePlatform(),
-            requirements=[requirement],
-            acquisition_filters=query or {},
+            requirements=[scoped],
             frame_no=frame_no,
         )[0]
 
     empty_frame = observe(
-        1, table=empty, applied={"Product": "widgets"}, query={"product": "widgets"},
+        1, table=empty, applied={"Product": "Widget C"}, query={"product": "Widget C"},
     )
     assert empty_frame.collections[0].row_count == 0
     assert empty_frame.collections[0].coverage["status"] == "complete"
 
-    observe(2, table=listed, applied={"Product": "widget"}, query={"product": "widget"})
+    observe(2, table=listed)
     observe(
         3,
         controls=[
             {"label": "Title", "kind": "text_input", "value": "Ann"},
             {"label": "Detailed Rating", "kind": "number", "value": 3},
         ],
-        query={"product": "widget"},
     )
     last = observe(
         4,
@@ -992,13 +1177,72 @@ def test_assembled_details_replace_a_stale_empty_collection(tmp_path: Path) -> N
             {"label": "Title", "kind": "text_input", "value": "Bob"},
             {"label": "Detailed Rating", "kind": "number", "value": 2},
         ],
-        query={"product": "widget"},
     )
     assert last.collections[0].row_count == 2
     assert last.collections[0].coverage["status"] == "complete"
 
 
-def test_collector_establishes_filter_scope_before_materializing_rows(tmp_path: Path) -> None:
+def test_exact_text_query_empty_is_not_an_authoritative_empty_result(
+    tmp_path: Path,
+) -> None:
+    requirement = DataRequirement(
+        id="reviews",
+        description="Reviews for one exact product",
+        row_schema={"product": "string", "title": "string"},
+        field_sources={"product": "Product", "title": "Title"},
+        filters={"product": "Erica Sports Bra"},
+    )
+    empty_table = {
+        "caption": "Reviews",
+        "headers": ["Product", "Title"],
+        "rows": [],
+        "total_records": 0,
+        "partial": False,
+        "traversal": {"type": "static", "has_next_page": False},
+    }
+    materializer = _materializer(tmp_path, "enhanced")
+    materializer._vision_extract = lambda *_args, **_kwargs: {  # type: ignore[method-assign]
+        "found": False,
+        "rows": [],
+        "empty_state_visible": True,
+        "empty_state_evidence": "No records found",
+        "end_visible": True,
+        "filter_state_visible": True,
+        "scope_satisfied": True,
+    }
+
+    frame, _ = materializer.observe(
+        bundle=FakeBundle(
+            [empty_table],
+            controls=[{
+                "kind": "text_input",
+                "label": "Product",
+                "value": "Erica Sports Bra",
+                "is_filter": True,
+            }],
+            applied_filters={"Product": "Erica Sports Bra"},
+            applied_filter_state=AppliedFilterState(
+                predicates=compile_filter_predicates({
+                    "Product": "Erica Sports Bra"
+                }),
+                coverage="complete",
+                source="filter_indicator",
+            ),
+        ),
+        platform=FakePlatform(),
+        requirements=[requirement],
+        frame_no=1,
+    )
+
+    scope = frame.requirement_scopes[requirement.id]
+    assert scope["status"] == "met"
+    assert scope["query_outcome"] == "empty"
+    assert scope["empty_authoritative"] is False
+    assert frame.collections == []
+    assert frame.missing_requirements == [requirement.id]
+
+
+def test_complete_candidate_surface_is_validated_without_exact_ui_filter(tmp_path: Path) -> None:
     row_schema = {
         "type": "object",
         "properties": {
@@ -1053,9 +1297,16 @@ def test_collector_establishes_filter_scope_before_materializing_rows(tmp_path: 
         frame_no=1,
     )
 
-    assert before.collections == []
-    assert before.missing_requirements == ["filtered_records"]
-    assert before.requirement_scopes["filtered_records"]["status"] == "unmet"
+    assert before.missing_requirements == []
+    assert before.requirement_scopes["filtered_records"]["status"] == "met"
+    assert before.requirement_scopes["filtered_records"]["evidence"] == (
+        "validated_candidates"
+    )
+    assert materializer.data_store.collection_rows(before.collections[0].ref) == [{
+        "record_id": "2",
+        "owner": "b",
+        "status": "Complete",
+    }]
     assert before.controls == [{
         "kind": "native_select",
         "label": "Status",
@@ -1125,7 +1376,6 @@ def test_linked_details_resolve_empty_values_from_related_records(tmp_path: Path
             ),
             platform=FakePlatform(),
             requirements=[requirement],
-            acquisition_filters={"quantity": 3},
             frame_no=frame_no,
         )
         return frame
@@ -1672,6 +1922,7 @@ def test_acquisition_scope_change_resets_detail_collection(tmp_path: Path) -> No
     )
 
     def observe(frame_no: int, *, product: str, table=None, controls=None):
+        scoped = requirement.model_copy(update={"filters": {"product": product}})
         return materializer.observe(
             bundle=FakeBundle(
                 [table] if table else [],
@@ -1684,8 +1935,7 @@ def test_acquisition_scope_change_resets_detail_collection(tmp_path: Path) -> No
                 ),
             ),
             platform=FakePlatform(),
-            requirements=[requirement],
-            acquisition_filters={"product": product},
+            requirements=[scoped],
             frame_no=frame_no,
         )[0]
 
@@ -1738,6 +1988,7 @@ def test_vision_only_never_invokes_platform_perception(tmp_path: Path) -> None:
     materializer._vision_extract = lambda _requirement, _png, **_kwargs: {  # type: ignore[method-assign]
         "found": True,
         "rows": [{"term": "visual-value", "uses": 2}],
+        "start_visible": True,
         "end_visible": True,
     }
 
@@ -1753,6 +2004,153 @@ def test_vision_only_never_invokes_platform_perception(tmp_path: Path) -> None:
     assert materializer.data_store.collection_chunks(frame.collections[0].ref) == [
         [{"term": "visual-value", "uses": 2}]
     ]
+    assert frame.collections[0].coverage["status"] == "incomplete"
+    assert materializer.data_store.mark_scroll_end(
+        frame.collections[0].ref
+    ).coverage["status"] == "complete"
+    clipped = _materializer(tmp_path, "vision-only")
+    clipped._vision_extract = lambda *_args, **_kwargs: {  # type: ignore[method-assign]
+        "found": True, "rows": [{"term": "visible", "uses": 2}],
+        "clipped_top_record_visible": True, "start_visible": True,
+        "end_visible": True,
+    }
+    frame = _observe_requirement(clipped, _requirement(), 2)
+    completed = clipped.data_store.mark_scroll_end(frame.collections[0].ref)
+    assert (frame.collections[0].coverage["start_seen"],
+            completed.coverage["status"]) == (False, "incomplete")
+
+
+def test_visual_singleton_completes_without_collection_boundary(tmp_path: Path) -> None:
+    requirement = _requirement().model_copy(update={"cardinality": "one"})
+    materializer = _materializer(tmp_path, "vision-only")
+    materializer._vision_extract = lambda *_args, **_kwargs: {  # type: ignore[method-assign]
+        "found": True,
+        "rows": [{"term": "authoritative summary", "uses": 27}],
+        "start_visible": True,
+        "end_visible": False,
+    }
+
+    frame = _observe_requirement(materializer, requirement, 1)
+
+    assert frame.collections[0].row_count == 1
+    assert frame.collections[0].coverage["status"] == "complete"
+    assert frame.collections[0].coverage["cardinality"] == "one"
+
+
+def test_single_identity_candidates_assemble_linked_details(tmp_path: Path) -> None:
+    properties = {"name": {"type": "string"}, "content": {
+        "type": "array", "items": {"type": "string"},
+    }}
+    requirement = DataRequirement(
+        id="documents", description="Documents and their content",
+        row_schema={"type": "object", "properties": properties,
+                    "required": list(properties)},
+        field_sources={"name": "Name", "content": "Content"},
+        field_types={"name": "text", "content": "text_list"},
+    )
+    materializer = _materializer(tmp_path, "enhanced")
+    candidate_table = {
+        "headers": ["Name"],
+        "rows": [{"Name": "a.txt"}, {"Name": "b.txt"}],
+        "partial": True,
+        "traversal": {"type": "scroll"},
+    }
+    first = _observe_requirement(
+        materializer, requirement, 1, tables=[candidate_table],
+    )
+    assert first.missing_requirements == ["documents"]
+
+    def detail(name: str, content: str) -> dict:
+        return {
+            "source": "webview-document",
+            "headers": ["Name", "Content"],
+            "rows": [{"Name": name, "Content": content}],
+            "total_records": 1,
+            "partial": False,
+            "traversal": {"type": "static", "has_next_page": False},
+        }
+
+    second = _observe_requirement(
+        materializer, requirement, 2, tables=[detail("a.txt", "one\ntwo\n")],
+    )
+    assert second.missing_requirements == ["documents"]
+    assert second.requirement_scopes["documents"]["detail_resolution"]["status"] == "active"
+
+    completed = _observe_requirement(
+        materializer, requirement, 3, tables=[detail("b.txt", "three\n")],
+    )
+    collection = completed.collections[0]
+    assert collection.coverage["status"] == "complete"
+    assert materializer.data_store.collection_rows(collection.ref) == [
+        {"name": "a.txt", "content": ["one", "two"]},
+        {"name": "b.txt", "content": ["three"]},
+    ]
+
+
+def test_bound_acquisition_defers_and_nested_surface_owns_candidates(
+    tmp_path: Path,
+) -> None:
+    properties = {
+        "name": {"type": "string"},
+        "content": {"type": "array", "items": {"type": "string"}},
+    }
+    requirement = DataRequirement(
+        id="documents", description="Selected documents and their content",
+        row_schema={"type": "object", "properties": properties,
+                    "required": list(properties)},
+        field_sources={"name": "Name", "content": "Content"},
+        field_types={"name": "text", "content": "text_list"},
+    )
+    materializer = _materializer(tmp_path, "enhanced")
+
+    def candidates(location: str, *names: str) -> dict:
+        return {
+            "path": "native-list", "location": location, "headers": ["Name"],
+            "rows": [{"Name": name} for name in names],
+            "partial": True, "traversal": {"type": "scroll"},
+        }
+
+    deferred = _observe_requirement(
+        materializer, requirement, 1,
+        tables=[candidates("Downloads", "unrelated.zip")],
+        allow_linked_details=False,
+    )
+    assert "detail_resolution" not in deferred.requirement_scopes["documents"]
+
+    target = _observe_requirement(
+        materializer, requirement, 2,
+        tables=[candidates("Downloads", "target.zip")],
+    )
+    assert target.requirement_scopes["documents"]["detail_resolution"][
+        "next_unresolved_candidate"
+    ]["fields"] == {"name": "target.zip"}
+
+    overlay = _observe_requirement(
+        materializer, requirement, 3,
+        tables=[candidates("Open with", "OpenDocument Reader")],
+    )
+    assert overlay.requirement_scopes["documents"]["detail_resolution"][
+        "next_unresolved_candidate"
+    ]["fields"] == {"name": "target.zip"}
+
+    archive = _observe_requirement(
+        materializer, requirement, 4,
+        tables=[candidates("Downloads > target.zip", "a.txt", "b.txt")],
+    )
+    assert archive.requirement_scopes["documents"]["detail_resolution"][
+        "candidate_records"
+    ] == 2
+
+    parent = _observe_requirement(
+        materializer, requirement, 5,
+        tables=[candidates("Downloads", "unrelated.txt")],
+    )
+    assert parent.requirement_scopes["documents"]["detail_resolution"][
+        "candidate_records"
+    ] == 2
+    assert parent.requirement_scopes["documents"]["detail_resolution"][
+        "next_unresolved_candidate"
+    ]["fields"] == {"name": "a.txt"}
 
 
 def test_explicit_visual_empty_state_materializes_complete_empty_collection(
@@ -1781,6 +2179,39 @@ def test_explicit_visual_empty_state_materializes_complete_empty_collection(
     assert collection.coverage["coverage_evidence"] == "explicit_visual_empty_state"
     assert collection.coverage["empty_state_evidence"] == "No matching records"
     assert frame.missing_requirements == []
+
+
+def test_confirmed_exact_filter_supplies_exact_scope_fields(tmp_path: Path) -> None:
+    requirement = _requirement().model_copy(update={"filters": {"term": "fixed"}})
+    assert set(_visible_row_schema(requirement, {})["properties"]) == {"term", "uses"}
+    materializer = _materializer(tmp_path, "vision-only")
+    materializer.mode = "enhanced"
+    materializer._vision_extract = lambda *_args, **_kwargs: {  # type: ignore[method-assign]
+        "found": True,
+        "rows": [{"uses": 20}],
+        "filter_state_visible": True,
+        "start_visible": True,
+        "end_visible": True,
+    }
+    frame, _ = materializer.observe(
+        bundle=FakeBundle(
+            [],
+            applied_filters={"Search Term": "fixed"},
+            applied_filter_state=AppliedFilterState(
+                predicates=compile_filter_predicates({"Search Term": "fixed"}),
+                coverage="complete",
+                source="filter_indicator",
+            ),
+        ),
+        platform=FakePlatform(),
+        requirements=[requirement],
+        frame_no=1,
+    )
+
+    assert (frame.requirement_scopes["terms"]["status"],
+            materializer.data_store.collection_rows(frame.collections[0].ref)) == (
+                "met", [{"term": "fixed", "uses": 20}],
+            )
 
 
 def test_visual_empty_state_requires_explicit_evidence(tmp_path: Path) -> None:

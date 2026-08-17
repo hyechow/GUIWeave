@@ -24,6 +24,7 @@ dependencies = [
     "pyyaml>=6.0.0",
     "requests>=2.32.0",
     "pyobjc-framework-Quartz>=11.0; sys_platform == 'darwin'",
+    "websocket-client>=1.8.0",
 ]
 
 [project.scripts]

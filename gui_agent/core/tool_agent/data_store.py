@@ -16,12 +16,57 @@ from jsonschema import validate
 from gui_agent.core.tool_agent.contracts import CollectionRef, DataChunkRef, ResultRef
 
 
+def _coverage_status(**evidence: Any) -> str:
+    if evidence["scope_status"] != "met":
+        return "incomplete"
+    row_count = evidence["row_count"]
+    known_total = evidence.get("known_total")
+    page_count = evidence.get("page_count")
+    if evidence.get("totals_conflict") or (
+        known_total is not None and row_count > known_total
+    ):
+        return "conflicting"
+    if evidence["requested"] == "first_match" and row_count:
+        return "complete"
+    if evidence["structured"] and (
+        evidence.get("all_pages")
+        or page_count is None and (
+            evidence.get("contiguous_to_end")
+            or known_total is not None
+            and row_count >= known_total
+            and not evidence.get("partial")
+            or evidence.get("surface_complete")
+        )
+    ):
+        return "complete"
+    if not evidence["structured"] and (
+        page_count is None or evidence.get("all_pages")
+    ) and (
+        known_total is not None and row_count >= known_total
+        or evidence.get("at_end")
+        and known_total is None
+        and evidence.get("start_seen") is not False
+    ):
+        return "complete"
+    if (
+        evidence.get("has_next_page") is True
+        or page_count is not None and not evidence.get("all_pages")
+        or known_total is not None and row_count < known_total
+        or evidence.get("partial")
+        or evidence.get("start_seen") is False
+        and page_count is None
+        and known_total is None
+    ):
+        return "incomplete"
+    return "unknown"
+
+
 def _canonical(value: Any) -> str:
     return json.dumps(value, ensure_ascii=False, sort_keys=True, separators=(",", ":"))
 
 
 def _boundary_overlap(left: list[Any], right: list[Any]) -> int:
-    """Longest exact suffix/prefix overlap between consecutive visual windows."""
+    """Longest exact suffix/prefix overlap between consecutive windows."""
     for size in range(min(len(left), len(right)), 0, -1):
         if left[-size:] == right[:size]:
             return size
@@ -34,6 +79,7 @@ class RuntimeDataStore:
         self._chunks: dict[str, DataChunkRef] = {}
         self._collections: dict[str, CollectionRef] = {}
         self._results: dict[str, ResultRef] = {}
+        self._data_results: set[str] = set()
         self._requirement_chunks: dict[tuple[str, str], list[str]] = defaultdict(list)
         self._dedupe: dict[tuple[str, str, str, str, str], str] = {}
 
@@ -92,20 +138,27 @@ class RuntimeDataStore:
         previous_ref = ""
         for chunk_ref in chunk_ids:
             current_rows = self._values[chunk_ref]
-            overlap = 0
             if previous_ref:
                 previous = self._chunks[previous_ref]
                 current = self._chunks[chunk_ref]
                 previous_context = str(previous.coverage.get("window_context") or "")
                 current_context = str(current.coverage.get("window_context") or "")
                 if (
-                    previous.provider == current.provider == "vision"
+                    previous.provider == current.provider
+                    and current.provider in {"vision", "structured"}
                     and previous_context
                     and previous_context == current_context
                     and previous.coverage.get("partial") is True
                 ):
                     overlap = _boundary_overlap(self._values[previous_ref], current_rows)
-            collection_rows.extend(current_rows[overlap:])
+                    if overlap:
+                        current_rows = current_rows[overlap:]
+                    elif reverse := _boundary_overlap(
+                        current_rows, self._values[previous_ref]
+                    ):
+                        collection_rows[:0] = current_rows[:-reverse]
+                        current_rows = []
+            collection_rows.extend(current_rows)
             previous_ref = chunk_ref
         row_count = len(collection_rows)
         totals = {
@@ -135,6 +188,12 @@ class RuntimeDataStore:
         at_end = bool(
             last_coverage.get("at_end", last_coverage.get("end_visible"))
         )
+        start_values = [
+            item.get("start_visible")
+            for item in coverage_samples
+            if isinstance(item.get("start_visible"), bool)
+        ]
+        start_seen = True if True in start_values else False if start_values else None
         scope_status = str(last_coverage.get("scope_status") or "met")
         contiguous_to_end = bool(
             at_end
@@ -146,43 +205,29 @@ class RuntimeDataStore:
         surface_complete = bool(
             (traversal_type == "static" or traversal_type == "scroll" and at_end)
             and not last_coverage.get("partial")
+            and start_seen is not False
             and (known_total is None or row_count >= known_total)
         )
         totals_conflict = len(totals) > 1 or len(page_counts) > 1
-        if scope_status != "met":
-            coverage_status = "incomplete"
-        elif totals_conflict or (
-            known_total is not None and row_count > known_total
-        ):
-            coverage_status = "conflicting"
-        elif structured and (
-            all_pages
-            or page_count is None and (
-                contiguous_to_end
-                or known_total is not None
-                and row_count >= known_total
-                and not last_coverage.get("partial")
-                or surface_complete
-            )
-        ):
-            coverage_status = "complete"
-        elif not structured and at_end and (
-            page_count is None or all_pages
-        ) and (
-            known_total is None or row_count >= known_total
-        ):
-            coverage_status = "complete"
-        elif (
-            last_coverage.get("has_next_page") is True
-            or (page_count is not None and not all_pages)
-            or (known_total is not None and row_count < known_total)
-            or last_coverage.get("partial")
-        ):
-            coverage_status = "incomplete"
-        else:
-            coverage_status = "unknown"
+        requested = str(last_coverage.get("requested") or "complete")
+        coverage_status = _coverage_status(
+            scope_status=scope_status,
+            requested=requested,
+            row_count=row_count,
+            structured=structured,
+            known_total=known_total,
+            page_count=page_count,
+            all_pages=all_pages,
+            contiguous_to_end=contiguous_to_end,
+            surface_complete=surface_complete,
+            at_end=at_end,
+            start_seen=start_seen,
+            totals_conflict=totals_conflict,
+            has_next_page=last_coverage.get("has_next_page"),
+            partial=bool(last_coverage.get("partial")),
+        )
         combined_coverage = {
-            "requested": "complete",
+            "requested": requested,
             "scope_status": scope_status,
             "requested_filters": dict(last_coverage.get("requested_filters") or {}),
             "applied_filters": dict(last_coverage.get("applied_filters") or {}),
@@ -205,9 +250,22 @@ class RuntimeDataStore:
                 )
             ),
         }
+        if start_seen is not None:
+            combined_coverage["start_seen"] = start_seen
         for key in ("coverage_evidence", "empty_state_evidence"):
             if last_coverage.get(key) not in (None, ""):
                 combined_coverage[key] = last_coverage[key]
+        cardinality = "one" if last_coverage.get("cardinality") == "one" else "many"
+        combined_coverage["cardinality"] = cardinality
+        if scope_status == "met" and cardinality == "one":
+            proves_multiple = row_count > 1 or any(
+                isinstance(value, (int, float)) and value > 1
+                for value in (known_total, page_count)
+            ) or combined_coverage["movement"].get("has_next_page") is True
+            if proves_multiple:
+                combined_coverage["status"] = "conflicting"
+            elif row_count == 1 and coverage_status != "conflicting":
+                combined_coverage["status"] = "complete"
         collection = CollectionRef(
             ref=collection_id,
             requirement_id=requirement_id,
@@ -235,6 +293,45 @@ class RuntimeDataStore:
             return self._collections[ref]
         except KeyError as exc:
             raise KeyError(f"unknown CollectionRef {ref!r}") from exc
+
+    def mark_scroll_end(self, ref: str) -> CollectionRef:
+        """Record the terminal boundary proven by a downward scroll with no effect."""
+        collection = self.collection_descriptor(ref)
+        coverage = collection.coverage
+        scrollable = coverage.get("source_scope") == "visual_collection" or (
+            coverage.get("source_scope") == "structured_collection"
+            and coverage.get("movement", {}).get("type") == "scroll"
+        )
+        if not scrollable:
+            return collection
+        started = coverage.get("start_seen") is True
+        coverage = {
+            **coverage,
+            "at_end": True,
+            "coverage_evidence": "downward_scroll_no_effect"
+            + ("" if started else "_without_start"),
+        }
+        structured = coverage.get("source_scope") == "structured_collection"
+        coverage["status"] = _coverage_status(
+            scope_status=str(coverage.get("scope_status") or "met"),
+            requested=str(coverage.get("requested") or "complete"),
+            row_count=collection.row_count,
+            structured=structured,
+            known_total=coverage.get("known_total"),
+            page_count=coverage.get("page_count"),
+            all_pages=bool(
+                coverage.get("page_count") is not None
+                and coverage.get("pages_seen")
+                == list(range(1, int(coverage["page_count"]) + 1))
+            ),
+            surface_complete=bool(started and structured),
+            at_end=True,
+            start_seen=coverage.get("start_seen"),
+            has_next_page=False,
+        )
+        collection = collection.model_copy(update={"coverage": coverage})
+        self._collections[ref] = collection
+        return collection
 
     def collection_for_requirement(self, requirement_id: str) -> CollectionRef | None:
         """Return the latest accumulated collection for one logical requirement."""
@@ -272,13 +369,28 @@ class RuntimeDataStore:
         collection = self._collections.get(ref)
         return collection.row_schema if collection is not None else None
 
-    def put_result(self, value: Any, schema: dict[str, Any], *, summary: str = "") -> ResultRef:
+    def put_result(
+        self,
+        value: Any,
+        schema: dict[str, Any],
+        *,
+        summary: str = "",
+        source_refs: list[str] | None = None,
+    ) -> ResultRef:
         validate(instance=value, schema=schema)
         ref_id = f"result:{len(self._results) + 1}"
         descriptor = ResultRef(ref=ref_id, value_schema=schema, summary=summary)
         self._results[ref_id] = descriptor
         self._values[ref_id] = value
+        if any(
+            ref in self._collections or ref in self._data_results
+            for ref in source_refs or []
+        ):
+            self._data_results.add(ref_id)
         return descriptor
+
+    def is_data_result(self, ref: str) -> bool:
+        return ref in self._data_results
 
     def result_descriptor(self, ref: str) -> ResultRef:
         try:

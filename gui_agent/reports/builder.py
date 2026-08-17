@@ -542,9 +542,7 @@ def _tool_agent_report_steps(
                     "observation": compact_observation(turn.get("observation") or turn),
                     "state": {
                         "status": state.get("status"),
-                        "coverage": state.get("coverage") or {},
                         "established_facts": state.get("established_facts") or [],
-                        "open_gaps": state.get("open_gaps") or [],
                     },
                     "action": {
                         "tool": turn.get("tool"),
@@ -560,12 +558,6 @@ def _tool_agent_report_steps(
                         "chars": int(final_decision.get("context_chars") or 0),
                         "journal_events": int(
                             final_decision.get("memory_event_count") or 0
-                        ),
-                        "state_source": str(
-                            final_decision.get("state_source") or "legacy"
-                        ),
-                        "compatibility": list(
-                            final_decision.get("state_compatibility") or []
                         ),
                     },
                     **({"worker_actions": spec.get("actions") or []} if program_event is None else {}),
@@ -595,7 +587,6 @@ def _tool_agent_report_steps(
                 statement_id=worker_id,
                 instance_id=worker_id,
                 statement_executor="interact",
-                instruction=str(state.get("next_instruction") or ""),
                 summary=str(state.get("summary") or turn.get("message") or ""),
                 timings=timings,
                 token_usage=token_usage,
@@ -656,7 +647,7 @@ def _tool_agent_report_steps(
             }
 
         terminal_note = str(outcome.get("summary") or "")
-        description = f"{profile} · {worker_goal}"
+        description = f"{profile} · Goal: {worker_goal}"
         if terminal_note and not steps:
             description += f" · {terminal_note}"
 

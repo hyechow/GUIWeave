@@ -2,9 +2,10 @@ import json
 import os
 from types import SimpleNamespace
 
+import pytest
+
 from gui_agent.adapters.browser.device import (
     PlaywrightDevice,
-    _CDPTimeout,
     _cdp_proxy_bypass,
     _direct_cdp_host,
 )
@@ -81,7 +82,7 @@ def test_ensure_net_tracking_timeout_degrades_without_retrying_same_session():
 
     def timed_send(sess, method, params):
         calls.append((sess, method, params))
-        raise _CDPTimeout()
+        raise TimeoutError()
 
     dev._timed_cdp_send = timed_send
 
@@ -94,7 +95,7 @@ def test_ensure_net_tracking_timeout_degrades_without_retrying_same_session():
     assert session.handlers == {}
 
 
-def test_tracked_request_keeps_browser_loading_until_response_headers():
+def test_tracked_request_does_not_override_document_readiness():
     session = _FakeSession()
     dev = _device_with_session(session)
     dev._timed_cdp_send = lambda *_args: {}
@@ -104,12 +105,43 @@ def test_tracked_request_keeps_browser_loading_until_response_headers():
 
     request({"requestId": "save", "type": "XHR"})
     dev._cdp_send = lambda *_args, **_kwargs: {
-        "result": {"value": "complete"}
+        "result": {"value": ["complete", True]}
     }
-    assert dev.is_loading() is True
+    assert dev.is_loading() is False
 
     response({"requestId": "save", "type": "XHR"})
     assert dev.is_loading() is False
+
+
+def test_empty_semantic_main_remains_loading_after_document_complete():
+    dev = _device_with_session(_FakeSession())
+    dev._cdp_send = lambda *_args, **_kwargs: {
+        "result": {"value": ["complete", False]}
+    }
+
+    assert dev.is_loading() is True
+
+
+def test_settle_waits_for_content_but_not_background_requests():
+    dev = _device_with_session(_FakeSession())
+    dev._xhr_ids = {"background": 1.0}
+    dev._ensure_net_tracking = lambda: None
+    probes = iter((["complete", 500, False], ["complete", 500, True]))
+    probe_count = []
+
+    def cdp_send(_method, params):
+        if "return 1" in params["expression"]:
+            value = 1
+        else:
+            probe_count.append(True)
+            value = next(probes)
+        return {"result": {"value": value}}
+
+    dev._cdp_send = cdp_send
+
+    dev.wait_settled("navigate")
+
+    assert len(probe_count) == 2
 
 
 def test_cdp_navigation_surfaces_protocol_error_text():
@@ -142,8 +174,17 @@ def test_headless_navigation_uses_bounded_commit_wait():
     assert dev.navigate("https://example.test/") == "OK navigate https://example.test/"
     assert calls == [(
         "https://example.test/",
-        {"wait_until": "commit", "timeout": 20_000},
+        {"wait_until": "commit", "timeout": 5_000},
     )]
+
+
+def test_failed_start_navigation_stops_before_first_observation() -> None:
+    dev = PlaywrightDevice.__new__(PlaywrightDevice)
+    dev.start_url = "https://unreachable.example/"
+    dev.navigate = lambda url: f"failed: navigate {url}: net::ERR_TIMED_OUT"
+
+    with pytest.raises(RuntimeError, match="browser start navigation failed"):
+        dev._navigate_to_start_url()
 
 
 def test_navigation_failure_feedback_skips_unresponsive_page_probe():
@@ -155,10 +196,13 @@ def test_navigation_failure_feedback_skips_unresponsive_page_probe():
             TimeoutError("navigation timed out\nCall log:\n  - internal detail")
         )
     )
+    stop_calls = []
+    dev._cdp_send = lambda method, params: stop_calls.append((method, params)) or {}
 
     result = dev.navigate("https://example.test/")
     assert "navigation timed out" in result
     assert "internal detail" not in result
+    assert stop_calls == [("Page.stopLoading", {})]
     dev._follow_active_tab = lambda: None
     dev._cdp_send = lambda *_args, **_kwargs: (_ for _ in ()).throw(
         AssertionError("native navigation failure must bypass the page probe")
@@ -167,6 +211,23 @@ def test_navigation_failure_feedback_skips_unresponsive_page_probe():
 
     assert len(feedback) == 1
     assert json.loads(feedback[0]["body"])["message"] == "navigation timed out"
+
+
+def test_browser_scroll_is_capped_below_one_viewport() -> None:
+    wheel_calls = []
+    page = SimpleNamespace(mouse=SimpleNamespace(
+        move=lambda *_args: None,
+        wheel=lambda dx, dy: wheel_calls.append((dx, dy)),
+    ))
+    dev = PlaywrightDevice.__new__(PlaywrightDevice)
+    dev._last_viewport = (1280, 800)
+    dev._follow_active_tab = lambda: None
+    dev._require_page = lambda: page
+
+    result = dev.scroll("down", amount=9, x=640, y=400)
+
+    assert wheel_calls == [(0, 720)]
+    assert "720px" in result
 
 
 def test_dom_snap_text_retarget_uses_interactive_accessible_names():

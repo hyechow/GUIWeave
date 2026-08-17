@@ -369,6 +369,7 @@ def main() -> int:
 
         app_knowledges = []
         orchestrator_knowledge = ""
+        worker_knowledge = ""
         access_context = ""
         knowledge_summary: Optional[dict] = None
         try:
@@ -384,6 +385,9 @@ def main() -> int:
             app_names = " + ".join(item.app_name for item in app_knowledges)
             orchestrator_knowledge = "\n\n".join(
                 item.orchestrator_context(goal) for item in app_knowledges
+            )
+            worker_knowledge = "\n\n".join(
+                item.worker_context() for item in app_knowledges
             )
             access_context = _mobileworld_access_context(app_knowledges)
             summaries = [item.summary() for item in app_knowledges]
@@ -446,6 +450,7 @@ def main() -> int:
                         fallback_task_type=_guess_task_type(goal),
                         knowledge_summary=knowledge_summary,
                         knowledge=orchestrator_knowledge,
+                        worker_knowledge=worker_knowledge,
                         access_context=access_context,
                         hud=hud,
                         raw_input=goal,

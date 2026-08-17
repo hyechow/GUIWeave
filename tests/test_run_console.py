@@ -9,6 +9,7 @@ from types import SimpleNamespace
 import pytest
 from fastapi.testclient import TestClient
 
+from gui_agent.adapters.browser.factory import DEFAULT_BROWSER_START_URL
 from gui_agent.console import ChatRequest, RunConsole, RunRequest, create_app
 from gui_agent.core.chat_router import ChatRoute
 from gui_agent.core.config.preflight import ModelPreflightResult
@@ -110,6 +111,9 @@ def test_console_home_explains_model_gateway_boundary(tmp_path: Path) -> None:
     assert "新建 GUI 任务" in response.text
     assert "Android 设备地址" in response.text
     assert 'name="adb_serial"' in response.text
+    assert "Browser 起始页" in response.text
+    assert 'name="start_url"' in response.text
+    assert f'value="{DEFAULT_BROWSER_START_URL}"' in response.text
     assert "新建 Tool Agent 任务" not in response.text
 
 
@@ -176,6 +180,11 @@ def test_console_frontend_auto_selects_and_prioritizes_final_reply() -> None:
     assert 'localStorage.setItem(ANDROID_DEVICE_STORAGE_KEY, address)' in source
     assert 'localStorage.removeItem(ANDROID_DEVICE_STORAGE_KEY)' in source
     assert "const CONSOLE_HEADLESS = true" in source
+    assert f'const DEFAULT_BROWSER_START_URL = "{DEFAULT_BROWSER_START_URL}"' in source
+    assert '$("chat-browser-field").classList.toggle("hidden", platform !== "browser")' in source
+    assert '$("browser-start-url-field").classList.toggle("hidden", platform !== "browser")' in source
+    assert "start_url: startUrl" in source
+    assert 'data.start_url = data.platform === "browser"' in source
     assert 'query.set("headless", String(CONSOLE_HEADLESS))' in source
     assert "headless: CONSOLE_HEADLESS" in source
     assert "async function cancelTask()" in source
@@ -319,6 +328,8 @@ def test_console_submit_enforces_background_only_options(monkeypatch) -> None:
     monkeypatch.setattr(threading.Thread, "start", lambda _thread: None)
     console = RunConsole(_NeverRunService())  # type: ignore[arg-type]
     assert RunRequest(goal="inspect", platform="browser").headless is True
+    assert RunRequest(goal="inspect", platform="browser").start_url == DEFAULT_BROWSER_START_URL
+    assert RunRequest(goal="inspect", platform="browser", start_url=" ").start_url == DEFAULT_BROWSER_START_URL
     task = console.submit(RunRequest(
         goal="inspect", platform="browser", mode="chat", headless=False, show_hud=True,
     ))
@@ -404,9 +415,11 @@ class _ImmediateChatService:
     def __init__(self, log_root: Path) -> None:
         self.log_root = log_root
         self.goals = []
+        self.options = []
 
     def run(self, goal: str, **options: object):
         self.goals.append(goal)
+        self.options.append(options)
         run_id = "tool_agent/browser/20260813_190000"
         options["on_run_created"](run_id, self.log_root / run_id)  # type: ignore[operator]
         return SimpleNamespace(
@@ -419,6 +432,23 @@ class _ImmediateChatService:
                 "reply": "页面已经打开。",
             },
         )
+
+
+def test_console_passes_browser_start_url_to_service(tmp_path: Path) -> None:
+    service = _ImmediateChatService(tmp_path)
+    console = RunConsole(service)  # type: ignore[arg-type]
+
+    task = console.submit(RunRequest(
+        goal="inspect",
+        platform="browser",
+        start_url="https://example.com/start",
+    ))
+    deadline = time.monotonic() + 1
+    while task.status in {"queued", "running"} and time.monotonic() < deadline:
+        time.sleep(0.005)
+
+    assert task.status == "completed"
+    assert service.options[0]["start_url"] == "https://example.com/start"
 
 
 def test_console_chat_responds_without_starting_gui() -> None:

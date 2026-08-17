@@ -16,7 +16,8 @@ _ROLES = {
     "autocompletetextview": "textbox",
     "checkbox": "checkbox", "radiobutton": "radio", "switch": "switch",
     "switchcompat": "switch", "togglebutton": "switch", "spinner": "combobox",
-    "recyclerview": "list", "listview": "list", "textview": "text",
+    "recyclerview": "list", "listview": "list", "gridview": "list",
+    "textview": "text",
     "imageview": "img",
 }
 _COLLECTION_CLASSES = {"recyclerview", "listview", "gridview"}
@@ -38,7 +39,7 @@ _ICON_GLYPH_RE = re.compile(r"[\uE000-\uF8FF\U000F0000-\U000FFFFD]")
 
 def _role(class_name: str, *, clickable: bool, scrollable: bool) -> str:
     name = str(class_name or "").rpartition(".")[2].casefold()
-    if name in _ROLES and name != "textview":
+    if name in _ROLES and name not in {"textview", "imageview"}:
         return _ROLES[name]
     if scrollable or name in {"scrollview", "horizontalscrollview"}:
         return "region"
@@ -128,9 +129,11 @@ def _resource_visible_label(resource: str, *, include_root: bool = True) -> str:
     return ""
 
 
-def _texts(node: ET.Element) -> list[str]:
+def _texts(node: ET.Element, *, include_self: bool = True) -> list[str]:
     result: list[str] = []
     for child in node.iter("node"):
+        if child is node and not include_self:
+            continue
         for name in ("content-desc", "text"):
             value = _visible_text(child.attrib.get(name))
             if value and value not in result:
@@ -247,30 +250,60 @@ def semantic_tree_from_uiautomator(
             for descendant in child.iter("node")
         )
     }
+    # Adapter-backed native collections dispatch item clicks from their direct
+    # child views even when UIAutomator marks those row containers non-clickable.
+    # Promote only labelled container rows without a more precise clickable child.
+    inferred_collection_rows = {
+        child
+        for container in root.iter("node")
+        if _short_class(container).casefold() in _COLLECTION_CLASSES
+        for child in container
+        if child.tag == "node"
+        and _short_class(child).casefold() not in {"textview", "imageview"}
+        and child.attrib.get("enabled") != "false"
+        and _raw_bounds(child) is not None
+        and bool(_texts(child, include_self=False))
+        and not any(
+            descendant is not child
+            and (
+                descendant.attrib.get("clickable") == "true"
+                or descendant.attrib.get("checkable") == "true"
+            )
+            for descendant in child.iter("node")
+        )
+    }
     result: list[dict[str, Any]] = []
     for node, path, depth in _nodes(root):
         attrs = node.attrib
-        clickable = attrs.get("clickable") == "true" or node in inferred_root_rows
+        clickable = (
+            attrs.get("clickable") == "true"
+            or node in inferred_root_rows
+            or node in inferred_collection_rows
+        )
         scrollable = attrs.get("scrollable") == "true"
         raw_visible_label = attrs.get("content-desc") or attrs.get("text") or ""
         visible_label = _visible_text(raw_visible_label)
         glyph_selection_state = _private_use_selection_state(raw_visible_label)
         resource = _short_resource(node)
-        if _is_documentsui_resource(node, "item_root") and any(
-            _is_documentsui_resource(descendant, "preview_icon")
+        resource_id = str(attrs.get("resource-id") or "")
+        descendant_labels = _texts(node, include_self=False) if clickable else []
+        if visible_label and any(
+            descendant is not node
+            and descendant.attrib.get("clickable") == "true"
+            and _visible_text(
+                descendant.attrib.get("content-desc")
+                or descendant.attrib.get("text")
+            ) == visible_label
             for descendant in node.iter("node")
         ):
-            visible_label = next((
-                _visible_text(descendant.attrib.get("text"))
-                for descendant in node.iter("node")
-                if _short_resource(descendant) == "title"
-                and _visible_text(descendant.attrib.get("text"))
-            ), visible_label)
+            visible_label = next(
+                (label for label in descendant_labels if label != visible_label),
+                visible_label,
+            )
         if clickable and not visible_label:
-            descendant_labels = _texts(node)
             visible_label = (
-                _resource_visible_label(resource)
-                or (descendant_labels[0] if descendant_labels else "")
+                descendant_labels[0]
+                if descendant_labels else _resource_visible_label(resource)
             )
         key = visible_label or resource
         match = _BOUNDS.fullmatch(str(attrs.get("bounds") or "").strip())
@@ -287,6 +320,7 @@ def semantic_tree_from_uiautomator(
             "depth": depth,
             "scrollable": scrollable,
             "clickable": clickable,
+            "enabled": attrs.get("enabled") != "false",
         }
         if clickable and glyph_selection_state is not None:
             # Some icon-font UIs expose multi-select state only through stable
@@ -294,6 +328,7 @@ def semantic_tree_from_uiautomator(
             item["glyph_selection_state"] = glyph_selection_state
         if resource:
             item["resource"] = resource
+            item["resource_id"] = resource_id
         if match is not None:
             x1, y1, x2, y2 = map(int, match.groups())
             if x2 > x1 and y2 > y1:
@@ -321,6 +356,42 @@ def semantic_tree_from_uiautomator(
         result.append(item)
     _infer_private_use_selection_states(result)
     return result
+
+
+def screen_title_from_semantic_tree(
+    nodes: list[dict[str, Any]] | None,
+) -> str:
+    """Return visible top-level navigation identity from Android accessibility."""
+    def at(node: dict[str, Any], axis: str) -> float:
+        alias = {"w": "width", "h": "height"}.get(axis, "")
+        return float(node["rect"].get(axis) or node["rect"].get(alias) or 0)
+
+    text = [node for node in nodes or () if (
+        node.get("role") == "text" and str(node.get("key") or "").strip()
+        and isinstance(node.get("rect"), dict)
+    )]
+    breadcrumbs = [node for node in text if "breadcrumb" in str(
+        node.get("resource") or ""
+    ).casefold()]
+    if breadcrumbs:
+        return " > ".join(dict.fromkeys(
+            str(node["key"]).strip() for node in sorted(breadcrumbs, key=lambda item: at(item, "x"))
+        ))
+    candidates = [node for node in text if node.get("in_viewport") is not False]
+    titles = [node for node in candidates if "title" in str(node.get("resource") or "").casefold()]
+    list_top = min((at(node, "y") - at(node, "h") / 2 for node in nodes or () if (
+        node.get("role") == "list" and node.get("scrollable") is True
+        and isinstance(node.get("rect"), dict)
+    )), default=float("inf"))
+    title = min(titles, key=lambda node: at(node, "y"), default=None) or max(
+        (node for node in candidates if at(node, "y") < list_top),
+        key=lambda node: at(node, "y"), default=None,
+    )
+    value = str((title or {}).get("key") or "").strip()
+    return value[len("Files in "):].strip() if (
+        str((title or {}).get("resource") or "").casefold() == "header_title"
+        and value.casefold().startswith("files in ")
+    ) else value
 
 
 def _ref_parts(node: dict[str, Any]) -> tuple[str, ...]:
@@ -482,7 +553,9 @@ def _infer_private_use_selection_states(nodes: list[dict[str, Any]]) -> None:
         )
 
 
-def _is_commit_control(*, role: str, key: str, resource: str) -> bool:
+def _is_commit_control(
+    *, role: str, key: str, resource: str, resource_id: str = "",
+) -> bool:
     """Recognize explicit submission controls without matching container paths."""
 
     if role != "button":
@@ -498,7 +571,12 @@ def _is_commit_control(*, role: str, key: str, resource: str) -> bool:
     )
     commit_words = _COMMIT_LABELS - {"create"}
     return bool(
-        explicit_label
+        resource_id.casefold() in {
+            "android:id/button1",
+            "android:id/button_once",
+            "android:id/button_always",
+        }
+        or explicit_label
         or (
             "selected" in resource_words
             and resource_words & {"action", "button"}
@@ -588,6 +666,7 @@ def form_controls_from_semantic_tree(
             role=role,
             key=key,
             resource=resource,
+            resource_id=str(node.get("resource_id") or ""),
         )
         ref = str(node.get("ref") or "")
         inferred_choice = leading_choices.get(ref, "")
@@ -634,7 +713,7 @@ def form_controls_from_semantic_tree(
             "value": node.get("value", node.get("key", "")),
             "resource": resource,
         }
-        for field in ("selected", "selection_mode", "action_point"):
+        for field in ("enabled", "selected", "selection_mode", "action_point"):
             if field in node:
                 item[field] = node[field]
         if inferred_choice:
@@ -643,6 +722,10 @@ def form_controls_from_semantic_tree(
             item.pop("value", None)
         if kind == "text_input" and identity_words & {"search", "filter", "query"}:
             item["is_filter"] = True
+        if kind == "button" and identity_words & {"search", "filter", "query"}:
+            item["query_action"] = (
+                "reset" if identity_words & {"clear", "close", "remove", "reset"} else "open"
+            )
         if persistence:
             item["form_action"] = "commit"
         if "in_viewport" in node:

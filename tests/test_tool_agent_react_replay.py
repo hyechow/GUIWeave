@@ -4,7 +4,6 @@ import json
 from pathlib import Path
 
 from gui_agent.core.tool_agent.contracts import (
-    DynamicActionSpec,
     MaterializedFrame,
     WorkerSpec,
 )
@@ -24,7 +23,7 @@ _FIXTURE = (
 )
 
 
-def test_task193_turn3_replay_requires_react_recovery_before_completion() -> None:
+def test_task193_turn3_does_not_gain_an_undeclared_recovery_action() -> None:
     case = json.loads(_FIXTURE.read_text(encoding="utf-8"))
     spec = WorkerSpec(
         profile="collector",
@@ -42,12 +41,7 @@ def test_task193_turn3_replay_requires_react_recovery_before_completion() -> Non
             "field_types": {"status": "text"},
             "filters": {"status": "Complete"},
         }],
-        actions=[DynamicActionSpec(
-            name="filter_status_complete",
-            capability="select_option",
-            description="Select Complete in the Status filter",
-            fixed_args={"text": "Complete"},
-        )],
+        strategy={"approach": "Filter the orders to the requested status."},
     )
     frame = MaterializedFrame(
         frame_id=case["source_frame"],
@@ -65,6 +59,7 @@ def test_task193_turn3_replay_requires_react_recovery_before_completion() -> Non
         missing_requirements=["completed_orders"],
     )
     runtime = object.__new__(ToolAgentRuntime)
+    runtime._platform_capabilities = frozenset({"select_option"})
     active_actions = runtime._initial_worker_actions(spec)
 
     tools = runtime._worker_tools_for_frame(spec, active_actions, frame)
@@ -75,7 +70,7 @@ def test_task193_turn3_replay_requires_react_recovery_before_completion() -> Non
     )
 
     assert case["expected_recovery"]["forbidden_tool"] not in tool_names
-    assert "runtime_tap_visible" in tool_names
+    assert tool_names == {"select_option", "report_blocked"}
     assert any(control.get("label") == "Clear all" for control in frame.controls)
     assert '"extra_applied_filters": ["Purchase Date"]' in projection.text
     assert frame.collections == []

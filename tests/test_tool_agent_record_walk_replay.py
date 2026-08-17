@@ -16,11 +16,7 @@ import pytest
 
 from gui_agent.adapters.browser.form_reader import traversal_action_of
 from gui_agent.core.tool_agent.contracts import DataRequirement, MaterializedFrame
-from gui_agent.core.tool_agent.perception import (
-    _apply_observed_detail,
-    _control_row,
-    _DetailCollectionState,
-)
+from gui_agent.core.tool_agent.perception import PerceptionMaterializer
 from gui_agent.core.tool_agent.record_walk import (
     RecordWalkState,
     record_walk_step,
@@ -84,44 +80,76 @@ def _requirement(recording: dict) -> DataRequirement:
     )
 
 
+def _assembler() -> PerceptionMaterializer:
+    materializer = object.__new__(PerceptionMaterializer)
+    materializer._detail_collections = {}
+    return materializer
+
+
+def _credit_editor(
+    materializer: PerceptionMaterializer,
+    requirement: DataRequirement,
+    recording: dict,
+    turn: str,
+    *,
+    seed: bool = False,
+) -> tuple[object, list, dict]:
+    """Credit one recorded editor frame through the production assembly path."""
+    result = materializer._assemble_detail_collection(
+        state_key=("test", requirement.id),
+        requirement=requirement,
+        candidate_rows=(
+            [dict(row) for row in recording["candidate_rows"]] if seed else []
+        ),
+        detail_fields=set(recording["detail_fields"]) if seed else set(),
+        controls=recording["frames"][turn]["controls"],
+        structured_rows=[],
+        scope_status="met",
+        surface="reviews",
+        location="Reviews",
+        scope_key="reviews",
+    )
+    assert result is not None, f"turn {turn}: assembly returned no state"
+    return result
+
+
+def _resolved_ordinals(state: object) -> list[int]:
+    return [
+        index + 1
+        for index, row in enumerate(state.rows)
+        if all(row.get(field) not in (None, "") for field in state.detail_fields)
+    ]
+
+
 def test_editor_observations_replay_live_resolution_sequence(recording: dict) -> None:
     requirement = _requirement(recording)
-    state = _DetailCollectionState(
-        rows=[dict(row) for row in recording["candidate_rows"]],
-        detail_fields=set(recording["detail_fields"]),
-    )
-
+    materializer = _assembler()
+    state = None
     for turn in _EDITOR_TURNS:
-        frame = recording["frames"][turn]
-        detail, observed = _control_row(requirement, frame["controls"])
-        _apply_observed_detail(state, detail, observed)
-        resolved = [
-            index + 1
-            for index, row in enumerate(state.rows)
-            if all(row.get(field) not in (None, "") for field in state.detail_fields)
-        ]
+        state, _, _ = _credit_editor(
+            materializer, requirement, recording, turn, seed=state is None
+        )
+        resolved = _resolved_ordinals(state)
         assert resolved == recording["expected_resolved_after"][turn], (
             f"turn {turn}: resolved {resolved} != live run "
-            f"{recording['expected_resolved_after'][turn]} (detail={detail})"
+            f"{recording['expected_resolved_after'][turn]}"
         )
 
 
 def test_revisit_is_idempotent_under_replay(recording: dict) -> None:
     requirement = _requirement(recording)
-    state = _DetailCollectionState(
-        rows=[dict(row) for row in recording["candidate_rows"]],
-        detail_fields=set(recording["detail_fields"]),
-    )
+    materializer = _assembler()
+    state = None
     for turn in ("10", "11", "14"):
-        detail, observed = _control_row(requirement, recording["frames"][turn]["controls"])
-        _apply_observed_detail(state, detail, observed)
+        state, _, _ = _credit_editor(
+            materializer, requirement, recording, turn, seed=state is None
+        )
     snapshot = [dict(row) for row in state.rows]
 
     # Re-visiting already-resolved editors (turns 16/37/39 in the run) must
     # neither move nor duplicate credits.
     for turn in ("16", "37", "39"):
-        detail, observed = _control_row(requirement, recording["frames"][turn]["controls"])
-        _apply_observed_detail(state, detail, observed)
+        state, _, _ = _credit_editor(materializer, requirement, recording, turn)
     assert state.rows == snapshot
 
 
@@ -168,10 +196,8 @@ def test_driver_crediting_chain_reproduces_live_sequence(recording: dict) -> Non
     driver's engagement as they do in a live worker loop.
     """
     requirement = _requirement(recording)
-    collection = _DetailCollectionState(
-        rows=[dict(row) for row in recording["candidate_rows"]],
-        detail_fields=set(recording["detail_fields"]),
-    )
+    materializer = _assembler()
+    collection = None
     walk = RecordWalkState()
     for turn in _FRAME_ORDER:
         frame = _materialize(turn, recording["frames"][turn])
@@ -180,13 +206,10 @@ def test_driver_crediting_chain_reproduces_live_sequence(recording: dict) -> Non
             assert step is None, f"turn {turn}: driver must yield grid frames"
             continue
         assert step is not None, f"turn {turn}: driver failed to engage"
-        detail, observed = _control_row(requirement, frame.controls)
-        _apply_observed_detail(collection, detail, observed)
-        resolved = [
-            index + 1
-            for index, row in enumerate(collection.rows)
-            if all(row.get(field) not in (None, "") for field in collection.detail_fields)
-        ]
+        collection, _, _ = _credit_editor(
+            materializer, requirement, recording, turn, seed=collection is None
+        )
+        resolved = _resolved_ordinals(collection)
         assert resolved == recording["expected_resolved_after"][turn]
         assert walk.stalls == 0, f"turn {turn}: driver stalled on live data"
 
@@ -196,10 +219,8 @@ def test_editor_verdicts_separate_fresh_credits_from_dups(recording: dict) -> No
     repeat visits as already-complete — the signal that lets the driver refuse
     to re-walk resolved records (the live run's turn killer)."""
     requirement = _requirement(recording)
-    collection = _DetailCollectionState(
-        rows=[dict(row) for row in recording["candidate_rows"]],
-        detail_fields=set(recording["detail_fields"]),
-    )
+    materializer = _assembler()
+    collection = None
     expected_verdicts = {
         "10": (False, True),   # Mervin: fresh credit
         "11": (False, True),   # Trey: fresh credit
@@ -210,9 +231,10 @@ def test_editor_verdicts_separate_fresh_credits_from_dups(recording: dict) -> No
         "39": (True, True),    # Mervin again: already complete
     }
     for turn in _EDITOR_TURNS:
-        frame = _materialize(turn, recording["frames"][turn])
-        detail, observed = _control_row(requirement, frame.controls)
-        verdict = _apply_observed_detail(collection, detail, observed)
+        collection, _, progress = _credit_editor(
+            materializer, requirement, recording, turn, seed=collection is None
+        )
+        verdict = progress["current_editor"]
         assert verdict is not None, f"turn {turn}: editor identity unmatched"
         assert (verdict["pre_resolved"], verdict["resolved"]) == expected_verdicts[turn], (
             f"turn {turn}: {verdict}"

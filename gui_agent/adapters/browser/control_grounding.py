@@ -383,12 +383,57 @@ def ground_rendered_action(
     return decision.model_copy(update={"action": grounded})
 
 
-def _compatible_with_action(control: dict, action_type: str) -> bool:
+_WORD_RE = re.compile(r"[^\W_]+")
+_FAMILY_TYPE_WORDS = {
+    "link": {"link", "option", "item"},
+    "button": {"button", "option", "item", "toggle", "row", "record"},
+    "choice": {"checkbox", "radio", "option", "row", "control"},
+    "input": {"input", "field", "textbox", "textarea", "editor", "combobox"},
+    "select": {"select", "dropdown", "combobox", "listbox", "field"},
+    "row": {"row", "item", "record"},
+}
+
+
+def _words(value: object) -> list[str]:
+    return _WORD_RE.findall(str(value or "").casefold())
+
+
+def _control_family(control: dict) -> str:
     kind = str(control.get("kind") or "").casefold()
+    input_type = kind.removesuffix("_input") if kind.endswith("_input") else ""
+    if kind in {"a", "link"}:
+        return "link"
+    if kind in {"button", "input_button", "submit", "section_toggle"} or input_type in {
+        "button", "submit", "reset", "image",
+    }:
+        return "button"
+    if "checkbox" in kind or "radio" in kind:
+        return "choice"
+    if kind == "aria_combobox":
+        return "select" if any(
+            key in control for key in ("options", "selected_text", "selected_text_primary")
+        ) else "input"
+    if kind in {
+        "native_select", "select", "selectmenu", "listbox", "combobox", "aria_listbox",
+    }:
+        return "select"
+    if kind == "clickable_row":
+        return "row"
+    if input_type in {"file", "hidden", "color", "range"}:
+        return ""
+    if kind == "input" or input_type or any(
+        token in kind for token in ("textarea", "textbox", "editor")
+    ):
+        return "input"
+    return ""
+
+
+def _compatible_with_action(control: dict, action_type: str) -> bool:
+    family = _control_family(control)
     if action_type == "type":
-        return any(token in kind for token in ("input", "textarea", "textbox", "editor"))
+        return family == "input"
     if action_type == "select_option":
-        return kind in {"native_select", "select", "selectmenu", "listbox", "combobox"}
+        return family == "select"
     return action_type in {"tap", "click"}
 
 
@@ -401,18 +446,20 @@ def _matches_described_control_type(description: str, control: dict) -> bool:
     words are treated as constraints; with no type word, geometry remains unchanged.
     """
 
-    words = set(re.findall(r"[a-z0-9]+", (description or "").casefold()))
-    kind = str(control.get("kind") or "").casefold()
+    words = set(_words(description))
+    family = _control_family(control)
     if "link" in words:
-        return kind in {"a", "link"}
+        return family == "link"
     if "button" in words:
-        return kind in {"button", "input_button", "submit", "section_toggle"}
+        return family == "button"
     if words.intersection({"checkbox", "radio"}):
-        return any(token in kind for token in ("checkbox", "radio"))
+        return family == "choice"
     if words.intersection({"input", "textbox", "textarea", "field"}):
-        return any(token in kind for token in ("input", "textbox", "textarea", "editor"))
-    if words.intersection({"select", "dropdown", "combobox", "listbox"}):
-        return kind in {"native_select", "select", "selectmenu", "listbox", "combobox"}
+        return family == "input"
+    if "combobox" in words:
+        return family in {"input", "select"}
+    if words.intersection({"select", "dropdown", "listbox"}):
+        return family == "select"
     return True
 
 
@@ -428,8 +475,8 @@ def _contains_visible_name(description: str, visible_name: object) -> bool:
     ):
         return False
     if name.isascii():
-        name_tokens = re.findall(r"[a-z0-9]+", name.casefold())
-        description_tokens = re.findall(r"[a-z0-9]+", description.casefold())
+        name_tokens = _words(name)
+        description_tokens = _words(description)
         width = len(name_tokens)
         return bool(
             name_tokens
@@ -448,7 +495,7 @@ def _description_names_control(description: str, control: dict) -> bool:
         str(control.get("group_field") or "").strip(),
     }
     kind = str(control.get("kind") or "").casefold()
-    if kind in {"a", "button", "link", "section_toggle"}:
+    if _control_family(control) in {"link", "button"}:
         names.add(str(control.get("value") or "").strip())
     if kind == "clickable_row":
         names.update(
@@ -467,30 +514,20 @@ def _explicit_target_position(description: str, control: dict) -> int | None:
     miss, while ordinary name mentions remain subject to bounded nearby grounding.
     """
 
-    description_tokens = re.findall(r"[a-z0-9]+", (description or "").casefold())
+    description_tokens = _words(description)
     kind = str(control.get("kind") or "").casefold()
-    allowed_types: set[str]
-    if kind in {"a", "link"}:
-        allowed_types = {"link", "option", "item"}
-    elif kind in {"button", "input_button", "submit", "section_toggle"}:
-        allowed_types = {"button", "option", "item", "toggle"}
-        if kind == "section_toggle":
-            allowed_types = allowed_types | {"section", "heading"}
-    elif any(token in kind for token in ("checkbox", "radio")):
-        allowed_types = {"checkbox", "radio", "option", "row", "control"}
-    elif any(token in kind for token in ("input", "textbox", "textarea", "editor")):
-        allowed_types = {"input", "field", "textbox", "textarea", "editor"}
-    elif kind in {"native_select", "select", "selectmenu", "listbox", "combobox"}:
-        allowed_types = {"select", "dropdown", "combobox", "listbox", "field"}
-    elif kind == "clickable_row":
-        allowed_types = {"row", "item", "record"}
-    else:
+    allowed_types = _FAMILY_TYPE_WORDS.get(_control_family(control))
+    if allowed_types is None:
         return None
+    if kind == "section_toggle":
+        # Workers legitimately describe an expandable section toggle by what it
+        # heads, not by the word "button".
+        allowed_types = allowed_types | {"section", "heading"}
     names = {
         str(control.get("label") or "").strip(),
         str(control.get("group_field") or "").strip(),
     }
-    if kind in {"a", "button", "link", "section_toggle"}:
+    if _control_family(control) in {"link", "button"}:
         names.add(str(control.get("value") or "").strip())
     if kind == "clickable_row":
         names.update(
@@ -499,11 +536,11 @@ def _explicit_target_position(description: str, control: dict) -> int | None:
         )
     positions: list[int] = []
     for name in names:
-        name_tokens = re.findall(r"[a-z0-9]+", name.casefold())
+        name_tokens = _words(name)
         if not name_tokens:
             continue
         width = len(name_tokens)
-        for index in range(len(description_tokens) - width):
+        for index in range(len(description_tokens) - width + 1):
             if description_tokens[index:index + width] != name_tokens:
                 continue
             following = description_tokens[index + width:index + width + 3]

@@ -767,9 +767,8 @@ def _synthesize_response(
         )
 
     from langchain_core.messages import HumanMessage, SystemMessage
-    from langchain_openai import ChatOpenAI
-
     from gui_agent.core.config import resolve_llm_config
+    from llm.provider_config import build_chat_model
     from llm.structured import invoke_structured
 
     evidence_text = _run_evidence_text(context_path)
@@ -784,7 +783,7 @@ def _synthesize_response(
         evidence_text=evidence_text,
     )
     cfg = resolve_llm_config("output")
-    llm = ChatOpenAI(model=cfg.model, api_key=cfg.api_key, base_url=cfg.base_url)
+    llm = build_chat_model(cfg)
     return invoke_structured(
         llm, [SystemMessage(content=_WEBARENA_SYSTEM), HumanMessage(content=human)], WAResponse
     )
@@ -1071,7 +1070,8 @@ def main() -> int:
         os.environ["BROWSER_USER_DATA_DIR"] = str(profile_dir)
 
     log_dir = create_run_dir("tool_agent", f"webarena/browser/{args.perception}")
-    bundle = build_platform("browser")
+    # WebArena loads auth before navigating to its case-owned start URL.
+    bundle = build_platform("browser", start_url=None)
     hud = bundle.make_status_reporter(not args.headless)
     reset_details: dict[str, object] | None = None
 
@@ -1194,6 +1194,11 @@ def main() -> int:
                             knowledge_summary=knowledge_summary,
                             knowledge=(
                                 knowledge.orchestrator_context(intent)
+                                if knowledge is not None
+                                else ""
+                            ),
+                            worker_knowledge=(
+                                knowledge.worker_context()
                                 if knowledge is not None
                                 else ""
                             ),

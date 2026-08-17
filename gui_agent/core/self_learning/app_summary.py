@@ -87,6 +87,11 @@ class AppKnowledge:
             str(item).strip() for item in nav_scope
         }:
             return ""
+        return self.worker_context()
+
+    def worker_context(self) -> str:
+        """Application execution facts without private deployment context."""
+
         navigation = self.navigation
         if self.deployment and navigation.startswith(self.deployment):
             navigation = navigation[len(self.deployment) :].lstrip()

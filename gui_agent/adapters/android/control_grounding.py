@@ -153,6 +153,7 @@ def ground_action_to_android_control(
         )
         if (
             not compatible or control.get("in_viewport") is False
+            or control.get("enabled") is False
             or not isinstance(rect, dict)
             or not all(isinstance(rect.get(key), (int, float)) for key in ("x", "y", "w", "h"))
             or not _described_kind_matches(description, kind)

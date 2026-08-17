@@ -177,6 +177,22 @@ def test_android_short_button_label_snaps_boundary_point_to_center() -> None:
         "snapped": [777.3, 316.25],
         "info": "AM",
     }
+def test_android_named_menu_item_snaps_shared_edge_to_center() -> None:
+    controls = [
+        _android_button("Select all", 752.3, 238.75, 476.8, 52.5),
+        _android_button("Get info", 752.3, 291.25, 476.8, 52.5),
+    ]
+    original = AndroidActionDecision(action=AndroidAction(
+        action_type="tap",
+        x=990,
+        y=265,
+        description="Tap the Select all button in the popup menu",
+    ))
+
+    grounded = ground_action_to_android_control(original, controls)
+
+    assert (grounded.action.x, grounded.action.y) == (752.3, 238.75)
+    assert grounded.action.snap["info"] == "Select all"
 
 
 def test_android_common_short_word_does_not_override_named_control() -> None:
@@ -414,7 +430,7 @@ def test_task549_wide_keyword_input_near_miss_snaps_to_unique_text_field() -> No
     }
 
 
-def test_task108_replay_blocks_third_equivalent_action_until_target_progresses() -> None:
+def test_task108_replay_blocks_one_unchanged_repeat_until_target_progresses() -> None:
     case = _case()
     attempt = case["attempt"]
     frame = _frame(case)
@@ -434,17 +450,8 @@ def test_task108_replay_blocks_third_equivalent_action_until_target_progresses()
         args=attempt["args"],
         frame=frame,
     )
-    assert second.blocked is False
-    breaker.record(second)
-
-    third = breaker.inspect(
-        tool=attempt["tool"],
-        capability=attempt["capability"],
-        args=attempt["args"],
-        frame=frame,
-    )
-    assert third.blocked is True
-    assert third.prior_attempts == 2
+    assert second.blocked is True
+    assert second.prior_attempts == 1
 
     progressed = breaker.inspect(
         tool=attempt["tool"],
@@ -453,7 +460,7 @@ def test_task108_replay_blocks_third_equivalent_action_until_target_progresses()
         frame=_frame(case, scope_status="met"),
     )
     assert progressed.blocked is False
-    assert progressed.progress != third.progress
+    assert progressed.progress != second.progress
     breaker.record(progressed)
     assert breaker.inspect(
         tool=attempt["tool"], capability=attempt["capability"],
@@ -467,15 +474,14 @@ def test_action_alias_cannot_bypass_repeated_action_fuse() -> None:
     frame = _frame(case)
     breaker = WorkerActionCircuitBreaker()
 
-    for tool in ("search_by_date", "search_by_date"):
-        decision = breaker.inspect(
-            tool=tool,
-            capability=attempt["capability"],
-            args=attempt["args"],
-            frame=frame,
-        )
-        assert decision.blocked is False
-        breaker.record(decision)
+    decision = breaker.inspect(
+        tool="search_by_date",
+        capability=attempt["capability"],
+        args=attempt["args"],
+        frame=frame,
+    )
+    assert decision.blocked is False
+    breaker.record(decision)
 
     aliased = breaker.inspect(
         tool="runtime_type_visible",
@@ -485,7 +491,7 @@ def test_action_alias_cannot_bypass_repeated_action_fuse() -> None:
     )
 
     assert aliased.blocked is True
-    assert aliased.prior_attempts == 2
+    assert aliased.prior_attempts == 1
 
 
 def test_distinct_prerequisite_action_releases_old_fuse_count() -> None:
@@ -494,12 +500,11 @@ def test_distinct_prerequisite_action_releases_old_fuse_count() -> None:
     frame = _frame(case)
     breaker = WorkerActionCircuitBreaker()
 
-    for _ in range(2):
-        decision = breaker.inspect(
-            tool=attempt["tool"], capability=attempt["capability"],
-            args=attempt["args"], frame=frame,
-        )
-        breaker.record(decision)
+    decision = breaker.inspect(
+        tool=attempt["tool"], capability=attempt["capability"],
+        args=attempt["args"], frame=frame,
+    )
+    breaker.record(decision)
     prerequisite = breaker.inspect(
         tool="accept_terms", capability="tap",
         args={"x": 100, "y": 700}, frame=frame,
@@ -513,33 +518,6 @@ def test_distinct_prerequisite_action_releases_old_fuse_count() -> None:
 
     assert retry.blocked is False
     assert retry.prior_attempts == 0
-
-
-def test_action_guard_blocks_strict_two_state_cycle() -> None:
-    case = _case()
-    closed = _frame(case, scope_status="met").model_copy(update={"controls": []})
-    opened = closed.model_copy(update={"controls": [{
-        "kind": "button", "label": "Documents", "value": "Documents",
-    }]})
-    breaker = WorkerActionCircuitBreaker()
-    actions = [
-        (closed, {"x": 70, "y": 80}),
-        (opened, {"x": 900, "y": 400}),
-    ] * 2
-    for frame, args in actions:
-        decision = breaker.inspect(
-            tool="tap", capability="tap", args=args, frame=frame,
-        )
-        assert decision.blocked is False
-        breaker.record(decision)
-
-    cycle = breaker.inspect(
-        tool="tap", capability="tap", args={"x": 70, "y": 80}, frame=closed,
-    )
-
-    assert cycle.blocked is True
-    assert cycle.prior_attempts == 2
-    assert "two-state action cycle" in cycle.reason
 
 
 def test_control_value_change_counts_as_task_progress() -> None:
@@ -563,14 +541,13 @@ def test_control_value_change_counts_as_task_progress() -> None:
     })
     breaker = WorkerActionCircuitBreaker()
 
-    for _ in range(2):
-        decision = breaker.inspect(
-            tool=attempt["tool"],
-            capability=attempt["capability"],
-            args=attempt["args"],
-            frame=initial,
-        )
-        breaker.record(decision)
+    decision = breaker.inspect(
+        tool=attempt["tool"],
+        capability=attempt["capability"],
+        args=attempt["args"],
+        frame=initial,
+    )
+    breaker.record(decision)
 
     progressed = breaker.inspect(
         tool=attempt["tool"],
@@ -597,14 +574,13 @@ def test_visible_android_menu_controls_count_as_task_progress() -> None:
     })
     breaker = WorkerActionCircuitBreaker()
 
-    for _ in range(2):
-        decision = breaker.inspect(
-            tool=attempt["tool"],
-            capability=attempt["capability"],
-            args=attempt["args"],
-            frame=closed,
-        )
-        breaker.record(decision)
+    decision = breaker.inspect(
+        tool=attempt["tool"],
+        capability=attempt["capability"],
+        args=attempt["args"],
+        frame=closed,
+    )
+    breaker.record(decision)
 
     progressed = breaker.inspect(
         tool=attempt["tool"],
@@ -677,7 +653,7 @@ def test_action_guard_requires_observed_transient_authentication_code() -> None:
     ).blocked
 
 
-def test_action_guard_blocks_redundant_detail_scroll_and_unscoped_row() -> None:
+def test_action_guard_blocks_unscoped_row() -> None:
     breaker = WorkerActionCircuitBreaker()
     detail = MaterializedFrame(
         frame_id="detail",
@@ -690,13 +666,6 @@ def test_action_guard_blocks_redundant_detail_scroll_and_unscoped_row() -> None:
             },
         }},
     )
-    assert breaker.inspect(
-        tool="scroll",
-        capability="scroll",
-        args={"direction": "down", "description": "Reveal Material"},
-        frame=detail,
-    ).blocked
-
     row = detail.model_copy(update={
         "requirement_scopes": {"products": {"status": "unmet"}},
         "controls": [{

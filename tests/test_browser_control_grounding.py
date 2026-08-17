@@ -1,5 +1,7 @@
 from gui_agent.adapters.browser.actions import BrowserAction, BrowserActionDecision
 from gui_agent.adapters.browser.control_grounding import (
+    _compatible_with_action,
+    _matches_described_control_type,
     ground_action_to_nearest_control,
     ground_rendered_action,
     rendered_target_evidence,
@@ -102,6 +104,32 @@ def test_coordinate_grounding_does_not_use_partial_visible_name_match() -> None:
 
     assert decision is visual
     assert decision.action.snap is None
+
+
+def test_named_result_row_repairs_a_large_miss_to_its_button() -> None:
+    visual = BrowserActionDecision(action=BrowserAction(
+        action_type="tap",
+        x=320,
+        y=140,
+        description="Tap the North Harbor result row in the visible results panel",
+    ))
+    controls = [
+        {
+            "kind": "text_input",
+            "label": "Search locations",
+            "rect": {"x": 320, "y": 140, "w": 300, "h": 48},
+        },
+        {
+            "kind": "button",
+            "label": "North Harbor",
+            "rect": {"x": 320, "y": 220, "w": 300, "h": 40},
+        },
+    ]
+
+    decision = ground_action_to_nearest_control(visual, controls)
+
+    assert (decision.action.x, decision.action.y) == (320.0, 220.0)
+    assert decision.action.snap["method"] == "control_semantic_geometry"
 
 
 def test_coordinate_grounding_fails_open_when_visible_name_is_duplicated() -> None:
@@ -262,6 +290,46 @@ def test_explicit_text_input_phrase_disambiguates_login_fields() -> None:
 
     assert (decision.action.x, decision.action.y) == (500.0, 580.0)
     assert decision.action.snap["info"] == "Password"
+
+
+def test_grounding_respects_editable_control_family_with_mixed_language_labels() -> None:
+    controls = [
+        {"kind": "textarea", "label": "搜索",
+         "rect": {"x": 484, "y": 440, "w": 447, "h": 50}},
+        {"kind": "submit_input", "label": "Portal 搜索", "value": "Portal 搜索",
+         "rect": {"x": 457, "y": 531, "w": 111, "h": 36}},
+    ]
+    visual = BrowserActionDecision(action=BrowserAction(
+        action_type="type",
+        x=300,
+        y=425,
+        text="query",
+        description="Portal search textarea input field labeled '搜索' in the center",
+    ))
+    decision = ground_action_to_nearest_control(
+        visual, controls, viewport_size=(1280, 800),
+    )
+    assert (decision.action.x, decision.action.y) == (484.0, 440.0)
+    assert decision.action.snap["info"] == "搜索"
+
+    aria = {"kind": "aria_combobox", "label": "Assignee"}
+    assert _compatible_with_action(aria, "type")
+    assert _matches_described_control_type("Assignee combobox", aria)
+
+    for kind in (
+        "submit_input", "button_input", "checkbox_input", "radio_input",
+        "file_input", "hidden_input", "color_input", "range_input",
+    ):
+        visual = BrowserActionDecision(action=BrowserAction(
+            action_type="type", x=100, y=100, text="value",
+            description="Type value into the visible text field",
+        ))
+        decision = ground_action_to_nearest_control(
+            visual, [{"kind": kind, "label": "Other",
+                      "rect": {"x": 150, "y": 100, "w": 40, "h": 20}}],
+            viewport_size=(1000, 1000),
+        )
+        assert decision is visual, kind
 
 
 def test_semantic_grid_checkbox_label_repairs_adjacent_row_miss() -> None:

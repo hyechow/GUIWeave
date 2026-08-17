@@ -25,22 +25,20 @@
     "input_refs": {
       "computed_description": "result:1"
     },
-    "actions": [
+    "input_bindings": [
       {
         "name": "enter_computed_description",
-        "capability": "type",
-        "description": "Enter the Runtime-bound computed description in the visible description editor.",
-        "input_args": {
-          "text": {
-            "input": "computed_description",
-            "path": [
-              "description"
-            ]
-          }
-        }
+        "input": "computed_description",
+        "path": [
+          "description"
+        ],
+        "target": "text_input",
+        "description": "Enter the Runtime-bound computed description in the visible description editor."
       }
     ],
-    "max_steps": 8
+    "strategy": {
+      "approach": "Update the product through its visible description editor."
+    }
   },
   "recorded_editor_state_after_clear": {
     "kind": "rich_textarea",

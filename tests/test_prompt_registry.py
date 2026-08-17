@@ -21,8 +21,8 @@ def test_prompt_registry_loads_all_assets() -> None:
     assert {prompt.id for prompt in prompts} == {
         "task.chat.router",
         "task.tool_agent.master",
-        "task.tool_agent.master_redelegate",
         "task.tool_agent.presentation",
+        "task.tool_agent.strategy_decide",
         "task.tool_agent.visual_transcription",
         "task.tool_agent.worker",
         "task.knowledge.document_ingest",
@@ -73,10 +73,22 @@ def test_master_exposes_only_tool_agent_runtime_api() -> None:
         assert retired not in prompt
     assert "Keep each collector schema minimal" in prompt
     assert "merely useful supplemental metrics" in prompt
+    assert "A collector only acquires raw source records" in prompt
+    assert "A collector may perform prerequisite navigation or mutation" in prompt
+    assert "Do not enumerate atomic GUI actions" in prompt
+    assert "Runtime supplies the active adapter's generic capabilities" in prompt
+    assert "Never guess enum/status labels" in prompt
+    assert "Preserve every user-supplied string predicate verbatim" in prompt
     assert "never require perception to invent a missing year" in prompt
     assert "When success criteria guarantee exactly one target record" in prompt
     assert "Source layout order is not a data contract" in prompt
-    assert "navigation, not data retrieval" in prompt
+    assert "surface itself is the requested outcome" in prompt
+    assert "use a scalar JSON Schema" in prompt
+    assert "does not convert a differently displayed source value" in prompt
+    assert "Current, first, or visually prominent values are not extrema" in prompt
+    assert 'Set `cardinality="one"` only' in prompt
+    assert "the first visible candidate is not" in prompt
+    assert "execution experience" not in prompt
 
 
 def test_visual_transcription_uses_runtime_time_without_inventing_dates() -> None:
@@ -84,7 +96,7 @@ def test_visual_transcription_uses_runtime_time_without_inventing_dates() -> Non
 
     assert "provenance-bearing platform clock" in prompt
     assert "explicitly relative visible labels" in prompt
-    assert "omit it instead of returning null" in prompt
+    assert "Omit invisible optional properties" in prompt
 
 
 def test_presentation_requires_user_facing_prose() -> None:
@@ -99,16 +111,25 @@ def test_presentation_requires_user_facing_prose() -> None:
 
 def test_worker_keeps_data_private_and_coordinates_normalized() -> None:
     prompt = load_prompt_text("task.tool_agent.worker")
-    assert "Runtime data-reference values are private" in prompt
-    assert "Values visibly read during this Worker's own cohesive GUI branch" in prompt
-    assert "Never guess an authentication secret" in prompt
-    assert "transient verification code on its delivery surface" in prompt
-    assert "visible required acknowledgement" in prompt
-    assert "select all matching records before committing" in prompt
-    assert "the original task is context" in prompt
-    assert "call `complete` immediately" in prompt
+
+    assert "A successful mutation does not prove navigation" in prompt
+    assert "Runtime-owned ResultRef and collection values are private" in prompt
+    assert "bounded cross-frame reasoning" in prompt
+    assert "Never guess credentials" in prompt
+    assert "transient code from its delivery surface" in prompt
+    assert "immutable goal, success criteria" in prompt
+    assert "Complete an operator only" in prompt
     assert "Coordinates are normalized 0..999" in prompt
-    assert "request_action_patch" in prompt
+    assert "Use only Runtime-supplied actions" in prompt
+    assert "request_action_patch" not in prompt
+    assert "`state.status = completed | failed` is terminal" in prompt
+
+
+def test_worker_prompt_stays_a_compact_role_contract() -> None:
+    prompt = load_prompt_text("task.tool_agent.worker")
+
+    assert len(prompt) < 8_000
+    assert sum(line.startswith("-") for line in prompt.splitlines()) <= 30
 
 
 def test_master_keeps_visual_conditional_dependencies_in_one_worker() -> None:
@@ -120,35 +141,68 @@ def test_master_keeps_visual_conditional_dependencies_in_one_worker() -> None:
         "authorized authentication method", "exact acceptance set", "never prescribe per-record commits",
         "traverses every prerequisite collection", "compares each candidate", "mutates only nonmatches",
         "candidate-local evidence", "complete—not merely visible—candidate traversal",
-        "excluded/already-processed identities", "never emit an empty list", "intermediate identities",
-        "UI transitions/mutations", "clean environment", "Action `description` is static metadata",
-        "such as `type.text`",
+        "excluded/already-processed identities", "intermediate identities",
+        "UI transitions/mutations", "clean environment", "Do not enumerate atomic GUI actions",
+        "such as `type.text`", "finishing with `effect=\"data\"`",
+        "neither typed data nor a transferable scope",
     ):
         assert rule in prompt
 
 
-def test_worker_handles_exhausted_candidate_sets_and_row_targets() -> None:
+def test_worker_keeps_action_grounding_and_memory_boundaries() -> None:
     prompt = load_prompt_text("task.tool_agent.worker")
 
     for rule in (
-        "an exhausted candidate set is direct", "the same unfiltered selector",
-        "latest selected batch's commit produced a confirmed transition",
-        "candidate_set_state.status = exhausted", "An initially empty selector, a filtered zero-result view",
-        "describe the row/button itself", "adjacent child icon or decoration", "named action does not prove",
-        "never relabel another visible control", "retain processed identities",
-        "explicitly remaining candidate", "durable completion fact means processed", "without reopening",
-        "comparison evidence", "implement `state.next_instruction`",
-        "never an internal step such as compare/evaluate/determine", "excluded match permits traversal",
-        "complete application-declared identity", "repeated, prefixed, ellipsized, or partial",
-        "complete identity and confirmed effect", "this item/record", "visible_collection_regions",
-        "not record boundaries", "skip exact excluded matches", "viewport_tail_clipped = true",
-        "repeated identity alone is insufficient", "Stable page chrome", "selector scrolls offscreen",
-        "unobscured central viewport", "opening tap returns `no_effect`",
-        "If any field contradicts it", "return to the candidate surface",
-        "Runtime may advance next-record traversal deterministically",
-        "never re-walk resolved",
+        "exactly one visible control", "do not relabel a nearby or generic control",
+        "complete task-relevant record identities", "bounded cross-frame reasoning",
+        "Stable page identity",
+        "A `no_effect` result requires inspecting the next frame",
     ):
         assert rule in prompt
+
+
+@pytest.mark.parametrize(
+    ("prompt_id", "phrases"),
+    [
+        ("task.tool_agent.master", (
+            "Keep each collector schema minimal", "never require perception to invent a missing year",
+            "surface itself is the requested outcome", "immutable Worker goal/output contract",
+                "initial `approach`", "`relative_date_offsets`",
+            'coverage="first_match"', "ResultRefs cannot serve as hidden Worker memory",
+            "complete—not merely visible—candidate traversal", "Do not enumerate atomic GUI actions",
+            "Preserve every user-supplied string predicate verbatim",
+        )),
+        ("task.tool_agent.visual_transcription", (
+            "provenance-bearing platform clock", "Omit invisible optional properties",
+            "inside one visible record boundary", "scope context, not row evidence",
+            "no enabled pagination or further scrolling remains", "visible page-level identity",
+            "declared source semantics",
+        )),
+        ("task.tool_agent.presentation", (
+            "user-facing prose", "not serialized JSON", "compact Markdown table",
+            "Keep every row and column", "keep result values unchanged",
+        )),
+        ("task.tool_agent.worker", (
+            "ResultRef and collection values are private", "Never guess credentials",
+                "human-presence challenge", "Runtime-supplied actions", "`report_blocked`",
+            "Coordinates are normalized 0..999", "binding approach",
+                "Worker observations and recent steps", "Do not interact with residue",
+                "Do not claim completion from visible pixels alone",
+        )),
+        ("task.tool_agent.strategy_decide", (
+            "materially different, falsifiable implementation approach",
+            "Do not emit actions, action arguments, budgets, data filters",
+            "Never invent credentials", "Worker chooses atomic actions",
+            "Goal, success criteria, profile, inputs, data requirements",
+        )),
+    ],
+)
+def test_tool_agent_prompts_keep_contract_rules(
+    prompt_id: str,
+    phrases: tuple[str, ...],
+) -> None:
+    prompt = load_prompt_text(prompt_id)
+    assert not [phrase for phrase in phrases if phrase not in prompt]
 
 
 def test_large_inline_prompt_constants_are_not_added() -> None:

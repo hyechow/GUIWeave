@@ -16,13 +16,13 @@ from functools import lru_cache
 from typing import Callable, Literal
 
 from langchain_core.messages import HumanMessage, SystemMessage
-from langchain_openai import ChatOpenAI
 from PIL import Image
 from pydantic import BaseModel, ConfigDict, Field
 
 from gui_agent.core.config import resolve_llm_config
 from gui_agent.core.schemas import Observation
 from gui_agent.prompts import load_prompt_text
+from llm.provider_config import build_chat_model
 from llm.structured import invoke_structured
 
 from .frame_analysis import is_blank_screen
@@ -184,16 +184,9 @@ def _visual_complexity(png_bytes: bytes) -> tuple[float, float, float]:
     return edge_density, entropy, background_ratio
 
 
-def _loading_llm() -> ChatOpenAI:
+def _loading_llm():
     config = resolve_llm_config("loading")
-    return ChatOpenAI(
-        model=config.model,
-        api_key=config.api_key,
-        base_url=config.base_url,
-        timeout=config.timeout_s,
-        max_retries=config.max_retries,
-        temperature=0,
-    )
+    return build_chat_model(config, temperature=0)
 
 
 def _prepare_png(png_bytes: bytes, max_width: int = 768) -> bytes:

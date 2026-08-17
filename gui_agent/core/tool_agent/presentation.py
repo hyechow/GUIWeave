@@ -16,11 +16,11 @@ from pathlib import Path
 from typing import Any, Literal
 
 from langchain_core.messages import HumanMessage, SystemMessage
-from langchain_openai import ChatOpenAI
 from pydantic import BaseModel, ConfigDict, Field
 
 from gui_agent.core.config import resolve_llm_config
 from gui_agent.prompts import load_prompt_text
+from llm.provider_config import build_chat_model
 from llm.structured import (
     get_llm_call_count,
     get_llm_token_usage,
@@ -137,9 +137,9 @@ def _salient_literals(value: Any, *, limit: int = 200) -> list[str]:
             for nested in item:
                 visit(nested)
             return
-        if item is None or isinstance(item, bool):
+        if item is None:
             return
-        text = str(item).strip()
+        text = str(item).lower() if isinstance(item, bool) else str(item).strip()
         if text and text not in values:
             values.append(text)
 
@@ -167,7 +167,11 @@ def _validate_fidelity(reply: str, result: Any) -> None:
 
 def _literal_is_preserved(reply: str, value: str) -> bool:
     # URLs, emails, and mixed ASCII identifiers must remain byte-for-byte stable.
-    if re.search(r"https?://|@|(?=.*[A-Za-z])(?=.*\d)", value):
+    if re.search(r"https?://|@", value) or (
+        re.fullmatch(r"[A-Za-z0-9._:/-]+", value)
+        and re.search(r"[A-Za-z]", value)
+        and re.search(r"\d", value)
+    ):
         return bool(re.search(
             rf"(?<![A-Za-z0-9]){re.escape(value)}(?![A-Za-z0-9])",
             reply,
@@ -288,7 +292,6 @@ def present_result(
                 f"replay status is {replay_status!r}"
             ),
         )
-
     payload = {
         "goal": goal,
         "execution": {
@@ -297,6 +300,7 @@ def present_result(
             "result": result,
             "result_digest": digest,
             "replay_status": replay_status,
+            "must_preserve_literals": _salient_literals(result),
         },
     }
     messages = [
@@ -312,13 +316,7 @@ def present_result(
         if llm is None:
             cfg = resolve_llm_config("tool_agent.presentation")
             resolved_model = cfg.model
-            llm = ChatOpenAI(
-                model=cfg.model,
-                api_key=cfg.api_key,
-                base_url=cfg.base_url,
-                timeout=cfg.timeout_s,
-                max_retries=cfg.max_retries,
-            )
+            llm = build_chat_model(cfg)
         envelope = invoke(
             llm,
             messages,

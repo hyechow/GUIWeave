@@ -3,12 +3,21 @@
 from __future__ import annotations
 
 import json
+import ipaddress
 import re
+import socket
 from dataclasses import dataclass
 from hashlib import sha256
-from typing import Any
+from typing import Any, Literal
+from urllib.parse import urlsplit
 
-from gui_agent.core.tool_agent.contracts import MaterializedFrame, positioned_rect
+from gui_agent.core.tool_agent.contracts import (
+    CollectionRef,
+    DynamicActionSpec,
+    MaterializedFrame,
+    WorkerSpec,
+    positioned_rect,
+)
 
 
 _GUARDED_CAPABILITIES = {
@@ -41,6 +50,102 @@ _AUTH_CODE_RE = re.compile(
     rf"|(?<!\d)(\d{{4,8}})(?!\d)\D{{0,32}}{_AUTH_CODE_MARKER}",
     re.IGNORECASE,
 )
+_DEFAULT_BLOCK_INSTRUCTION = (
+    "Treat the Runtime guard as authoritative. Do not retry the blocked action; "
+    "advance from the current observation or choose a materially different capability."
+)
+
+
+@dataclass(frozen=True)
+class NavigationAdmission:
+    decision: Literal["allow", "abort"]
+    reason: str = ""
+
+
+@dataclass(frozen=True)
+class FrameAssessment:
+    allowed_actions: list[DynamicActionSpec]
+    ready_collection: CollectionRef | None = None
+    completion_mode: Literal["unavailable", "operator", "collector"] = "unavailable"
+
+
+def _http_origin(value: str, *, require_public: bool = False) -> tuple[str, str, int | None] | None:
+    try:
+        parsed = urlsplit(value)
+        scheme, host, port = parsed.scheme.casefold(), (parsed.hostname or "").casefold(), parsed.port
+    except ValueError:
+        return None
+    if scheme not in {"http", "https"} or not host or parsed.username or parsed.password:
+        return None
+    if require_public:
+        try:
+            address = ipaddress.ip_address(host.strip("[]"))
+        except ValueError:
+            try:
+                address = ipaddress.ip_address(socket.inet_ntoa(socket.inet_aton(host)))
+            except OSError:
+                address = None
+        if (
+            host == "localhost" or host.endswith((".localhost", ".local", ".internal"))
+            or address is not None and not address.is_global
+        ):
+            return None
+    default_port = 443 if scheme == "https" else 80
+    return scheme, host, None if port == default_port else port
+
+
+def assess_navigation_url(
+    candidate: str,
+) -> NavigationAdmission:
+    """Validate only the transport and network-safety boundary of a URL."""
+
+    candidate = candidate.strip()
+    origin = _http_origin(candidate)
+    if origin is None:
+        return NavigationAdmission(
+            "abort", "navigation requires an absolute HTTP(S) URL without credentials"
+        )
+    if _http_origin(candidate, require_public=True) is None:
+        return NavigationAdmission(
+            "abort", "navigation to private, loopback, link-local, or reserved destinations is denied"
+        )
+    return NavigationAdmission("allow")
+
+
+def ready_collection(spec: WorkerSpec, frame: MaterializedFrame) -> CollectionRef | None:
+    if spec.profile != "collector" or not spec.data_requirements:
+        return None
+    requirement_id = spec.data_requirements[0].id
+    return next((item for item in frame.collections
+        if item.requirement_id == requirement_id
+        and item.coverage.get("scope_status") == "met"
+        and item.coverage.get("status") == "complete"
+    ), None)
+
+
+def assess_frame(
+    spec: WorkerSpec,
+    actions: list[DynamicActionSpec],
+    frame: MaterializedFrame,
+    *,
+    attempted_action: bool = False,
+) -> FrameAssessment:
+    if frame.readiness != "ready":
+        allowed = [] if attempted_action else [
+            action for action in actions
+            if action.capability in {"open_url", "back", "home", "app_switch", "launch_app"}
+        ]
+        return FrameAssessment(
+            allowed,
+            completion_mode="unavailable",
+        )
+    collection = ready_collection(spec, frame)
+    mode: Literal["unavailable", "operator", "collector"] = (
+        "operator" if spec.profile == "operator"
+        else "collector" if collection is not None
+        else "unavailable"
+    )
+    return FrameAssessment(actions, collection, mode)
 
 
 def auth_codes_from_text(text: str) -> set[str]:
@@ -128,27 +233,23 @@ def _action_boundary_error(
     if control is not None:
         kind = str(control.get("kind") or "").casefold()
         label = str(control.get("label") or kind or "control")
-        text_like = any(
-            token in kind for token in ("input", "textarea", "textbox", "editor")
-        )
+        if control.get("enabled") is False:
+            return f"blocked action on disabled control {label!r}"
         choice_like = any(
             key in control for key in ("options", "selected_text", "selected_text_primary")
         )
+        text_like = any(
+            token in kind for token in ("input", "textarea", "textbox", "editor")
+        ) or ("combobox" in kind and not choice_like)
         if capability == "type" and not text_like:
             return f"blocked type on {label!r} ({kind}): target an editable input control"
         if capability == "select_option" and not choice_like:
             return f"blocked select_option on {label!r} ({kind}): target a choice control"
         if capability == "tap" and choice_like:
             return f"blocked tap on {label!r} ({kind}): use select_option to mutate it"
-    selectable = bool(control and (
-        str(control.get("kind") or "").casefold()
-        in {"checkbox", "checkbox_input", "radio", "radio_input", "switch", "switch_input"}
-        or control.get("selection_mode") in {"single", "multiple"}
-    ))
     x, y = args.get("x"), args.get("y")
     if (
         capability in {"tap", "long_press"}
-        and not selectable
         and isinstance(x, (int, float))
         and isinstance(y, (int, float))
     ):
@@ -161,6 +262,13 @@ def _action_boundary_error(
                     and float(bounds[0]) <= float(x) <= float(bounds[2])
                     and float(bounds[1]) <= float(y) <= float(bounds[3])
                 ):
+                    cell_ref = str(cell.get("ref") or "")
+                    control_ref = str((control or {}).get("ref") or "")
+                    if control_ref and cell_ref and not (
+                        control_ref == cell_ref
+                        or control_ref.startswith(cell_ref + ".")
+                    ):
+                        continue
                     return (
                         "spatial target lies inside a clipped collection cell; scroll it "
                         "into the unobscured central viewport before acting"
@@ -184,19 +292,6 @@ def _action_boundary_error(
     for scope in frame.requirement_scopes.values():
         detail = scope.get("detail_resolution")
         detail = detail if isinstance(detail, dict) else {}
-        observed = set(detail.get("current_observed_detail_fields") or [])
-        required = set(detail.get("detail_fields") or [])
-        description = str(args.get("description") or "").casefold()
-        if (
-            capability == "scroll"
-            and required
-            and required.issubset(observed)
-            and any(str(field).casefold() in description for field in required)
-        ):
-            return (
-                "blocked redundant scroll: enhanced observation already contains every "
-                "required detail field; continue from the observed values"
-            )
         if scope.get("status") != "unmet" or (
             detail.get("status") == "active"
             and detail.get("pending_candidate_ordinal") is not None
@@ -213,7 +308,7 @@ def _action_boundary_error(
     return ""
 
 
-def _coordinate_bucket(value: Any, *, size: int = 25) -> int | None:
+def _coordinate_bucket(value: Any, *, size: int = 50) -> int | None:
     if not isinstance(value, (int, float)) or isinstance(value, bool):
         return None
     return int(round(float(value) / size) * size)
@@ -231,48 +326,38 @@ def action_signature(
         "capability": capability,
     }
     for field_name in _SIGNATURE_FIELDS:
+        if capability == "scroll" and field_name == "amount":
+            continue
         value = args.get(field_name)
         if value not in (None, ""):
             payload[field_name] = value
-    for coordinate in ("x", "y", "to_x", "to_y"):
-        bucket = _coordinate_bucket(args.get(coordinate))
-        if bucket is not None:
-            payload[coordinate] = bucket
+    if capability != "scroll":
+        for coordinate in ("x", "y", "to_x", "to_y"):
+            bucket = _coordinate_bucket(args.get(coordinate))
+            if bucket is not None:
+                payload[coordinate] = bucket
     return json.dumps(payload, ensure_ascii=False, sort_keys=True, separators=(",", ":"))
 
 
 def progress_signature(frame: MaterializedFrame) -> str:
     """Hash task-relevant progress while ignoring unrelated visual mutations."""
+    control_fields = ("kind", "label", "value", "focused", "checked", "selected")
     payload = {
-        "url": frame.url,
-        "title": frame.title,
+        "page": (frame.url, frame.title),
         "scopes": {
-            key: {
-                "status": value.get("status"),
-                "applied_filters": value.get("applied_filters"),
-            }
+            key: (value.get("status"), value.get("applied_filters"))
             for key, value in sorted(frame.requirement_scopes.items())
         },
         "collections": [
-            {
-                "requirement_id": item.requirement_id,
-                "row_count": item.row_count,
-                "status": item.coverage.get("status"),
-                "pages_seen": item.coverage.get("pages_seen"),
-            }
+            (item.requirement_id, item.row_count, item.coverage.get("status"),
+             item.coverage.get("pages_seen"))
             for item in frame.collections
         ],
+        "visible": frame.visible_collection_regions,
         "controls": [
-            {
-                key: control.get(key)
-                for key in ("kind", "label", "value", "focused", "checked", "selected")
-                if control.get(key) not in (None, "")
-            }
+            tuple(control.get(key) for key in control_fields)
             for control in frame.controls
-            if any(
-                control.get(key) not in (None, "")
-                for key in ("value", "focused", "checked", "selected")
-            )
+            if any(control.get(key) not in (None, "") for key in control_fields[2:])
         ],
     }
     rendered = json.dumps(payload, ensure_ascii=False, sort_keys=True, default=str)
@@ -294,16 +379,14 @@ class ActionCircuitDecision:
     progress: str
     prior_attempts: int
     reason: str = ""
+    instruction: str = ""
 
 
 @dataclass
 class WorkerActionCircuitBreaker:
-    """Block repeated actions and strict two-state action cycles."""
+    """Block an identical action when task-relevant progress is unchanged."""
 
-    threshold: int = 2
     _last_attempt: tuple[str, str] | None = None
-    _consecutive_attempts: int = 0
-    _recent_attempts: tuple[tuple[str, str], ...] = ()
     _progress_window: tuple[str, ...] = ()
 
     def inspect(
@@ -318,7 +401,7 @@ class WorkerActionCircuitBreaker:
         signature = action_signature(tool=tool, capability=capability, args=args)
         progress = progress_signature(frame)
         attempt = (signature, progress)
-        prior = self._consecutive_attempts if attempt == self._last_attempt else 0
+        repeated = attempt == self._last_attempt
         compatibility_error = _action_boundary_error(
             capability, args, frame, observed_auth_codes or set()
         )
@@ -327,18 +410,12 @@ class WorkerActionCircuitBreaker:
                 blocked=True,
                 signature=signature,
                 progress=progress,
-                prior_attempts=prior,
+                prior_attempts=int(repeated),
                 reason=compatibility_error,
+                instruction=_DEFAULT_BLOCK_INSTRUCTION,
             )
-        guarded = capability in _GUARDED_CAPABILITIES
-        history = self._recent_attempts
-        cycle = (
-            len(history) == 4
-            and history[::2] == (attempt, attempt)
-            and history[1] == history[3] != attempt
-        )
         # A coordinate/description jitter lets a Next/Back traversal loop dodge the
-        # exact-pair cycle above. The robust stuck signal is surface-level: a worker
+        # repeat check above. The robust stuck signal is surface-level: a worker
         # whose last N dispatches only revisited already-seen surfaces is cycling,
         # regardless of which action moved it there. Progressing flows (form fill,
         # collection scroll, detail walk) keep minting new progress hashes and never
@@ -348,31 +425,28 @@ class WorkerActionCircuitBreaker:
             len(window) == _CYCLE_WINDOW
             and len(set(window)) <= _CYCLE_MAX_DISTINCT
         )
-        blocked = guarded and (prior >= self.threshold or cycle or surface_cycle)
+        blocked = capability in _GUARDED_CAPABILITIES and (repeated or surface_cycle)
         reason = ""
         if blocked:
             reason = (
-                "blocked surface cycle: recent dispatches only revisited already-seen "
-                "surfaces without new task-relevant state; stop the traversal loop and "
-                "change the pending state (perform the untried selection/mutation) or "
-                "fail with the concrete blocker"
-                if surface_cycle and not cycle else
-                "blocked two-state action cycle without task-relevant progress"
-                if cycle else
-                f"blocked repeated {capability} action after {prior} equivalent "
-                "dispatches without task-relevant progress"
+                f"blocked repeated {capability} action without task-relevant progress"
+                if repeated
+                else "blocked surface cycle: recent dispatches only revisited "
+                "already-seen surfaces without new task-relevant state; stop the "
+                "traversal loop and change the pending state (perform the untried "
+                "selection/mutation) or fail with the concrete blocker"
             )
         return ActionCircuitDecision(
             blocked=blocked,
             signature=signature,
             progress=progress,
-            prior_attempts=2 if cycle or surface_cycle else prior,
+            prior_attempts=int(repeated),
             reason=reason,
+            instruction=_DEFAULT_BLOCK_INSTRUCTION if blocked else "",
         )
 
     def record(self, decision: ActionCircuitDecision) -> None:
-        attempt = (decision.signature, decision.progress)
-        self._recent_attempts = (*self._recent_attempts[-3:], attempt)
+        self._last_attempt = (decision.signature, decision.progress)
         # One surface visit per entry: a multi-action batch decided on a single
         # frame (login = type, type, tap) repeats that frame's hash per atomic
         # dispatch, but it is one decision, not a traversal loop.
@@ -380,25 +454,7 @@ class WorkerActionCircuitBreaker:
             self._progress_window = (
                 *self._progress_window[-_CYCLE_WINDOW + 1:], decision.progress,
             )
-        self._consecutive_attempts = (
-            self._consecutive_attempts + 1 if attempt == self._last_attempt else 1
-        )
-        self._last_attempt = attempt
 
     def reset(self) -> None:
         self._last_attempt = None
-        self._consecutive_attempts = 0
-        self._recent_attempts = ()
         self._progress_window = ()
-
-
-__all__ = [
-    "ActionCircuitDecision",
-    "WorkerActionCircuitBreaker",
-    "action_signature",
-    "auth_codes_from_frame",
-    "auth_codes_from_text",
-    "is_candidate_commit",
-    "control_at_point",
-    "progress_signature",
-]

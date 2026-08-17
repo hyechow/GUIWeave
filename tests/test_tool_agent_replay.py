@@ -32,14 +32,7 @@ def _worker_spec() -> WorkerSpec:
             "description": "Normalized records",
             "row_schema": ROW_SCHEMA,
         }],
-        actions=[{
-            "name": "reveal_more",
-            "capability": "scroll",
-            "description": "Reveal additional records",
-            "fixed_args": {"direction": "down"},
-            "exposed_args": ["amount"],
-        }],
-        max_steps=4,
+        strategy={"approach": "Traverse the normalized records."},
     )
 
 
@@ -52,8 +45,7 @@ def _source(spec: WorkerSpec) -> str:
         goal={payload["goal"]!r},
         success_criteria={payload["success_criteria"]!r},
         data_requirements={payload["data_requirements"]!r},
-        actions={payload["actions"]!r},
-        max_steps={payload["max_steps"]!r},
+        approach={payload["strategy"]["approach"]!r},
     )
     computed = ctx.transform(
         transform_id="sum_records",
@@ -120,7 +112,10 @@ def test_replay_restores_gui_collection_but_reexecutes_transform(monkeypatch) ->
 
 def test_replay_rejects_a_changed_gui_worker_contract() -> None:
     spec = _worker_spec()
-    changed = _source(spec).replace("max_steps=4", "max_steps=5")
+    changed = _source(spec).replace(
+        "Traverse the normalized records.",
+        "Use an alternate record traversal.",
+    )
 
     result = replay_program(changed, _recording(spec))
 

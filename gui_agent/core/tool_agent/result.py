@@ -132,6 +132,7 @@ def execute_tool_agent(
     fallback_task_type: str,
     knowledge_summary: dict | None,
     knowledge: str = "",
+    worker_knowledge: str = "",
     access_context: str = "",
     page_url: str = "",
     page_title: str = "",
@@ -159,6 +160,7 @@ def execute_tool_agent(
     run = runtime.run(
         intent,
         knowledge=knowledge,
+        worker_knowledge=worker_knowledge,
         access_context=access_context,
         page_url=page_url,
         page_title=page_title,
