@@ -44,7 +44,6 @@ from gui_agent.core.tool_agent.action_guard import (
     auth_codes_from_frame,
     auth_codes_from_text,
     control_at_point,
-    extract_http_urls,
     is_candidate_commit,
     ready_collection,
 )
@@ -134,7 +133,7 @@ def _worker_action_error(exc: Exception) -> dict[str, Any]:
 
 
 def _action_feedback(items: object, action_type: str) -> list[dict[str, Any]]:
-    """Normalize platform failures only for actions that can cause them."""
+    """Normalize feedback without attributing arbitrary background HTTP failures."""
     if action_type not in {"navigate", "tap", "press_enter"}:
         return []
     feedback: list[dict[str, Any]] = []
@@ -142,6 +141,7 @@ def _action_feedback(items: object, action_type: str) -> list[dict[str, Any]]:
         if not isinstance(item, dict):
             continue
         status = item.get("status")
+        kind = str(item.get("kind") or "")
         body = str(item.get("body") or "").strip()
         try:
             decoded = json.loads(body) if body else None
@@ -156,11 +156,15 @@ def _action_feedback(items: object, action_type: str) -> list[dict[str, Any]]:
             and (decoded.get("error") is True or decoded.get("success") is False)
         )
         http_error = isinstance(status, (int, float)) and int(status) >= 400
+        native_navigation_failure = kind == "navigation" and (
+            rejected or http_error or bool(message)
+        )
+        causally_rejected = native_navigation_failure
         if message or rejected or http_error:
             feedback.append({
                 "status": int(status or 0),
                 "url": str(item.get("url") or ""),
-                "rejected": rejected or http_error,
+                "rejected": causally_rejected,
                 "message": str(message or body[:500]).strip(),
             })
     return feedback
@@ -254,7 +258,6 @@ class ToolAgentRuntime:
         log_dir: Path,
         perception_mode: PerceptionMode,
         max_turns: int = 50,
-        max_strategy_replacements: int = 2,
         max_compile_attempts: int = 5,
         allow_multi_action: bool = False,
         status_cb: Callable[[str], None] | None = None,
@@ -276,12 +279,9 @@ class ToolAgentRuntime:
         self._platform_capabilities = frozenset(platform_capabilities)
         self.log_dir = log_dir
         self.perception_mode = perception_mode
-        if max_strategy_replacements < 0:
-            raise ValueError("max_strategy_replacements cannot be negative")
         if max_compile_attempts < 1:
             raise ValueError("max_compile_attempts must be positive")
         self.max_turns = max_turns
-        self.max_strategy_replacements = max_strategy_replacements
         self.max_compile_attempts = max_compile_attempts
         self.allow_multi_action = allow_multi_action
         read_time = getattr(bundle, "read_time", None)
@@ -610,22 +610,6 @@ class ToolAgentRuntime:
             "supported_capabilities": sorted(self._platform_capabilities),
             "installed_applications": list(self._installed_applications()),
         }
-        current_frame = getattr(self, "_worker_last_frames", {}).get(prior_worker_id)
-        context["current_url"] = str(getattr(current_frame, "url", "") or "")
-        authorized_urls = extract_http_urls(
-            getattr(self, "_task_goal", ""),
-            getattr(self, "_master_knowledge", ""),
-            getattr(self, "_worker_knowledge", ""),
-            getattr(self, "_start_page_url", ""),
-        )
-        start_page_url = str(getattr(self, "_start_page_url", "") or "").strip()
-        if start_page_url:
-            authorized_urls.add(start_page_url)
-        context["navigation_policy"] = {
-            "established_deep_urls": sorted(authorized_urls),
-            "public_origin_root_allowed": True,
-        }
-
         def trace(event: str, **payload: Any) -> None:
             self._trace(
                 event,
@@ -651,13 +635,14 @@ class ToolAgentRuntime:
         current_id = worker_id
         current_spec = spec
         attempted_strategies = [spec.strategy]
-        max_replacements = max(
-            0, int(getattr(self, "max_strategy_replacements", 0))
-        )
         consumed_steps = 0
         strategy_attempt = 0
         while True:
-            outcome = self._run_worker(current_id, current_spec)
+            outcome = self._run_worker(
+                current_id,
+                current_spec,
+                require_attempt=strategy_attempt > 0,
+            )
             consumed_steps += outcome.steps
             if self._turn_budget_exhausted() and outcome.phase == "failed":
                 if outcome.failure_kind == "budget_exhausted":
@@ -668,8 +653,6 @@ class ToolAgentRuntime:
                 return outcome.model_copy(update={"steps": consumed_steps})
             route = Strategy.route(outcome)
             if route in {"complete", "master", "abort"}:
-                return outcome.model_copy(update={"steps": consumed_steps})
-            if route == "replace" and strategy_attempt >= max_replacements:
                 return outcome.model_copy(update={"steps": consumed_steps})
             if route != "replace":
                 raise AssertionError(f"unexpected Worker failure route {route!r}")
@@ -758,7 +741,13 @@ class ToolAgentRuntime:
         worker_id = str(getattr(self, "_active_worker_id", "") or "")
         return (getattr(self, "_worker_journals", None) or {}).get(worker_id)
 
-    def _run_worker(self, worker_id: str, spec: WorkerSpec) -> WorkerOutcome:
+    def _run_worker(
+        self,
+        worker_id: str,
+        spec: WorkerSpec,
+        *,
+        require_attempt: bool = False,
+    ) -> WorkerOutcome:
         self._validate_worker_spec(spec)
         self._active_worker_id = worker_id
         journals = getattr(self, "_worker_journals", None)
@@ -807,8 +796,8 @@ class ToolAgentRuntime:
                         worker_id=worker_id,
                         steps=step,
                     )
-                step += 1
                 frame, png = self._observe(spec)
+                step += 1
                 observed_auth_codes.update(auth_codes_from_frame(frame))
                 initial_same_frame_feedback = None
                 predispatch_repair_turn = 0
@@ -821,7 +810,10 @@ class ToolAgentRuntime:
                 last_frames = self._worker_last_frames
             last_frames[worker_id] = frame
             frame_assessment = assess_frame(
-                spec, active_actions, frame,
+                spec,
+                active_actions,
+                frame,
+                attempted_action=bool(journal.executed_tools),
             )
             frame_actions = frame_assessment.allowed_actions
             if frame_assessment.ready_collection is not None:
@@ -855,7 +847,11 @@ class ToolAgentRuntime:
                     steps=step - 1,
                 )
             worker_tools = self._worker_tools_for_frame(
-                spec, frame_actions, frame, assessment=frame_assessment,
+                spec,
+                frame_actions,
+                frame,
+                assessment=frame_assessment,
+                allow_failure=not require_attempt or bool(journal.executed_tools),
             )
             action_limit = self._worker_action_limit()
             action_protocol = str(
@@ -1214,11 +1210,12 @@ class ToolAgentRuntime:
         )
 
     def _observe(self, spec: WorkerSpec) -> tuple[MaterializedFrame, bytes]:
-        self._frame_no += 1
         observe_started_at = time.perf_counter()
         journal = self._active_worker_journal()
         logical_worker_id = journal.worker_id if journal is not None else ""
         executed_tools = getattr(journal, "executed_tools", set())
+        frame_no = self._frame_no + 1
+
         frame, png = self.materializer.observe(
             bundle=self.bundle,
             platform=self.platform,
@@ -1228,8 +1225,9 @@ class ToolAgentRuntime:
                 for binding in spec.input_bindings
             ),
             state_scope=logical_worker_id,
-            frame_no=self._frame_no,
+            frame_no=frame_no,
         )
+        self._frame_no = frame_no
         terminal_ref = journal.observe_collection(frame) if journal is not None else ""
         if spec.profile == "collector" and terminal_ref:
             frame = frame.model_copy(update={
@@ -1250,6 +1248,7 @@ class ToolAgentRuntime:
             url=frame.url,
             title=frame.title,
             structured_surfaces=frame.structured_surfaces,
+            readiness=frame.readiness,
             platform_time=frame.platform_time,
             control_count=len(frame.controls),
             observe_seconds=round(time.perf_counter() - observe_started_at, 3),
@@ -1264,13 +1263,8 @@ class ToolAgentRuntime:
         )
         return frame, png
 
-    def _worker_system_prompt(
-        self,
-        spec: WorkerSpec,
-        active_actions: list[DynamicActionSpec],
-    ) -> str:
-        # Keep reusable runtime instructions and deployment context at the front.
-        # A replacement Worker changes only the physical attempt contract at the suffix.
+    def _worker_system_prompt(self) -> str:
+        # Keep reusable role instructions and deployment context cacheable.
         prompt = _WORKER_SYSTEM
         application_knowledge = getattr(
             self, "_worker_knowledge", getattr(self, "_master_knowledge", ""),
@@ -1299,10 +1293,6 @@ class ToolAgentRuntime:
                 "results, or user-facing text.\n"
                 + access_context
             )
-        task_goal = str(getattr(self, "_task_goal", "") or "").strip()
-        if task_goal and task_goal != spec.goal:
-            prompt += "\n\n## Original task goal\n" + task_goal
-        prompt += "\n\n" + worker_attempt_contract(spec, active_actions)
         return prompt
 
     def _worker_messages(
@@ -1318,24 +1308,24 @@ class ToolAgentRuntime:
     ) -> tuple[list[Any], list[dict[str, Any]]]:
         """Rebuild one frame from bounded Journal memory; never replay chat history."""
         memory = build_worker_memory_view(journal)
-        projection = project_worker_context(
-            memory=memory,
-            frame=frame,
-            same_frame_feedback=same_frame_feedback,
-        )
         assessment = assessment or assess_frame(
             spec, active_actions, frame,
         )
         frame_actions = assessment.allowed_actions
-        system_prompt = self._worker_system_prompt(spec, frame_actions)
-        stable_prompt, delimiter, attempt_prompt = system_prompt.partition(
-            "## Worker attempt contract"
+        projection = project_worker_context(
+            memory=memory,
+            frame=frame,
+            attempt_contract=worker_attempt_contract(
+                spec,
+                attempted_action=bool(journal.executed_tools),
+            ),
+            same_frame_feedback=same_frame_feedback,
         )
+        system_prompt = self._worker_system_prompt()
         messages = [
             cacheable_system_message(
-                stable_prompt,
+                system_prompt,
                 enabled=getattr(self, "_worker_explicit_cache", False),
-                suffix=(delimiter + attempt_prompt if delimiter else ""),
             ),
             image_message(
                 projection.text,
@@ -1354,6 +1344,7 @@ class ToolAgentRuntime:
         frame: MaterializedFrame,
         *,
         assessment: FrameAssessment | None = None,
+        allow_failure: bool = True,
     ) -> list[dict[str, Any]]:
         assessment = assessment or assess_frame(
             spec, actions, frame,
@@ -1363,6 +1354,7 @@ class ToolAgentRuntime:
             completion_mode=assessment.completion_mode,
             action_envelope=bool(getattr(self, "allow_multi_action", False)),
             max_ordered_actions=self._worker_action_limit(),
+            allow_failure=allow_failure,
         )
 
     def _worker_action_limit(self) -> int:
@@ -1727,10 +1719,7 @@ class ToolAgentRuntime:
         call_args = self._validated_action_call_args(action_spec, call["args"])
         full_args = {**action_spec.fixed_args, **call_args}
         if action_spec.capability == "open_url":
-            self._validate_runtime_open_url(
-                str(full_args.get("url") or ""),
-                frame=frame,
-            )
+            self._validate_runtime_open_url(str(full_args.get("url") or ""))
         if action_spec.capability == "launch_app":
             self._validate_runtime_launch_app(str(full_args.get("app") or ""))
         if action_spec.capability in _EXECUTABLE_CAPABILITIES:
@@ -1847,6 +1836,18 @@ class ToolAgentRuntime:
                 payload["target_signal"] = target_signal
             if platform_feedback:
                 payload["platform_feedback"] = platform_feedback
+            if terminal is not None:
+                rejection = next(
+                    (
+                        item for item in platform_feedback
+                        if item.get("rejected") is True
+                    ),
+                    {},
+                )
+                payload["reason"] = str(
+                    rejection.get("message")
+                    or "The platform rejected the requested action."
+                )
             if frame is not None and payload["status"] == "executed" and (
                 payload["no_effect"] is False
                 and is_candidate_commit(
@@ -1867,25 +1868,10 @@ class ToolAgentRuntime:
     def _validate_runtime_open_url(
         self,
         candidate: str,
-        *,
-        frame: MaterializedFrame | None,
     ) -> None:
-        """Validate Runtime Policy provenance for all navigation proposals."""
+        """Validate only URL shape and network safety before dispatch."""
 
-        authorized_urls = extract_http_urls(
-            getattr(self, "_task_goal", ""),
-            getattr(self, "_master_knowledge", ""),
-            getattr(self, "_worker_knowledge", ""),
-            getattr(self, "_start_page_url", ""),
-        )
-        start_page_url = str(getattr(self, "_start_page_url", "") or "").strip()
-        if start_page_url:
-            authorized_urls.add(start_page_url)
-        admission = assess_navigation_url(
-            candidate,
-            authorized_urls=frozenset(authorized_urls),
-            current_url=frame.url if frame is not None else "",
-        )
+        admission = assess_navigation_url(candidate)
         if admission.decision != "allow":
             raise _WorkerActionRejected(admission.reason)
 
@@ -2300,8 +2286,7 @@ class ToolAgentRuntime:
             )
             return (
                 f"State      : {state.get('status', '?')} · {state.get('summary', '')}\n"
-                f"Action plan: {entry.get('tool', '?')} · "
-                f"{state.get('next_instruction', '')}"
+                f"Action plan: {entry.get('tool', '?')}"
                 f"{context_text}"
                 f"{metrics}"
             )

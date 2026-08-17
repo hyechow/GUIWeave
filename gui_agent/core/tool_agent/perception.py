@@ -40,6 +40,7 @@ from gui_agent.core.tool_agent.protocol import (
     parse_json_object,
     response_usage,
 )
+from gui_agent.core.vision.frame_analysis import is_blank_screen
 from llm.provider_config import build_chat_model, chat_request_kwargs
 
 PerceptionMode = Literal["vision-only", "enhanced"]
@@ -957,6 +958,8 @@ class PerceptionMaterializer:
         applied_filters: dict[str, Any] = {}
         applied_filter_state = None
         visible_collection_regions: list[dict[str, Any]] = []
+        readiness: Literal["ready", "loading", "blank"] = "ready"
+        readiness_reason = ""
         if self.mode == "enhanced":
             observation = bundle.make_perception(platform, screenshot_path).observe()
             png = observation.png_bytes
@@ -981,6 +984,24 @@ class PerceptionMaterializer:
                     getattr(observation, "collection_regions", None)
                 )
             url, title = observation.url or "", observation.title or ""
+            platform_loading = getattr(observation, "loading", None)
+            visible_controls = any(
+                item.get("in_viewport") is not False
+                for item in controls
+            )
+            if platform_loading is True:
+                readiness = "loading"
+                readiness_reason = "platform reports an in-progress document or request"
+            elif platform_loading is False and not tables and not visible_controls:
+                try:
+                    visually_blank = is_blank_screen(png)
+                except Exception:
+                    visually_blank = False
+                if visually_blank:
+                    readiness = "blank"
+                    readiness_reason = (
+                        "rendered browser frame is visually blank and exposes no visible structure"
+                    )
         else:
             png = platform.screenshot()
             screenshot_path.parent.mkdir(parents=True, exist_ok=True)
@@ -1007,6 +1028,17 @@ class PerceptionMaterializer:
             detail_fields: set[str] = set()
             coverage: dict[str, Any] = {}
             collection_found = False
+            if readiness != "ready":
+                requirement_scopes[requirement.id] = _scope_descriptor(
+                    requirement,
+                    required_predicates=required_predicates,
+                    applied_filter_state=applied_filter_state,
+                    applied_filters=applied_filters,
+                    text_query_fields=text_query_fields,
+                    rows=[],
+                )
+                missing.append(requirement.id)
+                continue
             if table is None:
                 empty_tables = [
                     candidate
@@ -1382,6 +1414,8 @@ class PerceptionMaterializer:
         materialized = MaterializedFrame(
             frame_id=frame_id,
             screenshot_path=str(screenshot_path),
+            readiness=readiness,
+            readiness_reason=readiness_reason,
             platform_time=(
                 getattr(self, "platform_time", None)
                 or host_time_fallback(

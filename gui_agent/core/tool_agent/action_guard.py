@@ -53,7 +53,6 @@ _DEFAULT_BLOCK_INSTRUCTION = (
     "Treat the Runtime guard as authoritative. Do not retry the blocked action; "
     "advance from the current observation or choose a materially different capability."
 )
-_HTTP_URL = re.compile(r"https?://[^\s<>'\"`]+", re.IGNORECASE)
 
 
 @dataclass(frozen=True)
@@ -67,20 +66,6 @@ class FrameAssessment:
     allowed_actions: list[DynamicActionSpec]
     ready_collection: CollectionRef | None = None
     completion_mode: Literal["unavailable", "operator", "collector"] = "unavailable"
-
-
-def extract_http_urls(*values: Any) -> set[str]:
-    """Extract exact task-provided HTTP(S) destinations."""
-    pending, urls = list(values), set()
-    while pending:
-        value = pending.pop()
-        if isinstance(value, str):
-            urls.update(match.group(0).rstrip(".,;:!?)]}") for match in _HTTP_URL.finditer(value))
-        elif isinstance(value, dict):
-            pending.extend(value.values())
-        elif isinstance(value, (list, tuple, set, frozenset)):
-            pending.extend(value)
-    return urls
 
 
 def _http_origin(value: str, *, require_public: bool = False) -> tuple[str, str, int | None] | None:
@@ -110,11 +95,8 @@ def _http_origin(value: str, *, require_public: bool = False) -> tuple[str, str,
 
 def assess_navigation_url(
     candidate: str,
-    *,
-    authorized_urls: set[str] | frozenset[str] = frozenset(),
-    current_url: str = "",
 ) -> NavigationAdmission:
-    """Admit safe discovery roots and evidenced or same-origin deep routes."""
+    """Validate only the transport and network-safety boundary of a URL."""
 
     candidate = candidate.strip()
     origin = _http_origin(candidate)
@@ -126,20 +108,7 @@ def assess_navigation_url(
         return NavigationAdmission(
             "abort", "navigation to private, loopback, link-local, or reserved destinations is denied"
         )
-    parsed = urlsplit(candidate)
-    public_origin_root = (
-        parsed.path in {"", "/"} and not parsed.query and not parsed.fragment
-    )
-    if (
-        public_origin_root
-        or candidate in authorized_urls
-        or origin == _http_origin(current_url)
-    ):
-        return NavigationAdmission("allow")
-    return NavigationAdmission(
-        "abort",
-        "cross-origin deep navigation lacks exact task, knowledge, or start-page provenance",
-    )
+    return NavigationAdmission("allow")
 
 
 def ready_collection(spec: WorkerSpec, frame: MaterializedFrame) -> CollectionRef | None:
@@ -157,7 +126,18 @@ def assess_frame(
     spec: WorkerSpec,
     actions: list[DynamicActionSpec],
     frame: MaterializedFrame,
+    *,
+    attempted_action: bool = False,
 ) -> FrameAssessment:
+    if frame.readiness != "ready":
+        allowed = [] if attempted_action else [
+            action for action in actions
+            if action.capability in {"open_url", "back", "home", "app_switch", "launch_app"}
+        ]
+        return FrameAssessment(
+            allowed,
+            completion_mode="unavailable",
+        )
     collection = ready_collection(spec, frame)
     mode: Literal["unavailable", "operator", "collector"] = (
         "operator" if spec.profile == "operator"

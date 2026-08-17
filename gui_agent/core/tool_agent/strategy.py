@@ -62,8 +62,8 @@ class Strategy:
             issues.append("replacement strategy has already been attempted")
         if approach_is_procedural(replacement.approach):
             issues.append(
-                "replacement approach must name one source or implementation method, "
-                "not an ordered GUI procedure"
+                "replacement approach must be one source or implementation method, "
+                "without an action, action argument, URL, or ordered GUI procedure"
             )
         return issues
 

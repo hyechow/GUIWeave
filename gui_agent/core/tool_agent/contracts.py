@@ -28,7 +28,7 @@ FailureKind: TypeAlias = Literal[
 ]
 
 _ATOMIC_APPROACH_ACTION = re.compile(
-    r"\b(?:tap|click|press|type|scroll|swipe|drag|select|open|navigate|launch|switch|"
+    r"\b(?:tap|click|press|type|scroll|swipe|drag|select|open|navigate|navigation|launch|switch|"
     r"search|query|locate|find|extract|inspect|read)\b"
     r"|(?:点击|按下|输入|滚动|滑动|拖动|选择|打开|导航|启动|切换|搜索|查询|查找|定位|提取|检查|读取)",
     re.IGNORECASE,
@@ -42,6 +42,15 @@ _APPROACH_ACTION_SEQUENCE = re.compile(
     rf"(?:\band\b|[,;]|并且?|再)\s*.{{0,20}}(?:{_ATOMIC_APPROACH_ACTION.pattern})",
     re.IGNORECASE,
 )
+_APPROACH_ACTION_COMMAND = re.compile(
+    rf"^\s*(?:(?:direct|directly)\s+)?(?:{_ATOMIC_APPROACH_ACTION.pattern})",
+    re.IGNORECASE,
+)
+_APPROACH_CAPABILITY_OR_URL = re.compile(
+    r"\b(?:open_url|press_enter|clear_text|select_option|long_press|"
+    r"app_switch|launch_app)\b|https?://",
+    re.IGNORECASE,
+)
 
 
 def approach_atomic_action_count(approach: str) -> int:
@@ -51,10 +60,12 @@ def approach_atomic_action_count(approach: str) -> int:
 
 
 def approach_is_procedural(approach: str) -> bool:
-    """Return whether an approach encodes an ordered GUI procedure."""
+    """Return whether an approach leaks actions, arguments, or a GUI procedure."""
 
     return bool(
-        _APPROACH_SEQUENCE.search(approach)
+        _APPROACH_ACTION_COMMAND.search(approach)
+        or _APPROACH_CAPABILITY_OR_URL.search(approach)
+        or _APPROACH_SEQUENCE.search(approach)
         or _APPROACH_ACTION_SEQUENCE.search(approach)
     )
 
@@ -402,23 +413,21 @@ class WorkerSpec(StrictModel):
 
 
 class WorkerState(StrictModel):
-    """Visible state-machine channel emitted in assistant ``content``."""
+    """Compact evidence channel paired with a Worker action decision."""
 
     status: Literal["exploring", "collecting", "completed", "failed"]
     summary: str
     established_facts: list[str] = Field(
         default_factory=list,
         description=(
-            "New exact visual facts not already present in WorkerMemory; Runtime retains "
-            "them across turns. Before leaving a record used for later matching, include "
-            "its complete application-declared identity without pronouns, prefixes, ellipses, "
-            "summaries, or repetition. A completion fact must contain that identity and confirmed "
-            "effect together."
+            "New exact visual observations not already present in WorkerMemory. Runtime "
+            "keeps them only as bounded Worker narrative, never as authoritative completion "
+            "evidence. Include only task evidence needed after leaving the current frame; "
+            "exclude page chrome, dialogs, coordinates, approach alignment, and visible-control "
+            "inventories. For later record matching, retain the complete application-declared "
+            "identity without pronouns, prefixes, ellipses, summaries, or repetition."
         ),
     )
-    open_gaps: list[str] = Field(default_factory=list)
-    coverage: dict[str, str] = Field(default_factory=dict)
-    next_instruction: str
 
 
 class DataChunkRef(StrictModel):
@@ -452,6 +461,8 @@ class ResultRef(StrictModel):
 class MaterializedFrame(StrictModel):
     frame_id: str
     screenshot_path: str
+    readiness: Literal["ready", "loading", "blank"] = "ready"
+    readiness_reason: str = ""
     platform_time: dict[str, Any] = Field(default_factory=dict)
     url: str = ""
     title: str = ""

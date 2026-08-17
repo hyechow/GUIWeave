@@ -27,7 +27,9 @@ from gui_agent.core.tool_agent.protocol import (
     bind_worker_decision_transport,
     decode_worker_action,
     dynamic_worker_tools,
+    generic_action_spec,
     image_message,
+    worker_attempt_contract,
 )
 from gui_agent.prompts import load_prompt_text
 from llm.provider_config import (
@@ -132,6 +134,7 @@ def _worker_messages(
     report: dict[str, Any],
     screenshot: bytes,
     *,
+    attempt_contract: str,
     image_scale: float = 1.0,
 ) -> list[Any]:
     messages: list[Any] = []
@@ -147,11 +150,15 @@ def _worker_messages(
             )
             suffix = text[dynamic_start:].strip()
             suffix = _without_section(suffix, "## Ordered multi-action mode")
+            suffix = _without_section(suffix, "## Original task goal")
+            suffix = _without_section(suffix, "## Worker attempt contract")
             current = load_prompt_text("task.tool_agent.worker").rstrip()
             messages.append(SystemMessage(content=(
                 current + ("\n\n" + suffix if suffix else "")
             )))
         elif name == "human":
+            text = _without_section(text, "## Current Worker attempt")
+            text = (text.rstrip() + "\n\n" + attempt_contract).strip()
             messages.append(
                 image_message(text, screenshot, scale=image_scale)
                 if any(part.get("type") == "image" for part in parts)
@@ -419,10 +426,16 @@ def replay_worker_decision(
     )
     spec = WorkerSpec.model_validate(replay_context["worker_spec"])
     materialized = MaterializedFrame.model_validate(observation)
-    actions = [
-        DynamicActionSpec.model_validate(action)
-        for action in replay_context.get("actions") or []
-    ]
+    actions = []
+    for raw_action in replay_context.get("actions") or []:
+        action = DynamicActionSpec.model_validate(raw_action)
+        actions.append(
+            generic_action_spec(action.capability)
+            if action.name == action.capability
+            and not action.fixed_args
+            and not action.input_args
+            else action
+        )
     assessment = assess_frame(
         spec, actions, materialized,
     )
@@ -457,6 +470,10 @@ def replay_worker_decision(
     messages = _worker_messages(
         _report(selected, "tool_agent.worker"),
         _screenshot(run_dir, frame_no, observation),
+        attempt_contract=worker_attempt_contract(
+            spec,
+            attempted_action=bool(replay_context.get("executed_tools")),
+        ),
         image_scale=float(getattr(model_config, "image_scale", 1.0)),
     )
     request_model = getattr(model_config, "model", None)

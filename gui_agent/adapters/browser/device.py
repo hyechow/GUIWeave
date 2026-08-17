@@ -105,10 +105,26 @@ _FORM_VALUE_FINGERPRINT_JS = (
     "return els.length+'|'+vals.join('\\u0001');})()"
 )
 
+# Prefer the semantic main-content root when present. A completed document may expose only
+# page chrome while its main surface is still an empty skeleton. Controls or media count only
+# when they carry usable content; layout-only descendants do not.
+_CONTENT_READY = (
+    "(()=>{const b=document.body;if(!b)return false;"
+    "const r=document.querySelector('main,[role=main]')||b;"
+    "if((r.innerText||'').trim().length>0)return true;"
+    "return [...r.querySelectorAll('button,input,textarea,select,img,canvas,video,iframe,a')]"
+    ".some(e=>{if(e.getClientRects().length===0||getComputedStyle(e).visibility==='hidden')"
+    "return false;if(e.matches('img'))return e.complete&&e.naturalWidth>1;"
+    "if(e.matches('a'))return !!((e.innerText||e.getAttribute('aria-label')||'').trim());"
+    "return true;});})()"
+)
+_DOCUMENT_READINESS = (
+    "(()=>{return [document.readyState," + _CONTENT_READY + "];})()"
+)
+
 # A MutationObserver storing the time of the last DOM change on window.__q.t (installed once
 # per document, guarded; re-installs after a navigation wipes window.__q). _SETTLE_RESET sets
-# the baseline to now (called on wait_settled entry, so quiet is measured FROM THE ACTION);
-# _SETTLE_PROBE returns [readyState, msSinceLastMutation] in one round-trip.
+# the baseline to now (called on wait_settled entry, so quiet is measured FROM THE ACTION).
 _SETTLE_INSTALL = (
     "if(!window.__q){window.__q={t:performance.now()};"
     "new MutationObserver(()=>{window.__q.t=performance.now();}).observe(document.documentElement||document,"
@@ -117,16 +133,12 @@ _SETTLE_INSTALL = (
 _SETTLE_RESET = "(()=>{" + _SETTLE_INSTALL + "window.__q.t=performance.now();return 1;})()"
 _SETTLE_PROBE = (
     "(()=>{" + _SETTLE_INSTALL
-    + "const b=document.body;const visible=!!b&&(b.innerText.trim().length>0||"
-    "[...b.querySelectorAll('a,button,input,textarea,select,img,canvas,svg,video,iframe')]"
-    ".some(e=>e.getClientRects().length>0&&getComputedStyle(e).visibility!=='hidden'));"
-    "return [document.readyState,Math.round(performance.now()-window.__q.t),visible];})()"
+    + "return [document.readyState,Math.round(performance.now()-window.__q.t),"
+    + _CONTENT_READY + "];})()"
 )
 
-# Same-origin XHR/fetch feedback belongs to the executed GUI action's observable outcome.  Some
-# web widgets return a structured rejection without rendering its message into the current
-# viewport.  Install a page-local, bounded monitor immediately before dispatch and consume it
-# after settle; it observes existing application requests without issuing any request itself.
+# Observe bounded same-origin XHR/fetch feedback without issuing requests. Page traffic remains
+# context; only native browser navigation feedback can reject a dispatched GUI action.
 _ACTION_FEEDBACK_INSTALL_JS = r"""
 (() => {
   window.__guiAgentActionFeedback = [];
@@ -471,17 +483,16 @@ class PlaywrightDevice:
         return base64.b64decode(result["data"])
 
     def is_loading(self) -> bool:
-        """Whether the document or a tracked one-shot request is still pending."""
+        """Whether the document or its semantic main surface is still loading."""
         try:
-            self._ensure_net_tracking()
             res = self._cdp_send(
                 "Runtime.evaluate",
-                {"expression": "document.readyState", "returnByValue": True},
+                {"expression": _DOCUMENT_READINESS, "returnByValue": True},
             )
-            return (
-                (res.get("result", {}) or {}).get("value") == "loading"
-                or bool(self._xhr_ids)
-            )
+            value = (res.get("result", {}) or {}).get("value")
+            if isinstance(value, list) and len(value) >= 2:
+                return value[0] == "loading" or not bool(value[1])
+            return value == "loading"
         except Exception:
             return False
 
@@ -552,26 +563,27 @@ class PlaywrightDevice:
                 if isinstance(val, list) and len(val) >= 3
                 else ("complete", None, True)
             )
-            # XHR/Fetch remains in flight until response headers, completion or failure.  A slow
-            # persistence request must not become "quiet" merely because a local timer elapsed.
+            # Long-lived telemetry and session requests do not prevent an already materialized
+            # surface from settling. Network quiet means no new XHR/Fetch activity in the quiet
+            # window; semantic content and DOM quiet independently guard visible readiness.
             now = time.monotonic()
             xhr_inflight = len(self._xhr_ids)
-            net_quiet = xhr_inflight == 0 and (now - self._xhr_last) * 1000.0 >= _SETTLE_QUIET_MS
+            net_quiet = (now - self._xhr_last) * 1000.0 >= _SETTLE_QUIET_MS
             elapsed = time.perf_counter() - t0
             settled = bool(
                 rs != "loading"
                 and (q or 0) >= _SETTLE_QUIET_MS
                 and net_quiet
-                and (action_type != "navigate" or content_ready)
+                and content_ready
             )
             cap = _SETTLE_NAV_CAP_S if action_type == "navigate" else _SETTLE_CAP_S
             if settled or elapsed >= cap:
                 # DOM never mutated after entry → quietMs climbed with elapsed (≈ equal).
-                no_effect = q is not None and q >= elapsed * 1000.0 - 150 and xhr_inflight == 0
-                tag = "settled" if settled else "达上限·仍在加载"
+                no_effect = q is not None and q >= elapsed * 1000.0 - 150
+                tag = "settled" if settled else "达上限·内容未就绪"
                 print(f"  [Settle] {elapsed:.1f}s (CDP {tag}: readyState={rs}, "
                       f"domQuiet={q}ms, xhr在飞={xhr_inflight}"
-                      + (f"，内容={'就绪' if content_ready else '空白'}" if action_type == "navigate" else "")
+                      + f"，内容={'就绪' if content_ready else '空白'}"
                       + ("，零效果" if no_effect else "") + ")")
                 return elapsed, no_effect
             self._ensure_net_tracking()  # re-arm if a poll rebuilt the session

@@ -136,8 +136,9 @@ _CAPABILITY_SCHEMAS: dict[str, dict[str, Any]] = {
     }, ("x", "y", "text")),
     "open_url": _args({"url": {
         "type": "string", "minLength": 1, "maxLength": 2048,
-        "description": "Absolute HTTP(S) URL to open in the current tab. Master-declared "
-                       "actions may change origin when the destination has task provenance.",
+        "description": "Absolute HTTP(S) URL to open in the current tab. This browser-level "
+                       "navigation replaces the current document and is not blocked by its "
+                       "dialogs or overlays.",
     }}, ("url",)),
     "back": _EMPTY_ARGS,
     "home": _EMPTY_ARGS,
@@ -150,14 +151,24 @@ _CAPABILITY_SCHEMAS: dict[str, dict[str, Any]] = {
 
 _CAPABILITY_DESCRIPTIONS = {
     "tap": "Tap one visible control that advances the current approach.",
-    "type": "Enter text into one visible input control.",
+    "type": (
+        "Replace the value of one visible input control. Use it directly to reformulate "
+        "a visible query; no prior tap or clear action is required."
+    ),
     "clear_text": "Clear the currently focused text control.",
     "press_enter": "Press Enter for the currently focused control.",
-    "scroll": "Scroll one visible content region.",
+    "scroll": (
+        "Traverse an ordinary visible collection or reveal a target outside the viewport. "
+        "Never use this on a relevance-ordered web/search result page to hunt for later "
+        "results; leading results decide query quality, so reformulate or report instead."
+    ),
     "drag": "Drag one visible object to one visible destination.",
     "long_press": "Long-press one visible control or item.",
     "select_option": "Select one visible option from one visible choice control.",
-    "open_url": "Open an absolute HTTP(S) URL that executes the current approach.",
+    "open_url": (
+        "Replace the current browser document with an absolute HTTP(S) URL that executes "
+        "the current approach; current-page dialogs and overlays do not block this action."
+    ),
     "back": "Navigate back once within the current execution path.",
     "home": "Return to the platform home surface.",
     "app_switch": "Open the platform application switcher.",
@@ -175,23 +186,63 @@ def model_tool(name: str, description: str, model: type[BaseModel]) -> dict[str,
     return function_tool(name, description, model.model_json_schema())
 
 
-def worker_attempt_contract(spec: WorkerSpec, actions: list[DynamicActionSpec]) -> str:
-    """Serialize the immutable Worker contract shared by live and replay prompts."""
+def worker_attempt_contract(
+    spec: WorkerSpec,
+    *,
+    attempted_action: bool = False,
+) -> str:
+    """Serialize the binding attempt beside each current frame."""
 
-    payload = spec.model_dump(mode="json", exclude={"input_refs"})
-    payload["input_names"] = sorted(spec.input_refs)
-    payload["available_actions"] = [
-        {"name": action.name, "capability": action.capability}
-        for action in actions
-    ]
+    payload = {
+        "approach": spec.strategy.approach,
+        "phase": "continue" if attempted_action else "start",
+        **spec.model_dump(mode="json", exclude={"input_refs", "strategy"}),
+        "input_names": sorted(spec.input_refs),
+    }
+    profile_rules = (
+        "Collector rules for this attempt:\n"
+        "- Form recall queries from natural equivalents and distinctive terms. Normalized "
+        "filter values remain validation predicates; they need not appear literally or "
+        "adjacent in query text.\n"
+        "- When a requested date is relative to the authoritative task clock, use its "
+        "natural relative-date term in the task language for recall rather than an ISO or "
+        "long-form calendar literal; keep the exact date only for validation.\n"
+        "- When a visible query needs no autocomplete selection, batch its `type` and "
+        "`press_enter` in the same decision; do not spend a separate turn submitting it.\n"
+        "- A relevance-ordered web/search page's leading visible titles assess one query. "
+        "If they mismatch the goal, never scroll or paginate for later results: directly "
+        "replace the visible query and submit, or report after materially different queries "
+        "already failed.\n"
+        "- Treat autocomplete as pending; commit a suggestion only when its identity "
+        "matches the requested scope. `empty_authoritative = false` is a recall miss, "
+        "not a completed empty result.\n"
+        "- Recall candidates without changing semantic predicates, let Runtime validate "
+        "requirement scope, then collect only scope-matched evidence.\n"
+        "- Drive ordinary collection traversal from coverage and explicit end evidence; a "
+        "clipped or repeated record is not the end.\n"
+        if spec.profile == "collector"
+        else (
+            "Operator rules for this attempt:\n"
+            "- Treat multi-select and configuration goals as exact sets; validate any review "
+            "surface before committing.\n"
+            "- `candidate_set_state.status = exhausted` is guarded Runtime evidence; an "
+            "initially empty or filtered selector is not exhausted.\n"
+            "- Finish comparison evidence before mutation, skip excluded or already processed "
+            "identities, and advance only through explicitly remaining candidates.\n"
+            "- Observe the post-action frame before repeating or completing a mutation.\n"
+        )
+    )
     return (
-        "## Worker attempt contract\n"
-        "The immutable goal and data contract define what must remain unchanged. The "
-        "current Strategy supplies only the approach. Runtime supplies the platform's "
-        "generic atomic actions; choose among them from the current screenshot. Named "
-        "input bindings inject private Master-routed values and must be used only for "
-        "their described target.\n"
+        "## Current Worker attempt\n"
+        "`approach` is binding for this attempt. Choose actions that execute it; do not "
+        "continue a different source, application, or mechanism visible in the frame. "
+        "When `phase` is `start`, the first action's visible target or destination must "
+        "identify the approach; the residue surface's usefulness for the goal is irrelevant. "
+        "The goal and output contract are immutable. Runtime actions are generic "
+        "capabilities, and named input bindings inject private Master-routed values.\n"
         + json.dumps(payload, ensure_ascii=False)
+        + "\n"
+        + profile_rules
     )
 
 
@@ -210,10 +261,9 @@ _WORKER_STATE_SCHEMA: dict[str, Any] = {
             "maxItems": 8,
             "description": WorkerState.model_fields["established_facts"].description,
         },
-        "next_instruction": {"type": "string", "maxLength": 240},
     },
     "required": [
-        "status", "summary", "established_facts", "next_instruction",
+        "status", "summary", "established_facts",
     ],
     "additionalProperties": False,
 }
@@ -257,7 +307,7 @@ def dynamic_worker_tools(
             actions,
             max_ordered_actions=max_ordered_actions,
         ))]
-        if action_envelope
+        if action_envelope and actions
         else [_with_worker_state(dynamic_action_tool(item)) for item in actions]
     )
     if completion_mode != "unavailable":
@@ -297,18 +347,19 @@ def dynamic_action_envelope_tool(
         or not 1 <= max_ordered_actions <= MAX_ORDERED_ACTIONS
     ):
         raise ValueError(f"max_ordered_actions must be in [1, {MAX_ORDERED_ACTIONS}]")
-    variants = [
-        {
+    variants = []
+    for action in actions:
+        tool = dynamic_action_tool(action)["function"]
+        variants.append({
             "type": "object",
+            "description": tool["description"],
             "properties": {
                 "name": {"type": "string", "const": action.name},
-                "args": dynamic_action_tool(action)["function"]["parameters"],
+                "args": tool["parameters"],
             },
             "required": ["name", "args"],
             "additionalProperties": False,
-        }
-        for action in actions
-    ]
+        })
     action_range = (
         "exactly one action"
         if max_ordered_actions == 1
@@ -317,7 +368,8 @@ def dynamic_action_envelope_tool(
     return function_tool(
         "continue_with_actions",
         (
-            f"Continue with {action_range} on already-visible targets. "
+            f"Continue with {action_range}. Spatial actions require current-frame visible "
+            "targets; non-spatial actions follow their own capability contracts. "
             "Apply task conditions first: excluded or already-processed candidates permit traversal, "
             "never their mutation path. If no eligible work remains, call complete directly; do not "
             "put terminal tools in this action list. "
@@ -740,24 +792,34 @@ def decode_worker_action(
         call = {"id": "json-decision", "name": value["tool"].strip(), "args": value["args"]}
     else:
         raise ValueError(f"unsupported Worker action protocol {protocol!r}")
+    if call["name"] == "continue_with_actions":
+        raw = call["args"].get("actions") or []
+        raw = decode_ordered_actions(raw)
+        if not isinstance(raw, list) or not all(isinstance(item, dict) for item in raw):
+            raise ProtocolError("actions must be an ordered list of objects")
+        raw = [
+            item
+            if "args" in item
+            else {
+                "name": item.get("name"),
+                "args": {key: value for key, value in item.items() if key != "name"},
+            }
+            for item in raw
+        ]
+        calls = [{
+            "name": str(item.get("name") or ""),
+            "args": normalize_action_arguments(dict(item.get("args") or {})),
+        } for item in raw]
+        call["args"]["actions"] = calls
+    else:
+        call["args"] = normalize_action_arguments(call["args"])
+        calls = [call]
     if tools is not None:
         tool = tools.get(call["name"])
         if tool is None:
             raise ProtocolError(f"unknown Worker tool {call['name']!r}")
         validate(instance=call["args"], schema=tool["function"]["parameters"])
     raw_state = call["args"].pop("state", None)
-    if call["name"] == "continue_with_actions":
-        raw = call["args"].get("actions") or []
-        raw = decode_ordered_actions(raw)
-        if not isinstance(raw, list) or not all(isinstance(item, dict) for item in raw):
-            raise ProtocolError("actions must be an ordered list of objects")
-        calls = [{
-            "name": str(item.get("name") or ""),
-            "args": normalize_action_arguments(dict(item.get("args") or {})),
-        } for item in raw]
-    else:
-        call["args"] = normalize_action_arguments(call["args"])
-        calls = [call]
     if call["name"] == "continue_with_actions":
         call["args"]["actions"] = calls
     else:

@@ -542,9 +542,7 @@ def _tool_agent_report_steps(
                     "observation": compact_observation(turn.get("observation") or turn),
                     "state": {
                         "status": state.get("status"),
-                        "coverage": state.get("coverage") or {},
                         "established_facts": state.get("established_facts") or [],
-                        "open_gaps": state.get("open_gaps") or [],
                     },
                     "action": {
                         "tool": turn.get("tool"),
@@ -589,7 +587,6 @@ def _tool_agent_report_steps(
                 statement_id=worker_id,
                 instance_id=worker_id,
                 statement_executor="interact",
-                instruction=str(state.get("next_instruction") or ""),
                 summary=str(state.get("summary") or turn.get("message") or ""),
                 timings=timings,
                 token_usage=token_usage,

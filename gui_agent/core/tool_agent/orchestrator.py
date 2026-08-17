@@ -360,8 +360,8 @@ def _validate_gui_worker_call(
     if approach_is_procedural(approach):
         diagnostics.append(_diagnostic(
             "WORKER_APPROACH_BOUNDARY",
-            "approach enumerates multiple atomic GUI actions; state one source or "
-            "implementation method and leave action choice to Worker",
+            "approach contains an action, action argument, URL, or GUI procedure; "
+            "state one source or implementation method and leave actions to Worker",
             call,
         ))
     if any(item.arg == "data_requirements" for item in call.keywords):
