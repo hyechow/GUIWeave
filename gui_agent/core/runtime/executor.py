@@ -23,7 +23,8 @@ from gui_agent.core.schemas import BaseActionDecision
 
 # Coarse ScrollAmount -> device ``scroll`` amount units (the device maps units->px).
 _AMOUNT_UNITS = {"small": 3, "medium": 5, "large": 9}
-_REDACTED_INPUT_VALUE = "[session access value redacted]"
+REDACTED_ACCESS_VALUE = "[session access value redacted]"
+_REDACTED_INPUT_VALUE = REDACTED_ACCESS_VALUE
 
 
 def amount_to_units(amount: str) -> int:

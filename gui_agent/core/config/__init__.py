@@ -10,7 +10,11 @@ from typing import Any, Literal
 import yaml
 from pydantic import BaseModel, ConfigDict, Field, ValidationError
 
-from llm.provider_config import ChatProviderConfig, resolve_chat_provider_config
+from llm.provider_config import (
+    ChatProviderConfig,
+    build_chat_model,
+    resolve_chat_provider_config,
+)
 
 # AGENT_CONFIG selects the YAML file. A bare filename is resolved next to this
 # module; a relative path is resolved from the working directory. AGENT_MODEL then
@@ -105,6 +109,13 @@ def load_config() -> dict[str, Any]:
         merged["llm"] = _deep_merge(base_llm, override)
         return merged
     return raw
+
+
+def build_llm(name: str) -> tuple[Any, ChatProviderConfig]:
+    """Build the chat model for a named profile together with its config."""
+
+    cfg = resolve_llm_config(name)
+    return build_chat_model(cfg), cfg
 
 
 def resolve_llm_config(name: str) -> ChatProviderConfig:

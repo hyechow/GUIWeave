@@ -8,7 +8,6 @@ import pytest
 from gui_agent.adapters.browser.actions import BrowserAction
 from gui_agent.adapters.android.actions import AndroidAction
 from gui_agent.core.tool_agent.contracts import (
-    DataRequirement,
     DynamicActionSpec,
     MaterializedFrame,
     WorkerOutcome,
@@ -20,7 +19,6 @@ from gui_agent.core.tool_agent.action_guard import (
     WorkerActionCircuitBreaker,
     action_signature,
     is_candidate_commit,
-    progress_signature,
 )
 from gui_agent.core.tool_agent.data_store import RuntimeDataStore
 from gui_agent.core.tool_agent.protocol import (
@@ -31,7 +29,6 @@ from gui_agent.core.tool_agent.protocol import (
 )
 from gui_agent.core.tool_agent.runtime import (
     ToolAgentRuntime,
-    _WorkerActionRejected,
     _action_feedback,
     _target_verification_result,
 )
@@ -594,16 +591,6 @@ def test_android_runtime_discovers_installed_apps_for_worker_prompt() -> None:
     runtime.platform = SimpleNamespace(list_apps=lambda: ["Settings", "Calendar"])
     runtime._master_knowledge = ""
     runtime._worker_access_context = ""
-    spec = _worker_spec(
-        goal="Open Calendar",
-        success_criteria=["Calendar is visible"],
-        actions=[DynamicActionSpec(
-            name="open_calendar",
-            capability="launch_app",
-            description="Open the Calendar application",
-            fixed_args={"app": "Calendar"},
-        )],
-    )
 
     prompt = runtime._worker_system_prompt()
 
@@ -683,15 +670,6 @@ def test_private_access_context_reaches_worker_but_is_redacted_from_trace() -> N
     runtime._master_knowledge = "Account settings are available from the profile menu."
     runtime._access_log_redactions = _access_log_redactions(access_context)
     runtime.trace = []
-    spec = _worker_spec(
-        goal="Reach the authenticated page",
-        success_criteria=["The authenticated page is visible"],
-        actions=[DynamicActionSpec(
-            name="submit_login",
-            capability="tap",
-            description="Submit the visible login form",
-        )],
-    )
 
     prompt = runtime._worker_system_prompt()
 

@@ -245,22 +245,6 @@ def normalize_applied_filter_state(raw: Any) -> tuple[dict[str, str] | None, dic
     return filters, meta
 
 
-def normalize_applied_filters(raw: Any) -> dict[str, str] | None:
-    """Coerce the JS result into `{label: value}` with trimmed string keys/values.
-
-    Returns None when empty/unusable — so `Observation.applied_filters` stays None on pages
-    where the adapter has no applied-filter signal.
-    """
-    filters, _meta = normalize_applied_filter_state(raw)
-    return filters
-
-
-def normalize_applied_filter_meta(raw: Any) -> dict[str, Any] | None:
-    """Return only the meta portion from an applied-filter JS result."""
-    _filters, meta = normalize_applied_filter_state(raw)
-    return meta or None
-
-
 def typed_applied_filter_state(
     filters: dict[str, str] | None,
     meta: dict[str, Any] | None,

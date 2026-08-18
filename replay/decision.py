@@ -10,7 +10,8 @@ from typing import Any
 
 from langchain_core.messages import AIMessage, HumanMessage, SystemMessage
 
-from gui_agent.core.config import resolve_llm_config
+from gui_agent.core.config import build_llm
+from gui_agent.core.runtime.executor import REDACTED_ACCESS_VALUE as _REDACTED_ACCESS_VALUE
 from gui_agent.core.runtime.clock import PlatformTimeSnapshot
 from gui_agent.core.tool_agent.action_guard import assess_frame, control_at_point
 from gui_agent.core.self_learning.app_summary import load_knowledge_for_app
@@ -32,13 +33,9 @@ from gui_agent.core.tool_agent.protocol import (
     worker_attempt_contract,
 )
 from gui_agent.prompts import load_prompt_text
-from llm.provider_config import (
-    build_chat_model,
-    chat_request_kwargs,
-)
+from llm.provider_config import chat_request_kwargs
 
 
-_REDACTED_ACCESS_VALUE = "[session access value redacted]"
 _WORKER_DYNAMIC_SECTIONS = (
     "## Application knowledge",
     "## Installed applications",
@@ -49,15 +46,10 @@ _WORKER_DYNAMIC_SECTIONS = (
 )
 
 
-def _model(name: str) -> tuple[Any, Any]:
-    config = resolve_llm_config(name)
-    return build_chat_model(config), config
-
-
 def _selected_model(name: str, llm: Any) -> tuple[Any, Any, str]:
     if llm is not None:
         return llm, None, type(llm).__name__
-    model, config = _model(name)
+    model, config = build_llm(name)
     return model, config, config.model
 
 

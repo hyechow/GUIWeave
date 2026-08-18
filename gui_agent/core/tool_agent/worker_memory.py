@@ -17,6 +17,7 @@ from gui_agent.core.tool_agent.contracts import (
     WorkerState,
     positioned_rect,
 )
+from gui_agent.core.tool_agent.filter_state import diff_filter_sets
 
 
 DEFAULT_WORKER_RECENT_K = 4
@@ -411,7 +412,6 @@ class WorkerJournal:
 
 @dataclass(frozen=True)
 class WorkerMemoryView:
-    worker_id: str
     durable_facts: tuple[WorkerJournalEvent, ...]
     recent_steps: tuple[WorkerJournalEvent, ...]
     compressed_history: tuple[str, ...]
@@ -464,7 +464,6 @@ def build_worker_memory_view(
         if event.durable_text:
             durable_by_key[(event.kind, event.durable_text)] = event
     return WorkerMemoryView(
-        worker_id=journal.worker_id,
         durable_facts=tuple(durable_by_key.values()),
         recent_steps=tuple(recent),
         compressed_history=compressed,
@@ -487,15 +486,12 @@ def _frame_payload(
             continue
         requested = dict(scope.get("requested_filters") or {})
         applied = dict(scope.get("applied_filters") or {})
+        filter_diff = diff_filter_sets(requested, applied)
         scope_blockers[requirement_id] = {
             "status": "unmet",
-            "missing_applied_filters": sorted(set(requested).difference(applied)),
-            "extra_applied_filters": sorted(set(applied).difference(requested)),
-            "conflicting_applied_filters": sorted(
-                key
-                for key in set(requested).intersection(applied)
-                if requested[key] != applied[key]
-            ),
+            "missing_applied_filters": filter_diff["missing"],
+            "extra_applied_filters": filter_diff["extra"],
+            "conflicting_applied_filters": filter_diff["conflicting"],
         }
     candidate_state: dict[str, Any] = {}
     if candidate_committed:

@@ -5,7 +5,7 @@ from types import SimpleNamespace
 
 import pytest
 
-from gui_agent.core.tool_agent.contracts import WorkerOutcome, WorkerSpec, WorkerStrategy
+from gui_agent.core.tool_agent.contracts import WorkerSpec, WorkerStrategy
 from gui_agent.core.tool_agent.strategy import Strategy
 
 

@@ -411,7 +411,7 @@ def test_worker_replay_supports_plain_json_action_protocol(tmp_path, monkeypatch
         reasoning_effort="low",
         action_protocol="json",
     )
-    monkeypatch.setattr(decision_module, "_model", lambda _name: (model, config))
+    monkeypatch.setattr(decision_module, "build_llm", lambda _name: (model, config))
 
     result = replay_worker_decision(run_dir, frame=1)
 

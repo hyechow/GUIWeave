@@ -5,7 +5,7 @@ from __future__ import annotations
 import re
 import unicodedata
 from decimal import Decimal, InvalidOperation
-from typing import Any, Literal
+from typing import Any, Literal, Mapping
 
 from pydantic import BaseModel, ConfigDict, Field, JsonValue, model_validator
 
@@ -199,3 +199,21 @@ def match_filter_state(
     if actual is None or actual.coverage != "complete":
         return "unknown"
     return "met" if requested == actual.predicates else "unmet"
+
+
+def diff_filter_sets(
+    required: Mapping[str, Any],
+    applied: Mapping[str, Any],
+) -> dict[str, list[str]]:
+    """Field-level set difference between required and applied filter maps."""
+    required_fields = set(required)
+    applied_fields = set(applied)
+    return {
+        "missing": sorted(required_fields.difference(applied_fields)),
+        "extra": sorted(applied_fields.difference(required_fields)),
+        "conflicting": sorted(
+            field
+            for field in required_fields.intersection(applied_fields)
+            if required[field] != applied[field]
+        ),
+    }

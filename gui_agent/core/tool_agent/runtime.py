@@ -14,8 +14,9 @@ from typing import Any, Callable, Literal
 from jsonschema import Draft202012Validator, validate
 from langchain_core.messages import HumanMessage
 
-from gui_agent.core.config import resolve_llm_config
+from gui_agent.core.config import build_llm
 from gui_agent.prompts import load_prompt_text
+from gui_agent.core.runtime.executor import REDACTED_ACCESS_VALUE as _REDACTED_ACCESS_VALUE
 from gui_agent.core.runtime.action_settle import (
     VERIFY_TIMEOUT_S,
     has_snapped_point,
@@ -91,10 +92,7 @@ from gui_agent.core.tool_agent.worker_memory import (
     project_worker_context,
 )
 from gui_agent.core.vision.target_verify import verify_target
-from llm.provider_config import (
-    build_chat_model,
-    chat_request_kwargs,
-)
+from llm.provider_config import chat_request_kwargs
 
 _MASTER_SYSTEM = load_prompt_text("task.tool_agent.master")
 _WORKER_SYSTEM = load_prompt_text("task.tool_agent.worker")
@@ -127,7 +125,6 @@ class _WorkerActionRejected(ValueError):
 _ACTION_TYPES = {"open_url": "navigate"}
 
 
-_REDACTED_ACCESS_VALUE = "[session access value redacted]"
 _WORKER_VERIFY_POOL = ThreadPoolExecutor(
     max_workers=1,
     thread_name_prefix="tool-worker-verify",
@@ -252,11 +249,6 @@ def _redact_log_value(value: Any, redactions: tuple[str, ...]) -> Any:
     return value
 
 
-def _llm(config_name: str) -> tuple[Any, Any]:
-    cfg = resolve_llm_config(config_name)
-    return build_chat_model(cfg), cfg
-
-
 class ToolAgentRuntime:
     """Run one reviewed Master program over autonomous visual Workers."""
 
@@ -309,8 +301,8 @@ class ToolAgentRuntime:
                 reason="platform adapter does not expose a clock reader",
         )
         self.data_store = RuntimeDataStore()
-        self.master, self.master_cfg = _llm("tool_agent.master")
-        self.worker, self.worker_cfg = _llm("tool_agent.worker")
+        self.master, self.master_cfg = build_llm("tool_agent.master")
+        self.worker, self.worker_cfg = build_llm("tool_agent.worker")
         self._master_explicit_cache = _supports_explicit_prompt_cache(self.master_cfg)
         self.strategy = Strategy(
             self.worker,
@@ -981,12 +973,10 @@ class ToolAgentRuntime:
             while True:
                 messages, context_reports = self._worker_messages(
                     spec=spec,
-                    active_actions=frame_actions,
                     journal=journal,
                     frame=frame,
                     png=png,
                     same_frame_feedback=same_frame_feedback,
-                    assessment=frame_assessment,
                 )
                 response = None
                 state = None
@@ -1417,19 +1407,13 @@ class ToolAgentRuntime:
         self,
         *,
         spec: WorkerSpec,
-        active_actions: list[DynamicActionSpec],
         journal: WorkerJournal,
         frame: MaterializedFrame,
         png: bytes,
         same_frame_feedback: dict[str, Any] | None,
-        assessment: FrameAssessment | None = None,
     ) -> tuple[list[Any], list[dict[str, Any]]]:
         """Rebuild one frame from bounded Journal memory; never replay chat history."""
         memory = build_worker_memory_view(journal)
-        assessment = assessment or assess_frame(
-            spec, active_actions, frame,
-        )
-        frame_actions = assessment.allowed_actions
         projection = project_worker_context(
             memory=memory,
             frame=frame,

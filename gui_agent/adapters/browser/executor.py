@@ -19,7 +19,10 @@ from urllib.parse import urljoin
 
 from gui_agent.adapters.browser.actions import BrowserAction
 from gui_agent.adapters.browser.control_grounding import ground_action_to_nearest_control
-from gui_agent.core.runtime.executor import VisionExecutor
+from gui_agent.core.runtime.executor import (
+    REDACTED_ACCESS_VALUE,
+    VisionExecutor,
+)
 
 _DESELECT_OPTION = re.compile(
     r"\b(deselect|unselect|uncheck|remove|toggle off)\b",
@@ -280,7 +283,7 @@ class BrowserExecutor(VisionExecutor):
         # can emit a separate clear_text).
         kind = _focused_kind(client)
         displayed_text = (
-            "[session access value redacted]"
+            REDACTED_ACCESS_VALUE
             if text in getattr(self, "sensitive_text_values", ())
             else repr(text)
         )

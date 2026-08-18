@@ -21,6 +21,7 @@ from gui_agent.core.tool_agent.filter_state import (
     canonical_filter_field,
     canonical_filter_value,
     compile_filter_predicates,
+    diff_filter_sets,
     match_filter_state,
 )
 from gui_agent.core.tool_agent.data_normalization import (
@@ -628,18 +629,13 @@ def _scope_descriptor(
         }
     exact_applied_scope = match_filter_state(required, applied_filter_state) == "met"
     required_fields = set(required)
-    applied_fields = set(applied)
-    conflicting = {
-        field for field in required_fields.intersection(applied_fields)
-        if required[field] != applied[field]
-    }
-    extra = applied_fields.difference(required_fields)
+    filter_diff = diff_filter_sets(required, applied)
     hard_conflicts = {
-        field for field in conflicting
+        field for field in filter_diff["conflicting"]
         if not _is_text_query_field(field, query_fields)
     }
     hard_extras = {
-        field for field in extra
+        field for field in filter_diff["extra"]
         if not _is_text_query_field(field, query_fields)
     }
     hard_blocked = bool(hard_conflicts or hard_extras)
@@ -707,6 +703,13 @@ def _collection_key(
         "route": url,
         "schema": requirement.row_schema,
         "filters": scope.get("applied_filters") or scope.get("requested_filters") or {},
+    })
+
+
+def _visual_collection_key(requirement: DataRequirement, scope: dict[str, Any]) -> str:
+    return "visual:" + _fingerprint({
+        "requirement": requirement.id,
+        "filters": scope["requested_filters"],
     })
 
 
@@ -797,7 +800,7 @@ class PerceptionMaterializer:
         self.platform_time = platform_time
         self.task_goal = ""
         self._on_event = on_event
-        self._expected_totals: dict[tuple[str, str], int] = {}
+        self._expected_totals: dict[tuple[str, str, str], int] = {}
         self._detail_collections: dict[tuple[str, str], _DetailCollectionState] = {}
         self._visual_filter_states: dict[tuple[str, str, str], str] = {}
         cfg = resolve_llm_config("tool_agent.perception")
@@ -910,7 +913,7 @@ class PerceptionMaterializer:
         for extra in (*structured_rows, *(observed_rows or [])):
             if (target := matching_row(extra)) is not None:
                 for key in state.detail_fields:
-                    if key in extra:
+                    if _nonempty(extra.get(key)):
                         state.rows[target][key] = extra[key]
                         observed.add(key)
         current_editor = None
@@ -1318,10 +1321,7 @@ class PerceptionMaterializer:
                         "scope_status": scope["status"],
                         "requested_filters": scope["requested_filters"],
                         "applied_filters": scope["applied_filters"],
-                        "collection_key": "visual:" + _fingerprint({
-                            "requirement": requirement.id,
-                            "filters": scope["requested_filters"],
-                        }),
+                        "collection_key": _visual_collection_key(requirement, scope),
                         "source_scope": "visual_viewport",
                         "window_context": _fingerprint({
                             "route": url,
@@ -1404,14 +1404,14 @@ class PerceptionMaterializer:
                 if self.mode == "enhanced"
                 else None
             )
-            scope_key = (requirement.id, requested_fingerprint)
+            totals_key = (state_scope, requirement.id, requested_fingerprint)
             table_total = table.get("total_records") if table is not None else None
             if scope["status"] == "met" and table_total not in (None, ""):
                 try:
-                    expected_totals[scope_key] = max(0, int(table_total))
+                    expected_totals[totals_key] = max(0, int(table_total))
                 except (TypeError, ValueError):
                     pass
-            expected_total = expected_totals.get(scope_key)
+            expected_total = expected_totals.get(totals_key)
             if assembled is not None:
                 detail_state, assembled_rows, detail_progress = assembled
                 ready = bool(assembled_rows)
@@ -1467,10 +1467,7 @@ class PerceptionMaterializer:
                             "scope_status": "met",
                             "requested_filters": scope["requested_filters"],
                             "applied_filters": scope["applied_filters"],
-                            "collection_key": "visual:" + _fingerprint({
-                                "requirement": requirement.id,
-                                "filters": scope["requested_filters"],
-                            }),
+                            "collection_key": _visual_collection_key(requirement, scope),
                             "source_scope": "linked_detail",
                             "window_context": requirement.id,
                             "at_end": True,
@@ -1500,7 +1497,7 @@ class PerceptionMaterializer:
                         sort_keys=True,
                         default=str,
                     )
-                    == scope_key[1]
+                    == requested_fingerprint
                 ):
                     # Collection state belongs to the Worker, not to one page.
                     # Keep accumulated descriptors visible while the Worker moves

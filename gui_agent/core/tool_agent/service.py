@@ -7,7 +7,7 @@ from dataclasses import asdict, dataclass
 from datetime import datetime
 from pathlib import Path
 from collections.abc import Callable
-from typing import Any, Literal
+from typing import Any
 
 from gui_agent.core.config.preflight import (
     ModelPreflightResult,
@@ -23,10 +23,8 @@ from gui_agent.core.runtime.factory import SetupCheckResult, build_platform
 from gui_agent.core.runtime.platforms import PLATFORMS, PlatformName
 from gui_agent.core.app_router import resolve_app_routes
 from gui_agent.core.self_learning.app_summary import load_knowledge_for_app
+from gui_agent.core.tool_agent.perception import PerceptionMode
 from gui_agent.core.tool_agent.result import execute_tool_agent
-
-
-PerceptionMode = Literal["vision-only", "enhanced"]
 
 
 @dataclass(frozen=True)

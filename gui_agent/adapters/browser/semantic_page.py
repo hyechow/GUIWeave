@@ -125,18 +125,8 @@ def _normalize(s: str) -> str:
     return re.sub(r"\s+", " ", s).strip()
 
 
-# Roles whose `value` field holds the current user-entered / selected value.
-_FORM_ROLES = frozenset({
-    "textbox", "searchbox", "combobox", "listbox", "spinbutton",
-    "slider", "checkbox", "radio", "switch",
-})
-
 # Roles that mark a row as a filter row (skip during grid extraction).
 _FILTER_ROLES = frozenset({"textbox", "searchbox", "combobox", "spinbutton"})
-
-
-def _row_dedup_key(row: dict[str, str]) -> str:
-    return "|".join(f"{k}={v}" for k, v in sorted(row.items()))
 
 
 def read_grid_from_tree(
@@ -150,7 +140,8 @@ def read_grid_from_tree(
     Returns ``[]`` when a table exists but contains no data rows.
     Returns the row dicts otherwise (one dict per data row, keyed by ``returns`` field names).
 
-    Column matching uses the same two-tier normalized fuzzy logic as ``read_from_tree``.
+    Column matching is two-tier: exact normalized-key match first, then best-ratio
+    ``difflib.SequenceMatcher`` fuzzy match.
     Filter rows (cells that contain form-control children) are skipped automatically.
     """
     import re as _re
@@ -279,168 +270,6 @@ def read_grid_from_tree(
         result_rows.append(row_dict)
 
     return result_rows
-
-
-def find_prev_page_ref(tree: list[dict]) -> int | None:
-    """Return the ``backendDOMNodeId`` of the 'previous page' button, or None.
-
-    Mirrors ``find_next_page_ref``; used to rewind a grid that loaded mid-pagination
-    (e.g. a saved UI-grid bookmark restoring a non-1 ``currentPage``) back to page 1
-    before forward collection starts — otherwise rows before the landing page are
-    silently lost (only the landing page onward gets collected).
-    """
-    import re
-
-    _PREV_RE = re.compile(
-        "^(prev(ious)?|\u2039|\u2190|<|\ue629)$|prev.?page",
-        re.IGNORECASE,
-    )
-    for node in tree:
-        if node["role"] == "button" and node.get("ref"):
-            if _PREV_RE.search(node["key"].strip()):
-                return node["ref"]
-    return None
-
-
-def find_next_page_ref(tree: list[dict]) -> int | None:
-    """Return the ``backendDOMNodeId`` of the 'next page' button in the tree, or None."""
-    import re
-
-    _NEXT_RE = re.compile(
-        r"^(next|›|→|>||)$|next.?page",
-        re.IGNORECASE,
-    )
-    for node in tree:
-        if node["role"] == "button" and node.get("ref"):
-            if _NEXT_RE.search(node["key"].strip()):
-                return node["ref"]
-    return None
-
-
-def find_columns_control_ref(tree: list[dict]) -> int | None:
-    """Return the ``backendDOMNodeId`` of a grid's "Columns" visibility-control toggle, or None.
-
-    Magento admin grids hide some columns by default (e.g. the Orders grid does not render
-    ``Customer Email`` out of the box) behind a "Columns" button that opens a panel of
-    per-column checkboxes. Used by the collector to enable a declared collection column the
-    grid isn't currently rendering, instead of silently dropping it. Matches a button/link/
-    combobox whose label is — or starts with — "columns" (the live label is often "Columns"
-    or "Columns 13 of 20")."""
-    for node in tree:
-        if not node.get("ref"):
-            continue
-        if node["role"] not in {"button", "link", "combobox", "menuitem"}:
-            continue
-        nk = _normalize(node["key"])
-        if nk == "columns" or nk.startswith("columns "):
-            return node["ref"]
-    return None
-
-
-def find_column_toggle_refs(tree: list[dict], fields: list[str]) -> list[int]:
-    """Return refs of per-column visibility toggles matching any of ``fields`` (the missing
-    declared columns), for use after the "Columns" control panel is opened.
-
-    Normally called for columns the grid is NOT rendering — i.e. OFF toggles — so clicking turns
-    them ON. As a guard against ever reverting an already-enabled column (the Magento checkbox
-    carries its checked state as ``value`` = "true"/"false"), toggles already ON are skipped.
-    Label match mirrors ``read_grid_from_tree``'s field→header fuzzy logic but requires a strong
-    match to avoid enabling the wrong column. General to any grid/column, not Magento-specific."""
-    from difflib import SequenceMatcher
-
-    norm_fields = [_normalize(f) for f in fields if _normalize(f)]
-    refs: list[int] = []
-    seen: set[int] = set()
-    for node in tree:
-        ref = node.get("ref")
-        if not ref or ref in seen:
-            continue
-        if node["role"] not in {
-            "checkbox", "menuitemcheckbox", "switch", "menuitemradio", "option", "menuitem",
-        }:
-            continue
-        # Skip toggles already ON: never un-check (revert) a column that's already enabled. A
-        # missing column's toggle reads "false"; only an unreliable match could be "true".
-        if (node.get("value") or "").strip().lower() == "true":
-            continue
-        nk = _normalize(node["key"])
-        if not nk:
-            continue
-        for nf in norm_fields:
-            if nk == nf or SequenceMatcher(None, nf, nk).ratio() >= 0.85:
-                refs.append(ref)
-                seen.add(ref)
-                break
-    return refs
-
-
-def read_from_tree(
-    tree: list[dict],
-    returns: list[str],
-    read_spec: str = "",  # noqa: ARG001 — reserved for future LLM tier
-) -> dict[str, str] | None:
-    """Extract ``returns`` field values from a semantic tree (scroll-free, exact).
-
-    Returns a ``{field: value}`` dict when ALL fields are resolved,
-    or ``None`` when one or more fields cannot be matched (caller should fall
-    back to a visual read).  Empty string is a valid resolved value (an empty
-    form control IS a result; "not found" is different from "found and empty").
-
-    Matching is two-tier:
-    1. Exact normalized-key match (case-insensitive, strip punctuation / sort arrow).
-    2. Best-ratio ``difflib.SequenceMatcher`` match above 0.75.
-
-    For form-control roles the node's ``value`` is returned; for data cells /
-    headings the node's ``key`` is the content.
-    """
-    from difflib import SequenceMatcher
-
-    if not tree or not returns:
-        return None
-
-    norm_returns = {f: _normalize(f) for f in returns}
-    result: dict[str, str] = {}
-    unresolved: list[str] = []
-
-    for field in returns:
-        nf = norm_returns[field]
-        best_node: dict | None = None
-        best_score = 0.0
-        best_is_form = False
-
-        for node in tree:
-            nk = _normalize(node["key"])
-            if not nk:
-                continue
-            is_form = node["role"] in _FORM_ROLES
-            if nk == nf:
-                # Exact match — prefer form controls over structural nodes.
-                if best_score < 1.0 or (not best_is_form and is_form):
-                    best_node = node
-                    best_score = 1.0
-                    best_is_form = is_form
-                    if is_form:
-                        break  # can't do better
-            else:
-                score = SequenceMatcher(None, nf, nk).ratio()
-                if score >= 0.75 and score > best_score:
-                    best_node = node
-                    best_score = score
-                    best_is_form = is_form
-
-        if best_node is None:
-            unresolved.append(field)
-        else:
-            if best_is_form:
-                result[field] = best_node["value"]
-            else:
-                # Cells / headings: the accessible name IS the content.
-                result[field] = best_node["key"]
-
-    if unresolved:
-        return None
-
-    return result
 
 
 def build_semantic_tree(cdp_send: Any) -> list[dict]:
