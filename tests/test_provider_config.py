@@ -42,6 +42,18 @@ def test_model_capabilities_keep_qwen_fields_out_of_luna_requests():
     }
 
 
+def test_explicit_thinking_mode_is_bound_at_model_construction():
+    config = ChatProviderConfig(
+        provider="tokenplan",
+        model="deepseek-v4-flash-0731",
+        api_key="test",
+        base_url="http://tokenplan.example/v1",
+        enable_thinking=False,
+    )
+
+    assert chat_model_kwargs(config)["extra_body"] == {"enable_thinking": False}
+
+
 def test_standard_provider_reads_standard_environment(monkeypatch):
     monkeypatch.setenv("STANDARD_MODEL", "qwen3.7-plus")
     monkeypatch.setenv("STANDARD_API_KEY", "sk-test-standard")
