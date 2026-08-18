@@ -42,6 +42,88 @@
 | 708 | 1.0 | ✅ | Show the tax report for this year (today is March 15, 2023) | [report](reports/708.html) |
 | 709 | 1.0 | ✅ | Show the orders report from May 1, 2021 to March 31, 2022 | [report](reports/709.html) |
 
+## shopping（customer-facing）
+
+客户侧 Magento 商店（端口 7770）。与 shopping_admin 的差异：**登录走 `X-M2-Customer-Auto-Login` header 自动登录**（`emma.lopez@gmail.com:Password.123`），跑前需先建立带登录态的 `--storage-state`（或 headed 模式手动登录）；**`--reset-instance` 不支持 shopping**（`_RESETTABLE_CONTAINERS` 仅含 shopping_admin），跑前需手工起好容器：
+
+```bash
+docker run -d --name webarena_verified_shopping \
+  -p 7770:80 -p 7771:8877 \
+  -e "WA_ENV_CTRL_EXTERNAL_SITE_URL=http://192.168.1.103:7770/" \
+  am1n3e/webarena-verified-shopping:latest
+docker exec webarena_verified_shopping env-ctrl init --base-url http://192.168.1.103:7770/
+```
+
+tasks 文件：`webarena-verified/output/shopping_only_hard_tasks.json`（56 个纯 shopping 任务；混合 reddit 的 671–675 已过滤）。跑法：
+
+```bash
+TASKS_FILE=webarena-verified/output/shopping_only_hard_tasks.json \
+WA_HOST=192.168.1.103 bin/webarena 21
+```
+
+**运行顺序（按 P1→P6 难度递进，同模板聚类）**：
+
+| 层 | task | 结果 | 目标 | 报告 |
+| --- | --- | --- | --- | --- |
+| P1 页面内只读 | 21 | | Get reviewer names mentioning small ear cups on current page | |
+| P1 页面内只读 | 25 | | Get reviewer names mentioning print quality with ≤3 stars | |
+| P1 页面内只读 | 163 | | Get review titles with 2 stars or below (current page) | |
+| P1 页面内只读 | 165 | | Get review titles with 2 stars or below (current page) | |
+| P1 页面内只读 | 166 | | Get review titles with 2 stars or below (current page) | |
+| P1 页面内只读 | 124 | | Price range of wireless earphone (min/max) | |
+| P1 页面内只读 | 125 | | Price range of teeth grinding mouth guard (min/max) | |
+| P1 页面内只读 | 226 | | Price range of Amazon basic products (min/max) | |
+| P1 页面内只读 | 387 | | Who gave 4–5 stars for EYZUTAK phone cases | |
+| P1 页面内只读 | 388 | | Who gave 1–2 stars for EYZUTAK phone cases | |
+| P2 导航/检索 | 269 | | Open women shoes category filtered under $25 | |
+| P2 导航/检索 | 271 | | Open makeup remover category filtered under $46.99 | |
+| P2 导航/检索 | 273 | | Open furniture with accent category filtered under $199 | |
+| P2 导航/检索 | 325 | | All mouth night guard listings sorted by desc price | |
+| P2 导航/检索 | 327 | | All iphone 12 phone case listings sorted by name | |
+| P2 导航/检索 | 328 | | All iphone 12 phone case listings sorted by price | |
+| P2 导航/检索 | 284 | | Product page: least expensive shoe storage ≥12 pairs | |
+| P2 导航/检索 | 286 | | Product page: least expensive ssd hard drive ≥1TB | |
+| P2 导航/检索 | 240 | | Product page: most expensive men's Uniforms, Work & Safety | |
+| P3 订单历史 | 50 | | Complete orders past year: count + total (incl. shipping) | |
+| P3 订单历史 | 96 | | Latest order status + arrival date | |
+| P3 订单历史 | 191 | | Total cost of latest order marked "processing" | |
+| P3 订单历史 | 235 | | Order number of most recent under-delivery order | |
+| P3 订单历史 | 301 | | Open order details for most recent processing order | |
+| P3 订单历史 | 142 | | Spent on hair care Jan 2023 (excl. shipping) | |
+| P3 订单历史 | 143 | | Spent on home decoration Jan 2023 (excl. shipping) | |
+| P3 订单历史 | 147 | | Size (width/height) of picture frame bought in 2022 | |
+| P3 订单历史 | 148 | | Color of picture frame bought Sep 2022 | |
+| P3 订单历史 | 149 | | Color of artificial plants bought Feb 2023 | |
+| P3 订单历史 | 320 | | Refund from canceled orders Feb 2023 (incl. shipping) | |
+| P3 订单历史 | 321 | | Refund from canceled orders in 2022 (incl. shipping) | |
+| P3 订单历史 | 323 | | Refund from Mar 2022 canceled order (excl. shipping fee) | |
+| P3 订单历史 | 335 | | Date I last ordered body butter | |
+| P3 订单历史 | 337 | | Date I last ordered olive bread | |
+| P3 订单历史 | 338 | | Date I last ordered toothpaste | |
+| P4 轻写 | 519 | | Add current-page product to wishlist | |
+| P4 轻写 | 520 | | Add current-page product to wishlist | |
+| P4 轻写 | 466 | | Add 2× Hawaiian Bamboo Orchid Roots to wishlist | |
+| P4 轻写 | 521 | | Subscribe to OneStopMarket newsletter | |
+| P4 轻写 | 431 | | Add lowest per-unit-price product from open tabs to cart | |
+| P4 轻写 | 432 | | Add lowest per-unit-price product from open tabs to cart | |
+| P4 轻写 | 435 | | Add lowest per-unit-price product from open tabs to cart | |
+| P5 表单/评价 | 528 | | Fill contact-us refund form (screen protector, don't submit) | |
+| P5 表单/评价 | 529 | | Fill contact-us refund form (stereo system, don't submit) | |
+| P5 表单/评价 | 530 | | Fill contact-us refund form (kitchen organizer, don't submit) | |
+| P5 表单/评价 | 585 | | Rate floor lamp 5★ as Emma Lopez | |
+| P5 表单/评价 | 586 | | Rate Jiffy Mix 4★ as ShoppingEmma | |
+| P5 表单/评价 | 587 | | Rate PS3 accessory 3★ as GamingEmma | |
+| P6 重写·购买 | 507 | | Buy highest-rated ceiling light (budget >1000, empty cart) | |
+| P6 重写·购买 | 508 | | Buy highest-rated NS switch (budget <60, empty cart) | |
+| P6 重写·购买 | 509 | | Buy best-rated men's shoe ≥5 reviews, least expensive | |
+| P6 重写·改地址 | 571 | | Update my address to 231 Willow Way, Chicago | |
+| P6 重写·改地址 | 572 | | Update my address to 654 Aspen Road, Boston | |
+| P6 重写·改地址 | 795 | | Change 2nd-most-recent order delivery address | |
+| P6 重写·改地址 | 797 | | Change first-order-ever delivery address | |
+| P6 重写·改地址 | 798 | | Change most recent non-canceled order delivery address | |
+
+排序理由：P1 纯读当前页（验证登录/感知基线）→ P2 导航+检索（筛选/排序机制）→ P3 账户订单历史（数据网格+SQL 聚合）→ P4 轻写（心愿单/订阅/加购）→ P5 表单/评价（填表+提交语义）→ P6 重写（购买流+地址变更，状态敏感，放最后）。同模板任务相邻，跑通一个即可复用机制。
+
 ## 已知问题/局限
 
 - **task 185 "Give me the material of the products that have 3 units left"：已修复（端到端跑通），score 1.0（run `logs/gui_agent/webarena/browser/20260630_181240`）。** 官方 eval `retrieved_data = ['Fleece', 'Cotton']`。
