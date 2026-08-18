@@ -137,7 +137,7 @@ def test_master_keeps_visual_conditional_dependencies_in_one_worker() -> None:
 
     for rule in (
         "drive a later conditional GUI mutation", "including across application switches",
-        "ResultRefs cannot serve as hidden Worker memory", "including by nesting it in an object",
+        "ResultRefs cannot serve as hidden Worker memory", "consume=\"each\"",
         "authorized authentication method", "exact acceptance set", "never prescribe per-record commits",
         "traverses every prerequisite collection", "compares each candidate", "mutates only nonmatches",
         "candidate-local evidence", "complete—not merely visible—candidate traversal",
