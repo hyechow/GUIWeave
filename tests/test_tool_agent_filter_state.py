@@ -33,6 +33,14 @@ def test_contains_suffix_lowers_to_semantic_predicate_on_base_field() -> None:
     assert predicates["review text"].values == ["ear cups being small"]
 
 
+def test_numeric_bound_max_compiles_to_lte() -> None:
+    # "rating of 3 or less" must be a range predicate, never exact equality
+    # (a bare `star_rating: 3` would drop the 1-star reviewers — live task 25).
+    predicates = compile_filter_predicates({"star_rating": {"max": 3}})
+    assert predicates["star rating"].operator == "lte"
+    assert predicates["star rating"].values == ["3"]
+
+
 def test_display_presents_contains_on_base_field() -> None:
     # Rendered as the bare base-field phrase so perception matches by meaning,
     # never as a literal "must contain" that triggers substring matching.

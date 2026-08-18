@@ -591,6 +591,76 @@ def table_snapshot_js() -> str:
     }}));
   }}
 
+  // Repeating list items (div/li cards) — structured data without a <table>.
+  // Generic: a container holding >=2 structurally similar list items; fields come
+  // from schema.org itemprop attributes, headings, and label+value pairs. This is
+  // how a review/card/product list reads deterministically, so name-text pairing
+  // and star ratings never depend on the vision model.
+  const listVisible = (el) => {{
+    if (!el || !el.isConnected) return false;
+    const s = getComputedStyle(el);
+    if (s.visibility === "hidden" || s.display === "none") {{
+      return text(el).length > 0;  // data inside an inactive tab panel is still readable
+    }}
+    return true;
+  }};
+  const listItemSel = "li, [role='listitem']";
+  for (const item of Array.from(document.querySelectorAll(listItemSel))) {{
+    if (snapshots.length >= MAX_TABLES) break;
+    if (!listVisible(item)) continue;
+    let parent = item.parentElement;
+    while (parent && parent.children.length < 2) parent = parent.parentElement;
+    if (!parent || seen.has(parent)) continue;
+    const siblings = Array.from(parent.children).filter((s) => listVisible(s) && s.matches(listItemSel));
+    if (siblings.length < 2) continue;
+    if (parent.querySelector("table")) continue;  // a real table already owns it
+    const rows = [];
+    const headerSet = [];
+    for (const sib of siblings) {{
+      const row = {{}};
+      for (const el of sib.querySelectorAll("[itemprop]")) {{
+        const key = norm(el.getAttribute("itemprop"));
+        const val = text(el);
+        if (key && val && !(key in row)) row[key] = val;
+      }}
+      const titleEl = sib.querySelector("h1,h2,h3,h4,h5,h6,[class*='title' i],[data-role='title']");
+      if (titleEl) {{
+        const t = text(titleEl);
+        if (t && !Object.values(row).includes(t)) row["title"] = t;
+      }}
+      let best = "";
+      for (const el of sib.querySelectorAll("p,div,[itemprop]")) {{
+        const t = text(el);
+        if (t.length > best.length && !Object.values(row).includes(t)) best = t;
+      }}
+      if (best) row["content"] = best;
+      const ratingEl = sib.querySelector(".rating-result, [class*='rating' i], [itemprop='ratingValue']");
+      const pctAttr = ratingEl
+        ? (ratingEl.getAttribute("title") || ratingEl.getAttribute("aria-label") || text(ratingEl))
+        : "";
+      const pctMatch = pctAttr.match(/(\\d+(?:\\.\\d+)?)%/);
+      if (pctMatch) {{
+        // width percentage of a 5-star row -> star count (20% = 1, 80% = 4).
+        row["ratingValue"] = Math.round(Number(pctMatch[1]) / 20 * 10) / 10;
+      }}
+      rows.push(row);
+      for (const k of Object.keys(row)) if (!headerSet.includes(k)) headerSet.push(k);
+    }}
+    if (headerSet.length < 2 || rows.length < 2) continue;
+    const listHeaders = headerSet;
+    snapshots.push(finalize({{
+      source: "list",
+      caption: nearbyTitle(parent),
+      headers: listHeaders,
+      rows: rows.map((r) => listHeaders.map((k) => (r[k] == null ? "" : r[k]))),
+      rowLinks: rows.map(() => []),
+      totalRecords: null,
+      path: uniquePath(parent),
+      ...viewportState(parent),
+    }}));
+    seen.add(parent);
+  }}
+
   return JSON.stringify({{
     url: location.href,
     title: document.title,

@@ -85,15 +85,30 @@ def _words(text: str) -> set[str]:
     return set(re.findall(r"[a-z0-9]+", text.casefold()))
 
 
+# Generic semantic aliases between schema.org itemprop names and common
+# field-source labels (cross-site mechanism, not a site fact). Lets a repeating
+# list reader's ``author``/``description``/``ratingValue`` headers map onto a
+# requirement's ``reviewer name``/``review text``/``star rating`` sources.
+_SEMANTIC_FIELD_ALIASES = {
+    "author": ("reviewer name", "reviewer", "author name"),
+    "description": ("review text", "review", "text", "comment"),
+    "reviewbody": ("review text", "text"),
+    "ratingvalue": ("star rating", "rating", "stars", "rating value"),
+}
+
+
 def _table_fields(table: dict[str, Any]) -> dict[str, str]:
     labels = list(table.get("headers") or [])
     labels.extend(
         key for row in table.get("rows") or [] if isinstance(row, dict) for key in row
     )
-    return {
-        normalized: str(label) for label in labels
-        if (normalized := _normalize(str(label)))
-    }
+    fields: dict[str, str] = {}
+    for label in labels:
+        normalized = _normalize(str(label))
+        fields[normalized] = str(label)
+        for alias in _SEMANTIC_FIELD_ALIASES.get(normalized, ()):
+            fields.setdefault(_normalize(alias), str(label))
+    return fields
 
 
 def _source_keys(
@@ -110,7 +125,10 @@ def _source_keys(
         source = requirement.field_sources.get(field, field)
         exact = _normalize(source)
         if exact in available:
-            resolved[field] = exact
+            # Resolve to the header's normalized key (row dicts are keyed by
+            # header), which equals `exact` for exact-label tables and is the
+            # itemprop header when an alias matched.
+            resolved[field] = _normalize(available[exact])
             continue
         source_words = _words(source)
         matches = [
@@ -1202,6 +1220,24 @@ class PerceptionMaterializer:
             if table_complete:
                 rows = _structured_rows(requirement, table)
                 scope_rows = rows
+                if _requirement_has_semantic_predicate(requirement) and rows:
+                    # Structured rows carry the complete, accurate text: literal
+                    # matches are authoritative and always collected; the text
+                    # judge only supplements the rows a deterministic substring
+                    # cannot decide (paraphrases). This keeps a literal match like
+                    # "print quality" from being dropped by judge variance.
+                    literal, undecided = [], []
+                    for row in rows:
+                        match = _rows_satisfy_filters(requirement, [row])
+                        if match is True:
+                            literal.append(row)
+                        elif match is None:
+                            undecided.append(row)
+                        # False = a deterministic filter failed; excluded.
+                    rows = literal + (
+                        self._semantic_judge(requirement, undecided)
+                        if undecided else []
+                    )
                 rows = _logical_rows(
                     requirement,
                     rows,
@@ -1689,13 +1725,25 @@ class PerceptionMaterializer:
         prompt = (
             "Transcribed records are below. Keep the subset that satisfies this semantic "
             f"predicate: {json.dumps(predicates, ensure_ascii=False)}\n"
-            "A record matches when its text mentions or describes the phrase, including "
-            "paraphrases; exclude a record only when it visibly does not relate.\n"
+            "A record matches ONLY when its content field states the phrase directly — the "
+            "exact words, or a clear near-paraphrase whose subject is clearly that phrase "
+            "(e.g. 'for very small ears' for 'ear cups being small'). A record that merely "
+            "relates to the general topic (hardware, printing, quality, the product) without "
+            "stating the phrase does NOT match.\n"
             'Return ONLY a JSON object with the 0-based indices of the kept records: '
             '{"matched_indices": [0, 2, ...]}\n'
             f"Records:\n{json.dumps(rows, ensure_ascii=False)}"
         )
-        response = self._reader_invoke([HumanMessage(content=prompt)])
+        # The judge is a precision task — use the stronger perception model, not
+        # the cheap flash reader (flash over-matches "print quality" to printing
+        # topics; plus returns the exact paraphrase set).
+        cfg = getattr(self, "_vision_cfg", None) or self._reader_config()
+        model = getattr(cfg, "model", None) or self.model
+        reader = getattr(self, "_vision", None) or getattr(self, "_screen_reader", None)
+        response = reader.bind(
+            response_format={"type": "json_object"},
+            **chat_request_kwargs(model),
+        ).invoke([HumanMessage(content=prompt)])
         indices = parse_json_object(response.content).get("matched_indices")
         if not isinstance(indices, list):
             return []  # undecided judge → keep nothing; a later frame re-reads

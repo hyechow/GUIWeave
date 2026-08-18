@@ -16,11 +16,19 @@ a task predicate — matching is done separately, after transcription.
 Rules:
 - Transcribe every visible record that fits the schema, matching or not. A record
   is one visually bounded item, card, review, row, or list entry.
+- A list item's identifying label (author, name, id) may sit at the BOTTOM of the
+  item, below its content. That label belongs to the item it is inside — the
+  content above it — never to the following item. Pair each name with its own
+  item's text, in visual order (live: a name was attached to the next review's
+  text, offsetting every pairing).
 - If a record is partially clipped, transcribe the visible portion and mark the
   omitted tail with "…". Never invent content that is not visible.
 - Keep each field inside its record's boundary. Never merge parallel items or
   columns. A value populates a field only when its visible label or role matches
   that field's declared semantics.
+- When a record displays a 1–5 star glyph row, transcribe the EXACT number of
+  filled stars as the numeric value — never round up or count partially filled
+  stars as more than they are.
 - Omit an unreadable/absent optional field; do not fabricate values. Do not use
   outside knowledge or infer off-screen content.
 - Set `found=true` whenever at least one visible record fits the schema — even if

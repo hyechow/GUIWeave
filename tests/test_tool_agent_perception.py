@@ -8,6 +8,7 @@ from types import SimpleNamespace
 import pytest
 from PIL import Image
 
+from gui_agent.adapters.browser.table_reader import normalize_table_snapshots
 from gui_agent.core.tool_agent.filter_state import (
     AppliedFilterState,
     compile_filter_predicates,
@@ -647,6 +648,84 @@ def test_screen_reader_transcribes_all_then_judge_filters_semantic_rows(
         "judge keeps the paraphrase match (Anglebert) and drops non-matches"
     )
     assert extracted["found"] is True
+
+
+def test_numeric_bound_predicate_is_deterministic_not_semantic() -> None:
+    requirement = DataRequirement(
+        id="reviews",
+        description="Reviews with a low star rating",
+        row_schema={"reviewer_name": "string", "star_rating": "number"},
+        field_sources={"reviewer_name": "Reviewer Name", "star_rating": "Star Rating"},
+        field_types={"reviewer_name": "text", "star_rating": "number"},
+        filters={"star_rating": {"max": 3}},
+        coverage="complete",
+    )
+    # A numeric bound is decided deterministically, never deferred to perception.
+    assert _rows_satisfy_filters(requirement, [
+        {"reviewer_name": "a", "star_rating": 1},
+    ]) is True
+    assert _rows_satisfy_filters(requirement, [
+        {"reviewer_name": "a", "star_rating": 4},
+    ]) is False
+
+
+def test_structured_list_snapshot_deterministically_reads_reviews(
+    tmp_path: Path,
+) -> None:
+    """Replay: the real Epson review DOM (captured as a list snapshot) reads
+    deterministically — correct name-text pairing and star ratings, so the gold
+    reviewers surface without any vision. The semantic judge is stubbed to the
+    literal phrase; its paraphrase role is covered separately."""
+    raw = json.loads(
+        (Path(__file__).parent / "fixtures/tool_agent/task25_epson_list_snapshot.json")
+        .read_text(encoding="utf-8")
+    )
+    snaps = normalize_table_snapshots(raw)
+    assert snaps and snaps[0]["source"] == "list"
+    assert len(snaps[0]["rows"]) == 10
+
+    requirement = DataRequirement(
+        id="print_quality_low_rating_reviews",
+        description="Reviews mentioning print quality with rating 3 or less",
+        row_schema={
+            "type": "object",
+            "properties": {
+                "reviewer_name": {"type": "string"},
+                "star_rating": {"type": "number"},
+                "review_text": {"type": "string"},
+            },
+            "required": ["reviewer_name", "star_rating", "review_text"],
+        },
+        field_sources={
+            "reviewer_name": "reviewer name",
+            "star_rating": "star rating",
+            "review_text": "review text",
+        },
+        field_types={"reviewer_name": "text", "star_rating": "number", "review_text": "text"},
+        filters={"star_rating": {"max": 3}, "review_text_contains": "print quality"},
+        coverage="complete",
+    )
+    materializer = _materializer(tmp_path, "enhanced")
+    materializer._semantic_judge = (  # type: ignore[method-assign]
+        lambda _req, rows: [
+            r for r in rows if "print quality" in (r.get("review_text") or "").lower()
+        ]
+    )
+
+    frame, _ = materializer.observe(
+        bundle=FakeBundle(snaps),
+        platform=FakePlatform(),
+        requirements=[requirement],
+        frame_no=1,
+    )
+
+    names = sorted(
+        row["reviewer_name"]
+        for row in materializer.data_store.collection_rows(frame.collections[0].ref)
+    )
+    # Gold (1-star reviewers who mention print quality) — Roxanne and Nelson; the
+    # 4-star reviewers (Goldfish/Imajin8) and non-print-quality 1-stars are excluded.
+    assert names == ["Nelson", "Roxanne Brandon Coffey"]
 
 
 def test_known_filter_mismatch_wins_over_unknown_row() -> None:
