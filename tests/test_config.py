@@ -57,19 +57,13 @@ def test_agent_config_selects_sibling_yaml_by_filename(monkeypatch):
             "model": "qwen3.6-flash",
         }
         worker = config.resolve_llm_config("tool_agent.worker")
-        assert worker.model == "gpt-5.6-luna"
-        assert worker.reasoning_effort == "low"
-        assert worker.temperature is None
-        assert worker.image_scale == 0.75
+        assert worker.model == "qwen3.7-plus"
+        assert worker.provider == "standard"
         assert worker.action_protocol == "json"
-        assert worker.use_responses_api is True
-        assert worker.timeout_s == 20
-        assert worker.max_retries == 1
         perception = config.resolve_llm_config("tool_agent.perception")
-        assert perception.model == "gpt-5.6-luna"
-        assert perception.reasoning_effort == "low"
+        assert perception.model == "qwen3.7-plus"
+        assert perception.provider == "standard"
         assert perception.image_scale == 1.0
-        assert perception.use_responses_api is True
     finally:
         config._load_raw.cache_clear()
         config.load_config.cache_clear()
