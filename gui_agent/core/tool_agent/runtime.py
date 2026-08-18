@@ -45,7 +45,6 @@ from gui_agent.core.tool_agent.action_guard import (
     auth_codes_from_text,
     control_at_point,
     is_candidate_commit,
-    ready_collection,
 )
 from gui_agent.core.tool_agent.data_store import RuntimeDataStore
 from gui_agent.core.tool_agent.orchestrator import (
@@ -863,36 +862,6 @@ class ToolAgentRuntime:
                 attempted_action=bool(journal.executed_tools),
             )
             frame_actions = frame_assessment.allowed_actions
-            if frame_assessment.ready_collection is not None:
-                descriptor = frame_assessment.ready_collection
-                data_store = getattr(self, "data_store", None)
-                if data_store is not None:
-                    descriptor = data_store.collection_descriptor(descriptor.ref)
-                if descriptor.row_count == 0:
-                    self._trace(
-                        "worker_empty_collection",
-                        step=step,
-                        profile=spec.profile,
-                        collection_ref=descriptor.model_dump(mode="json"),
-                    )
-                self._trace(
-                    "worker_complete",
-                    step=step,
-                    profile=spec.profile,
-                    completion_source="runtime_policy",
-                    collection_ref=descriptor.model_dump(mode="json"),
-                )
-                return WorkerOutcome(
-                    phase="completed",
-                    summary=(
-                        "The requested collection scope completed with an authoritative "
-                        "empty result."
-                        if descriptor.row_count == 0
-                        else "Runtime verified the requested collection as complete."
-                    ),
-                    collection_ref=descriptor,
-                    steps=step - 1,
-                )
             worker_tools = self._worker_tools_for_frame(
                 spec,
                 frame_actions,
@@ -1056,14 +1025,7 @@ class ToolAgentRuntime:
                         frame=frame,
                         observed_auth_codes=observed_auth_codes,
                     )
-                    collection_exit_reason = self._incomplete_collection_exit_reason(
-                        capability=action_spec.capability,
-                        args=resolved_guard_args,
-                        state=state,
-                        journal=journal,
-                        frame=frame,
-                    )
-                    blocked_reason = collection_exit_reason or (
+                    blocked_reason = (
                         circuit_decision.reason if circuit_decision.blocked else ""
                     )
                     if blocked_reason:
@@ -1071,11 +1033,7 @@ class ToolAgentRuntime:
                             return WorkerOutcome(
                                 phase="failed",
                                 summary=blocked_reason,
-                                failure_kind=(
-                                    "worker_blocked"
-                                    if collection_exit_reason
-                                    else "action_contract_invalid"
-                                ),
+                                failure_kind="action_contract_invalid",
                                 steps=step - 1,
                             )
                         guard_repair_turn += 1
@@ -1083,12 +1041,7 @@ class ToolAgentRuntime:
                             "status": "blocked_repeated_action",
                             "reason": blocked_reason,
                             "prior_attempts": circuit_decision.prior_attempts,
-                            "instruction": (
-                                "The collection end is not established. Scroll this same "
-                                "collection now; do not navigate away."
-                                if collection_exit_reason else
-                                circuit_decision.instruction
-                            ),
+                            "instruction": circuit_decision.instruction,
                         }
                         self._trace(
                             "worker_action_blocked",
@@ -1221,6 +1174,10 @@ class ToolAgentRuntime:
                 # A consume="each" operator finished one plan element; the cursor
                 # was advanced inside _execute_worker_tool. Continue the loop so
                 # the next frame sees the next element's bound value.
+                # Reset the circuit breaker: each plan element is an independent
+                # GUI phase, and same-structured menus across elements (e.g. every
+                # rename dialog) would otherwise be misread as one repeated action.
+                circuit_breaker.reset()
                 self._trace(
                     "worker_each_advanced",
                     step=step,
@@ -1297,11 +1254,6 @@ class ToolAgentRuntime:
             frame_no=frame_no,
         )
         self._frame_no = frame_no
-        terminal_ref = journal.observe_collection(frame) if journal is not None else ""
-        if spec.profile == "collector" and terminal_ref:
-            frame = frame.model_copy(update={
-                "collections": [self.data_store.mark_scroll_end(terminal_ref)],
-            })
         self._trace(
             "observe",
             frame_id=frame.frame_id,
@@ -1380,13 +1332,15 @@ class ToolAgentRuntime:
         assessment = assessment or assess_frame(
             spec, active_actions, frame,
         )
-        frame_actions = assessment.allowed_actions
         projection = project_worker_context(
             memory=memory,
             frame=frame,
             attempt_contract=worker_attempt_contract(
                 spec,
                 attempted_action=bool(journal.executed_tools),
+                current_element=self._current_each_element(
+                    spec, journal.worker_id
+                ),
             ),
             same_frame_feedback=same_frame_feedback,
         )
@@ -1629,17 +1583,8 @@ class ToolAgentRuntime:
                 frame=frame,
                 observed_auth_codes=observed_auth_codes,
             )
-            policy_reason = (
-                self._incomplete_collection_exit_reason(
-                    capability=action_spec.capability,
-                    args=resolved_args,
-                    state=state,
-                    journal=journal,
-                    frame=frame,
-                )
-            )
-            if circuit_decision.blocked or policy_reason:
-                reason = policy_reason or circuit_decision.reason
+            if circuit_decision.blocked:
+                reason = circuit_decision.reason
                 rejected_before_dispatch = executed == 0
                 journal.record_guard(
                     step=step,
@@ -1655,7 +1600,7 @@ class ToolAgentRuntime:
                 # grows across frames, and escalate once it has been hit a few
                 # times — the Worker is re-scheduling an action it was told not
                 # to retry.
-                if circuit_decision.prior_attempts > 0 and not policy_reason:
+                if circuit_decision.prior_attempts > 0:
                     circuit_breaker.record(circuit_decision)
                     if circuit_decision.prior_attempts >= _BATCH_GUARD_ESCALATION_THRESHOLD:
                         batch_guard_escalated = True
@@ -1787,18 +1732,14 @@ class ToolAgentRuntime:
             if spec.profile == "collector":
                 if frame is None:
                     raise ValueError("collector complete requires a current frame")
-                frame_collection = ready_collection(spec, frame)
-                if frame_collection is None:
-                    raise ValueError(
-                        "collector complete is unavailable until the current frame "
-                        "contains one scope-met, complete CollectionRef"
-                    )
-                descriptor = self.data_store.collection_descriptor(frame_collection.ref)
+                # The Worker certifies exhaustiveness from its own evidence; Runtime
+                # binds whatever rows the perception loop has accumulated so far.
                 requirement = spec.data_requirements[0]
-                if descriptor.requirement_id != requirement.id:
+                descriptor = self.data_store.collection_for_requirement(requirement.id)
+                if descriptor is None:
                     raise ValueError(
-                        f"CollectionRef {descriptor.ref!r} belongs to requirement "
-                        f"{descriptor.requirement_id!r}, not {requirement.id!r}"
+                        f"collector complete has no accumulated rows for requirement "
+                        f"{requirement.id!r}; keep collecting or report_blocked"
                     )
                 return descriptor.model_dump(mode="json"), "complete"
             # Operator with consume="each" (or an array ref) bindings: `complete`
@@ -2040,41 +1981,6 @@ class ToolAgentRuntime:
             f"available: {list(installed)}"
         )
 
-    @staticmethod
-    def _incomplete_collection_exit_reason(
-        *,
-        capability: str,
-        args: dict[str, Any],
-        state: WorkerState,
-        journal: WorkerJournal,
-        frame: MaterializedFrame,
-    ) -> str:
-        if (
-            state.status != "collecting"
-            or capability not in {"tap", "long_press"}
-            or not journal.collection_context
-            or journal.has_downward_scroll_end_evidence(frame)
-            or len(frame.visible_collection_regions) != 1
-        ):
-            return ""
-        region = frame.visible_collection_regions[0]
-        bounds = region.get("bounds") or ()
-        if not region.get("viewport_tail_clipped") or len(bounds) != 4:
-            return ""
-        x, y = args.get("x"), args.get("y")
-        if not isinstance(x, (int, float)) or not isinstance(y, (int, float)):
-            return ""
-        inside = (
-            float(bounds[0]) <= float(x) <= float(bounds[2])
-            and float(bounds[1]) <= float(y) <= float(bounds[3])
-        )
-        if inside:
-            return ""
-        return (
-            "cannot navigate outside a scroll collection while its viewport tail is clipped "
-            "unless the latest traversal scroll returned no_effect"
-        )
-
     def _supported_capabilities(self) -> frozenset[str]:
         capabilities = getattr(self, "_platform_capabilities", None)
         if capabilities is None:
@@ -2168,6 +2074,40 @@ class ToolAgentRuntime:
             )
         except (KeyError, TypeError):
             return False
+
+    def _current_each_element(self, spec: WorkerSpec, worker_id: str) -> str | None:
+        """The current consume="each" plan element as a worker-visible locating hint.
+
+        The bound values are private-value actions the Worker never sees; without
+        this hint a Worker iterating an array plan cannot know which record to
+        locate on screen and falls back to the first visible row. Emit one line
+        per each-binding naming the field the binding's path resolves to.
+        """
+
+        each = [
+            binding for binding in spec.input_bindings
+            if self._binding_is_each(spec, binding)
+        ]
+        if not each:
+            return None
+        lines: list[str] = []
+        for binding in each:
+            try:
+                values = self.data_store.result_value(spec.input_refs[binding.input])
+            except (KeyError, TypeError):
+                continue
+            cursor = self._each_cursors.get((worker_id, binding.input), 0)
+            if not isinstance(values, list) or cursor >= len(values):
+                continue
+            element = values[cursor]
+            try:
+                for part in binding.path:
+                    element = element[part]
+            except (KeyError, TypeError, IndexError):
+                element = None
+            if element is not None:
+                lines.append(f"{binding.name}={element}")
+        return "; ".join(lines) if lines else None
 
     def _refresh_each_actions(
         self,
@@ -2307,8 +2247,6 @@ class ToolAgentRuntime:
             )
             suffix = f" with {collection.get('ref')}" if collection.get("ref") else ""
             return f"Worker completed{suffix}"
-        if event == "worker_empty_collection":
-            return "Worker completed the requested collection scope with zero rows"
         if event == "master_worker_result":
             outcome = payload.get("outcome") if isinstance(payload.get("outcome"), dict) else {}
             return f"Worker {payload.get('worker_id', '?')} returned {outcome.get('phase', '?')}"
@@ -2549,16 +2487,6 @@ class ToolAgentRuntime:
             )
             suffix = f" · {collection.get('ref')}" if collection.get("ref") else ""
             return f"Verification: completed{suffix}"
-        if event == "worker_empty_collection":
-            collection = (
-                entry.get("collection_ref")
-                if isinstance(entry.get("collection_ref"), dict)
-                else {}
-            )
-            return (
-                "Verification: exact scope complete · 0 rows · "
-                f"{collection.get('ref', '?')}"
-            )
         if event == "master_worker_result":
             outcome = entry.get("outcome") if isinstance(entry.get("outcome"), dict) else {}
             return f"Worker outcome: {entry.get('worker_id', '?')} · {outcome.get('phase', '?')}"

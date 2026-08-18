@@ -168,6 +168,16 @@ def _semantic_result(result: Any) -> Any:
     }
 
 
+def _info_coverage(coverage: dict[str, Any]) -> dict[str, Any]:
+    """Project coverage as evidence for reasoning, never as a mechanical verdict.
+
+    The status word is Runtime-internal now that collection completeness is a
+    Worker judgment; exposing it would read as a wait signal it no longer is.
+    """
+
+    return {key: value for key, value in coverage.items() if key != "status"}
+
+
 def _semantic_controls(controls: list[dict[str, Any]]) -> list[dict[str, Any]]:
     """Expose controls that can be grounded in the current screenshot."""
 
@@ -219,69 +229,8 @@ class WorkerJournal:
 
     worker_id: str
     events: list[WorkerJournalEvent] = field(default_factory=list)
-    collection_context: str = ""
-    collection_ref: str = ""
-    last_scroll_no_effect: bool = False
-    last_scroll_direction: str = ""
-    last_scroll_collection_ref: str = ""
-    last_scroll_point: tuple[float, float] | None = None
     established_fact_texts: set[str] = field(default_factory=set, repr=False)
     executed_tools: set[str] = field(default_factory=set, repr=False)
-
-    def observe_collection(self, frame: MaterializedFrame) -> str:
-        """Return the collection ref carrying downward-scroll end evidence, if any."""
-
-        if len(frame.visible_collection_regions) != 1:
-            self.collection_ref = ""
-            return ""
-        self.collection_ref = (
-            frame.collections[0].ref if len(frame.collections) == 1 else ""
-        )
-        region = frame.visible_collection_regions[0]
-        bounds = region.get("bounds")
-        context = str(region.get("caption") or "").strip()
-        if isinstance(bounds, (list, tuple)) and len(bounds) == 4:
-            top = float(bounds[1])
-            anchors = [
-                control for control in frame.controls
-                if control.get("selected") is True
-                and control.get("label")
-                and isinstance(control.get("rect"), dict)
-                and float(control["rect"].get("y") or 0)
-                + float(control["rect"].get("h") or 0) / 2 <= top
-            ]
-            if anchors:
-                context = str(max(
-                    anchors,
-                    key=lambda control: float(control["rect"].get("y") or 0),
-                )["label"]).strip()
-        if context:
-            self.collection_context = context[:120]
-        return (
-            self.collection_ref
-            if self.collection_ref == self.last_scroll_collection_ref
-            and self.has_downward_scroll_end_evidence(frame)
-            else ""
-        )
-
-    def has_downward_scroll_end_evidence(self, frame: MaterializedFrame) -> bool:
-        """Whether facts show a no-effect downward scroll on the sole collection."""
-
-        if not (
-            self.last_scroll_no_effect
-            and self.last_scroll_direction == "down"
-            and self.last_scroll_point is not None
-            and len(frame.visible_collection_regions) == 1
-        ):
-            return False
-        bounds = frame.visible_collection_regions[0].get("bounds") or ()
-        if len(bounds) != 4:
-            return False
-        x, y = self.last_scroll_point
-        return (
-            float(bounds[0]) <= x <= float(bounds[2])
-            and float(bounds[1]) <= y <= float(bounds[3])
-        )
 
     def record_established_fact(self, *, event_ref: str, text: str) -> None:
         """Retain a model observation; disproven paths and reaffirmations stay durable.
@@ -347,25 +296,6 @@ class WorkerJournal:
         )
         if result_status == "executed":
             self.executed_tools.add(tool)
-            if result.get("action_type") == "scroll":
-                self.last_scroll_no_effect = bool(result.get("no_effect"))
-                self.last_scroll_direction = str(
-                    result.get("direction") or args.get("direction") or ""
-                )
-                self.last_scroll_collection_ref = self.collection_ref
-                x = args.get("x")
-                y = args.get("y")
-                self.last_scroll_point = (
-                    float(x) if isinstance(x, (int, float)) else 500.0,
-                    float(y) if isinstance(y, (int, float)) else 500.0,
-                )
-            else:
-                self.collection_context = ""
-                self.collection_ref = ""
-                self.last_scroll_no_effect = False
-                self.last_scroll_direction = ""
-                self.last_scroll_collection_ref = ""
-                self.last_scroll_point = None
         is_exception = isinstance(result, dict) and bool(result.get("error"))
         is_no_effect = isinstance(result, dict) and bool(result.get("no_effect"))
         candidate_commit = isinstance(result, dict) and bool(result.get("candidate_commit"))
@@ -607,7 +537,7 @@ def _frame_payload(
                 "requirement_id": item.requirement_id,
                 "provider": item.provider,
                 "row_count": item.row_count,
-                "coverage": item.coverage,
+                "coverage": _info_coverage(item.coverage),
             }
             for item in frame.chunks
         ],
@@ -616,7 +546,7 @@ def _frame_payload(
                 "ref": item.ref,
                 "requirement_id": item.requirement_id,
                 "row_count": item.row_count,
-                "coverage": item.coverage,
+                "coverage": _info_coverage(item.coverage),
             }
             for item in frame.collections
         ],

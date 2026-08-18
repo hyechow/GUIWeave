@@ -7,6 +7,7 @@ import html
 import json
 import re
 import time
+from fnmatch import fnmatch
 from dataclasses import dataclass
 from datetime import datetime
 from decimal import Decimal, InvalidOperation
@@ -536,13 +537,21 @@ def _rows_satisfy_filters(
             field_type = requirement.field_types.get(row_field)
             field_name = requirement.field_sources.get(row_field, row_field)
             if predicate.operator == "eq":
-                matches = _compare_values(
-                    value,
-                    predicate.values[0],
-                    field_name=field_name,
-                    field_type=field_type,
-                    platform_year=platform_year,
-                ) == 0
+                expected = predicate.values[0]
+                # Wildcard filters (`bid_*` prefix, `*.txt` suffix, `*bid_*`
+                # substring) match literal text by pattern, not by equality.
+                # This is the DSL surface for "starts with / ends with / contains";
+                # the Master emits these from user predicates like 前缀为 bid_。
+                if isinstance(expected, str) and ("*" in expected or "?" in expected):
+                    matches = fnmatch(str(value), expected)
+                else:
+                    matches = _compare_values(
+                        value,
+                        expected,
+                        field_name=field_name,
+                        field_type=field_type,
+                        platform_year=platform_year,
+                    ) == 0
             elif predicate.operator == "gte":
                 matches = _compare_values(
                     value,

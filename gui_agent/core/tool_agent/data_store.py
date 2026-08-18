@@ -299,45 +299,6 @@ class RuntimeDataStore:
         except KeyError as exc:
             raise KeyError(f"unknown CollectionRef {ref!r}") from exc
 
-    def mark_scroll_end(self, ref: str) -> CollectionRef:
-        """Record the terminal boundary proven by a downward scroll with no effect."""
-        collection = self.collection_descriptor(ref)
-        coverage = collection.coverage
-        scrollable = coverage.get("source_scope") == "visual_collection" or (
-            coverage.get("source_scope") == "structured_collection"
-            and coverage.get("movement", {}).get("type") == "scroll"
-        )
-        if not scrollable:
-            return collection
-        started = coverage.get("start_seen") is True
-        coverage = {
-            **coverage,
-            "at_end": True,
-            "coverage_evidence": "downward_scroll_no_effect"
-            + ("" if started else "_without_start"),
-        }
-        structured = coverage.get("source_scope") == "structured_collection"
-        coverage["status"] = _coverage_status(
-            scope_status=str(coverage.get("scope_status") or "met"),
-            requested=str(coverage.get("requested") or "complete"),
-            row_count=collection.row_count,
-            structured=structured,
-            known_total=coverage.get("known_total"),
-            page_count=coverage.get("page_count"),
-            all_pages=bool(
-                coverage.get("page_count") is not None
-                and coverage.get("pages_seen")
-                == list(range(1, int(coverage["page_count"]) + 1))
-            ),
-            surface_complete=bool(started and structured),
-            at_end=True,
-            start_seen=coverage.get("start_seen"),
-            has_next_page=False,
-        )
-        collection = collection.model_copy(update={"coverage": coverage})
-        self._collections[ref] = collection
-        return collection
-
     def collection_for_requirement(self, requirement_id: str) -> CollectionRef | None:
         """Return the latest accumulated collection for one logical requirement."""
         collection = self._collections.get(f"collection:{requirement_id}")

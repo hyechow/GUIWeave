@@ -190,8 +190,15 @@ def worker_attempt_contract(
     spec: WorkerSpec,
     *,
     attempted_action: bool = False,
+    current_element: str | None = None,
 ) -> str:
-    """Serialize the binding attempt beside each current frame."""
+    """Serialize the binding attempt beside each current frame.
+
+    ``current_element`` is the worker-visible locating hint for the current
+    consume="each" plan element (Runtime-computed from the shared cursor). The
+    bound values themselves stay private; without this hint a Worker iterating
+    an array plan cannot know which record to locate on screen.
+    """
 
     payload = {
         "approach": spec.strategy.approach,
@@ -199,6 +206,8 @@ def worker_attempt_contract(
         **spec.model_dump(mode="json", exclude={"input_refs", "strategy"}),
         "input_names": sorted(spec.input_refs),
     }
+    if current_element:
+        payload["current_element"] = current_element
     profile_rules = (
         "Collector rules for this attempt:\n"
         "- Form recall queries from natural equivalents and distinctive terms. Normalized "
@@ -218,8 +227,11 @@ def worker_attempt_contract(
         "not a completed empty result.\n"
         "- Recall candidates without changing semantic predicates, let Runtime validate "
         "requirement scope, then collect only scope-matched evidence.\n"
-        "- Drive ordinary collection traversal from coverage and explicit end evidence; a "
-        "clipped or repeated record is not the end.\n"
+        "- You own the exhaustiveness judgment: narrow the scope with an exact filter or "
+        "search first, then traverse; treat the collection as complete only when your own "
+        "evidence says nothing remains (the filtered list fits the viewport, or further "
+        "scrolling yields no new rows). Call `complete` on that judgment and state the "
+        "evidence; Runtime never certifies completeness.\n"
         if spec.profile == "collector"
         else (
             "Operator rules for this attempt:\n"
@@ -312,11 +324,15 @@ def dynamic_worker_tools(
     )
     if completion_mode != "unavailable":
         description = (
-            "Complete this operator after its target UI state is visibly confirmed."
+            "Complete this operator after its target UI state is visibly confirmed. "
+            "With element-wise array bindings, call complete after EACH element so "
+            "Runtime advances the cursor until the plan is exhausted."
             if completion_mode == "operator"
             else (
-                "Complete this collector using the valid complete CollectionRef already "
-                "bound by Runtime for the current frame."
+                "Complete this collector when your own evidence shows the requested "
+                "scope is fully acquired; state in your summary what established "
+                "exhaustiveness (exact filter applied, list traversed to its end). "
+                "Runtime does not certify completeness."
             )
         )
         tools.append(_with_worker_state(model_tool(

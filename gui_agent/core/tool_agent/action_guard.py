@@ -13,7 +13,6 @@ from typing import Any, Literal
 from urllib.parse import urlsplit
 
 from gui_agent.core.tool_agent.contracts import (
-    CollectionRef,
     DynamicActionSpec,
     MaterializedFrame,
     WorkerSpec,
@@ -61,6 +60,14 @@ _DEFAULT_BLOCK_INSTRUCTION = (
     "Treat the Runtime guard as authoritative. Do not retry the blocked action; "
     "advance from the current observation or choose a materially different capability."
 )
+# A Worker hallucination: `{{new_name}}` (or `{new_name}`) typed literally because
+# the model could not see the Runtime-injected binding value. It is never a real
+# input value — binding actions inject actual values and a generic `type` must fill
+# a literal visible string. Blocking here turns a silent phantom-file mutation into
+# a correctable action rejection.
+_TEMPLATE_PLACEHOLDER_RE = re.compile(
+    r"\{\{?\s*[a-zA-Z_][a-zA-Z0-9_]*\s*\}?\}"
+)
 
 
 @dataclass(frozen=True)
@@ -72,7 +79,6 @@ class NavigationAdmission:
 @dataclass(frozen=True)
 class FrameAssessment:
     allowed_actions: list[DynamicActionSpec]
-    ready_collection: CollectionRef | None = None
     completion_mode: Literal["unavailable", "operator", "collector"] = "unavailable"
 
 
@@ -119,17 +125,6 @@ def assess_navigation_url(
     return NavigationAdmission("allow")
 
 
-def ready_collection(spec: WorkerSpec, frame: MaterializedFrame) -> CollectionRef | None:
-    if spec.profile != "collector" or not spec.data_requirements:
-        return None
-    requirement_id = spec.data_requirements[0].id
-    return next((item for item in frame.collections
-        if item.requirement_id == requirement_id
-        and item.coverage.get("scope_status") == "met"
-        and item.coverage.get("status") == "complete"
-    ), None)
-
-
 def assess_frame(
     spec: WorkerSpec,
     actions: list[DynamicActionSpec],
@@ -146,13 +141,13 @@ def assess_frame(
             allowed,
             completion_mode="unavailable",
         )
-    collection = ready_collection(spec, frame)
+    # Collection completeness is a Worker-judged claim: the collector decides from
+    # its own evidence when the scope is fully acquired. Runtime never certifies it,
+    # so `complete` is offered unconditionally for either profile on a ready frame.
     mode: Literal["unavailable", "operator", "collector"] = (
-        "operator" if spec.profile == "operator"
-        else "collector" if collection is not None
-        else "unavailable"
+        "operator" if spec.profile == "operator" else "collector"
     )
-    return FrameAssessment(actions, collection, mode)
+    return FrameAssessment(actions, completion_mode=mode)
 
 
 def auth_codes_from_text(text: str) -> set[str]:
@@ -276,6 +271,12 @@ def _action_boundary_error(
         str((control or {}).get("label") or "").casefold(),
     ))
     text = str(args.get("text") or "").strip()
+    if capability == "type" and _TEMPLATE_PLACEHOLDER_RE.search(text):
+        return (
+            "blocked type: text contains a template placeholder like '{{new_name}}', "
+            "which is not a real value; use the Runtime binding action for this input "
+            "(e.g. new_name) or type the exact visible value"
+        )
     if (
         capability == "type"
         and re.fullmatch(r"\d{4,8}", text)
@@ -345,8 +346,7 @@ def progress_signature(frame: MaterializedFrame) -> str:
             for key, value in sorted(frame.requirement_scopes.items())
         },
         "collections": [
-            (item.requirement_id, item.row_count, item.coverage.get("status"),
-             item.coverage.get("pages_seen"))
+            (item.requirement_id, item.row_count)
             for item in frame.collections
         ],
         "visible": frame.visible_collection_regions,
