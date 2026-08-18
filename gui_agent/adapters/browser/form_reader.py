@@ -189,17 +189,26 @@ def form_controls_js() -> str:
   // 703 discount_amount),planner 也不知道该滚过去。改为报全部已渲染控件 + in_viewport 标志,由消费
   // 方决定是否先滚动。原 keepForRead 只把 select/textarea 豁免视口(Material below-fold),现统一到全部。
   const labelFromContainer = (el) => {
+    // Decorative/auxiliary text (error messages, input prefixes/suffixes, hints) never names the
+    // control — skip it so the first REAL label in the container wins.
+    const decorative = (lbl) => {
+      if (!lbl) return true;
+      if (clean(lbl.getAttribute('role')) === 'alert') return true;
+      const cls = clean(lbl.className || '').toLowerCase();
+      return /error|prefix|suffix|hint|note|addon/.test(cls);
+    };
     const boxes = [
-      el.closest('.admin__field'),
       el.closest('.field'),
       el.closest('[class*=field]'),
       el.parentElement,
       el.parentElement && el.parentElement.parentElement,
     ].filter(Boolean);
     for (const box of boxes) {
-      const lbl = box.querySelector('label,.admin__field-label,.label,[data-label]');
-      const text = clean(lbl && (lbl.innerText || lbl.textContent || lbl.getAttribute('data-label')));
-      if (text) return text;
+      for (const lbl of Array.from(box.querySelectorAll('label,.label,[data-label]'))) {
+        if (decorative(lbl)) continue;
+        const text = clean(lbl.innerText || lbl.textContent || lbl.getAttribute('data-label'));
+        if (text) return text;
+      }
     }
     return '';
   };
@@ -316,13 +325,30 @@ def form_controls_js() -> str:
     candidates.sort((a, b) => b.r.bottom - a.r.bottom);
     return candidates[0] ? candidates[0].text : '';
   };
+  const optionRowOf = (el) => {
+    // Repeated option rows without table markup (choice lists): the row is the nearest ancestor
+    // whose same-tag siblings each hold a checkbox/radio of their own. Structural shape, not
+    // class vocabulary.
+    const type = clean(el.getAttribute('type') || el.type || '').toLowerCase();
+    if (!['checkbox', 'radio'].includes(type)) return null;
+    for (let node = el.parentElement, depth = 0; node && depth < 3; depth += 1, node = node.parentElement) {
+      const parent = node.parentElement;
+      if (!parent) break;
+      const siblings = Array.from(parent.children).filter((child) => child.tagName === node.tagName);
+      if (
+        siblings.length >= 2
+        && siblings.every((child) => child.querySelector('input[type="checkbox"],input[type="radio"]'))
+      ) return node;
+    }
+    return null;
+  };
   const repeatedGroupOf = (el) => {
     // Preserve field association inside repeated form collections. Flat control text cannot tell
     // whether a value belongs to the intended column of an option/line-item row. This is generic
-    // DOM structure (table/grid/field-option), not an application vocabulary.
-    const row = el.closest('tr,[role="row"],[data-role="row"],.admin__field-option');
+    // DOM structure (table/grid/repeated option rows), not an application vocabulary.
+    const row = el.closest('tr,[role="row"],[data-role="row"]') || optionRowOf(el);
     if (!row) return null;
-    const owner = row.closest('table,[role="grid"],fieldset,.admin__fieldset');
+    const owner = row.closest('table,[role="grid"],fieldset,[role="group"]');
     const siblings = row.parentElement ? Array.from(row.parentElement.children) : [];
     const index = Math.max(0, siblings.indexOf(row));
     const ownerKey = clean(
@@ -340,14 +366,24 @@ def form_controls_js() -> str:
   const requiredOf = (el) => {
     const own = clean(el.getAttribute('aria-required')).toLowerCase();
     const dataValidate = clean(el.getAttribute('data-validate')).toLowerCase();
-    const cls = clean(el.className || '').toLowerCase();
-    const holder = el.closest('._required,[aria-required="true"],[data-validate*="required"],.required-entry');
+    // Class-based "required" markers: the word is language-level UI vocabulary; exclude
+    // negations ("not-required") so they can't false-positive.
+    const markedRequired = (node) => {
+      const cls = clean((node && node.className) || '').toLowerCase();
+      return /(?:^|[-_\s])required(?:[-_\s]|$)/.test(cls) && !/(?:^|[-_\s])not[-_]required/.test(cls);
+    };
+    const holder = el.closest('[aria-required="true"],[data-validate*="required"],[class*="required"]');
+    const holderRequired = Boolean(holder) && (
+      clean(holder.getAttribute('aria-required')).toLowerCase() === 'true'
+      || clean(holder.getAttribute('data-validate')).toLowerCase().includes('required')
+      || markedRequired(holder)
+    );
     return Boolean(
       el.required
       || own === 'true'
       || dataValidate.includes('required')
-      || cls.includes('required-entry')
-      || holder
+      || markedRequired(el)
+      || holderRequired
     );
   };
   const kindOf = (el) => {
@@ -367,10 +403,11 @@ def form_controls_js() -> str:
     if (tag === 'TEXTAREA') return 'textarea';
     if (role === 'combobox') return 'aria_combobox';
     if (role === 'listbox') return 'aria_listbox';
-    // Magento selectmenu: <input> 是自定义下拉的显示框,选项在 .selectmenu-items 里、click 绑在
-    // 选项 <button>(.selectmenu-item-action) 上。识别为 selectmenu(选选项,非 type 输入),否则被当
-    // text_input → planner 用 type 填值,改了显示框却不触发 setSize(见 task 63 per page 复盘)。
-    if (tag === 'INPUT' && el.closest('.selectmenu')) return 'selectmenu';
+    // selectmenu-style widget (widget-family vocabulary, like "datepicker"): a readonly display
+    // <input> whose options render as a clickable list. Recognize it as an option selector, not
+    // a text field — otherwise the planner types into the display box and never fires the
+    // widget's selection handler (task 63 per-page control).
+    if (tag === 'INPUT' && el.closest('[class*="selectmenu" i]')) return 'selectmenu';
     if (tag === 'INPUT') return (el.type || 'text').toLowerCase() + '_input';
     return role || tag.toLowerCase();
   };
@@ -407,7 +444,6 @@ def form_controls_js() -> str:
   const statusSelector = [
     '[role="alert"]',
     '[role="status"]',
-    '[data-ui-id^="message-"]',
     '.message-error',
     '.message-success',
     '.message-warning',
@@ -457,7 +493,7 @@ def form_controls_js() -> str:
       if (holderAttr) return holderAttr.toLowerCase();
     }
     const sectionTitle = el.closest('.fieldset-wrapper-title') || el;
-    const wrapper = sectionTitle.closest('.fieldset-wrapper, .admin__collapsible-block-wrapper');
+    const wrapper = sectionTitle.closest('.fieldset-wrapper,[class*="collapsible"],[class*="accordion"]');
     if (wrapper) {
       const content = Array.from(wrapper.children || []).find(child => {
         if (child === sectionTitle) return false;
@@ -576,10 +612,13 @@ def form_controls_js() -> str:
       )
       ? 'submit'
       : '';
-    const isFilter = el.id.includes('_filter_')
-      || !!el.closest('[data-role="filter-form"]')
-      || !!el.closest('.admin__data-grid-filters');
-    const isDatepicker = el.classList && el.classList.contains('_has-datepicker');
+    // Filter-region detection: a container named for filtering (data-role/data-part/class token
+    // "filter") that hosts controls but NOT the result grid itself. The grid guard keeps results
+    // panels and page-level wrappers from marking every control inside them as a filter.
+    const filterRegion = el.closest('[data-role*="filter" i],[data-part*="filter" i],[class*="filter" i]');
+    const inFilterRegion = Boolean(filterRegion) && !filterRegion.querySelector('table,[role="grid"]');
+    const isFilter = el.id.includes('_filter_') || inFilterRegion;
+    const isDatepicker = Boolean(el.matches && el.matches('[class*="datepicker" i],[data-provide="datepicker"]'));
     const label = isFilter ? (gridHeaderLabelOf(el) || labelOf(el)) : labelOf(el);
     const item = {
       label: cut(label, 80),
@@ -631,12 +670,22 @@ def form_controls_js() -> str:
       item.selected_text_primary = cut(selTexts[0] || '', 80);
       item.options = opts.map(o => cut(o.textContent || o.label || o.value, 80)).filter(Boolean).slice(0, 60);
     } else if (kind === 'selectmenu') {
-      // selectmenu:value=input 显示值;options 从 .selectmenu-items 选项 button 文本抓
-      // (折叠时选项在 DOM 但不可见,querySelectorAll 不受 visible 限制,仍能取到)。
+      // selectmenu-style widget: value = display input's text; options = the innermost clickable
+      // items in the widget's option list (kept in the DOM while collapsed, so visibility does
+      // not restrict querySelectorAll). The widget root is the OUTERMOST contiguous
+      // selectmenu-marked ancestor — inner wrappers (a value box holding only the input) match
+      // the same token but hold no options.
       item.value = cut(el.value, 80);
-      const sm = el.closest('.selectmenu');
-      const optEls = sm ? Array.from(sm.querySelectorAll('.selectmenu-items .selectmenu-item-action, .selectmenu-items button')) : [];
-      item.options = optEls.map(o => cut(o.textContent || '', 80)).filter(Boolean).slice(0, 60);
+      let sm = null;
+      for (let n = el.parentElement, d = 0; n && d < 5; d += 1, n = n.parentElement) {
+        if (n.matches && n.matches('[class*="selectmenu" i]')) { sm = n; } else if (sm) break;
+      }
+      const optAll = sm ? Array.from(sm.querySelectorAll('[role="option"],[role="menuitem"],button,a[href],li')) : [];
+      // A widget's own trigger (toggle button, haspopup element) is chrome, not an option.
+      const optEls = optAll.filter((o) => o !== el && !o.contains(el)
+        && !(o.matches && o.matches('[aria-haspopup],[class*="toggle" i],[class*="trigger" i],[class*="button" i]'))
+        && !optAll.some((other) => other !== o && o.contains(other)));
+      item.options = [...new Set(optEls.map(o => cut(o.textContent || '', 80)).filter(Boolean))].slice(0, 60);
     } else if (['checkbox', 'radio'].includes((el.type || '').toLowerCase())) {
       item.value = el.checked ? 'on' : 'off';
     } else if ((el.type || '').toLowerCase() === 'password') {
@@ -670,7 +719,7 @@ def form_controls_js() -> str:
       const forLabel = document.querySelector(`label[for="${css}"]`);
       return forLabel && rendered(forLabel) ? forLabel : null;
     }).find(Boolean);
-    const box = radios[0].closest('fieldset, .admin__field, .field, [class*="field"]') || radios[0];
+    const box = radios[0].closest('fieldset, .field, [class*="field"]') || radios[0];
     const rectEl = visibleLabel || (rendered(box) ? box : radios[0]);
     const optionLabels = radios.map((radio) => {
       const optionLabel = radio.labels && radio.labels[0]

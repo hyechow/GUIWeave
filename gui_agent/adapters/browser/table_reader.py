@@ -54,13 +54,7 @@ def table_snapshot_js() -> str:
   const linksOf = (row, selector) => Array.from(row.querySelectorAll(selector))
     .filter(visible).slice(0, MAX_CELLS).map(cellLink);
   const titleSelectors = [
-    ".dashboard-item-title",
-    ".admin__page-section-title",
-    ".page-title",
-    ".panel-title",
-    ".box-title",
-    ".block-title",
-    ".title",
+    "[class*='title' i]",
     "[data-role='title']",
     "[role='heading']",
     "legend",
@@ -191,13 +185,19 @@ def table_snapshot_js() -> str:
         'select',
         'input',
         '[role="combobox"]',
-        '.selectmenu input',
+        '[class*="selectmenu" i] input',
         '[class*="page-size" i] input',
         '[class*="per-page" i] input',
       ].join(',')));
       for (const control of candidates) {{
         const label = labelTextFor(control, root);
-        let menu = control.closest('.selectmenu, [class*="page-size" i], [class*="per-page" i]');
+        // The widget root is the outermost CONTIGUOUS matching ancestor: inner wrappers (a value
+        // box around the display input) match the same tokens but hold neither label nor options.
+        let menu = null;
+        for (let n = control.parentElement, d = 0; n && d < 5; d += 1, n = n.parentElement) {{
+          if (n.matches && n.matches('[class*="selectmenu" i], [class*="page-size" i], [class*="per-page" i]')) {{ menu = n; }}
+          else if (menu) break;
+        }}
         const nearby = norm((menu || control.parentElement || control).textContent || "");
         const attrs = norm([
           control.getAttribute("name"),
@@ -216,10 +216,7 @@ def table_snapshot_js() -> str:
         const optionNodes = Array.from(menu.querySelectorAll([
           'option',
           '[role="option"]',
-          '.selectmenu-item',
-          '.selectmenu-items li',
-          '.selectmenu-items button',
-          '.selectmenu-items a',
+          '[class*="selectmenu" i] li',
           'button',
           'a',
         ].join(',')));
@@ -251,8 +248,8 @@ def table_snapshot_js() -> str:
   }};
 
   const PAGER_SELECTORS = [
-    '.pager', '.pagination', '[role="navigation"][aria-label*="page" i]',
-    '.pages', '.page-numbers', '.data-grid-paginator', '.admin__data-grid-pager',
+    '[class*="pager" i]', '[class*="paginat" i]', '.pages', '.page-numbers',
+    '[role="navigation"][aria-label*="page" i]',
     'nav[aria-label*="pagination" i]', '[aria-label*="page" i]',
   ].join(',');
 
@@ -341,9 +338,9 @@ def table_snapshot_js() -> str:
       page_count = parseInt(pageMatch[2]);
     }}
 
-    // Magento-style: <input data-ui-id="current-page-input" value="N"> + <label>of M</label>.
-    // The input id is often a dynamic number, so prefer the label's `for` link over id patterns.
-    const pageLabels = Array.from(pager.querySelectorAll('label.admin__control-support-text, label[for]'));
+    // Paged-pager pattern: an <input> holding the current page plus a label reading "of M".
+    // The input id is often dynamic, so prefer the label's `for` link over id patterns.
+    const pageLabels = Array.from(pager.querySelectorAll('label'));
     for (const label of pageLabels) {{
       const labelText = label.innerText || '';
       if (!/\\bof\\s+\\d+/i.test(labelText)) continue;
@@ -359,16 +356,16 @@ def table_snapshot_js() -> str:
       }}
     }}
 
-    // Other Magento variants: <input id="*_page-current" value="N">.
+    // Other variants: the current-page input identified by generic id/name/label patterns.
     if (!page_index) {{
-      const pageInput = pager.querySelector('input[data-ui-id="current-page-input" i], input[id*="page-current" i], input[name="page" i]');
+      const pageInput = pager.querySelector('input[id*="page-current" i], input[name="page" i], input[aria-label*="page" i]');
       if (pageInput) {{
         const val = parseInt(pageInput.value);
         if (val) page_index = val;
       }}
     }}
     if (!page_count) {{
-      const label = pager.querySelector('label[for*="page-current" i], label.admin__control-support-text');
+      const label = pager.querySelector('label[for*="page-current" i]');
       if (label) {{
         const span = label.querySelector('span');
         const totalText = span ? span.innerText : label.innerText;

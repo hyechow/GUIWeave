@@ -35,11 +35,12 @@ def _wants_multi_select_deselect(description: object) -> bool:
 
     return bool(_DESELECT_OPTION.search(str(description or "")))
 
-# jQuery UI datepicker capability. A non-bubbling ``change`` reaches the
-# widget's direct binding without triggering delegated form behavior.
+# jQuery UI datepicker capability (and widgets built on it — they all mark the input with a
+# *datepicker* class). A non-bubbling ``change`` reaches the widget's direct binding without
+# triggering delegated form behavior.
 _JQUERY_DATEPICKER_SET_JS = r"""(() => {{
   const el = document.activeElement;
-  if (!el || !el.classList.contains('_has-datepicker') || !window.jQuery) return false;
+  if (!el || !el.matches('[class*="datepicker" i]') || !window.jQuery) return false;
   const raw = {value};
   const iso = raw.match(/^(\d{{4}})-(\d{{2}})-(\d{{2}})$/);
   let date;

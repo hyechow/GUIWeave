@@ -42,9 +42,19 @@ _NAVIGATION_COMMIT_TIMEOUT_MS = 5_000
 TEXT_RETARGET_RADIUS_PX = 220
 _CDP_PROXY_ENV_LOCK = threading.Lock()
 
-# Wheel anchors must not land on native selects or custom ARIA/admin choice
-# widgets. A closed tabindex=0 combobox looks like empty surface to tag-only
+# Wheel anchors must not land on native selects or custom choice-widget
+# triggers. A closed focusable combobox looks like empty surface to tag-only
 # probes, so a center wheel opens the option list instead of scrolling.
+# Layered generic rules — no vendor classes:
+#  - UNSAFE_SCROLL_SELECTOR: unconditional tag/ARIA-role exclusions.
+#  - _UNSAFE_SCROLL_POPUP_SELECTOR: elements that DECLARE popup semantics
+#    (aria-haspopup / aria-expanded / framework dropdown binding). A closed
+#    trigger reads "false", so aria-expanded matches any value.
+#  - _UNSAFE_SCROLL_FOCUSABLE_SELECTOR: focusable non-widget surface — the
+#    generic form of the "closed tabindex=0 combobox" failure class.
+# The two attribute layers only disqualify trigger-SIZED boxes (see
+# _UNSAFE_SCROLL_MAX_HEIGHT_RATIO in the probe); a large collapsible region
+# carrying aria-expanded must not disqualify its whole interior.
 UNSAFE_SCROLL_SELECTOR = ",".join((
     "a",
     "button",
@@ -68,19 +78,31 @@ UNSAFE_SCROLL_SELECTOR = ",".join((
     '[role="switch"]',
     '[role="tab"]',
     '[role="textbox"]',
-    ".action-select",
-    ".action-select-wrap",
-    ".admin__action-multiselect",
-    ".admin__action-multiselect-wrap",
-    ".admin__action-multiselect-text",
-    '[data-role="advanced-select"]',
-    '[aria-haspopup="listbox"]',
-    ".ui-select",
-    ".select2-container",
-    ".mage-suggest",
 ))
-_CHOICE_OVERLAY_OPEN_JS = """(() => {
-  /* choice_overlay_open */
+_UNSAFE_SCROLL_POPUP_SELECTOR = ",".join((
+    '[aria-haspopup]:not([aria-haspopup="false"])',
+    "[aria-expanded]",
+    '[data-toggle="dropdown"]',
+))
+_UNSAFE_SCROLL_FOCUSABLE_SELECTOR = ':is(div,span,li)[tabindex]:not([tabindex^="-"])'
+# Popup/focusable matches disqualify an anchor only when the matched element is
+# trigger-sized. Full-width short dropdowns are the target class; the real
+# false positives (a11y scrollable panels with div[tabindex=0]) are tall.
+_UNSAFE_SCROLL_MAX_HEIGHT_RATIO = 0.30
+
+# Open choice-popup detection. Three generic channels, no vendor classes:
+#  (1) native: a focused <select> (its popup lives outside the page tree);
+#  (2) ARIA: a visible explicit-role listbox/menu holding option/menuitem
+#      descendants, or a visible expanded trigger with confirmed popup
+#      semantics (aria-haspopup / role=combobox) — role=tab excluded so
+#      accordion headers (the persistent aria-expanded=true family) never
+#      count, and an aria-controls target must be visible AND floating so
+#      WAI accordions (in-flow role=region/tabpanel) never count;
+#  (3) structural (zero-ARIA hand-rolled widgets): a visible floating
+#      (absolute/fixed) container holding >=2 vertically-stacked, same-shaped
+#      clickable rows. Horizontal toolbars/dialogs do not stack vertically.
+_OPEN_CHOICE_POPUPS_JS = """(() => {
+  /* open_choice_popups */
   const visible = (el) => {
     if (!el) return false;
     const style = getComputedStyle(el);
@@ -91,37 +113,82 @@ _CHOICE_OVERLAY_OPEN_JS = """(() => {
       && r.bottom > 0 && r.right > 0
       && r.top < innerHeight && r.left < innerWidth;
   };
+  const floating = (el) => {
+    const p = getComputedStyle(el).position;
+    return p === 'absolute' || p === 'fixed';
+  };
+  const popups = [];
+  const push = (el) => { if (el && !popups.includes(el)) popups.push(el); };
+
   const active = document.activeElement;
-  if (active && String(active.tagName || '').toLowerCase() === 'select') return true;
-  const menus = document.querySelectorAll(
-    '.admin__action-multiselect-menu-inner, .admin__action-multiselect-menu, '
-    + '.action-menu._active, .selectmenu-items, [role="listbox"]'
-  );
-  for (const el of menus) {
-    if (visible(el)) return true;
+  if (active && String(active.tagName || '').toLowerCase() === 'select') push(active);
+
+  // ARIA channel: explicit popup containers.
+  for (const el of document.querySelectorAll('[role="listbox"], [role="menu"]')) {
+    if (!visible(el)) continue;
+    if (el.querySelector('[role="option"], [role="menuitem"], [role="menuitemcheckbox"], [role="menuitemradio"]')) push(el);
   }
-  const expanded = document.querySelectorAll(
-    '[aria-haspopup="listbox"][aria-expanded="true"], '
-    + '[role="combobox"][aria-expanded="true"], '
-    + '.admin__action-multiselect[aria-expanded="true"], '
-    + '.action-select[aria-expanded="true"]'
-  );
-  for (const el of expanded) {
-    if (visible(el)) return true;
+  // ARIA channel: expanded triggers with confirmed popup semantics.
+  for (const el of document.querySelectorAll('[aria-expanded="true"]')) {
+    if (!visible(el)) continue;
+    const role = String(el.getAttribute('role') || '').toLowerCase();
+    if (role === 'tab') continue;  // accordion headers stay expanded
+    const haspopup = String(el.getAttribute('aria-haspopup') || '').toLowerCase();
+    if (role !== 'combobox' && !['listbox', 'menu', 'tree', 'grid', 'dialog', 'true'].includes(haspopup)) continue;
+    const controls = el.getAttribute('aria-controls') || el.getAttribute('aria-owns');
+    if (controls) {
+      const target = document.getElementById(controls.trim());
+      if (!target || !visible(target) || !floating(target)) continue;
+      push(target);
+    } else {
+      push(el);
+    }
   }
-  return false;
+  // Structural channel: floating container with >=2 stacked homogeneous rows.
+  const clickableRows = (box) => Array.from(box.querySelectorAll(
+    'button, a, li, label, [role="option"], [role="menuitem"], [role="menuitemcheckbox"], [role="menuitemradio"]'
+  )).filter((el) => visible(el) && !el.closest('select'));
+  for (const box of document.querySelectorAll('body *')) {
+    if (!visible(box) || !floating(box)) continue;
+    const rows = clickableRows(box);
+    if (rows.length < 2) continue;
+    // Vertically stacked, same-shaped rows: same left edge, increasing y,
+    // similar heights. Kills horizontal toolbars and dialog button bars.
+    let stacked = 0;
+    let prev = null;
+    for (const row of rows) {
+      const r = row.getBoundingClientRect();
+      if (prev
+        && r.top > prev.bottom - 2
+        && Math.abs(r.left - prev.left) <= 4
+        && r.height >= prev.height * 0.5 && r.height <= prev.height * 2) {
+        stacked++;
+      }
+      prev = r;
+    }
+    if (stacked >= 1) push(box);
+  }
+  return popups;
 })()"""
-_POINT_HITS_CHOICE_JS = """(function(x, y) {
-  const el = document.elementFromPoint(x, y);
-  if (!el) return false;
-  if (el.closest && el.closest(
-    'select, option, [role="listbox"], [role="option"], [role="menu"], '
-    + '[role="menuitem"], .admin__action-multiselect-menu, '
-    + '.admin__action-multiselect-menu-inner, .action-menu._active, '
-    + '.selectmenu-items'
-  )) return true;
-  return false;
-})"""
+_CHOICE_OVERLAY_OPEN_JS = (
+    "(() => {\n"
+    "  /* choice_overlay_open */\n"
+    "  const openPopups = " + _OPEN_CHOICE_POPUPS_JS + ";\n"
+    "  return openPopups.length > 0;\n"
+    "})()"
+)
+_POINT_HITS_CHOICE_JS = (
+    "(function(x, y) {\n"
+    "  const el = document.elementFromPoint(x, y);\n"
+    "  if (!el) return false;\n"
+    "  const openPopups = " + _OPEN_CHOICE_POPUPS_JS + ";\n"
+    "  for (const box of openPopups) {\n"
+    "    if (box === el || (box.contains && box.contains(el))) return true;\n"
+    "  }\n"
+    "  if (el.closest && el.closest('select, option')) return true;\n"
+    "  return false;\n"
+    "})"
+)
 
 
 def _direct_cdp_host(cdp_url: str) -> str:
@@ -1115,8 +1182,8 @@ class PlaywrightDevice:
         - native ``<select>``: option popups are outside the page rendering tree (CDP can't
           capture them, the mouse can't target them), so set value + dispatch input/change
           via JS — the ONLY case where we bypass the mouse.
-        - custom dropdown (ARIA/listbox/Magento selectmenu): options ARE rendered in the
-          page, so find the option's coordinates and ``page.mouse.click`` them — the
+        - custom dropdown (ARIA listbox/menu, or any rendered overlay): options ARE rendered
+          in the page, so find the option's coordinates and ``page.mouse.click`` them — the
           physical click fires the full mousedown→mouseup→click chain and works for any
           handler binding (click/checked), no need to guess which element holds the handler.
         """
@@ -1191,17 +1258,24 @@ class PlaywrightDevice:
                     }
 
                     const candidates = Array.from(document.querySelectorAll(
-                        '[role=option], [role=menuitem], [role=listbox] li, '
-                        + '.admin__action-dropdown-menu li, .selectmenu li, '
-                        + '.admin__action-multiselect-menu .admin__action-multiselect-label, '
-                        + '.admin__action-multiselect-menu li, li, option'
+                        '[role=option], [role=menuitem], [role=menuitemcheckbox], '
+                        + '[role=menuitemradio], option, li, '
+                        + 'label:has(> input[type=checkbox]), label:has(> input[type=radio])'
                     )).filter((el) => {
                         if (el.closest('select')) return false;
                         const r = el.getBoundingClientRect();
                         return r.width > 0 && r.height > 0;
                     });
-                    const option = candidates.find((el) => norm(labelOf(el)) === wanted)
-                        || candidates.find((el) => norm(labelOf(el)).includes(wanted));
+                    // Innermost match wins: in tree/optgroup popups the group row and
+                    // the leaf row both contain the wanted text, but only the leaf
+                    // (e.g. a label-wrapped checkbox item) is the clean target.
+                    const innermost = (list) => list.filter(
+                        (el) => !list.some((o) => o !== el && el.contains(o))
+                    );
+                    const exact = candidates.filter((el) => norm(labelOf(el)) === wanted);
+                    const partial = candidates.filter((el) => norm(labelOf(el)).includes(wanted));
+                    const option = innermost(exact)[0] || exact[0]
+                        || innermost(partial)[0] || partial[0];
                     if (option) {
                         // option 是页面渲染的自定义下拉项(CDP 截得到) → 返回其坐标,由调用方
                         // page.mouse.click 物理点击(鼠标优先:触发完整 mousedown→mouseup→click 事件链,
@@ -1303,8 +1377,22 @@ class PlaywrightDevice:
             "e.getAttribute&&e.getAttribute('aria-label'),e.getAttribute&&e.getAttribute('placeholder'),e.id];"
             "if(e.id){try{const l=document.querySelector('label[for=\"'+(window.CSS&&CSS.escape?CSS.escape(e.id):e.id)+'\"]');"
             "if(l)p.push(l.textContent);}catch(_){}}"
-            "const box=e.closest&&e.closest('.admin__field,.admin__form-field,.field,[data-role=filter],td,th,div');"
-            "if(box){const l=box.querySelector('label,.admin__field-label,.label');if(l)p.push(l.textContent);}"
+            # Container-label sniff: nearest-first, depth-capped, boundary-stopped
+            # ancestor walk — generic, no class-token assumptions. Guards: a label
+            # owned by another control (for=/label.control) is skipped; wrapping
+            # labels resolve per-option checkbox/radio; the walk stops before
+            # document-level containers so multi-field wrappers can't inject a
+            # wrong container label.
+            "let anc=e.parentElement,depth=0;"
+            "while(anc&&depth<3&&!/^(HTML|BODY|FORM|NAV|MAIN|ASIDE|HEADER|FOOTER)$/.test(anc.tagName||'')){"
+            "let lbl=null;"
+            "if((anc.tagName||'')==='LABEL'){lbl=anc;}"
+            "else{for(const c of anc.querySelectorAll('label,legend,[class*=label],[data-label]')){"
+            "if((c.tagName||'')==='LABEL'){const f=c.getAttribute&&c.getAttribute('for');"
+            "if(f&&f!==e.id)continue;if(c.control&&c.control!==e)continue;}"
+            "lbl=c;break;}}"
+            "if(lbl){p.push(lbl.textContent);break;}"
+            "anc=anc.parentElement;depth++;}"
             "return norm(p.filter(Boolean).join(' '));};"
             "const roleOf=e=>{const n=norm((e.getAttribute&&e.getAttribute('name'))||'')+' '+"
             "norm((e.getAttribute&&e.getAttribute('placeholder'))||'')+' '+"
@@ -1450,10 +1538,15 @@ class PlaywrightDevice:
         preferred_y = float(y)
         area = json.dumps(target_area or "main_content")
         unsafe = json.dumps(UNSAFE_SCROLL_SELECTOR)
+        unsafe_popup = json.dumps(_UNSAFE_SCROLL_POPUP_SELECTOR)
+        unsafe_focusable = json.dumps(_UNSAFE_SCROLL_FOCUSABLE_SELECTOR)
         expression = (
             "(() => {"
             f"const preferredX={preferred_x}, preferredY={preferred_y}, area={area};"
             f"const unsafe={unsafe};"
+            f"const unsafePopup={unsafe_popup};"
+            f"const unsafeFocusable={unsafe_focusable};"
+            f"const maxTriggerH=innerHeight*{_UNSAFE_SCROLL_MAX_HEIGHT_RATIO};"
             "const ranges = {"
             "  main_content: [0.18, 0.94, 0.12, 0.88],"
             "  left_panel: [0.02, 0.45, 0.12, 0.88],"
@@ -1478,7 +1571,12 @@ class PlaywrightDevice:
             "let best = null;"
             "for (const [px, py] of candidates) {"
             "  const el = document.elementFromPoint(px, py);"
-            "  if (!el || el.closest(unsafe)) continue;"
+            "  if (!el) continue;"
+            # Tag/ARIA-role exclusions are unconditional; popup/focusable
+            # attribute matches only disqualify trigger-sized boxes.
+            "  if (el.closest(unsafe)) continue;"
+            "  const trigger = el.closest(unsafePopup) || el.closest(unsafeFocusable);"
+            "  if (trigger && trigger.getBoundingClientRect().height <= maxTriggerH) continue;"
             "  const style = getComputedStyle(el);"
             "  if (style.visibility === 'hidden' || style.display === 'none') continue;"
             "  const score = Math.hypot(px - preferredX, py - preferredY);"
@@ -1552,7 +1650,7 @@ class PlaywrightDevice:
         try:
             page.mouse.move(x, y)
             page.mouse.wheel(dx, dy)
-            # A wheel that still grazes a focused <select> / Magento multiselect
+            # A wheel that still grazes a focused <select> / custom multiselect
             # opens the option list and blocks the rest of the form. Dismiss it
             # immediately so the next observe sees the scrolled form, not the list.
             if self._choice_overlay_open():

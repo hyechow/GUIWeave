@@ -13,9 +13,9 @@ def test_table_snapshot_js_is_serialized_expression():
     assert "JSON.stringify" in js
     assert "role=\"grid\"" in js
     assert "records?" in js
-    assert ".dashboard-item-title" in js
+    assert "[class*='title' i]" in js
     assert "aria-labelledby" in js
-    assert "current-page-input" in js
+    assert "page-current" in js
     assert "detectPageViewport" in js
     assert "viewport: detectPageViewport" in js
     assert "document.documentElement.scrollHeight" in js

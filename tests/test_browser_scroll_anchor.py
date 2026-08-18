@@ -5,15 +5,32 @@ from types import SimpleNamespace
 from gui_agent.adapters.browser.device import (
     UNSAFE_SCROLL_SELECTOR,
     _CHOICE_OVERLAY_OPEN_JS,
+    _POINT_HITS_CHOICE_JS,
+    _UNSAFE_SCROLL_FOCUSABLE_SELECTOR,
+    _UNSAFE_SCROLL_POPUP_SELECTOR,
     PlaywrightDevice,
 )
 
+_VENDOR_TOKENS = ("admin__", "mage-", "action-select", "selectmenu", "data-ui-id")
 
-def test_unsafe_scroll_selector_covers_magento_choice_widgets() -> None:
-    assert ".admin__action-multiselect" in UNSAFE_SCROLL_SELECTOR
-    assert ".action-select" in UNSAFE_SCROLL_SELECTOR
-    assert '[aria-haspopup="listbox"]' in UNSAFE_SCROLL_SELECTOR
+
+def test_unsafe_scroll_selector_is_generic_only() -> None:
+    """Anchor exclusions must hold on arbitrary sites: tags, ARIA roles, and
+    behavior-declaring attributes — never a vendor's CSS classes."""
+    for token in _VENDOR_TOKENS:
+        assert token not in UNSAFE_SCROLL_SELECTOR
+        assert token not in _UNSAFE_SCROLL_POPUP_SELECTOR
+        assert token not in _UNSAFE_SCROLL_FOCUSABLE_SELECTOR
+    # Unconditional layer: interactive tags + ARIA widget roles.
     assert "select" in UNSAFE_SCROLL_SELECTOR.split(",")
+    assert '[role="combobox"]' in UNSAFE_SCROLL_SELECTOR
+    assert '[role="listbox"]' in UNSAFE_SCROLL_SELECTOR
+    # Popup-semantics layer: a closed trigger declares haspopup/expanded — the
+    # generic form of the "wheel opens the option list" failure class.
+    assert "[aria-haspopup]" in _UNSAFE_SCROLL_POPUP_SELECTOR
+    assert "[aria-expanded]" in _UNSAFE_SCROLL_POPUP_SELECTOR
+    # Focusable non-widget surface: the generic closed-combobox shape.
+    assert "[tabindex]" in _UNSAFE_SCROLL_FOCUSABLE_SELECTOR
 
 
 def _device_with_page(page) -> PlaywrightDevice:
@@ -28,32 +45,37 @@ def _device_with_page(page) -> PlaywrightDevice:
     return dev
 
 
-def test_choice_overlay_probe_ignores_generic_aria_expanded() -> None:
-    """Left-nav / Filters / Columns keep aria-expanded=true on the Products grid.
+def test_choice_overlay_probe_ignores_persistent_aria_expanded() -> None:
+    """Left-nav / Filters / accordions keep aria-expanded=true forever; they must not
+    turn every tap into Escape and block Add Product / Search / Edit.
 
-    A blanket [aria-expanded=true] probe turns every tap into Escape and blocks
-    Add Product, Search by keyword, and Edit.
+    The probe confirms popup semantics — explicit listbox/menu role with option
+    descendants, or an expanded trigger (role=tab excluded) whose aria-controls
+    target is visible AND floating — plus a structural channel for zero-ARIA
+    widgets, all without site-family classes.
     """
     assert "choice_overlay_open" in _CHOICE_OVERLAY_OPEN_JS
     assert "getBoundingClientRect" in _CHOICE_OVERLAY_OPEN_JS
-    assert '[aria-haspopup="listbox"][aria-expanded="true"]' in _CHOICE_OVERLAY_OPEN_JS
-    assert "querySelector('[aria-expanded=\"true\"]')" not in _CHOICE_OVERLAY_OPEN_JS
-    assert 'querySelector("[aria-expanded=\\"true\\"]")' not in _CHOICE_OVERLAY_OPEN_JS
+    assert "role === 'tab'" in _CHOICE_OVERLAY_OPEN_JS
+    assert "aria-controls" in _CHOICE_OVERLAY_OPEN_JS
+    assert "floating" in _CHOICE_OVERLAY_OPEN_JS
+    assert '[role="listbox"], [role="menu"]' in _CHOICE_OVERLAY_OPEN_JS
+    for token in _VENDOR_TOKENS:
+        assert token not in _CHOICE_OVERLAY_OPEN_JS
+        assert token not in _POINT_HITS_CHOICE_JS
 
 
 def test_tap_dismisses_open_choice_overlay_instead_of_clicking() -> None:
     pressed: list[str] = []
     clicked: list[tuple[float, float]] = []
 
+    # Overlay reports open (open-probe), but the tap point misses it (point-probe
+    # False) → dismiss with Escape, then click.
     page = SimpleNamespace(
         bring_to_front=lambda: None,
         mouse=SimpleNamespace(click=lambda x, y: clicked.append((x, y))),
         keyboard=SimpleNamespace(press=lambda key: pressed.append(key)),
-        evaluate=lambda expr, *args: (
-            True
-            if "aria-expanded" in str(expr) or "activeElement" in str(expr)
-            else False
-        ),
+        evaluate=lambda expr, *args: "choice_overlay_open" in str(expr),
     )
     device = _device_with_page(page)
 
@@ -90,11 +112,7 @@ def test_scroll_dismisses_choice_overlay_opened_by_wheel() -> None:
             wheel=lambda dx, dy: wheeled.append((dx, dy)),
         ),
         keyboard=SimpleNamespace(press=lambda key: pressed.append(key)),
-        evaluate=lambda expr, *args: (
-            True
-            if "aria-expanded" in str(expr) or "activeElement" in str(expr)
-            else None
-        ),
+        evaluate=lambda expr, *args: "choice_overlay_open" in str(expr),
     )
     device = _device_with_page(page)
 

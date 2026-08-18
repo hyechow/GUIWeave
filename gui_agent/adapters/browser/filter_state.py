@@ -8,14 +8,15 @@ agent re-reads row/cell values (where the checker once conflated an adjacent dis
 e.g. Magento `Salable Quantity`, with the filtered `Quantity` and rejected a correctly-applied
 filter into a clear→reset loop).
 
-Magento admin has two grid families:
+Three generic channels, normalized to `{label: value}`:
 
-- modern UI-component grids render applied filters as chips under `.admin__current-filters-list`;
-- legacy Mage_Adminhtml grids keep the applied filter in a `/filter/<base64>/` URL segment and
-  render the filter row values under table headers.
+- applied-filter CHIPS: a filter-list region (data-role/current-filters/applied-filters/
+  active-filters/filter-chips) whose items each carry a label and a value;
+- an encoded `/filter/<token>/` URL segment carrying the applied state;
+- a filter ROW inside a static data table: pristine (server-rendered) filter controls under
+  column headers.
 
-Both are normalized to `{label: value}`. Platform-specific selectors live here; core stays
-neutral via `Observation.applied_filters`.
+All signals are generic DOM structure; core stays neutral via `Observation.applied_filters`.
 """
 
 from __future__ import annotations
@@ -34,12 +35,12 @@ def applied_filters_js() -> str:
     applied-filter state. It returns a JSON string with shape
     `{filters: {label: value}, meta: {...}}`.
 
-    Live DOM (Magento 2.4.6, verified): the bar is `<ul class="admin__current-filters-list"
-    data-role="filter-list">`; each chip is a bare `<li>` holding a label span
+    Chip shape (verified live on Magento 2.4.6, matched via its generic data-role): the bar is
+    a `<ul data-role="filter-list">`; each chip is a bare `<li>` holding a label span
     `<span data-bind="text: label + ':'">Quantity:</span>`, a value span (`3 - 3`), and a
-    `<button class="action-remove">Remove</button>`. The chip carries NO `current-filters-item`
-    class, and the button's "Remove" text pollutes `li.innerText` — so we read the label span
-    directly and take the remaining textContent (label span + buttons removed) as the value."""
+    `<button>Remove</button>`. The button's "Remove" text pollutes `li.innerText` — so we read
+    the label span directly and take the remaining textContent (label span + buttons removed)
+    as the value."""
     return r"""
 (() => {
   const clean = (s) => String(s ?? '').replace(/\s+/g, ' ').trim();
@@ -52,16 +53,21 @@ def applied_filters_js() -> str:
     legacy_grid: 'absent',
   };
 
-  const chipContainers = Array.from(document.querySelectorAll(
-    '.admin__current-filters-list, [data-role="filter-list"]'
-  ));
+  const CHIP_CONTAINER_SELECTOR = [
+    '[data-role="filter-list"]',
+    '[class*="current-filters" i]',
+    '[class*="applied-filters" i]',
+    '[class*="active-filters" i]',
+    '[class*="filter-chips" i]',
+  ].join(', ');
+  const chipContainers = Array.from(document.querySelectorAll(CHIP_CONTAINER_SELECTOR));
   if (chipContainers.length) {
     meta.indicator_channel = 'present';
     meta.chip_container = 'present';
   }
 
   const items = document.querySelectorAll(
-    '.admin__current-filters-list > li, [data-role="filter-list"] > li'
+    CHIP_CONTAINER_SELECTOR.split(', ').map(s => s + ' > li').join(', ')
   );
   items.forEach(li => {
     const lblEl = li.querySelector('span[data-bind*="label"]') || li.querySelector('span');
@@ -105,7 +111,7 @@ def applied_filters_js() -> str:
   const legacyTables = Array.from(document.querySelectorAll('table')).filter(table => {
     if (!rendered(table)) return false;
     const id = table.id || '';
-    const staticGrid = Boolean(table.closest('.admin__data-grid-wrap-static'));
+    const staticGrid = Boolean(table.closest('[class*="grid-wrap" i], [class*="data-grid" i], [data-role="grid"]'));
     const filterControl = table.querySelector(
       'input[id*="_filter_"], select[id*="_filter_"], textarea[id*="_filter_"]'
     );
@@ -156,7 +162,7 @@ def applied_filters_js() -> str:
       legacyOut[label || key] = value;
     }
   } else {
-    // Some Magento legacy grids persist filters in the server session and render the filtered
+    // Some legacy grids persist filters in the server session and render the filtered
     // page at the plain grid URL.  In that shape there is no chip and no `/filter/<token>` URL.
     // A server-rendered control is distinguishable from an unsent local edit because its current
     // value still equals the HTML defaultValue/defaultSelected state.  Only those pristine,

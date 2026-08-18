@@ -28,6 +28,14 @@ bin/mobileworld --list
 - Browser, Android, WebArena, and MobileWorld mechanics stay in their adapters or
   harnesses.
 - Site- and app-specific facts live under `knowledge/`, not in core prompts.
+- Mechanisms must be built from generic signals — ARIA roles/states, semantic HTML,
+  structural heuristics, behavioral probing. Vendor CSS classes and other site-family
+  executable facts (e.g. `.admin__*`, `.mage-*`, `data-ui-id`) are forbidden in core and
+  adapters, including as `knowledge/` selectors: an agent that depends on site facts is
+  not a general agent. Descriptive vocabulary tokens (`title`, `pager`, `required`,
+  `filter`, `datepicker`, `selectmenu`) and cross-site component libraries are platform
+  mechanism, not site fact. Evaluations are regression nets for generality, never the
+  design target.
 - Every run must retain its trace, screenshots, replay data, and report inputs.
 - Add deterministic tests for runtime and adapter invariants; keep model-driven cases
   under `evals/`.
