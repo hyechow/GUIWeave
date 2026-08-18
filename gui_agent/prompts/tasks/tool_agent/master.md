@@ -91,7 +91,7 @@ When success criteria guarantee exactly one target record, use that sole record;
 
 ## Result Flow
 
-`ctx.transform` contains one pure `def transform(inputs):` with no imports, I/O, network, or model work. Route collection rows as `inputs=[outcome["collection_ref"]["ref"]]`; finish the returned string as `ctx.finish(result["ref"], effect=...)`. A transform after an operator may materialize only control flow such as `True`, never observed data.
+`ctx.transform` contains one pure `def transform(inputs):` with no imports, I/O, network, or model work. Its `source` is raw Python only—never a code fence, language tag, mapping, or prose, even though examples in this prompt sit inside fences. Route collection rows as `inputs=[outcome["collection_ref"]["ref"]]`; finish the returned string as `ctx.finish(result["ref"], effect=...)`. A transform after an operator may materialize only control flow such as `True`, never observed data.
 
 Every ResultRef produced before a later GUI Worker must be routed through `input_refs` and consumed by one matching semantic `input_bindings` entry. A binding has `name`, `input`, optional `path`, `target` (`text_input`, `choice`, `url`, or `application`), and `description`. Runtime lowers the semantic target and injects the private value. ResultRef business values never bind spatial arguments; use a non-spatial value-entry target such as `type.text`.
 

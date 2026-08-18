@@ -161,10 +161,15 @@ class RuntimeDataStore:
             collection_rows.extend(current_rows)
             previous_ref = chunk_ref
         row_count = len(collection_rows)
+        # An authoritative empty state (e.g. a search returning "No matches") reports
+        # total_records=0 as "zero matches on this filtered surface", not the real size
+        # of the unfiltered collection. Counting it as the known total would mark the
+        # whole collection conflicting whenever any real row was also collected.
         totals = {
             int(value)
             for item in coverage_samples
             if (value := item.get("total_records")) not in (None, "")
+            and item.get("coverage_evidence") != "explicit_visual_empty_state"
         }
         known_total = next(iter(totals)) if len(totals) == 1 else None
         pages_seen = sorted({

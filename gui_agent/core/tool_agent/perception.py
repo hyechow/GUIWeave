@@ -8,6 +8,7 @@ import json
 import re
 import time
 from dataclasses import dataclass
+from datetime import datetime
 from decimal import Decimal, InvalidOperation
 from pathlib import Path
 from typing import Any, Callable, Literal
@@ -63,14 +64,31 @@ class _DetailCollectionState:
     pending_index: int | None = None
 
 
+def _platform_year(platform_time: PlatformTimeSnapshot | None) -> int | None:
+    """Extract the reference year from the frozen platform clock, when available."""
+
+    if platform_time is None:
+        return None
+    try:
+        return datetime.fromisoformat(platform_time.local_datetime).year
+    except (TypeError, ValueError):
+        return None
+
+
 def _normalize_runtime_value(
     field_name: str,
     value: Any,
     value_type: str,
+    *,
+    platform_year: int | None = None,
 ) -> Any:
     """Normalize an observed value into the JSON form stored by Tool Agent."""
 
-    return json_value(normalize_table_value(field_name, value, value_type))
+    return json_value(
+        normalize_table_value(
+            field_name, value, value_type, platform_year=platform_year
+        )
+    )
 
 
 def _normalize(text: str) -> str:
@@ -229,6 +247,8 @@ def _match_table(requirement: DataRequirement, tables: list[dict[str, Any]]) -> 
 def _structured_rows(
     requirement: DataRequirement,
     table: dict[str, Any],
+    *,
+    platform_year: int | None = None,
 ) -> list[dict[str, Any]]:
     source_map = requirement.field_sources
     properties = requirement.row_schema.get("properties") or {}
@@ -245,7 +265,9 @@ def _structured_rows(
             declared_type = requirement.field_types.get(field)
             if value is not None and declared_type is not None:
                 try:
-                    value = _normalize_runtime_value(source, value, declared_type)
+                    value = _normalize_runtime_value(
+                        source, value, declared_type, platform_year=platform_year
+                    )
                 except ValueNormalizationError as exc:
                     raise DataNormalizationError(
                         f"row {row_index} field {field!r} cannot normalize as "
@@ -277,6 +299,8 @@ def _structured_rows(
 def _partial_structured_rows(
     requirement: DataRequirement,
     table: dict[str, Any],
+    *,
+    platform_year: int | None = None,
 ) -> tuple[list[dict[str, Any]], set[str]]:
     """Read candidate fields without pretending detail-only fields were observed."""
 
@@ -299,12 +323,14 @@ def _partial_structured_rows(
         "required": sorted(required_fields.intersection(list_fields)),
         "additionalProperties": False,
     }})
-    return _structured_rows(candidate_requirement, table), detail_fields
+    return _structured_rows(candidate_requirement, table, platform_year=platform_year), detail_fields
 
 
 def _control_row(
     requirement: DataRequirement,
     controls: list[dict[str, Any]],
+    *,
+    platform_year: int | None = None,
 ) -> tuple[dict[str, Any], set[str]]:
     """Project current form values by declared visible labels, preserving emptiness."""
 
@@ -332,7 +358,9 @@ def _control_row(
             value = html.unescape(value).strip()
         declared_type = requirement.field_types.get(field)
         if value not in (None, "") and declared_type is not None:
-            value = _normalize_runtime_value(source, value, declared_type)
+            value = _normalize_runtime_value(
+                source, value, declared_type, platform_year=platform_year
+            )
         row[field] = "" if value is None else value
     return row, observed
 
@@ -344,6 +372,8 @@ def _nonempty(value: Any) -> bool:
 def _normalize_visual_rows(
     requirement: DataRequirement,
     rows: list[Any],
+    *,
+    platform_year: int | None = None,
 ) -> list[dict[str, Any]]:
     normalized_rows: list[dict[str, Any]] = []
     for row_index, row in enumerate(rows, start=1):
@@ -378,6 +408,7 @@ def _normalize_visual_rows(
                     source,
                     normalized[field],
                     declared_type,
+                    platform_year=platform_year,
                 )
             except ValueNormalizationError as exc:
                 raise DataNormalizationError(
@@ -453,11 +484,16 @@ def _compare_values(
     *,
     field_name: str = "",
     field_type: str | None = None,
+    platform_year: int | None = None,
 ) -> int:
     if field_type is not None:
         try:
-            left = _normalize_runtime_value(field_name, left, field_type)
-            right = _normalize_runtime_value(field_name, right, field_type)
+            left = _normalize_runtime_value(
+                field_name, left, field_type, platform_year=platform_year
+            )
+            right = _normalize_runtime_value(
+                field_name, right, field_type, platform_year=platform_year
+            )
         except ValueNormalizationError as exc:
             raise DataNormalizationError(
                 f"filter field {field_name!r} cannot normalize as {field_type}"
@@ -478,6 +514,7 @@ def _rows_satisfy_filters(
     rows: list[dict[str, Any]],
     *,
     filters: dict[str, Any] | None = None,
+    platform_year: int | None = None,
 ) -> bool | None:
     active_filters = requirement.filters if filters is None else filters
     if not active_filters:
@@ -504,6 +541,7 @@ def _rows_satisfy_filters(
                     predicate.values[0],
                     field_name=field_name,
                     field_type=field_type,
+                    platform_year=platform_year,
                 ) == 0
             elif predicate.operator == "gte":
                 matches = _compare_values(
@@ -511,6 +549,7 @@ def _rows_satisfy_filters(
                     predicate.values[0],
                     field_name=field_name,
                     field_type=field_type,
+                    platform_year=platform_year,
                 ) >= 0
             elif predicate.operator == "lte":
                 matches = _compare_values(
@@ -518,6 +557,7 @@ def _rows_satisfy_filters(
                     predicate.values[0],
                     field_name=field_name,
                     field_type=field_type,
+                    platform_year=platform_year,
                 ) <= 0
             else:
                 matches = (
@@ -526,12 +566,14 @@ def _rows_satisfy_filters(
                         predicate.values[0],
                         field_name=field_name,
                         field_type=field_type,
+                        platform_year=platform_year,
                     ) >= 0
                     and _compare_values(
                         value,
                         predicate.values[1],
                         field_name=field_name,
                         field_type=field_type,
+                        platform_year=platform_year,
                     ) <= 0
                 )
             if not matches:
@@ -544,9 +586,12 @@ def _logical_rows(
     rows: list[dict[str, Any]],
     *,
     keep_unknown: bool = False,
+    platform_year: int | None = None,
 ) -> list[dict[str, Any]]:
     return [row for row in rows
-            if (match := _rows_satisfy_filters(requirement, [row])) is True
+            if (match := _rows_satisfy_filters(
+                requirement, [row], platform_year=platform_year
+            )) is True
             or keep_unknown and match is None]
 
 
@@ -804,6 +849,9 @@ class PerceptionMaterializer:
         self.model = cfg.model
         self._vision = build_chat_model(cfg)
 
+    def _platform_year(self) -> int | None:
+        return _platform_year(getattr(self, "platform_time", None))
+
     def _assemble_detail_collection(
         self,
         *,
@@ -889,7 +937,9 @@ class PerceptionMaterializer:
             best = max(scores, default=0)
             return scores.index(best) if best and scores.count(best) == 1 else None
 
-        detail, observed = _control_row(requirement, controls)
+        detail, observed = _control_row(
+            requirement, controls, platform_year=self._platform_year()
+        )
         for structured_detail in structured_rows:
             if (target := matching_row(structured_detail)) is not None:
                 for key in state.detail_fields:
@@ -1054,11 +1104,15 @@ class PerceptionMaterializer:
                 table is not None and _authoritative_empty_table(table)
             )
             if table_complete:
-                rows = _structured_rows(requirement, table)
+                rows = _structured_rows(
+                    requirement, table, platform_year=self._platform_year()
+                )
                 scope_rows = rows
                 rows = _logical_rows(requirement, rows)
             elif self.mode == "enhanced" and table is not None and not empty_complete:
-                candidate_rows, detail_fields = _partial_structured_rows(requirement, table)
+                candidate_rows, detail_fields = _partial_structured_rows(
+                    requirement, table, platform_year=self._platform_year()
+                )
                 if not allow_linked_details:
                     candidate_rows, detail_fields = [], set()
                 scope_rows = candidate_rows
@@ -1108,7 +1162,9 @@ class PerceptionMaterializer:
             structured_detail = bool(
                 detail_state
                 and detail_state.detail_fields.intersection(
-                    _control_row(requirement, controls)[1]
+                    _control_row(
+                        requirement, controls, platform_year=self._platform_year()
+                    )[1]
                 )
             )
             if (
@@ -1183,6 +1239,7 @@ class PerceptionMaterializer:
                     valid_visual_rows = _normalize_visual_rows(
                         requirement,
                         raw_visual_rows,
+                        platform_year=self._platform_year(),
                     )
                     rows = _logical_rows(requirement, valid_visual_rows)
                     if len(raw_visual_rows) != len(valid_visual_rows):
@@ -1489,7 +1546,9 @@ class PerceptionMaterializer:
         # schema validation drops a non-empty row here, the caller can no longer
         # distinguish an incomplete record from an authoritative empty surface.
         raw_rows = list(value["rows"])
-        valid_rows = _normalize_visual_rows(requirement, raw_rows)
+        valid_rows = _normalize_visual_rows(
+            requirement, raw_rows, platform_year=self._platform_year()
+        )
         on_event = getattr(self, "_on_event", None)
         if on_event is not None:
             on_event(

@@ -59,14 +59,43 @@ class TransformValidationError(ValueError):
     pass
 
 
+_FENCE_LANGUAGE_TAGS = {"python", "py", "python3"}
+
+
+def _strip_code_fence(source: str) -> str:
+    """Remove a Markdown code fence copied into a transform source.
+
+    Program examples in the Master prompt sit inside ```python fences, and the
+    Master occasionally copies the fence or its language tag into the ``source``
+    string. Both forms are unambiguous artifacts — a valid transform starts
+    with ``def transform`` — so strip them at this boundary before validation
+    and execution instead of relying on the model to learn from rejections.
+    """
+    text = source.strip()
+    lines = text.splitlines()
+    if lines and lines[0].strip().startswith("```"):
+        lines = lines[1:]
+    if lines and lines[-1].strip() == "```":
+        lines = lines[:-1]
+    text = "\n".join(lines).strip()
+    first_line, separator, rest = text.partition("\n")
+    if separator and first_line.strip().lower() in _FENCE_LANGUAGE_TAGS:
+        text = rest.strip()
+    return text
+
+
 def validate_transform_source(source: str) -> None:
+    source = _strip_code_fence(source)
     try:
         tree = ast.parse(source, mode="exec")
     except SyntaxError as exc:
         raise TransformValidationError(f"invalid transform syntax: {exc}") from exc
     functions = [node for node in tree.body if isinstance(node, ast.FunctionDef)]
     if len(tree.body) != 1 or len(functions) != 1 or functions[0].name != "transform":
-        raise TransformValidationError("source must contain exactly def transform(rows):")
+        raise TransformValidationError(
+            "source must contain exactly one top-level def transform(rows): "
+            f"and nothing else (found {len(tree.body)} top-level statement(s))"
+        )
     fn = functions[0]
     if len(fn.args.args) != 1 or fn.args.vararg or fn.args.kwarg:
         raise TransformValidationError("transform must accept exactly one positional argument")
@@ -84,6 +113,7 @@ def validate_transform_row_fields(
     row_schema: dict[str, Any],
 ) -> None:
     """Require transforms to read normalized schema keys, not display labels."""
+    source = _strip_code_fence(source)
     validate_transform_source(source)
     tree = ast.parse(source, mode="exec")
     function = next(node for node in tree.body if isinstance(node, ast.FunctionDef))
@@ -190,6 +220,7 @@ def execute_transform(
     max_input_bytes: int = 2_000_000,
     max_output_bytes: int = 1_000_000,
 ) -> Any:
+    source = _strip_code_fence(source)
     validate_transform_source(source)
     encoded_input = json.dumps(rows, ensure_ascii=False)
     if len(encoded_input.encode()) > max_input_bytes:

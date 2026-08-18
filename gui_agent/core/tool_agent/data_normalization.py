@@ -83,7 +83,7 @@ def _decimal(value: Any, *, money: bool = False) -> Decimal:
     return -result if negative else result
 
 
-def _datetime(value: Any) -> datetime:
+def _datetime(value: Any, *, platform_year: int | None = None) -> datetime:
     text = re.sub(r"\s+", " ", str(value or "").strip())
     if not text:
         raise ValueNormalizationError(f"cannot parse {value!r} as datetime")
@@ -96,15 +96,20 @@ def _datetime(value: Any) -> datetime:
         for fmt in _DATETIME_FORMATS:
             try:
                 parsed = datetime.strptime(normalized, fmt)
-                break
             except ValueError:
                 continue
+            # Formats without %Y leave the year at strptime's default 1900. When the
+            # platform clock is available, prefer its year so a yearless surface date
+            # such as "Jul 11" resolves to the current year instead of 1900.
+            if platform_year is not None and "%Y" not in fmt:
+                parsed = parsed.replace(year=platform_year)
+            break
     if parsed is None:
         raise ValueNormalizationError(f"cannot parse {value!r} as datetime")
     return parsed if parsed.tzinfo else parsed.replace(tzinfo=timezone.utc)
 
 
-def _typed(value: Any, value_type: ValueType) -> Any:
+def _typed(value: Any, value_type: ValueType, *, platform_year: int | None = None) -> Any:
     if value_type == "auto":
         return value
     if value_type == "text":
@@ -120,7 +125,7 @@ def _typed(value: Any, value_type: ValueType) -> Any:
     if value_type == "money":
         return _decimal(value, money=True)
     if value_type == "datetime":
-        return _datetime(value)
+        return _datetime(value, platform_year=platform_year)
     if isinstance(value, bool):
         return value
     text = str(value or "").strip().casefold()
@@ -135,9 +140,11 @@ def normalize_table_value(
     field_name: str,
     value: Any,
     value_type: ValueType = "auto",
+    *,
+    platform_year: int | None = None,
 ) -> Any:
     if value_type == "datetime":
-        return _datetime(value)
+        return _datetime(value, platform_year=platform_year)
     if value_type == "number":
         numbers = _NUMBER_RE.findall(str(value).strip())
         if len(numbers) != 1:
@@ -146,7 +153,7 @@ def normalize_table_value(
     if value_type == "money":
         return json_value(_decimal(value, money=True))
     if value_type != "auto":
-        return json_value(_typed(value, value_type))
+        return json_value(_typed(value, value_type, platform_year=platform_year))
     if not isinstance(value, str):
         return json_value(value)
     text = value.strip()
@@ -155,7 +162,7 @@ def normalize_table_value(
     words = set(re.findall(r"[\w]+", field_name.casefold()))
     if words & {"date", "datetime", "time", "timestamp"}:
         try:
-            return json_value(_datetime(text))
+            return json_value(_datetime(text, platform_year=platform_year))
         except ValueNormalizationError:
             pass
     numbers = _NUMBER_RE.findall(text)
