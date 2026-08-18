@@ -90,6 +90,7 @@ class ChatProviderConfig:
     base_url: str
     temperature: float | None = 0.0
     reasoning_effort: str | None = None
+    enable_thinking: bool | None = None
     image_scale: float = 1.0
     max_actions_per_call: int = 5
     action_protocol: str = "tool_call"
@@ -122,6 +123,8 @@ def chat_model_kwargs(config: ChatProviderConfig) -> dict[str, Any]:
         kwargs["temperature"] = config.temperature
     if config.reasoning_effort:
         kwargs["reasoning_effort"] = config.reasoning_effort
+    if config.enable_thinking is not None:
+        kwargs["extra_body"] = {"enable_thinking": config.enable_thinking}
     if config.use_responses_api:
         kwargs["use_responses_api"] = True
     return kwargs

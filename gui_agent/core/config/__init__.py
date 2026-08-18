@@ -29,6 +29,7 @@ class _LLMOptions(BaseModel):
 
     temperature: float | None = Field(ge=0, le=2)
     reasoning_effort: str | None
+    enable_thinking: bool | None = None
     image_scale: float = Field(gt=0, le=1)
     action_protocol: Literal["tool_call", "json"]
     use_responses_api: bool

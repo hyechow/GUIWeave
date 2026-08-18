@@ -75,7 +75,7 @@ STANDARD_API_KEY=your-secret
 `config.standard.yaml` assigns models to the Master, Worker, Perception,
 Presentation, Loading, and Target Verify slots. Worker, Perception, and visual
 verification send screenshots, so their configured models must accept
-OpenAI-compatible image input. `config.tokenplan.yaml` uses Token Plan for its Qwen
+OpenAI-compatible image input. `config.tokenplan.yaml` uses Token Plan for its text
 slots and the `STANDARD_*` gateway for the Luna Worker and Perception, so that hybrid
 configuration requires both sets of credentials. Never commit provider keys, and
 restart the Run Console or Codex after changing `.env`.
