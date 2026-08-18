@@ -86,7 +86,8 @@ def test_master_exposes_only_tool_agent_runtime_api() -> None:
     assert "use a scalar JSON Schema" in prompt
     assert "does not convert a differently displayed source value" in prompt
     assert "Current, first, or visually prominent values are not extrema" in prompt
-    assert 'Set `cardinality="one"` only' in prompt
+    assert 'Set `cardinality="one"` when' in prompt
+    assert "single aggregate value over the scope" in prompt
     assert "the first visible candidate is not" in prompt
     assert "execution experience" not in prompt
 
