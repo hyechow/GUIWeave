@@ -387,3 +387,47 @@ def test_collection_provenance_does_not_mix_rows_across_filter_scopes() -> None:
     assert store.collection_rows(first.ref) == [{"label": "after", "metric": 2}]
     assert filtered.coverage["collection_key"] == "surface:filtered"
     assert filtered.coverage["requested_filters"] == {"Status": "Complete"}
+
+
+def test_empty_state_total_records_does_not_conflict_with_real_rows() -> None:
+    """A "No matches" empty state reports total_records=0 for its filtered surface,
+    not the real size of the unfiltered collection. It must not mark the collection
+    conflicting when real rows were also collected."""
+    store = RuntimeDataStore()
+    _, collection, _ = store.put_chunk(
+        requirement_id="records",
+        frame_id="frame:1",
+        provider="vision",
+        rows=[{"label": "a", "metric": 1}, {"label": "b", "metric": 2}],
+        row_schema=ROW_SCHEMA,
+        coverage={
+            "scope_status": "met",
+            "requested": "complete",
+            "source_scope": "visual_viewport",
+            "start_visible": True,
+            "at_end": False,
+            "partial": True,
+        },
+    )
+    # Same collection, later an empty-state observation (e.g. a filtered search).
+    _, collection, _ = store.put_chunk(
+        requirement_id="records",
+        frame_id="frame:2",
+        provider="vision",
+        rows=[{"label": "a", "metric": 1}, {"label": "b", "metric": 2}],
+        row_schema=ROW_SCHEMA,
+        coverage={
+            "scope_status": "met",
+            "requested": "complete",
+            "source_scope": "visual_viewport",
+            "start_visible": True,
+            "end_visible": True,
+            "at_end": True,
+            "partial": False,
+            "total_records": 0,
+            "coverage_evidence": "explicit_visual_empty_state",
+            "empty_state_evidence": "No matches in Downloads",
+        },
+    )
+    assert collection.coverage["known_total"] is None
+    assert collection.coverage["status"] != "conflicting"

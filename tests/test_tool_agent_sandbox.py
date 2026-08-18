@@ -78,3 +78,45 @@ def test_transform_timeout_remains_enforced_with_live_runtime_startup_budget() -
             {"type": "array"},
             timeout_s=0.05,
         )
+
+
+@pytest.mark.parametrize(
+    "source",
+    [
+        "```python\ndef transform(rows):\n    return [row['value'] for row in rows]\n```",
+        "```\ndef transform(rows):\n    return [row['value'] for row in rows]\n```",
+        "python\ndef transform(rows):\n    return [row['value'] for row in rows]",
+        "python\ndef transform(rows):\n    return [row['value'] for row in rows]\n```",
+    ],
+)
+def test_transform_tolerates_copied_code_fence_artifacts(source: str) -> None:
+    """The Master prompt shows programs inside ```python fences and the model
+    sometimes copies the fence or its language tag into a transform source.
+    The boundary strips those artifacts instead of asking the model to retry."""
+    validate_transform_source(source)
+    result = execute_transform(
+        source,
+        [{"value": 2}, {"value": 3}],
+        {"type": "array", "items": {"type": "integer"}},
+    )
+    assert result == [2, 3]
+
+
+def test_transform_row_fields_tolerates_code_fence_artifacts() -> None:
+    schema = {
+        "type": "object",
+        "properties": {"value": {"type": "integer"}},
+        "required": ["value"],
+    }
+
+    validate_transform_row_fields(
+        "python\ndef transform(rows):\n    return [row['value'] for row in rows]",
+        schema,
+    )
+
+
+def test_transform_still_rejects_fence_tag_without_function() -> None:
+    """A source that is only the language tag has no transform to run."""
+
+    with pytest.raises(TransformValidationError, match="exactly one top-level"):
+        validate_transform_source("python")
