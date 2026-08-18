@@ -417,6 +417,42 @@ def test_text_query_can_broaden_without_changing_required_predicates(
     assert stale.collections == []
 
 
+def test_wildcard_filter_matches_by_prefix_suffix_and_substring() -> None:
+    requirement = DataRequirement(
+        id="bid_files",
+        description="Files with bid_ prefix",
+        row_schema={"name": "string", "extension": "string"},
+        filters={"name": "bid_*"},
+    )
+    bid_row = [{"name": "bid_restaurant_proposal.txt", "extension": ".txt"}]
+    other_row = [{"name": "other_file.txt", "extension": ".txt"}]
+    # Prefix wildcard is the DSL for 前缀为 bid_。
+    assert _rows_satisfy_filters(requirement, bid_row) is True
+    assert _rows_satisfy_filters(requirement, other_row) is False
+    # Suffix / substring forms round-trip through the same predicate compiler.
+    suffix = DataRequirement(
+        id="txt", description="txt files",
+        row_schema={"name": "string"},
+        filters={"name": "*.txt"},
+    )
+    assert _rows_satisfy_filters(suffix, other_row) is True
+    contains = DataRequirement(
+        id="bid_substr", description="contains bid_",
+        row_schema={"name": "string"},
+        filters={"name": "*bid_*"},
+    )
+    assert _rows_satisfy_filters(contains, bid_row) is True
+    assert _rows_satisfy_filters(contains, other_row) is False
+    # Exact-value filters keep equality semantics (no wildcard).
+    exact = DataRequirement(
+        id="exact", description="exact name",
+        row_schema={"name": "string"},
+        filters={"name": "bid_restaurant_proposal.txt"},
+    )
+    assert _rows_satisfy_filters(exact, bid_row) is True
+    assert _rows_satisfy_filters(exact, other_row) is False
+
+
 def test_visual_candidate_must_satisfy_immutable_logical_filter(
     tmp_path: Path,
 ) -> None:
@@ -1366,10 +1402,8 @@ def test_vision_only_never_invokes_platform_perception(tmp_path: Path) -> None:
     assert materializer.data_store.collection_chunks(frame.collections[0].ref) == [
         [{"term": "visual-value", "uses": 2}]
     ]
+    # Coverage status is informational evidence only; it no longer gates completion.
     assert frame.collections[0].coverage["status"] == "incomplete"
-    assert materializer.data_store.mark_scroll_end(
-        frame.collections[0].ref
-    ).coverage["status"] == "complete"
     clipped = _materializer(tmp_path, "vision-only")
     clipped._vision_extract = lambda *_args, **_kwargs: {  # type: ignore[method-assign]
         "found": True, "rows": [{"term": "visible", "uses": 2}],
@@ -1377,9 +1411,8 @@ def test_vision_only_never_invokes_platform_perception(tmp_path: Path) -> None:
         "end_visible": True,
     }
     frame = _observe_requirement(clipped, _requirement(), 2)
-    completed = clipped.data_store.mark_scroll_end(frame.collections[0].ref)
-    assert (frame.collections[0].coverage["start_seen"],
-            completed.coverage["status"]) == (False, "incomplete")
+    assert frame.collections[0].coverage["start_seen"] is False
+    assert frame.collections[0].coverage["status"] == "incomplete"
 
 
 def test_visual_singleton_completes_without_collection_boundary(tmp_path: Path) -> None:

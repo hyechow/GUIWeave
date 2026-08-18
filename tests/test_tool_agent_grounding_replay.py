@@ -13,6 +13,7 @@ from gui_agent.adapters.browser.actions import BrowserAction, BrowserActionDecis
 from gui_agent.adapters.browser.control_grounding import ground_action_to_nearest_control
 from gui_agent.core.tool_agent.action_guard import (
     WorkerActionCircuitBreaker,
+    _action_boundary_error,
     auth_codes_from_frame,
     auth_codes_from_text,
 )
@@ -428,6 +429,53 @@ def test_task549_wide_keyword_input_near_miss_snaps_to_unique_text_field() -> No
         "snapped": [247.0, 337.0],
         "info": "Search Search",
     }
+
+
+def test_progress_signature_ignores_coverage_status_verdicts() -> None:
+    # The coverage status verdict no longer gates anything, so it must not feed
+    # the circuit-breaker progress hash: only accumulated row counts count as
+    # collection progress.
+    from gui_agent.core.tool_agent.action_guard import progress_signature
+    from gui_agent.core.tool_agent.contracts import CollectionRef
+
+    def frame_with(status: str, rows: int) -> MaterializedFrame:
+        return MaterializedFrame(
+            frame_id="frame:1",
+            screenshot_path="",
+            collections=[CollectionRef(
+                kind="collection",
+                ref="collection:records",
+                requirement_id="records",
+                chunk_refs=["chunk:records:1"],
+                row_count=rows,
+                row_schema={"type": "object", "properties": {}},
+                coverage={"status": status, "pages_seen": [1] if status == "complete" else []},
+            )],
+        )
+
+    same_rows = progress_signature(frame_with("incomplete", 3)) == progress_signature(
+        frame_with("complete", 3)
+    )
+    assert same_rows
+    assert progress_signature(frame_with("complete", 3)) != progress_signature(
+        frame_with("complete", 4)
+    )
+
+
+def test_type_template_placeholder_text_is_blocked() -> None:
+    # R2 regression: a Worker hallucinated `{{new_name}}` as literal type text
+    # because the bound value is opaque, silently creating a phantom file. The
+    # guard must reject template placeholders instead of executing them.
+    frame = MaterializedFrame(frame_id="frame:1", screenshot_path="", readiness="ready")
+    for bad in ("{{new_name}}", "{new_name}", "rename to {{new_name}}"):
+        error = _action_boundary_error("type", {"text": bad}, frame, set())
+        assert error and "placeholder" in error, bad
+
+    real = _action_boundary_error("type", {"text": "bid_1.txt"}, frame, set())
+    assert real == ""
+    # A binding action carries no Worker-authored text; the injected value must pass.
+    bound = _action_boundary_error("type", {"x": 500, "y": 510}, frame, set())
+    assert bound == ""
 
 
 def test_task108_replay_blocks_one_unchanged_repeat_until_target_progresses() -> None:

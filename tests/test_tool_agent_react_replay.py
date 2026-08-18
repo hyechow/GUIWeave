@@ -3,10 +3,13 @@ from __future__ import annotations
 import json
 from pathlib import Path
 
+import pytest
+
 from gui_agent.core.tool_agent.contracts import (
     MaterializedFrame,
     WorkerSpec,
 )
+from gui_agent.core.tool_agent.data_store import RuntimeDataStore
 from gui_agent.core.tool_agent.runtime import ToolAgentRuntime
 from gui_agent.core.tool_agent.worker_memory import (
     WorkerJournal,
@@ -69,11 +72,21 @@ def test_task193_turn3_does_not_gain_an_undeclared_recovery_action() -> None:
         frame=frame,
     )
 
-    assert case["expected_recovery"]["forbidden_tool"] not in tool_names
-    assert tool_names == {"select_option", "report_blocked"}
+    # ReAct collection: complete is always offered to a collector on a ready frame.
+    # The old mechanical gate withheld it here (the recorded run shows
+    # complete_available=False below); the new guard is that calling it with zero
+    # accumulated rows is rejected by the runtime with guidance.
+    assert tool_names == {"select_option", "report_blocked", "complete"}
     assert any(control.get("label") == "Clear all" for control in frame.controls)
     assert '"extra_applied_filters": ["Purchase Date"]' in projection.text
     assert frame.collections == []
+
+    runtime.data_store = RuntimeDataStore()
+    with pytest.raises(ValueError, match="no accumulated rows"):
+        runtime._execute_worker_tool(
+            spec, active_actions, {"name": "complete", "args": {"evidence": []}},
+            b"png", frame,
+        )
 
     observed = case["observed_policy_replay"]
     assert observed["complete_available"] is False

@@ -128,13 +128,11 @@ def test_collection_rows_remove_overlap_between_visual_windows() -> None:
 def test_visual_collection_backfills_rows_above_initial_bottom_window() -> None:
     store = RuntimeDataStore()
     rows = [{"label": "first", "metric": 1}, {"label": "second", "metric": 2}]
-    _, bottom, _ = _put_window(
+    _put_window(
         store, "frame:1",
         rows=rows[1:],
         context="surface", partial=True, start_visible=False, end_visible=True,
     )
-
-    assert store.mark_scroll_end(bottom.ref).coverage["status"] == "incomplete"
 
     _, backfilled, _ = _put_window(
         store, "frame:2",
@@ -143,14 +141,6 @@ def test_visual_collection_backfills_rows_above_initial_bottom_window() -> None:
     )
 
     assert store.collection_rows(backfilled.ref) == rows
-    assert store.mark_scroll_end(backfilled.ref).coverage["status"] == "complete"
-    structured = RuntimeDataStore()
-    _, collection, _ = _put_window(
-        structured, "frame:1", rows=rows[:1], context="surface", partial=True,
-        provider="structured", source_scope="structured_surface", scope_status="met",
-        start_visible=True, movement={"type": "scroll"},
-    )
-    assert structured.mark_scroll_end(collection.ref).coverage["status"] == "complete"
 
 
 def test_static_unknown_total_stays_incomplete_with_a_clipped_start() -> None:

@@ -302,7 +302,52 @@ def test_strategy_stop_does_not_dispatch_another_worker() -> None:
     assert runtime.trace[-1]["event"] == "strategy_stopped"
 
 
-def test_worker_returns_verified_empty_without_another_policy_call() -> None:
+class _CompletingWorker:
+    """Worker policy that calls `complete` on the first policy turn."""
+
+    def __init__(self) -> None:
+        self.calls = 0
+
+    def bind_tools(self, tools, **kwargs):
+        del tools, kwargs
+        return self
+
+    def invoke(self, messages):
+        del messages
+        self.calls += 1
+        return SimpleNamespace(
+            content="",
+            tool_calls=[{
+                "id": "complete-1",
+                "name": "complete",
+                "args": {
+                    "state": {
+                        "status": "completed",
+                        "summary": "Requested scope fully collected per visible evidence.",
+                    },
+                    "evidence": ["Filtered list fits the viewport with no clipped tail."],
+                },
+            }],
+        )
+
+
+def _collector_runtime(frame: MaterializedFrame, descriptor: CollectionRef,
+                       rows: list[dict]) -> ToolAgentRuntime:
+    runtime = object.__new__(ToolAgentRuntime)
+    runtime.trace = []
+    runtime._status_cb = None
+    runtime._worker_journals = {}
+    runtime._worker_last_frames = {}
+    runtime._observe = lambda _spec: (frame, b"png")
+    runtime.worker = _CompletingWorker()
+    from gui_agent.core.tool_agent.data_store import RuntimeDataStore
+
+    runtime.data_store = RuntimeDataStore()
+    runtime.data_store.restore_collection(descriptor, rows)
+    return runtime
+
+
+def test_empty_collection_completes_only_through_a_worker_policy_call() -> None:
     case = _case()
     spec = WorkerSpec.model_validate(case["original_spec"])
     empty_collection = CollectionRef.model_validate(
@@ -321,30 +366,28 @@ def test_worker_returns_verified_empty_without_another_policy_call() -> None:
         },
         collections=[empty_collection],
     )
-    runtime = object.__new__(ToolAgentRuntime)
-    runtime.trace = []
-    runtime._status_cb = None
-    runtime._worker_journals = {}
-    runtime._worker_last_frames = {}
-    runtime._observe = lambda _spec: (frame, b"png")
-    runtime.worker = SimpleNamespace(
-        bind_tools=lambda *_args, **_kwargs: (_ for _ in ()).throw(
-            AssertionError("verified empty collection must terminate before policy")
-        )
-    )
+    runtime = _collector_runtime(frame, empty_collection, [])
 
     outcome = runtime._run_worker(case["logical_worker_id"], spec)
 
+    # ReAct collection: no runtime auto-completion; the Worker policy is consulted
+    # and its explicit `complete` binds the accumulated (empty) collection.
     assert outcome.phase == "completed"
     assert outcome.collection_ref is not None
     assert outcome.collection_ref.row_count == 0
-    assert outcome.steps == 0
-    assert any(event["event"] == "worker_empty_collection" for event in runtime.trace)
+    assert runtime.worker.calls == 1
+    assert outcome.steps >= 1
+    completed = [event for event in runtime.trace if event["event"] == "worker_complete"]
+    assert completed and "completion_source" not in completed[0]
 
 
-def test_worker_auto_completes_ready_nonempty_collection_without_model_call() -> None:
+def test_collector_completion_binds_accumulated_collection_without_coverage_gate() -> None:
     case = _case()
     spec = WorkerSpec.model_validate(case["original_spec"])
+    rows = [
+        {"product": "Erica Sports Bra", "title": "Great fit", "rating": 5},
+        {"product": "Erica Sports Bra", "title": "Runs small", "rating": 3},
+    ]
     collection = CollectionRef.model_validate(
         case["empty_outcome"]["collection_ref"]
     ).model_copy(update={"row_count": 2})
@@ -353,23 +396,14 @@ def test_worker_auto_completes_ready_nonempty_collection_without_model_call() ->
         screenshot_path="recorded-ready.png",
         collections=[collection],
     )
-    runtime = object.__new__(ToolAgentRuntime)
-    runtime.trace = []
-    runtime._status_cb = None
-    runtime._worker_journals = {}
-    runtime._worker_last_frames = {}
-    runtime._observe = lambda _spec: (frame, b"png")
-    runtime.worker = SimpleNamespace(
-        bind_tools=lambda *_args, **_kwargs: (_ for _ in ()).throw(
-            AssertionError("ready collector must complete before Worker policy")
-        )
-    )
+    runtime = _collector_runtime(frame, collection, rows)
 
     outcome = runtime._run_worker(case["logical_worker_id"], spec)
 
     assert outcome.phase == "completed"
     assert outcome.collection_ref is not None
     assert outcome.collection_ref.row_count == 2
-    assert outcome.steps == 0
+    assert runtime.worker.calls == 1
+    assert outcome.steps >= 1
     completed = [event for event in runtime.trace if event["event"] == "worker_complete"]
-    assert completed[0]["completion_source"] == "runtime_policy"
+    assert completed and "completion_source" not in completed[0]

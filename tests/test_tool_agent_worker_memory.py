@@ -156,7 +156,7 @@ def test_worker_memory_accumulates_explicit_visual_facts() -> None:
     assert not [event for event in durable if "author=demo" in event.durable_text]
 
 
-def test_worker_memory_tracks_collection_anchor_without_persisting_raw_cells() -> None:
+def test_worker_memory_keeps_collection_cells_out_of_durable_memory() -> None:
     journal = WorkerJournal("collection_memory")
     frame = MaterializedFrame(
         frame_id="frame:7",
@@ -185,44 +185,14 @@ def test_worker_memory_tracks_collection_anchor_without_persisting_raw_cells() -
         }],
     )
 
-    journal.observe_collection(frame)
     rendered = build_worker_memory_view(journal).render_prompt_section()
 
-    assert journal.collection_context == "Bookmarks"
     assert "Exact content 💛🐾" not in rendered
     assert journal.events == []
     projection = project_worker_context(
         memory=build_worker_memory_view(journal), frame=frame,
     )
     assert "Exact content 💛🐾" in projection.text
-
-    journal.record_turn(
-        step=1,
-        frame_id="frame:7",
-        state=_state(1),
-        tool="scroll_records",
-        args={"x": None, "y": None},
-        result={"status": "executed", "action_type": "scroll", "no_effect": True},
-    )
-    assert journal.last_scroll_no_effect is True
-    assert journal.last_scroll_point == (500, 500)
-    assert journal.has_downward_scroll_end_evidence(frame) is False
-
-    journal.last_scroll_direction = "down"
-    assert journal.has_downward_scroll_end_evidence(frame) is True
-    journal.last_scroll_point = (500, 950)
-    assert journal.has_downward_scroll_end_evidence(frame) is False
-
-    journal.record_turn(
-        step=2,
-        frame_id="frame:7",
-        state=_state(2),
-        tool="open_search",
-        args={},
-        result={"status": "executed", "action_type": "tap"},
-    )
-    assert journal.collection_context == ""
-    assert journal.last_scroll_no_effect is False
 
 
 def test_worker_context_always_uses_compact_semantic_frame() -> None:

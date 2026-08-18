@@ -118,7 +118,9 @@ def test_worker_keeps_data_private_and_coordinates_normalized() -> None:
     assert "Never guess credentials" in prompt
     assert "transient code from its delivery surface" in prompt
     assert "immutable goal, success criteria" in prompt
-    assert "Complete an operator only" in prompt
+    assert "Complete a single-element operator only" in prompt
+    assert "consumes a plan array element-wise" in prompt
+    assert "after EACH element's target UI state" in prompt
     assert "Coordinates are normalized 0..999" in prompt
     assert "Use only Runtime-supplied actions" in prompt
     assert "request_action_patch" not in prompt
@@ -143,7 +145,7 @@ def test_master_keeps_visual_conditional_dependencies_in_one_worker() -> None:
         "candidate-local evidence", "complete—not merely visible—candidate traversal",
         "excluded/already-processed identities", "intermediate identities",
         "UI transitions/mutations", "clean environment", "Do not enumerate atomic GUI actions",
-        "such as `type.text`", "finishing with `effect=\"data\"`",
+        "never an action string like `type.text`", "finishing with `effect=\"data\"`",
         "neither typed data nor a transferable scope",
     ):
         assert rule in prompt

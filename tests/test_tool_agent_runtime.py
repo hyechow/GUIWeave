@@ -19,7 +19,6 @@ from gui_agent.core.tool_agent.action_guard import (
     WorkerActionCircuitBreaker,
     action_signature,
     is_candidate_commit,
-    progress_signature,
 )
 from gui_agent.core.tool_agent.data_store import RuntimeDataStore
 from gui_agent.core.tool_agent.protocol import (
@@ -30,7 +29,6 @@ from gui_agent.core.tool_agent.protocol import (
 )
 from gui_agent.core.tool_agent.runtime import (
     ToolAgentRuntime,
-    _WorkerActionRejected,
     _action_feedback,
     _target_verification_result,
 )
@@ -300,7 +298,10 @@ def test_runtime_rejects_spatial_target_inside_clipped_collection_cell() -> None
     assert inspect(unrelated, "tap", 948).blocked is False
 
 
-def test_runtime_blocks_navigation_outside_unfinished_scroll_collection() -> None:
+def test_navigation_outside_clipped_collection_is_not_mechanically_blocked() -> None:
+    # The ReAct collector owns traversal: navigating away from a clipped scroll
+    # collection is a Worker judgment call, guarded only by the circuit breaker.
+    # The old `_incomplete_collection_exit_reason` gate is gone.
     frame = MaterializedFrame(
         frame_id="frame:9",
         screenshot_path="frame.png",
@@ -310,42 +311,13 @@ def test_runtime_blocks_navigation_outside_unfinished_scroll_collection() -> Non
             "cells": [],
         }],
     )
-    state = WorkerState(
-        status="collecting",
-        summary="Collection is complete.",
-    )
-    journal = WorkerJournal("collection")
-    journal.collection_context = "Bookmarks"
-
-    reason = ToolAgentRuntime._incomplete_collection_exit_reason(
-        capability="tap",
-        args={"x": 375, "y": 930},
-        state=state,
-        journal=journal,
+    breaker = WorkerActionCircuitBreaker()
+    decision = breaker.inspect(
+        tool="tap", capability="tap",
+        args={"x": 375, "y": 930, "description": "Back"},
         frame=frame,
     )
-    assert "latest traversal scroll returned no_effect" in reason
-
-    journal.last_scroll_no_effect = True
-    journal.last_scroll_direction = "down"
-    journal.last_scroll_point = (375, 500)
-    assert ToolAgentRuntime._incomplete_collection_exit_reason(
-        capability="tap",
-        args={"x": 375, "y": 930},
-        state=state,
-        journal=journal,
-        frame=frame,
-    ) == ""
-
-    journal.collection_context = ""
-    journal.last_scroll_no_effect = False
-    assert ToolAgentRuntime._incomplete_collection_exit_reason(
-        capability="tap",
-        args={"x": 375, "y": 930},
-        state=state,
-        journal=journal,
-        frame=frame,
-    ) == ""
+    assert decision.blocked is False
 
 
 def test_action_guard_allows_typing_into_editable_aria_combobox() -> None:
@@ -2404,7 +2376,7 @@ def test_timed_out_target_verification_is_cancelled() -> None:
     assert isinstance(error, TimeoutError)
     assert cancelled == [True]
 
-def test_collector_completion_is_unavailable_until_collection_is_ready() -> None:
+def test_collector_completion_binds_accumulated_rows_regardless_of_coverage() -> None:
     runtime = object.__new__(ToolAgentRuntime)
     runtime.data_store = RuntimeDataStore()
     _, collection, _ = runtime.data_store.put_chunk(
@@ -2456,16 +2428,56 @@ def test_collector_completion_is_unavailable_until_collection_is_ready() -> None
         collections=[collection],
         requirement_scopes={"records": {"status": "met"}},
     )
+    # ReAct collection: complete is offered on any ready frame; the Worker decides.
     tools = runtime._worker_tools_for_frame(spec, spec._test_actions, frame)
-    assert "complete" not in {tool["function"]["name"] for tool in tools}
+    assert "complete" in {tool["function"]["name"] for tool in tools}
 
-    with pytest.raises(ValueError, match="complete is unavailable"):
+    # Calling it binds whatever rows the perception loop accumulated, even while the
+    # mechanical coverage verdict is still "incomplete" (partial page here).
+    assert collection.coverage.get("status") == "incomplete"
+    payload, terminal = runtime._execute_worker_tool(
+        spec,
+        spec._test_actions,
+        {
+            "name": "complete",
+            "args": {"evidence": []},
+        },
+        b"png",
+        frame,
+    )
+    assert terminal == "complete"
+    assert payload["ref"] == collection.ref
+    assert payload["row_count"] == 1
+
+
+def test_collector_complete_without_any_accumulated_rows_is_rejected() -> None:
+    runtime = object.__new__(ToolAgentRuntime)
+    runtime.data_store = RuntimeDataStore()
+    spec = _worker_spec(
+        profile="collector",
+        goal="Collect all records",
+        success_criteria=["Collection coverage is complete"],
+        data_requirements=[{
+            "id": "records",
+            "description": "Collect all records",
+            "row_schema": {
+                "type": "object",
+                "properties": {"value": {"type": "string"}},
+                "required": ["value"],
+                "additionalProperties": False,
+            },
+        }],
+        actions=[],
+    )
+    frame = MaterializedFrame(frame_id="frame:1", screenshot_path="frame.png")
+
+    with pytest.raises(ValueError, match="no accumulated rows"):
         runtime._execute_worker_tool(
             spec,
             spec._test_actions,
             {
                 "name": "complete",
-                "args": {},
+                "args": {"evidence": []},
             },
             b"png",
             frame,
@@ -2531,6 +2543,83 @@ def test_ready_collector_completion_uses_runtime_bound_collection_ref() -> None:
 
     assert terminal == "complete"
     assert payload["ref"] == collection.ref
+
+
+def test_current_each_element_hints_the_plan_record_to_the_worker() -> None:
+    # R2.3 regression: the Worker must know which plan element it is operating
+    # on, otherwise it locates the first visible row (e.g. an already-renamed
+    # file) instead of the actual target.
+    runtime = object.__new__(ToolAgentRuntime)
+    runtime.data_store = RuntimeDataStore()
+    plan = [
+        {"old_name": "bid_restaurant_proposal.txt", "new_name": "bid_1.txt"},
+        {"old_name": "bid_menu_design_contract.pdf", "new_name": "bid_8.pdf"},
+    ]
+    ref = runtime.data_store.put_result(
+        plan,
+        {"type": "array", "items": {
+            "type": "object",
+            "properties": {
+                "old_name": {"type": "string"}, "new_name": {"type": "string"},
+            },
+            "required": ["old_name", "new_name"],
+        }},
+        summary="rename plan",
+    ).ref
+    runtime._each_cursors = {("worker", "plan"): 0}
+    spec = WorkerSpec(
+        profile="operator",
+        goal="Rename each plan element",
+        success_criteria=["Every plan element renamed"],
+        input_refs={"plan": ref},
+        input_bindings=[
+            {
+                "name": "target_file", "input": "plan", "path": ["old_name"],
+                "target": "text_input", "consume": "each",
+                "description": "Current file name to locate and select",
+            },
+            {
+                "name": "new_name", "input": "plan", "path": ["new_name"],
+                "target": "text_input", "consume": "each",
+                "description": "New file name to enter",
+            },
+        ],
+        strategy=WorkerStrategy(approach="per-row rename"),
+    )
+
+    hint = runtime._current_each_element(spec, "worker")
+    assert hint is not None
+    assert "target_file=bid_restaurant_proposal.txt" in hint
+    assert "new_name=bid_1.txt" in hint
+
+    runtime._each_cursors[("worker", "plan")] = 1
+    hint2 = runtime._current_each_element(spec, "worker")
+    assert "bid_menu_design_contract.pdf" in hint2
+    assert "bid_restaurant_proposal.txt" not in hint2
+
+
+def test_attempt_contract_carries_current_element_hint() -> None:
+    spec = WorkerSpec(
+        profile="operator",
+        goal="Rename each plan element",
+        success_criteria=["Every plan element renamed"],
+        input_refs={"plan": "result:1"},
+        input_bindings=[
+            {
+                "name": "target_file", "input": "plan", "path": ["old_name"],
+                "target": "text_input", "consume": "each",
+                "description": "Current file name to locate and select",
+            },
+        ],
+        strategy=WorkerStrategy(approach="per-row rename"),
+    )
+    plain = worker_attempt_contract(spec)
+    assert "current_element" not in plain
+    with_hint = worker_attempt_contract(
+        spec, current_element="target_file=bid_menu_design_contract.pdf"
+    )
+    assert "current_element" in with_hint
+    assert "bid_menu_design_contract.pdf" in with_hint
 
 
 def test_runtime_streams_live_logs_and_observation_artifacts(tmp_path) -> None:
@@ -3124,3 +3213,104 @@ def test_each_binding_complete_advances_cursor_and_exhausts() -> None:
     )
     assert terminal == "complete"
     assert result.get("each_advanced") is None
+
+
+class _QueueWorker:
+    """Worker policy that replays a fixed decision list."""
+
+    def __init__(self, decisions: list[dict]) -> None:
+        self.decisions = list(decisions)
+        self.calls = 0
+
+    def bind_tools(self, tools, **kwargs):
+        del tools, kwargs
+        return self
+
+    def invoke(self, messages):
+        del messages
+        decision = self.decisions.pop(0)
+        self.calls += 1
+        return SimpleNamespace(content="", tool_calls=[{
+            "id": f"call-{self.calls}",
+            "name": decision["name"],
+            "args": decision["args"],
+        }])
+
+
+def test_each_element_boundary_resets_the_circuit_breaker() -> None:
+    """Completing plan element N must clear the breaker window so a structurally
+    identical menu action on element N+1 is not misread as a repeated tap."""
+    rename_frame = MaterializedFrame(
+        frame_id="frame:menu",
+        screenshot_path="frame.png",
+        controls=[{
+            "kind": "button", "label": "Rename", "enabled": True,
+            "rect": {"x": 752, "y": 449, "w": 477, "h": 53},
+        }],
+    )
+    runtime = object.__new__(ToolAgentRuntime)
+    runtime.trace = []
+    runtime._status_cb = None
+    runtime._worker_journals = {}
+    runtime._worker_last_frames = {}
+    runtime._worker_action_breakers = {}
+    runtime._each_cursors = {}
+    runtime._observe = lambda _spec: (rename_frame, b"png")
+    runtime.data_store = SimpleNamespace(
+        result_value=lambda ref: [
+            {"old_name": "a.txt", "new_name": "bid_1.txt"},
+            {"old_name": "b.doc", "new_name": "bid_2.doc"},
+        ],
+        collection_for_requirement=lambda req: None,
+    )
+    runtime._platform_capabilities = frozenset({"tap"})
+    runtime._initial_worker_actions = lambda spec: [
+        DynamicActionSpec(name="tap", capability="tap", description="Tap target")
+    ]
+    runtime.worker = _QueueWorker([
+        {"name": "tap", "args": {
+            "state": {"status": "exploring", "summary": "tap rename"},
+            "x": 750, "y": 450, "description": "Tap Rename",
+        }},
+        {"name": "complete", "args": {
+            "state": {"status": "completed", "summary": "element done"},
+            "evidence": ["renamed"],
+        }},
+        {"name": "tap", "args": {
+            "state": {"status": "exploring", "summary": "tap rename next"},
+            "x": 750, "y": 450, "description": "Tap Rename next",
+        }},
+        {"name": "complete", "args": {
+            "state": {"status": "completed", "summary": "element done"},
+            "evidence": ["renamed"],
+        }},
+    ])
+    spec = WorkerSpec(
+        profile="operator",
+        goal="Rename each plan element",
+        success_criteria=["Every element renamed"],
+        input_refs={"plan": "result:1"},
+        input_bindings=[
+            {
+                "name": "target_file", "input": "plan", "path": ["old_name"],
+                "target": "text_input", "consume": "each",
+                "description": "locate row",
+            },
+            {
+                "name": "new_name", "input": "plan", "path": ["new_name"],
+                "target": "text_input", "consume": "each",
+                "description": "new name",
+            },
+        ],
+        strategy=WorkerStrategy(approach="per-row rename"),
+    )
+
+    outcome = runtime._run_worker("rename_worker", spec)
+
+    # Both taps executed (the second, same-coordinate tap on a structurally
+    # identical menu was NOT blocked as a repeat) and both elements completed.
+    assert runtime.worker.calls == 4
+    assert outcome.phase == "completed"
+    assert outcome.steps >= 1
+    each = [event for event in runtime.trace if event["event"] == "worker_each_advanced"]
+    assert len(each) == 1

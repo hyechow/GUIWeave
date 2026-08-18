@@ -49,7 +49,7 @@ def _collection(*, rows: int = 1, filtered: bool = False) -> CollectionRef:
     )
 
 
-def test_action_guard_owns_collector_readiness() -> None:
+def test_collector_completion_is_offered_regardless_of_coverage_status() -> None:
     spec = _collector()
     frame = MaterializedFrame(
         frame_id="frame:1",
@@ -59,8 +59,13 @@ def test_action_guard_owns_collector_readiness() -> None:
 
     assessment = assess_frame(spec, [generic_action_spec("scroll")], frame)
 
-    assert assessment.ready_collection is not None
+    # ReAct collection: the Worker certifies exhaustiveness; Runtime never gates the
+    # complete tool on the mechanical coverage verdict.
     assert assessment.completion_mode == "collector"
+
+    bare_frame = MaterializedFrame(frame_id="frame:2", screenshot_path="frame.png")
+    bare = assess_frame(spec, [generic_action_spec("scroll")], bare_frame)
+    assert bare.completion_mode == "collector"
 
 
 def test_frame_guard_preserves_capabilities_until_an_unready_attempt() -> None:
