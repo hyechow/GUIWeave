@@ -91,6 +91,10 @@ _MASTER_SYSTEM = load_prompt_text("task.tool_agent.master")
 _WORKER_SYSTEM = load_prompt_text("task.tool_agent.worker")
 _MAX_ACTION_GUARD_REPAIRS_PER_FRAME = 1
 _MAX_PREDISPATCH_REPAIRS_PER_FRAME = 1
+# A guard-blocked action whose identical (signature, progress) already appears
+# twice in the window is a loop, not a transient: escalate the batch to a typed
+# Worker failure so Strategy can replace the approach.
+_BATCH_GUARD_ESCALATION_THRESHOLD = 2
 _SPATIAL_CAPABILITIES = {
     "tap", "type", "scroll", "drag", "long_press", "select_option",
 }
@@ -112,6 +116,14 @@ class _RuntimeCancelled(Exception):
 
 class _WorkerActionRejected(ValueError):
     """An action contract was rejected before any platform input was dispatched."""
+
+
+class _EachExhausted(Exception):
+    """A consume="each" array cursor passed the end of its plan array.
+
+    Raised while materializing an each binding so the runtime drops that action
+    from the available set instead of failing the Worker.
+    """
 
 
 _ACTION_TYPES = {"open_url": "navigate"}
@@ -328,6 +340,9 @@ class ToolAgentRuntime:
         self._access_log_redactions: tuple[str, ...] = ()
         self._worker_journals: dict[str, WorkerJournal] = {}
         self._worker_last_frames: dict[str, MaterializedFrame] = {}
+        # Per-worker, per-array-ref cursors for consume="each" input bindings:
+        # (worker_id, ref_name) -> next array index to consume.
+        self._each_cursors: dict[tuple[str, str], int] = {}
         self._master_knowledge = ""
         self._worker_knowledge = ""
         self._installed_app_names: tuple[str, ...] | None = None
@@ -390,6 +405,7 @@ class ToolAgentRuntime:
                 last_frames.clear()
             for name in (
                 "_worker_action_breakers",
+                "_each_cursors",
             ):
                 state = getattr(self, name, None)
                 if isinstance(state, dict):
@@ -548,6 +564,35 @@ class ToolAgentRuntime:
         digest = hashlib.sha256(worker_id.encode()).hexdigest()[:8]
         prefix_size = 64 - len(suffix) - len(digest) - 1
         return f"{worker_id[:prefix_size]}_{digest}{suffix}"
+
+    @staticmethod
+    def _inherit_disproven_facts(
+        journals: dict[str, WorkerJournal],
+        journal: WorkerJournal,
+        worker_id: str,
+    ) -> None:
+        """Copy disproven-path facts from the logical worker into a strategy retry.
+
+        A strategy worker (`worker_id_strategy_N`) starts with an empty journal,
+        so it would blindly re-attempt the very path the prior worker proved
+        impossible. Inherit the base worker's disproven observations (and only
+        those — narrative, candidate commits, and runtime evidence stay per
+        attempt) so the retry can rule them out without replaying the failure.
+        """
+
+        if "_strategy_" not in worker_id:
+            return
+        base_id = worker_id.split("_strategy_", 1)[0]
+        base = journals.get(base_id)
+        if base is None or journal.events:
+            return
+        for event in base.events:
+            if (
+                event.kind in {"worker_observation", "worker_reaffirmed"}
+                and event.durable_text
+                and event.event_ref not in {item.event_ref for item in journal.events}
+            ):
+                journal.events.append(event)
 
     def _worker_recovery_experience(
         self,
@@ -760,6 +805,7 @@ class ToolAgentRuntime:
             breakers = self._worker_action_breakers
         journal = journals.setdefault(worker_id, WorkerJournal(worker_id=worker_id))
         circuit_breaker = breakers.setdefault(worker_id, WorkerActionCircuitBreaker())
+        self._inherit_disproven_facts(journals, journal, worker_id)
         retained_events = len(journal.events)
         self._trace(
             "worker_started",
@@ -809,6 +855,7 @@ class ToolAgentRuntime:
                 self._worker_last_frames = {}
                 last_frames = self._worker_last_frames
             last_frames[worker_id] = frame
+            active_actions = self._refresh_each_actions(spec, active_actions)
             frame_assessment = assess_frame(
                 spec,
                 active_actions,
@@ -1088,6 +1135,7 @@ class ToolAgentRuntime:
                         call,
                         png,
                         frame,
+                        worker_id=worker_id,
                     )
             except Exception as exc:  # noqa: BLE001 - feed capability failure back into ReAct
                 result_payload = _worker_action_error(exc)
@@ -1105,6 +1153,16 @@ class ToolAgentRuntime:
                     tool=call["name"],
                     args=call["args"],
                     result=result_payload,
+                )
+            if result_payload.get("batch_guard_escalated"):
+                return WorkerOutcome(
+                    phase="failed",
+                    summary=(
+                        "Worker repeated a guard-blocked action inside a multi-action "
+                        "batch after same-frame corrective feedback."
+                    ),
+                    failure_kind="action_contract_invalid",
+                    steps=step,
                 )
             if result_payload.get("reuse_current_frame") is True:
                 predispatch_repair_turn += 1
@@ -1159,6 +1217,17 @@ class ToolAgentRuntime:
                     collection_ref=descriptor,
                     steps=step,
                 )
+            if terminal == "each_next":
+                # A consume="each" operator finished one plan element; the cursor
+                # was advanced inside _execute_worker_tool. Continue the loop so
+                # the next frame sees the next element's bound value.
+                self._trace(
+                    "worker_each_advanced",
+                    step=step,
+                    worker_id=worker_id,
+                    profile=spec.profile,
+                )
+                continue
             if terminal == "report_blocked":
                 reason = FailWorkerArgs.model_validate(call["args"]).reason
                 return WorkerOutcome(
@@ -1378,7 +1447,7 @@ class ToolAgentRuntime:
             and result.get("no_effect") is False
         )
         if result.get("candidate_commit") or effective_scroll:
-            breaker.reset()
+            breaker.reset(trigger_signature=decision.signature)
         else:
             breaker.record(decision)
 
@@ -1536,6 +1605,7 @@ class ToolAgentRuntime:
         reason = ""
         terminal: str | None = None
         rejected_before_dispatch = False
+        batch_guard_escalated = False
         for index, action_call in enumerate(calls, start=1):
             action_spec = action_by_name[action_call["name"]]
             if action_call.get("_control_ref") and not self._refresh_next_action(
@@ -1577,6 +1647,25 @@ class ToolAgentRuntime:
                     tool=action_call["name"],
                     reason=reason,
                 )
+                # A repeated action inside a batch previously only broke the
+                # suffix and reobserved: in a loop the same blocked element keeps
+                # getting re-scheduled behind a progressing head action, so the
+                # batch never escalates and the run dies on the turn budget.
+                # Record the blocked repeat into the window so prior_attempts
+                # grows across frames, and escalate once it has been hit a few
+                # times — the Worker is re-scheduling an action it was told not
+                # to retry.
+                if circuit_decision.prior_attempts > 0 and not policy_reason:
+                    circuit_breaker.record(circuit_decision)
+                    if circuit_decision.prior_attempts >= _BATCH_GUARD_ESCALATION_THRESHOLD:
+                        batch_guard_escalated = True
+                        reason = (
+                            "blocked repeated action inside a multi-action batch "
+                            f"({circuit_decision.signature[:60]}); reobserve "
+                            "and change approach instead of re-scheduling it"
+                        )
+                        rejected_before_dispatch = executed == 0
+                        break
                 break
             self._trace(
                 "runtime_action_started",
@@ -1598,6 +1687,7 @@ class ToolAgentRuntime:
                     action_call,
                     current_png,
                     frame,
+                    worker_id=worker_id,
                 )
             except _WorkerActionRejected as exc:
                 result = _worker_action_error(exc)
@@ -1668,6 +1758,7 @@ class ToolAgentRuntime:
             "status": "executed" if executed == len(calls) and not reason else "aborted",
             "planned_actions": len(calls),
             "executed_actions": executed,
+            "batch_guard_escalated": batch_guard_escalated,
         }
         event = (
             "worker_multi_action_completed"
@@ -1688,6 +1779,8 @@ class ToolAgentRuntime:
         call: dict[str, Any],
         png: bytes,
         frame: MaterializedFrame | None = None,
+        *,
+        worker_id: str = "",
     ) -> tuple[dict[str, Any], str | None]:
         if call["name"] == "complete":
             CompleteReadyWorkerArgs.model_validate(call["args"])
@@ -1708,6 +1801,29 @@ class ToolAgentRuntime:
                         f"{descriptor.requirement_id!r}, not {requirement.id!r}"
                     )
                 return descriptor.model_dump(mode="json"), "complete"
+            # Operator with consume="each" (or an array ref) bindings: `complete`
+            # after finishing one plan element advances the shared cursor and
+            # continues the Worker unless the array is exhausted (then it is a
+            # real terminal). Uses the same predicate as materialization so an
+            # array ref bound without explicit consume still iterates.
+            each_refs = sorted({
+                binding.input
+                for binding in spec.input_bindings
+                if self._binding_is_each(spec, binding)
+            })
+            if each_refs:
+                for ref_name in each_refs:
+                    values = self.data_store.result_value(spec.input_refs[ref_name])
+                    cursor = self._each_cursors.get((worker_id, ref_name), 0)
+                    if cursor < len(values):
+                        self._each_cursors[(worker_id, ref_name)] = cursor + 1
+                remaining = any(
+                    self._each_cursors.get((worker_id, ref_name), 0)
+                    < len(self.data_store.result_value(spec.input_refs[ref_name]))
+                    for ref_name in each_refs
+                )
+                if remaining:
+                    return {"status": "completed", "each_advanced": True}, "each_next"
             return {"status": "completed"}, "complete"
         if call["name"] == "report_blocked":
             parsed = FailWorkerArgs.model_validate(call["args"])
@@ -1982,10 +2098,23 @@ class ToolAgentRuntime:
     ) -> DynamicActionSpec:
         if not action.input_args:
             return action
+        worker_id = str(getattr(self, "_active_worker_id", "") or "")
+        binding_by_name = {item.name: item for item in spec.input_bindings}
         resolved = dict(action.fixed_args)
         for argument, binding in action.input_args.items():
             try:
                 value = self.data_store.result_value(spec.input_refs[binding.input])
+                declared = binding_by_name.get(action.name)
+                if declared is not None and declared.consume == "each" or (
+                    isinstance(value, list) and declared is not None
+                ):
+                    cursor = self._each_cursors.get((worker_id, binding.input), 0)
+                    if cursor >= len(value):
+                        raise _EachExhausted(
+                            f"{action.name}: each array for {binding.input!r} exhausted "
+                            f"at cursor {cursor}/{len(value)}"
+                        )
+                    value = value[cursor]
                 for part in binding.path:
                     value = value[part]
             except (KeyError, IndexError, TypeError) as exc:
@@ -2006,13 +2135,76 @@ class ToolAgentRuntime:
             generic_action_spec(capability)
             for capability in sorted(self._supported_capabilities())
         ]
-        actions.extend(
-            self._materialize_action_inputs(spec, input_binding_action(binding))
-            for binding in spec.input_bindings
-        )
+        for binding in spec.input_bindings:
+            try:
+                actions.append(self._materialize_action_inputs(
+                    spec, input_binding_action(binding),
+                ))
+            except _EachExhausted:
+                # The array is already fully consumed; the binding action is not
+                # available on this Worker run.
+                continue
+            except ValueError:
+                # Non-each binding that fails materialization is surfaced at
+                # dispatch; do not silently drop it here.
+                if self._binding_is_each(spec, binding):
+                    raise
+                continue
         for action in actions:
             self._validate_platform_action(action)
         return actions
+
+    def _binding_is_each(self, spec: WorkerSpec, binding: Any) -> bool:
+        """Whether a binding consumes its ref element-wise.
+
+        Either the Master declared consume="each", or the ref resolves to a list
+        (an array plan routed to a Worker is inherently element-wise)."""
+
+        if getattr(binding, "consume", "once") == "each":
+            return True
+        try:
+            return isinstance(
+                self.data_store.result_value(spec.input_refs[binding.input]), list
+            )
+        except (KeyError, TypeError):
+            return False
+
+    def _refresh_each_actions(
+        self,
+        spec: WorkerSpec,
+        actions: list[DynamicActionSpec],
+    ) -> list[DynamicActionSpec]:
+        """Re-materialize consume="each" binding actions at the current cursor.
+
+        The cursor advances when the Worker calls `complete` after finishing one
+        plan element; each new frame must see the next element's bound value.
+        Each binding is rebuilt from its original semantic binding (an already
+        materialized action has empty input_args and would not refresh).
+        Non-each actions pass through unchanged.
+        """
+
+        each_bindings = [
+            binding for binding in spec.input_bindings
+            if self._binding_is_each(spec, binding)
+        ]
+        if not each_bindings:
+            return actions
+        each_by_name = {binding.name: binding for binding in each_bindings}
+        refreshed: list[DynamicActionSpec] = []
+        for action in actions:
+            binding = each_by_name.get(action.name)
+            if binding is None:
+                refreshed.append(action)
+                continue
+            try:
+                refreshed.append(self._materialize_action_inputs(
+                    spec, input_binding_action(binding),
+                ))
+            except _EachExhausted:
+                # Cursor passed the end of the plan array: the binding action is
+                # no longer available; the Worker has finished all plan elements.
+                continue
+        return refreshed
 
     @staticmethod
     def _event_layer(event: str) -> str:

@@ -676,13 +676,54 @@ def _static_flow_diagnostics(tree: ast.AST) -> list[MasterDiagnostic]:
                     worker,
                 ))
             routed_arrays = sorted(routed.intersection(array_results))
-            if routed_arrays:
+            try:
+                bindings = _literal_keyword(worker, "input_bindings")
+            except ValueError:
+                bindings = []
+            # An array ref routed to a Worker is consumed element-wise by its
+            # input_bindings: each binding's `input` names an input_refs key, and
+            # its `path` selects one field of the current element. Map binding
+            # `input` keys back to the routed ref's base name so a binding that
+            # consumes an array ref is recognized.
+            ref_by_input_key: dict[str, str] = {}
+            input_refs_keyword = next(
+                (item for item in worker.keywords if item.arg == "input_refs"),
+                None,
+            )
+            if input_refs_keyword is not None and isinstance(input_refs_keyword.value, ast.Dict):
+                ref_dict = input_refs_keyword.value
+                for ref_key, ref_value in zip(ref_dict.keys, ref_dict.values):
+                    key = getattr(ref_key, "value", ref_key)
+                    ref_by_input_key[str(key)] = _base_name(ref_value)
+            bound_inputs = {
+                ref_by_input_key.get(str(item.get("input") or ""), str(item.get("input") or ""))
+                for item in bindings
+                if isinstance(item, dict)
+            } if isinstance(bindings, list) else set()
+            unconsumed_arrays = [
+                ref for ref in routed_arrays if ref not in bound_inputs
+            ]
+            bad_paths = [
+                str(item.get("name") or "")
+                for item in bindings
+                if isinstance(item, dict)
+                and isinstance(item.get("path"), str)
+            ]
+            if unconsumed_arrays:
                 diagnostics.append(_diagnostic(
                     "WORKER_ARRAY_INPUT_UNSUPPORTED",
-                    "GUI Worker cannot consume private array ResultRefs "
-                    f"from {routed_arrays}; do not join or serialize them into a scalar; "
-                    "keep the multi-record observe/branch/act loop inside one cohesive "
-                    "operator and use a bulk/group editor when available",
+                    "GUI Worker receives array ResultRefs "
+                    f"from {unconsumed_arrays}; bind each element's field with an "
+                    "input_binding whose `input` points at the array ref and whose "
+                    "`path` is a list of keys into one element; the Worker calls "
+                    "complete after each element",
+                    worker,
+                ))
+            for name in bad_paths:
+                diagnostics.append(_diagnostic(
+                    "BINDING_PATH_LIST",
+                    f"input binding {name!r} uses a string path; path must be a "
+                    "list of keys selecting one field of the current array element",
                     worker,
                 ))
             pending_results.difference_update(routed)

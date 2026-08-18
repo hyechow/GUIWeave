@@ -226,6 +226,12 @@ class WorkerInputBinding(StrictModel):
     path: list[str | int] = Field(default_factory=list)
     target: Literal["text_input", "choice", "url", "application"]
     description: str = Field(min_length=1)
+    # "once": the ref is a scalar resolved once per Worker. "each": the ref is
+    # an array consumed one element at a time; the Worker calls `complete` after
+    # each element and the Runtime advances the shared cursor. Multiple `each`
+    # bindings over the same ref stay aligned on one cursor (e.g. a plan row's
+    # identity and target value).
+    consume: Literal["once", "each"] = "once"
 
 
 class DynamicActionSpec(StrictModel):
