@@ -55,10 +55,15 @@ def validate_worker_tool_state(tool: str, state: WorkerState) -> None:
 
 
 class CompleteReadyWorkerArgs(BaseModel):
-    """Completion evidence when Runtime owns any required data reference."""
+    """Completion evidence when Runtime owns any required data reference.
+
+    ``rows`` carries records the Worker read from surfaces perception could not
+    extract; Runtime validates and accumulates them before binding the collection.
+    """
 
     model_config = ConfigDict(extra="forbid")
     evidence: list[str] = Field(default_factory=list)
+    rows: list[dict[str, Any]] = Field(default_factory=list)
 
 
 class FailWorkerArgs(BaseModel):
@@ -801,11 +806,24 @@ def decode_worker_action(
         call = exactly_one_tool_call(response)
     elif protocol == "json":
         value = parse_json_object(getattr(response, "content", ""))
-        if set(value) != {"tool", "args"} or not isinstance(value["args"], dict):
-            raise ProtocolError("Worker decision JSON requires exactly tool and object args")
-        if not isinstance(value["tool"], str) or not value["tool"].strip():
+        if not isinstance(value, dict) or not isinstance(value.get("args"), dict):
+            raise ProtocolError("Worker decision JSON requires tool, object args, and optional rows")
+        unknown = set(value) - {"tool", "args", "rows"}
+        if unknown:
+            raise ProtocolError(
+                f"Worker decision JSON has unknown fields: {sorted(unknown)}"
+            )
+        if not isinstance(value.get("tool"), str) or not value["tool"].strip():
             raise ProtocolError("Worker decision JSON tool must be a non-empty string")
-        call = {"id": "json-decision", "name": value["tool"].strip(), "args": value["args"]}
+        rows = value.get("rows")
+        if rows is not None and not isinstance(rows, list):
+            raise ProtocolError("Worker decision JSON rows must be an array of records")
+        call = {
+            "id": "json-decision",
+            "name": value["tool"].strip(),
+            "args": value["args"],
+            "rows": rows,
+        }
     else:
         raise ValueError(f"unsupported Worker action protocol {protocol!r}")
     if call["name"] == "continue_with_actions":

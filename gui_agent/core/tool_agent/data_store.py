@@ -318,6 +318,61 @@ class RuntimeDataStore:
         self._collections[descriptor.ref] = descriptor
         self._values[descriptor.ref] = list(rows)
 
+    def put_observed_rows(
+        self,
+        requirement_id: str,
+        rows: list[dict[str, Any]],
+        row_schema: dict[str, Any],
+    ) -> CollectionRef:
+        """Accumulate rows the Worker observed but perception could not extract.
+
+        General fallback for surfaces perception cannot turn into collection rows
+        (detail pages, dialogs, non-standard grids). Rows are validated against the
+        requirement schema, deduplicated by canonical content, and merged into the
+        requirement's accumulated collection.
+        """
+
+        if not isinstance(rows, list) or not rows:
+            raise ValueError(f"observed rows for requirement {requirement_id!r} must be non-empty")
+        for row in rows:
+            validate(instance=row, schema=row_schema)
+        seen: set[str] = set()
+        unique: list[dict[str, Any]] = []
+        for row in rows:
+            key = json.dumps(row, ensure_ascii=False, sort_keys=True, default=str)
+            if key not in seen:
+                seen.add(key)
+                unique.append(row)
+        collection_id = f"collection:{requirement_id}"
+        prior = list(self._values.get(collection_id, []))
+        prior_keys = {
+            json.dumps(row, ensure_ascii=False, sort_keys=True, default=str)
+            for row in prior
+        }
+        merged = prior + [
+            row for row in unique
+            if json.dumps(row, ensure_ascii=False, sort_keys=True, default=str)
+            not in prior_keys
+        ]
+        collection = CollectionRef(
+            kind="collection",
+            ref=collection_id,
+            requirement_id=requirement_id,
+            chunk_refs=[],
+            row_count=len(merged),
+            row_schema=row_schema,
+            coverage={
+                "requested": "complete",
+                "scope_status": "met",
+                "status": "complete",
+                "source_scope": "worker_observation",
+                "collection_key": f"worker:{requirement_id}",
+            },
+        )
+        self._collections[collection_id] = collection
+        self._values[collection_id] = list(merged)
+        return collection
+
     def ref_row_schema(self, ref: str) -> dict[str, Any] | None:
         """Return the normalized row schema for a collection-like input ref."""
         collection = self._collections.get(ref)

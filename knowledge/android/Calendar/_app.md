@@ -61,3 +61,24 @@ version: 2
   - when creating an event from a source message, the saved form must use that message's
     exact start and end (with end derived from its stated duration), rather than guessing
     from source prose or leaving either field at its default.
+- Conference-day counting: when the task asks how many days a set of meetings spans
+  (e.g. "how many days of conference meetings in October"), the answer is the total
+  number of calendar days the matching events cover:
+  - the MONTH grid cell and search row render only PART of an event's span (often
+    just the end day, e.g. `All-day (10 Friday)`), which is NOT enough to count days.
+  - tap the event and read its full Start/End dates from the event detail/edit form
+    (e.g. start `October 4 (Sat)`, end `October 10 (Fri)`). The day count is
+    inclusive: `end - start + 1` days (Oct 4-10 = 7 days).
+  - sum the day counts across every matching event; if two events share a date it is
+    still counted once overall, so collect each event's start/end and union the days.
+- Collect a month-scoped set of events by SEARCH, not the month grid: use the top
+  search box and type the distinctive title term (e.g. `conference`). Search returns
+  the matching event rows as an accessible list, which structured perception can
+  read as rows (the month grid is rendered as opaque date cells that perception
+  does not extract). The requirement filter carries the date range (e.g.
+  `'start_ts': '2025-10-*'`) so rows from other months/years are rejected by scope
+  validation. The month view is only a visual confirmation surface, not the
+  acquisition surface.
+- A natural date phrase in search (e.g. `conference october 2025`) is unreliable:
+  it can return events from a different year or an empty result. Prefer the bare
+  title term and let the filter date scope do the year bounding.

@@ -77,6 +77,12 @@ _UI_SURFACE_SUCCESS = re.compile(
 _EXACT_SCOPE_LITERAL = re.compile(
     r"\b\d{4}-\d{2}-\d{2}\b|(?P<quote>['\"])(?P<quoted>[^'\"\n]{1,80})(?P=quote)"
 )
+# English month names; a task that states one requires the datetime filter field
+# to carry the month scope so the collector can bound acquisition.
+_MONTH_NAMES = {
+    "january", "february", "march", "april", "may", "june",
+    "july", "august", "september", "october", "november", "december",
+}
 _CTX_METHODS = {
     "gui_worker",
     "transform",
@@ -436,6 +442,32 @@ def _validate_gui_worker_call(
                 f"filters, not only prose or a later transform: {sorted(unbound_literals)}",
                 call,
             ))
+        contract_lower = contract_text.casefold()
+        has_date_scope = (
+            any(month in contract_lower for month in _MONTH_NAMES)
+            or bool(re.search(r"\b20\d{2}\b", contract_text))
+        )
+        if has_date_scope:
+            filter_values = json.dumps(
+                requirement.get("filters") or {}, ensure_ascii=False
+            )
+            filter_lower = filter_values.casefold()
+            filter_has_date = bool(
+                re.search(
+                    r"20\d{2}|\b\d{1,2}[-/]\d{1,2}\b|\b\d{4}-\d{2}\b",
+                    filter_values,
+                )
+                or any(month in filter_lower for month in _MONTH_NAMES)
+            )
+            if not filter_has_date:
+                diagnostics.append(_diagnostic(
+                    "DATA_FILTER_DATE_SCOPE",
+                    "the task text states a month/date scope but no filter value carries "
+                    "a date constraint; freeze the date range in filters (e.g. "
+                    "{'Event start time': '2025-10-*'}) so the collector can bound "
+                    "acquisition",
+                    call,
+                ))
     try:
         profile = None
         if any(item.arg == "profile" for item in call.keywords):

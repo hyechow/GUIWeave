@@ -101,7 +101,18 @@ def validate_transform_source(source: str) -> None:
         raise TransformValidationError("transform must accept exactly one positional argument")
     for node in ast.walk(tree):
         if isinstance(node, _BANNED_NODES):
-            raise TransformValidationError(f"disallowed syntax: {type(node).__name__}")
+            if isinstance(node, ast.Try):
+                hint = (
+                    "; parse dates/text with regex or string methods instead of "
+                    "try/except"
+                )
+            elif isinstance(node, ast.While):
+                hint = "; use for loops or comprehensions instead of while"
+            else:
+                hint = ""
+            raise TransformValidationError(
+                f"disallowed syntax: {type(node).__name__}{hint}"
+            )
         if isinstance(node, ast.Name) and node.id in _BANNED_NAMES:
             raise TransformValidationError(f"disallowed name: {node.id}")
         if isinstance(node, ast.Attribute) and node.attr.startswith("_"):

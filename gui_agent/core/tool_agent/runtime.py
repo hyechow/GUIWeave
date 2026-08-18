@@ -929,6 +929,7 @@ class ToolAgentRuntime:
                             raise ProtocolError("Worker decision state must be an object")
                         state = WorkerState.model_validate(raw_state)
                         validate_worker_tool_state(call["name"], state)
+                        self._accumulate_observed_rows(spec, worker_id, call, step)
                         break
                     except Exception as exc:  # noqa: BLE001 - one same-frame protocol repair
                         self._trace(
@@ -1728,10 +1729,16 @@ class ToolAgentRuntime:
         worker_id: str = "",
     ) -> tuple[dict[str, Any], str | None]:
         if call["name"] == "complete":
-            CompleteReadyWorkerArgs.model_validate(call["args"])
+            parsed_complete = CompleteReadyWorkerArgs.model_validate(call["args"])
             if spec.profile == "collector":
                 if frame is None:
                     raise ValueError("collector complete requires a current frame")
+                # The Worker may fold records read from un-extractable surfaces into
+                # the completion; accumulate them before binding the collection.
+                if parsed_complete.rows:
+                    self._accumulate_observed_rows(
+                        spec, worker_id, {"rows": parsed_complete.rows}, 0,
+                    )
                 # The Worker certifies exhaustiveness from its own evidence; Runtime
                 # binds whatever rows the perception loop has accumulated so far.
                 requirement = spec.data_requirements[0]
@@ -2074,6 +2081,48 @@ class ToolAgentRuntime:
             )
         except (KeyError, TypeError):
             return False
+
+    def _accumulate_observed_rows(
+        self,
+        spec: WorkerSpec,
+        worker_id: str,
+        call: dict[str, Any],
+        step: int,
+    ) -> None:
+        """Fold Worker-observed structured rows into the collection.
+
+        General fallback for surfaces perception cannot extract (detail pages,
+        dialogs, non-standard grids). The Worker declares the exact records it
+        read from the current view; Runtime validates and accumulates them so a
+        transform can consume them even when perception produced no rows.
+        """
+
+        rows = call.get("rows")
+        if not rows or spec.profile != "collector" or not spec.data_requirements:
+            return
+        requirement = spec.data_requirements[0]
+        if not isinstance(requirement.row_schema, dict):
+            return
+        try:
+            self.data_store.put_observed_rows(
+                requirement.id, rows, requirement.row_schema,
+            )
+        except ValueError as exc:
+            self._trace(
+                "worker_observed_rows_rejected",
+                worker_id=worker_id,
+                requirement_id=requirement.id,
+                reason=str(exc),
+                step=step,
+            )
+            return
+        self._trace(
+            "worker_observed_rows",
+            worker_id=worker_id,
+            requirement_id=requirement.id,
+            count=len(rows),
+            step=step,
+        )
 
     def _current_each_element(self, spec: WorkerSpec, worker_id: str) -> str | None:
         """The current consume="each" plan element as a worker-visible locating hint.
