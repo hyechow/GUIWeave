@@ -8,6 +8,7 @@ from gui_agent.adapters.browser.webarena import (
     _eval_compat_probe_urls_for_task,
     _finalize_response,
     _guess_webarena_task_type,
+    _normalize_retrieved_data_for_intent,
     _run_official_eval,
     _synthesize_response,
     _official_eval_summary,
@@ -113,6 +114,24 @@ def test_eval_compat_probe_skips_when_referer_is_not_current_page():
         start_url="http://example.test/admin",
         current_url="http://example.test/admin/dashboard/",
     ) == []
+
+
+def test_scalar_retrieve_answer_is_deduplicated():
+    """Scroll traversal can transcribe the same record in several windows; a RETRIEVE
+    answer is a distinct set, so duplicate scalars are dropped (live task 21 returned
+    names twice and scored 0 despite matching 4/4)."""
+    deduped = _normalize_retrieved_data_for_intent(
+        ["catso", "catso", "dibbins", "anglebert dinkherhump", "michelle davis", "michelle davis"],
+        intent="Get name(s) of reviewer(s) who mention ear cups being small",
+    )
+    assert deduped == ["catso", "dibbins", "anglebert dinkherhump", "michelle davis"]
+
+
+def test_keyed_rows_are_not_deduplicated_into_objects():
+    # A keyed output may legitimately repeat a scalar across records; only scalar
+    # answers are a distinct set.
+    rows = [{"name": "a", "uses": 1}, {"name": "a", "uses": 2}]
+    assert _normalize_retrieved_data_for_intent(rows, intent="terms and uses") == rows
 
 
 def test_retrieve_success_without_data_is_not_success():

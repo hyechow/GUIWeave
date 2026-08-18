@@ -54,10 +54,10 @@ docker run -d --name webarena_verified_shopping \
 docker exec webarena_verified_shopping env-ctrl init --base-url http://192.168.1.103:7770/
 ```
 
-tasks 文件：`webarena-verified/output/shopping_only_hard_tasks.json`（56 个纯 shopping 任务；混合 reddit 的 671–675 已过滤）。跑法：
+tasks 文件：`webarena-verified/output/shopping_hard_tasks.json`（56 个纯 shopping 任务；混合 reddit 的 671–675 已过滤）。跑法：
 
 ```bash
-TASKS_FILE=webarena-verified/output/shopping_only_hard_tasks.json \
+TASKS_FILE=webarena-verified/output/shopping_hard_tasks.json \
 WA_HOST=192.168.1.103 bin/webarena 21
 ```
 

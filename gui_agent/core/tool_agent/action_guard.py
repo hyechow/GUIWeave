@@ -116,11 +116,13 @@ def ready_collection(spec: WorkerSpec, frame: MaterializedFrame) -> CollectionRe
     if spec.profile != "collector" or not spec.data_requirements:
         return None
     requirement_id = spec.data_requirements[0].id
-    return next((item for item in frame.collections
-        if item.requirement_id == requirement_id
-        and item.coverage.get("scope_status") == "met"
-        and item.coverage.get("status") == "complete"
-    ), None)
+    cands = [item for item in (frame.collections or [])
+             if item.requirement_id == requirement_id]
+    if not cands:
+        return None
+    # Pure ReAct collector: any collection item for the requirement is usable.
+    # The LLM decides completion; runtime snapshots accumulated or current rows.
+    return cands[-1]
 
 
 def assess_frame(
@@ -140,11 +142,14 @@ def assess_frame(
             completion_mode="unavailable",
         )
     collection = ready_collection(spec, frame)
-    mode: Literal["unavailable", "operator", "collector"] = (
-        "operator" if spec.profile == "operator"
-        else "collector" if collection is not None
-        else "unavailable"
-    )
+    if spec.profile == "operator":
+        mode: Literal["unavailable", "operator", "collector"] = "operator"
+    elif spec.profile == "collector":
+        # Collectors are now pure ReAct: always offer complete tool.
+        # Worker LLM decides completion; runtime snapshots current/accumulated rows.
+        mode = "collector"
+    else:
+        mode = "unavailable"
     return FrameAssessment(actions, collection, mode)
 
 

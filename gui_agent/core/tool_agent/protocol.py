@@ -364,8 +364,10 @@ def dynamic_worker_tools(
             "Complete this operator after its target UI state is visibly confirmed."
             if completion_mode == "operator"
             else (
-                "Complete this collector using the valid complete CollectionRef already "
-                "bound by Runtime for the current frame."
+                "Complete this collector once you (the LLM) decide you have gathered "
+                "the required data by observing the UI. Runtime will bind a CollectionRef "
+                "from the rows accumulated or visible at this moment. No waiting for "
+                "internal coverage signals – you drive completion."
             )
         )
         tools.append(_with_worker_state(model_tool(

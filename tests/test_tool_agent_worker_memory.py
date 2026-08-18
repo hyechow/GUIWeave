@@ -3,6 +3,7 @@ from __future__ import annotations
 from types import SimpleNamespace
 
 from gui_agent.core.tool_agent.contracts import (
+    CollectionRef,
     MaterializedFrame,
     WorkerSpec,
     WorkerState,
@@ -611,3 +612,44 @@ def test_offscreen_action_controls_expose_reveal_targets() -> None:
     assert section.count('"kind"') <= 24
     assert '"label": "Nona Fitness Tank' not in section
     assert section.count('"label": "Select"') <= 1
+
+
+def test_collection_stability_note_appears_after_revisits_with_no_new_rows() -> None:
+    """ReAct stop cue: consecutive frames that add no rows to the accumulated
+    collection surface a stability note so the Worker can conclude it is done
+    instead of looping (live failure: 25/25 budget scroll loop with data in hand)."""
+    journal = WorkerJournal(worker_id="collector")
+
+    def collection_frame(row_count: int) -> MaterializedFrame:
+        return MaterializedFrame(
+            frame_id=f"frame:{row_count}",
+            screenshot_path="",
+            collections=[
+                CollectionRef(
+                    ref="collection:reviews",
+                    requirement_id="reviews",
+                    chunk_refs=[],
+                    row_count=row_count,
+                    row_schema={},
+                    coverage={},
+                )
+            ],
+        )
+
+    # First two observes grow the collection (1 then 2 rows) — no note yet.
+    journal.record_collection_stability(collection_frame(1))
+    journal.record_collection_stability(collection_frame(2))
+    frame = collection_frame(2)
+    assert journal.collection_stability_note(frame) == ""
+
+    # Two consecutive revisits add no rows → note appears.
+    journal.record_collection_stability(collection_frame(2))
+    journal.record_collection_stability(collection_frame(2))
+    note = journal.collection_stability_note(frame)
+    assert "reviews" in note
+    assert "no new rows in the last 2 observed frame(s)" in note
+    assert "accumulated 2 row(s)" in note
+
+    # Growth resets the counter.
+    journal.record_collection_stability(collection_frame(3))
+    assert journal.collection_stability_note(collection_frame(3)) == ""

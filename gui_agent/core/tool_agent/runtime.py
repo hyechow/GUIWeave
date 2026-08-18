@@ -819,36 +819,6 @@ class ToolAgentRuntime:
                 attempted_action=bool(journal.executed_tools),
             )
             frame_actions = frame_assessment.allowed_actions
-            if frame_assessment.ready_collection is not None:
-                descriptor = frame_assessment.ready_collection
-                data_store = getattr(self, "data_store", None)
-                if data_store is not None:
-                    descriptor = data_store.collection_descriptor(descriptor.ref)
-                if descriptor.row_count == 0:
-                    self._trace(
-                        "worker_empty_collection",
-                        step=step,
-                        profile=spec.profile,
-                        collection_ref=descriptor.model_dump(mode="json"),
-                    )
-                self._trace(
-                    "worker_complete",
-                    step=step,
-                    profile=spec.profile,
-                    completion_source="runtime_policy",
-                    collection_ref=descriptor.model_dump(mode="json"),
-                )
-                return WorkerOutcome(
-                    phase="completed",
-                    summary=(
-                        "The requested collection scope completed with an authoritative "
-                        "empty result."
-                        if descriptor.row_count == 0
-                        else "Runtime verified the requested collection as complete."
-                    ),
-                    collection_ref=descriptor,
-                    steps=step - 1,
-                )
             walk_step = (
                 record_walk_step(frame, walk_state)
                 if (
@@ -1337,6 +1307,8 @@ class ToolAgentRuntime:
         )
         self._frame_no = frame_no
         terminal_ref = journal.observe_collection(frame) if journal is not None else ""
+        if journal is not None:
+            journal.record_collection_stability(frame)
         if spec.profile == "collector" and terminal_ref:
             frame = frame.model_copy(update={
                 "collections": [self.data_store.mark_scroll_end(terminal_ref)],
@@ -1422,6 +1394,7 @@ class ToolAgentRuntime:
                 attempted_action=bool(journal.executed_tools),
             ),
             same_frame_feedback=same_frame_feedback,
+            collection_stability=journal.collection_stability_note(frame),
         )
         system_prompt = self._worker_system_prompt()
         messages = [
@@ -1796,20 +1769,46 @@ class ToolAgentRuntime:
             if spec.profile == "collector":
                 if frame is None:
                     raise ValueError("collector complete requires a current frame")
+                req = spec.data_requirements[0]
+                # Collector is now pure ReAct (no separate structured FSM).
+                # LLM decides when done. Snapshot best available (accumulated or current frame).
+                ds = getattr(self, "data_store", None)
                 frame_collection = ready_collection(spec, frame)
+                accum = ds.collection_for_requirement(req.id) if ds is not None else None
+                if accum is not None and (frame_collection is None or (accum.row_count or 0) > (getattr(frame_collection, "row_count", 0) or 0)):
+                    frame_collection = accum
                 if frame_collection is None:
-                    raise ValueError(
-                        "collector complete is unavailable until the current frame "
-                        "contains one scope-met, complete CollectionRef"
+                    # No data seen yet; return empty but valid collection ref.
+                    # Store it so the ref is resolvable by transforms/finish (pure ReAct
+                    # complete must always yield a usable CollectionRef for master).
+                    snap = CollectionRef(
+                        ref=f"react-snapshot:{req.id}",
+                        requirement_id=req.id,
+                        chunk_refs=[],
+                        row_count=0,
+                        row_schema=getattr(req, "row_schema", {}),
                     )
+                    snap = snap.model_copy(update={
+                        "coverage": {**(snap.coverage or {}), "status": "complete", "react_complete": True}
+                    })
+                    if ds is not None:
+                        try:
+                            ds.restore_collection(snap, [])
+                        except Exception:  # noqa: BLE001 - 0-row restore is best-effort
+                            pass
+                    return snap.model_dump(mode="json"), "complete"
                 descriptor = self.data_store.collection_descriptor(frame_collection.ref)
-                requirement = spec.data_requirements[0]
-                if descriptor.requirement_id != requirement.id:
+                if descriptor.requirement_id != req.id:
                     raise ValueError(
                         f"CollectionRef {descriptor.ref!r} belongs to requirement "
-                        f"{descriptor.requirement_id!r}, not {requirement.id!r}"
+                        f"{descriptor.requirement_id!r}, not {req.id!r}"
                     )
-                return descriptor.model_dump(mode="json"), "complete"
+                # Pure ReAct: worker LLM called complete; present snapshot as completed.
+                # Rows are authoritative; override coverage status so transforms and traces
+                # see completion rather than FSM-derived "incomplete".
+                final_cov = {**(descriptor.coverage or {}), "status": "complete", "react_complete": True}
+                final_desc = descriptor.model_copy(update={"coverage": final_cov})
+                return final_desc.model_dump(mode="json"), "complete"
             return {"status": "completed"}, "complete"
         if call["name"] == "report_blocked":
             parsed = FailWorkerArgs.model_validate(call["args"])
@@ -2327,7 +2326,7 @@ class ToolAgentRuntime:
                     f"{item.get('requirement_id', '?')}:{amount} {coverage.get('status', 'unknown')}"
                 )
             scope_text = "; ".join(scopes) or "—"
-            collection_text = "; ".join(collections) or "waiting"
+            collection_text = "; ".join(collections) or "none"
             frame_id = str(entry.get("frame_id") or "?")
             turn_no = frame_id.rsplit(":", 1)[-1]
             screenshot = str(entry.get("screenshot_path") or "")

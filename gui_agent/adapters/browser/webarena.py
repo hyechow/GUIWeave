@@ -112,6 +112,25 @@ def _single_column_scalars(data: list) -> list | None:
     return out if len(keys) == 1 else None
 
 
+def _dedupe_scalars(values: list) -> list:
+    """Drop exact duplicates from a scalar list, preserving order.
+
+    A RETRIEVE answer is a set of distinct values: scroll traversal can transcribe
+    the same record in several windows, so the collection may hold duplicate rows
+    that the evaluator counts as extras (live task 21 returned catso/michelle twice
+    and scored 0 despite matching 4/4). Never touch objects — a keyed output may
+    legitimately repeat a scalar across records.
+    """
+    seen: set[str] = set()
+    out: list = []
+    for value in values:
+        key = json.dumps(value, ensure_ascii=False, sort_keys=True)
+        if key not in seen:
+            seen.add(key)
+            out.append(value)
+    return out
+
+
 def _normalize_retrieved_data_for_intent(data: object, intent: str = "") -> object:
     """Conservatively coerce obvious over-shaped WebArena answers to the requested shape.
 
@@ -122,10 +141,16 @@ def _normalize_retrieved_data_for_intent(data: object, intent: str = "") -> obje
     """
     if not isinstance(data, list) or not data:
         return data
+    if all(not isinstance(item, dict) for item in data):
+        # Already the intended scalar answer shape. A RETRIEVE answer is a set of
+        # distinct values; scroll traversal can transcribe the same record in
+        # several windows, so dedupe (live task 21 returned names twice and scored
+        # 0 despite matching 4/4).
+        return _dedupe_scalars(data)
     # General: unwrap a single-column row list to scalars (any intent — the wrapper is never wanted).
     single_col = _single_column_scalars(data)
     if single_col is not None:
-        return single_col
+        return _dedupe_scalars(single_col)
     intent_l = (intent or "").lower()
     asks_search_terms = "search term" in intent_l or ("search" in intent_l and "term" in intent_l)
     asks_metric = any(
@@ -139,7 +164,7 @@ def _normalize_retrieved_data_for_intent(data: object, intent: str = "") -> obje
         return data
     scalars = [_search_term_scalar(item) for item in data]
     if all(value is not None for value in scalars):
-        return scalars
+        return _dedupe_scalars(scalars)
     return data
 
 

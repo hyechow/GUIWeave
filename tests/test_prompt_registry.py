@@ -22,6 +22,7 @@ def test_prompt_registry_loads_all_assets() -> None:
         "task.chat.router",
         "task.tool_agent.master",
         "task.tool_agent.presentation",
+        "task.tool_agent.screen_reader",
         "task.tool_agent.strategy_decide",
         "task.tool_agent.visual_transcription",
         "task.tool_agent.worker",

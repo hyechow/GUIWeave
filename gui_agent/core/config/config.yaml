@@ -48,6 +48,12 @@ llm:
       # User-submitted manuals are distilled into reviewed local knowledge drafts.
       provider: dashscope
       model: qwen3.5-35b-a3b
+  tool_agent:
+    screen_reader:
+      # Dedicated pure-transcription model (no semantic judgment); matching is a
+      # separate text step on the transcribed rows.
+      provider: dashscope
+      model: qwen3.5-flash
 
 # AGENT_MODEL=<profile> 时，把对应 profile 深合并进上面的 llm（只覆盖列出的字段）。
 # qwen35 为基线（无需在此列，留空即用上面默认）。新增对比模型只在此加一项即可。

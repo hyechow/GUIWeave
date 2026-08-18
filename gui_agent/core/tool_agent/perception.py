@@ -13,15 +13,17 @@ from pathlib import Path
 from typing import Any, Callable, Literal
 
 from jsonschema import ValidationError, validate
-from langchain_core.messages import SystemMessage
+from langchain_core.messages import HumanMessage, SystemMessage
 
 from gui_agent.core.config import resolve_llm_config
 from gui_agent.core.runtime.clock import PlatformTimeSnapshot, host_time_fallback
 from gui_agent.core.tool_agent.filter_state import (
+    FilterPredicate,
     canonical_filter_field,
     canonical_filter_value,
     compile_filter_predicates,
     diff_filter_sets,
+    display_filter_predicates,
     match_filter_state,
 )
 from gui_agent.core.tool_agent.data_normalization import (
@@ -46,7 +48,7 @@ from llm.provider_config import build_chat_model, chat_request_kwargs
 
 PerceptionMode = Literal["vision-only", "enhanced"]
 
-_VISION_SYSTEM = load_prompt_text("task.tool_agent.visual_transcription")
+_SCREEN_READER_SYSTEM = load_prompt_text("task.tool_agent.screen_reader")
 
 
 class DataNormalizationError(ValueError):
@@ -475,6 +477,50 @@ def _compare_values(
     return (left_decimal > right_decimal) - (left_decimal < right_decimal)
 
 
+def _is_semantic_predicate(
+    predicate: FilterPredicate,
+    *,
+    field_type: str | None,
+) -> bool:
+    """True when the predicate is semantic free-text only perception can judge.
+
+    A `contains` operator (from a ``<field>_contains`` filter key) is always
+    semantic. An exact predicate on a ``text`` field whose value is a multi-token
+    phrase is likewise prose ("records that mention X"), not an identity label:
+    deterministic string equality cannot prove a paraphrase miss, so it defers to
+    perception rather than hard-rejecting the row.
+    """
+    if predicate.operator == "contains":
+        return True
+    if predicate.operator != "eq" or field_type != "text":
+        return False
+    value = predicate.values[0]
+    if not isinstance(value, str):
+        return False
+    return " " in value
+
+
+def _text_contains(value: Any, phrase: Any) -> bool:
+    """Casefolded substring match used by semantic predicates."""
+    text = canonical_filter_value(value)
+    needle = canonical_filter_value(phrase)
+    return isinstance(text, str) and isinstance(needle, str) and needle in text
+
+
+def _requirement_has_semantic_predicate(requirement: DataRequirement) -> bool:
+    """True when any filter predicate defers to perception (see ``_is_semantic_predicate``)."""
+    predicates = compile_filter_predicates(requirement.filters)
+    raw_by_canonical = {
+        canonical_filter_field(field): field for field in (requirement.filters or {})
+    }
+    for canonical_field, predicate in predicates.items():
+        raw_field = raw_by_canonical.get(canonical_field, "")
+        field_type = requirement.field_types.get(raw_field)
+        if _is_semantic_predicate(predicate, field_type=field_type):
+            return True
+    return False
+
+
 def _rows_satisfy_filters(
     requirement: DataRequirement,
     rows: list[dict[str, Any]],
@@ -500,6 +546,13 @@ def _rows_satisfy_filters(
             value = row[row_field]
             field_type = requirement.field_types.get(row_field)
             field_name = requirement.field_sources.get(row_field, row_field)
+            if _is_semantic_predicate(predicate, field_type=field_type):
+                # A literal substring match is decisive; absence is NOT proof of a
+                # miss (a paraphrase is a valid match). Defer to perception.
+                if _text_contains(value, predicate.values[0]):
+                    continue
+                unknown = True
+                continue
             if predicate.operator == "eq":
                 matches = _compare_values(
                     value,
@@ -639,6 +692,7 @@ def _scope_descriptor(
         if not _is_text_query_field(field, query_fields)
     }
     hard_blocked = bool(hard_conflicts or hard_extras)
+    semantic_scope = _requirement_has_semantic_predicate(requirement)
     has_valid_candidate = any(
         _rows_satisfy_filters(requirement, [row]) is True for row in rows
     )
@@ -648,12 +702,14 @@ def _scope_descriptor(
     empty_authoritative = bool(
         exact_applied_scope and not exact_scope_is_query and not hard_blocked
     )
-    if hard_blocked or visual_scope_satisfied is False:
-        status, evidence = "unmet", (
-            "conflicting_non_query_filters"
-            if hard_blocked
-            else "visual_filter_state"
-        )
+    if hard_blocked:
+        status, evidence = "unmet", "conflicting_non_query_filters"
+    elif visual_scope_satisfied is False and not semantic_scope:
+        # For a semantic free-text predicate there is no UI filter to apply;
+        # perception's scope_satisfied=False is informational, not a hard block
+        # (it would otherwise drive a worker to seek a nonexistent filter and
+        # report blocked, triggering a strategy replacement churn).
+        status, evidence = "unmet", "visual_filter_state"
     elif has_valid_candidate:
         status, evidence = "met", "validated_candidates"
     elif exact_applied_scope:
@@ -666,8 +722,8 @@ def _scope_descriptor(
         )
     return {
         "status": status,
-        "requested_filters": required_ui_predicates,
-        "required_predicates": required_ui_predicates,
+        "requested_filters": display_filter_predicates(required_ui_predicates),
+        "required_predicates": display_filter_predicates(required_ui_predicates),
         "applied_filters": dict(applied_filters),
         "query_state": query_state,
         "query_outcome": "unobserved",
@@ -807,6 +863,12 @@ class PerceptionMaterializer:
         self._vision_cfg = cfg
         self.model = cfg.model
         self._vision = build_chat_model(cfg)
+        try:
+            reader_cfg = resolve_llm_config("tool_agent.screen_reader")
+        except Exception:  # noqa: BLE001 - legacy configs without the slot fall back
+            reader_cfg = cfg
+        self._screen_reader_cfg = reader_cfg
+        self._screen_reader = build_chat_model(reader_cfg)
 
     def _assemble_detail_collection(
         self,
@@ -834,7 +896,7 @@ class PerceptionMaterializer:
         ):
             state = None
             self._detail_collections.pop(state_key, None)
-        if candidate_rows and detail_fields and scope_status == "met":
+        if candidate_rows and detail_fields:  # ReAct: assemble candidates without requiring scope "met"
             identity_fields = detail_fields | (state.detail_fields if state else set())
 
             def identities(items: list[dict[str, Any]]) -> list[dict[str, Any]]:
@@ -1140,7 +1202,11 @@ class PerceptionMaterializer:
             if table_complete:
                 rows = _structured_rows(requirement, table)
                 scope_rows = rows
-                rows = _logical_rows(requirement, rows)
+                rows = _logical_rows(
+                    requirement,
+                    rows,
+                    keep_unknown=_requirement_has_semantic_predicate(requirement),
+                )
             elif self.mode == "enhanced" and table is not None and not empty_complete:
                 candidate_rows, detail_fields = _partial_structured_rows(requirement, table)
                 if not allow_linked_details:
@@ -1172,10 +1238,12 @@ class PerceptionMaterializer:
                         self._visual_filter_states[filter_key] = "confirmed"
                     else:
                         self._visual_filter_states.pop(filter_key, None)
-                if (
-                    scope["status"] == "met"
-                    and (rows or empty_complete and scope["empty_authoritative"])
-                ):
+                if rows or (empty_complete and scope["empty_authoritative"]):
+                    # Emit for current visible rows (ReAct support).
+                    # Previously gated on scope["status"] == "met"; now emit whenever
+                    # we have logical rows so ReAct collector can complete and snapshot
+                    # what the worker has made visible, even if overall scope_status is
+                    # "candidates" or "unknown".
                     provider = "structured"
                     coverage = _structured_coverage(
                         table,
@@ -1268,7 +1336,11 @@ class PerceptionMaterializer:
                         requirement,
                         raw_visual_rows,
                     )
-                    rows = _logical_rows(requirement, valid_visual_rows)
+                    rows = _logical_rows(
+                        requirement,
+                        valid_visual_rows,
+                        keep_unknown=_requirement_has_semantic_predicate(requirement),
+                    )
                     if len(raw_visual_rows) != len(valid_visual_rows):
                         scope["collection_blockers"] = [
                             "visible rows did not satisfy the required row schema"
@@ -1356,10 +1428,9 @@ class PerceptionMaterializer:
                         coverage.update({
                             "coverage_evidence": "structured_surface_cardinality",
                         })
-                    collection_found = bool(
-                        scope["status"] == "met"
-                        and (rows or authoritative_visual_empty)
-                    )
+                    collection_found = bool(rows or authoritative_visual_empty)
+                    # Collectors are pure ReAct: emit current visible rows whenever extracted.
+                    # LLM will decide completion; no FSM gating.
             requirement_scopes.setdefault(
                 requirement.id,
                 _scope_descriptor(
@@ -1406,7 +1477,7 @@ class PerceptionMaterializer:
             )
             totals_key = (state_scope, requirement.id, requested_fingerprint)
             table_total = table.get("total_records") if table is not None else None
-            if scope["status"] == "met" and table_total not in (None, ""):
+            if table_total not in (None, ""):  # ReAct: capture totals from surfaces even if scope not "met" yet
                 try:
                     expected_totals[totals_key] = max(0, int(table_total))
                 except (TypeError, ValueError):
@@ -1451,7 +1522,7 @@ class PerceptionMaterializer:
                     # concluding the collection is finished (fake-complete loop).
                     scope["detail_resolution"]["window_exhausted"] = True
                     scope["detail_resolution"]["known_total"] = int(expected_total)
-                if ready_to_complete and scope["status"] == "met":
+                if ready_to_complete:  # ReAct: no scope["status"]=="met" gate for collector detail rows
                     existing = self.data_store.collection_for_requirement(requirement.id)
                     if existing is not None and (
                         existing.coverage.get("status") != "complete"
@@ -1464,7 +1535,7 @@ class PerceptionMaterializer:
                         provider = "structured"
                         coverage = {
                             "scope": requirement.scope,
-                            "scope_status": "met",
+                            "scope_status": str(scope.get("status") or "unknown"),
                             "requested_filters": scope["requested_filters"],
                             "applied_filters": scope["applied_filters"],
                             "collection_key": _visual_collection_key(requirement, scope),
@@ -1489,7 +1560,6 @@ class PerceptionMaterializer:
                 )
                 if (
                     accumulated is not None
-                    and scope["status"] == "met"
                     and accumulated.row_schema == requirement.row_schema
                     and json.dumps(
                         accumulated.coverage.get("requested_filters") or {},
@@ -1499,9 +1569,9 @@ class PerceptionMaterializer:
                     )
                     == requested_fingerprint
                 ):
-                    # Collection state belongs to the Worker, not to one page.
-                    # Keep accumulated descriptors visible while the Worker moves
-                    # between a candidate list and linked detail surfaces.
+                    # Pure ReAct collectors: retain prior accumulated collection across frames.
+                    # The worker owns the collection; a single page's scope_status does not reset it.
+                    # This keeps chunks visible while the worker navigates between list and detail surfaces.
                     collections.append(accumulated)
                     continue
                 missing.append(requirement.id)
@@ -1551,6 +1621,86 @@ class PerceptionMaterializer:
         )
         return materialized, png
 
+    def _reader_config(self) -> Any:
+        return getattr(self, "_screen_reader_cfg", None) or getattr(
+            self, "_vision_cfg", None
+        )
+
+    def _reader_invoke(self, messages: list[Any]) -> Any:
+        """Invoke the dedicated screen-reader model, falling back to the perception model."""
+        cfg = self._reader_config()
+        model = getattr(cfg, "model", None) or self.model
+        reader = getattr(self, "_screen_reader", None) or getattr(
+            self, "_vision", None
+        )
+        return reader.bind(
+            response_format={"type": "json_object"},
+            **chat_request_kwargs(model),
+        ).invoke(messages)
+
+    def _screen_read(
+        self,
+        requirement: DataRequirement,
+        png: bytes,
+        *,
+        query_filters: dict[str, Any],
+        page_identity: dict[str, str] | None = None,
+    ) -> tuple[dict[str, Any], list[Any], Any, float]:
+        """Pure transcription of every visible record — no semantic judgment.
+
+        A dedicated screen-reader model (cheap flash) reads all records that fit
+        the row schema, matching or not. Matching is a separate text step, so a
+        paraphrase the judge accepts is never dropped at transcription time.
+        """
+        prompt = (
+            f"Data requirement: {requirement.description}\n"
+            f"Visible target label: {requirement.target_label or '(not specified)'}\n"
+            f"Current page identity: {json.dumps(page_identity or {}, ensure_ascii=False)}\n"
+            f"Current UI query state: {json.dumps(query_filters, ensure_ascii=False)}\n"
+            f"Visible field labels: {json.dumps(requirement.field_sources, ensure_ascii=False)}\n"
+            "Visible row JSON Schema (transcribe EVERY visible record, matching or not): "
+            f"{json.dumps(_visible_row_schema(requirement, {}), ensure_ascii=False)}"
+        )
+        started_at = time.perf_counter()
+        cfg = self._reader_config()
+        messages = [
+            SystemMessage(content=_SCREEN_READER_SYSTEM),
+            image_message(prompt, png, scale=float(getattr(cfg, "image_scale", 1.0))),
+        ]
+        response = self._reader_invoke(messages)
+        value = parse_json_object(response.content)
+        if not isinstance(value.get("rows"), list):
+            value["rows"] = []
+        return value, messages, response, time.perf_counter() - started_at
+
+    def _semantic_judge(
+        self,
+        requirement: DataRequirement,
+        rows: list[dict[str, Any]],
+    ) -> list[dict[str, Any]]:
+        """Text-only filter of transcribed rows by a semantic predicate.
+
+        The screen reader transcribes everything; this judge keeps the rows whose
+        content field mentions or describes the phrase, paraphrases included —
+        the exact judgment the fused transcribe-and-filter perception kept missing
+        (e.g. "half my ear into it" for small ear cups).
+        """
+        predicates = display_filter_predicates(requirement.filters)
+        prompt = (
+            "Transcribed records are below. Keep the subset that satisfies this semantic "
+            f"predicate: {json.dumps(predicates, ensure_ascii=False)}\n"
+            "A record matches when its text mentions or describes the phrase, including "
+            "paraphrases; exclude a record only when it visibly does not relate.\n"
+            'Return ONLY a JSON object with the 0-based indices of the kept records: '
+            '{"matched_indices": [0, 2, ...]}\n'
+            f"Records:\n{json.dumps(rows, ensure_ascii=False)}"
+        )
+        response = self._reader_invoke([HumanMessage(content=prompt)])
+        indices = parse_json_object(response.content).get("matched_indices")
+        if not isinstance(indices, list):
+            return []  # undecided judge → keep nothing; a later frame re-reads
+        return [rows[i] for i in indices if isinstance(i, int) and 0 <= i < len(rows)]
+
     def _vision_extract(
         self,
         requirement: DataRequirement,
@@ -1559,43 +1709,17 @@ class PerceptionMaterializer:
         query_filters: dict[str, Any],
         page_identity: dict[str, str] | None = None,
     ) -> dict[str, Any]:
-        reference_time = (
-            getattr(self, "platform_time", None)
-            or host_time_fallback("browser", reason="legacy perception fallback")
+        value, messages, response, llm_elapsed_s = self._screen_read(
+            requirement,
+            png,
+            query_filters=query_filters,
+            page_identity=page_identity,
         )
-        prompt = (
-            f"Data requirement: {requirement.description}\n"
-            f"Visible target label: {requirement.target_label or '(not specified)'}\n"
-            f"Current page identity: {json.dumps(page_identity or {}, ensure_ascii=False)}\n"
-            f"Original task temporal context: {getattr(self, 'task_goal', '') or '(none)'}\n"
-            "Task reference time (frozen platform clock): "
-            f"{json.dumps(reference_time.model_dump(mode='json'), ensure_ascii=False)}\n"
-            "Frozen relative calendar dates by day offset: "
-            f"{json.dumps(reference_time.relative_date_offsets(), ensure_ascii=False)}\n"
-            "Immutable required predicates: "
-            f"{json.dumps(requirement.filters, ensure_ascii=False)}\n"
-            f"Current UI query state: {json.dumps(query_filters, ensure_ascii=False)}\n"
-            "A visible empty state proves only that the current query returned no candidates; "
-            "do not infer that the immutable required result set is empty.\n"
-            "Visible row JSON Schema (transcribe every visible required field): "
-            f"{json.dumps(_visible_row_schema(requirement, {}), ensure_ascii=False)}"
-        )
-        started_at = time.perf_counter()
-        config = getattr(self, "_vision_cfg", None)
-        model = getattr(config, "model", None) or getattr(self, "model", None)
-        messages = [
-            SystemMessage(content=_VISION_SYSTEM),
-            image_message(prompt, png, scale=float(getattr(config, "image_scale", 1.0))),
-        ]
-        response = self._vision.bind(
-            response_format={"type": "json_object"},
-            **chat_request_kwargs(model),
-        ).invoke(messages)
-        llm_elapsed_s = time.perf_counter() - started_at
-        value = parse_json_object(response.content)
-        rows = value.get("rows")
-        if not isinstance(rows, list):
-            value["rows"] = []
+        if _requirement_has_semantic_predicate(requirement):
+            rows = value.get("rows") or []
+            if rows:
+                value["rows"] = self._semantic_judge(requirement, rows)
+            value["found"] = bool(value["rows"])
         # Preserve visibly transcribed rows until observe() classifies them. If
         # schema validation drops a non-empty row here, the caller can no longer
         # distinguish an incomplete record from an authoritative empty surface.

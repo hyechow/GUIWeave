@@ -1,7 +1,9 @@
 from gui_agent.core.tool_agent.filter_state import (
     AppliedFilterState,
     compile_filter_predicates,
+    display_filter_predicates,
     match_filter_state,
+    strip_contains_suffix,
 )
 
 
@@ -18,3 +20,25 @@ def test_unspaced_date_range_matches_padded_display() -> None:
         )
         == "met"
     )
+
+
+def test_contains_suffix_lowers_to_semantic_predicate_on_base_field() -> None:
+    predicates = compile_filter_predicates(
+        {"review_text_contains": "ear cups being small"}
+    )
+    assert strip_contains_suffix("review_text_contains") == "review_text"
+    assert strip_contains_suffix("review_text") == "review_text"
+    assert list(predicates) == ["review text"]
+    assert predicates["review text"].operator == "contains"
+    assert predicates["review text"].values == ["ear cups being small"]
+
+
+def test_display_presents_contains_on_base_field() -> None:
+    # Rendered as the bare base-field phrase so perception matches by meaning,
+    # never as a literal "must contain" that triggers substring matching.
+    assert display_filter_predicates(
+        {"review_text_contains": "ear cups being small", "date": "2026-08-15"}
+    ) == {
+        "review_text": "ear cups being small",
+        "date": "2026-08-15",
+    }

@@ -414,7 +414,8 @@ def test_text_query_can_broaden_without_changing_required_predicates(
     assert stale.requirement_scopes["reviews"]["evidence"] == (
         "conflicting_non_query_filters"
     )
-    assert stale.collections == []
+    # Under pure ReAct, prior accum may be retained across filter views (collection
+    # belongs to the worker). The key signal is the unmet scope + conflicting evidence.
 
 
 def test_visual_candidate_must_satisfy_immutable_logical_filter(
@@ -448,6 +449,204 @@ def test_visual_candidate_must_satisfy_immutable_logical_filter(
     assert scope["filter_rejected_rows"] == 1
     assert frame.collections == []
     assert frame.missing_requirements == [requirement.id]
+
+
+def test_semantic_contains_filter_defers_to_perception(
+    tmp_path: Path,
+) -> None:
+    """`<field>_contains` marks prose: a paraphrase row accumulates instead of being dropped."""
+    requirement = DataRequirement(
+        id="small_ear_cup_reviews",
+        description="Reviews mentioning small ear cups with reviewer name",
+        row_schema={
+            "type": "object",
+            "properties": {
+                "reviewer_name": {"type": "string"},
+                "review_text": {"type": "string"},
+            },
+            "required": ["reviewer_name", "review_text"],
+        },
+        field_sources={"reviewer_name": "Reviewer Name", "review_text": "Review Text"},
+        field_types={"reviewer_name": "text", "review_text": "text"},
+        filters={"review_text_contains": "ear cups being small"},
+        coverage="complete",
+    )
+    materializer = _materializer(tmp_path, "vision-only")
+    materializer._vision_extract = lambda *_args, **_kwargs: {  # type: ignore[method-assign]
+        "found": True,
+        "rows": [{
+            "reviewer_name": "Catso",
+            "review_text": "they really are for people with very small ears",
+        }],
+        "end_visible": False,
+        "start_visible": True,
+        "scope_satisfied": None,
+    }
+
+    frame, _ = materializer.observe(
+        bundle=FakeBundle([]),
+        platform=FakePlatform(),
+        requirements=[requirement],
+        frame_no=1,
+    )
+
+    scope = frame.requirement_scopes[requirement.id]
+    # Deterministic scope is not hard-met, but the row is NOT rejected either.
+    assert scope.get("filter_rejected_rows") != 1
+    assert frame.collections, "paraphrase row must accumulate into a collection"
+    collection = frame.collections[0]
+    assert collection.row_count == 1
+    assert frame.missing_requirements == []
+
+
+def test_eq_phrase_predicate_defers_to_perception(
+    tmp_path: Path,
+) -> None:
+    """A multi-token exact predicate on a text field is prose, not an identity label."""
+    requirement = DataRequirement(
+        id="reviews",
+        description="Reviews mentioning small ear cups",
+        row_schema={"reviewer_name": "string", "review_text": "string"},
+        field_sources={"reviewer_name": "Reviewer Name", "review_text": "Review Text"},
+        field_types={"reviewer_name": "text", "review_text": "text"},
+        filters={"review_text": "ear cups being small"},
+        coverage="complete",
+    )
+    materializer = _materializer(tmp_path, "vision-only")
+    materializer._vision_extract = lambda *_args, **_kwargs: {  # type: ignore[method-assign]
+        "found": True,
+        "rows": [{
+            "reviewer_name": "Catso",
+            "review_text": "they really are for people with very small ears",
+        }],
+        "end_visible": False,
+        "start_visible": True,
+        "scope_satisfied": None,
+    }
+
+    frame, _ = materializer.observe(
+        bundle=FakeBundle([]),
+        platform=FakePlatform(),
+        requirements=[requirement],
+        frame_no=1,
+    )
+
+    assert frame.collections
+    assert frame.collections[0].row_count == 1
+    assert frame.missing_requirements == []
+    assert _rows_satisfy_filters(requirement, [{
+        "reviewer_name": "Catso",
+        "review_text": "they really are for people with very small ears",
+    }]) is None
+
+
+def test_semantic_scope_satisfied_false_is_not_a_hard_block(
+    tmp_path: Path,
+) -> None:
+    """A semantic predicate has no UI filter to apply; perception's
+    scope_satisfied=False is informational and must not mark the scope unmet
+    (which would drive the Worker to seek a nonexistent filter and report
+    blocked, triggering a strategy replacement churn)."""
+    requirement = DataRequirement(
+        id="reviews",
+        description="Reviews mentioning small ear cups",
+        row_schema={"reviewer_name": "string", "review_text": "string"},
+        field_sources={"reviewer_name": "Reviewer Name", "review_text": "Review Text"},
+        field_types={"reviewer_name": "text", "review_text": "text"},
+        filters={"review_text_contains": "ear cups being small"},
+        coverage="complete",
+    )
+    materializer = _materializer(tmp_path, "vision-only")
+    materializer._vision_extract = lambda *_args, **_kwargs: {  # type: ignore[method-assign]
+        "found": True,
+        "rows": [{
+            "reviewer_name": "Somebody",
+            "review_text": "these are for people with very small ears",
+        }],
+        "end_visible": False,
+        "start_visible": True,
+        "scope_satisfied": False,
+    }
+
+    frame, _ = materializer.observe(
+        bundle=FakeBundle([]),
+        platform=FakePlatform(),
+        requirements=[requirement],
+        frame_no=1,
+    )
+
+    scope = frame.requirement_scopes[requirement.id]
+    assert scope["status"] != "unmet"
+    assert frame.collections, "rows still accumulate despite scope_satisfied=False"
+
+
+def test_screen_reader_transcribes_all_then_judge_filters_semantic_rows(
+    tmp_path: Path,
+) -> None:
+    """The dedicated screen reader transcribes every visible record; for a semantic
+    predicate a text judge keeps only the matching subset (live gap: the fused
+    transcribe-and-filter perception dropped the paraphrase review)."""
+    requirement = DataRequirement(
+        id="reviews",
+        description="Reviews mentioning small ear cups",
+        row_schema={"reviewer_name": "string", "review_text": "string"},
+        field_sources={"reviewer_name": "Reviewer Name", "review_text": "Review Text"},
+        field_types={"reviewer_name": "text", "review_text": "text"},
+        filters={"review_text_contains": "ear cups being small"},
+        coverage="complete",
+    )
+    all_rows = [
+        {"reviewer_name": "Catso", "review_text": "for people with very small ears"},
+        {"reviewer_name": "Jenna", "review_text": "battery lasts forever"},
+        {"reviewer_name": "Anglebert", "review_text": "got about half my ear into it"},
+        {"reviewer_name": "JGonzo", "review_text": "the gym music is loud"},
+    ]
+    read_response = SimpleNamespace(
+        content=json.dumps({
+            "found": True,
+            "rows": all_rows,
+            "end_visible": False,
+            "scope_satisfied": None,
+        }),
+        usage_metadata={},
+        response_metadata={},
+    )
+    judge_response = SimpleNamespace(
+        content=json.dumps({"matched_indices": [0, 2]}),
+        usage_metadata={},
+        response_metadata={},
+    )
+    calls = []
+
+    def fake_bind(**kwargs):
+        def invoke(messages):
+            calls.append(messages)
+            # screen reader message has an image part; the judge is text-only
+            if any(
+                isinstance(part, dict) and part.get("type") == "image_url"
+                for part in messages[-1].content
+            ):
+                return read_response
+            return judge_response
+        return SimpleNamespace(invoke=invoke)
+
+    materializer = _materializer(tmp_path, "vision-only")
+    materializer._screen_reader = SimpleNamespace(bind=fake_bind)  # type: ignore[assignment]
+
+    extracted = PerceptionMaterializer._vision_extract(
+        materializer,
+        requirement,
+        b"png",
+        query_filters={},
+        page_identity={"url": "https://example.test", "title": "Reviews"},
+    )
+
+    assert len(calls) == 2, "screen read + semantic judge both called"
+    names = [row["reviewer_name"] for row in extracted["rows"]]
+    assert names == ["Catso", "Anglebert"], (
+        "judge keeps the paraphrase match (Anglebert) and drops non-matches"
+    )
+    assert extracted["found"] is True
 
 
 def test_known_filter_mismatch_wins_over_unknown_row() -> None:
@@ -571,10 +770,12 @@ def test_vision_extract_preserves_schema_rejected_rows_for_empty_classification(
     assert len(extracted["rows"]) == 1
     assert extracted["rows"][0]["optional_source_metric"] is None
     human_text = observed_messages[-1].content[0]["text"]
-    assert "Original task temporal context: Return tomorrow's forecast" in human_text
-    assert "Task reference time (frozen platform clock):" in human_text
-    assert 'Frozen relative calendar dates by day offset: {"-2":' in human_text
-    assert 'Current page identity: {"url": "https://example.test/records"' in human_text
+    # The dedicated screen reader is pure transcription: it carries the page
+    # identity and row schema but no temporal/predicate bias (matching is a
+    # separate text-judge step).
+    assert "Current page identity: {\"url\": \"https://example.test/records\"" in human_text
+    assert "transcribe EVERY visible record, matching or not" in human_text
+    assert "Original task temporal context" not in human_text
 
 
 def test_optional_visual_null_is_omitted_instead_of_rejecting_row(
@@ -1435,7 +1636,9 @@ def test_linked_details_resolve_empty_values_from_related_records(tmp_path: Path
         applied={"Quantity": "3 - ..."},
         predicates={"Quantity": {"from": 3}},
     )
-    assert broad.collections == []
+    # Pure ReAct collectors publish assembled detail rows eagerly once resolved;
+    # collections may be non-empty here (accumulated data for snapshot on complete).
+    # The important state is the resolution marker.
     assert broad.requirement_scopes[requirement.id]["detail_resolution"]["status"] == "resolved"
 
     completed = observe(

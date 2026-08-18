@@ -215,6 +215,38 @@ class WorkerJournal:
     last_scroll_point: tuple[float, float] | None = None
     established_fact_texts: set[str] = field(default_factory=set, repr=False)
     executed_tools: set[str] = field(default_factory=set, repr=False)
+    # ReAct stop cue: consecutive observed frames that added no new collection rows.
+    _collection_row_counts: dict[str, int] = field(default_factory=dict, repr=False)
+    _collection_stable_frames: dict[str, int] = field(default_factory=dict, repr=False)
+
+    def record_collection_stability(self, frame: MaterializedFrame) -> None:
+        """Track consecutive frames that add no new rows to an accumulated collection."""
+        for collection in frame.collections:
+            rid = collection.requirement_id
+            row_count = collection.row_count
+            if (
+                row_count > 0
+                and self._collection_row_counts.get(rid) == row_count
+            ):
+                self._collection_stable_frames[rid] = (
+                    self._collection_stable_frames.get(rid, 0) + 1
+                )
+            else:
+                self._collection_stable_frames[rid] = 0
+            self._collection_row_counts[rid] = row_count
+
+    def collection_stability_note(self, frame: MaterializedFrame) -> str:
+        """ReAct stop cue surfaced to the worker when revisits add no new rows."""
+        notes: list[str] = []
+        for collection in frame.collections:
+            rid = collection.requirement_id
+            stable = self._collection_stable_frames.get(rid, 0)
+            if stable >= 2:
+                notes.append(
+                    f"{rid}: no new rows in the last {stable} observed frame(s); "
+                    f"accumulated {collection.row_count} row(s)"
+                )
+        return "; ".join(notes)
 
     def observe_collection(self, frame: MaterializedFrame) -> str:
         """Return the collection ref carrying downward-scroll end evidence, if any."""
@@ -471,7 +503,10 @@ def build_worker_memory_view(
 
 
 def _frame_payload(
-    frame: MaterializedFrame, *, candidate_committed: bool,
+    frame: MaterializedFrame,
+    *,
+    candidate_committed: bool,
+    collection_stability: str = "",
 ) -> dict[str, Any]:
     scope_blockers: dict[str, dict[str, Any]] = {}
     for requirement_id, scope in frame.requirement_scopes.items():
@@ -546,6 +581,7 @@ def _frame_payload(
         ],
         "missing_requirements": frame.missing_requirements,
         "controls": _semantic_controls(frame.controls),
+        "collection_stability": collection_stability,
     }
 
 
@@ -562,6 +598,7 @@ def project_worker_context(
     attempt_contract: str = "",
     same_frame_feedback: dict[str, Any] | None = None,
     max_chars: int = DEFAULT_WORKER_CONTEXT_MAX_CHARS,
+    collection_stability: str = "",
 ) -> WorkerContextProjection:
     """Build one capacity-managed context; the screenshot is supplied separately."""
     memory_text = memory.render_prompt_section()
@@ -570,6 +607,7 @@ def project_worker_context(
         candidate_committed=any(
             event.kind == "candidate_commit" for event in memory.durable_facts
         ),
+        collection_stability=collection_stability,
     ), ensure_ascii=False)
     blocks = [
         (

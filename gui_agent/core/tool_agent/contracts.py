@@ -8,6 +8,8 @@ from typing import Any, Literal, TypeAlias, get_args
 
 from pydantic import BaseModel, ConfigDict, Field, model_validator
 
+from gui_agent.core.tool_agent.filter_state import strip_contains_suffix
+
 
 class StrictModel(BaseModel):
     model_config = ConfigDict(extra="forbid")
@@ -136,7 +138,10 @@ class DataRequirement(StrictModel):
     @model_validator(mode="after")
     def _filters_are_collectable_fields(self) -> "DataRequirement":
         properties = set((self.row_schema.get("properties") or {}).keys())
-        unknown_filters = set(self.filters).difference(properties)
+        # "<field>_contains" is a semantic operator on <field>; the base field is
+        # what must exist in row_schema (see filter_state.strip_contains_suffix).
+        filter_fields = {strip_contains_suffix(field) for field in self.filters}
+        unknown_filters = filter_fields.difference(properties)
         if unknown_filters:
             raise ValueError(
                 "filter fields must be present in row_schema so logical row scope can "

@@ -9,7 +9,7 @@ from typing import Any, Literal, Mapping
 
 from pydantic import BaseModel, ConfigDict, Field, JsonValue, model_validator
 
-FilterOperator = Literal["eq", "gte", "lte", "range"]
+FilterOperator = Literal["eq", "gte", "lte", "range", "contains"]
 FilterMatchStatus = Literal["met", "unmet", "unknown"]
 _LOWER = {"from", "start", "min"}
 _UPPER = {"to", "end", "max"}
@@ -17,6 +17,27 @@ _BOUND_SUFFIX = re.compile(
     r"^(?P<field>.+?)(?:\s+|_)(?P<bound>from|start|min|to|end|max)$",
     re.IGNORECASE,
 )
+# "<field>_contains" marks a semantic free-text predicate ("records that mention
+# X") on <field>; perception judges the paraphrase. It is an operator, never a
+# field name.
+_CONTAINS_SUFFIX = re.compile(r"^(?P<field>.+)_contains$", re.IGNORECASE)
+
+
+def strip_contains_suffix(field: str) -> str:
+    """Return the base field name for a ``<field>_contains`` filter key."""
+    match = _CONTAINS_SUFFIX.fullmatch(str(field or "").strip())
+    return match.group("field") if match else str(field)
+
+
+def display_filter_predicates(filters: Mapping[str, Any] | None) -> dict[str, Any]:
+    """Render contract filters for LLM-facing scope/prompt text.
+
+    ``<field>_contains`` lowers to the bare base field so perception matches the
+    phrase by meaning; a paraphrase is a valid match.
+    """
+    return {
+        strip_contains_suffix(field): value for field, value in (filters or {}).items()
+    }
 _DATE = r"(?:\d{4}[-/]\d{1,2}[-/]\d{1,2}|\d{1,2}[-/]\d{1,2}[-/]\d{2,4})"
 _DATE_RANGE = re.compile(rf"^\s*(?P<lower>{_DATE})\s*-\s*(?P<upper>{_DATE})\s*$")
 _NUMBER = r"[+-]?(?:\d+(?:\.\d*)?|\.\d+)"
@@ -150,6 +171,12 @@ def compile_filter_predicates(
         if not field:
             continue
         suffix = _BOUND_SUFFIX.fullmatch(field)
+        contains = _CONTAINS_SUFFIX.fullmatch(field) if suffix is None else None
+        if contains is not None:
+            predicates[canonical_filter_field(contains.group("field"))] = (
+                FilterPredicate(operator="contains", values=[canonical_filter_value(raw_value)])
+            )
+            continue
         key = canonical_filter_field(suffix.group("field") if suffix else field)
         if suffix:
             lower, upper = pending.get(key, (None, None))

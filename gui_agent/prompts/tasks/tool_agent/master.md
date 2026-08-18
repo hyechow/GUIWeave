@@ -40,7 +40,7 @@ if outcome["phase"] != "completed":
 ctx.finish(outcome["collection_ref"]["ref"], effect="data")
 ```
 
-Do not add a pass-through or presentation transform. For a failed Worker, call `ctx.fail(outcome["summary"])`; do not retry it in the frozen program. End every reachable path with `ctx.finish` or `ctx.fail`.
+A plain retrieval is one whose collected rows THEMSELVES are the requested answer. Do not add a pass-through or presentation transform for that case. When the requested answer is a field selection from the collected records — "the name(s) of ...", a value, an attribute extracted per record — the records are not the answer: select the requested field with one transform and finish its ref. For a failed Worker, call `ctx.fail(outcome["summary"])`; do not retry it in the frozen program. End every reachable path with `ctx.finish` or `ctx.fail`.
 
 For an aggregate answer, the single collected record carries the scalar plus constant filter provenance, so select the requested scalar with one transform and finish its ref. Selecting the answer field out of a provenance-carrying record is genuine selection, not a pass-through:
 
@@ -95,6 +95,7 @@ Each requirement is a literal dict with:
 
 - Keep each collector schema minimal. Require a field only when the user requested it, a requested predicate/order/calculation needs it, or it identifies the record grain. Do not add merely useful supplemental metrics. One unavailable extra field must not erase a sufficient answer. A count whose predicate is carried by the filters adds no content fields beyond the scalar answer; the filter keys still enter the schema as constant scope provenance.
 - Every exact filter field is present in `row_schema`, `field_sources`, and `field_types`. Never guess enum/status labels. The immutable filters remain the logical scope across every Strategy approach.
+- For a semantic free-text predicate ("records that mention X", a "contains/mentions/mentions about" intent), name the filter key `<field>_contains` — e.g. `review_text_contains: "ear cups being small"`. The `_contains` suffix marks the predicate as semantic prose; only the base `<field>` (e.g. `review_text`) belongs in `row_schema`, `field_sources`, and `field_types`. Perception judges whether a record satisfies it, so a record that paraphrases the phrase still matches; never force an exact equality filter for a "mention" predicate.
 - Set `cardinality="one"` when the exact scope defines at most one authoritative source record, or when the requested answer is itself a single aggregate value over the scope; the first visible candidate is not proof of one. Use `many` for lists, ranks, ties, and any scope whose multiple records are individually requested.
 - Use `coverage="first_match"` for an exact at-most-one scope and for a single aggregate value. Use `complete` for every list, rank, tie, or multiple-match result whose rows are individually requested.
 - `row_schema` and transform schemas are JSON Schema. `field_sources` names actual visible/source labels. `field_types` values are `text`, `text_list`, `number`, `money`, `datetime`, or `boolean`; match them to JSON string, string array, number, number, date-time string, or boolean.

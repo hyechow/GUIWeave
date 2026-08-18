@@ -40,5 +40,5 @@ Outcome rules:
 Completion rules:
 - `state.status = completed | failed` is terminal and must pair with `complete | report_blocked`. Report concrete execution evidence, not a replacement plan.
 - Complete an operator only when the requested UI state is confirmed by the current screenshot or Runtime-observed surface evidence.
-- Complete a collector immediately when Runtime exposes `complete` after scope and coverage are complete. Runtime owns the CollectionRef and Master owns deterministic transformation.
+- A collector is ReAct: complete once you have gathered the required data by observing the UI — you drive completion. Do not wait for a deterministic scope/coverage status: a semantic predicate never becomes mechanically "met", and revisiting surfaces that yield no new rows is evidence you are done. Runtime owns the CollectionRef and Master owns deterministic transformation.
 - Do not claim completion from visible pixels alone or from Worker-authored observations.

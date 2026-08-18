@@ -17,8 +17,10 @@ from gui_agent.core.tool_agent.contracts import CollectionRef, DataChunkRef, Res
 
 
 def _coverage_status(**evidence: Any) -> str:
-    if evidence["scope_status"] != "met":
-        return "incomplete"
+    # Pure ReAct collectors: scope_status may never be "met" (vision rows, partial
+    # predicate match). Do not hard-incomplete here; let row/end evidence decide.
+    # Final worker complete() always forces status="complete" on the snapshot.
+    scope_status = str(evidence.get("scope_status") or "met")
     row_count = evidence["row_count"]
     known_total = evidence.get("known_total")
     page_count = evidence.get("page_count")

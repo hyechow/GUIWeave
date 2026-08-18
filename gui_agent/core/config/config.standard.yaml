@@ -66,6 +66,13 @@ llm:
       <<: *standard
       model: qwen3.7-plus
       image_scale: 1.0
+    screen_reader:
+      # Dedicated pure-transcription model: reads every visible record from a
+      # screenshot without judging matches. Cheap and faithful; semantic matching
+      # is a separate text step on the transcribed rows.
+      <<: *standard
+      model: qwen3.6-flash
+      image_scale: 1.0
     presentation:
       # Final wording only; receives no screenshot, browser handle, or private data.
       <<: *standard

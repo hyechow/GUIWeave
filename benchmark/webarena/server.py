@@ -31,7 +31,7 @@ from fastapi.responses import FileResponse, HTMLResponse, PlainTextResponse
 
 ROOT = Path(__file__).resolve().parents[2]
 WA_DIR = Path(__file__).resolve().parent                           # benchmark/webarena/
-WA_LOGS = ROOT / "logs" / "gui_agent" / "webarena" / "browser"
+WA_LOGS = ROOT / "logs" / "gui_agent" / "tool_agent" / "webarena" / "browser"
 README = WA_DIR / "README.md"
 REPORTS = WA_DIR / "reports"
 OUTPUT_ROOT = ROOT / "webarena-verified" / "output"                # tasks-files + per-site run/<id>/eval_result.json
@@ -57,7 +57,7 @@ def load_site_tasks(site: str) -> list[dict]:
         tid = x.get("task_id")
         if tid is None:
             continue
-        out.append({"task_id": tid, "intent": (x.get("intent") or "")})
+        out.append({"task_id": tid, "intent": (x.get("intent") or ""), "sites": x.get("sites") or []})
     return out
 
 
@@ -94,13 +94,21 @@ def dataset_task_meta() -> dict[str, tuple[str, str]]:
     return meta
 
 
-def _run_dir_for_site(site: str) -> Path:
-    return OUTPUT_ROOT / _RUN_DIR.get(site, f"{site}_run")
+def _run_dir_for_task_sites(sites: list) -> Path:
+    """按任务自带 sites 镜像 bin/webarena 的 run 目录命名:单站点查 _RUN_DIR 兼容表,
+    多站点按 sites 原顺序 join(如 shopping+reddit -> shopping_reddit_run)。
+    这样 shopping_only 这类 filtered tasks-file 也能找到任务真实的输出目录。"""
+    parts = [re.sub(r"[^a-z0-9]+", "_", str(s).strip().lower()).strip("_") for s in sites]
+    slug = "_".join(p for p in parts if p) or "unknown"
+    return OUTPUT_ROOT / _RUN_DIR.get(slug, f"{slug}_run")
 
 
 def official_eval(site: str, task_id) -> dict | None:
-    """站点官方 eval_result.json(按 task_id 覆盖式落盘),作为无 log run 时的兜底评分源。"""
-    fp = _run_dir_for_site(site) / str(task_id) / "eval_result.json"
+    """站点官方 eval_result.json(按 task_id 覆盖式落盘),作为无 log run 时的兜底评分源。
+    目录按该任务在 tasks-file 里的 sites 解析,而非 tab 名(filtered 文件名 ≠ 站点名)。"""
+    task = next((t for t in load_site_tasks(site) if str(t["task_id"]) == str(task_id)), None)
+    run_dir = _run_dir_for_task_sites(task["sites"] if task else [site])
+    fp = run_dir / str(task_id) / "eval_result.json"
     if not fp.is_file():
         return None
     try:
@@ -188,7 +196,9 @@ def _run_meta(d: Path) -> dict:
             pass
     stdout = _read(d / "stdout.log")
     ts = _parse_ts(d.name)
-    n_shots = len(list(d.glob("screenshot_turn_*_ann.jpg"))) or len(list(d.glob("screenshot_turn_*.png")))
+    n_shots = (len(list(d.glob("screenshot_turn_*_ann.jpg")))
+               or len(list(d.glob("screenshot_turn_*.png")))
+               or len(list(d.glob("screenshot_tool_agent_*.png"))))
     # timed-out/killed sweep runs: context.json exists but no eval + last line hangs at settle
     hung = bool(re.search(r"CDP settle 异常，回退视觉", stdout)) and score is None
     meta = {
@@ -220,7 +230,9 @@ def _run_meta(d: Path) -> dict:
 def parse_runs() -> list[dict]:
     if not WA_LOGS.exists():
         return []
-    runs = [_run_meta(d) for d in WA_LOGS.iterdir() if d.is_dir()]
+    # run 目录在 <perception>/<timestamp>/ 层(tool_agent 日志树),以 context.json 为准发现。
+    run_dirs = [d for d in WA_LOGS.rglob("*") if d.is_dir() and (d / "context.json").is_file()]
+    runs = [_run_meta(d) for d in run_dirs]
     # keep only runs that carry a WebArena eval or a goal (skip unrelated agent-loop dirs)
     runs = [r for r in runs if r["task_id"] is not None or r["goal"]]
     runs.sort(key=lambda r: (r["ts"] or datetime.min), reverse=True)
@@ -359,9 +371,16 @@ def index(site: str | None = None):
         return _layout("WebArena 可视化", _header("无 tasks-file")
                        + "<main><p style='padding:24px;color:#8a93a3'>webarena-verified/output/ 下没有 *_hard_tasks.json</p></main>")
     runs = parse_runs()
+
+    def _task_ids(s: str) -> set[str]:
+        return {str(t["task_id"]) for t in load_site_tasks(s)}
+
+    # tab = 一个 tasks-file 套件;run 按 task_id 归属到套件(而非 run 自报的站点名,
+    # 否则 shopping_only 这类 filtered 文件永远匹配不到 sites=["shopping"] 的 run)。
     if site not in sites:  # default to the site with the most runs (the one being tested)
-        site = max(sites, key=lambda s: sum(1 for r in runs if s in (r.get("sites") or [])))
-    site_runs = [r for r in runs if site in (r.get("sites") or [])]
+        site = max(sites, key=lambda s: sum(1 for r in runs if r["task"] in _task_ids(s)))
+    site_task_ids = _task_ids(site)
+    site_runs = [r for r in runs if r["task"] in site_task_ids]
     rows = build_task_rows(site, runs)
 
     n_total = len(rows)
@@ -372,8 +391,10 @@ def index(site: str | None = None):
 
     tabs = []
     for s in sites:
+        s_rows = rows if s == site else build_task_rows(s, runs)
+        n_p = sum(1 for r in s_rows if r["badge"] == "pass")
         cls = "btn" if s == site else "btn ghost"
-        tabs.append(f"<a class='{cls}' href='/?site={s}'>{_html.escape(s)} <span class='pill'>{len(load_site_tasks(s))}</span></a>")
+        tabs.append(f"<a class='{cls}' href='/?site={s}'>{_html.escape(s)} <span class='pill'>{n_p}/{len(s_rows)}</span></a>")
 
     trows = []
     _emo = {"pass": "✅", "fail": "❌", "crash": "💥", "todo": "⬜"}
@@ -459,7 +480,7 @@ def _shot_key(p: Path):
 
 
 def _turn_of(name: str) -> int:
-    m = re.search(r"turn_(\d+)", name)
+    m = re.search(r"(?:turn|tool_agent)_(\d+)", name)
     return int(m.group(1)) if m else 0
 
 
@@ -476,10 +497,21 @@ def _safe(path: Path, base: Path) -> bool:
         return False
 
 
+def _find_run_dir(run_id: str) -> Path | None:
+    """run_id = 时间戳目录名;run 目录在 <perception>/<ts>/ 层,按名字在树里定位。"""
+    if not run_id or "/" in run_id or run_id in (".", ".."):
+        return None
+    for d in WA_LOGS.glob(f"*/{run_id}"):
+        if d.is_dir():
+            return d
+    d = WA_LOGS / run_id  # 兼容平铺的旧树
+    return d if d.is_dir() else None
+
+
 @app.get("/run/{run_id}", response_class=HTMLResponse)
 def run_detail(run_id: str):
-    d = WA_LOGS / run_id
-    if not d.is_dir() or not _safe(d, WA_LOGS):
+    d = _find_run_dir(run_id)
+    if d is None or not _safe(d, WA_LOGS):
         raise HTTPException(404, "run 不存在")
     meta = _run_meta(d)
     stdout = _read(d / "stdout.log")
@@ -487,6 +519,8 @@ def run_detail(run_id: str):
     shots = sorted(set(d.glob("screenshot_turn_*_ann.jpg")), key=_shot_key)
     if not shots:
         shots = sorted(d.glob("screenshot_turn_*.png"), key=_shot_key)
+    if not shots:
+        shots = sorted(d.glob("screenshot_tool_agent_*.png"), key=_shot_key)
     cards = []
     for p in shots:
         cards.append(
@@ -530,8 +564,8 @@ def run_detail(run_id: str):
 
 @app.get("/run/{run_id}/{filename:path}")
 def run_file(run_id: str, filename: str):
-    d = WA_LOGS / run_id
-    if not d.is_dir() or not _safe(d, WA_LOGS):
+    d = _find_run_dir(run_id)
+    if d is None or not _safe(d, WA_LOGS):
         raise HTTPException(404, "run 不存在")
     fp = (d / filename).resolve()
     if not _safe(fp, d) or not fp.is_file():
@@ -546,16 +580,17 @@ def task_report(task: str):
         return FileResponse(fp)
     latest = latest_run_for_task(task, parse_runs())
     if latest and latest.get("has_report"):
-        run_fp = WA_LOGS / latest["id"] / "report.html"
-        if _safe(run_fp, WA_LOGS) and run_fp.is_file():
+        latest_dir = _find_run_dir(latest["id"])
+        run_fp = latest_dir / "report.html" if latest_dir else None
+        if run_fp and _safe(run_fp, WA_LOGS) and run_fp.is_file():
             return FileResponse(run_fp)
     raise HTTPException(404, "无报告(任务可能还没跑过或未生成报告)")
 
 
 @app.get("/stdout/{run_id}", response_class=PlainTextResponse)
 def run_stdout(run_id: str):
-    d = WA_LOGS / run_id
-    if not d.is_dir() or not _safe(d, WA_LOGS):
+    d = _find_run_dir(run_id)
+    if d is None or not _safe(d, WA_LOGS):
         raise HTTPException(404, "run 不存在")
     return _read(d / "stdout.log")
 
@@ -571,7 +606,7 @@ def api_runs_head():
 
     signature = 全部 run 目录数 + 最大 mtime(取 context.json 的 mtime;没有则用目录 mtime)。
     新 run 出现(目录数变)或某 run 完成/重写 context.json(mtime 变)都会改变 signature。"""
-    dirs = [d for d in WA_LOGS.iterdir() if d.is_dir()] if WA_LOGS.exists() else []
+    dirs = [d for d in WA_LOGS.rglob("*") if d.is_dir()] if WA_LOGS.exists() else []
     sig = 0.0
     for d in dirs:
         ctx = d / "context.json"

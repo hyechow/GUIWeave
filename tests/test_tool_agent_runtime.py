@@ -2487,7 +2487,12 @@ def test_timed_out_target_verification_is_cancelled() -> None:
     assert isinstance(error, TimeoutError)
     assert cancelled == [True]
 
-def test_collector_completion_is_unavailable_until_collection_is_ready() -> None:
+def test_collector_can_complete_on_partial_under_pure_react() -> None:
+    """Pure ReAct collector: complete is always available; LLM decides sufficiency.
+
+    Even with partial coverage (more pages exist), the worker may call complete
+    and runtime snapshots the rows seen so far (accum or current frame).
+    """
     runtime = object.__new__(ToolAgentRuntime)
     runtime.data_store = RuntimeDataStore()
     _, collection, _ = runtime.data_store.put_chunk(
@@ -2540,19 +2545,19 @@ def test_collector_completion_is_unavailable_until_collection_is_ready() -> None
         requirement_scopes={"records": {"status": "met"}},
     )
     tools = runtime._worker_tools_for_frame(spec, spec._test_actions, frame)
-    assert "complete" not in {tool["function"]["name"] for tool in tools}
+    assert "complete" in {tool["function"]["name"] for tool in tools}
 
-    with pytest.raises(ValueError, match="complete is unavailable"):
-        runtime._execute_worker_tool(
-            spec,
-            spec._test_actions,
-            {
-                "name": "complete",
-                "args": {},
-            },
-            b"png",
-            frame,
-        )
+    # Execute complete on partial: succeeds, returns snapshot with the 1 row.
+    payload, terminal = runtime._execute_worker_tool(
+        spec,
+        spec._test_actions,
+        {"name": "complete", "args": {}},
+        b"png",
+        frame,
+    )
+    assert terminal == "complete"
+    assert payload["row_count"] == 1
+    assert payload.get("coverage", {}).get("react_complete") is True
 
 
 def test_ready_collector_completion_uses_runtime_bound_collection_ref() -> None:

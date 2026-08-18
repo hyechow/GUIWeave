@@ -302,74 +302,12 @@ def test_strategy_stop_does_not_dispatch_another_worker() -> None:
     assert runtime.trace[-1]["event"] == "strategy_stopped"
 
 
-def test_worker_returns_verified_empty_without_another_policy_call() -> None:
-    case = _case()
-    spec = WorkerSpec.model_validate(case["original_spec"])
-    empty_collection = CollectionRef.model_validate(
-        case["empty_outcome"]["collection_ref"]
-    )
-    frame = MaterializedFrame(
-        frame_id="frame:6",
-        screenshot_path="recorded-task214-turn6.png",
-        applied_filters={"Product": "Erica Sports Bra"},
-        requirement_scopes={
-            "erica_review_details": {
-                "status": "met",
-                "requested_filters": {"Product": "Erica Sports Bra"},
-                "applied_filters": {"Product": "Erica Sports Bra"},
-            }
-        },
-        collections=[empty_collection],
-    )
-    runtime = object.__new__(ToolAgentRuntime)
-    runtime.trace = []
-    runtime._status_cb = None
-    runtime._worker_journals = {}
-    runtime._worker_last_frames = {}
-    runtime._observe = lambda _spec: (frame, b"png")
-    runtime.worker = SimpleNamespace(
-        bind_tools=lambda *_args, **_kwargs: (_ for _ in ()).throw(
-            AssertionError("verified empty collection must terminate before policy")
-        )
-    )
-
-    outcome = runtime._run_worker(case["logical_worker_id"], spec)
-
-    assert outcome.phase == "completed"
-    assert outcome.collection_ref is not None
-    assert outcome.collection_ref.row_count == 0
-    assert outcome.steps == 0
-    assert any(event["event"] == "worker_empty_collection" for event in runtime.trace)
+# test_worker_returns_verified_empty_without_another_policy_call removed.
+# Pure ReAct: even "verified empty" frames are shown to the collector LLM,
+# which calls complete() when it decides the requirement is satisfied (0 rows).
 
 
-def test_worker_auto_completes_ready_nonempty_collection_without_model_call() -> None:
-    case = _case()
-    spec = WorkerSpec.model_validate(case["original_spec"])
-    collection = CollectionRef.model_validate(
-        case["empty_outcome"]["collection_ref"]
-    ).model_copy(update={"row_count": 2})
-    frame = MaterializedFrame(
-        frame_id="frame:7",
-        screenshot_path="recorded-ready.png",
-        collections=[collection],
-    )
-    runtime = object.__new__(ToolAgentRuntime)
-    runtime.trace = []
-    runtime._status_cb = None
-    runtime._worker_journals = {}
-    runtime._worker_last_frames = {}
-    runtime._observe = lambda _spec: (frame, b"png")
-    runtime.worker = SimpleNamespace(
-        bind_tools=lambda *_args, **_kwargs: (_ for _ in ()).throw(
-            AssertionError("ready collector must complete before Worker policy")
-        )
-    )
-
-    outcome = runtime._run_worker(case["logical_worker_id"], spec)
-
-    assert outcome.phase == "completed"
-    assert outcome.collection_ref is not None
-    assert outcome.collection_ref.row_count == 2
-    assert outcome.steps == 0
-    completed = [event for event in runtime.trace if event["event"] == "worker_complete"]
-    assert completed[0]["completion_source"] == "runtime_policy"
+# test_worker_auto_completes_ready_nonempty... removed.
+# Pure ReAct collector: the LLM worker receives the first frame (with its
+# accumulated or visible rows) and itself calls the complete tool when ready.
+# No more runtime FSM auto-complete on "ready collection".
