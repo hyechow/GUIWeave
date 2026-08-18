@@ -381,7 +381,7 @@ def test_collector_completion_tool_is_frame_gated_and_runtime_bound() -> None:
     )
     properties = complete["function"]["parameters"]["properties"]
     assert "collection_ref" not in properties
-    assert set(properties) == {"state", "evidence"}
+    assert set(properties) == {"state", "evidence", "rows"}
     assert properties["state"]["properties"]["status"]["enum"] == ["completed"]
     failure = next(
         tool for tool in ready if tool["function"]["name"] == "report_blocked"

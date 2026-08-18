@@ -2545,6 +2545,40 @@ def test_ready_collector_completion_uses_runtime_bound_collection_ref() -> None:
     assert payload["ref"] == collection.ref
 
 
+def test_worker_observed_rows_accumulate_into_the_collection() -> None:
+    runtime = object.__new__(ToolAgentRuntime)
+    runtime.data_store = RuntimeDataStore()
+    runtime.trace = []
+    spec = WorkerSpec(
+        profile="collector",
+        goal="Collect conference events",
+        success_criteria=["All events collected"],
+        data_requirements=[{
+            "id": "events",
+            "description": "Conference events",
+            "row_schema": {
+                "type": "object",
+                "properties": {
+                    "title": {"type": "string"},
+                    "start": {"type": "string"},
+                    "end": {"type": "string"},
+                },
+                "required": ["title", "start", "end"],
+            },
+        }],
+        strategy=WorkerStrategy(approach="Read event details"),
+    )
+    runtime._accumulate_observed_rows(
+        spec, "w", {"rows": [
+            {"title": "Conference in Tokyo", "start": "Oct 4", "end": "Oct 10"},
+        ]}, step=1,
+    )
+    collection = runtime.data_store.collection_for_requirement("events")
+    assert collection is not None
+    assert collection.row_count == 1
+    assert "worker_observed_rows" in [e["event"] for e in runtime.trace]
+
+
 def test_current_each_element_hints_the_plan_record_to_the_worker() -> None:
     # R2.3 regression: the Worker must know which plan element it is operating
     # on, otherwise it locates the first visible row (e.g. an already-renamed

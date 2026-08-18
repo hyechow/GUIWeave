@@ -41,6 +41,36 @@ def _put_window(
     )
 
 
+def test_data_store_accumulates_worker_observed_rows() -> None:
+    store = RuntimeDataStore()
+    schema = {
+        "type": "object",
+        "properties": {
+            "title": {"type": "string"},
+            "start": {"type": "string"},
+            "end": {"type": "string"},
+        },
+        "required": ["title", "start", "end"],
+    }
+    tokyo = [{"title": "Conference in Tokyo", "start": "Oct 4", "end": "Oct 10"}]
+    paris = [{"title": "Conference in Paris", "start": "Oct 11", "end": "Oct 15"}]
+
+    first = store.put_observed_rows("events", tokyo, schema)
+    assert first.row_count == 1
+    assert first.coverage["source_scope"] == "worker_observation"
+
+    merged = store.put_observed_rows("events", paris, schema)
+    assert merged.row_count == 2
+
+    # Duplicate re-submission is deduplicated by canonical content.
+    again = store.put_observed_rows("events", tokyo, schema)
+    assert again.row_count == 2
+
+    # Rows that violate the schema are rejected.
+    with pytest.raises(Exception):
+        store.put_observed_rows("events", [{"title": "Bad"}], schema)
+
+
 def test_data_store_exposes_refs_but_resolves_values_only_at_runtime() -> None:
     store = RuntimeDataStore()
     rows = [{"label": "alpha", "metric": 3}]

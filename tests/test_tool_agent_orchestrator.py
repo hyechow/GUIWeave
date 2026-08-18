@@ -121,6 +121,43 @@ ctx.fail(outcome["summary"])
     assert "Shenzhen weather" not in filter_issue.message
 
 
+def test_master_review_requires_date_scope_in_filters_when_task_states_a_month() -> None:
+    source = _program(
+        '''
+outcome = ctx.gui_worker(
+    worker_id="collect_conference",
+    profile="collector",
+    goal="Collect all conference events in October 2025",
+    success_criteria=["All October 2025 conference events collected"],
+    data_requirements=[{
+        "id": "events",
+        "description": "Conference events in October",
+        "row_schema": {"title": "string", "date_text": "string"},
+        "filters": {"title": "*conference*"},
+    }],
+    approach="Search conference events in Calendar",
+)
+ctx.finish(outcome["collection_ref"]["ref"], effect="data")
+'''.strip()
+    )
+
+    diagnostics = validate_master_source(
+        source,
+        user_goal="How many days of conference meetings did I schedule in October?",
+    )
+    assert {item.code for item in diagnostics} >= {"DATA_FILTER_DATE_SCOPE"}
+
+    dated = source.replace(
+        '"filters": {"title": "*conference*"}',
+        '"filters": {"title": "*conference*", "date_text": "2025-10-*"}',
+    )
+    ok = validate_master_source(
+        dated,
+        user_goal="How many days of conference meetings did I schedule in October?",
+    )
+    assert not [item for item in ok if item.code == "DATA_FILTER_DATE_SCOPE"]
+
+
 def test_master_review_accepts_semantic_contract_and_source_approach() -> None:
     source = _program(
         '''
