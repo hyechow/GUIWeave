@@ -71,3 +71,4 @@ vendor/
 # inlined as base64 via `python -m gui_agent.reports.inline` — committed) and runs/<task>/
 # (full run logs: raw screenshots + context.json + logs — local-only, regenerable from logs/).
 benchmark/*/runs/
+guiweave.egg-info/

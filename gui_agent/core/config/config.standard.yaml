@@ -70,10 +70,12 @@ llm:
       <<: *standard
       model: qwen3.7-max
     worker:
-      <<: *luna
+      <<: *standard
+      model: qwen3.7-plus
       action_protocol: json
     perception:
-      <<: *luna
+      <<: *standard
+      model: qwen3.7-plus
       image_scale: 1.0
     presentation:
       # Final wording only; receives no screenshot, browser handle, or private data.

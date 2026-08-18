@@ -5,7 +5,7 @@ platform: android
 app: Files
 scope:
   - orchestrator
-selector_when: Downloads earliest zip July archive entries extract files content lines Documents folder review pdf move paper 移动 文件夹 邮件 Documents
+selector_when: rename 重命名 改名 Downloads earliest zip July archive entries extract files content lines Documents folder review pdf move paper 移动 文件夹 邮件 Documents
 source: manual_verified
 confidence: high
 ttl: session
@@ -30,6 +30,11 @@ ttl: session
   row (target-bound), then `commit(target=row, values={"destination_folder": <text>})`. The move
   consumes the source row: after it, the file is no longer listed under Documents and appears
   under the destination folder.
+- Renaming is also a per-row, single-file operation: there is **no bulk rename**. The
+  multi-select toolbar offers only Share, Delete, and More options (Sort, Select all, Copy,
+  Move, Compress) — never Rename. To rename a file, reach its exact row (target-bound),
+  long-press it, open More options, choose Rename, and confirm the new name; repeat per file.
+  Order such a multi-file rename by deterministic per-row plan, not by in-memory recollection.
 - In `Move to…`, preserve the selection, navigate within the destination picker via `Show roots`
   and device storage, then activate `MOVE`.
 - A destination subfolder (e.g. `Document/paper`) is reached like any folder: reach it by name,
