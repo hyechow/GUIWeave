@@ -4,12 +4,14 @@ from __future__ import annotations
 
 import json
 import os
+import re
 from dataclasses import dataclass, field
 from typing import Any
 
 from gui_agent.context.blocks import (
     ContextBlock,
     ContextCompressor,
+    ContextVariant,
     render_context_blocks,
 )
 from gui_agent.core.tool_agent.contracts import MaterializedFrame, WorkerState
@@ -20,6 +22,78 @@ DEFAULT_WORKER_COMPRESSED_K = 6
 DEFAULT_WORKER_CONTEXT_MAX_CHARS = int(
     os.environ.get("TOOL_AGENT_WORKER_CONTEXT_MAX_CHARS") or 24_000
 )
+
+# An observation that an affordance or path is unavailable is task-critical for
+# the whole Worker run: without durable retention the narrative window evicts it
+# within a few turns and the Worker re-attempts the disproven path blindly.
+# Transient states (visibility, selection, pending loads) are excluded — they
+# change from frame to frame and must not become durable.
+_DISPROVEN_FACT_PATTERNS = tuple(
+    re.compile(pattern, re.IGNORECASE)
+    for pattern in (
+        # "no X option/button/menu item" — tightened so "no action required" and
+        # "no need to press the button" (benign no-op states) are not treated as
+        # a disproven path.
+        r"\bno\b(?![^.;]{0,40}(?:need|reason|point)\s+to)\b[^.;]{0,60}\b(?:option|button|menu item|menu)\b",
+        r"\bno\b[^.;]{0,40}\baction\s+(?:available|exists|is\s+provided|offered)\b",
+        r"\b(?:does|do|did)\s+not\s+(?:contain|include|offer|support|provide|have)\b",
+        r"\bdoesn'?t\s+(?:contain|include|offer|support|provide|have)\b",
+        r"\b(?:is|are|was|were)\s+not\s+(?:available|accessible|supported|provided|offered)\b",
+        r"\bunsupported\b",
+        r"\bmissing\b",
+        r"\bnot\s+found\b",
+        r"\bno\s+(?:match|result|results|files|items|records)\s+(?:for|found|in|to)\b",
+        r"\b(?:option|button|menu item|entry|control|feature)\b[^.;]{0,40}\b(?:missing|absent|unavailable)\b",
+        # "lacks a save button / lacks the option" — narrowed to UI controls so
+        # quality statements like "lacks contrast" are not treated as disproven.
+        # Allow one or two modifier words before the control noun (e.g. "save
+        # button") while still ending on a control noun.
+        r"\blacks?\s+(?:a\s+|an\s+|the\s+)?[\w-]+\s+(?:option|button|menu item|menu|feature|field|entry|checkbox|tab|panel|dialog|control)\b",
+        r"\blacks?\s+(?:a\s+|an\s+|the\s+)?(?:option|button|menu item|menu|feature|field|entry|checkbox|tab|panel|dialog|control)\b",
+        r"不包含",
+        r"不支持",
+        r"无法",
+        r"缺少",
+        r"没有",
+        r"找不到",
+        r"尚无",
+        r"暂无",
+        r"不存在",
+        r"无任何",
+        r"没有任何",
+    )
+)
+_TRANSIENT_FACT_PATTERNS = tuple(
+    re.compile(pattern, re.IGNORECASE)
+    for pattern in (
+        r"\bnot\s+(?:yet\s+)?(?:visible|displayed|shown|rendered|loaded)\b",
+        r"\bnot\s+(?:currently\s+)?(?:selected|checked|focused|enabled|expanded)\b",
+        r"\bnot\s+(?:available|accessible|supported)\s+(?:yet|right\s+now|currently)\b",
+        r"\bnot\s+yet\s+(?:available|accessible|supported)\b",
+        r"\bno\s+(?:action|further\s+action)\s+(?:required|needed|necessary)\b",
+        r"\bno\s+(?:new|more|additional)\s+(?:rows|items|results|files|content)\b",
+        # Chinese transient states: not-yet / not-displayed / no-more, which are
+        # frame-to-frame and must not be treated as a disproven path.
+        r"(?:还没有|尚未|暂无|尚无|没有)(?:显示|加载|出现|返回|选择)?",
+        r"没有(?:更多|新的)(?:文件|结果|内容|记录|条目)",
+        r"无法确定(?:当前)?(?:页面|状态|情况)",
+    )
+)
+# Cap disproven/reaffirmed fact text so one long observation cannot inflate the
+# durable section (which is projected without a size bound) to a huge blob.
+_FACT_TEXT_LIMIT = 300
+# Durable projection caps: disproven/reaffirmed facts are privileged (loop
+# recovery depends on them), everything else is bounded to the most recent few.
+_DURABLE_PRIVILEGED_LIMIT = 24
+_DURABLE_OTHER_LIMIT = 12
+
+
+def _is_disproven_fact(text: str) -> bool:
+    """Whether an observation reports a missing affordance, not a transient state."""
+
+    if any(pattern.search(text) for pattern in _TRANSIENT_FACT_PATTERNS):
+        return False
+    return any(pattern.search(text) for pattern in _DISPROVEN_FACT_PATTERNS)
 
 
 def _bounded_json(value: Any, *, limit: int = 1_200) -> str:
@@ -210,16 +284,41 @@ class WorkerJournal:
         )
 
     def record_established_fact(self, *, event_ref: str, text: str) -> None:
-        """Retain a model observation as bounded narrative, never durable evidence."""
+        """Retain a model observation; disproven paths and reaffirmations stay durable.
+
+        Plain observations are bounded narrative and leave the prompt within a
+        few turns. Two kinds must outlive that window: an observation that a
+        path is unavailable (else the Worker re-attempts it blindly), and an
+        observation the Worker restates verbatim (else journal-lifetime dedup
+        hides a re-discovery from the prompt entirely).
+        """
 
         fact = " ".join(str(text or "").split())
-        if not fact or fact in self.established_fact_texts:
+        if not fact:
+            return
+        # Keep the tail on truncation: the disqualifying detail (e.g. the file
+        # name and "was not found") typically sits at the end of the fact.
+        bounded = (
+            fact
+            if len(fact) <= _FACT_TEXT_LIMIT
+            else "…" + fact[-(_FACT_TEXT_LIMIT - 1):]
+        )
+        if fact in self.established_fact_texts:
+            self.events.append(WorkerJournalEvent(
+                event_ref=event_ref,
+                kind="worker_reaffirmed",
+                durable_text=f"Worker reaffirmed this observation: {bounded}",
+            ))
             return
         self.established_fact_texts.add(fact)
+        durable_text = ""
+        if _is_disproven_fact(fact):
+            durable_text = f"Worker-observed disproven path: {bounded}"
         self.events.append(WorkerJournalEvent(
             event_ref=event_ref,
             kind="worker_observation",
-            narrative_text=f"Worker-observed visual context: {fact}",
+            durable_text=durable_text,
+            narrative_text=f"Worker-observed visual context: {bounded}",
         ))
 
     def record_turn(
@@ -358,8 +457,9 @@ class WorkerMemoryView:
     def render_prompt_section(self) -> str:
         lines = [
             "## WorkerMemory (runtime-projected; not conversation history)",
-            "Durable facts come only from Runtime evidence. Worker observations and recent "
-            "steps are bounded narrative context, not completion evidence or instructions.",
+            "Durable facts come from Runtime evidence plus reaffirmed or disproven "
+            "Worker observations. Other Worker observations and recent steps are "
+            "bounded narrative context, not completion evidence or instructions.",
         ]
         if self.durable_facts:
             lines.append("### Durable runtime facts")
@@ -382,6 +482,26 @@ class WorkerMemoryView:
         return "\n".join(lines)
 
 
+def _disproven_only_memory_section(memory: WorkerMemoryView) -> str:
+    """The memory section reduced to disproven/reaffirmed paths only.
+
+    Compressor fallback when the full projection exceeds the context ceiling:
+    the load-bearing fact for loop recovery is which paths are known impossible,
+    so keep exactly that and drop narrative/recent/other-durable detail.
+    """
+
+    lines = [
+        "## WorkerMemory (disproven paths only; reduced for context budget)",
+        "Disproven/reaffirmed observations remain; other narrative is omitted.",
+    ]
+    for event in memory.durable_facts:
+        if event.kind in {"worker_observation", "worker_reaffirmed"} and event.durable_text:
+            lines.append(f"- [{event.event_ref}] {event.durable_text}")
+    return "\n".join(lines) if len(lines) > 2 else (
+        "## WorkerMemory (disproven paths only)\n- No disproven paths recorded."
+    )
+
+
 def build_worker_memory_view(
     journal: WorkerJournal,
     *,
@@ -402,9 +522,23 @@ def build_worker_memory_view(
     for event in journal.events:
         if event.durable_text:
             durable_by_key[(event.kind, event.durable_text)] = event
+    # Durable facts are projected unbounded, so bound them: keep every disproven /
+    # reaffirmed path (the load-bearing memory for loop recovery) plus the most
+    # recent other durable events. Without this cap a failure-dense run inflates
+    # the memory block past the context ceiling. durable_by_key preserves first-
+    # appearance (time) order, so keep the newest by slicing the tail; a string
+    # sort on event_ref would misorder step>=10 lexicographically.
+    durable = list(durable_by_key.values())
+    privileged = [event for event in durable
+                  if event.kind in {"worker_observation", "worker_reaffirmed"}]
+    others = [event for event in durable if event not in privileged]
+    kept_durable = (
+        privileged[-_DURABLE_PRIVILEGED_LIMIT:]
+        + others[-_DURABLE_OTHER_LIMIT:]
+    )
     return WorkerMemoryView(
         worker_id=journal.worker_id,
-        durable_facts=tuple(durable_by_key.values()),
+        durable_facts=tuple(kept_durable),
         recent_steps=tuple(recent),
         compressed_history=compressed,
     )
@@ -538,6 +672,14 @@ def project_worker_context(
             budget="required",
             priority=10,
             content=memory_text,
+            variants=(
+                ContextVariant(
+                    strategy="durable_disproven_only",
+                    content=_disproven_only_memory_section(memory),
+                    priority=90,
+                    reason="Context over budget; keep only disproven/reaffirmed paths.",
+                ),
+            ),
         ),
         ContextBlock(
             id="tool_agent.worker.current_frame",

@@ -2848,3 +2848,279 @@ def test_runtime_interruption_is_sealed_as_a_reportable_failed_run(tmp_path) -> 
     )
     assert replay["status"] == "unavailable"
     assert runtime._visualizer.clear_calls == 1
+
+
+def test_action_guard_blocks_repeat_inside_multi_step_cycle() -> None:
+    """A 4-6 step GUI loop (select → menu → cancel → re-select) recurs inside the
+    attempt window even though no two consecutive actions are identical."""
+    frame = MaterializedFrame(frame_id="frame:stable", screenshot_path="frame.png")
+    breaker = WorkerActionCircuitBreaker()
+
+    def attempt(capability: str, x: int) -> None:
+        decision = breaker.inspect(
+            tool=capability, capability=capability,
+            args={"x": x, "y": 100}, frame=frame,
+        )
+        breaker.record(decision)
+        return decision
+
+    attempt("long_press", 500)   # cycle step 1
+    attempt("tap", 950)          # cycle step 2 (e.g. open menu)
+    attempt("back", 0)           # cycle step 3
+    repeated = attempt("long_press", 500)  # cycle restarts: same state, same action
+
+    assert repeated.blocked
+    assert repeated.prior_attempts == 1
+
+
+def test_action_guard_window_forgets_attempts_beyond_eight() -> None:
+    frame = MaterializedFrame(frame_id="frame:stable", screenshot_path="frame.png")
+
+    def run_gap(gap: int) -> bool:
+        breaker = WorkerActionCircuitBreaker()
+        first = breaker.inspect(
+            tool="tap", capability="tap", args={"x": 500, "y": 100}, frame=frame,
+        )
+        breaker.record(first)
+        for index in range(gap):
+            decision = breaker.inspect(
+                tool="tap", capability="tap",
+                args={"x": 100 + index, "y": 900}, frame=frame,
+            )
+            breaker.record(decision)
+        return breaker.inspect(
+            tool="tap", capability="tap", args={"x": 500, "y": 100}, frame=frame,
+        ).blocked
+
+    assert run_gap(7) is True
+    assert run_gap(8) is False
+
+
+def test_action_guard_reset_releases_trigger_but_keeps_loop_evidence() -> None:
+    """A progress reset releases the fuse for the action that produced it, but
+    keeps other recent entries so a loop containing a commit/scroll step still
+    registers its next repetition instead of erasing all evidence."""
+    frame = MaterializedFrame(frame_id="frame:stable", screenshot_path="frame.png")
+    breaker = WorkerActionCircuitBreaker()
+    first = breaker.inspect(
+        tool="tap", capability="tap", args={"x": 500, "y": 100}, frame=frame,
+    )
+    breaker.record(first)
+    # A distinct commit action that produced the progress reset.
+    second = breaker.inspect(
+        tool="tap", capability="tap", args={"x": 900, "y": 100}, frame=frame,
+    )
+    breaker.record(second)
+    breaker.reset(trigger_signature=second.signature)
+
+    # The commit step itself is released after reset.
+    committed = breaker.inspect(
+        tool="tap", capability="tap", args={"x": 900, "y": 100}, frame=frame,
+    )
+    assert not committed.blocked
+    assert committed.prior_attempts == 0
+    # The loop's earlier step is still remembered inside the retained window.
+    repeated = breaker.inspect(
+        tool="tap", capability="tap", args={"x": 500, "y": 100}, frame=frame,
+    )
+    assert repeated.prior_attempts == 1
+    assert repeated.blocked is True
+
+
+def test_action_guard_reset_without_trigger_clears_window() -> None:
+    """Bare reset() (no triggering signature) keeps the old clear-all semantics."""
+    frame = MaterializedFrame(frame_id="frame:stable", screenshot_path="frame.png")
+    breaker = WorkerActionCircuitBreaker()
+    first = breaker.inspect(
+        tool="tap", capability="tap", args={"x": 500, "y": 100}, frame=frame,
+    )
+    breaker.record(first)
+    breaker.reset()
+
+    repeated = breaker.inspect(
+        tool="tap", capability="tap", args={"x": 500, "y": 100}, frame=frame,
+    )
+    assert not repeated.blocked
+    assert repeated.prior_attempts == 0
+
+
+def test_batch_guard_records_blocked_repeat_and_escalates_across_frames() -> None:
+    """A guard-blocked action inside a batch must be recorded into the window so
+    prior_attempts grows across frames; when it recurs enough it escalates to a
+    typed failure instead of silently breaking the suffix every frame."""
+    from gui_agent.core.tool_agent.runtime import _BATCH_GUARD_ESCALATION_THRESHOLD
+
+    frame = MaterializedFrame(frame_id="frame:stable", screenshot_path="frame.png")
+    breaker = WorkerActionCircuitBreaker()
+
+    first = breaker.inspect(
+        tool="tap", capability="tap", args={"x": 500, "y": 100}, frame=frame,
+    )
+    assert first.blocked is False
+    breaker.record(first)
+
+    # Subsequent frames re-schedule the same action; each block is recorded,
+    # growing prior_attempts, and the escalation threshold triggers.
+    escalation_frames = []
+    for frame_no in range(2, 6):
+        decision = breaker.inspect(
+            tool="tap", capability="tap", args={"x": 500, "y": 100}, frame=frame,
+        )
+        if decision.blocked:
+            breaker.record(decision)
+        if decision.prior_attempts >= _BATCH_GUARD_ESCALATION_THRESHOLD:
+            escalation_frames.append(frame_no)
+            break
+        assert decision.prior_attempts < _BATCH_GUARD_ESCALATION_THRESHOLD, (
+            "escalation must not fire below the threshold"
+        )
+
+    assert escalation_frames, "cross-frame batch loop must escalate"
+    assert escalation_frames[0] == 3, "threshold=2 means escalation on the 3rd block"
+
+
+def test_each_binding_advances_cursor_on_complete_and_exhausts() -> None:
+    """consume="each" bindings materialize one array element per cursor, advance
+    on complete, and drop the action once the array is exhausted."""
+    from gui_agent.core.tool_agent.runtime import _EachExhausted
+    from gui_agent.core.tool_agent.contracts import RuntimeInputBinding
+
+    runtime = object.__new__(ToolAgentRuntime)
+    runtime._active_worker_id = "rename_worker"
+    runtime._each_cursors = {}
+    runtime.data_store = SimpleNamespace(
+        result_value=lambda ref: [{"name": "a.txt", "new": "bid_1.txt"},
+                                  {"name": "b.txt", "new": "bid_2.txt"}]
+    )
+    spec = WorkerSpec(
+        profile="operator",
+        goal="Rename files",
+        success_criteria=["All renamed"],
+        input_refs={"plan": "result:1"},
+        input_bindings=[
+            {
+                "name": "rename_new",
+                "input": "plan",
+                "path": ["new"],
+                "target": "text_input",
+                "description": "New name",
+                "consume": "each",
+            },
+        ],
+        strategy=WorkerStrategy(approach="Rename each"),
+    )
+    action = DynamicActionSpec(
+        name="rename_new",
+        capability="type",
+        description="Type the new name",
+        input_args={"text": RuntimeInputBinding(input="plan", path=["new"])},
+        exposed_args=["x", "y"],
+    )
+
+    def materialized_text():
+        return runtime._materialize_action_inputs(spec, action).fixed_args["text"]
+
+    # Cursor 0 → first element.
+    assert materialized_text() == "bid_1.txt"
+    # Advance cursor (as complete does) → second element.
+    runtime._each_cursors[("rename_worker", "plan")] = 1
+    assert materialized_text() == "bid_2.txt"
+    # Exhausted → action is unavailable.
+    runtime._each_cursors[("rename_worker", "plan")] = 2
+    with pytest.raises(_EachExhausted):
+        runtime._materialize_action_inputs(spec, action)
+
+
+def test_review_accepts_array_ref_consumed_by_each_binding() -> None:
+    """WORKER_ARRAY_INPUT_UNSUPPORTED is lifted when the array is consumed by a
+    consume='each' binding."""
+    from gui_agent.core.tool_agent.orchestrator import _static_flow_diagnostics
+    import ast
+
+    source = (
+        'def run(ctx):\n'
+        '    plan = ctx.transform(transform_id="plan", inputs=[coll["collection_ref"]["ref"]],\n'
+        '        source="def transform(rows):\\n    return [{\'n\': r[\'name\']} for r in rows]",\n'
+        '        result_schema={"type": "array", "items": {"type": "object"}})\n'
+        '    ctx.gui_worker(worker_id="w", profile="operator", goal="g", success_criteria=["c"],\n'
+        '        approach="a", input_refs={"plan": plan["ref"]},\n'
+        '        input_bindings=[{"name": "apply", "input": "plan", "path": ["n"],\n'
+        '            "target": "text_input", "description": "apply", "consume": "each"}])\n'
+        '    ctx.finish(plan["ref"], effect="data")\n'
+    )
+    tree = ast.parse(source)
+    diags = _static_flow_diagnostics(tree)
+    array_diags = [d for d in diags if d.code == "WORKER_ARRAY_INPUT_UNSUPPORTED"]
+    assert array_diags == [], f"each-consumed array must be allowed, got {array_diags}"
+
+
+def test_each_binding_implicit_array_ref_loops_on_complete() -> None:
+    """A binding over an array ref without explicit consume still iterates: the
+    complete branch uses the same predicate as materialization."""
+    from gui_agent.core.tool_agent.contracts import RuntimeInputBinding
+    from gui_agent.core.tool_agent.runtime import _EachExhausted, ToolAgentRuntime
+
+    runtime = object.__new__(ToolAgentRuntime)
+    runtime._active_worker_id = "rename_worker"
+    runtime._each_cursors = {}
+    runtime.data_store = SimpleNamespace(
+        result_value=lambda ref: [{"n": "a"}, {"n": "b"}]
+    )
+    spec = WorkerSpec(
+        profile="operator",
+        goal="g", success_criteria=["c"],
+        input_refs={"plan": "result:1"},
+        input_bindings=[{
+            "name": "apply", "input": "plan", "path": ["n"],
+            "target": "text_input", "description": "apply",
+        }],  # no consume field → implicit each over array
+        strategy=WorkerStrategy(approach="a"),
+    )
+    action = DynamicActionSpec(
+        name="apply", capability="type", description="d",
+        input_args={"text": RuntimeInputBinding(input="plan", path=["n"])},
+        exposed_args=["x", "y"],
+    )
+    # Materialization follows the cursor for an implicit-each array ref.
+    m = ToolAgentRuntime._materialize_action_inputs.__get__(runtime)
+    first = m(spec, action)
+    assert first.fixed_args["text"] == "a"
+    runtime._each_cursors[("rename_worker", "plan")] = 1
+    second = m(spec, action)
+    assert second.fixed_args["text"] == "b"
+
+
+def test_each_binding_complete_advances_cursor_and_exhausts() -> None:
+    """The full complete→each_next→terminal chain advances the cursor across
+    elements and ends once the array is consumed."""
+    from gui_agent.core.tool_agent.runtime import ToolAgentRuntime
+
+    runtime = object.__new__(ToolAgentRuntime)
+    runtime._active_worker_id = "w"
+    runtime._each_cursors = {}
+    runtime.data_store = SimpleNamespace(
+        result_value=lambda ref: [{"n": "a"}, {"n": "b"}]
+    )
+    spec = WorkerSpec(
+        profile="operator",
+        goal="g", success_criteria=["c"],
+        input_refs={"plan": "result:1"},
+        input_bindings=[{
+            "name": "apply", "input": "plan", "path": ["n"],
+            "target": "text_input", "description": "apply", "consume": "each",
+        }],
+        strategy=WorkerStrategy(approach="a"),
+    )
+    # complete #1 → advances to cursor 1, returns each_next (not terminal).
+    result, terminal = runtime._execute_worker_tool(
+        spec, [], {"name": "complete", "args": {}}, b"png", worker_id="w",
+    )
+    assert terminal == "each_next"
+    assert result.get("each_advanced") is True
+    assert runtime._each_cursors[("w", "plan")] == 1
+    # complete #2 → cursor 2 == len, exhausted → real terminal.
+    result, terminal = runtime._execute_worker_tool(
+        spec, [], {"name": "complete", "args": {}}, b"png", worker_id="w",
+    )
+    assert terminal == "complete"
+    assert result.get("each_advanced") is None

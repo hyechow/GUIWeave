@@ -6,7 +6,8 @@ import json
 import ipaddress
 import re
 import socket
-from dataclasses import dataclass
+from collections import deque
+from dataclasses import dataclass, field
 from hashlib import sha256
 from typing import Any, Literal
 from urllib.parse import urlsplit
@@ -34,6 +35,13 @@ _GUARDED_CAPABILITIES = {
     "app_switch",
     "launch_app",
 }
+# Recent (signature, progress) attempts retained for repeat detection. Sized to
+# exceed a typical multi-step GUI cycle (select → menu → cancel → re-select ≈ 6)
+# so a repeated step lands inside the window before the cycle closes again.
+_ATTEMPT_WINDOW = 8
+# Entries kept after a progress reset() so a loop containing a commit/scroll step
+# still registers its repetition on the next cycle.
+_RESET_RETAIN = 2
 _SIGNATURE_FIELDS = (
     "text",
     "url",
@@ -364,9 +372,18 @@ class ActionCircuitDecision:
 
 @dataclass
 class WorkerActionCircuitBreaker:
-    """Block an identical action when task-relevant progress is unchanged."""
+    """Block an action already executed in an identical task-relevant state.
 
-    _last_attempt: tuple[str, str] | None = None
+    A single-slot memory cannot see multi-step GUI loops (select → open menu →
+    cancel → re-select): intervening actions overwrite it before the cycle
+    closes, so each repeated step looks novel. Keep a bounded window of recent
+    (signature, progress) attempts and block when the same pair recurs inside
+    it; the window is sized to cover a full GUI cycle.
+    """
+
+    _attempts: deque[tuple[str, str]] = field(
+        default_factory=lambda: deque(maxlen=_ATTEMPT_WINDOW)
+    )
 
     def inspect(
         self,
@@ -380,7 +397,7 @@ class WorkerActionCircuitBreaker:
         signature = action_signature(tool=tool, capability=capability, args=args)
         progress = progress_signature(frame)
         attempt = (signature, progress)
-        repeated = attempt == self._last_attempt
+        prior_attempts = sum(1 for item in self._attempts if item == attempt)
         compatibility_error = _action_boundary_error(
             capability, args, frame, observed_auth_codes or set()
         )
@@ -389,11 +406,11 @@ class WorkerActionCircuitBreaker:
                 blocked=True,
                 signature=signature,
                 progress=progress,
-                prior_attempts=int(repeated),
+                prior_attempts=prior_attempts,
                 reason=compatibility_error,
                 instruction=_DEFAULT_BLOCK_INSTRUCTION,
             )
-        blocked = capability in _GUARDED_CAPABILITIES and repeated
+        blocked = capability in _GUARDED_CAPABILITIES and prior_attempts > 0
         reason = (
             f"blocked repeated {capability} action without task-relevant progress"
             if blocked else ""
@@ -402,13 +419,24 @@ class WorkerActionCircuitBreaker:
             blocked=blocked,
             signature=signature,
             progress=progress,
-            prior_attempts=int(repeated),
+            prior_attempts=prior_attempts,
             reason=reason,
             instruction=_DEFAULT_BLOCK_INSTRUCTION if blocked else "",
         )
 
     def record(self, decision: ActionCircuitDecision) -> None:
-        self._last_attempt = (decision.signature, decision.progress)
+        self._attempts.append((decision.signature, decision.progress))
 
-    def reset(self) -> None:
-        self._last_attempt = None
+    def reset(self, trigger_signature: str | None = None) -> None:
+        # A "progress" event (candidate commit / effective scroll) releases the
+        # fuse for the action that produced it, but clearing the whole window
+        # would erase the evidence of a loop that happens to contain such a step
+        # (select → commit → undo → re-select). Release only the triggering
+        # action's entries and keep the rest so the next cycle still registers.
+        if trigger_signature is None:
+            self._attempts.clear()
+            return
+        retained = [
+            item for item in self._attempts if item[0] != trigger_signature
+        ]
+        self._attempts = deque(retained[-_RESET_RETAIN:], maxlen=_ATTEMPT_WINDOW)

@@ -147,10 +147,13 @@ def test_worker_memory_accumulates_explicit_visual_facts() -> None:
     assert "author=demo; content=Golden Retriever" in rendered
     assert rendered.index("author=pupper") < rendered.index("author=demo")
     assert sum(event.kind == "worker_observation" for event in journal.events) == 2
-    assert not [
-        event for event in build_worker_memory_view(journal).durable_facts
-        if "author=" in event.durable_text
-    ]
+    durable = build_worker_memory_view(journal).durable_facts
+    # The verbatim-restated fact is load-bearing to the Worker: it is promoted
+    # to durable instead of being silently dropped by journal-lifetime dedup.
+    reaffirmed = [event for event in durable if event.kind == "worker_reaffirmed"]
+    assert len(reaffirmed) == 1
+    assert "author=pupper; content=Border Collie" in reaffirmed[0].durable_text
+    assert not [event for event in durable if "author=demo" in event.durable_text]
 
 
 def test_worker_memory_tracks_collection_anchor_without_persisting_raw_cells() -> None:
@@ -534,3 +537,97 @@ def test_worker_rebuilds_fresh_messages_each_frame_instead_of_replaying_chat_his
         )
         for event in decisions
     )
+
+
+def test_disproven_path_fact_stays_durable_beyond_narrative_window() -> None:
+    """A "path is unavailable" observation must outlive the narrative window;
+    otherwise the Worker re-attempts the disproven path blindly."""
+    journal = WorkerJournal(worker_id="disproven_memory")
+    journal.record_established_fact(
+        event_ref="step:12:fact:1",
+        text="More options menu shows: Sort by..., Select all, Copy to..., "
+        "Move to..., Compress - no Rename option available",
+    )
+    for step in range(13, 30):
+        journal.record_established_fact(
+            event_ref=f"step:{step}:fact:1",
+            text=f"Some unrelated visible row fact {step}",
+        )
+
+    view = build_worker_memory_view(journal)
+    rendered = view.render_prompt_section()
+
+    assert any(
+        event.kind == "worker_observation" and "no Rename option" in event.durable_text
+        for event in view.durable_facts
+    )
+    assert "no Rename option" in rendered
+    # The plain observations filled and rotated the narrative window meanwhile.
+    assert not any(
+        "row fact 13" in (event.narrative_text or "") for event in view.recent_steps
+    )
+
+
+def test_transient_negations_stay_narrative_only() -> None:
+    """Visibility/selection states change every frame; they must not go durable."""
+    journal = WorkerJournal(worker_id="transient_memory")
+    journal.record_established_fact(
+        event_ref="step:1:fact:1", text="The Rename dialog is not visible yet"
+    )
+    journal.record_established_fact(
+        event_ref="step:1:fact:2", text="The target row is not selected"
+    )
+    journal.record_established_fact(
+        event_ref="step:1:fact:3", text="No new rows appeared after the scroll"
+    )
+
+    assert not build_worker_memory_view(journal).durable_facts
+
+
+def test_disproven_detection_covers_common_phrasings() -> None:
+    from gui_agent.core.tool_agent.worker_memory import _is_disproven_fact
+
+    assert _is_disproven_fact("The menu does not contain Rename")
+    assert _is_disproven_fact("Bulk rename is not available")
+    assert _is_disproven_fact("This screen lacks a save button")
+    assert _is_disproven_fact("该菜单不包含重命名选项")
+    assert not _is_disproven_fact("The dialog is not visible")
+    assert not _is_disproven_fact("Three files are selected")
+
+
+def test_durable_projection_keeps_newest_facts_across_step_10() -> None:
+    """The durable cap must keep the newest disproven facts even when step
+    numbers pass 9 (a lexicographic sort would misorder '9' > '10')."""
+    from gui_agent.core.tool_agent.worker_memory import _DURABLE_PRIVILEGED_LIMIT
+    from gui_agent.core.tool_agent.worker_memory import _is_disproven_fact
+
+    journal = WorkerJournal(worker_id="order_memory")
+    for step in range(1, 16):
+        journal.record_established_fact(
+            event_ref=f"step:{step}:fact:1",
+            text=f"step {step}: the menu does not contain Rename",
+        )
+    view = build_worker_memory_view(journal)
+    assert len(view.durable_facts) <= _DURABLE_PRIVILEGED_LIMIT
+    # The newest fact (step 15) must be present.
+    assert any("step 15" in (e.durable_text or "") for e in view.durable_facts)
+    # And the oldest within the privileged window must be step 15-24+1 = the tail.
+    rendered = view.render_prompt_section()
+    assert "step 15" in rendered
+
+
+def test_chinese_transient_negations_stay_narrative_only() -> None:
+    """Chinese not-yet / no-more states are transient, not disproven paths."""
+    journal = WorkerJournal(worker_id="zh_transient")
+    for text in ("还没有加载完成", "暂无更多结果", "没有显示任何内容", "没有更多文件了"):
+        journal.record_established_fact(event_ref="step:1:fact:1", text=text)
+    assert not build_worker_memory_view(journal).durable_facts
+
+
+def test_disproven_patterns_reject_benign_statements() -> None:
+    from gui_agent.core.tool_agent.worker_memory import _is_disproven_fact
+
+    assert not _is_disproven_fact("No need to press the save button again")
+    assert not _is_disproven_fact("The screenshot lacks contrast")
+    assert not _is_disproven_fact("The plan lacks clarity")
+    assert _is_disproven_fact("This screen lacks a save button")

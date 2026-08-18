@@ -462,10 +462,15 @@ def test_task108_replay_blocks_one_unchanged_repeat_until_target_progresses() ->
     assert progressed.blocked is False
     assert progressed.progress != second.progress
     breaker.record(progressed)
-    assert breaker.inspect(
+    # Only genuine state progress (a new tuple) releases the fuse. Returning to
+    # the exact earlier measured state and re-attempting the same action is a
+    # cycle, and the attempt window still remembers it.
+    returned = breaker.inspect(
         tool=attempt["tool"], capability=attempt["capability"],
         args=attempt["args"], frame=frame,
-    ).prior_attempts == 0
+    )
+    assert returned.prior_attempts == 1
+    assert returned.blocked is True
 
 
 def test_action_alias_cannot_bypass_repeated_action_fuse() -> None:
@@ -494,7 +499,11 @@ def test_action_alias_cannot_bypass_repeated_action_fuse() -> None:
     assert aliased.prior_attempts == 1
 
 
-def test_distinct_prerequisite_action_releases_old_fuse_count() -> None:
+def test_distinct_prerequisite_action_without_state_change_keeps_fuse() -> None:
+    """An intervening distinct action releases the fuse only when it changes the
+    measured task state (a new progress signature). When it does not, allowing
+    the retry would make multi-step loops (select → menu → cancel → re-select)
+    look novel at every step."""
     case = _case()
     attempt = case["attempt"]
     frame = _frame(case)
@@ -516,8 +525,8 @@ def test_distinct_prerequisite_action_releases_old_fuse_count() -> None:
         args=attempt["args"], frame=frame,
     )
 
-    assert retry.blocked is False
-    assert retry.prior_attempts == 0
+    assert retry.blocked is True
+    assert retry.prior_attempts == 1
 
 
 def test_control_value_change_counts_as_task_progress() -> None:
