@@ -15,10 +15,12 @@ from gui_agent.core.tool_agent.contracts import (
     DataRequirement,
     DynamicActionSpec,
     WorkerSpec,
+    WorkerState,
     approach_is_procedural,
 )
 from gui_agent.core.tool_agent.protocol import (
     MAX_ORDERED_ACTIONS,
+    ProtocolError,
     cacheable_system_message,
     diagnostic_prompt_reports,
     decode_worker_action,
@@ -29,11 +31,27 @@ from gui_agent.core.tool_agent.protocol import (
     json_worker_decision_instruction,
     normalize_action_arguments,
     response_usage,
+    validate_worker_tool_state,
     worker_attempt_contract,
 )
 
 
 _TARGET_DESCRIPTION = "Target the visible named control"
+
+
+def test_terminal_worker_state_rejects_a_pending_action_summary() -> None:
+    state = WorkerState(
+        status="completed",
+        summary="Exhausted all pages. Returning to the canonical first page.",
+    )
+
+    with pytest.raises(ProtocolError, match="pending action"):
+        validate_worker_tool_state("complete", state)
+
+    validate_worker_tool_state(
+        "complete",
+        state.model_copy(update={"summary": "Returned to the canonical first page."}),
+    )
 
 
 @pytest.mark.parametrize(

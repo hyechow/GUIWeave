@@ -61,6 +61,7 @@ def test_shopping_catalog_knowledge_preserves_exact_price_boundaries() -> None:
     assert "for descending, do the inverse" in context
     assert "rejected detail preserves query/order" in worker
     assert "N single-shoe pockets = N/2 pairs" in worker
+    assert "Terminal reporting from later pages is invalid" in worker
 
 
 def test_shopping_navigation_exposes_nested_category_paths() -> None:
@@ -123,3 +124,7 @@ def test_shopping_unavailable_arrival_stays_out_of_acquisition_schema() -> None:
 
     assert "collect only the newest row's visible Status" in context
     assert "do not add an unavailable arrival field" in context
+
+    detail_goal = "Open the most recent processing order details."
+    assert knowledge.orchestrator_sections(detail_goal) == ["order_history_planning"]
+    assert "required failure handling" in knowledge.orchestrator_context(detail_goal)

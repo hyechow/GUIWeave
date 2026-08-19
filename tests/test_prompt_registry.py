@@ -147,6 +147,7 @@ def test_master_keeps_visual_conditional_dependencies_in_one_worker() -> None:
         "UI transitions/mutations", "clean environment", "Do not enumerate atomic GUI actions",
         "such as `type.text`", "finishing with `effect=\"data\"`",
         "neither typed data nor a transferable scope",
+        "application-knowledge-defined unavailable/not-found failure-handling requirement",
     ):
         assert rule in prompt
 
@@ -160,7 +161,8 @@ def test_worker_keeps_action_grounding_and_memory_boundaries() -> None:
         "Stable page identity",
         "selected sort field proves only that field, never its direction",
         "names the next state, not the current state",
-        "A `no_effect` result requires inspecting the next frame",
+        "current frame supersedes prior action feedback",
+        "failure-handling UI state required by the criteria or application knowledge is a precondition",
         "one sentence of at most 160 characters",
         "never pair that conclusion with another action",
         "it does not require scrolling through or validating every result row",

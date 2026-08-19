@@ -1570,7 +1570,7 @@ def test_fused_worker_dispatches_public_deep_navigation_without_semantic_review(
 def test_fused_worker_returns_typed_failure_after_repeated_empty_action_envelope(
     monkeypatch,
 ) -> None:
-    worker = _MultiActionWorker([[], []])
+    worker = _MultiActionWorker([[], [], []])
 
     runtime = _run_fused_worker(
         monkeypatch,
@@ -1582,7 +1582,7 @@ def test_fused_worker_returns_typed_failure_after_repeated_empty_action_envelope
     assert runtime.outcome.steps == 0
     assert "action envelope must contain" in runtime.outcome.summary
     assert len(runtime._executor.actions) == 0
-    assert worker.calls == 2
+    assert worker.calls == 3
     assert any(
         "between 1 and 5 executable actions" in str(message.content)
         and "action envelope must contain" in str(message.content)
@@ -1598,7 +1598,7 @@ def test_fused_worker_rejects_terminal_state_with_continuing_action(
     actions = [[{
         "name": "submit_login",
         "args": {"x": 500, "y": 500, "description": "Submit the login form"},
-    }]] * 2
+    }]] * 3
     worker = _MultiActionWorker(actions, state_status=state_status)
     runtime = _run_fused_worker(
         monkeypatch,
@@ -1610,7 +1610,7 @@ def test_fused_worker_rejects_terminal_state_with_continuing_action(
     assert runtime.outcome.steps == 0
     assert "terminal state/tool mismatch" in runtime.outcome.summary
     assert len(runtime._executor.actions) == 0
-    assert worker.calls == 2
+    assert worker.calls == 3
 
 
 def test_worker_repairs_rejected_launch_app_without_reobserving(monkeypatch) -> None:
@@ -1831,7 +1831,7 @@ def test_worker_rejects_missing_tool_state_without_executing(monkeypatch) -> Non
     assert runtime._executor.actions == []
     assert len([
         event for event in runtime.trace if event["event"] == "worker_protocol_error"
-    ]) == 2
+    ]) == 3
 
 
 def test_replacement_strategy_starts_with_fresh_journal(monkeypatch) -> None:
