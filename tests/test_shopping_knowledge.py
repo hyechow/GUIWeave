@@ -105,9 +105,11 @@ def test_shopping_spend_and_reorder_goals_select_order_sources() -> None:
     )
     assert "exactly one order record" in recent_context
     assert "exact spelling and capitalization" in recent_context
-    assert knowledge.orchestrator_sections(
-        "How much did I spend on food in March without shipping?"
-    ) == ["order_history_planning"]
+    spend_goal = "How much did I spend on food in March without shipping?"
+    assert knowledge.orchestrator_sections(spend_goal) == ["order_history_planning"]
+    spend_context = knowledge.orchestrator_context(spend_goal)
+    assert "Artificial plants and topiary are" in spend_context
+    assert "speakers are Electronics" in spend_context
     assert knowledge.orchestrator_sections(
         "Reorder a product from my canceled order."
     ) == ["order_history_planning", "cart_checkout_planning"]
@@ -124,7 +126,6 @@ def test_shopping_unavailable_arrival_stays_out_of_acquisition_schema() -> None:
 
     assert "collect only the newest row's visible Status" in context
     assert "do not add an unavailable arrival field" in context
-
     detail_goal = "Open the most recent processing order details."
     assert knowledge.orchestrator_sections(detail_goal) == ["order_history_planning"]
     assert "required failure handling" in knowledge.orchestrator_context(detail_goal)
