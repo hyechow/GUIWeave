@@ -20,6 +20,7 @@ from gui_agent.core.tool_agent.action_guard import (
     action_signature,
     assess_frame,
     is_candidate_commit,
+    ordered_boundary_resume_feedback,
 )
 from gui_agent.core.tool_agent.data_store import RuntimeDataStore
 from gui_agent.core.tool_agent.protocol import (
@@ -262,6 +263,34 @@ def test_operator_completion_waits_for_requested_sort_direction(
     )
 
     assert assess_frame(spec, [], frame).completion_mode == completion_mode
+
+
+def test_ordered_boundary_resume_names_the_immediate_grid_successor() -> None:
+    spec = _worker_spec(
+        actions=[],
+        profile="operator",
+        goal="Open the least expensive qualifying record",
+        success_criteria=["The qualifying record is open"],
+        approach="catalog price ascending sort",
+    )
+    frame = MaterializedFrame(
+        frame_id="frame:2",
+        screenshot_path="frame.png",
+        controls=[
+            {"kind": "a", "label": "Rejected record…", "rect": {"x": 200, "y": 300}},
+            {"kind": "a", "label": "Immediate record", "rect": {"x": 400, "y": 300}},
+            {"kind": "a", "label": "Later match", "rect": {"x": 600, "y": 300}},
+        ],
+    )
+    memory = (
+        "Rejected record has an invalid value. state=exploring; tool=back "
+        "Later match is visible. state=exploring; tool=scroll"
+    )
+
+    feedback = ordered_boundary_resume_feedback(spec, frame, memory)
+
+    assert feedback["next_record"] == "Immediate record"
+    assert feedback["next_record_rect"] == {"x": 400, "y": 300}
 
 
 def test_action_guard_blocks_one_unchanged_repeat() -> None:

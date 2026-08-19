@@ -59,6 +59,8 @@ def test_shopping_catalog_knowledge_preserves_exact_price_boundaries() -> None:
     assert "not a nested hierarchy" in context
     assert "For ascending, click `Set Ascending Direction`" in worker
     assert "for descending, do the inverse" in context
+    assert "rejected detail preserves query/order" in worker
+    assert "N single-shoe pockets = N/2 pairs" in worker
 
 
 def test_shopping_navigation_exposes_nested_category_paths() -> None:

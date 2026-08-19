@@ -637,7 +637,10 @@ def test_worker_profile_inference_selects_relevant_attempt_rules() -> None:
         "empty_authoritative = false",
     ):
         assert rule in collector_contract and rule not in operator_contract
-    for rule in ("candidate_set_state.status = exhausted", "Finish comparison evidence"):
+    for rule in (
+        "candidate_set_state.status = exhausted", "Finish comparison evidence",
+        "inspect the immediate next record",
+    ):
         assert rule in operator_contract and rule not in collector_contract
     for rule in (
         "scope_blockers", "evidence against that query",
