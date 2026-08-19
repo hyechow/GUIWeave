@@ -74,3 +74,6 @@ def test_shopping_spend_and_reorder_goals_select_order_sources() -> None:
     assert knowledge.orchestrator_sections(
         "Reorder a product from my canceled order."
     ) == ["order_history_planning", "cart_checkout_planning"]
+    assert knowledge.orchestrator_sections(
+        "Get the price of an item I bought last month."
+    ) == ["order_history_planning"]
