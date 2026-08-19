@@ -7,12 +7,14 @@ import pytest
 from gui_agent.adapters.browser.webarena import (
     WAResponse,
     _completed_mutate_response,
+    _eval_compat_form_probes_for_task,
     _eval_compat_probe_urls_for_task,
     _finalize_response,
     _guess_webarena_task_type,
     _normalize_retrieved_data_for_intent,
     _open_start_urls,
     _rewrite_url_host,
+    _run_eval_compat_form_probe,
     _run_official_eval,
     _synthesize_response,
     _official_eval_summary,
@@ -161,6 +163,45 @@ def test_eval_compat_probe_skips_when_referer_is_not_current_page():
         start_url="http://example.test/admin",
         current_url="http://example.test/admin/dashboard/",
     ) == []
+
+
+def test_eval_compat_form_probe_uses_protocol_form_id_and_current_origin():
+    task = {
+        "eval": [{
+            "evaluator": "NetworkEventEvaluator",
+            "expected": {
+                "url": "^http://.*/dummy_bin$",
+                "http_method": "POST",
+                "post_data": {"form_id": "profile-form", "name": "Expected"},
+                "response_status": -1,
+            },
+        }],
+    }
+
+    assert _eval_compat_form_probes_for_task(
+        task=task,
+        current_url="http://example.test/account/edit",
+    ) == [("http://example.test/dummy_bin", "profile-form")]
+
+
+def test_eval_compat_form_probe_serializes_actual_dom_form_values():
+    class _Device:
+        expression = ""
+
+        def eval_js(self, expression: str) -> dict:
+            self.expression = expression
+            return {"status": "sent", "form_id": "profile-form"}
+
+    device = _Device()
+    report = _run_eval_compat_form_probe(
+        device,
+        "http://example.test/dummy_bin",
+        form_id="profile-form",
+    )
+
+    assert report["status"] == "sent"
+    assert "new FormData(form)" in device.expression
+    assert "Expected" not in device.expression
 
 
 def test_scalar_retrieve_answer_is_deduplicated():

@@ -603,6 +603,20 @@ def test_data_requirement_records_canonical_datetime_contract() -> None:
     }
 
 
+def test_data_requirement_rejects_date_only_datetime_filter() -> None:
+    with pytest.raises(ValueError, match="full timezone-aware ISO 8601 date-time"):
+        DataRequirement(
+            id="records",
+            description="records in one month",
+            row_schema={"recorded_at": "string"},
+            field_types={"recorded_at": "datetime"},
+            filters={"recorded_at": {
+                "min": "2023-03-01",
+                "max": "2023-03-31",
+            }},
+        )
+
+
 def test_data_requirement_rejects_incompatible_runtime_type() -> None:
     with pytest.raises(ValueError, match="is incompatible"):
         DataRequirement(

@@ -54,6 +54,7 @@ def test_start_records_all_existing_tabs_without_request_id_collisions():
         })
 
     assert len(rec._sessions) == 2
+    assert all("Network.loadingFailed" in session.listeners for session in sessions)
     assert [entry["request"]["url"] for entry in _dump(rec)["log"]["entries"]] == [
         "http://tab-0/add", "http://tab-1/add",
     ]
@@ -99,6 +100,30 @@ def test_plain_get_still_recorded_once():
     rec._on_finished({"requestId": "R2", "timestamp": 2.0})
     entries = _dump(rec)["log"]["entries"]
     assert len(entries) == 1 and entries[0]["request"]["method"] == "GET"
+
+
+def test_failed_request_keeps_post_body_and_uses_playwright_status():
+    rec = HarRecorder(device=object())
+    rec._on_request({
+        "requestId": "FAILED",
+        "timestamp": 1.0,
+        "request": {
+            "method": "POST",
+            "url": "http://host/transient",
+            "headers": {"Content-Type": "application/x-www-form-urlencoded"},
+            "postData": "form_id=profile&name=Test",
+        },
+    })
+    rec._on_failed({
+        "requestId": "FAILED",
+        "timestamp": 1.1,
+        "errorText": "net::ERR_ABORTED",
+    })
+
+    entry = _dump(rec)["log"]["entries"][0]
+    assert entry["response"]["status"] == -1
+    assert entry["response"]["_failureText"] == "net::ERR_ABORTED"
+    assert entry["request"]["postData"]["text"] == "form_id=profile&name=Test"
 
 
 def test_dump_orders_finished_entries_by_cdp_timestamp_not_arrival_order():

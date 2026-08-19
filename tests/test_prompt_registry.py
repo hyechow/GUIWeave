@@ -82,6 +82,8 @@ def test_master_exposes_only_tool_agent_runtime_api() -> None:
     assert "Preserve every user-supplied string predicate verbatim" in prompt
     assert "never require perception to invent a missing year" in prompt
     assert "complete calendar date" in prompt
+    assert "full timezone-aware ISO date-times" in prompt
+    assert "including leaving an unsent draft for review" in prompt
     assert "first 10 characters for `YYYY-MM-DD`" in prompt
     assert "When success criteria guarantee exactly one target record" in prompt
     assert "Source layout order is not a data contract" in prompt

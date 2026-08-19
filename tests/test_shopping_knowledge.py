@@ -87,6 +87,7 @@ def test_shopping_contact_draft_selects_order_data_without_crossing_submit() -> 
 
     assert sections == ["contact_planning", "order_history_planning"]
     assert "line Subtotal" in context
+    assert "sold bundle qualifies" in context
     assert "do not activate Submit" in context
     assert "The populated form is the final state" in context
 

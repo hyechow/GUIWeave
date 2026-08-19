@@ -651,7 +651,8 @@ def test_screen_reader_transcribes_all_then_judge_filters_semantic_rows(
     assert "Requirement context:" in judge_prompt
     assert "apply any explicit taxonomy equivalence" in judge_prompt
     assert "record's primary subject" in judge_prompt
-    assert "component, accessory, or bundle inclusion" in judge_prompt
+    assert "explicit bundle inclusion is a match" in judge_prompt
+    assert "compatibility or accessory mentions" in judge_prompt
     assert "primary function to perform the requested function" in judge_prompt
     assert "unless the requested class explicitly includes those objects" in judge_prompt
     assert extracted["found"] is True
@@ -2117,6 +2118,36 @@ def _linked_entry_materializer(tmp_path: Path) -> PerceptionMaterializer:
         row for row in rows if row.get("subject") == "Target service"
     ]
     return materializer
+
+
+def test_rejected_singleton_detail_does_not_complete_with_zero_rows(
+    tmp_path: Path,
+) -> None:
+    requirement = _linked_entry_requirement()
+    materializer = _linked_entry_materializer(tmp_path)
+    materializer._semantic_judge = lambda _requirement, _rows: []  # type: ignore[method-assign]
+    materializer.observe(
+        bundle=FakeBundle([_linked_parent_table("Records", ["one"])]),
+        platform=FakePlatform(),
+        requirements=[requirement],
+        frame_no=1,
+    )
+    rejected, _ = materializer.observe(
+        bundle=FakeBundle([{
+            "caption": "Entries",
+            "headers": ["Subject"],
+            "rows": [{"Subject": "Unrelated service"}],
+            "partial": False,
+            "traversal": {"type": "static"},
+        }], observation={"url": "http://example.test/record/one/"}),
+        platform=FakePlatform(),
+        requirements=[requirement],
+        frame_no=2,
+    )
+
+    assert rejected.collections == []
+    assert rejected.missing_requirements == ["entries"]
+    assert rejected.requirement_scopes["entries"]["detail_resolution"]["status"] == "active"
 
 
 def test_navigable_parent_replaces_residual_detail_candidate(tmp_path: Path) -> None:
