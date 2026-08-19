@@ -10,7 +10,7 @@ source: official_trace_distilled
 confidence: high
 sensitivity: internal
 ttl: session
-version: 7
+version: 8
 ---
 # One Stop Market order-history data
 
@@ -46,7 +46,9 @@ For spending over a date interval and product class, use one linked order-detail
 line-item grain. Retain Order # as the required stable parent identity because the detail title
 identifies its order by that value; also retain Date, then sum matching line Subtotals
 deterministically. Do not use the order-level Subtotal or Grand Total for a subset of items, and do
-not include Shipping & Handling.
+not include Shipping & Handling. Product classes are storefront taxonomy, not title substrings:
+carry known title equivalences into the requirement description. Artificial plants and topiary are
+home decoration; indoor/outdoor speakers are Electronics and do not qualify.
 
 For whole-order counts or spending, filter list rows by date and status first. Count qualifying
 orders once each. Use Grand Total when shipping/handling must be included and Subtotal when shipping
