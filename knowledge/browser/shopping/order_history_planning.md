@@ -10,7 +10,7 @@ source: official_trace_distilled
 confidence: high
 sensitivity: internal
 ttl: session
-version: 4
+version: 5
 ---
 # One Stop Market order-history data
 
@@ -26,7 +26,9 @@ with another label.
 Each View Order detail provides order date/status, addresses, Items Ordered, and a totals block.
 Items Ordered rows provide Product Name, Price, Qty, and line Subtotal. The totals block separately
 provides Subtotal, Shipping & Handling, and Grand Total. The storefront does not expose an arrival
-date, so its value is unavailable even when a status is visible.
+date, so its value is unavailable even when a status is visible. When the response asks for that
+field, collect only the newest row's visible Status and set the arrival date to `null` in the
+deterministic transform; do not add an unavailable arrival field to the acquisition schema.
 
 ## Chronology and linked item lookup
 
