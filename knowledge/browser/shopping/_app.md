@@ -7,6 +7,8 @@ scope:
   - worker
 aliases:
   - One Stop Market
+  - OneStopMarket
+  - OneStopShopping
 browser_origins:
   - http://localhost:7770
   - http://127.0.0.1:7770
@@ -14,40 +16,98 @@ source: manual_distilled
 confidence: high
 sensitivity: internal
 ttl: session
-version: 4
+version: 5
 ---
-# One Stop Market
+# One Stop Market storefront
 
-## Catalog
+## Global navigation
+
+- The signed-in account menu exposes My Account, My Wish List, and Sign Out. My Account has
+  sidebar links for My Orders, My Wish List, Address Book, Account Information, My Product Reviews,
+  and Newsletter Subscriptions.
+- The header cart opens a mini-cart; View and Edit Cart opens the full Shopping Cart. Footer links
+  include Advanced Search and Contact Us, and the footer newsletter form has an Email field and
+  Subscribe button.
+- If a task starts on a product page and says "the product on the current page", keep that product
+  identity. Do not replace it by searching for another product.
+
+## Catalog and search
 
 - The mini-search uses broad OR term matching, so it is not a bounded product-class source.
 - Advanced Search > Product Name performs contiguous substring matching. When no catalog category
-  covers the full class, use this recall source and preserve required source order in the approach.
-- Equivalent titles preserve use/problem wording but may vary base-type labels. For Product Name
-  recall, never enter the full class: use an exact noun-plus-gerund use/problem phrase when supplied,
-  or the base type without modifiers. Keep the full class unchanged in the contract and row filter.
-- Use the narrowest category only when its taxonomy directly covers the full class; for example,
-  earbud products are under Electronics > Headphones > Earbud Headphones. Validate primary product
-  identity against the full class because bundles and misclassified products may appear. Model it
-  as `primary_product`, sourced from `Product Name`, with filter `primary_product_contains`. Use the
-  category label as target data surface only for a category-based approach.
-- In this catalog taxonomy, an in-ear or behind-neck headphone/headset is an earphone product.
-  Preserve this taxonomy in the data-requirement description when that distinction affects a
-  product-class predicate, so semantic row validation can accept equivalent catalog wording.
-- Product lists support Sort By = Price and a separate direction link. The direction link label
-  names the action it will perform: `Set Ascending Direction` means the current order is
-  descending, and `Set Descending Direction` means the current order is ascending.
-- Product grids preserve the selected sort sequence from left to right across each row, then
-  from top to bottom.
-- For a filtered price boundary, sort in the needed direction and take the first row that
-  satisfies the remaining row-level predicate. Do not traverse the whole category.
+  covers the full class, use this recall source. Equivalent titles may preserve use/problem wording
+  while varying the base-type label. Search with an exact noun-plus-gerund use/problem phrase when
+  supplied, or the base type without modifiers; validate every result against the full class.
+- The top navigation is a category hierarchy. Use the narrowest category only when its taxonomy
+  directly covers the full requested class. Earbud products are under Electronics > Headphones >
+  Earbud Headphones; in this catalog, in-ear or behind-neck headphones/headsets are earphones.
+- Category and search-result pages offer Grid/List mode, Sort By, a separate direction link, a
+  per-page selector, and pagination. Product cards expose name and current price, and may expose
+  rating percentage and review count. A struck-through old price is not the current sale price.
+- Sort By includes Price but not customer rating. The direction link label names the action it will
+  perform: `Set Ascending Direction` means the current order is descending, while
+  `Set Descending Direction` means it is ascending.
+- Product grids preserve the selected order from left to right across each row, then top to bottom.
+  For a price boundary, sort in the needed direction and take the first row that satisfies all
+  remaining predicates; do not traverse the whole category.
 
-## Order history
+## Product pages and reviews
 
-- My Account > My Orders lists Order # and Date newest first, ten per page, without date or category
-  filters. For a closed date interval, advance until the upper boundary appears; after the
-  first row older than the lower boundary, later pages cannot qualify.
-- View Order opens Items Ordered rows with Product Name, Price, Qty, and line Subtotal. The
-  order summary separately shows Subtotal, Shipping & Handling, and Grand Total.
-- In Items Ordered, Product Name contains the purchased title and SKU plus any selected option
-  labels and values, such as size or color. Selected options are not separate table columns.
+- A product page contains the product name, current price, SKU, availability, rating summary,
+  review-count link, details, quantity, and purchase controls. Configurable products also expose
+  required option controls such as size or color; select any available value only when the task
+  permits any variant.
+- Add to Cart and Add to Wish List act on the current product. A successful action produces a
+  confirmation message and the destination collection contains the product.
+- The Reviews link/tab reaches the current product's review list. Each review exposes a star rating,
+  summary/title, review body, and reviewer nickname. Preserve duplicate reviews and their displayed
+  order when the request says all reviews or same order.
+- Add Your Review exposes Your Rating, Nickname, Summary, Review, and Submit Review. Selecting a star
+  label is required; filling the text fields alone does not submit a review.
+
+## Shopping cart and checkout
+
+- The full Shopping Cart shows each product, selected options, item price, quantity, subtotal, and
+  a Remove item control. To empty it, remove every existing row and verify the empty-cart state
+  before adding the requested product.
+- "Add" means stop after the item is in the requested cart or wish list. "Buy" means continue from
+  the cart through checkout until the order-success page; reaching the cart alone is incomplete.
+- Checkout proceeds through Shipping, then Review & Payments. The saved customer address may already
+  populate shipping and billing. Place Order is the final commit and should be used only for an
+  explicit purchase request.
+
+## Orders
+
+- My Account > My Orders lists Order #, Date, Order Total, Status, and View Order, newest first,
+  ten per page. It has no date, product, category, or status filters.
+- For a closed date interval, advance until the upper boundary appears. After the
+  first row older than the lower boundary, later pages cannot qualify. The first page is
+  authoritative for latest;
+  the last reachable row is authoritative for first/oldest.
+- View Order opens a detail page with Order Date and Status, Items Ordered, Shipping Address,
+  Shipping Method, Billing Address, and order totals. Items Ordered rows expose Product Name, Price,
+  Qty, and line Subtotal. Product Name includes the purchased title and SKU plus selected option
+  labels and values, such as size or color; options are not separate table columns.
+- The totals block separates Subtotal, Shipping & Handling, and Grand Total. An arrival date is not
+  displayed. A placed order's delivery address cannot be edited from the storefront order detail.
+- Reorder on an order detail adds that order's products to the cart. It does not itself complete a
+  new checkout.
+
+## Customer account
+
+- Address Book separates default billing, default shipping, and additional address entries. Edit
+  Address opens First Name, Last Name, Company, Phone Number, Street Address lines, City,
+  State/Province, ZIP/Postal Code, Country, and default-address checkboxes.
+- A general moved/address-update request refers to editing the existing account address, not a
+  placed order's immutable shipping address. Preserve existing identity and phone fields unless the
+  request changes them; put unit/suite/house information on Street Address line 2.
+- My Wish List lists saved products and supports quantity updates, removal, and adding items to the
+  cart. A catalog or product-page Add to Wish List is the shortest path for a requested addition.
+
+## Contact and newsletter
+
+- Contact Us contains Name, Email, Phone Number, What's on your mind?, and Submit. Signed-in customer
+  details may be prefilled. A request to leave the form ready for review means fill the requested
+  fields and remain on Contact Us without activating Submit.
+- The footer newsletter Email field posts a subscription directly with Subscribe. The signed-in
+  customer's account email is the subscription identity unless the request supplies another email.
