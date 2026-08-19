@@ -16,6 +16,11 @@ ttl: session
   (`datetime`), and **kind** (`text`). It has no source filters. ZIP membership and the requested
   month are therefore evaluated in Python from the complete rows; a month without a year does not
   constrain the year. A row is identified by **name**.
+- To collect a **subset** of Downloads (e.g. files whose name starts with `bid_`), open the
+  top-bar search box and type the exact name or distinctive prefix FIRST, then read the filtered
+  rows — do not blind-scroll the whole list to find them. The filtered list is the authoritative
+  acquisition surface; scrolling the unfiltered list wastes turns and risks row duplication across
+  scroll frames.
 - **Documents** means the physical folder reached through `Show roots` → device storage →
   `Documents`; the drawer's namesake item is an indexed category that can omit descendants or file
   types. Its grid contains direct children and top-bar search matches descendants recursively, so

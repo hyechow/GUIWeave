@@ -12,16 +12,9 @@ Hierarchy failures degrade to the screenshot-only path.
 from __future__ import annotations
 
 import io
-import time
 from pathlib import Path
 from typing import Optional
 
-from gui_agent.adapters.android.accessibility import (
-    collection_regions_from_uiautomator,
-    form_controls_from_semantic_tree,
-    screen_title_from_semantic_tree,
-    semantic_tree_from_uiautomator,
-)
 from gui_agent.adapters.android.constants import SCREENSHOT_MAX_WIDTH
 from gui_agent.core.schemas import Observation
 
@@ -95,27 +88,20 @@ class AndroidSession:
         return self.client.platform_time()
 
     def capture(self) -> tuple[bytes, str | None]:
-        """Capture a hierarchy followed by pixels from the same settled UI state."""
+        """Capture pixels only (UIAutomator structured perception is removed)."""
         if self.client is None:
             raise RuntimeError("Android 设备尚未连接")
-        # UIAutomator is slower than screencap. Taking them concurrently can pair an
-        # old transition frame with a hierarchy from the destination screen. Finish
-        # the optional structural sensor first, then capture the authoritative pixels.
-        hierarchy_started_at = time.perf_counter()
-        # This sensor is optional. A failed/slow dump must not be repeated inside
-        # one observation; screenshot perception remains authoritative and the
-        # next real turn will try UIAutomator again.
-        xml_text = self.client.dump_ui_hierarchy()
-        hierarchy_seconds = time.perf_counter() - hierarchy_started_at
-        screenshot_started_at = time.perf_counter()
+        # The UIAutomator sensor is gone: it cost 2-6s per frame, returned an opaque
+        # shell for WebView apps, and could lag the screenshot (an old hierarchy
+        # paired with a new frame). Screenshot is authoritative; observe() still
+        # tries the optional WebView CDP document as a structured channel.
         png_bytes = self.client.screenshot()
-        screenshot_seconds = time.perf_counter() - screenshot_started_at
         self.last_capture_timing = {
-            "hierarchy_seconds": round(hierarchy_seconds, 3),
-            "hierarchy_available": xml_text is not None,
-            "screenshot_seconds": round(screenshot_seconds, 3),
+            "hierarchy_seconds": 0.0,
+            "hierarchy_available": False,
+            "screenshot_seconds": 0.0,
         }
-        return png_bytes, xml_text
+        return png_bytes, None
 
     def list_apps(self) -> list[str]:
         """Return launchable application names from the active package manager."""
@@ -135,16 +121,10 @@ class AndroidPerception:
         print("截图中 (Android)...")
         png_bytes, hierarchy = self.session.capture()
         client = self.session.client
-        semantic_tree = semantic_tree_from_uiautomator(
-            hierarchy,
-            viewport_size=client.viewport_size if client is not None else (0, 0),
-        )
-        collection_regions = collection_regions_from_uiautomator(
-            hierarchy,
-            viewport_size=client.viewport_size if client is not None else (0, 0),
-        )
-        form_controls = form_controls_from_semantic_tree(semantic_tree)
-        screen_title = screen_title_from_semantic_tree(semantic_tree)
+        # UIAutomator structured perception is removed: it costs 2-6s per frame,
+        # returns an opaque shell for WebView apps, and can lag the screenshot (an
+        # old hierarchy paired with a new frame). The screenshot is authoritative;
+        # the WebView CDP document remains as an optional structured channel.
         webview = (
             client.webview_document()
             if client is not None
@@ -157,18 +137,15 @@ class AndroidPerception:
         self.screenshot_path.parent.mkdir(parents=True, exist_ok=True)
         self.screenshot_path.write_bytes(png_bytes)
         print(f"截图大小: {len(png_bytes) // 1024} KB，已保存到 {self.screenshot_path}")
-        if semantic_tree is not None:
-            print(f"结构节点: {len(semantic_tree)}（UIAutomator）")
         return Observation(
             png_bytes=png_bytes,
             source="android",
             url=(webview or {}).get("url") or None,
-            # A native WebView wrapper may expose the whole document body as its
-            # accessibility title.  CDP's document title is the authoritative
-            # surface identity when the guarded WebView sensor succeeded.
-            title=(webview or {}).get("title") or screen_title or None,
-            semantic_tree=semantic_tree,
+            # CDP's document title is the authoritative surface identity when the
+            # guarded WebView sensor succeeded.
+            title=(webview or {}).get("title") or None,
+            semantic_tree=None,
             tables=(webview or {}).get("tables", []),
-            collection_regions=collection_regions,
-            form_control_state=form_controls,
+            collection_regions=[],
+            form_control_state=None,
         )

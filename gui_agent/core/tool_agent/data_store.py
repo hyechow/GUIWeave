@@ -105,7 +105,18 @@ class RuntimeDataStore:
         window_state = "end" if coverage.get(
             "at_end", coverage.get("end_visible")
         ) else "partial"
-        transport_key = window_key or f"{window_context}:{window_state}"
+        # A paged collection keeps each page's rows (a page is an independent
+        # record set, even when two pages carry identical business rows). A
+        # scrolling collection is one moving viewport: the same record re-appears
+        # across windows, so deduplicate by business-row content regardless of
+        # window_context. This is what keeps a scrolled pure-vision read from
+        # accumulating duplicate rows (row_count inflated across scroll frames).
+        is_paged = coverage.get("page_index") not in (None, "")
+        transport_key = (
+            window_key or f"{window_context}:{window_state}"
+            if is_paged
+            else f"scroll:{collection_key}"
+        )
         key = (requirement_id, collection_key, provider, transport_key, digest)
         existing = self._dedupe.get(key)
         created = existing is None
@@ -160,6 +171,37 @@ class RuntimeDataStore:
                         current_rows = []
             collection_rows.extend(current_rows)
             previous_ref = chunk_ref
+        # A scrolling collection is one moving viewport: the same record re-appears
+        # across windows. Deduplicate by business-row identity (order-preserving)
+        # so a scrolled read does not accumulate duplicate rows. Paged collections
+        # (any chunk carries page_index) keep each page's rows as independent
+        # records, identical business content included.
+        if not any(
+            self._chunks[chunk_ref].coverage.get("page_index") is not None
+            for chunk_ref in chunk_ids
+        ):
+            schema_props = (row_schema.get("properties") or {})
+            date_fields = {
+                field for field, spec in schema_props.items()
+                if isinstance(spec, dict) and spec.get("format") == "date-time"
+            }
+            seen: set[str] = set()
+            deduped: list[dict[str, Any]] = []
+            for row in collection_rows:
+                # Datetime fields are excluded from the identity: perception can
+                # transcribe the same date with slight variation across scroll
+                # frames (e.g. "Aug 9" vs "9/9"), and the date is not what makes
+                # the record distinct.
+                identity = {
+                    key: value for key, value in row.items() if key not in date_fields
+                }
+                canonical_row = json.dumps(
+                    identity, ensure_ascii=False, sort_keys=True, default=str
+                )
+                if canonical_row not in seen:
+                    seen.add(canonical_row)
+                    deduped.append(row)
+            collection_rows = deduped
         row_count = len(collection_rows)
         # An authoritative empty state (e.g. a search returning "No matches") reports
         # total_records=0 as "zero matches on this filtered surface", not the real size

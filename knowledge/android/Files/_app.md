@@ -77,3 +77,8 @@ version: 2
   the collection has no name-prefix, month, type, or callable source filter. Extracted
   rows do not exist in any pre-extraction collection snapshot, so matching requires a
   fresh complete `DownloadFiles` snapshot after extraction.
+- To collect a **subset** of Downloads (e.g. files whose name starts with `bid_`), open the
+  top-bar search box and type the exact name or distinctive prefix FIRST, then read the filtered
+  rows — do not blind-scroll the whole list to find them. The filtered list is the authoritative
+  acquisition surface; scrolling the unfiltered list wastes turns and risks row duplication across
+  scroll frames.

@@ -52,3 +52,10 @@ version: 4
   individual product price.
 - Its source filter field is `order_time`. The application's exact one-month filter
   value is `近1个月`.
+- Checkout flow (search → buy): search the item, open its detail page from the
+  results, then use `立即购买` (not `加入购物车`) to start checkout. A spec-selection
+  sheet may appear; confirm the required spec, then the order-confirmation page shows
+  a `提交订单` button. Activate `提交订单` to enter the payment page — do NOT complete
+  on the confirmation page. The payment page (payment-method selection, total shown)
+  is the terminal surface a "let me pay / stay on the payment page" task wants to reach
+  and remain on.
