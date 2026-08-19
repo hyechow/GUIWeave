@@ -335,6 +335,47 @@ def test_worker_replay_preserves_recorded_protocol_repair_history(tmp_path) -> N
     assert "Protocol repair" in model.calls[0][-1].content
 
 
+def test_worker_replay_uses_current_application_knowledge(
+    tmp_path, monkeypatch,
+) -> None:
+    run_dir = _worker_run(
+        tmp_path,
+        recorded_tool="continue_with_actions",
+        recorded_actions=[{"name": "scroll", "args": {}}],
+    )
+    context_path = run_dir / "context.json"
+    context_path.write_text(json.dumps({
+        "platform": "android",
+        "knowledge": {"app_name": "Example"},
+    }), encoding="utf-8")
+    trace_path = run_dir / "tool_agent_trace.json"
+    trace = json.loads(trace_path.read_text(encoding="utf-8"))
+    report = trace["trace"][-1]["context_reports"][0]
+    report["roles"][0]["parts"][0]["text"] = (
+        "recorded static prompt\n\n## Application knowledge\nold fact"
+        "\n\n## Worker attempt contract\n{}"
+    )
+    trace_path.write_text(json.dumps(trace), encoding="utf-8")
+    knowledge = SimpleNamespace(worker_context=lambda: "current fact")
+    monkeypatch.setattr(
+        "replay.decision.load_knowledge_for_app",
+        lambda _name, _platform: knowledge,
+    )
+    model = _RecordedModel(_tool_call("continue_with_actions", {
+        "state": _state(),
+        "actions": [{"name": "scroll", "args": {
+            "direction": "down",
+            "description": "Scroll the visible collection downward",
+        }}],
+    }))
+
+    result = replay_worker_decision(run_dir, frame=1, llm=model)
+
+    assert result["status"] == "passed"
+    assert "current fact" in model.calls[0][0].content
+    assert "old fact" not in model.calls[0][0].content
+
+
 def test_worker_replay_preserves_recorded_singleton_contract(tmp_path) -> None:
     run_dir = _worker_run(
         tmp_path,

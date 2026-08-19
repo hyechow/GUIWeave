@@ -73,6 +73,9 @@ def test_master_exposes_only_tool_agent_runtime_api() -> None:
     for retired in ("ctx.reach", "ctx.query", "ctx.read", "ctx.commit"):
         assert retired not in prompt
     assert "Keep each collector schema minimal" in prompt
+    assert "Application knowledge explains interface mechanics" in prompt
+    assert "unless the user's task requires it" in prompt
+    assert "Keep independent state dimensions independent" in prompt
     assert "merely useful supplemental metrics" in prompt
     assert "A collector only acquires raw source records" in prompt
     assert "A collector may perform prerequisite navigation or mutation" in prompt
@@ -115,7 +118,7 @@ def test_worker_keeps_data_private_and_coordinates_normalized() -> None:
 
     assert "A successful mutation does not prove navigation" in prompt
     assert "Runtime-owned ResultRef and collection values are private" in prompt
-    assert "bounded cross-frame reasoning" in prompt
+    assert "visible states across frames" in prompt
     assert "Never guess credentials" in prompt
     assert "transient code from its delivery surface" in prompt
     assert "immutable goal, success criteria" in prompt
@@ -157,12 +160,13 @@ def test_worker_keeps_action_grounding_and_memory_boundaries() -> None:
 
     for rule in (
         "exactly one visible control", "do not relabel a nearby or generic control",
-        "complete task-relevant record identities", "bounded cross-frame reasoning",
+        "record identities and visible states across frames",
         "Stable page identity",
         "A `no_effect` result requires inspecting the next frame",
-        "followed by leaving its editor or form", "complete immediately instead of reopening",
-        "starts a new mutation and must not be activated", "no toast is required",
-        "commit control still awaiting activation is not completion",
+        "A no-effect traversal establishes the boundary", "call `complete`",
+        "After a commit exits its editor or form", "instead of reopening the mutation",
+        "no encountered record is known unsatisfied", "without rechecking handled records",
+        "never establish a collection boundary",
     ):
         assert rule in prompt
 
@@ -193,7 +197,7 @@ def test_worker_keeps_action_grounding_and_memory_boundaries() -> None:
                 "human-presence challenge", "Runtime-supplied actions", "`report_blocked`",
             "Coordinates are normalized 0..999", "binding approach",
                 "Worker observations and recent steps", "Do not interact with residue",
-                "Do not claim completion from visible pixels alone",
+                "never establish a collection boundary",
         )),
         ("task.tool_agent.strategy_decide", (
             "materially different, falsifiable implementation approach",

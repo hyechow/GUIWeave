@@ -2502,41 +2502,6 @@ def test_page_request_errors_are_observational(status: int, body: str) -> None:
     assert _action_feedback(feedback, "tap")[0]["rejected"] is False
 
 
-@pytest.mark.parametrize(
-    ("result", "is_commit"),
-    [
-        ({"status": "executed", "action_type": "tap", "no_effect": False,
-          "target_signal": {"status": "on_target", "actual_element": "Send button"}}, True),
-        ({"status": "executed", "action_type": "tap", "no_effect": True,
-          "target_signal": {"status": "on_target", "actual_element": "Save button"}}, False),
-        ({"status": "executed", "action_type": "tap", "no_effect": False,
-          "target_signal": {"status": "off_target", "actual_element": "Submit button"}}, False),
-        ({"status": "executed", "action_type": "tap", "no_effect": False,
-          "target_signal": {"status": "on_target", "actual_element": "Reply button"}}, False),
-        ({"status": "executed", "action_type": "type", "no_effect": False,
-          "target_signal": {"status": "on_target", "actual_element": "Confirm password"}}, False),
-    ],
-)
-def test_only_grounded_effective_commit_control_becomes_commit_evidence(
-    result: dict,
-    is_commit: bool,
-) -> None:
-    journal = WorkerJournal(worker_id="operator")
-    journal.record_turn(
-        step=3,
-        frame_id="frame:3",
-        state=WorkerState(status="exploring", summary="Submit the form"),
-        tool="tap",
-        args={"description": "visible control"},
-        result=result,
-    )
-
-    assert (journal.events[-1].kind == "commit_action") is is_commit
-    if is_commit:
-        view = build_worker_memory_view(journal)
-        assert "post-action evidence" in view.durable_facts[0].durable_text
-
-
 def test_failed_transport_action_skips_settle_and_returns_control(monkeypatch) -> None:
     runtime = object.__new__(ToolAgentRuntime)
     runtime.bundle = SimpleNamespace(

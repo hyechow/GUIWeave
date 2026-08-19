@@ -140,10 +140,25 @@ def test_mastodon_saved_views_require_global_profile_navigation() -> None:
     for fact in (
         "Profile → Saved → Favorites", "selected `Saved` tab", "profile strip",
         "use visible Back one", "until the global bar returns",
-        "After both sets are complete", "controls on a tag row or TootDetail are not authoritative",
+        "independent state dimensions", "task-stated predicate",
+        "filled blue star with a count", "outline star means it is not",
         "exact hashtag row", "0 people are talking", "never proof",
         "open its text body", "exact tag title identifies",
         "Never favorite from timeline action bars", "fixed `reply`",
         "separate structured `Favorite` control",
     ):
         assert fact in context
+
+
+def test_mastodon_knowledge_does_not_add_conditional_exclusions() -> None:
+    knowledge = load_knowledge_for_app("Mastodon", "android")
+    assert knowledge is not None
+
+    contexts = (
+        knowledge.orchestrator_context("favorite all toots tagged #dogs"),
+        knowledge.worker_context(),
+    )
+    for context in contexts:
+        assert "independent state dimensions" in context
+        assert "absent from both saved sets" not in context
+        assert "determine exclusion only" not in context

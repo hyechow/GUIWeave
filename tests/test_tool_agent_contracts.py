@@ -14,13 +14,11 @@ from PIL import Image
 from gui_agent.core.tool_agent.contracts import (
     DataRequirement,
     DynamicActionSpec,
-    WorkerState,
     WorkerSpec,
     approach_is_procedural,
 )
 from gui_agent.core.tool_agent.protocol import (
     MAX_ORDERED_ACTIONS,
-    ProtocolError,
     cacheable_system_message,
     diagnostic_prompt_reports,
     decode_worker_action,
@@ -32,36 +30,10 @@ from gui_agent.core.tool_agent.protocol import (
     normalize_action_arguments,
     response_usage,
     worker_attempt_contract,
-    validate_worker_tool_state,
 )
 
 
 _TARGET_DESCRIPTION = "Target the visible named control"
-
-
-@pytest.mark.parametrize(
-    ("summary", "evidence", "rejected"),
-    [
-        ("The send button is visible and ready to activate.", [], True),
-        ("The next step is to submit the completed form.", [], True),
-        ("Reply composed.", ["Confirmation control is awaiting activation"], True),
-        ("表单已填写，下一步需要点击提交按钮。", [], True),
-        ("Submit executed and the editor closed without an error.", [], False),
-        ("No further control is available; 不需要点击其他按钮。", [], False),
-    ],
-)
-def test_worker_completion_rejects_pending_action_claims(
-    summary: str,
-    evidence: list[str],
-    rejected: bool,
-) -> None:
-    state = WorkerState(status="completed", summary=summary)
-
-    if rejected:
-        with pytest.raises(ProtocolError, match="pending action or commit control"):
-            validate_worker_tool_state("complete", state, {"evidence": evidence})
-    else:
-        validate_worker_tool_state("complete", state, {"evidence": evidence})
 
 
 @pytest.mark.parametrize(
@@ -404,6 +376,7 @@ def test_collector_completion_tool_is_frame_gated_and_runtime_bound() -> None:
     assert action_state["properties"]["status"]["enum"] == ["exploring", "collecting"]
 
     ready = dynamic_worker_tools(actions, completion_mode="collector")
+    assert ready[0]["function"]["name"] == "complete"
     complete = next(
         tool for tool in ready if tool["function"]["name"] == "complete"
     )

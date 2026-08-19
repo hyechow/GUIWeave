@@ -15,7 +15,7 @@ from __future__ import annotations
 import io
 
 import numpy as np
-from PIL import Image
+from PIL import Image, ImageDraw
 
 from gui_agent.core.vision.frame_analysis import frame_changed
 
@@ -50,3 +50,14 @@ def test_center_box_catches_localized_change():
 def test_center_box_away_from_change_stays_false():
     a, b = _frames()
     assert frame_changed(a, b, center=(800, 800)) is False  # box elsewhere sees nothing
+
+
+def test_center_box_catches_small_toggle_color_change():
+    before = Image.new("RGB", (160, 320), "white")
+    after = before.copy()
+    ImageDraw.Draw(after).rectangle([76, 156, 83, 163], fill=(45, 95, 205))
+
+    assert frame_changed(_png(np.asarray(before)), _png(np.asarray(after))) is False
+    assert frame_changed(
+        _png(np.asarray(before)), _png(np.asarray(after)), center=(500, 500),
+    ) is True
