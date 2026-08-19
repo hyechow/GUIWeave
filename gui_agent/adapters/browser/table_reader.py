@@ -331,8 +331,9 @@ def table_snapshot_js() -> str:
     let has_prev_page = null;
 
     const pagerText = pager.innerText || '';
-    const pageMatch = pagerText.match(/(?:page\\s*)?(\\d+)\\s*(?:of|\\/|共)\\s*(?:page\\s*)?(\\d+)/i)
-      || pagerText.match(/(\\d+)\\s*-\\s*\\d+\\s*(?:of|\\/|共)\\s*(\\d+)/i);
+    const pageMatch = pagerText.match(/\\bpage\\s*(\\d+)\\s*(?:of|\\/)\\s*(?:page\\s*)?(\\d+)\\b/i)
+      || pagerText.match(/^\\s*(\\d+)\\s*\\/\\s*(\\d+)\\s*$/)
+      || pagerText.match(/第?\\s*(\\d+)\\s*页\\s*(?:\\/|共)\\s*(\\d+)\\s*页?/i);
     if (pageMatch) {{
       page_index = parseInt(pageMatch[1]);
       page_count = parseInt(pageMatch[2]);

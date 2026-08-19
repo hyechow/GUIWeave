@@ -11,6 +11,7 @@ from dataclasses import dataclass, field
 from decimal import Decimal, InvalidOperation
 from pathlib import Path
 from typing import Any, Callable, Literal
+from urllib.parse import parse_qsl, urlencode, urlsplit
 
 from jsonschema import ValidationError, validate
 from langchain_core.messages import HumanMessage, SystemMessage
@@ -791,6 +792,22 @@ def _surface_marker(table: dict[str, Any] | None) -> Any:
     )
 
 
+def _collection_route(table: dict[str, Any], url: str) -> str:
+    traversal = table.get("traversal")
+    if not isinstance(traversal, dict) or traversal.get("type") != "paged":
+        return url
+    parts = urlsplit(url)
+    pagination_keys = {
+        "p", "page", "pageindex", "pagenumber", "currentpage", "offset", "start",
+    }
+    query = urlencode([
+        (key, value)
+        for key, value in parse_qsl(parts.query, keep_blank_values=True)
+        if _normalize(key) not in pagination_keys
+    ])
+    return parts._replace(query=query).geturl()
+
+
 def _collection_key(
     table: dict[str, Any],
     requirement: DataRequirement,
@@ -799,7 +816,7 @@ def _collection_key(
 ) -> str:
     return "surface:" + _fingerprint({
         "surface": _surface_marker(table),
-        "route": url,
+        "route": _collection_route(table, url),
         "schema": requirement.row_schema,
         "filters": scope.get("applied_filters") or scope.get("requested_filters") or {},
     })
