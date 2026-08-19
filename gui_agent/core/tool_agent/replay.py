@@ -193,6 +193,8 @@ def load_recorded_run(run_dir: Path) -> RecordedRun:
                     f"recording has no private value for {outcome.collection_ref.ref!r}"
                 )
             recorded_value = values[outcome.collection_ref.ref]
+            if isinstance(recorded_value, list):
+                recorded_value = recorded_value[:outcome.collection_ref.row_count]
         workers.append(RecordedGuiWorker(worker_id, spec, outcome, recorded_value))
 
     grouped_workers: dict[str, list[RecordedGuiWorker]] = {}
