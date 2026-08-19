@@ -14,7 +14,7 @@ source: manual_distilled
 confidence: high
 sensitivity: internal
 ttl: session
-version: 3
+version: 4
 ---
 # One Stop Market
 
@@ -49,3 +49,5 @@ version: 3
   first row older than the lower boundary, later pages cannot qualify.
 - View Order opens Items Ordered rows with Product Name, Price, Qty, and line Subtotal. The
   order summary separately shows Subtotal, Shipping & Handling, and Grand Total.
+- In Items Ordered, Product Name contains the purchased title and SKU plus any selected option
+  labels and values, such as size or color. Selected options are not separate table columns.

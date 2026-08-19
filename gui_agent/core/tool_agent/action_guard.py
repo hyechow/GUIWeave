@@ -189,7 +189,9 @@ def assess_frame(
         )
     collection = ready_collection(spec, frame)
     requirement = spec.data_requirements[0] if spec.data_requirements else None
-    boundary = requirement if requirement and requirement.coverage == "first_match" else None
+    boundary = requirement if requirement and (
+        requirement.coverage == "first_match" and requirement.cardinality == "many"
+    ) else None
     order_applied = boundary is None or _approach_order_is_applied(spec, frame)
     boundary_ready = bool(
         boundary

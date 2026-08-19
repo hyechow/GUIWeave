@@ -49,6 +49,11 @@ from llm.provider_config import build_chat_model, chat_request_kwargs
 PerceptionMode = Literal["vision-only", "enhanced"]
 
 _SCREEN_READER_SYSTEM = load_prompt_text("task.tool_agent.screen_reader")
+_NAVIGATION_URL = "__navigation_url"
+
+
+def _public_detail_row(row: dict[str, Any]) -> dict[str, Any]:
+    return {key: value for key, value in row.items() if key != _NAVIGATION_URL}
 
 
 class DataNormalizationError(ValueError):
@@ -66,6 +71,8 @@ class _DetailCollectionState:
     pending_index: int | None = None
     scope_key: str = ""
     expanded_rows: dict[int, list[dict[str, Any]]] = field(default_factory=dict)
+    source_url: str = ""
+    source_has_more: bool = False
 
 
 def _normalize_runtime_value(
@@ -323,7 +330,19 @@ def _partial_structured_rows(
         "required": sorted(required_fields.intersection(list_fields)),
         "additionalProperties": False,
     }})
-    return _structured_rows(candidate_requirement, table), detail_fields
+    rows = _structured_rows(candidate_requirement, table)
+    source_rows = list(table.get("rows") or [])
+    if len(rows) == len(source_rows):
+        for row, source in zip(rows, source_rows, strict=True):
+            urls = {
+                html.unescape(str(value)).strip()
+                for key, value in source.items()
+                if _normalize(str(key)).endswith("url")
+                and re.match(r"^https?://", str(value).strip(), re.I)
+            }
+            if len(urls) == 1:
+                row[_NAVIGATION_URL] = urls.pop()
+    return rows, detail_fields
 
 
 def _control_row(
@@ -905,6 +924,7 @@ class PerceptionMaterializer:
         page_identity: dict[str, str] | None = None,
         observed_rows: list[dict[str, Any]] | None = None,
         scope_key: str = "",
+        source_has_more: bool = False,
     ) -> tuple[_DetailCollectionState, list[dict[str, Any]], dict[str, Any]] | None:
         """Accumulate list candidates and form details without exposing row values."""
 
@@ -920,7 +940,7 @@ class PerceptionMaterializer:
         expanded_target = None
         expanded_pre_resolved = False
         if state is not None and candidate_rows and detail_fields:
-            incoming_fields = set().union(*(row.keys() for row in candidate_rows))
+            incoming_fields = set().union(*map(_public_detail_row, candidate_rows))
             parent_fields = set(requirement.row_schema.get("properties") or {}).difference(
                 state.detail_fields
             )
@@ -960,8 +980,11 @@ class PerceptionMaterializer:
 
             def identities(items: list[dict[str, Any]]) -> list[dict[str, Any]]:
                 return [
-                    {key: value for key, value in row.items() if key not in identity_fields}
-                    for row in items
+                    {
+                        key: value for key, value in row.items()
+                        if key not in identity_fields
+                    }
+                    for row in map(_public_detail_row, items)
                 ]
 
             if state is None:
@@ -971,6 +994,8 @@ class PerceptionMaterializer:
                     surface=surface,
                     location=location,
                     scope_key=scope_key,
+                    source_url=str((page_identity or {}).get("url") or ""),
+                    source_has_more=source_has_more,
                 )
                 self._detail_collections[state_key] = state
             else:
@@ -999,6 +1024,8 @@ class PerceptionMaterializer:
                     state.surface = surface
                     state.location = location
                     state.pending_index = None
+                    state.source_url = str((page_identity or {}).get("url") or "")
+                    state.source_has_more = source_has_more
                     known = identities(state.rows)
                     incoming = known
                 state.detail_fields.update(detail_fields)
@@ -1009,6 +1036,9 @@ class PerceptionMaterializer:
                     elif allow_new:
                         known.append(identity)
                         state.rows.append(dict(candidate))
+                if candidate_rows and page_identity and allow_new:
+                    state.source_url = str(page_identity.get("url") or state.source_url)
+                    state.source_has_more = source_has_more
         if state is None or not state.rows or not state.detail_fields:
             return None
 
@@ -1127,12 +1157,27 @@ class PerceptionMaterializer:
             if index not in state.expanded_rows
             and any(not _nonempty(row.get(field)) for field in state.detail_fields)
         ]
+        expanded_rows = [
+            _public_detail_row(row)
+            for rows in state.expanded_rows.values()
+            for row in rows
+        ]
+        singleton_match = requirement.cardinality == "one" and len(expanded_rows) == 1
+        if singleton_match:
+            unresolved_indexes = []
+        window_exhausted = bool(
+            requirement.cardinality == "one"
+            and not expanded_rows
+            and not unresolved_indexes
+            and state.source_has_more
+        )
         progress = {
             "candidate_records": len(state.rows),
             "current_observed_detail_fields": sorted(
                 state.detail_fields.intersection(observed)
             ),
             "current_editor": current_editor,
+            "window_exhausted": window_exhausted,
             "resolved_candidate_ordinals": [
                 index + 1
                 for index in range(len(state.rows))
@@ -1143,22 +1188,25 @@ class PerceptionMaterializer:
                     "ordinal": unresolved_indexes[0] + 1,
                     "fields": {
                         key: value
-                        for key, value in state.rows[unresolved_indexes[0]].items()
-                        if key not in state.detail_fields and _nonempty(value)
+                        for key, value in _public_detail_row(
+                            state.rows[unresolved_indexes[0]]
+                        ).items()
+                        if key not in state.detail_fields
+                        and _nonempty(value)
                     },
+                    "navigation_url": state.rows[unresolved_indexes[0]].get(
+                        _NAVIGATION_URL, ""
+                    ),
                 }
                 if unresolved_indexes
                 else None
             ),
+            "candidate_source_url": state.source_url,
         }
         rows = (
-            [
-                dict(row)
-                for index in range(len(state.rows))
-                for row in state.expanded_rows.get(index, [])
-            ]
-            if not unresolved_indexes and state.expanded_rows
-            else [dict(row) for row in state.rows] if not unresolved_indexes else []
+            expanded_rows or list(map(_public_detail_row, state.rows))
+            if not unresolved_indexes
+            else []
         )
         return state, rows, progress
 
@@ -1563,6 +1611,7 @@ class PerceptionMaterializer:
                 # same list surface; no linked-detail branch remains to resolve.
                 self._detail_collections.pop(detail_key, None)
                 candidate_rows, detail_fields = [], set()
+            source_traversal = (table or {}).get("traversal") or {}
             assembled = (
                 self._assemble_detail_collection(
                     state_key=detail_key,
@@ -1581,6 +1630,13 @@ class PerceptionMaterializer:
                     location=str((table or {}).get("location") or ""),
                     page_identity={"url": url, "title": title},
                     scope_key=requested_fingerprint,
+                    source_has_more=bool(
+                        source_traversal.get("has_next_page") is True
+                        or _page_has_more(
+                            source_traversal.get("page_index"),
+                            source_traversal.get("page_count"),
+                        )
+                    ),
                 )
                 if self.mode == "enhanced"
                 else None
@@ -1601,9 +1657,13 @@ class PerceptionMaterializer:
             expected_total = expected_totals.get(totals_key)
             if assembled is not None:
                 detail_state, assembled_rows, detail_progress = assembled
-                ready = detail_progress.get("next_unresolved_candidate") is None
+                ready = (
+                    detail_progress.get("next_unresolved_candidate") is None
+                    and detail_progress.get("window_exhausted") is not True
+                )
                 enough = (
-                    expected_total is None
+                    requirement.cardinality == "one" and bool(assembled_rows)
+                    or expected_total is None
                     or int(detail_progress["candidate_records"]) >= int(expected_total)
                 )
                 ready_to_complete = ready and enough
@@ -1660,6 +1720,7 @@ class PerceptionMaterializer:
                             "at_end": True,
                             "partial": False,
                             "total_records": len(assembled_rows),
+                            "cardinality": requirement.cardinality,
                             "coverage_evidence": "linked_detail_assembly",
                             **detail_progress,
                         }

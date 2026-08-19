@@ -55,6 +55,7 @@ from gui_agent.core.tool_agent.filter_state import canonical_filter_value
 from gui_agent.core.tool_agent.record_walk import (
     RecordWalkState,
     record_walk_step,
+    same_origin_navigation,
     walk_detail_scope,
 )
 from gui_agent.core.tool_agent.orchestrator import (
@@ -832,20 +833,31 @@ class ToolAgentRuntime:
                 else None
             )
             if walk_step is not None:
-                rect = walk_step.control["rect"]
-                walk_x = min(999.0, max(0.0, float(rect["x"])))
-                walk_y = min(999.0, max(0.0, float(rect["y"])))
-                walk_call = {
-                    "name": "tap",
-                    "args": {
-                        "x": walk_x,
-                        "y": walk_y,
-                        "description": (
-                            "Next-record traversal control "
-                            f"({walk_step.reason})"
-                        ),
-                    },
-                }
+                if walk_step.navigation_url:
+                    navigation = next(
+                        action for action in frame_actions
+                        if action.capability == "open_url"
+                    )
+                    walk_x = walk_y = None
+                    walk_call = {
+                        "name": navigation.name,
+                        "args": {"url": walk_step.navigation_url},
+                    }
+                else:
+                    rect = walk_step.control["rect"]
+                    walk_x = min(999.0, max(0.0, float(rect["x"])))
+                    walk_y = min(999.0, max(0.0, float(rect["y"])))
+                    walk_call = {
+                        "name": "tap",
+                        "args": {
+                            "x": walk_x,
+                            "y": walk_y,
+                            "description": (
+                                "Next-record traversal control "
+                                f"({walk_step.reason})"
+                            ),
+                        },
+                    }
                 self._trace(
                     "record_walk_step",
                     worker_id=worker_id,
@@ -856,6 +868,7 @@ class ToolAgentRuntime:
                     walk_stalls=walk_state.stalls,
                     x=walk_x,
                     y=walk_y,
+                    navigation_url=walk_step.navigation_url,
                 )
                 walk_result, _walk_terminal = self._execute_multi_action_calls(
                     worker_id=worker_id,
@@ -865,10 +878,6 @@ class ToolAgentRuntime:
                     state=WorkerState(
                         status="collecting",
                         summary=walk_step.reason,
-                        next_instruction=(
-                            "Resume the Worker goal once the deterministic "
-                            "record walk yields."
-                        ),
                     ),
                     step=step,
                     frame=frame,
@@ -1819,7 +1828,10 @@ class ToolAgentRuntime:
             raise ProtocolError(f"unknown Worker tool {call['name']!r}")
         call_args = self._validated_action_call_args(action_spec, call["args"])
         full_args = {**action_spec.fixed_args, **call_args}
-        if action_spec.capability == "open_url":
+        if action_spec.capability == "open_url" and not (
+            frame is not None
+            and same_origin_navigation(frame, full_args.get("url"))
+        ):
             self._validate_runtime_open_url(str(full_args.get("url") or ""))
         if action_spec.capability == "launch_app":
             self._validate_runtime_launch_app(str(full_args.get("app") or ""))

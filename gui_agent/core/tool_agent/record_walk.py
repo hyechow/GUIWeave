@@ -18,6 +18,7 @@ from __future__ import annotations
 
 from dataclasses import dataclass, fields
 from typing import Any
+from urllib.parse import urlsplit
 
 from gui_agent.core.tool_agent.action_guard import progress_signature
 from gui_agent.core.tool_agent.contracts import MaterializedFrame, positioned_rect
@@ -57,6 +58,22 @@ class RecordWalkStep:
     resolved: tuple[int, ...]
     candidate_records: int
     reason: str
+    navigation_url: str = ""
+
+
+def same_origin_navigation(frame: MaterializedFrame, candidate: Any) -> str:
+    url = str(candidate or "").strip()
+    current = urlsplit(frame.url)
+    target = urlsplit(url)
+    if (
+        current.scheme in {"http", "https"}
+        and current.netloc
+        and target.scheme in {"http", "https"}
+        and target.netloc
+        and (target.scheme, target.netloc) == (current.scheme, current.netloc)
+    ):
+        return url
+    return ""
 
 
 def walk_detail_scope(frame: MaterializedFrame) -> dict[str, Any] | None:
@@ -192,6 +209,32 @@ def record_walk_step(
         ]
 
     record_next = _tappable("record_next")
+    current_editor = detail.get("current_editor")
+    freshly_resolved = bool(
+        isinstance(current_editor, dict)
+        and current_editor.get("resolved") is True
+        and current_editor.get("pre_resolved") is not True
+    )
+    if not record_next and freshly_resolved:
+        candidate = detail.get("next_unresolved_candidate")
+        navigation_url = same_origin_navigation(
+            frame,
+            candidate.get("navigation_url") if isinstance(candidate, dict) else "",
+        )
+        if not navigation_url and detail.get("window_exhausted") is True:
+            navigation_url = same_origin_navigation(
+                frame, detail.get("candidate_source_url")
+            )
+        if navigation_url:
+            state.engaged = True
+            state.steps += 1
+            return RecordWalkStep(
+                control={},
+                resolved=resolved,
+                candidate_records=candidate_records,
+                reason="open the next observed linked-detail target",
+                navigation_url=navigation_url,
+            )
     if not record_next:
         # Candidate-list surface. First: open the exact next unresolved
         # candidate when its row is visibly present — the Worker's most
@@ -204,7 +247,9 @@ def record_walk_step(
         page_next = _tappable("page_next")
         page_previous = _tappable("page_previous")
         direction = None
-        if len(page_next) == 1 and not page_previous:
+        if detail.get("window_exhausted") is True and len(page_next) == 1:
+            direction = page_next[0]
+        elif len(page_next) == 1 and not page_previous:
             direction = page_next[0]
         elif len(page_previous) == 1 and not page_next:
             direction = page_previous[0]
