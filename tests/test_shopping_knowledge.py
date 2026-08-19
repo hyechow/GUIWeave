@@ -29,6 +29,14 @@ def test_shopping_review_and_wishlist_goals_select_only_their_sections() -> None
         "Add the product on the current page to my wishlist."
     ) == ["wishlist_newsletter_planning"]
 
+    review_context = " ".join(knowledge.orchestrator_context(
+        "Rate my recently purchased desk chair with five stars."
+    ).split())
+    assert "separate sources" in review_context
+    assert "primary_product_contains" in review_context
+    assert "Select the single `primary_product` identity" in review_context
+    assert "do not return to My Orders or activate Reorder" in review_context
+
 
 def test_shopping_newsletter_uses_the_signed_in_account_email() -> None:
     knowledge = _shopping_knowledge()

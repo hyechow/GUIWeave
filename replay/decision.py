@@ -35,6 +35,7 @@ from gui_agent.core.tool_agent.protocol import (
     dynamic_worker_tools,
     generic_action_spec,
     image_message,
+    input_binding_action,
     validate_worker_tool_state,
     worker_attempt_contract,
 )
@@ -421,7 +422,7 @@ def _worker_decision(
         names = [str(item.get("name") or "") for item in calls]
         ordered = [item for item in calls if isinstance(item, dict)]
     capabilities = {action.name: action.capability for action in actions}
-    return {
+    decision = {
         "tool": call["name"],
         "actions": names,
         "action_capabilities": [capabilities.get(name, name) for name in names],
@@ -439,6 +440,9 @@ def _worker_decision(
         "state_summary": str(state.get("summary") or ""),
         "args": {**call["args"], "state": state},
     }
+    decision["first_action_capability"] = (decision["action_capabilities"] or [""])[0]
+    decision["first_action_target"] = (decision["action_targets"] or [""])[0]
+    return decision
 
 
 def replay_worker_decision(
@@ -479,8 +483,13 @@ def replay_worker_decision(
     spec = WorkerSpec.model_validate(replay_context["worker_spec"])
     materialized = MaterializedFrame.model_validate(observation)
     actions = []
+    bindings = {binding.name: binding for binding in spec.input_bindings}
     for raw_action in replay_context.get("actions") or []:
         action = DynamicActionSpec.model_validate(raw_action)
+        if binding := bindings.get(action.name):
+            action = action.model_copy(update={
+                "description": input_binding_action(binding).description,
+            })
         actions.append(
             generic_action_spec(action.capability)
             if action.name == action.capability

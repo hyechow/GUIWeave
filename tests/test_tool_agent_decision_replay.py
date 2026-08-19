@@ -84,8 +84,10 @@ def _worker_run(
     recorded_actions: list[dict],
     controls: list[dict] | None = None,
     repair_history: bool = False,
+    spec: WorkerSpec | None = None,
+    actions: list[DynamicActionSpec] | None = None,
 ) -> Path:
-    actions = [DynamicActionSpec(
+    actions = actions or [DynamicActionSpec(
         name="scroll",
         capability="scroll",
         description="recorded static action description",
@@ -98,7 +100,7 @@ def _worker_run(
             description="Tap a visible control",
             exposed_args=["x", "y", "description"],
         ))
-    spec = WorkerSpec.model_validate({
+    spec = spec or WorkerSpec.model_validate({
         "profile": "operator",
         "goal": "Traverse the visible collection.",
         "success_criteria": ["The collection boundary is reached."],
@@ -205,6 +207,8 @@ def test_worker_replay_compares_equivalent_actions_by_capability(
     }
     assert result["samples"][0]["actions"] == ["scroll"]
     assert result["samples"][0]["action_capabilities"] == ["scroll"]
+    assert result["samples"][0]["first_action_capability"] == "scroll"
+    assert result["samples"][0]["first_action_target"] == "scroll"
     assert {tool["function"]["name"] for tool in model.bound_tools} >= {
         "continue_with_actions",
         "complete",
@@ -235,6 +239,61 @@ def test_worker_replay_compares_equivalent_actions_by_capability(
         scroll_variant["description"]
     )
     assert "recorded static action description" not in scroll_variant["description"]
+
+
+def test_worker_replay_rebuilds_current_input_binding_description(tmp_path) -> None:
+    spec = WorkerSpec.model_validate({
+        "profile": "operator",
+        "goal": "Open the bound record",
+        "success_criteria": ["The bound record is open"],
+        "input_refs": {"query": "result:1"},
+        "input_bindings": [{
+            "name": "enter_query",
+            "input": "query",
+            "target": "text_input",
+            "description": "Exact identity for the target record",
+        }],
+        "strategy": {"approach": "record detail source"},
+    })
+    run_dir = _worker_run(
+        tmp_path,
+        recorded_tool="continue_with_actions",
+        recorded_actions=[{"name": "enter_query", "args": {"x": 500, "y": 100}}],
+        controls=[{
+            "kind": "aria_combobox", "label": "Search",
+            "rect": {"x": 500, "y": 100, "w": 300, "h": 40},
+        }],
+        spec=spec,
+        actions=[DynamicActionSpec(
+            name="enter_query",
+            capability="type",
+            description="recorded ambiguous binding description",
+            fixed_args={"text": "private value"},
+            exposed_args=["x", "y", "description"],
+        )],
+    )
+    model = _RecordedModel(_tool_call("continue_with_actions", {
+        "state": _state(),
+        "actions": [{
+            "name": "enter_query",
+            "args": {"x": 500, "y": 100, "description": "Search input"},
+        }],
+    }))
+
+    result = replay_worker_decision(run_dir, frame=1, llm=model)
+
+    assert result["status"] == "passed"
+    envelope = next(
+        tool for tool in model.bound_tools
+        if tool["function"]["name"] == "continue_with_actions"
+    )
+    variants = envelope["function"]["parameters"]["properties"]["actions"]["items"]["oneOf"]
+    binding = next(
+        item for item in variants
+        if item["properties"]["name"]["const"] == "enter_query"
+    )
+    assert "Replace the value of one visible input control" in binding["description"]
+    assert "recorded ambiguous binding description" not in binding["description"]
 
 
 def test_worker_replay_reports_grounded_visible_action_target(tmp_path) -> None:

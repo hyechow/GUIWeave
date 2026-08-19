@@ -448,6 +448,11 @@ def test_surface_cycle_blocks_traversal_loop_with_coordinate_jitter() -> None:
     assert stuck.blocked is True
     assert "surface cycle" in stuck.reason
 
+    new_surface = _wizard_frame("unseen detail")
+    assert breaker.inspect(
+        tool="nav", capability="tap", args={"x": 420, "y": 500}, frame=new_surface,
+    ).blocked is False
+
     commit = step2.model_copy(update={"controls": [{
         "kind": "button",
         "label": "Save",

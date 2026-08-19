@@ -28,6 +28,7 @@ from gui_agent.core.tool_agent.protocol import (
     dynamic_worker_tools,
     exactly_one_tool_call,
     image_message,
+    input_binding_action,
     json_worker_decision_instruction,
     normalize_action_arguments,
     response_usage,
@@ -803,6 +804,10 @@ def test_worker_attempt_contract_keeps_input_binding_in_immutable_contract() -> 
     assert '"input_bindings"' in contract
     assert '"name": "enter_target"' in contract
     assert '"approach": "Search for the Runtime-bound target."' in contract
+
+    action = input_binding_action(spec.input_bindings[0])
+    assert action.description.startswith("Replace the value of one visible input control.")
+    assert action.description.endswith("Binding: Enter the Runtime-bound target")
 
 
 def test_worker_rejects_missing_input_binding_description() -> None:
