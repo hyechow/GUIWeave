@@ -524,7 +524,7 @@ def replay_worker_decision(
         item for item in recorded_calls[:max_ordered_actions]
         if isinstance(item, dict)
     ]
-    expected = expectation or {
+    expected = expectation if expectation is not None else {
         "tool": str(selected.get("tool") or ""),
         "action_capabilities": recorded_capabilities,
         "action_semantics": _action_semantics(recorded_calls, capabilities),
