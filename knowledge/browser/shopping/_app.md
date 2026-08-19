@@ -4,7 +4,6 @@ source_type: knowledge_navigation
 platform: browser
 app: shopping
 scope:
-  - orchestrator
   - worker
 aliases:
   - One Stop Market
@@ -15,20 +14,21 @@ source: manual_distilled
 confidence: high
 sensitivity: internal
 ttl: session
-version: 1
+version: 2
 ---
 # One Stop Market catalog
 
-- The mini-search uses broad term matching. A multi-word query can return products that match
-  only some terms, so its result set is not authoritative for an exact product class.
-- The catalog exposes a category hierarchy. For a product-class task, prefer the narrowest
-  category for recall; for example, earbud products are under Electronics > Headphones > Earbud
-  Headphones. Category membership alone is not authoritative row identity because bundles or
-  misclassified products can appear there. Validate each row's primary product against the full
-  task-supplied product-class phrase; a matching component mentioned inside a different primary
-  product is not sufficient. Model this as normalized field `primary_product`, sourced from the
-  visible `Product Name`, and filter with `primary_product_contains`. Use the category label as
-  the target data surface so products encountered during navigation do not enter the collection.
+- The mini-search uses broad OR term matching, so it is not a bounded product-class source.
+- Advanced Search > Product Name performs contiguous substring matching. When no catalog category
+  covers the full class, use this recall source and preserve required source order in the approach.
+- Equivalent titles preserve use/problem wording but may vary base-type labels. For Product Name
+  recall, never enter the full class: use an exact noun-plus-gerund use/problem phrase when supplied,
+  or the base type without modifiers. Keep the full class unchanged in the contract and row filter.
+- Use the narrowest category only when its taxonomy directly covers the full class; for example,
+  earbud products are under Electronics > Headphones > Earbud Headphones. Validate primary product
+  identity against the full class because bundles and misclassified products may appear. Model it
+  as `primary_product`, sourced from `Product Name`, with filter `primary_product_contains`. Use the
+  category label as target data surface only for a category-based approach.
 - In this catalog taxonomy, an in-ear or behind-neck headphone/headset is an earphone product.
   Preserve this taxonomy in the data-requirement description when that distinction affects a
   product-class predicate, so semantic row validation can accept equivalent catalog wording.

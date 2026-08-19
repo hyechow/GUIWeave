@@ -125,6 +125,52 @@ def ready_collection(spec: WorkerSpec, frame: MaterializedFrame) -> CollectionRe
     return cands[-1]
 
 
+def _approach_order_is_applied(spec: WorkerSpec, frame: MaterializedFrame) -> bool:
+    """Whether a sort named by the approach is reflected in current control state."""
+
+    approach = spec.strategy.approach.casefold()
+    if "sort" not in approach:
+        return True
+    contract = " ".join([*spec.success_criteria, spec.strategy.approach]).casefold()
+    control = next((
+        item for item in frame.controls
+        if "sort" in str(item.get("label") or "").casefold()
+    ), None)
+    if control is None:
+        return False
+    selected = str(
+        control.get("selected_text_primary")
+        or control.get("selected_text")
+        or control.get("value")
+        or ""
+    ).casefold()
+    requested = ""
+    for value in control.get("options") or ():
+        normalized = str(value).strip().casefold()
+        option = re.escape(normalized)
+        if normalized and re.search(
+            rf"\b(?:sort(?:ed)?\s+by\s+{option}|"
+            rf"(?:{option}\s+(?:ascending|descending)|"
+            rf"(?:ascending|descending)\s+{option})\s+(?:sort|order))\b",
+            contract,
+        ):
+            requested = normalized
+            break
+    if not requested or selected != requested:
+        return False
+    pending_direction = any(
+        direction in contract
+        and re.search(
+            rf"\b(?:set|sort)\s+(?:to\s+)?{direction}\b",
+            str(control.get("label") or ""),
+            re.I,
+        )
+        for direction in ("ascending", "descending")
+        for control in frame.controls
+    )
+    return not pending_direction
+
+
 def assess_frame(
     spec: WorkerSpec,
     actions: list[DynamicActionSpec],
@@ -142,12 +188,34 @@ def assess_frame(
             completion_mode="unavailable",
         )
     collection = ready_collection(spec, frame)
+    requirement = spec.data_requirements[0] if spec.data_requirements else None
+    boundary = requirement if requirement and requirement.coverage == "first_match" else None
+    order_applied = boundary is None or _approach_order_is_applied(spec, frame)
+    boundary_ready = bool(
+        boundary
+        and order_applied
+        and collection is not None
+        and collection.coverage.get("status") == "complete"
+        and any(
+            chunk.requirement_id == boundary.id
+            and chunk.frame_id == frame.frame_id
+            and chunk.row_count > 0
+            and chunk.coverage.get("start_visible") is True
+            for chunk in frame.chunks
+        )
+    )
+    if boundary and order_applied:
+        actions = [action for action in actions if action.capability != "reveal_control"]
+    if boundary_ready:
+        actions = []
     if spec.profile == "operator":
         mode: Literal["unavailable", "operator", "collector"] = "operator"
     elif spec.profile == "collector":
-        # Collectors are now pure ReAct: always offer complete tool.
-        # Worker LLM decides completion; runtime snapshots current/accumulated rows.
-        mode = "collector"
+        mode = (
+            "unavailable"
+            if boundary and not boundary_ready
+            else "collector"
+        )
     else:
         mode = "unavailable"
     return FrameAssessment(actions, collection, mode)
