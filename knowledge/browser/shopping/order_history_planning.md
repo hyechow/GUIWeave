@@ -10,7 +10,7 @@ source: official_trace_distilled
 confidence: high
 sensitivity: internal
 ttl: session
-version: 8
+version: 9
 ---
 # One Stop Market order-history data
 
@@ -77,11 +77,13 @@ A lookup naming one purchased item must not be pluralized into line items: use
 `cardinality="one"` and `coverage="first_match"`, even when the requested response is an array. In
 Product Name option text, a compound Size value is shown after the literal `Size` label in
 width-by-height order; the next option label, such as `Color`, ends that value. Isolate those label
-boundaries before splitting. A quote mark denotes inches, so return each component as
+boundaries before splitting. Rendered Product Name text may join an option label directly to its
+value while retaining spacing before later labels, so parsing must not require whitespace after the
+requested label. A quote mark denotes inches, so return each component as
 `<number> inches` rather than dropping the unit.
 
 `Forest Canvas` is this storefront's picture-frame product title; the title omits the category
-words. For this singular purchased-item lookup, describe the one matching line item as
-`Forest Canvas`, the picture-frame product, so the requirement carries this explicit taxonomy
-equivalence while preserving the user's `picture frame` filter and `cardinality="one"` /
+words. For this singular purchased-item lookup, map the category to the visible source with
+`primary_product_contains: "Forest Canvas"`; retain the user's picture-frame category in the
+requirement description as the explicit taxonomy equivalence. Use `cardinality="one"` and
 `coverage="first_match"`.
