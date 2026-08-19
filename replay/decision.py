@@ -308,9 +308,12 @@ def replay_master_decision(
         raise ValueError("samples must be positive")
     events, context = _artifacts(run_dir)
     attempts = [event for event in events if event.get("event") == "master_compile_attempt"]
-    selected = next((event for event in reversed(attempts) if not event.get("diagnostics")), None)
+    selected = next(
+        (event for event in reversed(attempts) if not event.get("diagnostics")),
+        attempts[-1] if attempts else None,
+    )
     if selected is None:
-        raise ValueError("recording has no reviewed Master compile attempt")
+        raise ValueError("recording has no Master compile attempt")
     expected = expectation or _master_shape(str(selected.get("source") or ""))
     model, _, model_name = _selected_model("tool_agent.master", llm)
     results = []

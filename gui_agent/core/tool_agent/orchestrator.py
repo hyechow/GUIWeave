@@ -414,12 +414,14 @@ def _validate_gui_worker_call(
             if not isinstance(filter_value, str) or not user_goal:
                 continue
             pattern = rf"(?<!\w){re.escape(filter_value)}(?!\w)"
-            if re.search(pattern, user_goal, re.IGNORECASE) and not re.search(
+            casefold_match = re.search(pattern, user_goal, re.IGNORECASE)
+            if casefold_match and not re.search(
                 pattern, user_goal,
             ):
                 diagnostics.append(_diagnostic(
                     "DATA_FILTER_LITERAL",
-                    "string filters found in the user goal must preserve exact case",
+                    f"filter {filter_value!r} must preserve the user literal "
+                    f"{casefold_match.group(0)!r} with exact case",
                     call,
                 ))
         contract_text = "\n".join([
