@@ -5,7 +5,7 @@ platform: browser
 app: shopping
 scope:
   - orchestrator
-selector_when: orders order history bought purchased date status total spend spent subtotal shipping refund first latest oldest item SKU size color option configuration canceled cancelled reorder
+selector_when: orders order history bought purchased date status total price cost spend spent subtotal shipping refund first latest oldest item SKU size color option configuration canceled cancelled reorder
 source: official_trace_distilled
 confidence: high
 sensitivity: internal
