@@ -688,6 +688,23 @@ def test_data_requirement_rejects_filter_missing_from_observable_row_schema() ->
         )
 
 
+def test_data_requirement_rejects_optional_filter_field() -> None:
+    with pytest.raises(ValueError, match="filter fields must be required"):
+        DataRequirement(
+            id="records",
+            description="Filtered records",
+            row_schema={
+                "type": "object",
+                "properties": {
+                    "status": {"type": "string"},
+                    "value": {"type": "number"},
+                },
+                "required": ["value"],
+            },
+            filters={"status": "Complete"},
+        )
+
+
 def test_data_requirement_rejects_declared_fields_missing_from_row_schema() -> None:
     with pytest.raises(ValueError, match="filter fields must be present"):
         DataRequirement(

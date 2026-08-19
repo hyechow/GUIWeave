@@ -2046,7 +2046,7 @@ def test_singleton_linked_detail_stops_or_continues_source(
             }],
             observation={
                 "url": "http://example.test/record/1/",
-                "title": "Record group-001",
+                "title": "Record details",
             },
         ),
         platform=FakePlatform(),
@@ -2066,6 +2066,123 @@ def test_singleton_linked_detail_stops_or_continues_source(
     assert materializer.data_store.collection_rows(
         completed.collections[0].ref
     ) == [{"record_id": "group-001", "subject": "Target service"}]
+
+
+def _linked_entry_requirement() -> DataRequirement:
+    return DataRequirement(
+        id="entries",
+        description="First matching linked entry",
+        cardinality="one",
+        row_schema={
+            "type": "object",
+            "properties": {
+                "record_id": {"type": "string"},
+                "subject": {"type": "string"},
+            },
+            "required": ["record_id", "subject"],
+            "additionalProperties": False,
+        },
+        field_sources={"record_id": "Record ID", "subject": "Subject"},
+        field_types={"record_id": "text", "subject": "text"},
+        filters={"subject_contains": "target class"},
+        coverage="first_match",
+    )
+
+
+def _linked_parent_table(caption: str, ids: list[str]) -> dict:
+    return {
+        "caption": caption,
+        "headers": ["Record ID", "Action"],
+        "rows": [{
+            "Record ID": record_id,
+            "Action": "Open",
+            "Action_url": f"http://example.test/record/{record_id}/",
+        } for record_id in ids],
+        "partial": False,
+        "traversal": {"type": "static"},
+    }
+
+
+def _linked_entry_materializer(tmp_path: Path) -> PerceptionMaterializer:
+    materializer = _materializer(tmp_path, "enhanced")
+    materializer._semantic_judge = lambda _requirement, rows: [  # type: ignore[method-assign]
+        row for row in rows if row.get("subject") == "Target service"
+    ]
+    return materializer
+
+
+def test_navigable_parent_replaces_residual_detail_candidate(tmp_path: Path) -> None:
+    requirement = _linked_entry_requirement()
+    materializer = _linked_entry_materializer(tmp_path)
+    materializer.observe(
+        bundle=FakeBundle([{
+            "caption": "Entries",
+            "headers": ["Subject"],
+            "rows": [{"Subject": "Unrelated service"}],
+            "partial": False,
+            "traversal": {"type": "static"},
+        }], observation={"url": "http://example.test/record/old/"}),
+        platform=FakePlatform(),
+        requirements=[requirement],
+        frame_no=1,
+    )
+
+    listed, _ = materializer.observe(
+        bundle=FakeBundle(
+            [_linked_parent_table("Records", ["group-001"])],
+            observation={"url": "http://example.test/records/"},
+        ),
+        platform=FakePlatform(),
+        requirements=[requirement],
+        frame_no=2,
+    )
+
+    progress = listed.requirement_scopes[requirement.id]["detail_resolution"]
+    assert progress["status"] == "active"
+    assert progress["candidate_records"] == 1
+    assert progress["resolved_candidate_ordinals"] == []
+    assert progress["next_unresolved_candidate"] == {
+        "ordinal": 1,
+        "fields": {"record_id": "group-001"},
+        "navigation_url": "http://example.test/record/group-001/",
+    }
+    assert listed.collections == []
+
+
+def test_overlapping_navigable_source_extends_resolved_candidates(tmp_path: Path) -> None:
+    requirement = _linked_entry_requirement()
+    materializer = _linked_entry_materializer(tmp_path)
+
+    materializer.observe(
+        bundle=FakeBundle([_linked_parent_table("Recent Records", ["one"])]),
+        platform=FakePlatform(),
+        requirements=[requirement],
+        frame_no=1,
+    )
+    materializer.observe(
+        bundle=FakeBundle([{
+            "caption": "Entries",
+            "headers": ["Subject"],
+            "rows": [{"Subject": "Unrelated service"}],
+            "partial": False,
+            "traversal": {"type": "static"},
+        }], observation={"url": "http://example.test/record/one/"}),
+        platform=FakePlatform(),
+        requirements=[requirement],
+        frame_no=2,
+    )
+    extended, _ = materializer.observe(
+        bundle=FakeBundle([_linked_parent_table("All Records", ["one", "two"])]),
+        platform=FakePlatform(),
+        requirements=[requirement],
+        frame_no=3,
+    )
+
+    progress = extended.requirement_scopes[requirement.id]["detail_resolution"]
+    assert progress["candidate_records"] == 2
+    assert progress["resolved_candidate_ordinals"] == [1]
+    assert progress["next_unresolved_candidate"]["fields"] == {"record_id": "two"}
+    assert progress["next_unresolved_candidate"]["navigation_url"].endswith("/two/")
 
 
 def test_vision_detail_row_advances_unresolved_candidate(tmp_path: Path) -> None:
