@@ -149,6 +149,8 @@ def test_tool_agent_trace_populates_report_timeline(tmp_path: Path) -> None:
         "output": 20,
         "cached_input": 800,
     }
+    observation = data.pages[0].steps[0].non_ui["outputs"]["observation"]
+    assert "controls" not in observation
     assert "cache 800 (80%)" in html
 
 

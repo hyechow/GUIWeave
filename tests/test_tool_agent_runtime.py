@@ -33,7 +33,7 @@ from gui_agent.core.tool_agent.runtime import (
     _target_verification_result,
 )
 from gui_agent.core.tool_agent.strategy import Strategy
-from gui_agent.core.schemas import TargetVerify
+from gui_agent.core.schemas import TargetGrounding, TargetVerify
 from gui_agent.core.tool_agent.worker_memory import (
     WorkerJournal,
     WorkerJournalEvent,
@@ -148,6 +148,7 @@ def test_action_guard_canonicalizes_equivalent_actions() -> None:
         "scroll", direction="down", amount=9, y=560,
     )
     assert signature("tap", x=210, y=150) == signature("tap", x=219, y=151)
+    assert signature("type", x=500, y=140) != signature("type", x=500, y=160)
 
 
 def test_action_guard_blocks_one_unchanged_repeat() -> None:
@@ -192,6 +193,35 @@ def test_action_guard_allows_same_action_after_progress() -> None:
 
     assert not repeated.blocked
     assert repeated.prior_attempts == 0
+
+
+def test_action_guard_allows_same_coordinate_on_a_different_visual_surface() -> None:
+    breaker = WorkerActionCircuitBreaker()
+    first = breaker.inspect(
+        tool="tap",
+        capability="tap",
+        args={"x": 500, "y": 140},
+        frame=MaterializedFrame(
+            frame_id="frame:search",
+            screenshot_path="search.png",
+            visual_fingerprint="surface-search",
+        ),
+    )
+    breaker.record(first)
+
+    next_surface = breaker.inspect(
+        tool="tap",
+        capability="tap",
+        args={"x": 500, "y": 140},
+        frame=MaterializedFrame(
+            frame_id="frame:address",
+            screenshot_path="address.png",
+            visual_fingerprint="surface-address",
+        ),
+    )
+
+    assert next_surface.blocked is False
+    assert next_surface.prior_attempts == 0
 
 
 def test_explicit_no_effect_exhausts_an_unchanged_action_retry() -> None:
@@ -489,7 +519,8 @@ def test_worker_prompt_defines_safe_batching_once() -> None:
 
     prompt = runtime._worker_system_prompt()
 
-    assert "actions grounded in the current frame" in prompt
+    assert "all intended targets are already visible" in prompt
+    assert "fresh screenshot" in prompt
     assert "batch `type` then `press_enter`" in prompt
     assert "## Ordered multi-action mode" not in prompt
 
@@ -984,7 +1015,7 @@ class _GroundingExecutor(_Executor):
 
 
 class _ImmediateVerifyFuture:
-    def __init__(self, value: TargetVerify) -> None:
+    def __init__(self, value: TargetGrounding | TargetVerify) -> None:
         self.value = value
 
     def result(self, *, timeout=None):
@@ -993,7 +1024,7 @@ class _ImmediateVerifyFuture:
 
 
 class _ImmediateVerifyPool:
-    def __init__(self, *values: TargetVerify) -> None:
+    def __init__(self, *values: TargetGrounding | TargetVerify) -> None:
         self.values = list(values)
         self.submitted = []
 
@@ -1149,6 +1180,23 @@ _LOGIN_ACTIONS = [
 ]
 
 
+def _code_action(code: str = "757570") -> dict:
+    return {
+        "name": "enter_code",
+        "args": {
+            "x": 500, "y": 500, "text": code,
+            "description": "Enter verification code",
+        },
+    }
+
+
+def _code_spec() -> DynamicActionSpec:
+    return DynamicActionSpec(
+        name="enter_code", capability="type",
+        description="Enter verification code", exposed_args=["text"],
+    )
+
+
 class _MultiActionWorker:
     def __init__(
         self,
@@ -1162,6 +1210,7 @@ class _MultiActionWorker:
         self.state_status = state_status
         self.messages = []
         self.state_summary = "The complete login form is visible."
+        self.established_facts = []
 
     def bind_tools(self, tools, **kwargs):
         assert kwargs.get("parallel_tool_calls") is False
@@ -1184,7 +1233,7 @@ class _MultiActionWorker:
                 "state": {
                     "status": self.state_status,
                     "summary": self.state_summary,
-                    "established_facts": [],
+                    "established_facts": self.established_facts,
                 },
                 "actions": actions,
             },
@@ -1200,6 +1249,10 @@ def _run_fused_worker(
     controls: list[dict] | None = None,
     requirement_scopes: dict[str, dict] | None = None,
     visible_collection_regions: list[dict] | None = None,
+    installed_apps: tuple[str, ...] = (),
+    journal: WorkerJournal | None = None,
+    breaker: WorkerActionCircuitBreaker | None = None,
+    bundle=None,
 ) -> ToolAgentRuntime:
     runtime = object.__new__(ToolAgentRuntime)
     runtime.trace = []
@@ -1207,11 +1260,19 @@ def _run_fused_worker(
     runtime._status_cb = runtime.statuses.append
     runtime.worker = worker or _MultiActionWorker()
     runtime._executor = _Executor()
+    if bundle is not None:
+        runtime.bundle = bundle
+    runtime._installed_app_names = installed_apps
+    runtime.screenshot_calls = []
     runtime.platform = SimpleNamespace(
-        screenshot=lambda: b"latest-png",
+        screenshot=lambda: runtime.screenshot_calls.append(True) or b"latest-png",
         client=SimpleNamespace(page_info=lambda: (current_url, "Login")),
     )
     runtime.allow_multi_action = True
+    if journal is not None:
+        runtime._worker_journals = {"fused-worker": journal}
+    if breaker is not None:
+        runtime._worker_action_breakers = {"fused-worker": breaker}
     runtime.observe_calls = 0
 
     def observe(_spec):
@@ -1228,7 +1289,7 @@ def _run_fused_worker(
     runtime._observe = observe
     monkeypatch.setattr(
         "gui_agent.core.tool_agent.runtime.settle_after_action",
-        lambda platform, png, *, action_type: (0.0, False),
+        lambda platform, png, **_kwargs: (0.0, False),
     )
     spec = _worker_spec(
         goal="Complete the visible local interaction",
@@ -1281,6 +1342,7 @@ def test_fused_worker_executes_ordered_actions_and_discards_invalid_suffix(
         for name in ("enter_username", "enter_password", "submit_login")
     )
     assert len(runtime._executor.actions) == expected_actions
+    assert len(runtime.screenshot_calls) == (2 if expected_actions == 3 else 1)
     assert any(event["event"] == expected_event for event in runtime.trace)
     if expected_actions == 3:
         assert any(status.startswith("Action · 2/3 · type") for status in runtime.statuses)
@@ -1366,55 +1428,19 @@ def test_worker_repairs_rejected_launch_app_without_reobserving(monkeypatch) -> 
         [{"name": "open_settings", "args": {"app": "Settings"}}],
         [{"name": "open_settings", "args": {"app": exact_app}}],
     ])
-    runtime = object.__new__(ToolAgentRuntime)
-    runtime.trace = []
-    runtime.statuses = []
-    runtime._status_cb = runtime.statuses.append
-    runtime.worker = worker
-    runtime._executor = _Executor()
-    runtime._visualizer = None
-    runtime._platform_capabilities = frozenset({"launch_app"})
-    runtime._installed_app_names = (exact_app,)
-    runtime._master_knowledge = ""
-    runtime._worker_access_context = ""
-    runtime.bundle = SimpleNamespace(
-        platform="android",
-        make_action=lambda payload: AndroidAction.model_validate(payload),
-    )
-    runtime.platform = SimpleNamespace(
-        screenshot=lambda: b"latest-png",
-        client=SimpleNamespace(),
-    )
-    runtime.perception_mode = "enhanced"
-    runtime.allow_multi_action = True
-    runtime.observe_calls = 0
-
-    def observe(_spec):
-        runtime.observe_calls += 1
-        return MaterializedFrame(
-            frame_id="frame:settings",
-            screenshot_path="frame.png",
-        ), b"initial-png"
-
-    runtime._observe = observe
-    monkeypatch.setattr(
-        "gui_agent.core.tool_agent.runtime.settle_after_action",
-        lambda platform, png, *, action_type: (0.0, False),
-    )
-    spec = _worker_spec(
-        goal="Open system settings",
-        success_criteria=["System settings is visible"],
+    runtime = _run_fused_worker(
+        monkeypatch, current_url="", worker=worker,
+        installed_apps=(exact_app,),
         actions=[DynamicActionSpec(
             name="open_settings",
             capability="launch_app",
             description="Open system settings",
             exposed_args=["app"],
         )],
-        max_steps=1,
+        bundle=SimpleNamespace(
+            make_action=lambda payload: AndroidAction.model_validate(payload),
+        ),
     )
-
-    _install_test_worker_contract(runtime, spec)
-    runtime._run_worker("open-settings", spec)
 
     assert runtime.observe_calls == 1
     assert worker.calls == 2
@@ -1425,35 +1451,104 @@ def test_worker_repairs_rejected_launch_app_without_reobserving(monkeypatch) -> 
     )
 
 
-def test_multi_action_continuation_uses_adapter_and_control_facts() -> None:
-    runtime = object.__new__(ToolAgentRuntime)
-    runtime.perception_mode = "enhanced"
-    runtime._executor = SimpleNamespace(
-        type_suffix_safe=False,
-        refresh_controls=lambda: [],
-    )
-    tap = DynamicActionSpec(name="tap", capability="tap", description="Tap")
-    type_action = DynamicActionSpec(name="type", capability="type", description="Type")
-    scroll = DynamicActionSpec(name="scroll", capability="scroll", description="Scroll")
-    actions = {item.name: item for item in (tap, type_action, scroll)}
-    remaining = [{"name": "type", "args": {}, "_control_ref": "input"}]
-    selection = MaterializedFrame(
-        frame_id="selection", screenshot_path="frame.png", controls=[{
-            "kind": "checkbox", "selection_mode": "multiple",
-            "rect": {"x": 500, "y": 500, "w": 100, "h": 100},
-        }],
+def test_worker_repairs_home_then_launch_app_before_dispatch(monkeypatch) -> None:
+    worker = _MultiActionWorker([
+        [
+            {"name": "go_home", "args": {}},
+            {"name": "open_messages", "args": {}},
+        ],
+        [{"name": "open_messages", "args": {}}],
+    ])
+    runtime = _run_fused_worker(
+        monkeypatch,
+        current_url="",
+        worker=worker,
+        installed_apps=("Messages",),
+        actions=[
+            DynamicActionSpec(name="go_home", capability="home", description="Go home"),
+            DynamicActionSpec(
+                name="open_messages",
+                capability="launch_app",
+                description="Open Messages",
+                fixed_args={"app": "Messages"},
+            ),
+        ],
     )
 
-    assert runtime._can_continue_batch(
-        tap, {"x": 500, "y": 500}, remaining, actions, selection,
+    assert runtime.observe_calls == 1
+    assert worker.calls == 2
+    assert [action.action_type for action in runtime._executor.actions] == ["launch_app"]
+    assert any(event["event"] == "worker_protocol_error" for event in runtime.trace)
+
+
+@pytest.mark.parametrize("code", ["757570", "580954"])
+def test_explicit_auth_fact_allows_code_entry_across_frames(
+    monkeypatch, code: str,
+) -> None:
+    worker = _MultiActionWorker([[_code_action(code)]])
+    journal = None
+    if code == "757570":
+        worker.established_facts = [f"The visible verification code is {code}."]
+    else:
+        journal = WorkerJournal(worker_id="fused-worker")
+        journal.record_established_fact(
+            event_ref="step:6:fact:1", text=f"验证码为{code}",
+        )
+
+    runtime = _run_fused_worker(
+        monkeypatch, current_url="", worker=worker, journal=journal,
+        actions=[_code_spec()],
     )
-    assert not runtime._can_continue_batch(
-        scroll, {}, remaining, actions, selection,
+
+    assert [action.text for action in runtime._executor.actions] == [code]
+
+
+def test_auth_code_in_summary_alone_remains_blocked(monkeypatch) -> None:
+    action = _code_action()
+    worker = _MultiActionWorker([[action], [action]])
+    worker.state_summary = "The visible verification code is 757570."
+
+    runtime = _run_fused_worker(
+        monkeypatch,
+        current_url="",
+        worker=worker,
+        actions=[_code_spec()],
     )
-    runtime.perception_mode = "vision-only"
-    assert not runtime._can_continue_batch(
-        type_action, {"x": 500, "y": 500}, remaining, actions, selection,
-    )
+
+    assert worker.calls == 2
+    assert runtime._executor.actions == []
+    assert runtime.outcome.failure_kind == "action_contract_invalid"
+
+
+@pytest.mark.parametrize(
+    "capability",
+    ["back", "home", "app_switch", "launch_app", "open_url", "scroll", "drag"],
+)
+def test_geometry_or_surface_changing_action_must_be_last_in_batch(capability: str) -> None:
+    args = {
+        "launch_app": {"app": "Messages"},
+        "open_url": {"url": "https://example.test/"},
+        "drag": {
+            "x": 500,
+            "y": 700,
+            "to_x": 500,
+            "to_y": 300,
+            "description": "Drag the visible item upward",
+        },
+    }.get(capability, {})
+    actions = [
+        DynamicActionSpec(name="change_surface", capability=capability, description="Change surface"),
+        DynamicActionSpec(name="tap", capability="tap", description="Tap visible control"),
+    ]
+    calls = [
+        {"name": "change_surface", "args": args},
+        {"name": "tap", "args": {"x": 500, "y": 500}},
+    ]
+
+    with pytest.raises(ProtocolError, match="must be the final batch action"):
+        ToolAgentRuntime._validate_multi_action_calls(calls, actions)
+
+    ToolAgentRuntime._validate_multi_action_calls(list(reversed(calls)), actions)
 
 
 def test_action_suffix_rebinds_after_layout_change() -> None:
@@ -1557,7 +1652,7 @@ def test_worker_rejects_missing_tool_state_without_executing(monkeypatch) -> Non
     )
     monkeypatch.setattr(
         "gui_agent.core.tool_agent.runtime.settle_after_action",
-        lambda platform, png, *, action_type: (0.0, False),
+        lambda platform, png, **_kwargs: (0.0, False),
     )
     spec = _worker_spec(
         goal="Advance one cohesive subgoal",
@@ -1593,7 +1688,7 @@ def test_replacement_strategy_starts_with_fresh_journal(monkeypatch) -> None:
     )
     monkeypatch.setattr(
         "gui_agent.core.tool_agent.runtime.settle_after_action",
-        lambda platform, png, *, action_type: (0.0, False),
+        lambda platform, png, **_kwargs: (0.0, False),
     )
     spec = _worker_spec(
         goal="Advance one cohesive subgoal",
@@ -1626,6 +1721,33 @@ def test_replacement_strategy_starts_with_fresh_journal(monkeypatch) -> None:
     ]
 
 
+def test_replacement_strategy_inherits_only_disproven_paths() -> None:
+    base = WorkerJournal(worker_id="worker")
+    base.record_established_fact(
+        event_ref="step:1:fact:1",
+        text="The screen shows an application not responding dialog",
+    )
+    base.record_established_fact(
+        event_ref="step:2:fact:1",
+        text="The screen shows an application not responding dialog",
+    )
+    base.record_established_fact(
+        event_ref="step:3:fact:1",
+        text="The menu does not contain the required option",
+    )
+    retry = WorkerJournal(worker_id="worker_strategy_1")
+
+    ToolAgentRuntime._inherit_disproven_facts(
+        {"worker": base, "worker_strategy_1": retry},
+        retry,
+        retry.worker_id,
+    )
+
+    assert len(retry.events) == 1
+    assert retry.events[0].kind == "worker_observation"
+    assert "does not contain" in retry.events[0].durable_text
+
+
 def test_worker_normalizes_provider_point_schema_and_executes_type(monkeypatch) -> None:
     runtime = object.__new__(ToolAgentRuntime)
     runtime.trace = []
@@ -1638,7 +1760,7 @@ def test_worker_normalizes_provider_point_schema_and_executes_type(monkeypatch) 
     )
     monkeypatch.setattr(
         "gui_agent.core.tool_agent.runtime.settle_after_action",
-        lambda platform, png, *, action_type: (0.0, False),
+        lambda platform, png, **_kwargs: (0.0, False),
     )
     spec = _worker_spec(
         goal="Enter a required value",
@@ -1704,7 +1826,7 @@ def test_worker_blocks_unchanged_repeat_and_accepts_same_frame_ref_repair(
     runtime._observe = observe
     monkeypatch.setattr(
         "gui_agent.core.tool_agent.runtime.settle_after_action",
-        lambda platform, png, *, action_type: (0.0, False),
+        lambda platform, png, **_kwargs: (0.0, False),
     )
     spec = _worker_spec(
         goal="Set the order end date",
@@ -1763,7 +1885,7 @@ def test_worker_allows_effective_scrolls_until_bounded_step_limit(
     runtime._observe = observe
     monkeypatch.setattr(
         "gui_agent.core.tool_agent.runtime.settle_after_action",
-        lambda platform, png, *, action_type: (0.0, False),
+        lambda platform, png, **_kwargs: (0.0, False),
     )
     spec = _worker_spec(
         goal="Collect a long visual surface",
@@ -1798,9 +1920,10 @@ def test_vision_only_execution_does_not_use_enhanced_control_geometry(
     runtime._visualizer = None
     runtime.platform = object()
     runtime._trace = lambda *_args, **_kwargs: None
+    settle_calls = []
     monkeypatch.setattr(
         "gui_agent.core.tool_agent.runtime.settle_after_action",
-        lambda platform, png, *, action_type: (0.0, False),
+        lambda platform, png, **kwargs: settle_calls.append(kwargs) or (0.0, False),
     )
     action = DynamicActionSpec(
         name="enter_visible_value",
@@ -1842,6 +1965,7 @@ def test_vision_only_execution_does_not_use_enhanced_control_geometry(
     executed = runtime._executor.actions[-1]
     assert (executed.x, executed.y) == (207, 448)
     assert executed.snap is None
+    assert settle_calls == [{"action_type": "type", "focus_y": 448.0, "center": None}]
 
 
 def test_worker_action_returns_flash_off_target_signal(monkeypatch) -> None:
@@ -1861,7 +1985,7 @@ def test_worker_action_returns_flash_off_target_signal(monkeypatch) -> None:
     ))
     monkeypatch.setattr(
         "gui_agent.core.tool_agent.runtime.settle_after_action",
-        lambda platform, png, *, action_type: (0.0, False),
+        lambda platform, png, **_kwargs: (0.0, False),
     )
     action = DynamicActionSpec(
         name="open_named_menu_item",
@@ -1902,7 +2026,78 @@ def test_worker_action_returns_flash_off_target_signal(monkeypatch) -> None:
     )
 
 
-def test_multi_action_aborts_suffix_after_flash_off_target(monkeypatch) -> None:
+def test_visual_grounding_snaps_type_to_high_confidence_field_center(
+    monkeypatch,
+) -> None:
+    runtime = object.__new__(ToolAgentRuntime)
+    runtime.bundle = SimpleNamespace(
+        make_action=lambda payload: AndroidAction.model_validate(payload)
+    )
+    runtime.perception_mode = "enhanced"
+    runtime._executor = _Executor()
+    runtime._visualizer = None
+    runtime.platform = object()
+    runtime.trace = []
+    runtime._target_ground_pool = _ImmediateVerifyPool(TargetGrounding(
+        target_found=True,
+        target_box=(210, 105, 790, 150),
+        control_type="text_input",
+        label="收货人姓名",
+        confidence="high",
+        reason="The editable value area is clearly visible.",
+    ))
+    runtime._target_verify_pool = None
+    settle_calls = []
+    monkeypatch.setattr(
+        "gui_agent.core.tool_agent.runtime.settle_after_action",
+        lambda platform, png, **kwargs: settle_calls.append(kwargs) or (0.0, False),
+    )
+    action = DynamicActionSpec(
+        name="enter_recipient",
+        capability="type",
+        description="Enter recipient name",
+        exposed_args=["text"],
+    )
+    spec = _worker_spec(
+        goal="Fill the recipient form",
+        success_criteria=["Recipient is filled"],
+        actions=[action],
+    )
+
+    payload, terminal = runtime._execute_worker_tool(
+        spec,
+        [action],
+        {
+            "name": action.name,
+            "args": {
+                "x": 500,
+                "y": 160,
+                "text": "张先生",
+                "description": "在收货人姓名输入框输入张先生",
+            },
+        },
+        b"png",
+        MaterializedFrame(frame_id="frame:address", screenshot_path="address.png"),
+    )
+
+    assert terminal is None
+    executed = runtime._executor.actions[-1]
+    assert (executed.x, executed.y) == (500, 127.5)
+    assert executed.snap["method"] == "visual_target_grounding"
+    assert executed.snap["original"] == [500.0, 160.0]
+    assert payload["target_signal"]["status"] == "on_target"
+    assert payload["target_signal"]["actual_element"] == "收货人姓名"
+    assert settle_calls == [{"action_type": "type", "focus_y": 127.5, "center": None}]
+    entry = next(
+        item for item in runtime.trace
+        if item["event"] == "worker_target_grounding"
+    )
+    assert runtime._human_line(entry).startswith(
+        "Grounding  : high · 收货人姓名 · point outside"
+    )
+
+
+def test_type_is_rejected_before_dispatch_when_target_is_off_target(monkeypatch) -> None:
     runtime = object.__new__(ToolAgentRuntime)
     runtime.bundle = SimpleNamespace(
         make_action=lambda payload: AndroidAction.model_validate(payload)
@@ -1915,14 +2110,18 @@ def test_multi_action_aborts_suffix_after_flash_off_target(monkeypatch) -> None:
         client=SimpleNamespace(page_info=lambda: ("", "")),
     )
     runtime.trace = []
-    runtime._target_verify_pool = _ImmediateVerifyPool(TargetVerify(
-        on_target=False,
-        actual_element="Username",
-        reason="The marker missed the Password field.",
+    runtime._target_ground_pool = _ImmediateVerifyPool(TargetGrounding(
+        target_found=True,
+        target_box=(400, 400, 600, 500),
+        control_type="text_input",
+        label="Username",
+        confidence="medium",
+        reason="The candidate point missed the Password field.",
     ))
+    runtime._target_verify_pool = None
     monkeypatch.setattr(
         "gui_agent.core.tool_agent.runtime.settle_after_action",
-        lambda platform, png, *, action_type: (0.0, False),
+        lambda platform, png, **_kwargs: (0.0, False),
     )
     type_action = DynamicActionSpec(
         name="enter_password",
@@ -1961,6 +2160,7 @@ def test_multi_action_aborts_suffix_after_flash_off_target(monkeypatch) -> None:
         },
     ]
 
+    breaker = WorkerActionCircuitBreaker()
     payload, terminal = runtime._execute_multi_action_calls(
         worker_id="login",
         spec=spec,
@@ -1974,14 +2174,16 @@ def test_multi_action_aborts_suffix_after_flash_off_target(monkeypatch) -> None:
         frame=MaterializedFrame(frame_id="frame:1", screenshot_path="frame.png"),
         png=b"png",
         journal=journal,
-        circuit_breaker=WorkerActionCircuitBreaker(),
+        circuit_breaker=breaker,
     )
 
     assert terminal is None
     assert payload["status"] == "aborted"
-    assert payload["executed_actions"] == 1
-    assert "flash verifier reported off_target" in payload["reason"]
-    assert len(runtime._executor.actions) == 1
+    assert payload["executed_actions"] == 0
+    assert payload["reuse_current_frame"] is True
+    assert "predispatch visual grounding" in payload["reason"]
+    assert len(runtime._executor.actions) == 0
+    assert not breaker._attempts
 
 
 def test_runtime_recovers_missing_exposed_action_description(monkeypatch) -> None:
@@ -1996,7 +2198,7 @@ def test_runtime_recovers_missing_exposed_action_description(monkeypatch) -> Non
     runtime._trace = lambda *_args, **_kwargs: None
     monkeypatch.setattr(
         "gui_agent.core.tool_agent.runtime.settle_after_action",
-        lambda platform, png, *, action_type: (0.0, False),
+        lambda platform, png, **_kwargs: (0.0, False),
     )
     action = DynamicActionSpec(
         name="reveal_required_detail",
@@ -2050,7 +2252,7 @@ def test_runtime_executes_nonspatial_browser_capabilities_through_adapter_action
     runtime._task_goal = str(args.get("url") or "Advance the browser subgoal")
     monkeypatch.setattr(
         "gui_agent.core.tool_agent.runtime.settle_after_action",
-        lambda platform, png, *, action_type: (0.0, False),
+        lambda platform, png, **_kwargs: (0.0, False),
     )
     action = DynamicActionSpec(
         name=f"do_{capability}",
@@ -2125,7 +2327,7 @@ def test_runtime_executes_android_device_capabilities(
     runtime._trace = lambda *_args, **_kwargs: None
     monkeypatch.setattr(
         "gui_agent.core.tool_agent.runtime.settle_after_action",
-        lambda platform, png, *, action_type: (0.0, False),
+        lambda platform, png, **_kwargs: (0.0, False),
     )
     action = DynamicActionSpec(
         name=f"do_{capability}",
@@ -2207,7 +2409,7 @@ def _browser_execution_runtime(
     runtime._trace = lambda *_args, **_kwargs: None
     monkeypatch.setattr(
         "gui_agent.core.tool_agent.runtime.settle_after_action",
-        lambda platform, png, *, action_type: (0.0, False),
+        lambda platform, png, **_kwargs: (0.0, False),
     )
     return runtime
 
@@ -2703,12 +2905,13 @@ def test_runtime_streams_live_logs_and_observation_artifacts(tmp_path) -> None:
     )
     assert events[0]["layer"] == "observer"
     assert events[0]["event"] == "observe"
+    assert "control_count" not in events[0]
     assert "Observe frame:1" in events[0]["message"]
     assert live_trace["phase"] == "running"
     assert live_trace["trace"] == events
-    assert "--- Turn 1 ---" in (
-        tmp_path / "tool_agent.log"
-    ).read_text(encoding="utf-8")
+    human_log = (tmp_path / "tool_agent.log").read_text(encoding="utf-8")
+    assert "--- Turn 1 ---" in human_log
+    assert "0 controls" not in human_log
     assert events[0]["timestamp"]
     assert statuses == ["Observer · Observe frame:1 for ?: no collection refs"]
     assert (tmp_path / "observation_tool_agent_1.json").is_file()
@@ -3067,39 +3270,44 @@ def test_action_guard_reset_without_trigger_clears_window() -> None:
     assert repeated.prior_attempts == 0
 
 
-def test_batch_guard_records_blocked_repeat_and_escalates_across_frames() -> None:
-    """A guard-blocked action inside a batch must be recorded into the window so
-    prior_attempts grows across frames; when it recurs enough it escalates to a
-    typed failure instead of silently breaking the suffix every frame."""
-    from gui_agent.core.tool_agent.runtime import _BATCH_GUARD_ESCALATION_THRESHOLD
-
-    frame = MaterializedFrame(frame_id="frame:stable", screenshot_path="frame.png")
+def test_batch_guard_feedback_does_not_count_rejection_as_attempt(monkeypatch) -> None:
+    frame = MaterializedFrame(
+        frame_id="frame:stable", screenshot_path="frame.png",
+        url="https://example.test/login", title="Login",
+    )
     breaker = WorkerActionCircuitBreaker()
-
-    first = breaker.inspect(
+    tap_attempt = breaker.inspect(
         tool="tap", capability="tap", args={"x": 500, "y": 100}, frame=frame,
     )
-    assert first.blocked is False
-    breaker.record(first)
+    breaker.record(tap_attempt)
+    actions = [
+        DynamicActionSpec(name="clear", capability="clear_text", description="Clear field"),
+        DynamicActionSpec(name="tap", capability="tap", description="Tap target"),
+    ]
+    worker = _MultiActionWorker([[
+        {"name": "clear", "args": {}},
+        {"name": "tap", "args": {"x": 500, "y": 100}},
+    ]])
+    runtime = _run_fused_worker(
+        monkeypatch,
+        current_url="https://example.test/login",
+        worker=worker,
+        actions=actions,
+        breaker=breaker,
+    )
 
-    # Subsequent frames re-schedule the same action; each block is recorded,
-    # growing prior_attempts, and the escalation threshold triggers.
-    escalation_frames = []
-    for frame_no in range(2, 6):
-        decision = breaker.inspect(
-            tool="tap", capability="tap", args={"x": 500, "y": 100}, frame=frame,
-        )
-        if decision.blocked:
-            breaker.record(decision)
-        if decision.prior_attempts >= _BATCH_GUARD_ESCALATION_THRESHOLD:
-            escalation_frames.append(frame_no)
-            break
-        assert decision.prior_attempts < _BATCH_GUARD_ESCALATION_THRESHOLD, (
-            "escalation must not fire below the threshold"
-        )
-
-    assert escalation_frames, "cross-frame batch loop must escalate"
-    assert escalation_frames[0] == 3, "threshold=2 means escalation on the 3rd block"
+    repeated = breaker.inspect(
+        tool="tap", capability="tap", args={"x": 500, "y": 100}, frame=frame,
+    )
+    aborted = next(
+        event for event in runtime.trace
+        if event["event"] == "worker_multi_action_aborted"
+    )
+    assert aborted["executed_actions"] == 1
+    assert repeated.blocked and repeated.prior_attempts == 1
+    assert "blocked repeated tap" in build_worker_memory_view(
+        runtime._worker_journals["fused-worker"]
+    ).render_prompt_section()
 
 
 def test_each_binding_advances_cursor_on_complete_and_exhausts() -> None:

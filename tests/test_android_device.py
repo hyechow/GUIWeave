@@ -305,8 +305,8 @@ def test_android_executor_amount_units_widen_range():
     from gui_agent.adapters.android.executor import AndroidExecutor
 
     ex = AndroidExecutor(types.SimpleNamespace(client=None))
-    assert ex._amount_units("small") == 1
-    assert ex._amount_units("medium") == 4
+    assert ex._amount_units("small") == 2
+    assert ex._amount_units("medium") == 6
     assert ex._amount_units("large") == 8
     minute_medium = AndroidAction(
         action_type="scroll",

@@ -10,6 +10,7 @@ from __future__ import annotations
 
 import io
 
+import pytest
 from PIL import Image, ImageDraw
 
 from gui_agent.core.runtime.action_settle import settle_after_action
@@ -62,3 +63,36 @@ def test_settle_uses_adapter_lightweight_screenshot_probe(monkeypatch):
     assert no_effect is True
     assert platform.probe_calls == 6
     assert platform.full_calls == 0
+
+
+@pytest.mark.parametrize(
+    ("action_type", "kwargs", "expected_no_effect"),
+    [
+        ("type", {}, False),
+        ("type", {"focus_y": 150}, True),
+        ("tap", {"center": (500, 150)}, False),
+    ],
+)
+def test_settle_scopes_type_but_detects_tap_side_effects(
+    monkeypatch, action_type, kwargs, expected_no_effect,
+):
+    before = Image.new("RGB", (160, 320), "white")
+    after = before.copy()
+    ImageDraw.Draw(after).rectangle([0, 250, 159, 319], fill="black")
+    before_png, after_png = _png(before), _png(after)
+
+    class _Platform:
+        def settle_screenshot(self):
+            return after_png
+
+        def screenshot(self):
+            raise AssertionError("lightweight settle probe should be used")
+
+    monkeypatch.setattr("gui_agent.core.runtime.action_settle.time.sleep", lambda _: None)
+
+    _, no_effect = settle_after_action(
+        _Platform(), before_png, action_type=action_type, **kwargs,
+    )
+    assert no_effect is expected_no_effect
+    if "center" in kwargs:
+        assert frame_changed(before_png, after_png, center=kwargs["center"]) is False

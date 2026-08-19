@@ -94,6 +94,23 @@ def test_worker_memory_omits_spatial_and_execution_metadata() -> None:
     assert "do not repeat the same point" in rendered
 
 
+def test_worker_context_omits_unavailable_structured_controls() -> None:
+    frame = MaterializedFrame(
+        frame_id="frame:android",
+        screenshot_path="android.png",
+        visual_fingerprint="runtime-private-surface",
+        controls=[],
+    )
+
+    projection = project_worker_context(
+        memory=build_worker_memory_view(WorkerJournal(worker_id="android")),
+        frame=frame,
+    )
+
+    assert '"controls"' not in projection.text
+    assert "runtime-private-surface" not in projection.text
+
+
 def test_worker_memory_preserves_flash_off_target_signal() -> None:
     journal = WorkerJournal(worker_id="target_feedback")
     journal.record_turn(
@@ -456,7 +473,7 @@ def test_worker_rebuilds_fresh_messages_each_frame_instead_of_replaying_chat_his
     runtime._observe = observe
     monkeypatch.setattr(
         "gui_agent.core.tool_agent.runtime.settle_after_action",
-        lambda platform, png, *, action_type: (0.0, False),
+        lambda platform, png, **_kwargs: (0.0, False),
     )
     spec = WorkerSpec(
         goal="Advance through three visual states",

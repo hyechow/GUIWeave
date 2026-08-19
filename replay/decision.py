@@ -31,6 +31,7 @@ from gui_agent.core.tool_agent.protocol import (
     image_message,
     worker_attempt_contract,
 )
+from gui_agent.core.tool_agent.runtime import ToolAgentRuntime
 from gui_agent.prompts import load_prompt_text
 from llm.provider_config import (
     build_chat_model,
@@ -136,6 +137,7 @@ def _worker_messages(
     *,
     attempt_contract: str,
     image_scale: float = 1.0,
+    strategy_retry: bool = False,
 ) -> list[Any]:
     messages: list[Any] = []
     for role in report.get("roles", []):
@@ -158,6 +160,11 @@ def _worker_messages(
             )))
         elif name == "human":
             text = _without_section(text, "## Current Worker attempt")
+            if strategy_retry:
+                text = "\n".join(
+                    line for line in text.splitlines()
+                    if "Worker reaffirmed this observation:" not in line
+                )
             text = (text.rstrip() + "\n\n" + attempt_contract).strip()
             messages.append(
                 image_message(text, screenshot, scale=image_scale)
@@ -252,6 +259,15 @@ def _master_shape(source: str, *, reviewed: bool = True) -> dict[str, Any]:
 
 
 def _mismatches(expected: Any, actual: Any, path: str = "$") -> list[str]:
+    if isinstance(expected, list):
+        if not isinstance(actual, list):
+            return [f"{path}: expected array, got {type(actual).__name__}"]
+        if len(expected) != len(actual):
+            return [f"{path}: expected {expected!r}, got {actual!r}"]
+        errors = []
+        for index, value in enumerate(expected):
+            errors.extend(_mismatches(value, actual[index], f"{path}[{index}]"))
+        return errors
     if not isinstance(expected, dict):
         return [] if expected == actual else [f"{path}: expected {expected!r}, got {actual!r}"]
     if not isinstance(actual, dict):
@@ -375,6 +391,8 @@ def _worker_decision(
         protocol=action_protocol,
         tools=tools,
     )
+    if call["name"] == "continue_with_actions":
+        ToolAgentRuntime._validate_multi_action_calls(calls, actions)
     names = [call["name"]]
     if call["name"] == "continue_with_actions":
         names = [str(item.get("name") or "") for item in calls]
@@ -383,10 +401,41 @@ def _worker_decision(
         "tool": call["name"],
         "actions": names,
         "action_capabilities": [capabilities.get(name, name) for name in names],
+        "action_semantics": _action_semantics(calls, capabilities),
         "state_status": str(state.get("status") or ""),
         "state_summary": str(state.get("summary") or ""),
         "args": {**call["args"], "state": state},
     }
+
+
+_REPLAY_SEMANTIC_ACTION_FIELDS = (
+    "app",
+    "text",
+    "url",
+    "direction",
+    "amount",
+    "duration_ms",
+    "target_area",
+    "option",
+    "key",
+)
+
+
+def _action_semantics(
+    calls: list[dict[str, Any]],
+    capabilities: dict[str, str],
+) -> list[dict[str, Any]]:
+    """Project replay-stable action meaning while ignoring wording and point jitter."""
+    return [
+        {
+            "capability": capabilities.get(name, name),
+            **{key: args[key] for key in _REPLAY_SEMANTIC_ACTION_FIELDS
+               if args.get(key) not in (None, "")},
+        }
+        for call in calls
+        if (name := str(call.get("name") or ""))
+        and isinstance((args := call.get("args") or {}), dict)
+    ]
 
 
 def replay_worker_decision(
@@ -463,9 +512,22 @@ def replay_worker_decision(
     recorded_capabilities = [capabilities.get(name, name) for name in action_names]
     if selected.get("tool") == "continue_with_actions":
         recorded_capabilities = recorded_capabilities[:max_ordered_actions]
+    recorded_calls = selected.get("args", {}).get("actions") or []
+    if selected.get("tool") != "continue_with_actions":
+        recorded_calls = [{
+            "name": str(selected.get("tool") or ""),
+            "args": selected.get("args") or {},
+        }]
+    elif not isinstance(recorded_calls, list):
+        recorded_calls = []
+    recorded_calls = [
+        item for item in recorded_calls[:max_ordered_actions]
+        if isinstance(item, dict)
+    ]
     expected = expectation or {
         "tool": str(selected.get("tool") or ""),
         "action_capabilities": recorded_capabilities,
+        "action_semantics": _action_semantics(recorded_calls, capabilities),
     }
     messages = _worker_messages(
         _report(selected, "tool_agent.worker"),
@@ -475,6 +537,7 @@ def replay_worker_decision(
             attempted_action=bool(replay_context.get("executed_tools")),
         ),
         image_scale=float(getattr(model_config, "image_scale", 1.0)),
+        strategy_retry="_strategy_" in str(selected.get("worker_id") or ""),
     )
     request_model = getattr(model_config, "model", None)
     if request_model is None:

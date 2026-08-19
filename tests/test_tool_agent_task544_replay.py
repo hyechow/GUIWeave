@@ -51,7 +51,7 @@ def test_task544_replay_injects_transform_result_without_model_transcription(
     runtime._trace = lambda *_args, **_kwargs: None
     monkeypatch.setattr(
         "gui_agent.core.tool_agent.runtime.settle_after_action",
-        lambda _platform, _png, *, action_type: (0.0, False),
+        lambda _platform, _png, **_kwargs: (0.0, False),
     )
 
     payload, terminal = runtime._execute_worker_tool(

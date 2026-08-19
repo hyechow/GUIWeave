@@ -177,9 +177,15 @@ def test_worker_replay_compares_equivalent_actions_by_capability(tmp_path) -> No
     assert result["expectation"] == {
         "tool": "continue_with_actions",
         "action_capabilities": ["scroll"],
+        "action_semantics": [{"capability": "scroll"}],
     }
     assert result["samples"][0]["actions"] == ["scroll"]
     assert result["samples"][0]["action_capabilities"] == ["scroll"]
+    assert result["samples"][0]["action_semantics"] == [{
+        "capability": "scroll",
+        "direction": "down",
+        "amount": "medium",
+    }]
     assert {tool["function"]["name"] for tool in model.bound_tools} >= {
         "continue_with_actions",
         "complete",
@@ -210,6 +216,45 @@ def test_worker_replay_compares_equivalent_actions_by_capability(tmp_path) -> No
     assert "recorded static action description" not in scroll_variant["description"]
 
 
+def test_worker_replay_detects_wrong_launch_app_argument(tmp_path) -> None:
+    run_dir = _worker_run(
+        tmp_path,
+        recorded_tool="continue_with_actions",
+        recorded_actions=[{
+            "name": "launch_app",
+            "args": {"app": "Taodian"},
+        }],
+    )
+    trace_path = run_dir / "tool_agent_trace.json"
+    trace = json.loads(trace_path.read_text(encoding="utf-8"))
+    trace["trace"][-1]["replay_context"]["actions"] = [
+        DynamicActionSpec(
+            name="launch_app",
+            capability="launch_app",
+            description="Launch one installed application",
+            exposed_args=["app"],
+        ).model_dump(mode="json")
+    ]
+    trace_path.write_text(json.dumps(trace), encoding="utf-8")
+    model = _RecordedModel(_tool_call("continue_with_actions", {
+        "state": _state(),
+        "actions": [{"name": "launch_app", "args": {"app": "Messages"}}],
+    }))
+
+    result = replay_worker_decision(run_dir, frame=1, llm=model)
+
+    assert result["status"] == "failed"
+    assert result["expectation"]["action_semantics"] == [{
+        "capability": "launch_app",
+        "app": "Taodian",
+    }]
+    assert result["samples"][0]["action_semantics"] == [{
+        "capability": "launch_app",
+        "app": "Messages",
+    }]
+    assert any(".app" in error for error in result["samples"][0]["errors"])
+
+
 def test_worker_replay_applies_one_same_frame_protocol_repair(tmp_path) -> None:
     run_dir = _worker_run(
         tmp_path,
@@ -232,6 +277,44 @@ def test_worker_replay_applies_one_same_frame_protocol_repair(tmp_path) -> None:
     assert sample["protocol_repairs"] == 1
     assert len(model.calls) == 2
     assert "Protocol repair" in model.calls[1][-1].content
+
+
+def test_worker_replay_repairs_surface_change_before_batch_suffix(tmp_path) -> None:
+    run_dir = _worker_run(
+        tmp_path,
+        recorded_tool="continue_with_actions",
+        recorded_actions=[{"name": "launch_app", "args": {"app": "Messages"}}],
+    )
+    trace = json.loads((run_dir / "tool_agent_trace.json").read_text())
+    trace["trace"][-1]["replay_context"]["actions"] = [
+        {"name": "home", "capability": "home", "description": "Go home"},
+        {
+            "name": "launch_app",
+            "capability": "launch_app",
+            "description": "Open Messages",
+            "exposed_args": ["app"],
+        },
+    ]
+    (run_dir / "tool_agent_trace.json").write_text(json.dumps(trace))
+    model = _RecordedModel(
+        _tool_call("continue_with_actions", {
+            "state": _state(),
+            "actions": [
+                {"name": "home", "args": {}},
+                {"name": "launch_app", "args": {"app": "Messages"}},
+            ],
+        }),
+        _tool_call("continue_with_actions", {
+            "state": _state(),
+            "actions": [{"name": "launch_app", "args": {"app": "Messages"}}],
+        }),
+    )
+
+    result = replay_worker_decision(run_dir, frame=1, llm=model)
+
+    sample = result["samples"][0]
+    assert sample["action_capabilities"] == ["launch_app"]
+    assert sample["protocol_repairs"] == 1
 
 
 def test_worker_replay_preserves_recorded_protocol_repair_history(tmp_path) -> None:
