@@ -24,6 +24,21 @@ def test_android_app_knowledge_is_complete_and_declarative() -> None:
         assert not [token for token in forbidden if token in text], path
 
 
+def test_mattermost_knowledge_distinguishes_replies_from_channel_posts() -> None:
+    knowledge = load_knowledge_for_app("Mattermost", "android")
+    assert knowledge is not None
+
+    context = knowledge.worker_context()
+    for fact in (
+        "long-press the visible message body",
+        "composer is a new message, not a reply",
+        "task user represented by first-person",
+        "credentials, not the task user's identity",
+    ):
+        assert fact in context
+    assert "Sam is the task user" not in context
+
+
 def test_knowledge_has_no_planner_owned_markdown_sections() -> None:
     forbidden = ("Planning boundary", "planning-boundary")
 

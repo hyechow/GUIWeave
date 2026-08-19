@@ -995,6 +995,47 @@ def test_strategy_replacements_use_only_the_global_turn_budget() -> None:
     ]
 
 
+def test_repeated_action_failure_shares_breaker_with_strategy_retry() -> None:
+    runtime = object.__new__(ToolAgentRuntime)
+    runtime.max_turns = 2
+    runtime._frame_no = 0
+    runtime._trace = lambda *_args, **_kwargs: None
+    breaker = WorkerActionCircuitBreaker()
+    runtime._worker_action_breakers = {"logical_worker": breaker}
+    outcomes = iter([
+        WorkerOutcome(
+            phase="failed",
+            summary="blocked repeated scroll action without task-relevant progress",
+            failure_kind="action_contract_invalid",
+            steps=1,
+        ),
+        WorkerOutcome(phase="completed", summary="alternative completed", steps=1),
+    ])
+
+    def run_worker(worker_id, _spec, *, require_attempt=False):
+        del require_attempt
+        if "_strategy_" in worker_id:
+            assert runtime._worker_action_breakers[worker_id] is breaker
+        runtime._frame_no += 1
+        return next(outcomes)
+
+    runtime._run_worker = run_worker
+    runtime._request_strategy_decision = lambda **_kwargs: (
+        WorkerStrategy(approach="channel search"),
+        "selected",
+    )
+    spec = _worker_spec(
+        profile="operator",
+        goal="Reply to the target record",
+        success_criteria=["The reply is posted"],
+        actions=[],
+    )
+
+    outcome = runtime._run_logical_worker("logical_worker", spec)
+
+    assert outcome.phase == "completed"
+
+
 class _Executor:
     def __init__(self) -> None:
         self.actions = []
