@@ -100,7 +100,7 @@ def _words(text: str) -> set[str]:
 # requirement's ``reviewer name``/``review text``/``star rating`` sources.
 _SEMANTIC_FIELD_ALIASES = {
     "name": ("title", "record title", "item title", "review title"),
-    "productname": ("item name",),
+    "productname": ("item name", "item description"),
     "author": ("reviewer name", "reviewer", "author name"),
     "description": ("review text", "review", "text", "comment"),
     "reviewbody": ("review text", "text"),
