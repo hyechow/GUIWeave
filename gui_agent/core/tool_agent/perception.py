@@ -1224,11 +1224,12 @@ class PerceptionMaterializer:
             ),
             "candidate_source_url": state.source_url,
         }
-        rows = (
-            expanded_rows or list(map(_public_detail_row, state.rows))
-            if not unresolved_indexes
-            else []
-        )
+        required = set(requirement.row_schema.get("required") or [])
+        resolved_rows = [
+            row for row in map(_public_detail_row, state.rows)
+            if all(_nonempty(row.get(field)) for field in required)
+        ]
+        rows = expanded_rows or resolved_rows if not unresolved_indexes else []
         return state, rows, progress
 
     def observe(
@@ -1653,6 +1654,7 @@ class PerceptionMaterializer:
                     scope_key=requested_fingerprint,
                     source_has_more=bool(
                         source_traversal.get("has_next_page") is True
+                        or source_traversal.get("has_prev_page") is True
                         or _page_has_more(
                             source_traversal.get("page_index"),
                             source_traversal.get("page_count"),
