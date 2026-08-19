@@ -16,7 +16,7 @@ source: manual_distilled
 confidence: high
 sensitivity: internal
 ttl: session
-version: 5
+version: 6
 ---
 # One Stop Market storefront
 
@@ -44,6 +44,15 @@ version: 5
 - Category and search-result pages offer Grid/List mode, Sort By, a separate direction link, a
   per-page selector, and pagination. Product cards expose name and current price, and may expose
   rating percentage and review count. A struck-through old price is not the current sale price.
+- `Women` and `Men` are category levels, not product modifiers. Their leaf paths are
+  `/<top-category>/women/<leaf>.html` and `/<top-category>/men/<leaf>.html`. A target or navigation
+  history containing either level is invalid unless its canonical URL contains `/women/` or `/men/`.
+- Sidebar category choices may replace the prior chip and leave a `cat=<id>` alias on the parent
+  path. A canonical path instead preserves the top category and every successive category choice as
+  lowercase, hyphenated path segments.
+- Visible price facets are coarse. For an exact range, navigate directly to the canonical category
+  URL with `price=<lower>-<upper>`; "under X" maps to `price=0-X`. Do not first apply a wider facet
+  or preserve a `cat=<id>` alias.
 - Sort By includes Price but not customer rating. The direction link label names the action it will
   perform: `Set Ascending Direction` means the current order is descending, while
   `Set Descending Direction` means it is ascending.

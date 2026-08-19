@@ -5,12 +5,12 @@ platform: browser
 app: shopping
 scope:
   - orchestrator
-selector_when: catalog search category price range cheapest expensive highest rated best rating capacity sale product budget go view navigate storage suitability problem
+selector_when: catalog search category price range under over cheapest expensive highest rated best rating capacity sale product budget go view navigate storage suitability problem
 source: manual_distilled
 confidence: high
 sensitivity: internal
 ttl: session
-version: 2
+version: 3
 ---
 # One Stop Market catalog data
 
@@ -28,6 +28,16 @@ price for budget or ranking decisions. Rating shown on a product card is a perce
 individual customer review uses a one-to-five star rating. Do not interchange the two scales.
 
 ## Price boundaries and ranking
+
+`Women` and `Men` are category levels, not product modifiers. Their leaf paths are
+`/<top-category>/women/<leaf>.html` and `/<top-category>/men/<leaf>.html`. Sidebar choices may replace
+the prior chip and leave a `cat=<id>` alias on the parent path. A target or navigation history containing
+either level is invalid unless its canonical URL contains `/women/` or `/men/`; otherwise preserve the
+top category and every successive category choice as lowercase, hyphenated segments.
+
+For an exact range, navigate directly to the canonical category URL with
+`price=<lower>-<upper>`; "under X" maps to `price=0-X`. Do not first apply a wider visible facet or
+preserve a `cat=<id>` alias; visible price facets are coarse alternatives, not a nested hierarchy.
 
 For minimum, maximum, cheapest, or most-expensive requests, apply the complete product-class and
 budget predicates, sort by Price in the needed direction, and use `coverage="first_match"`. A
