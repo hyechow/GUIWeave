@@ -113,3 +113,13 @@ def test_shopping_spend_and_reorder_goals_select_order_sources() -> None:
     assert knowledge.orchestrator_sections(
         "Get the price of an item I bought last month."
     ) == ["order_history_planning"]
+
+
+def test_shopping_unavailable_arrival_stays_out_of_acquisition_schema() -> None:
+    knowledge = _shopping_knowledge()
+    context = knowledge.orchestrator_context(
+        "Get the status of my latest order and when it will arrive."
+    )
+
+    assert "collect only the newest row's visible Status" in context
+    assert "do not add an unavailable arrival field" in context
