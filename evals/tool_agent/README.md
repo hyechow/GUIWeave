@@ -20,3 +20,12 @@ task or frozen Worker frame/memory; it does not connect to a device:
 bin/replay_decision <run-dir> --master --samples 3
 bin/replay_decision <run-dir> --worker-frame 12 --samples 3
 ```
+
+Curated multi-frame Worker suites use semantic matchers instead of exact action
+sequences, so a safe suffix may move to the next turn without failing the gate:
+
+```bash
+bin/replay_decision_suite evals/android/decision_replay/mobileworld_checkout --recorded
+uv run --env-file .env bin/replay_decision_suite \
+  evals/android/decision_replay/mobileworld_checkout --samples 3
+```

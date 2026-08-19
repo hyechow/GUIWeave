@@ -52,6 +52,7 @@ test.sh
 data/
 evals/**/*.png
 evals/**/*.jpg
+!evals/android/decision_replay/**/*.png
 replay/**/*.png
 replay/**/*.jpg
 tests/**/*.png

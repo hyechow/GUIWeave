@@ -1,0 +1,27 @@
+{
+  "frame_id": "frame:15",
+  "screenshot_path": "screenshot_tool_agent_15.png",
+  "visual_fingerprint": "80f923fda1be27ffa7ffa7ff27ff23ffafff800da03f800de0afa3ffa3fda7c1",
+  "readiness": "ready",
+  "readiness_reason": "",
+  "platform_time": {
+    "platform": "android",
+    "local_datetime": "2025-10-16T12:01:01+00:00",
+    "timezone": "GMT",
+    "utc_offset": "+00:00",
+    "source": "android_adb",
+    "confidence": "authoritative",
+    "captured_at": "2026-08-19T05:17:39.789+00:00",
+    "fallback_reason": ""
+  },
+  "url": "",
+  "title": "",
+  "controls": [],
+  "visible_collection_regions": [],
+  "structured_surfaces": [],
+  "applied_filters": {},
+  "requirement_scopes": {},
+  "chunks": [],
+  "collections": [],
+  "missing_requirements": []
+}

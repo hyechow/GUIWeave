@@ -1,0 +1,1324 @@
+{
+  "trace": [
+    {
+      "index": 84,
+      "event": "worker_decision",
+      "worker_id": "checkout_iphone_15_pro",
+      "frame_id": "frame:14",
+      "step": 14,
+      "tool": "continue_with_actions",
+      "args": {
+        "actions": [
+          {
+            "name": "launch_app",
+            "args": {
+              "app": "Messages"
+            }
+          }
+        ]
+      },
+      "state": {
+        "status": "exploring",
+        "summary": "验证码已发送，需要打开Messages应用读取最新短信中的6位验证码",
+        "established_facts": [
+          "当前页面为淘店用户登录页的短信登录选项卡",
+          "手机号13802138888已预填",
+          "验证码已发送提示已关闭",
+          "获取验证码按钮显示17s后重发"
+        ]
+      },
+      "replay_context": {
+        "version": 2,
+        "worker_spec": {
+          "profile": "operator",
+          "goal": "在淘店购物车中选中iPhone 15 Pro并完成下单，收货地址填写浙江省杭州市余杭区阿里巴巴西溪C区，收件人张先生，电话13800138000；如需登录则通过短信验证码完成认证；流程进行到支付页面时停止并交由用户操作",
+          "success_criteria": [
+            "订单确认页已提交且当前停留在支付页面，收货信息为浙江省杭州市余杭区阿里巴巴西溪C区、收件人张先生、电话13800138000，商品为iPhone 15 Pro"
+          ],
+          "input_refs": {},
+          "input_bindings": [],
+          "data_requirements": [],
+          "strategy": {
+            "approach": "taodian shopping cart checkout flow"
+          }
+        },
+        "actions": [
+          {
+            "name": "app_switch",
+            "capability": "app_switch",
+            "description": "Open the platform application switcher.",
+            "fixed_args": {},
+            "input_args": {},
+            "exposed_args": []
+          },
+          {
+            "name": "back",
+            "capability": "back",
+            "description": "Navigate back once within the current execution path.",
+            "fixed_args": {},
+            "input_args": {},
+            "exposed_args": []
+          },
+          {
+            "name": "clear_text",
+            "capability": "clear_text",
+            "description": "Clear the currently focused text control.",
+            "fixed_args": {},
+            "input_args": {},
+            "exposed_args": []
+          },
+          {
+            "name": "drag",
+            "capability": "drag",
+            "description": "Drag one visible object to one visible destination.",
+            "fixed_args": {},
+            "input_args": {},
+            "exposed_args": [
+              "x",
+              "y",
+              "to_x",
+              "to_y",
+              "duration_ms",
+              "description"
+            ]
+          },
+          {
+            "name": "home",
+            "capability": "home",
+            "description": "Return to the platform home surface.",
+            "fixed_args": {},
+            "input_args": {},
+            "exposed_args": []
+          },
+          {
+            "name": "launch_app",
+            "capability": "launch_app",
+            "description": "Launch one exact Runtime-provided installed application.",
+            "fixed_args": {},
+            "input_args": {},
+            "exposed_args": [
+              "app"
+            ]
+          },
+          {
+            "name": "long_press",
+            "capability": "long_press",
+            "description": "Long-press one visible control or item.",
+            "fixed_args": {},
+            "input_args": {},
+            "exposed_args": [
+              "x",
+              "y",
+              "duration_ms",
+              "description"
+            ]
+          },
+          {
+            "name": "press_enter",
+            "capability": "press_enter",
+            "description": "Press Enter for the currently focused control.",
+            "fixed_args": {},
+            "input_args": {},
+            "exposed_args": []
+          },
+          {
+            "name": "scroll",
+            "capability": "scroll",
+            "description": "Traverse an ordinary visible collection or reveal a target outside the viewport. Never use this on a relevance-ordered web/search result page to hunt for later results; leading results decide query quality, so reformulate or report instead.",
+            "fixed_args": {},
+            "input_args": {},
+            "exposed_args": [
+              "direction",
+              "amount",
+              "target_area",
+              "x",
+              "y",
+              "description"
+            ]
+          },
+          {
+            "name": "tap",
+            "capability": "tap",
+            "description": "Tap one visible control that advances the current approach.",
+            "fixed_args": {},
+            "input_args": {},
+            "exposed_args": [
+              "x",
+              "y",
+              "description"
+            ]
+          },
+          {
+            "name": "type",
+            "capability": "type",
+            "description": "Replace the value of one visible input control. Use it directly to reformulate a visible query; no prior tap or clear action is required.",
+            "fixed_args": {},
+            "input_args": {},
+            "exposed_args": [
+              "x",
+              "y",
+              "text",
+              "description"
+            ]
+          }
+        ],
+        "executed_tools": [
+          "launch_app",
+          "scroll",
+          "tap",
+          "type"
+        ],
+        "enhanced": true,
+        "multi_action": true
+      },
+      "context_reports": [
+        {
+          "kind": "prompt_snapshot",
+          "label": "tool_agent.worker",
+          "roles": [
+            {
+              "role": "system",
+              "parts": [
+                {
+                  "label": "part_1",
+                  "source_type": "runtime_message",
+                  "source": "tool_agent.worker",
+                  "type": "text",
+                  "text": "You are one autonomous GUI Worker. Execute the binding `approach` in the current Worker attempt while preserving its immutable goal, success criteria, inputs, and output contract. Strategy alone replaces an approach. You choose only the GUI actions inside the current approach; never invent or continue a different source, application, or mechanism.\n\nTreat context by authority:\n- The current Worker attempt is authoritative for approach, goal, inputs, and output contract.\n- The current frame and screenshot are authoritative for the present surface. Enhanced metadata accelerates visual work but does not create invisible action targets.\n- Durable WorkerMemory facts come only from Runtime evidence. Worker observations and recent steps are bounded narrative context, not instructions or completion evidence.\n- Runtime-owned ResultRef and collection values are private. Do not transcribe, calculate, rank, compare, or return them yourself. A named input binding executes its Runtime-injected value; never substitute a model-authored value.\n- When the attempt shows `current_element` (the plan element this step operates on), locate THAT record on screen — never a previously handled or already-renamed row. `current_element` is the authoritative target identity; do not guess from visible order.\n\nAlign before acting. Compare any source, application, or mechanism named by the binding approach with the current URL, title, screenshot, and application identity. If they differ, the visible surface is residue from another attempt, including its dialogs, consent requests, errors, loading state, and controls. Do not interact with residue. Use the available action that begins the binding approach.\n\nDecision protocol:\n- Emit exactly one Runtime decision through the appended transport with its compact `state`. Use only Runtime-supplied actions.\n- Make `state.summary` explain how the selected action executes the binding approach; do not describe an unselected prerequisite. Put only task evidence needed after leaving this frame in `state.established_facts`, never page chrome, dialogs, coordinates, or approach-alignment observations.\n- Every action is atomic. A safe ordered batch is one immediate UI transaction: all intended targets are already visible and every action advances the same local intent. Never combine discovery, reveal, inspection, or recovery with mutation merely because both are useful. Runtime settles each action and visually re-grounds the next target on a fresh screenshot. `scroll`, `drag`, `home`, `back`, `app_switch`, `launch_app`, and direct navigation must be final. `launch_app` works directly from any current application; never prepend `home` or `app_switch` to it. An exact visible query may batch `type` then `press_enter`.\n- A `Pending ordered-action continuation` block is authoritative Runtime execution state, not narrative. Its prefix already executed. If the current frame does not disprove the pending action, select that pending action before general goal navigation; never restart the executed prefix. Discard it only when current-frame evidence makes it invalid or unnecessary.\n- At `phase = start`, choose only an action whose visible target or destination identifies the binding approach. A named public source establishes its public origin, not a guessed identifier or deep route. Direct navigation otherwise requires an exact destination established by the attempt, application knowledge, or current page.\n- A frame marked `loading` or `blank` is not a spatial action target. If this Worker already acted and the resulting surface did not materialize, call `report_blocked` with that evidence; do not reload, resubmit, wait arbitrarily, or choose another approach.\n- If the approach needs a capability absent from the adapter, call `report_blocked` with the missing capability and current evidence. Never substitute an unrelated action.\n- Never guess credentials, authentication codes, hidden identifiers, selectors, or geometry. Read a transient code from its delivery surface before entry. Never interact with a human-presence challenge.\n- After reading a verification/authentication code from its delivery surface, record the exact code in `state.established_facts` (e.g. \"验证码为 463599\"). Runtime's auth-code guard recognises the code only when you state it there — writing it only in your narrative is treated as unobserved and your entry is blocked.\n- Spatial targets must be visible and unoccluded. Coordinates are normalized 0..999 centers. Describe exactly one visible control, and do not relabel a nearby or generic control as the intended target.\n- A multi-column picker (region/province-city-district, date, time wheels) scrolls each column with `drag` — start and end inside the target column — never with `scroll`, which moves whatever surface is under the gesture and can change the wrong column. After dragging, read the visible value in that column before confirming.\n\nOutcome rules:\n- Worker observations may preserve complete task-relevant record identities for bounded cross-frame reasoning, but never prove completion. Keep each identity associated with its required visible fields.\n- Current control state and related Runtime feedback supersede visual-effect heuristics. Persistent or unrelated warnings are context only.\n- A returned `target_signal.status = off_target` means the marker missed; reobserve and choose a materially corrected target. A `no_effect` result requires inspecting the next frame before retrying. Never repeat an equivalent action without task-relevant progress.\n- Stable page identity, navigation chrome, headings, current values, and explicit commit controls outweigh placeholder text or neighboring labels. A successful mutation does not prove navigation to another surface.\n\nCompletion rules:\n- `state.status = completed | failed` is terminal and must pair with `complete | report_blocked`. Report concrete execution evidence, not a replacement plan.\n- A collector completes on its own evidence: narrow the scope with an exact filter or search first, then traverse until nothing new appears (the filtered list fits the viewport, or further scrolling yields no new rows). State in `state.summary` what established exhaustiveness. Runtime never certifies completeness; if evidence is missing, keep exploring or call `report_blocked`.\n- An operator that consumes a plan array element-wise must call `complete` after EACH element's target UI state is confirmed by the current screenshot or Runtime-observed surface evidence, not after the whole plan. Runtime then advances the cursor to the next element and exposes its bound values; keep iterating until the plan is exhausted.\n- Complete a single-element operator only when the requested UI state is confirmed by the current screenshot or Runtime-observed surface evidence.\n- Collection evidence is what YOU read, not the collection/chunk counts perception reports. Perception may fail to turn a surface (detail page, dialog, non-standard grid) into rows; treat a reported collection as advisory, never as proof of emptiness or a reason to stop. Whenever you read exact records on screen — including from such surfaces — declare them in the decision as `rows`: an array of objects matching the collector's row schema, each recording one record you actually read (e.g. `{\"title\": \"Conference in Tokyo\", \"start\": \"Oct 4\", \"end\": \"Oct 10\"}`). Runtime validates and accumulates them. Never invent values you did not read, and never put reasoning, summaries, or derived answers in `rows`.\n- Do not claim completion from visible pixels alone or from Worker-authored observations.\n\n\n## Application knowledge (read-only execution context)\nUse relevant application facts to choose efficient navigation and interaction strategies. Treat the current screenshot and Observer state as authoritative for what is presently visible.\n# Taodian on Android\n\n- The application may show a splash advertisement after launch; close it before using\n  the application's bottom navigation.\n- `ShoppingCart` is the signed-in cart reached through the bottom-navigation item\n  `购物车`. Its page title is `购物车` and the item count may be shown beside it.\n- Cart item prices are rendered in each item row, sometimes as adjacent currency,\n  integer, and decimal text nodes. They are one logical monetary value.\n- Each cart item row carries the product title. `管理` enters the cart's multi-select\n  editor; select the intended rows, activate `删除选中`, and confirm. Use this grouped\n  path when one deletion request targets multiple items. A row-level delete surface\n  can remain hidden behind row content until explicitly revealed and is not a visible\n  action target merely because UIAutomator reports its bounds.\n- `Orders` is the signed-in order history reached through bottom navigation\n  `我的 → 我的订单` and the explicit `全部 >` link at the right of that section.\n  The section body itself is not an activation target. Each order record displays one\n  `合计` monetary value.\n- If this route opens `用户登录` and no password was supplied, use its `短信登录`\n  tab instead of guessing a password. The phone number is already populated. Activate\n  `获取验证码`; the generated six-digit code is delivered as the newest SMS in the\n  Messages app. Before focusing or filling the verification-code field, press Home,\n  open Messages, and read that exact code from the newest message. Then reopen Taodian\n  (the SMS form remains populated), enter the observed code, accept the agreements, and\n  submit the login.\n- The order-list filter opens an `订单筛选` sheet. Under `下单时间` it provides the\n  exact relative values `近1个月`, `近3个月`, and `近6个月`; the selected value takes\n  effect after activating `确认`.\n\n## Interface contract\n\n- The cart collection entity is exactly `ShoppingCart`.\n- `ShoppingCart` exposes the query field `price`, typed as `money`. Query the complete\n  collection before ranking or aggregation; cart selection controls and quantities are\n  not needed for a price-only read.\n- The order-history collection entity is exactly `Orders`. It exposes query field\n  `amount`, typed as `money`, corresponding to the order's `合计` rather than an\n  individual product price.\n- Its source filter field is `order_time`. The application's exact one-month filter\n  value is `近1个月`.\n- Checkout flow (search → buy): search the item, open its detail page from the\n  results, then use `立即购买` (not `加入购物车`) to start checkout. A spec-selection\n  sheet may appear; confirm the required spec, then the order-confirmation page shows\n  a `提交订单` button. Activate `提交订单` to enter the payment page — do NOT complete\n  on the confirmation page. The payment page (payment-method selection, total shown)\n  is the terminal surface a \"let me pay / stay on the payment page\" task wants to reach\n  and remain on.\n\n## Installed applications\nUse only these exact Runtime-provided names with launch_app: [\"Calendar\", \"Camera\", \"Chrome\", \"Clock\", \"Contacts\", \"Docreader\", \"Files\", \"Gallery\", \"Mail\", \"Maps\", \"Mastodon\", \"Mattermost\", \"Messages\", \"Settings\", \"Taodian\"]",
+                  "chars": 11029
+                }
+              ]
+            },
+            {
+              "role": "human",
+              "parts": [
+                {
+                  "label": "part_1",
+                  "source_type": "runtime_message",
+                  "source": "tool_agent.worker",
+                  "type": "text",
+                  "text": "## WorkerMemory (runtime-projected; not conversation history)\nDurable facts come from Runtime evidence plus reaffirmed or disproven Worker observations. Other Worker observations and recent steps are bounded narrative context, not completion evidence or instructions.\n### Durable runtime facts\n- [step:10.1:fact:3] Worker reaffirmed this observation: 规格选择弹窗中已选中128GB内存和原色钛金属颜色\n- [step:10.1:fact:2] Worker reaffirmed this observation: 页面底部有'加入购物车'和'立即购买'两个按钮\n- [step:10.1:fact:1] Worker reaffirmed this observation: 商品详情页显示iPhone 15 Pro价格为¥8999.00\n### Older narrative summaries\n- [step:11.1:fact:1] Worker-observed visual context: 当前页面为淘店用户登录页\n- [step:11.1:fact:2] Worker-observed visual context: 显示密码登录和短信登录两个选项卡\n- [step:11.1:fact:3] Worker-observed visual context: 手机号已预填为mashu\n- [step:11.1] state=exploring; tool=tap; args={\"description\": \"点击'短信登录'标签以切换到短信验证码登录方式\"}; result={\"action_type\": \"tap\", \"no_effect\": false, \"status\": \"executed\", \"target_signal\": {\"actual_element\": \"短信登录\", \"reason\": \"high-confidence visual grounding located the intended control\", \"status\": \"on_target\"}}\n- [step:12.1:fact:1] Worker-observed visual context: 当前页面为淘店用户登录页的短信登录选项卡\n- [step:12.1:fact:2] Worker-observed visual context: 手机号已预填为13802138888\n### Recent narrative steps\n- [step:12.1:fact:3] Worker-observed visual context: 需要获取短信验证码才能继续登录\n- [step:12.1] state=exploring; tool=tap; args={\"description\": \"点击蓝色的'获取验证码'按钮以发送短信验证码\"}; result={\"action_type\": \"tap\", \"no_effect\": false, \"status\": \"executed\", \"target_signal\": {\"actual_element\": \"获取验证码\", \"reason\": \"high-confidence visual grounding located the intended control\", \"status\": \"on_target\"}}\n- [step:13.1:fact:1] Worker-observed visual context: 当前显示'验证码已发送'弹窗，提示验证码已通过短信发送到手机13802138888\n- [step:13.1] state=exploring; tool=tap; args={\"description\": \"点击弹窗右下角的OK按钮以关闭验证码已发送提示\"}; result={\"action_type\": \"tap\", \"no_effect\": false, \"status\": \"executed\", \"target_signal\": {\"actual_element\": \"OK\", \"reason\": \"high-confidence visual grounding located the intended control\", \"status\": \"on_target\"}}\n\n## Current MaterializedFrame (compact semantic projection)\nRuntime-owned collection/data values remain private. Visible collection cell text is exact current-frame evidence, but cells do not declare record boundaries; clipped cells may be incomplete. For every control rect, x/y are its normalized center coordinates; never add half of w/h to derive the action point.\n{\"frame_id\": \"frame:14\", \"readiness\": \"ready\", \"readiness_reason\": \"\", \"task_reference_time\": {\"platform\": \"android\", \"local_datetime\": \"2025-10-16T12:01:01+00:00\", \"timezone\": \"GMT\", \"utc_offset\": \"+00:00\", \"source\": \"android_adb\", \"confidence\": \"authoritative\", \"captured_at\": \"2026-08-19T05:17:39.789+00:00\", \"fallback_reason\": \"\"}, \"url\": \"\", \"title\": \"\", \"applied_filters\": {}, \"requirement_scopes\": {}, \"scope_blockers\": {}, \"observed_choice_state\": [], \"candidate_set_state\": {}, \"visible_collection_regions\": [], \"structured_surfaces\": [], \"chunks\": [], \"collections\": [], \"missing_requirements\": []}\n\n## Current Worker attempt\n`approach` is binding for this attempt. Choose actions that execute it; do not continue a different source, application, or mechanism visible in the frame. When `phase` is `start`, the first action's visible target or destination must identify the approach; the residue surface's usefulness for the goal is irrelevant. The goal and output contract are immutable. Runtime actions are generic capabilities, and named input bindings inject private Master-routed values.\n{\"approach\": \"taodian shopping cart checkout flow\", \"phase\": \"continue\", \"profile\": \"operator\", \"goal\": \"在淘店购物车中选中iPhone 15 Pro并完成下单，收货地址填写浙江省杭州市余杭区阿里巴巴西溪C区，收件人张先生，电话13800138000；如需登录则通过短信验证码完成认证；流程进行到支付页面时停止并交由用户操作\", \"success_criteria\": [\"订单确认页已提交且当前停留在支付页面，收货信息为浙江省杭州市余杭区阿里巴巴西溪C区、收件人张先生、电话13800138000，商品为iPhone 15 Pro\"], \"input_bindings\": [], \"data_requirements\": [], \"input_names\": []}\nOperator rules for this attempt:\n- Treat multi-select and configuration goals as exact sets; validate any review surface before committing.\n- `candidate_set_state.status = exhausted` is guarded Runtime evidence; an initially empty or filtered selector is not exhausted.\n- Finish comparison evidence before mutation, skip excluded or already processed identities, and advance only through explicitly remaining candidates.\n- Observe the post-action frame before repeating or completing a mutation.",
+                  "chars": 4384
+                },
+                {
+                  "label": "screenshot",
+                  "source_type": "runtime_image",
+                  "source": "tool_agent.worker",
+                  "type": "image",
+                  "text": "[image_url omitted from diagnostic log]",
+                  "chars": 39
+                }
+              ]
+            }
+          ]
+        }
+      ]
+    },
+    {
+      "index": 89,
+      "event": "worker_decision",
+      "worker_id": "checkout_iphone_15_pro",
+      "frame_id": "frame:15",
+      "step": 15,
+      "tool": "continue_with_actions",
+      "args": {
+        "actions": [
+          {
+            "name": "launch_app",
+            "args": {
+              "app": "Taodian"
+            }
+          }
+        ]
+      },
+      "state": {
+        "status": "exploring",
+        "summary": "从Messages应用中读取到验证码533396，准备返回淘店应用输入验证码完成登录",
+        "established_facts": [
+          "短信验证码为533396"
+        ]
+      },
+      "replay_context": {
+        "version": 2,
+        "worker_spec": {
+          "profile": "operator",
+          "goal": "在淘店购物车中选中iPhone 15 Pro并完成下单，收货地址填写浙江省杭州市余杭区阿里巴巴西溪C区，收件人张先生，电话13800138000；如需登录则通过短信验证码完成认证；流程进行到支付页面时停止并交由用户操作",
+          "success_criteria": [
+            "订单确认页已提交且当前停留在支付页面，收货信息为浙江省杭州市余杭区阿里巴巴西溪C区、收件人张先生、电话13800138000，商品为iPhone 15 Pro"
+          ],
+          "input_refs": {},
+          "input_bindings": [],
+          "data_requirements": [],
+          "strategy": {
+            "approach": "taodian shopping cart checkout flow"
+          }
+        },
+        "actions": [
+          {
+            "name": "app_switch",
+            "capability": "app_switch",
+            "description": "Open the platform application switcher.",
+            "fixed_args": {},
+            "input_args": {},
+            "exposed_args": []
+          },
+          {
+            "name": "back",
+            "capability": "back",
+            "description": "Navigate back once within the current execution path.",
+            "fixed_args": {},
+            "input_args": {},
+            "exposed_args": []
+          },
+          {
+            "name": "clear_text",
+            "capability": "clear_text",
+            "description": "Clear the currently focused text control.",
+            "fixed_args": {},
+            "input_args": {},
+            "exposed_args": []
+          },
+          {
+            "name": "drag",
+            "capability": "drag",
+            "description": "Drag one visible object to one visible destination.",
+            "fixed_args": {},
+            "input_args": {},
+            "exposed_args": [
+              "x",
+              "y",
+              "to_x",
+              "to_y",
+              "duration_ms",
+              "description"
+            ]
+          },
+          {
+            "name": "home",
+            "capability": "home",
+            "description": "Return to the platform home surface.",
+            "fixed_args": {},
+            "input_args": {},
+            "exposed_args": []
+          },
+          {
+            "name": "launch_app",
+            "capability": "launch_app",
+            "description": "Launch one exact Runtime-provided installed application.",
+            "fixed_args": {},
+            "input_args": {},
+            "exposed_args": [
+              "app"
+            ]
+          },
+          {
+            "name": "long_press",
+            "capability": "long_press",
+            "description": "Long-press one visible control or item.",
+            "fixed_args": {},
+            "input_args": {},
+            "exposed_args": [
+              "x",
+              "y",
+              "duration_ms",
+              "description"
+            ]
+          },
+          {
+            "name": "press_enter",
+            "capability": "press_enter",
+            "description": "Press Enter for the currently focused control.",
+            "fixed_args": {},
+            "input_args": {},
+            "exposed_args": []
+          },
+          {
+            "name": "scroll",
+            "capability": "scroll",
+            "description": "Traverse an ordinary visible collection or reveal a target outside the viewport. Never use this on a relevance-ordered web/search result page to hunt for later results; leading results decide query quality, so reformulate or report instead.",
+            "fixed_args": {},
+            "input_args": {},
+            "exposed_args": [
+              "direction",
+              "amount",
+              "target_area",
+              "x",
+              "y",
+              "description"
+            ]
+          },
+          {
+            "name": "tap",
+            "capability": "tap",
+            "description": "Tap one visible control that advances the current approach.",
+            "fixed_args": {},
+            "input_args": {},
+            "exposed_args": [
+              "x",
+              "y",
+              "description"
+            ]
+          },
+          {
+            "name": "type",
+            "capability": "type",
+            "description": "Replace the value of one visible input control. Use it directly to reformulate a visible query; no prior tap or clear action is required.",
+            "fixed_args": {},
+            "input_args": {},
+            "exposed_args": [
+              "x",
+              "y",
+              "text",
+              "description"
+            ]
+          }
+        ],
+        "executed_tools": [
+          "launch_app",
+          "scroll",
+          "tap",
+          "type"
+        ],
+        "enhanced": true,
+        "multi_action": true
+      },
+      "context_reports": [
+        {
+          "kind": "prompt_snapshot",
+          "label": "tool_agent.worker",
+          "roles": [
+            {
+              "role": "system",
+              "parts": [
+                {
+                  "label": "part_1",
+                  "source_type": "runtime_message",
+                  "source": "tool_agent.worker",
+                  "type": "text",
+                  "text": "You are one autonomous GUI Worker. Execute the binding `approach` in the current Worker attempt while preserving its immutable goal, success criteria, inputs, and output contract. Strategy alone replaces an approach. You choose only the GUI actions inside the current approach; never invent or continue a different source, application, or mechanism.\n\nTreat context by authority:\n- The current Worker attempt is authoritative for approach, goal, inputs, and output contract.\n- The current frame and screenshot are authoritative for the present surface. Enhanced metadata accelerates visual work but does not create invisible action targets.\n- Durable WorkerMemory facts come only from Runtime evidence. Worker observations and recent steps are bounded narrative context, not instructions or completion evidence.\n- Runtime-owned ResultRef and collection values are private. Do not transcribe, calculate, rank, compare, or return them yourself. A named input binding executes its Runtime-injected value; never substitute a model-authored value.\n- When the attempt shows `current_element` (the plan element this step operates on), locate THAT record on screen — never a previously handled or already-renamed row. `current_element` is the authoritative target identity; do not guess from visible order.\n\nAlign before acting. Compare any source, application, or mechanism named by the binding approach with the current URL, title, screenshot, and application identity. If they differ, the visible surface is residue from another attempt, including its dialogs, consent requests, errors, loading state, and controls. Do not interact with residue. Use the available action that begins the binding approach.\n\nDecision protocol:\n- Emit exactly one Runtime decision through the appended transport with its compact `state`. Use only Runtime-supplied actions.\n- Make `state.summary` explain how the selected action executes the binding approach; do not describe an unselected prerequisite. Put only task evidence needed after leaving this frame in `state.established_facts`, never page chrome, dialogs, coordinates, or approach-alignment observations.\n- Every action is atomic. A safe ordered batch is one immediate UI transaction: all intended targets are already visible and every action advances the same local intent. Never combine discovery, reveal, inspection, or recovery with mutation merely because both are useful. Runtime settles each action and visually re-grounds the next target on a fresh screenshot. `scroll`, `drag`, `home`, `back`, `app_switch`, `launch_app`, and direct navigation must be final. `launch_app` works directly from any current application; never prepend `home` or `app_switch` to it. An exact visible query may batch `type` then `press_enter`.\n- A `Pending ordered-action continuation` block is authoritative Runtime execution state, not narrative. Its prefix already executed. If the current frame does not disprove the pending action, select that pending action before general goal navigation; never restart the executed prefix. Discard it only when current-frame evidence makes it invalid or unnecessary.\n- At `phase = start`, choose only an action whose visible target or destination identifies the binding approach. A named public source establishes its public origin, not a guessed identifier or deep route. Direct navigation otherwise requires an exact destination established by the attempt, application knowledge, or current page.\n- A frame marked `loading` or `blank` is not a spatial action target. If this Worker already acted and the resulting surface did not materialize, call `report_blocked` with that evidence; do not reload, resubmit, wait arbitrarily, or choose another approach.\n- If the approach needs a capability absent from the adapter, call `report_blocked` with the missing capability and current evidence. Never substitute an unrelated action.\n- Never guess credentials, authentication codes, hidden identifiers, selectors, or geometry. Read a transient code from its delivery surface before entry. Never interact with a human-presence challenge.\n- After reading a verification/authentication code from its delivery surface, record the exact code in `state.established_facts` (e.g. \"验证码为 463599\"). Runtime's auth-code guard recognises the code only when you state it there — writing it only in your narrative is treated as unobserved and your entry is blocked.\n- Spatial targets must be visible and unoccluded. Coordinates are normalized 0..999 centers. Describe exactly one visible control, and do not relabel a nearby or generic control as the intended target.\n- A multi-column picker (region/province-city-district, date, time wheels) scrolls each column with `drag` — start and end inside the target column — never with `scroll`, which moves whatever surface is under the gesture and can change the wrong column. After dragging, read the visible value in that column before confirming.\n\nOutcome rules:\n- Worker observations may preserve complete task-relevant record identities for bounded cross-frame reasoning, but never prove completion. Keep each identity associated with its required visible fields.\n- Current control state and related Runtime feedback supersede visual-effect heuristics. Persistent or unrelated warnings are context only.\n- A returned `target_signal.status = off_target` means the marker missed; reobserve and choose a materially corrected target. A `no_effect` result requires inspecting the next frame before retrying. Never repeat an equivalent action without task-relevant progress.\n- Stable page identity, navigation chrome, headings, current values, and explicit commit controls outweigh placeholder text or neighboring labels. A successful mutation does not prove navigation to another surface.\n\nCompletion rules:\n- `state.status = completed | failed` is terminal and must pair with `complete | report_blocked`. Report concrete execution evidence, not a replacement plan.\n- A collector completes on its own evidence: narrow the scope with an exact filter or search first, then traverse until nothing new appears (the filtered list fits the viewport, or further scrolling yields no new rows). State in `state.summary` what established exhaustiveness. Runtime never certifies completeness; if evidence is missing, keep exploring or call `report_blocked`.\n- An operator that consumes a plan array element-wise must call `complete` after EACH element's target UI state is confirmed by the current screenshot or Runtime-observed surface evidence, not after the whole plan. Runtime then advances the cursor to the next element and exposes its bound values; keep iterating until the plan is exhausted.\n- Complete a single-element operator only when the requested UI state is confirmed by the current screenshot or Runtime-observed surface evidence.\n- Collection evidence is what YOU read, not the collection/chunk counts perception reports. Perception may fail to turn a surface (detail page, dialog, non-standard grid) into rows; treat a reported collection as advisory, never as proof of emptiness or a reason to stop. Whenever you read exact records on screen — including from such surfaces — declare them in the decision as `rows`: an array of objects matching the collector's row schema, each recording one record you actually read (e.g. `{\"title\": \"Conference in Tokyo\", \"start\": \"Oct 4\", \"end\": \"Oct 10\"}`). Runtime validates and accumulates them. Never invent values you did not read, and never put reasoning, summaries, or derived answers in `rows`.\n- Do not claim completion from visible pixels alone or from Worker-authored observations.\n\n\n## Application knowledge (read-only execution context)\nUse relevant application facts to choose efficient navigation and interaction strategies. Treat the current screenshot and Observer state as authoritative for what is presently visible.\n# Taodian on Android\n\n- The application may show a splash advertisement after launch; close it before using\n  the application's bottom navigation.\n- `ShoppingCart` is the signed-in cart reached through the bottom-navigation item\n  `购物车`. Its page title is `购物车` and the item count may be shown beside it.\n- Cart item prices are rendered in each item row, sometimes as adjacent currency,\n  integer, and decimal text nodes. They are one logical monetary value.\n- Each cart item row carries the product title. `管理` enters the cart's multi-select\n  editor; select the intended rows, activate `删除选中`, and confirm. Use this grouped\n  path when one deletion request targets multiple items. A row-level delete surface\n  can remain hidden behind row content until explicitly revealed and is not a visible\n  action target merely because UIAutomator reports its bounds.\n- `Orders` is the signed-in order history reached through bottom navigation\n  `我的 → 我的订单` and the explicit `全部 >` link at the right of that section.\n  The section body itself is not an activation target. Each order record displays one\n  `合计` monetary value.\n- If this route opens `用户登录` and no password was supplied, use its `短信登录`\n  tab instead of guessing a password. The phone number is already populated. Activate\n  `获取验证码`; the generated six-digit code is delivered as the newest SMS in the\n  Messages app. Before focusing or filling the verification-code field, press Home,\n  open Messages, and read that exact code from the newest message. Then reopen Taodian\n  (the SMS form remains populated), enter the observed code, accept the agreements, and\n  submit the login.\n- The order-list filter opens an `订单筛选` sheet. Under `下单时间` it provides the\n  exact relative values `近1个月`, `近3个月`, and `近6个月`; the selected value takes\n  effect after activating `确认`.\n\n## Interface contract\n\n- The cart collection entity is exactly `ShoppingCart`.\n- `ShoppingCart` exposes the query field `price`, typed as `money`. Query the complete\n  collection before ranking or aggregation; cart selection controls and quantities are\n  not needed for a price-only read.\n- The order-history collection entity is exactly `Orders`. It exposes query field\n  `amount`, typed as `money`, corresponding to the order's `合计` rather than an\n  individual product price.\n- Its source filter field is `order_time`. The application's exact one-month filter\n  value is `近1个月`.\n- Checkout flow (search → buy): search the item, open its detail page from the\n  results, then use `立即购买` (not `加入购物车`) to start checkout. A spec-selection\n  sheet may appear; confirm the required spec, then the order-confirmation page shows\n  a `提交订单` button. Activate `提交订单` to enter the payment page — do NOT complete\n  on the confirmation page. The payment page (payment-method selection, total shown)\n  is the terminal surface a \"let me pay / stay on the payment page\" task wants to reach\n  and remain on.\n\n## Installed applications\nUse only these exact Runtime-provided names with launch_app: [\"Calendar\", \"Camera\", \"Chrome\", \"Clock\", \"Contacts\", \"Docreader\", \"Files\", \"Gallery\", \"Mail\", \"Maps\", \"Mastodon\", \"Mattermost\", \"Messages\", \"Settings\", \"Taodian\"]",
+                  "chars": 11029
+                }
+              ]
+            },
+            {
+              "role": "human",
+              "parts": [
+                {
+                  "label": "part_1",
+                  "source_type": "runtime_message",
+                  "source": "tool_agent.worker",
+                  "type": "text",
+                  "text": "## WorkerMemory (runtime-projected; not conversation history)\nDurable facts come from Runtime evidence plus reaffirmed or disproven Worker observations. Other Worker observations and recent steps are bounded narrative context, not completion evidence or instructions.\n### Durable runtime facts\n- [step:14.1:fact:1] Worker reaffirmed this observation: 当前页面为淘店用户登录页的短信登录选项卡\n- [step:10.1:fact:3] Worker reaffirmed this observation: 规格选择弹窗中已选中128GB内存和原色钛金属颜色\n- [step:10.1:fact:2] Worker reaffirmed this observation: 页面底部有'加入购物车'和'立即购买'两个按钮\n- [step:10.1:fact:1] Worker reaffirmed this observation: 商品详情页显示iPhone 15 Pro价格为¥8999.00\n### Older narrative summaries\n- [step:12.1:fact:1] Worker-observed visual context: 当前页面为淘店用户登录页的短信登录选项卡\n- [step:12.1:fact:2] Worker-observed visual context: 手机号已预填为13802138888\n- [step:12.1:fact:3] Worker-observed visual context: 需要获取短信验证码才能继续登录\n- [step:12.1] state=exploring; tool=tap; args={\"description\": \"点击蓝色的'获取验证码'按钮以发送短信验证码\"}; result={\"action_type\": \"tap\", \"no_effect\": false, \"status\": \"executed\", \"target_signal\": {\"actual_element\": \"获取验证码\", \"reason\": \"high-confidence visual grounding located the intended control\", \"status\": \"on_target\"}}\n- [step:13.1:fact:1] Worker-observed visual context: 当前显示'验证码已发送'弹窗，提示验证码已通过短信发送到手机13802138888\n- [step:13.1] state=exploring; tool=tap; args={\"description\": \"点击弹窗右下角的OK按钮以关闭验证码已发送提示\"}; result={\"action_type\": \"tap\", \"no_effect\": false, \"status\": \"executed\", \"target_signal\": {\"actual_element\": \"OK\", \"reason\": \"high-confidence visual grounding located the intended control\", \"status\": \"on_target\"}}\n### Recent narrative steps\n- [step:14.1:fact:2] Worker-observed visual context: 手机号13802138888已预填\n- [step:14.1:fact:3] Worker-observed visual context: 验证码已发送提示已关闭\n- [step:14.1:fact:4] Worker-observed visual context: 获取验证码按钮显示17s后重发\n- [step:14.1] state=exploring; tool=launch_app; args={\"app\": \"Messages\"}; result={\"action_type\": \"launch_app\", \"no_effect\": false, \"status\": \"executed\"}\n\n## Current MaterializedFrame (compact semantic projection)\nRuntime-owned collection/data values remain private. Visible collection cell text is exact current-frame evidence, but cells do not declare record boundaries; clipped cells may be incomplete. For every control rect, x/y are its normalized center coordinates; never add half of w/h to derive the action point.\n{\"frame_id\": \"frame:15\", \"readiness\": \"ready\", \"readiness_reason\": \"\", \"task_reference_time\": {\"platform\": \"android\", \"local_datetime\": \"2025-10-16T12:01:01+00:00\", \"timezone\": \"GMT\", \"utc_offset\": \"+00:00\", \"source\": \"android_adb\", \"confidence\": \"authoritative\", \"captured_at\": \"2026-08-19T05:17:39.789+00:00\", \"fallback_reason\": \"\"}, \"url\": \"\", \"title\": \"\", \"applied_filters\": {}, \"requirement_scopes\": {}, \"scope_blockers\": {}, \"observed_choice_state\": [], \"candidate_set_state\": {}, \"visible_collection_regions\": [], \"structured_surfaces\": [], \"chunks\": [], \"collections\": [], \"missing_requirements\": []}\n\n## Current Worker attempt\n`approach` is binding for this attempt. Choose actions that execute it; do not continue a different source, application, or mechanism visible in the frame. When `phase` is `start`, the first action's visible target or destination must identify the approach; the residue surface's usefulness for the goal is irrelevant. The goal and output contract are immutable. Runtime actions are generic capabilities, and named input bindings inject private Master-routed values.\n{\"approach\": \"taodian shopping cart checkout flow\", \"phase\": \"continue\", \"profile\": \"operator\", \"goal\": \"在淘店购物车中选中iPhone 15 Pro并完成下单，收货地址填写浙江省杭州市余杭区阿里巴巴西溪C区，收件人张先生，电话13800138000；如需登录则通过短信验证码完成认证；流程进行到支付页面时停止并交由用户操作\", \"success_criteria\": [\"订单确认页已提交且当前停留在支付页面，收货信息为浙江省杭州市余杭区阿里巴巴西溪C区、收件人张先生、电话13800138000，商品为iPhone 15 Pro\"], \"input_bindings\": [], \"data_requirements\": [], \"input_names\": []}\nOperator rules for this attempt:\n- Treat multi-select and configuration goals as exact sets; validate any review surface before committing.\n- `candidate_set_state.status = exhausted` is guarded Runtime evidence; an initially empty or filtered selector is not exhausted.\n- Finish comparison evidence before mutation, skip excluded or already processed identities, and advance only through explicitly remaining candidates.\n- Observe the post-action frame before repeating or completing a mutation.",
+                  "chars": 4313
+                },
+                {
+                  "label": "screenshot",
+                  "source_type": "runtime_image",
+                  "source": "tool_agent.worker",
+                  "type": "image",
+                  "text": "[image_url omitted from diagnostic log]",
+                  "chars": 39
+                }
+              ]
+            }
+          ]
+        }
+      ]
+    },
+    {
+      "index": 94,
+      "event": "worker_decision",
+      "worker_id": "checkout_iphone_15_pro",
+      "frame_id": "frame:16",
+      "step": 16,
+      "tool": "continue_with_actions",
+      "args": {
+        "actions": [
+          {
+            "name": "type",
+            "args": {
+              "x": 347,
+              "y": 487,
+              "text": "533396",
+              "description": "在'请输入验证码'输入框中填入短信验证码533396"
+            },
+            "_control_ref": ""
+          },
+          {
+            "name": "tap",
+            "args": {
+              "x": 82,
+              "y": 656,
+              "description": "勾选'已阅读并同意相关协议'复选框以启用登录按钮"
+            },
+            "_control_ref": ""
+          },
+          {
+            "name": "tap",
+            "args": {
+              "x": 497,
+              "y": 590,
+              "description": "点击橙色的'同意协议并登录'按钮提交短信验证码登录"
+            },
+            "_control_ref": ""
+          }
+        ]
+      },
+      "state": {
+        "status": "exploring",
+        "summary": "在淘店短信登录页输入已获取的验证码533396，准备提交登录",
+        "established_facts": [
+          "当前页面为淘店用户登录页的短信登录选项卡",
+          "手机号13802138888已预填",
+          "短信验证码为533396"
+        ]
+      },
+      "replay_context": {
+        "version": 2,
+        "worker_spec": {
+          "profile": "operator",
+          "goal": "在淘店购物车中选中iPhone 15 Pro并完成下单，收货地址填写浙江省杭州市余杭区阿里巴巴西溪C区，收件人张先生，电话13800138000；如需登录则通过短信验证码完成认证；流程进行到支付页面时停止并交由用户操作",
+          "success_criteria": [
+            "订单确认页已提交且当前停留在支付页面，收货信息为浙江省杭州市余杭区阿里巴巴西溪C区、收件人张先生、电话13800138000，商品为iPhone 15 Pro"
+          ],
+          "input_refs": {},
+          "input_bindings": [],
+          "data_requirements": [],
+          "strategy": {
+            "approach": "taodian shopping cart checkout flow"
+          }
+        },
+        "actions": [
+          {
+            "name": "app_switch",
+            "capability": "app_switch",
+            "description": "Open the platform application switcher.",
+            "fixed_args": {},
+            "input_args": {},
+            "exposed_args": []
+          },
+          {
+            "name": "back",
+            "capability": "back",
+            "description": "Navigate back once within the current execution path.",
+            "fixed_args": {},
+            "input_args": {},
+            "exposed_args": []
+          },
+          {
+            "name": "clear_text",
+            "capability": "clear_text",
+            "description": "Clear the currently focused text control.",
+            "fixed_args": {},
+            "input_args": {},
+            "exposed_args": []
+          },
+          {
+            "name": "drag",
+            "capability": "drag",
+            "description": "Drag one visible object to one visible destination.",
+            "fixed_args": {},
+            "input_args": {},
+            "exposed_args": [
+              "x",
+              "y",
+              "to_x",
+              "to_y",
+              "duration_ms",
+              "description"
+            ]
+          },
+          {
+            "name": "home",
+            "capability": "home",
+            "description": "Return to the platform home surface.",
+            "fixed_args": {},
+            "input_args": {},
+            "exposed_args": []
+          },
+          {
+            "name": "launch_app",
+            "capability": "launch_app",
+            "description": "Launch one exact Runtime-provided installed application.",
+            "fixed_args": {},
+            "input_args": {},
+            "exposed_args": [
+              "app"
+            ]
+          },
+          {
+            "name": "long_press",
+            "capability": "long_press",
+            "description": "Long-press one visible control or item.",
+            "fixed_args": {},
+            "input_args": {},
+            "exposed_args": [
+              "x",
+              "y",
+              "duration_ms",
+              "description"
+            ]
+          },
+          {
+            "name": "press_enter",
+            "capability": "press_enter",
+            "description": "Press Enter for the currently focused control.",
+            "fixed_args": {},
+            "input_args": {},
+            "exposed_args": []
+          },
+          {
+            "name": "scroll",
+            "capability": "scroll",
+            "description": "Traverse an ordinary visible collection or reveal a target outside the viewport. Never use this on a relevance-ordered web/search result page to hunt for later results; leading results decide query quality, so reformulate or report instead.",
+            "fixed_args": {},
+            "input_args": {},
+            "exposed_args": [
+              "direction",
+              "amount",
+              "target_area",
+              "x",
+              "y",
+              "description"
+            ]
+          },
+          {
+            "name": "tap",
+            "capability": "tap",
+            "description": "Tap one visible control that advances the current approach.",
+            "fixed_args": {},
+            "input_args": {},
+            "exposed_args": [
+              "x",
+              "y",
+              "description"
+            ]
+          },
+          {
+            "name": "type",
+            "capability": "type",
+            "description": "Replace the value of one visible input control. Use it directly to reformulate a visible query; no prior tap or clear action is required.",
+            "fixed_args": {},
+            "input_args": {},
+            "exposed_args": [
+              "x",
+              "y",
+              "text",
+              "description"
+            ]
+          }
+        ],
+        "executed_tools": [
+          "launch_app",
+          "scroll",
+          "tap",
+          "type"
+        ],
+        "enhanced": true,
+        "multi_action": true
+      },
+      "context_reports": [
+        {
+          "kind": "prompt_snapshot",
+          "label": "tool_agent.worker",
+          "roles": [
+            {
+              "role": "system",
+              "parts": [
+                {
+                  "label": "part_1",
+                  "source_type": "runtime_message",
+                  "source": "tool_agent.worker",
+                  "type": "text",
+                  "text": "You are one autonomous GUI Worker. Execute the binding `approach` in the current Worker attempt while preserving its immutable goal, success criteria, inputs, and output contract. Strategy alone replaces an approach. You choose only the GUI actions inside the current approach; never invent or continue a different source, application, or mechanism.\n\nTreat context by authority:\n- The current Worker attempt is authoritative for approach, goal, inputs, and output contract.\n- The current frame and screenshot are authoritative for the present surface. Enhanced metadata accelerates visual work but does not create invisible action targets.\n- Durable WorkerMemory facts come only from Runtime evidence. Worker observations and recent steps are bounded narrative context, not instructions or completion evidence.\n- Runtime-owned ResultRef and collection values are private. Do not transcribe, calculate, rank, compare, or return them yourself. A named input binding executes its Runtime-injected value; never substitute a model-authored value.\n- When the attempt shows `current_element` (the plan element this step operates on), locate THAT record on screen — never a previously handled or already-renamed row. `current_element` is the authoritative target identity; do not guess from visible order.\n\nAlign before acting. Compare any source, application, or mechanism named by the binding approach with the current URL, title, screenshot, and application identity. If they differ, the visible surface is residue from another attempt, including its dialogs, consent requests, errors, loading state, and controls. Do not interact with residue. Use the available action that begins the binding approach.\n\nDecision protocol:\n- Emit exactly one Runtime decision through the appended transport with its compact `state`. Use only Runtime-supplied actions.\n- Make `state.summary` explain how the selected action executes the binding approach; do not describe an unselected prerequisite. Put only task evidence needed after leaving this frame in `state.established_facts`, never page chrome, dialogs, coordinates, or approach-alignment observations.\n- Every action is atomic. A safe ordered batch is one immediate UI transaction: all intended targets are already visible and every action advances the same local intent. Never combine discovery, reveal, inspection, or recovery with mutation merely because both are useful. Runtime settles each action and visually re-grounds the next target on a fresh screenshot. `scroll`, `drag`, `home`, `back`, `app_switch`, `launch_app`, and direct navigation must be final. `launch_app` works directly from any current application; never prepend `home` or `app_switch` to it. An exact visible query may batch `type` then `press_enter`.\n- A `Pending ordered-action continuation` block is authoritative Runtime execution state, not narrative. Its prefix already executed. If the current frame does not disprove the pending action, select that pending action before general goal navigation; never restart the executed prefix. Discard it only when current-frame evidence makes it invalid or unnecessary.\n- At `phase = start`, choose only an action whose visible target or destination identifies the binding approach. A named public source establishes its public origin, not a guessed identifier or deep route. Direct navigation otherwise requires an exact destination established by the attempt, application knowledge, or current page.\n- A frame marked `loading` or `blank` is not a spatial action target. If this Worker already acted and the resulting surface did not materialize, call `report_blocked` with that evidence; do not reload, resubmit, wait arbitrarily, or choose another approach.\n- If the approach needs a capability absent from the adapter, call `report_blocked` with the missing capability and current evidence. Never substitute an unrelated action.\n- Never guess credentials, authentication codes, hidden identifiers, selectors, or geometry. Read a transient code from its delivery surface before entry. Never interact with a human-presence challenge.\n- After reading a verification/authentication code from its delivery surface, record the exact code in `state.established_facts` (e.g. \"验证码为 463599\"). Runtime's auth-code guard recognises the code only when you state it there — writing it only in your narrative is treated as unobserved and your entry is blocked.\n- Spatial targets must be visible and unoccluded. Coordinates are normalized 0..999 centers. Describe exactly one visible control, and do not relabel a nearby or generic control as the intended target.\n- A multi-column picker (region/province-city-district, date, time wheels) scrolls each column with `drag` — start and end inside the target column — never with `scroll`, which moves whatever surface is under the gesture and can change the wrong column. After dragging, read the visible value in that column before confirming.\n\nOutcome rules:\n- Worker observations may preserve complete task-relevant record identities for bounded cross-frame reasoning, but never prove completion. Keep each identity associated with its required visible fields.\n- Current control state and related Runtime feedback supersede visual-effect heuristics. Persistent or unrelated warnings are context only.\n- A returned `target_signal.status = off_target` means the marker missed; reobserve and choose a materially corrected target. A `no_effect` result requires inspecting the next frame before retrying. Never repeat an equivalent action without task-relevant progress.\n- Stable page identity, navigation chrome, headings, current values, and explicit commit controls outweigh placeholder text or neighboring labels. A successful mutation does not prove navigation to another surface.\n\nCompletion rules:\n- `state.status = completed | failed` is terminal and must pair with `complete | report_blocked`. Report concrete execution evidence, not a replacement plan.\n- A collector completes on its own evidence: narrow the scope with an exact filter or search first, then traverse until nothing new appears (the filtered list fits the viewport, or further scrolling yields no new rows). State in `state.summary` what established exhaustiveness. Runtime never certifies completeness; if evidence is missing, keep exploring or call `report_blocked`.\n- An operator that consumes a plan array element-wise must call `complete` after EACH element's target UI state is confirmed by the current screenshot or Runtime-observed surface evidence, not after the whole plan. Runtime then advances the cursor to the next element and exposes its bound values; keep iterating until the plan is exhausted.\n- Complete a single-element operator only when the requested UI state is confirmed by the current screenshot or Runtime-observed surface evidence.\n- Collection evidence is what YOU read, not the collection/chunk counts perception reports. Perception may fail to turn a surface (detail page, dialog, non-standard grid) into rows; treat a reported collection as advisory, never as proof of emptiness or a reason to stop. Whenever you read exact records on screen — including from such surfaces — declare them in the decision as `rows`: an array of objects matching the collector's row schema, each recording one record you actually read (e.g. `{\"title\": \"Conference in Tokyo\", \"start\": \"Oct 4\", \"end\": \"Oct 10\"}`). Runtime validates and accumulates them. Never invent values you did not read, and never put reasoning, summaries, or derived answers in `rows`.\n- Do not claim completion from visible pixels alone or from Worker-authored observations.\n\n\n## Application knowledge (read-only execution context)\nUse relevant application facts to choose efficient navigation and interaction strategies. Treat the current screenshot and Observer state as authoritative for what is presently visible.\n# Taodian on Android\n\n- The application may show a splash advertisement after launch; close it before using\n  the application's bottom navigation.\n- `ShoppingCart` is the signed-in cart reached through the bottom-navigation item\n  `购物车`. Its page title is `购物车` and the item count may be shown beside it.\n- Cart item prices are rendered in each item row, sometimes as adjacent currency,\n  integer, and decimal text nodes. They are one logical monetary value.\n- Each cart item row carries the product title. `管理` enters the cart's multi-select\n  editor; select the intended rows, activate `删除选中`, and confirm. Use this grouped\n  path when one deletion request targets multiple items. A row-level delete surface\n  can remain hidden behind row content until explicitly revealed and is not a visible\n  action target merely because UIAutomator reports its bounds.\n- `Orders` is the signed-in order history reached through bottom navigation\n  `我的 → 我的订单` and the explicit `全部 >` link at the right of that section.\n  The section body itself is not an activation target. Each order record displays one\n  `合计` monetary value.\n- If this route opens `用户登录` and no password was supplied, use its `短信登录`\n  tab instead of guessing a password. The phone number is already populated. Activate\n  `获取验证码`; the generated six-digit code is delivered as the newest SMS in the\n  Messages app. Before focusing or filling the verification-code field, press Home,\n  open Messages, and read that exact code from the newest message. Then reopen Taodian\n  (the SMS form remains populated), enter the observed code, accept the agreements, and\n  submit the login.\n- The order-list filter opens an `订单筛选` sheet. Under `下单时间` it provides the\n  exact relative values `近1个月`, `近3个月`, and `近6个月`; the selected value takes\n  effect after activating `确认`.\n\n## Interface contract\n\n- The cart collection entity is exactly `ShoppingCart`.\n- `ShoppingCart` exposes the query field `price`, typed as `money`. Query the complete\n  collection before ranking or aggregation; cart selection controls and quantities are\n  not needed for a price-only read.\n- The order-history collection entity is exactly `Orders`. It exposes query field\n  `amount`, typed as `money`, corresponding to the order's `合计` rather than an\n  individual product price.\n- Its source filter field is `order_time`. The application's exact one-month filter\n  value is `近1个月`.\n- Checkout flow (search → buy): search the item, open its detail page from the\n  results, then use `立即购买` (not `加入购物车`) to start checkout. A spec-selection\n  sheet may appear; confirm the required spec, then the order-confirmation page shows\n  a `提交订单` button. Activate `提交订单` to enter the payment page — do NOT complete\n  on the confirmation page. The payment page (payment-method selection, total shown)\n  is the terminal surface a \"let me pay / stay on the payment page\" task wants to reach\n  and remain on.\n\n## Installed applications\nUse only these exact Runtime-provided names with launch_app: [\"Calendar\", \"Camera\", \"Chrome\", \"Clock\", \"Contacts\", \"Docreader\", \"Files\", \"Gallery\", \"Mail\", \"Maps\", \"Mastodon\", \"Mattermost\", \"Messages\", \"Settings\", \"Taodian\"]",
+                  "chars": 11029
+                }
+              ]
+            },
+            {
+              "role": "human",
+              "parts": [
+                {
+                  "label": "part_1",
+                  "source_type": "runtime_message",
+                  "source": "tool_agent.worker",
+                  "type": "text",
+                  "text": "## WorkerMemory (runtime-projected; not conversation history)\nDurable facts come from Runtime evidence plus reaffirmed or disproven Worker observations. Other Worker observations and recent steps are bounded narrative context, not completion evidence or instructions.\n### Durable runtime facts\n- [step:14.1:fact:1] Worker reaffirmed this observation: 当前页面为淘店用户登录页的短信登录选项卡\n- [step:10.1:fact:3] Worker reaffirmed this observation: 规格选择弹窗中已选中128GB内存和原色钛金属颜色\n- [step:10.1:fact:2] Worker reaffirmed this observation: 页面底部有'加入购物车'和'立即购买'两个按钮\n- [step:10.1:fact:1] Worker reaffirmed this observation: 商品详情页显示iPhone 15 Pro价格为¥8999.00\n### Older narrative summaries\n- [step:12.1:fact:3] Worker-observed visual context: 需要获取短信验证码才能继续登录\n- [step:12.1] state=exploring; tool=tap; args={\"description\": \"点击蓝色的'获取验证码'按钮以发送短信验证码\"}; result={\"action_type\": \"tap\", \"no_effect\": false, \"status\": \"executed\", \"target_signal\": {\"actual_element\": \"获取验证码\", \"reason\": \"high-confidence visual grounding located the intended control\", \"status\": \"on_target\"}}\n- [step:13.1:fact:1] Worker-observed visual context: 当前显示'验证码已发送'弹窗，提示验证码已通过短信发送到手机13802138888\n- [step:13.1] state=exploring; tool=tap; args={\"description\": \"点击弹窗右下角的OK按钮以关闭验证码已发送提示\"}; result={\"action_type\": \"tap\", \"no_effect\": false, \"status\": \"executed\", \"target_signal\": {\"actual_element\": \"OK\", \"reason\": \"high-confidence visual grounding located the intended control\", \"status\": \"on_target\"}}\n- [step:14.1:fact:2] Worker-observed visual context: 手机号13802138888已预填\n- [step:14.1:fact:3] Worker-observed visual context: 验证码已发送提示已关闭\n### Recent narrative steps\n- [step:14.1:fact:4] Worker-observed visual context: 获取验证码按钮显示17s后重发\n- [step:14.1] state=exploring; tool=launch_app; args={\"app\": \"Messages\"}; result={\"action_type\": \"launch_app\", \"no_effect\": false, \"status\": \"executed\"}\n- [step:15.1:fact:1] Worker-observed visual context: 短信验证码为533396\n- [step:15.1] state=exploring; tool=launch_app; args={\"app\": \"Taodian\"}; result={\"action_type\": \"launch_app\", \"no_effect\": false, \"status\": \"executed\"}\n\n## Current MaterializedFrame (compact semantic projection)\nRuntime-owned collection/data values remain private. Visible collection cell text is exact current-frame evidence, but cells do not declare record boundaries; clipped cells may be incomplete. For every control rect, x/y are its normalized center coordinates; never add half of w/h to derive the action point.\n{\"frame_id\": \"frame:16\", \"readiness\": \"ready\", \"readiness_reason\": \"\", \"task_reference_time\": {\"platform\": \"android\", \"local_datetime\": \"2025-10-16T12:01:01+00:00\", \"timezone\": \"GMT\", \"utc_offset\": \"+00:00\", \"source\": \"android_adb\", \"confidence\": \"authoritative\", \"captured_at\": \"2026-08-19T05:17:39.789+00:00\", \"fallback_reason\": \"\"}, \"url\": \"\", \"title\": \"\", \"applied_filters\": {}, \"requirement_scopes\": {}, \"scope_blockers\": {}, \"observed_choice_state\": [], \"candidate_set_state\": {}, \"visible_collection_regions\": [], \"structured_surfaces\": [], \"chunks\": [], \"collections\": [], \"missing_requirements\": []}\n\n## Current Worker attempt\n`approach` is binding for this attempt. Choose actions that execute it; do not continue a different source, application, or mechanism visible in the frame. When `phase` is `start`, the first action's visible target or destination must identify the approach; the residue surface's usefulness for the goal is irrelevant. The goal and output contract are immutable. Runtime actions are generic capabilities, and named input bindings inject private Master-routed values.\n{\"approach\": \"taodian shopping cart checkout flow\", \"phase\": \"continue\", \"profile\": \"operator\", \"goal\": \"在淘店购物车中选中iPhone 15 Pro并完成下单，收货地址填写浙江省杭州市余杭区阿里巴巴西溪C区，收件人张先生，电话13800138000；如需登录则通过短信验证码完成认证；流程进行到支付页面时停止并交由用户操作\", \"success_criteria\": [\"订单确认页已提交且当前停留在支付页面，收货信息为浙江省杭州市余杭区阿里巴巴西溪C区、收件人张先生、电话13800138000，商品为iPhone 15 Pro\"], \"input_bindings\": [], \"data_requirements\": [], \"input_names\": []}\nOperator rules for this attempt:\n- Treat multi-select and configuration goals as exact sets; validate any review surface before committing.\n- `candidate_set_state.status = exhausted` is guarded Runtime evidence; an initially empty or filtered selector is not exhausted.\n- Finish comparison evidence before mutation, skip excluded or already processed identities, and advance only through explicitly remaining candidates.\n- Observe the post-action frame before repeating or completing a mutation.",
+                  "chars": 4385
+                },
+                {
+                  "label": "screenshot",
+                  "source_type": "runtime_image",
+                  "source": "tool_agent.worker",
+                  "type": "image",
+                  "text": "[image_url omitted from diagnostic log]",
+                  "chars": 39
+                }
+              ]
+            }
+          ]
+        }
+      ]
+    },
+    {
+      "index": 138,
+      "event": "worker_decision",
+      "worker_id": "checkout_iphone_15_pro",
+      "frame_id": "frame:23",
+      "step": 23,
+      "tool": "continue_with_actions",
+      "args": {
+        "actions": [
+          {
+            "name": "tap",
+            "args": {
+              "x": 67,
+              "description": "点击iPhone 15 Pro商品左侧的圆形选择框以选中该商品",
+              "y": 693
+            },
+            "_control_ref": ""
+          },
+          {
+            "name": "tap",
+            "args": {
+              "x": 848,
+              "description": "点击右下角橙色结算按钮进入订单确认页面",
+              "y": 913
+            },
+            "_control_ref": ""
+          }
+        ]
+      },
+      "state": {
+        "status": "collecting",
+        "summary": "购物车中已找到iPhone 15 Pro商品，需要选中该商品并点击结算按钮进入下单流程",
+        "established_facts": [
+          "当前购物车页面显示20件商品",
+          "iPhone 15 Pro商品可见，规格为128GB原色钛金属，价格¥8999.00"
+        ]
+      },
+      "replay_context": {
+        "version": 2,
+        "worker_spec": {
+          "profile": "operator",
+          "goal": "在淘店购物车中选中iPhone 15 Pro并完成下单，收货地址填写浙江省杭州市余杭区阿里巴巴西溪C区，收件人张先生，电话13800138000；如需登录则通过短信验证码完成认证；流程进行到支付页面时停止并交由用户操作",
+          "success_criteria": [
+            "订单确认页已提交且当前停留在支付页面，收货信息为浙江省杭州市余杭区阿里巴巴西溪C区、收件人张先生、电话13800138000，商品为iPhone 15 Pro"
+          ],
+          "input_refs": {},
+          "input_bindings": [],
+          "data_requirements": [],
+          "strategy": {
+            "approach": "taodian shopping cart checkout flow"
+          }
+        },
+        "actions": [
+          {
+            "name": "app_switch",
+            "capability": "app_switch",
+            "description": "Open the platform application switcher.",
+            "fixed_args": {},
+            "input_args": {},
+            "exposed_args": []
+          },
+          {
+            "name": "back",
+            "capability": "back",
+            "description": "Navigate back once within the current execution path.",
+            "fixed_args": {},
+            "input_args": {},
+            "exposed_args": []
+          },
+          {
+            "name": "clear_text",
+            "capability": "clear_text",
+            "description": "Clear the currently focused text control.",
+            "fixed_args": {},
+            "input_args": {},
+            "exposed_args": []
+          },
+          {
+            "name": "drag",
+            "capability": "drag",
+            "description": "Drag one visible object to one visible destination.",
+            "fixed_args": {},
+            "input_args": {},
+            "exposed_args": [
+              "x",
+              "y",
+              "to_x",
+              "to_y",
+              "duration_ms",
+              "description"
+            ]
+          },
+          {
+            "name": "home",
+            "capability": "home",
+            "description": "Return to the platform home surface.",
+            "fixed_args": {},
+            "input_args": {},
+            "exposed_args": []
+          },
+          {
+            "name": "launch_app",
+            "capability": "launch_app",
+            "description": "Launch one exact Runtime-provided installed application.",
+            "fixed_args": {},
+            "input_args": {},
+            "exposed_args": [
+              "app"
+            ]
+          },
+          {
+            "name": "long_press",
+            "capability": "long_press",
+            "description": "Long-press one visible control or item.",
+            "fixed_args": {},
+            "input_args": {},
+            "exposed_args": [
+              "x",
+              "y",
+              "duration_ms",
+              "description"
+            ]
+          },
+          {
+            "name": "press_enter",
+            "capability": "press_enter",
+            "description": "Press Enter for the currently focused control.",
+            "fixed_args": {},
+            "input_args": {},
+            "exposed_args": []
+          },
+          {
+            "name": "scroll",
+            "capability": "scroll",
+            "description": "Traverse an ordinary visible collection or reveal a target outside the viewport. Never use this on a relevance-ordered web/search result page to hunt for later results; leading results decide query quality, so reformulate or report instead.",
+            "fixed_args": {},
+            "input_args": {},
+            "exposed_args": [
+              "direction",
+              "amount",
+              "target_area",
+              "x",
+              "y",
+              "description"
+            ]
+          },
+          {
+            "name": "tap",
+            "capability": "tap",
+            "description": "Tap one visible control that advances the current approach.",
+            "fixed_args": {},
+            "input_args": {},
+            "exposed_args": [
+              "x",
+              "y",
+              "description"
+            ]
+          },
+          {
+            "name": "type",
+            "capability": "type",
+            "description": "Replace the value of one visible input control. Use it directly to reformulate a visible query; no prior tap or clear action is required.",
+            "fixed_args": {},
+            "input_args": {},
+            "exposed_args": [
+              "x",
+              "y",
+              "text",
+              "description"
+            ]
+          }
+        ],
+        "executed_tools": [
+          "launch_app",
+          "scroll",
+          "tap",
+          "type"
+        ],
+        "enhanced": true,
+        "multi_action": true
+      },
+      "context_reports": [
+        {
+          "kind": "prompt_snapshot",
+          "label": "tool_agent.worker",
+          "roles": [
+            {
+              "role": "system",
+              "parts": [
+                {
+                  "label": "part_1",
+                  "source_type": "runtime_message",
+                  "source": "tool_agent.worker",
+                  "type": "text",
+                  "text": "You are one autonomous GUI Worker. Execute the binding `approach` in the current Worker attempt while preserving its immutable goal, success criteria, inputs, and output contract. Strategy alone replaces an approach. You choose only the GUI actions inside the current approach; never invent or continue a different source, application, or mechanism.\n\nTreat context by authority:\n- The current Worker attempt is authoritative for approach, goal, inputs, and output contract.\n- The current frame and screenshot are authoritative for the present surface. Enhanced metadata accelerates visual work but does not create invisible action targets.\n- Durable WorkerMemory facts come only from Runtime evidence. Worker observations and recent steps are bounded narrative context, not instructions or completion evidence.\n- Runtime-owned ResultRef and collection values are private. Do not transcribe, calculate, rank, compare, or return them yourself. A named input binding executes its Runtime-injected value; never substitute a model-authored value.\n- When the attempt shows `current_element` (the plan element this step operates on), locate THAT record on screen — never a previously handled or already-renamed row. `current_element` is the authoritative target identity; do not guess from visible order.\n\nAlign before acting. Compare any source, application, or mechanism named by the binding approach with the current URL, title, screenshot, and application identity. If they differ, the visible surface is residue from another attempt, including its dialogs, consent requests, errors, loading state, and controls. Do not interact with residue. Use the available action that begins the binding approach.\n\nDecision protocol:\n- Emit exactly one Runtime decision through the appended transport with its compact `state`. Use only Runtime-supplied actions.\n- Make `state.summary` explain how the selected action executes the binding approach; do not describe an unselected prerequisite. Put only task evidence needed after leaving this frame in `state.established_facts`, never page chrome, dialogs, coordinates, or approach-alignment observations.\n- Every action is atomic. A safe ordered batch is one immediate UI transaction: all intended targets are already visible and every action advances the same local intent. Never combine discovery, reveal, inspection, or recovery with mutation merely because both are useful. Runtime settles each action and visually re-grounds the next target on a fresh screenshot. `scroll`, `drag`, `home`, `back`, `app_switch`, `launch_app`, and direct navigation must be final. `launch_app` works directly from any current application; never prepend `home` or `app_switch` to it. An exact visible query may batch `type` then `press_enter`.\n- A `Pending ordered-action continuation` block is authoritative Runtime execution state, not narrative. Its prefix already executed. If the current frame does not disprove the pending action, select that pending action before general goal navigation; never restart the executed prefix. Discard it only when current-frame evidence makes it invalid or unnecessary.\n- At `phase = start`, choose only an action whose visible target or destination identifies the binding approach. A named public source establishes its public origin, not a guessed identifier or deep route. Direct navigation otherwise requires an exact destination established by the attempt, application knowledge, or current page.\n- A frame marked `loading` or `blank` is not a spatial action target. If this Worker already acted and the resulting surface did not materialize, call `report_blocked` with that evidence; do not reload, resubmit, wait arbitrarily, or choose another approach.\n- If the approach needs a capability absent from the adapter, call `report_blocked` with the missing capability and current evidence. Never substitute an unrelated action.\n- Never guess credentials, authentication codes, hidden identifiers, selectors, or geometry. Read a transient code from its delivery surface before entry. Never interact with a human-presence challenge.\n- After reading a verification/authentication code from its delivery surface, record the exact code in `state.established_facts` (e.g. \"验证码为 463599\"). Runtime's auth-code guard recognises the code only when you state it there — writing it only in your narrative is treated as unobserved and your entry is blocked.\n- Spatial targets must be visible and unoccluded. Coordinates are normalized 0..999 centers. Describe exactly one visible control, and do not relabel a nearby or generic control as the intended target.\n- A multi-column picker (region/province-city-district, date, time wheels) scrolls each column with `drag` — start and end inside the target column — never with `scroll`, which moves whatever surface is under the gesture and can change the wrong column. After dragging, read the visible value in that column before confirming.\n\nOutcome rules:\n- Worker observations may preserve complete task-relevant record identities for bounded cross-frame reasoning, but never prove completion. Keep each identity associated with its required visible fields.\n- Current control state and related Runtime feedback supersede visual-effect heuristics. Persistent or unrelated warnings are context only.\n- A returned `target_signal.status = off_target` means the marker missed; reobserve and choose a materially corrected target. A `no_effect` result requires inspecting the next frame before retrying. Never repeat an equivalent action without task-relevant progress.\n- Stable page identity, navigation chrome, headings, current values, and explicit commit controls outweigh placeholder text or neighboring labels. A successful mutation does not prove navigation to another surface.\n\nCompletion rules:\n- `state.status = completed | failed` is terminal and must pair with `complete | report_blocked`. Report concrete execution evidence, not a replacement plan.\n- A collector completes on its own evidence: narrow the scope with an exact filter or search first, then traverse until nothing new appears (the filtered list fits the viewport, or further scrolling yields no new rows). State in `state.summary` what established exhaustiveness. Runtime never certifies completeness; if evidence is missing, keep exploring or call `report_blocked`.\n- An operator that consumes a plan array element-wise must call `complete` after EACH element's target UI state is confirmed by the current screenshot or Runtime-observed surface evidence, not after the whole plan. Runtime then advances the cursor to the next element and exposes its bound values; keep iterating until the plan is exhausted.\n- Complete a single-element operator only when the requested UI state is confirmed by the current screenshot or Runtime-observed surface evidence.\n- Collection evidence is what YOU read, not the collection/chunk counts perception reports. Perception may fail to turn a surface (detail page, dialog, non-standard grid) into rows; treat a reported collection as advisory, never as proof of emptiness or a reason to stop. Whenever you read exact records on screen — including from such surfaces — declare them in the decision as `rows`: an array of objects matching the collector's row schema, each recording one record you actually read (e.g. `{\"title\": \"Conference in Tokyo\", \"start\": \"Oct 4\", \"end\": \"Oct 10\"}`). Runtime validates and accumulates them. Never invent values you did not read, and never put reasoning, summaries, or derived answers in `rows`.\n- Do not claim completion from visible pixels alone or from Worker-authored observations.\n\n\n## Application knowledge (read-only execution context)\nUse relevant application facts to choose efficient navigation and interaction strategies. Treat the current screenshot and Observer state as authoritative for what is presently visible.\n# Taodian on Android\n\n- The application may show a splash advertisement after launch; close it before using\n  the application's bottom navigation.\n- `ShoppingCart` is the signed-in cart reached through the bottom-navigation item\n  `购物车`. Its page title is `购物车` and the item count may be shown beside it.\n- Cart item prices are rendered in each item row, sometimes as adjacent currency,\n  integer, and decimal text nodes. They are one logical monetary value.\n- Each cart item row carries the product title. `管理` enters the cart's multi-select\n  editor; select the intended rows, activate `删除选中`, and confirm. Use this grouped\n  path when one deletion request targets multiple items. A row-level delete surface\n  can remain hidden behind row content until explicitly revealed and is not a visible\n  action target merely because UIAutomator reports its bounds.\n- `Orders` is the signed-in order history reached through bottom navigation\n  `我的 → 我的订单` and the explicit `全部 >` link at the right of that section.\n  The section body itself is not an activation target. Each order record displays one\n  `合计` monetary value.\n- If this route opens `用户登录` and no password was supplied, use its `短信登录`\n  tab instead of guessing a password. The phone number is already populated. Activate\n  `获取验证码`; the generated six-digit code is delivered as the newest SMS in the\n  Messages app. Before focusing or filling the verification-code field, press Home,\n  open Messages, and read that exact code from the newest message. Then reopen Taodian\n  (the SMS form remains populated), enter the observed code, accept the agreements, and\n  submit the login.\n- The order-list filter opens an `订单筛选` sheet. Under `下单时间` it provides the\n  exact relative values `近1个月`, `近3个月`, and `近6个月`; the selected value takes\n  effect after activating `确认`.\n\n## Interface contract\n\n- The cart collection entity is exactly `ShoppingCart`.\n- `ShoppingCart` exposes the query field `price`, typed as `money`. Query the complete\n  collection before ranking or aggregation; cart selection controls and quantities are\n  not needed for a price-only read.\n- The order-history collection entity is exactly `Orders`. It exposes query field\n  `amount`, typed as `money`, corresponding to the order's `合计` rather than an\n  individual product price.\n- Its source filter field is `order_time`. The application's exact one-month filter\n  value is `近1个月`.\n- Checkout flow (search → buy): search the item, open its detail page from the\n  results, then use `立即购买` (not `加入购物车`) to start checkout. A spec-selection\n  sheet may appear; confirm the required spec, then the order-confirmation page shows\n  a `提交订单` button. Activate `提交订单` to enter the payment page — do NOT complete\n  on the confirmation page. The payment page (payment-method selection, total shown)\n  is the terminal surface a \"let me pay / stay on the payment page\" task wants to reach\n  and remain on.\n\n## Installed applications\nUse only these exact Runtime-provided names with launch_app: [\"Calendar\", \"Camera\", \"Chrome\", \"Clock\", \"Contacts\", \"Docreader\", \"Files\", \"Gallery\", \"Mail\", \"Maps\", \"Mastodon\", \"Mattermost\", \"Messages\", \"Settings\", \"Taodian\"]",
+                  "chars": 11029
+                }
+              ]
+            },
+            {
+              "role": "human",
+              "parts": [
+                {
+                  "label": "part_1",
+                  "source_type": "runtime_message",
+                  "source": "tool_agent.worker",
+                  "type": "text",
+                  "text": "## WorkerMemory (runtime-projected; not conversation history)\nDurable facts come from Runtime evidence plus reaffirmed or disproven Worker observations. Other Worker observations and recent steps are bounded narrative context, not completion evidence or instructions.\n### Durable runtime facts\n- [step:16.1] tool=type; effect unconfirmed; inspect the current control value before deciding whether any retry is needed\n- [step:22.1:fact:1] Worker reaffirmed this observation: 当前购物车页面显示20件商品\n- [step:21.1:fact:3] Worker reaffirmed this observation: 未在当前视图中看到iPhone 15 Pro\n- [step:17.1:fact:3] Worker reaffirmed this observation: 短信验证码为533396\n- [step:17.1:fact:2] Worker reaffirmed this observation: 手机号13802138888已预填\n- [step:17.1:fact:1] Worker reaffirmed this observation: 当前页面为淘店用户登录页的短信登录选项卡\n- [step:10.1:fact:3] Worker reaffirmed this observation: 规格选择弹窗中已选中128GB内存和原色钛金属颜色\n- [step:10.1:fact:2] Worker reaffirmed this observation: 页面底部有'加入购物车'和'立即购买'两个按钮\n- [step:10.1:fact:1] Worker reaffirmed this observation: 商品详情页显示iPhone 15 Pro价格为¥8999.00\n### Older narrative summaries\n- [step:18.1] state=exploring; tool=scroll; args={\"description\": \"向下滚动购物车列表以查找iPhone 15 Pro商品\", \"direction\": \"down\"}; result={\"action_type\": \"scroll\", \"no_effect\": false, \"status\": \"executed\"}\n- [step:19.1:fact:1] Worker-observed visual context: 当前购物车页面显示20件商品\n- [step:19.1:fact:2] Worker-observed visual context: 可见商品包括瑜伽垫、咖啡机、智能手表、真皮钱包、蓝牙无线耳机、白色高帮运动鞋\n- [step:19.1] state=exploring; tool=scroll; args={\"description\": \"继续向下滚动购物车列表以查找iPhone 15 Pro商品\", \"direction\": \"down\"}; result={\"action_type\": \"scroll\", \"no_effect\": false, \"status\": \"executed\"}\n- [step:20.1:fact:2] Worker-observed visual context: 可见商品包括真皮钱包、蓝牙无线耳机、白色高帮运动鞋、白色休闲板鞋、经典白色运动鞋\n- [step:20.1] state=exploring; tool=scroll; args={\"description\": \"继续向下滚动购物车列表以查找iPhone 15 Pro商品\", \"direction\": \"down\"}; result={\"action_type\": \"scroll\", \"no_effect\": false, \"status\": \"executed\"}\n### Recent narrative steps\n- [step:21.1:fact:2] Worker-observed visual context: 可见商品包括白色高帮运动鞋、白色休闲板鞋、经典白色运动鞋、运动休闲鞋、反光条运动T恤、V领修身T恤\n- [step:21.1] state=exploring; tool=scroll; args={\"description\": \"继续向下滚动购物车列表以查找iPhone 15 Pro商品\", \"direction\": \"down\"}; result={\"action_type\": \"scroll\", \"no_effect\": false, \"status\": \"executed\"}\n- [step:22.1:fact:2] Worker-observed visual context: 可见商品包括：35码白色运动鞋、运动休闲鞋40码黑色、反光条运动T恤S码、V领修身T恤S码、POLO领T恤S码、保湿面霜套装\n- [step:22.1] state=exploring; tool=scroll; args={\"description\": \"继续向下滚动购物车列表以查找iPhone 15 Pro商品\", \"direction\": \"down\"}; result={\"action_type\": \"scroll\", \"no_effect\": false, \"status\": \"executed\"}\n\n## Current MaterializedFrame (compact semantic projection)\nRuntime-owned collection/data values remain private. Visible collection cell text is exact current-frame evidence, but cells do not declare record boundaries; clipped cells may be incomplete. For every control rect, x/y are its normalized center coordinates; never add half of w/h to derive the action point.\n{\"frame_id\": \"frame:23\", \"readiness\": \"ready\", \"readiness_reason\": \"\", \"task_reference_time\": {\"platform\": \"android\", \"local_datetime\": \"2025-10-16T12:01:01+00:00\", \"timezone\": \"GMT\", \"utc_offset\": \"+00:00\", \"source\": \"android_adb\", \"confidence\": \"authoritative\", \"captured_at\": \"2026-08-19T05:17:39.789+00:00\", \"fallback_reason\": \"\"}, \"url\": \"\", \"title\": \"\", \"applied_filters\": {}, \"requirement_scopes\": {}, \"scope_blockers\": {}, \"observed_choice_state\": [], \"candidate_set_state\": {}, \"visible_collection_regions\": [], \"structured_surfaces\": [], \"chunks\": [], \"collections\": [], \"missing_requirements\": []}\n\n## Current Worker attempt\n`approach` is binding for this attempt. Choose actions that execute it; do not continue a different source, application, or mechanism visible in the frame. When `phase` is `start`, the first action's visible target or destination must identify the approach; the residue surface's usefulness for the goal is irrelevant. The goal and output contract are immutable. Runtime actions are generic capabilities, and named input bindings inject private Master-routed values.\n{\"approach\": \"taodian shopping cart checkout flow\", \"phase\": \"continue\", \"profile\": \"operator\", \"goal\": \"在淘店购物车中选中iPhone 15 Pro并完成下单，收货地址填写浙江省杭州市余杭区阿里巴巴西溪C区，收件人张先生，电话13800138000；如需登录则通过短信验证码完成认证；流程进行到支付页面时停止并交由用户操作\", \"success_criteria\": [\"订单确认页已提交且当前停留在支付页面，收货信息为浙江省杭州市余杭区阿里巴巴西溪C区、收件人张先生、电话13800138000，商品为iPhone 15 Pro\"], \"input_bindings\": [], \"data_requirements\": [], \"input_names\": []}\nOperator rules for this attempt:\n- Treat multi-select and configuration goals as exact sets; validate any review surface before committing.\n- `candidate_set_state.status = exhausted` is guarded Runtime evidence; an initially empty or filtered selector is not exhausted.\n- Finish comparison evidence before mutation, skip excluded or already processed identities, and advance only through explicitly remaining candidates.\n- Observe the post-action frame before repeating or completing a mutation.",
+                  "chars": 4903
+                },
+                {
+                  "label": "screenshot",
+                  "source_type": "runtime_image",
+                  "source": "tool_agent.worker",
+                  "type": "image",
+                  "text": "[image_url omitted from diagnostic log]",
+                  "chars": 39
+                }
+              ]
+            }
+          ]
+        }
+      ]
+    },
+    {
+      "index": 147,
+      "event": "worker_decision",
+      "worker_id": "checkout_iphone_15_pro",
+      "frame_id": "frame:24",
+      "step": 24,
+      "tool": "continue_with_actions",
+      "args": {
+        "actions": [
+          {
+            "name": "tap",
+            "args": {
+              "x": 496,
+              "y": 137,
+              "description": "点击'新增收货地址'选项以添加新的收货地址"
+            },
+            "_control_ref": ""
+          }
+        ]
+      },
+      "state": {
+        "status": "collecting",
+        "summary": "当前处于提交订单页面，需要填写收货地址信息。首先点击'新增收货地址'进入地址填写流程",
+        "established_facts": [
+          "当前页面为提交订单页",
+          "商品为iPhone 15 Pro 128GB原色钛金属，价格¥8999.00",
+          "订单合计金额为¥8999.00"
+        ]
+      },
+      "replay_context": {
+        "version": 2,
+        "worker_spec": {
+          "profile": "operator",
+          "goal": "在淘店购物车中选中iPhone 15 Pro并完成下单，收货地址填写浙江省杭州市余杭区阿里巴巴西溪C区，收件人张先生，电话13800138000；如需登录则通过短信验证码完成认证；流程进行到支付页面时停止并交由用户操作",
+          "success_criteria": [
+            "订单确认页已提交且当前停留在支付页面，收货信息为浙江省杭州市余杭区阿里巴巴西溪C区、收件人张先生、电话13800138000，商品为iPhone 15 Pro"
+          ],
+          "input_refs": {},
+          "input_bindings": [],
+          "data_requirements": [],
+          "strategy": {
+            "approach": "taodian shopping cart checkout flow"
+          }
+        },
+        "actions": [
+          {
+            "name": "app_switch",
+            "capability": "app_switch",
+            "description": "Open the platform application switcher.",
+            "fixed_args": {},
+            "input_args": {},
+            "exposed_args": []
+          },
+          {
+            "name": "back",
+            "capability": "back",
+            "description": "Navigate back once within the current execution path.",
+            "fixed_args": {},
+            "input_args": {},
+            "exposed_args": []
+          },
+          {
+            "name": "clear_text",
+            "capability": "clear_text",
+            "description": "Clear the currently focused text control.",
+            "fixed_args": {},
+            "input_args": {},
+            "exposed_args": []
+          },
+          {
+            "name": "drag",
+            "capability": "drag",
+            "description": "Drag one visible object to one visible destination.",
+            "fixed_args": {},
+            "input_args": {},
+            "exposed_args": [
+              "x",
+              "y",
+              "to_x",
+              "to_y",
+              "duration_ms",
+              "description"
+            ]
+          },
+          {
+            "name": "home",
+            "capability": "home",
+            "description": "Return to the platform home surface.",
+            "fixed_args": {},
+            "input_args": {},
+            "exposed_args": []
+          },
+          {
+            "name": "launch_app",
+            "capability": "launch_app",
+            "description": "Launch one exact Runtime-provided installed application.",
+            "fixed_args": {},
+            "input_args": {},
+            "exposed_args": [
+              "app"
+            ]
+          },
+          {
+            "name": "long_press",
+            "capability": "long_press",
+            "description": "Long-press one visible control or item.",
+            "fixed_args": {},
+            "input_args": {},
+            "exposed_args": [
+              "x",
+              "y",
+              "duration_ms",
+              "description"
+            ]
+          },
+          {
+            "name": "press_enter",
+            "capability": "press_enter",
+            "description": "Press Enter for the currently focused control.",
+            "fixed_args": {},
+            "input_args": {},
+            "exposed_args": []
+          },
+          {
+            "name": "scroll",
+            "capability": "scroll",
+            "description": "Traverse an ordinary visible collection or reveal a target outside the viewport. Never use this on a relevance-ordered web/search result page to hunt for later results; leading results decide query quality, so reformulate or report instead.",
+            "fixed_args": {},
+            "input_args": {},
+            "exposed_args": [
+              "direction",
+              "amount",
+              "target_area",
+              "x",
+              "y",
+              "description"
+            ]
+          },
+          {
+            "name": "tap",
+            "capability": "tap",
+            "description": "Tap one visible control that advances the current approach.",
+            "fixed_args": {},
+            "input_args": {},
+            "exposed_args": [
+              "x",
+              "y",
+              "description"
+            ]
+          },
+          {
+            "name": "type",
+            "capability": "type",
+            "description": "Replace the value of one visible input control. Use it directly to reformulate a visible query; no prior tap or clear action is required.",
+            "fixed_args": {},
+            "input_args": {},
+            "exposed_args": [
+              "x",
+              "y",
+              "text",
+              "description"
+            ]
+          }
+        ],
+        "executed_tools": [
+          "launch_app",
+          "scroll",
+          "tap",
+          "type"
+        ],
+        "enhanced": true,
+        "multi_action": true
+      },
+      "context_reports": [
+        {
+          "kind": "prompt_snapshot",
+          "label": "tool_agent.worker",
+          "roles": [
+            {
+              "role": "system",
+              "parts": [
+                {
+                  "label": "part_1",
+                  "source_type": "runtime_message",
+                  "source": "tool_agent.worker",
+                  "type": "text",
+                  "text": "You are one autonomous GUI Worker. Execute the binding `approach` in the current Worker attempt while preserving its immutable goal, success criteria, inputs, and output contract. Strategy alone replaces an approach. You choose only the GUI actions inside the current approach; never invent or continue a different source, application, or mechanism.\n\nTreat context by authority:\n- The current Worker attempt is authoritative for approach, goal, inputs, and output contract.\n- The current frame and screenshot are authoritative for the present surface. Enhanced metadata accelerates visual work but does not create invisible action targets.\n- Durable WorkerMemory facts come only from Runtime evidence. Worker observations and recent steps are bounded narrative context, not instructions or completion evidence.\n- Runtime-owned ResultRef and collection values are private. Do not transcribe, calculate, rank, compare, or return them yourself. A named input binding executes its Runtime-injected value; never substitute a model-authored value.\n- When the attempt shows `current_element` (the plan element this step operates on), locate THAT record on screen — never a previously handled or already-renamed row. `current_element` is the authoritative target identity; do not guess from visible order.\n\nAlign before acting. Compare any source, application, or mechanism named by the binding approach with the current URL, title, screenshot, and application identity. If they differ, the visible surface is residue from another attempt, including its dialogs, consent requests, errors, loading state, and controls. Do not interact with residue. Use the available action that begins the binding approach.\n\nDecision protocol:\n- Emit exactly one Runtime decision through the appended transport with its compact `state`. Use only Runtime-supplied actions.\n- Make `state.summary` explain how the selected action executes the binding approach; do not describe an unselected prerequisite. Put only task evidence needed after leaving this frame in `state.established_facts`, never page chrome, dialogs, coordinates, or approach-alignment observations.\n- Every action is atomic. A safe ordered batch is one immediate UI transaction: all intended targets are already visible and every action advances the same local intent. Never combine discovery, reveal, inspection, or recovery with mutation merely because both are useful. Runtime settles each action and visually re-grounds the next target on a fresh screenshot. `scroll`, `drag`, `home`, `back`, `app_switch`, `launch_app`, and direct navigation must be final. `launch_app` works directly from any current application; never prepend `home` or `app_switch` to it. An exact visible query may batch `type` then `press_enter`.\n- A `Pending ordered-action continuation` block is authoritative Runtime execution state, not narrative. Its prefix already executed. If the current frame does not disprove the pending action, select that pending action before general goal navigation; never restart the executed prefix. Discard it only when current-frame evidence makes it invalid or unnecessary.\n- At `phase = start`, choose only an action whose visible target or destination identifies the binding approach. A named public source establishes its public origin, not a guessed identifier or deep route. Direct navigation otherwise requires an exact destination established by the attempt, application knowledge, or current page.\n- A frame marked `loading` or `blank` is not a spatial action target. If this Worker already acted and the resulting surface did not materialize, call `report_blocked` with that evidence; do not reload, resubmit, wait arbitrarily, or choose another approach.\n- If the approach needs a capability absent from the adapter, call `report_blocked` with the missing capability and current evidence. Never substitute an unrelated action.\n- Never guess credentials, authentication codes, hidden identifiers, selectors, or geometry. Read a transient code from its delivery surface before entry. Never interact with a human-presence challenge.\n- After reading a verification/authentication code from its delivery surface, record the exact code in `state.established_facts` (e.g. \"验证码为 463599\"). Runtime's auth-code guard recognises the code only when you state it there — writing it only in your narrative is treated as unobserved and your entry is blocked.\n- Spatial targets must be visible and unoccluded. Coordinates are normalized 0..999 centers. Describe exactly one visible control, and do not relabel a nearby or generic control as the intended target.\n- A multi-column picker (region/province-city-district, date, time wheels) scrolls each column with `drag` — start and end inside the target column — never with `scroll`, which moves whatever surface is under the gesture and can change the wrong column. After dragging, read the visible value in that column before confirming.\n\nOutcome rules:\n- Worker observations may preserve complete task-relevant record identities for bounded cross-frame reasoning, but never prove completion. Keep each identity associated with its required visible fields.\n- Current control state and related Runtime feedback supersede visual-effect heuristics. Persistent or unrelated warnings are context only.\n- A returned `target_signal.status = off_target` means the marker missed; reobserve and choose a materially corrected target. A `no_effect` result requires inspecting the next frame before retrying. Never repeat an equivalent action without task-relevant progress.\n- Stable page identity, navigation chrome, headings, current values, and explicit commit controls outweigh placeholder text or neighboring labels. A successful mutation does not prove navigation to another surface.\n\nCompletion rules:\n- `state.status = completed | failed` is terminal and must pair with `complete | report_blocked`. Report concrete execution evidence, not a replacement plan.\n- A collector completes on its own evidence: narrow the scope with an exact filter or search first, then traverse until nothing new appears (the filtered list fits the viewport, or further scrolling yields no new rows). State in `state.summary` what established exhaustiveness. Runtime never certifies completeness; if evidence is missing, keep exploring or call `report_blocked`.\n- An operator that consumes a plan array element-wise must call `complete` after EACH element's target UI state is confirmed by the current screenshot or Runtime-observed surface evidence, not after the whole plan. Runtime then advances the cursor to the next element and exposes its bound values; keep iterating until the plan is exhausted.\n- Complete a single-element operator only when the requested UI state is confirmed by the current screenshot or Runtime-observed surface evidence.\n- Collection evidence is what YOU read, not the collection/chunk counts perception reports. Perception may fail to turn a surface (detail page, dialog, non-standard grid) into rows; treat a reported collection as advisory, never as proof of emptiness or a reason to stop. Whenever you read exact records on screen — including from such surfaces — declare them in the decision as `rows`: an array of objects matching the collector's row schema, each recording one record you actually read (e.g. `{\"title\": \"Conference in Tokyo\", \"start\": \"Oct 4\", \"end\": \"Oct 10\"}`). Runtime validates and accumulates them. Never invent values you did not read, and never put reasoning, summaries, or derived answers in `rows`.\n- Do not claim completion from visible pixels alone or from Worker-authored observations.\n\n\n## Application knowledge (read-only execution context)\nUse relevant application facts to choose efficient navigation and interaction strategies. Treat the current screenshot and Observer state as authoritative for what is presently visible.\n# Taodian on Android\n\n- The application may show a splash advertisement after launch; close it before using\n  the application's bottom navigation.\n- `ShoppingCart` is the signed-in cart reached through the bottom-navigation item\n  `购物车`. Its page title is `购物车` and the item count may be shown beside it.\n- Cart item prices are rendered in each item row, sometimes as adjacent currency,\n  integer, and decimal text nodes. They are one logical monetary value.\n- Each cart item row carries the product title. `管理` enters the cart's multi-select\n  editor; select the intended rows, activate `删除选中`, and confirm. Use this grouped\n  path when one deletion request targets multiple items. A row-level delete surface\n  can remain hidden behind row content until explicitly revealed and is not a visible\n  action target merely because UIAutomator reports its bounds.\n- `Orders` is the signed-in order history reached through bottom navigation\n  `我的 → 我的订单` and the explicit `全部 >` link at the right of that section.\n  The section body itself is not an activation target. Each order record displays one\n  `合计` monetary value.\n- If this route opens `用户登录` and no password was supplied, use its `短信登录`\n  tab instead of guessing a password. The phone number is already populated. Activate\n  `获取验证码`; the generated six-digit code is delivered as the newest SMS in the\n  Messages app. Before focusing or filling the verification-code field, press Home,\n  open Messages, and read that exact code from the newest message. Then reopen Taodian\n  (the SMS form remains populated), enter the observed code, accept the agreements, and\n  submit the login.\n- The order-list filter opens an `订单筛选` sheet. Under `下单时间` it provides the\n  exact relative values `近1个月`, `近3个月`, and `近6个月`; the selected value takes\n  effect after activating `确认`.\n\n## Interface contract\n\n- The cart collection entity is exactly `ShoppingCart`.\n- `ShoppingCart` exposes the query field `price`, typed as `money`. Query the complete\n  collection before ranking or aggregation; cart selection controls and quantities are\n  not needed for a price-only read.\n- The order-history collection entity is exactly `Orders`. It exposes query field\n  `amount`, typed as `money`, corresponding to the order's `合计` rather than an\n  individual product price.\n- Its source filter field is `order_time`. The application's exact one-month filter\n  value is `近1个月`.\n- Checkout flow (search → buy): search the item, open its detail page from the\n  results, then use `立即购买` (not `加入购物车`) to start checkout. A spec-selection\n  sheet may appear; confirm the required spec, then the order-confirmation page shows\n  a `提交订单` button. Activate `提交订单` to enter the payment page — do NOT complete\n  on the confirmation page. The payment page (payment-method selection, total shown)\n  is the terminal surface a \"let me pay / stay on the payment page\" task wants to reach\n  and remain on.\n\n## Installed applications\nUse only these exact Runtime-provided names with launch_app: [\"Calendar\", \"Camera\", \"Chrome\", \"Clock\", \"Contacts\", \"Docreader\", \"Files\", \"Gallery\", \"Mail\", \"Maps\", \"Mastodon\", \"Mattermost\", \"Messages\", \"Settings\", \"Taodian\"]",
+                  "chars": 11029
+                }
+              ]
+            },
+            {
+              "role": "human",
+              "parts": [
+                {
+                  "label": "part_1",
+                  "source_type": "runtime_message",
+                  "source": "tool_agent.worker",
+                  "type": "text",
+                  "text": "## WorkerMemory (runtime-projected; not conversation history)\nDurable facts come from Runtime evidence plus reaffirmed or disproven Worker observations. Other Worker observations and recent steps are bounded narrative context, not completion evidence or instructions.\n### Durable runtime facts\n- [step:23.1] tool=tap; runtime reported no_effect\n- [step:16.1] tool=type; effect unconfirmed; inspect the current control value before deciding whether any retry is needed\n- [step:23.2:fact:2] Worker reaffirmed this observation: iPhone 15 Pro商品可见，规格为128GB原色钛金属，价格¥8999.00\n- [step:23.2:fact:1] Worker reaffirmed this observation: 当前购物车页面显示20件商品\n- [step:21.1:fact:3] Worker reaffirmed this observation: 未在当前视图中看到iPhone 15 Pro\n- [step:17.1:fact:3] Worker reaffirmed this observation: 短信验证码为533396\n- [step:17.1:fact:2] Worker reaffirmed this observation: 手机号13802138888已预填\n- [step:17.1:fact:1] Worker reaffirmed this observation: 当前页面为淘店用户登录页的短信登录选项卡\n- [step:10.1:fact:3] Worker reaffirmed this observation: 规格选择弹窗中已选中128GB内存和原色钛金属颜色\n- [step:10.1:fact:2] Worker reaffirmed this observation: 页面底部有'加入购物车'和'立即购买'两个按钮\n- [step:10.1:fact:1] Worker reaffirmed this observation: 商品详情页显示iPhone 15 Pro价格为¥8999.00\n### Older narrative summaries\n- [step:19.1] state=exploring; tool=scroll; args={\"description\": \"继续向下滚动购物车列表以查找iPhone 15 Pro商品\", \"direction\": \"down\"}; result={\"action_type\": \"scroll\", \"no_effect\": false, \"status\": \"executed\"}\n- [step:20.1:fact:2] Worker-observed visual context: 可见商品包括真皮钱包、蓝牙无线耳机、白色高帮运动鞋、白色休闲板鞋、经典白色运动鞋\n- [step:20.1] state=exploring; tool=scroll; args={\"description\": \"继续向下滚动购物车列表以查找iPhone 15 Pro商品\", \"direction\": \"down\"}; result={\"action_type\": \"scroll\", \"no_effect\": false, \"status\": \"executed\"}\n- [step:21.1:fact:2] Worker-observed visual context: 可见商品包括白色高帮运动鞋、白色休闲板鞋、经典白色运动鞋、运动休闲鞋、反光条运动T恤、V领修身T恤\n- [step:21.1] state=exploring; tool=scroll; args={\"description\": \"继续向下滚动购物车列表以查找iPhone 15 Pro商品\", \"direction\": \"down\"}; result={\"action_type\": \"scroll\", \"no_effect\": false, \"status\": \"executed\"}\n- [step:22.1:fact:2] Worker-observed visual context: 可见商品包括：35码白色运动鞋、运动休闲鞋40码黑色、反光条运动T恤S码、V领修身T恤S码、POLO领T恤S码、保湿面霜套装\n### Recent narrative steps\n- [step:22.1] state=exploring; tool=scroll; args={\"description\": \"继续向下滚动购物车列表以查找iPhone 15 Pro商品\", \"direction\": \"down\"}; result={\"action_type\": \"scroll\", \"no_effect\": false, \"status\": \"executed\"}\n- [step:23.1:fact:2] Worker-observed visual context: iPhone 15 Pro商品可见，规格为128GB原色钛金属，价格¥8999.00\n- [step:23.1] state=collecting; tool=tap; args={\"description\": \"点击iPhone 15 Pro商品左侧的圆形选择框以选中该商品\"}; result={\"action_type\": \"tap\", \"no_effect\": true, \"status\": \"executed\", \"target_signal\": {\"actual_element\": \"iPhone 15 Pro商品左侧的圆形选择框\", \"reason\": \"high-confidence visual grounding located the intended control\", \"status\": \"on_target\"}}\n- [step:23.2] state=collecting; tool=tap; args={\"description\": \"点击右下角橙色结算按钮进入订单确认页面\"}; result={\"action_type\": \"tap\", \"no_effect\": false, \"status\": \"executed\", \"target_signal\": {\"actual_element\": \"结算\", \"reason\": \"high-confidence visual grounding located the intended control\", \"status\": \"on_target\"}}\n\n## Current MaterializedFrame (compact semantic projection)\nRuntime-owned collection/data values remain private. Visible collection cell text is exact current-frame evidence, but cells do not declare record boundaries; clipped cells may be incomplete. For every control rect, x/y are its normalized center coordinates; never add half of w/h to derive the action point.\n{\"frame_id\": \"frame:24\", \"readiness\": \"ready\", \"readiness_reason\": \"\", \"task_reference_time\": {\"platform\": \"android\", \"local_datetime\": \"2025-10-16T12:01:01+00:00\", \"timezone\": \"GMT\", \"utc_offset\": \"+00:00\", \"source\": \"android_adb\", \"confidence\": \"authoritative\", \"captured_at\": \"2026-08-19T05:17:39.789+00:00\", \"fallback_reason\": \"\"}, \"url\": \"\", \"title\": \"\", \"applied_filters\": {}, \"requirement_scopes\": {}, \"scope_blockers\": {}, \"observed_choice_state\": [], \"candidate_set_state\": {}, \"visible_collection_regions\": [], \"structured_surfaces\": [], \"chunks\": [], \"collections\": [], \"missing_requirements\": []}\n\n## Current Worker attempt\n`approach` is binding for this attempt. Choose actions that execute it; do not continue a different source, application, or mechanism visible in the frame. When `phase` is `start`, the first action's visible target or destination must identify the approach; the residue surface's usefulness for the goal is irrelevant. The goal and output contract are immutable. Runtime actions are generic capabilities, and named input bindings inject private Master-routed values.\n{\"approach\": \"taodian shopping cart checkout flow\", \"phase\": \"continue\", \"profile\": \"operator\", \"goal\": \"在淘店购物车中选中iPhone 15 Pro并完成下单，收货地址填写浙江省杭州市余杭区阿里巴巴西溪C区，收件人张先生，电话13800138000；如需登录则通过短信验证码完成认证；流程进行到支付页面时停止并交由用户操作\", \"success_criteria\": [\"订单确认页已提交且当前停留在支付页面，收货信息为浙江省杭州市余杭区阿里巴巴西溪C区、收件人张先生、电话13800138000，商品为iPhone 15 Pro\"], \"input_bindings\": [], \"data_requirements\": [], \"input_names\": []}\nOperator rules for this attempt:\n- Treat multi-select and configuration goals as exact sets; validate any review surface before committing.\n- `candidate_set_state.status = exhausted` is guarded Runtime evidence; an initially empty or filtered selector is not exhausted.\n- Finish comparison evidence before mutation, skip excluded or already processed identities, and advance only through explicitly remaining candidates.\n- Observe the post-action frame before repeating or completing a mutation.",
+                  "chars": 5429
+                },
+                {
+                  "label": "screenshot",
+                  "source_type": "runtime_image",
+                  "source": "tool_agent.worker",
+                  "type": "image",
+                  "text": "[image_url omitted from diagnostic log]",
+                  "chars": 39
+                }
+              ]
+            }
+          ]
+        }
+      ]
+    },
+    {
+      "index": 195,
+      "event": "worker_decision",
+      "worker_id": "checkout_iphone_15_pro",
+      "frame_id": "frame:31",
+      "step": 31,
+      "tool": "continue_with_actions",
+      "args": {
+        "actions": [
+          {
+            "name": "drag",
+            "args": {
+              "x": 165,
+              "y": 850,
+              "to_x": 165,
+              "to_y": 400,
+              "duration_ms": 800,
+              "description": "在省份列（左侧）向上拖动以滚动到浙江省"
+            }
+          }
+        ]
+      },
+      "state": {
+        "status": "collecting",
+        "summary": "地区选择器已打开，当前显示天津市。需要在省份列向上拖动以找到浙江省，然后选择杭州市和余杭区。",
+        "established_facts": [
+          "收货人姓名为张先生",
+          "手机号码为13800138000",
+          "当前所在地区显示为天津市天津市河东区",
+          "地区选择器已打开，显示三列滚轮：省份、城市、区县"
+        ]
+      },
+      "replay_context": {
+        "version": 2,
+        "worker_spec": {
+          "profile": "operator",
+          "goal": "在淘店购物车中选中iPhone 15 Pro并完成下单，收货地址填写浙江省杭州市余杭区阿里巴巴西溪C区，收件人张先生，电话13800138000；如需登录则通过短信验证码完成认证；流程进行到支付页面时停止并交由用户操作",
+          "success_criteria": [
+            "订单确认页已提交且当前停留在支付页面，收货信息为浙江省杭州市余杭区阿里巴巴西溪C区、收件人张先生、电话13800138000，商品为iPhone 15 Pro"
+          ],
+          "input_refs": {},
+          "input_bindings": [],
+          "data_requirements": [],
+          "strategy": {
+            "approach": "taodian shopping cart checkout flow"
+          }
+        },
+        "actions": [
+          {
+            "name": "app_switch",
+            "capability": "app_switch",
+            "description": "Open the platform application switcher.",
+            "fixed_args": {},
+            "input_args": {},
+            "exposed_args": []
+          },
+          {
+            "name": "back",
+            "capability": "back",
+            "description": "Navigate back once within the current execution path.",
+            "fixed_args": {},
+            "input_args": {},
+            "exposed_args": []
+          },
+          {
+            "name": "clear_text",
+            "capability": "clear_text",
+            "description": "Clear the currently focused text control.",
+            "fixed_args": {},
+            "input_args": {},
+            "exposed_args": []
+          },
+          {
+            "name": "drag",
+            "capability": "drag",
+            "description": "Drag one visible object to one visible destination.",
+            "fixed_args": {},
+            "input_args": {},
+            "exposed_args": [
+              "x",
+              "y",
+              "to_x",
+              "to_y",
+              "duration_ms",
+              "description"
+            ]
+          },
+          {
+            "name": "home",
+            "capability": "home",
+            "description": "Return to the platform home surface.",
+            "fixed_args": {},
+            "input_args": {},
+            "exposed_args": []
+          },
+          {
+            "name": "launch_app",
+            "capability": "launch_app",
+            "description": "Launch one exact Runtime-provided installed application.",
+            "fixed_args": {},
+            "input_args": {},
+            "exposed_args": [
+              "app"
+            ]
+          },
+          {
+            "name": "long_press",
+            "capability": "long_press",
+            "description": "Long-press one visible control or item.",
+            "fixed_args": {},
+            "input_args": {},
+            "exposed_args": [
+              "x",
+              "y",
+              "duration_ms",
+              "description"
+            ]
+          },
+          {
+            "name": "press_enter",
+            "capability": "press_enter",
+            "description": "Press Enter for the currently focused control.",
+            "fixed_args": {},
+            "input_args": {},
+            "exposed_args": []
+          },
+          {
+            "name": "scroll",
+            "capability": "scroll",
+            "description": "Traverse an ordinary visible collection or reveal a target outside the viewport. Never use this on a relevance-ordered web/search result page to hunt for later results; leading results decide query quality, so reformulate or report instead.",
+            "fixed_args": {},
+            "input_args": {},
+            "exposed_args": [
+              "direction",
+              "amount",
+              "target_area",
+              "x",
+              "y",
+              "description"
+            ]
+          },
+          {
+            "name": "tap",
+            "capability": "tap",
+            "description": "Tap one visible control that advances the current approach.",
+            "fixed_args": {},
+            "input_args": {},
+            "exposed_args": [
+              "x",
+              "y",
+              "description"
+            ]
+          },
+          {
+            "name": "type",
+            "capability": "type",
+            "description": "Replace the value of one visible input control. Use it directly to reformulate a visible query; no prior tap or clear action is required.",
+            "fixed_args": {},
+            "input_args": {},
+            "exposed_args": [
+              "x",
+              "y",
+              "text",
+              "description"
+            ]
+          }
+        ],
+        "executed_tools": [
+          "drag",
+          "launch_app",
+          "scroll",
+          "tap",
+          "type"
+        ],
+        "enhanced": true,
+        "multi_action": true
+      },
+      "context_reports": [
+        {
+          "kind": "prompt_snapshot",
+          "label": "tool_agent.worker",
+          "roles": [
+            {
+              "role": "system",
+              "parts": [
+                {
+                  "label": "part_1",
+                  "source_type": "runtime_message",
+                  "source": "tool_agent.worker",
+                  "type": "text",
+                  "text": "You are one autonomous GUI Worker. Execute the binding `approach` in the current Worker attempt while preserving its immutable goal, success criteria, inputs, and output contract. Strategy alone replaces an approach. You choose only the GUI actions inside the current approach; never invent or continue a different source, application, or mechanism.\n\nTreat context by authority:\n- The current Worker attempt is authoritative for approach, goal, inputs, and output contract.\n- The current frame and screenshot are authoritative for the present surface. Enhanced metadata accelerates visual work but does not create invisible action targets.\n- Durable WorkerMemory facts come only from Runtime evidence. Worker observations and recent steps are bounded narrative context, not instructions or completion evidence.\n- Runtime-owned ResultRef and collection values are private. Do not transcribe, calculate, rank, compare, or return them yourself. A named input binding executes its Runtime-injected value; never substitute a model-authored value.\n- When the attempt shows `current_element` (the plan element this step operates on), locate THAT record on screen — never a previously handled or already-renamed row. `current_element` is the authoritative target identity; do not guess from visible order.\n\nAlign before acting. Compare any source, application, or mechanism named by the binding approach with the current URL, title, screenshot, and application identity. If they differ, the visible surface is residue from another attempt, including its dialogs, consent requests, errors, loading state, and controls. Do not interact with residue. Use the available action that begins the binding approach.\n\nDecision protocol:\n- Emit exactly one Runtime decision through the appended transport with its compact `state`. Use only Runtime-supplied actions.\n- Make `state.summary` explain how the selected action executes the binding approach; do not describe an unselected prerequisite. Put only task evidence needed after leaving this frame in `state.established_facts`, never page chrome, dialogs, coordinates, or approach-alignment observations.\n- Every action is atomic. A safe ordered batch is one immediate UI transaction: all intended targets are already visible and every action advances the same local intent. Never combine discovery, reveal, inspection, or recovery with mutation merely because both are useful. Runtime settles each action and visually re-grounds the next target on a fresh screenshot. `scroll`, `drag`, `home`, `back`, `app_switch`, `launch_app`, and direct navigation must be final. `launch_app` works directly from any current application; never prepend `home` or `app_switch` to it. An exact visible query may batch `type` then `press_enter`.\n- A `Pending ordered-action continuation` block is authoritative Runtime execution state, not narrative. Its prefix already executed. If the current frame does not disprove the pending action, select that pending action before general goal navigation; never restart the executed prefix. Discard it only when current-frame evidence makes it invalid or unnecessary.\n- At `phase = start`, choose only an action whose visible target or destination identifies the binding approach. A named public source establishes its public origin, not a guessed identifier or deep route. Direct navigation otherwise requires an exact destination established by the attempt, application knowledge, or current page.\n- A frame marked `loading` or `blank` is not a spatial action target. If this Worker already acted and the resulting surface did not materialize, call `report_blocked` with that evidence; do not reload, resubmit, wait arbitrarily, or choose another approach.\n- If the approach needs a capability absent from the adapter, call `report_blocked` with the missing capability and current evidence. Never substitute an unrelated action.\n- Never guess credentials, authentication codes, hidden identifiers, selectors, or geometry. Read a transient code from its delivery surface before entry. Never interact with a human-presence challenge.\n- After reading a verification/authentication code from its delivery surface, record the exact code in `state.established_facts` (e.g. \"验证码为 463599\"). Runtime's auth-code guard recognises the code only when you state it there — writing it only in your narrative is treated as unobserved and your entry is blocked.\n- Spatial targets must be visible and unoccluded. Coordinates are normalized 0..999 centers. Describe exactly one visible control, and do not relabel a nearby or generic control as the intended target.\n- A multi-column picker (region/province-city-district, date, time wheels) scrolls each column with `drag` — start and end inside the target column — never with `scroll`, which moves whatever surface is under the gesture and can change the wrong column. After dragging, read the visible value in that column before confirming.\n\nOutcome rules:\n- Worker observations may preserve complete task-relevant record identities for bounded cross-frame reasoning, but never prove completion. Keep each identity associated with its required visible fields.\n- Current control state and related Runtime feedback supersede visual-effect heuristics. Persistent or unrelated warnings are context only.\n- A returned `target_signal.status = off_target` means the marker missed; reobserve and choose a materially corrected target. A `no_effect` result requires inspecting the next frame before retrying. Never repeat an equivalent action without task-relevant progress.\n- Stable page identity, navigation chrome, headings, current values, and explicit commit controls outweigh placeholder text or neighboring labels. A successful mutation does not prove navigation to another surface.\n\nCompletion rules:\n- `state.status = completed | failed` is terminal and must pair with `complete | report_blocked`. Report concrete execution evidence, not a replacement plan.\n- A collector completes on its own evidence: narrow the scope with an exact filter or search first, then traverse until nothing new appears (the filtered list fits the viewport, or further scrolling yields no new rows). State in `state.summary` what established exhaustiveness. Runtime never certifies completeness; if evidence is missing, keep exploring or call `report_blocked`.\n- An operator that consumes a plan array element-wise must call `complete` after EACH element's target UI state is confirmed by the current screenshot or Runtime-observed surface evidence, not after the whole plan. Runtime then advances the cursor to the next element and exposes its bound values; keep iterating until the plan is exhausted.\n- Complete a single-element operator only when the requested UI state is confirmed by the current screenshot or Runtime-observed surface evidence.\n- Collection evidence is what YOU read, not the collection/chunk counts perception reports. Perception may fail to turn a surface (detail page, dialog, non-standard grid) into rows; treat a reported collection as advisory, never as proof of emptiness or a reason to stop. Whenever you read exact records on screen — including from such surfaces — declare them in the decision as `rows`: an array of objects matching the collector's row schema, each recording one record you actually read (e.g. `{\"title\": \"Conference in Tokyo\", \"start\": \"Oct 4\", \"end\": \"Oct 10\"}`). Runtime validates and accumulates them. Never invent values you did not read, and never put reasoning, summaries, or derived answers in `rows`.\n- Do not claim completion from visible pixels alone or from Worker-authored observations.\n\n\n## Application knowledge (read-only execution context)\nUse relevant application facts to choose efficient navigation and interaction strategies. Treat the current screenshot and Observer state as authoritative for what is presently visible.\n# Taodian on Android\n\n- The application may show a splash advertisement after launch; close it before using\n  the application's bottom navigation.\n- `ShoppingCart` is the signed-in cart reached through the bottom-navigation item\n  `购物车`. Its page title is `购物车` and the item count may be shown beside it.\n- Cart item prices are rendered in each item row, sometimes as adjacent currency,\n  integer, and decimal text nodes. They are one logical monetary value.\n- Each cart item row carries the product title. `管理` enters the cart's multi-select\n  editor; select the intended rows, activate `删除选中`, and confirm. Use this grouped\n  path when one deletion request targets multiple items. A row-level delete surface\n  can remain hidden behind row content until explicitly revealed and is not a visible\n  action target merely because UIAutomator reports its bounds.\n- `Orders` is the signed-in order history reached through bottom navigation\n  `我的 → 我的订单` and the explicit `全部 >` link at the right of that section.\n  The section body itself is not an activation target. Each order record displays one\n  `合计` monetary value.\n- If this route opens `用户登录` and no password was supplied, use its `短信登录`\n  tab instead of guessing a password. The phone number is already populated. Activate\n  `获取验证码`; the generated six-digit code is delivered as the newest SMS in the\n  Messages app. Before focusing or filling the verification-code field, press Home,\n  open Messages, and read that exact code from the newest message. Then reopen Taodian\n  (the SMS form remains populated), enter the observed code, accept the agreements, and\n  submit the login.\n- The order-list filter opens an `订单筛选` sheet. Under `下单时间` it provides the\n  exact relative values `近1个月`, `近3个月`, and `近6个月`; the selected value takes\n  effect after activating `确认`.\n\n## Interface contract\n\n- The cart collection entity is exactly `ShoppingCart`.\n- `ShoppingCart` exposes the query field `price`, typed as `money`. Query the complete\n  collection before ranking or aggregation; cart selection controls and quantities are\n  not needed for a price-only read.\n- The order-history collection entity is exactly `Orders`. It exposes query field\n  `amount`, typed as `money`, corresponding to the order's `合计` rather than an\n  individual product price.\n- Its source filter field is `order_time`. The application's exact one-month filter\n  value is `近1个月`.\n- Checkout flow (search → buy): search the item, open its detail page from the\n  results, then use `立即购买` (not `加入购物车`) to start checkout. A spec-selection\n  sheet may appear; confirm the required spec, then the order-confirmation page shows\n  a `提交订单` button. Activate `提交订单` to enter the payment page — do NOT complete\n  on the confirmation page. The payment page (payment-method selection, total shown)\n  is the terminal surface a \"let me pay / stay on the payment page\" task wants to reach\n  and remain on.\n\n## Installed applications\nUse only these exact Runtime-provided names with launch_app: [\"Calendar\", \"Camera\", \"Chrome\", \"Clock\", \"Contacts\", \"Docreader\", \"Files\", \"Gallery\", \"Mail\", \"Maps\", \"Mastodon\", \"Mattermost\", \"Messages\", \"Settings\", \"Taodian\"]",
+                  "chars": 11029
+                }
+              ]
+            },
+            {
+              "role": "human",
+              "parts": [
+                {
+                  "label": "part_1",
+                  "source_type": "runtime_message",
+                  "source": "tool_agent.worker",
+                  "type": "text",
+                  "text": "## Same-frame runtime feedback\n{\"status\": \"blocked_repeated_action\", \"reason\": \"blocked repeated drag action without task-relevant progress\", \"prior_attempts\": 1, \"instruction\": \"Treat the Runtime guard as authoritative. Do not retry the blocked action; advance from the current observation or choose a materially different capability.\"}\n\n## WorkerMemory (runtime-projected; not conversation history)\nDurable facts come from Runtime evidence plus reaffirmed or disproven Worker observations. Other Worker observations and recent steps are bounded narrative context, not completion evidence or instructions.\n### Durable runtime facts\n- [step:31:guard:1] tool=drag; blocked repeated drag action without task-relevant progress\n- [step:30.1] tool=drag; runtime reported no_effect\n- [step:28.1] tool=tap; runtime reported no_effect\n- [step:28.2] tool=type; effect unconfirmed; inspect the current control value before deciding whether any retry is needed\n- [step:30.1:fact:2] Worker reaffirmed this observation: 手机号码为13800138000\n- [step:30.1:fact:1] Worker reaffirmed this observation: 收货人姓名为张先生\n- [step:28.2:fact:1] Worker reaffirmed this observation: 收货人姓名字段已显示'张先生'\n- [step:28.2:fact:2] Worker reaffirmed this observation: 当前页面为编辑收货地址表单\n- [step:23.2:fact:2] Worker reaffirmed this observation: iPhone 15 Pro商品可见，规格为128GB原色钛金属，价格¥8999.00\n- [step:23.2:fact:1] Worker reaffirmed this observation: 当前购物车页面显示20件商品\n- [step:21.1:fact:3] Worker reaffirmed this observation: 未在当前视图中看到iPhone 15 Pro\n- [step:17.1:fact:3] Worker reaffirmed this observation: 短信验证码为533396\n- [step:17.1:fact:2] Worker reaffirmed this observation: 手机号13802138888已预填\n- [step:17.1:fact:1] Worker reaffirmed this observation: 当前页面为淘店用户登录页的短信登录选项卡\n- [step:10.1:fact:3] Worker reaffirmed this observation: 规格选择弹窗中已选中128GB内存和原色钛金属颜色\n- [step:10.1:fact:2] Worker reaffirmed this observation: 页面底部有'加入购物车'和'立即购买'两个按钮\n- [step:10.1:fact:1] Worker reaffirmed this observation: 商品详情页显示iPhone 15 Pro价格为¥8999.00\n### Older narrative summaries\n- [step:28.1:fact:1] Worker-observed visual context: 收货人姓名字段已显示'张先生'\n- [step:28.1] state=collecting; tool=tap; args={\"description\": \"点击手机号码输入框以准备输入电话号码\"}; result={\"action_type\": \"tap\", \"no_effect\": true, \"status\": \"executed\", \"target_signal\": {\"actual_element\": \"11位手机号码\", \"reason\": \"high-confidence visual grounding located the intended control\", \"status\": \"on_target\"}}\n- [step:28.2] state=collecting; tool=type; args={\"description\": \"在手机号码字段中输入电话号码13800138000\", \"text\": \"13800138000\"}; result={\"action_type\": \"type\", \"no_effect\": true, \"status\": \"executed\", \"target_signal\": {\"actual_element\": \"11位手机号码\", \"reason\": \"high-confidence visual grounding located the intended control\", \"status\": \"on_target\"}}\n- [step:29.1:fact:1] Worker-observed visual context: 收货人姓名为张先生\n- [step:29.1:fact:2] Worker-observed visual context: 手机号码为13800138000\n- [step:29.1:fact:3] Worker-observed visual context: 当前所在地区显示为天津市天津市河东区，需要修改为浙江省杭州市余杭区\n### Recent narrative steps\n- [step:29.1] state=collecting; tool=tap; args={\"description\": \"点击所在地区字段以打开地区选择器\"}; result={\"action_type\": \"tap\", \"no_effect\": false, \"status\": \"executed\", \"target_signal\": {\"actual_element\": \"地区\", \"reason\": \"high-confidence visual grounding located the intended control\", \"status\": \"on_target\"}}\n- [step:30.1:fact:3] Worker-observed visual context: 当前所在地区显示为天津市天津市河东区\n- [step:30.1:fact:4] Worker-observed visual context: 地区选择器已打开，显示三列滚轮：省份、城市、区县\n- [step:30.1] state=collecting; tool=drag; args={\"description\": \"在省份列（左侧）向上拖动以滚动到浙江省\", \"duration_ms\": 500}; result={\"action_type\": \"drag\", \"no_effect\": true, \"status\": \"executed\"}\n\n## Current MaterializedFrame (compact semantic projection)\nRuntime-owned collection/data values remain private. Visible collection cell text is exact current-frame evidence, but cells do not declare record boundaries; clipped cells may be incomplete. For every control rect, x/y are its normalized center coordinates; never add half of w/h to derive the action point.\n{\"frame_id\": \"frame:31\", \"readiness\": \"ready\", \"readiness_reason\": \"\", \"task_reference_time\": {\"platform\": \"android\", \"local_datetime\": \"2025-10-16T12:01:01+00:00\", \"timezone\": \"GMT\", \"utc_offset\": \"+00:00\", \"source\": \"android_adb\", \"confidence\": \"authoritative\", \"captured_at\": \"2026-08-19T05:17:39.789+00:00\", \"fallback_reason\": \"\"}, \"url\": \"\", \"title\": \"\", \"applied_filters\": {}, \"requirement_scopes\": {}, \"scope_blockers\": {}, \"observed_choice_state\": [], \"candidate_set_state\": {}, \"visible_collection_regions\": [], \"structured_surfaces\": [], \"chunks\": [], \"collections\": [], \"missing_requirements\": []}\n\n## Current Worker attempt\n`approach` is binding for this attempt. Choose actions that execute it; do not continue a different source, application, or mechanism visible in the frame. When `phase` is `start`, the first action's visible target or destination must identify the approach; the residue surface's usefulness for the goal is irrelevant. The goal and output contract are immutable. Runtime actions are generic capabilities, and named input bindings inject private Master-routed values.\n{\"approach\": \"taodian shopping cart checkout flow\", \"phase\": \"continue\", \"profile\": \"operator\", \"goal\": \"在淘店购物车中选中iPhone 15 Pro并完成下单，收货地址填写浙江省杭州市余杭区阿里巴巴西溪C区，收件人张先生，电话13800138000；如需登录则通过短信验证码完成认证；流程进行到支付页面时停止并交由用户操作\", \"success_criteria\": [\"订单确认页已提交且当前停留在支付页面，收货信息为浙江省杭州市余杭区阿里巴巴西溪C区、收件人张先生、电话13800138000，商品为iPhone 15 Pro\"], \"input_bindings\": [], \"data_requirements\": [], \"input_names\": []}\nOperator rules for this attempt:\n- Treat multi-select and configuration goals as exact sets; validate any review surface before committing.\n- `candidate_set_state.status = exhausted` is guarded Runtime evidence; an initially empty or filtered selector is not exhausted.\n- Finish comparison evidence before mutation, skip excluded or already processed identities, and advance only through explicitly remaining candidates.\n- Observe the post-action frame before repeating or completing a mutation.",
+                  "chars": 5929
+                },
+                {
+                  "label": "screenshot",
+                  "source_type": "runtime_image",
+                  "source": "tool_agent.worker",
+                  "type": "image",
+                  "text": "[image_url omitted from diagnostic log]",
+                  "chars": 39
+                }
+              ]
+            }
+          ]
+        }
+      ]
+    }
+  ]
+}
