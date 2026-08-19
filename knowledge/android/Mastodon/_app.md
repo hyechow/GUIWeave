@@ -35,12 +35,14 @@ version: 5
 - Match a Toot across these collections by the exact pair
   (`author_handle`, `content`). A tag-result Toot can only be relocated through
   its `TaggedToots` collection.
-- Favorite or bookmark membership cannot be inferred from controls on a tag row or
-  TootDetail; only complete traversal of the corresponding Saved collection is authoritative.
+- A filled blue star with a count on a Toot action row means it is favorited; an
+  outline star means it is not. The corresponding Saved collection is an alternate
+  membership view, not a prerequisite for reading this visible control state.
+- Favorite and bookmark are independent state dimensions. Membership in one neither
+  implies nor excludes membership in the other; only a task-stated predicate makes a
+  saved collection relevant to the target set.
 - Favorite mutation uses the boolean field `favorited`; this is not a field
   displayed by `TaggedToots` and is neither a query field nor a query filter.
-  Do not prefilter `TaggedToots` by favorite state; determine exclusion only from
-  the exact memberships collected from `SavedFavorites` and `SavedBookmarks`.
 - Tapping the visible text body of a Toot opens its single-post detail view,
   titled `Post from <author>`. Do not tap the author/avatar or a media thumbnail:
   those open the author profile or media viewer instead. The detail view exposes

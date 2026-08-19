@@ -35,7 +35,7 @@ if TYPE_CHECKING:
 CHANGE_MEAN_THR = 8.0           # 灰度均值差佐证信号(噪声地板 ~0.05；冻结/静止邻帧 <1.1)
 CHANGE_SSIM_DIST_THR = 0.08     # 1-SSIM 结构差(主信号)：tab 切换 0.167 vs 静止邻帧 ≤0.03
 CHANGED_PIXEL_THR = 0.025       # 变色像素占比(任一通道差 >25)：tab 切换 0.042 vs 静止 ≤0.013
-EFFECT_REGION_HALF = 0.12       # tap 生效检测：点击点周围 2D box 半边(占比，24% box)——局部 UI
+EFFECT_REGION_HALF = 0.06       # tap 生效检测：点击点周围 2D box 半边(占比，12% box)——局部 UI
                                 # 改动(菜单展开/下拉/勾选)整帧会被稀释，裁到点击点附近用 SSIM+颜色
                                 # 判：实测菜单展开局部 ssim_dist≈0.29 / changed_ratio≈0.21 ≫ 阈值
 # frame_diff (画面是否停稳) — stability only, grayscale is fine here.
@@ -100,7 +100,7 @@ def frame_changed(
     聚焦(都对**同一套 SSIM+颜色信号**生效，只是缩小比较范围让局部改动凸显，绝不退回灰度)：
       - ``center``(tap 的归一化 0-1000 x/y)：只看点击点周围 ``box_half`` 的 2D box。tap 触发的
         是**局部** UI 改动(菜单展开/下拉/勾选/边栏)，整帧 SSIM 会被稀释成「没变」(实测菜单展开
-        整帧 ssim_dist 仅 0.026<0.08，而点击点 24% box 内达 0.29)——裁到点击点附近才看得见。
+        整帧 ssim_dist 仅 0.026<0.08，而点击点 12% box 内达 0.29)——裁到点击点附近才看得见。
       - ``focus_y``(归一化 0-1000)：只看该 y 周围横向带(type 只改输入框那一行)。
       - 都不给：整帧。``center`` 优先于 ``focus_y``。
     """
