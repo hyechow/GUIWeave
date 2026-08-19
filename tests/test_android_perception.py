@@ -24,15 +24,14 @@ class _Client:
 
 
 @pytest.mark.parametrize("result", [None, "<hierarchy><node /></hierarchy>"])
-def test_android_capture_bounds_optional_hierarchy_to_one_attempt(result) -> None:
+def test_android_capture_is_pure_vision_without_hierarchy(result) -> None:
+    # UIAutomator structured perception is removed; capture is screenshot-only.
     session = AndroidSession()
     session.client = _Client([result])
 
-    assert session.capture() == (b"png", result)
+    assert session.capture() == (b"png", None)
     assert session.client.screenshot_calls == 1
-    assert session.client.hierarchy_calls == 1
-    assert session.client.hierarchy_timeout_s == 6.0
-    assert session.last_capture_timing["hierarchy_available"] is (result is not None)
+    assert session.client.hierarchy_calls == 0
 
 
 def test_android_settle_screenshot_uses_one_primary_capture() -> None:

@@ -223,7 +223,10 @@ def test_singleton_requires_exactly_one_authoritative_record(
 @pytest.mark.parametrize(
     ("contexts", "expected_count"),
     [
-        (("detail:1", "detail:2"), 2),
+        # A scrolling viewport deduplicates identical business rows across windows:
+        # the same record re-appears as the view moves. Paged collections (which
+        # carry page_index) keep each page's rows instead.
+        (("detail:1", "detail:2"), 1),
         (("surface", "surface"), 1),
     ],
     ids=("distinct-contexts", "advancing-window"),
