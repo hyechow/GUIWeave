@@ -61,6 +61,9 @@ def test_shopping_order_history_knowledge_separates_planning_and_navigation() ->
     assert "one linked order-detail collection" in master_text
     assert "required stable parent identity" in master_text
     assert "Grand Total" in master_text
+    assert "Order Total is the list rendering" in master_text
+    assert "sum Order Total directly from the list" in master_text
+    assert "not replacement filter values" in master_text
 
 
 def test_shopping_purchased_option_uses_real_order_detail_fields() -> None:
