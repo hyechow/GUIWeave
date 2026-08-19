@@ -410,6 +410,18 @@ def _validate_gui_worker_call(
     for requirement in values.get("data_requirements") or []:
         if not isinstance(requirement, dict):
             continue
+        for filter_value in (requirement.get("filters") or {}).values():
+            if not isinstance(filter_value, str) or not user_goal:
+                continue
+            pattern = rf"(?<!\w){re.escape(filter_value)}(?!\w)"
+            if re.search(pattern, user_goal, re.IGNORECASE) and not re.search(
+                pattern, user_goal,
+            ):
+                diagnostics.append(_diagnostic(
+                    "DATA_FILTER_LITERAL",
+                    "string filters found in the user goal must preserve exact case",
+                    call,
+                ))
         contract_text = "\n".join([
             str(values["goal"]),
             *(

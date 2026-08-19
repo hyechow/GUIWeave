@@ -5,12 +5,12 @@ platform: browser
 app: shopping
 scope:
   - orchestrator
-selector_when: orders order history bought purchased date status total price cost spend spent subtotal shipping refund first latest oldest item SKU size color option configuration canceled cancelled reorder
+selector_when: orders order number history bought purchased date status total price cost spend spent subtotal shipping refund first latest oldest item SKU size color option configuration canceled cancelled reorder
 source: official_trace_distilled
 confidence: high
 sensitivity: internal
 ttl: session
-version: 3
+version: 4
 ---
 # One Stop Market order-history data
 
@@ -18,9 +18,10 @@ version: 3
 
 My Orders is newest first and has no filters. Its list rows provide Order #, Date, Order Total,
 Status, and a View Order link. Date is a complete calendar date displayed as `M/D/YY`; normalize it
-as `datetime`. Use the list alone for status/date/order-total questions. Treat user wording
-"cancelled" as the visible `Canceled` status and "completed" as `Complete`; do not approximate an
-unsupported delivery phrase with a different visible status.
+as `datetime`. Use the list alone for status/date/order-total questions. Status is an exact label,
+not free text: treat user wording "cancelled" as visible `Canceled` and "completed" as `Complete`;
+otherwise retain the requested phrase's exact spelling and capitalization, never approximating it
+with another label.
 
 Each View Order detail provides order date/status, addresses, Items Ordered, and a totals block.
 Items Ordered rows provide Product Name, Price, Qty, and line Subtotal. The totals block separately
@@ -29,10 +30,11 @@ date, so its value is unavailable even when a status is visible.
 
 ## Chronology and linked item lookup
 
-For latest or most recent, scan newest-first list rows and stop at the first row satisfying all
-list-level predicates. For first/oldest, traverse to the final page and use the oldest qualifying
-row. For the date last ordered a product, traverse orders newest first and inspect linked Items
-Ordered until the first matching line item is found; do not open every remaining order after that.
+For latest or most recent, return exactly one order record: the first qualifying row in the
+newest-first list. Stop as soon as it satisfies all list-level predicates. For first/oldest,
+traverse to the final page and use the oldest qualifying row. For the date last ordered a product,
+traverse orders newest first and inspect linked Items Ordered until the first matching line item is
+found; do not open every remaining order after that.
 
 For spending over a date interval and product class, use one linked order-detail collection at
 line-item grain. Retain Order # as the required stable parent identity because the detail title
