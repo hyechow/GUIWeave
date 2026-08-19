@@ -10,7 +10,7 @@ source: official_trace_distilled
 confidence: high
 sensitivity: internal
 ttl: session
-version: 9
+version: 10
 ---
 # One Stop Market order-history data
 
@@ -18,10 +18,11 @@ version: 9
 
 My Orders is newest first and has no filters. Its list rows provide Order #, Date, Order Total,
 Status, and a View Order link. Date is a complete calendar date displayed as `M/D/YY`; normalize it
-as `datetime`. Use the list alone for status/date/order-total questions. Status is an exact label,
-not free text: treat user wording "cancelled" as visible `Canceled` and "completed" as `Complete`;
-otherwise retain the requested phrase's exact spelling and capitalization, never approximating it
-with another label.
+as `datetime`. Order Total is the list rendering of the whole-order Grand Total and includes
+Shipping & Handling, so use the list alone for status/date/order-total questions. Status is an exact label,
+not free text: visible `Canceled` and `Complete` are semantic equivalents for user wording such as
+"canceled", "cancelled", or "completed", not replacement filter values. Keep the user's exact
+spelling and capitalization in the filter while perception applies the visible-label equivalence.
 
 Each View Order detail provides order date/status, addresses, Items Ordered, and a totals block.
 Items Ordered rows provide Product Name, Price, Qty, and line Subtotal. The totals block separately
@@ -51,16 +52,17 @@ carry known title equivalences into the requirement description. Artificial plan
 home decoration; indoor/outdoor speakers are Electronics and do not qualify.
 
 For whole-order counts or spending, filter list rows by date and status first. Count qualifying
-orders once each. Use Grand Total when shipping/handling must be included and Subtotal when shipping
-must be excluded; do not sum both. An empty bounded result is not a numeric zero unless the task
-explicitly requests zero for no matches.
+orders once each. Sum list-row Order Total when shipping/handling must be included. When shipping
+must be excluded, open the qualifying order details and sum Subtotal; do not sum both. An empty
+bounded result is not a numeric zero unless the task explicitly requests zero for no matches.
 
 ## Refund arithmetic
 
-For canceled-order refund estimates, first bound orders by visible `Canceled` status and date. If
-shipping is refundable, sum Grand Total. If shipping is not refundable, sum Subtotal. If the user
-also keeps one item, subtract that item's line Subtotal from the otherwise refundable merchandise
-Subtotal. Do not subtract the whole order, item unit price, or shipping twice.
+For canceled-order refund estimates, first bound orders by the user's status predicate and date. If
+shipping is refundable, sum Order Total directly from the list. If shipping is not refundable, sum
+detail Subtotal. If the user also keeps one item, subtract that item's line Subtotal from the
+otherwise refundable merchandise Subtotal. Do not subtract the whole order, item unit price, or
+shipping twice.
 
 ## Purchased options and identity
 
