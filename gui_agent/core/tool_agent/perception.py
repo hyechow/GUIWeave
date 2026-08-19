@@ -499,6 +499,10 @@ def _compare_values(
 ) -> int:
     if field_type is not None:
         try:
+            if field_type == "datetime":
+                left_time = normalize_table_value(field_name, left, field_type)
+                right_time = normalize_table_value(field_name, right, field_type)
+                return (left_time > right_time) - (left_time < right_time)
             left = _normalize_runtime_value(field_name, left, field_type)
             right = _normalize_runtime_value(field_name, right, field_type)
         except ValueNormalizationError as exc:
