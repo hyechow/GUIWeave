@@ -10,7 +10,7 @@ source: official_trace_distilled
 confidence: high
 sensitivity: internal
 ttl: session
-version: 10
+version: 11
 ---
 # One Stop Market order-history data
 
@@ -63,6 +63,12 @@ shipping is refundable, sum Order Total directly from the list. If shipping is n
 detail Subtotal. If the user also keeps one item, subtract that item's line Subtotal from the
 otherwise refundable merchandise Subtotal. Do not subtract the whole order, item unit price, or
 shipping twice.
+
+When a nonrefundable kept item changes the refund, use one linked Items Ordered collection at
+line-item grain across every date/status-qualified order. Retain Order #, Date, and Status from the
+parent plus Product Name and line Subtotal from each child row. Sum the line Subtotals except rows
+matching the kept product. Do not nest Items Ordered as an array inside an order row or also collect
+the order Subtotal; the flat line sum already is the refundable merchandise subtotal.
 
 ## Purchased options and identity
 
