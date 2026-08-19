@@ -958,6 +958,22 @@ class PerceptionMaterializer:
         ):
             state = None
             self._detail_collections.pop(state_key, None)
+        incoming_urls = {
+            str(row[_NAVIGATION_URL])
+            for row in candidate_rows
+            if row.get(_NAVIGATION_URL)
+        }
+        state_urls = {
+            str(row[_NAVIGATION_URL])
+            for row in (state.rows if state is not None else [])
+            if row.get(_NAVIGATION_URL)
+        }
+        if state is not None and incoming_urls and not state_urls:
+            # A strategy may begin on a residual detail page, then return to
+            # the navigable parent list.  That list starts the candidate walk;
+            # it must not be merged positionally into the residual detail row.
+            state = None
+            self._detail_collections.pop(state_key, None)
         expanded_target = None
         expanded_pre_resolved = False
         if state is not None and candidate_rows and detail_fields:
@@ -972,10 +988,13 @@ class PerceptionMaterializer:
             )
             if is_child_table:
                 identity = _normalize(" ".join((page_identity or {}).values()))
+                page_url = str((page_identity or {}).get("url") or "").rstrip("/")
                 targets = [
                     index
                     for index, row in enumerate(state.rows)
-                    if any(
+                    if page_url
+                    and str(row.get(_NAVIGATION_URL) or "").rstrip("/") == page_url
+                    or any(
                         len(token := _normalize(str(value))) >= 3
                         and token in identity
                         for key, value in row.items()
@@ -1003,9 +1022,9 @@ class PerceptionMaterializer:
                 return [
                     {
                         key: value for key, value in row.items()
-                        if key not in identity_fields
+                        if key == _NAVIGATION_URL or key not in identity_fields
                     }
-                    for row in map(_public_detail_row, items)
+                    for row in items
                 ]
 
             if state is None:
@@ -1050,7 +1069,9 @@ class PerceptionMaterializer:
                     known = identities(state.rows)
                     incoming = known
                 state.detail_fields.update(detail_fields)
-                allow_new = surface == state.surface
+                allow_new = surface == state.surface or bool(
+                    incoming_urls.intersection(state_urls)
+                )
                 for candidate, identity in zip(candidate_rows, incoming, strict=True):
                     if identity in known:
                         state.rows[known.index(identity)].update(candidate)
@@ -1058,6 +1079,8 @@ class PerceptionMaterializer:
                         known.append(identity)
                         state.rows.append(dict(candidate))
                 if candidate_rows and page_identity and allow_new:
+                    state.surface = surface
+                    state.location = location
                     state.source_url = str(page_identity.get("url") or state.source_url)
                     state.source_has_more = source_has_more
         if state is None or not state.rows or not state.detail_fields:
@@ -1225,10 +1248,11 @@ class PerceptionMaterializer:
             "candidate_source_url": state.source_url,
         }
         required = set(requirement.row_schema.get("required") or [])
-        resolved_rows = [
-            row for row in map(_public_detail_row, state.rows)
+        resolved_rows = self._matching_rows(requirement, [
+            row
+            for row in map(_public_detail_row, state.rows)
             if all(_nonempty(row.get(field)) for field in required)
-        ]
+        ])
         rows = expanded_rows or resolved_rows if not unresolved_indexes else []
         return state, rows, progress
 
