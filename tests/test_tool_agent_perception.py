@@ -676,6 +676,27 @@ def test_numeric_bound_predicate_is_deterministic_not_semantic() -> None:
     ]) is False
 
 
+def test_datetime_bound_compares_instants_across_offsets() -> None:
+    requirement = DataRequirement(
+        id="records",
+        description="Records in a date interval",
+        row_schema={"recorded_at": "string"},
+        field_sources={"recorded_at": "Recorded At"},
+        field_types={"recorded_at": "datetime"},
+        filters={"recorded_at": {
+            "min": "2022-09-01T00:00:00+08:00",
+            "max": "2022-09-30T23:59:59+08:00",
+        }},
+    )
+
+    assert _rows_satisfy_filters(requirement, [
+        {"recorded_at": "2022-09-01T00:00:00+00:00"},
+    ]) is True
+    assert _rows_satisfy_filters(requirement, [
+        {"recorded_at": "2022-08-31T15:59:59+00:00"},
+    ]) is False
+
+
 def test_structured_list_snapshot_deterministically_reads_reviews(
     tmp_path: Path,
 ) -> None:
