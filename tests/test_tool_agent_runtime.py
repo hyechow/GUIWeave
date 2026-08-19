@@ -233,6 +233,37 @@ def test_order_guard_uses_explicit_contract_field_over_approach_overlap() -> Non
     assert proven.completion_mode == "collector"
 
 
+@pytest.mark.parametrize(
+    ("goal", "direction_label", "completion_mode"),
+    [
+        ("Show results sorted alphabetically", "Set Ascending Direction", "unavailable"),
+        ("Show results sorted alphabetically", "Set Descending Direction", "operator"),
+        ("Show results sorted descending", "Set Descending Direction", "unavailable"),
+        ("Show results sorted descending", "Set Ascending Direction", "operator"),
+        ("Show results sorted by price", "Set Ascending Direction", "operator"),
+    ],
+)
+def test_operator_completion_waits_for_requested_sort_direction(
+    goal: str,
+    direction_label: str,
+    completion_mode: str,
+) -> None:
+    spec = _worker_spec(
+        actions=[],
+        profile="operator",
+        goal=goal,
+        success_criteria=[goal],
+        approach="Search and sort the result list.",
+    )
+    frame = MaterializedFrame(
+        frame_id="frame:1",
+        screenshot_path="frame.png",
+        controls=[{"kind": "a", "label": direction_label}],
+    )
+
+    assert assess_frame(spec, [], frame).completion_mode == completion_mode
+
+
 def test_action_guard_blocks_one_unchanged_repeat() -> None:
     frame = MaterializedFrame(frame_id="frame:stable", screenshot_path="frame.png")
     breaker = WorkerActionCircuitBreaker()

@@ -57,8 +57,8 @@ def test_shopping_catalog_knowledge_preserves_exact_price_boundaries() -> None:
     assert "retain the segment" in worker
     assert "every successive category choice" in context
     assert "not a nested hierarchy" in context
-    assert "`Set Ascending Direction` proves descending is active" in worker
-    assert "Complete without clicking when active order" in context
+    assert "For ascending, click `Set Ascending Direction`" in worker
+    assert "for descending, do the inverse" in context
 
 
 def test_shopping_navigation_exposes_nested_category_paths() -> None:
