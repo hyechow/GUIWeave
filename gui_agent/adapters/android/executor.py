@@ -28,7 +28,7 @@ from gui_agent.core.runtime.executor import VisionExecutor
 # Android scroll units per ScrollAmount label for ordinary lists. Picker wheels use
 # column-specific maps below; the old shared medium=4 jumped ~8 hour rows and caused
 # 09<->01 oscillation in the alarm picker.
-_ANDROID_AMOUNT_UNITS = {"small": 1, "medium": 4, "large": 8}
+_ANDROID_AMOUNT_UNITS = {"small": 2, "medium": 6, "large": 8}
 _ANDROID_PICKER_AMOUNT_UNITS = {
     "default": {"small": 1, "medium": 2, "large": 3},
     "hour": {"small": 1, "medium": 2, "large": 2},
@@ -45,11 +45,6 @@ _SLIDER_EDGE_THRESHOLD = 900.0
 
 class AndroidExecutor(VisionExecutor):
     """Execute normalized policy actions against the phone via AndroidDevice."""
-
-    # Focusing a field can open the keyboard and reflow the Android viewport.
-    # Typing or focusing can reflow the viewport, invalidating a spatial suffix.
-    tap_type_suffix_safe = False
-    type_suffix_safe = False
 
     def refresh_controls(self) -> list[dict] | None:
         """Refresh UIAutomator controls for safe in-batch coordinate rebinding."""

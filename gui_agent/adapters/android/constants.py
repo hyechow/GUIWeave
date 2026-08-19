@@ -40,10 +40,9 @@ VENDORED_ADB = Path(_configured_adb).expanduser().resolve() if _configured_adb e
 # or a USB serial. None -> auto-select the sole connected device.
 DEFAULT_SERIAL = os.environ.get("ANDROID_SERIAL") or None
 
-# Swipe pixels per scroll unit. With AndroidExecutor's wider unit map (small/medium/
-# large -> 1/4/8) this gives small≈140px (≈1 wheel-picker row on a 1080x2400 panel),
-# medium≈560px (≈¼ screen), large≈1120px (≈½ screen). Tuned so a wheel/time picker can
-# be nudged ~1 row at a time (small) instead of overshooting, while lists still fling.
+# Swipe pixels per scroll unit. AndroidExecutor maps ordinary lists to 2/6/8 units
+# (about 280/840/1120px on the target panel) and keeps picker wheels on their own
+# bounded 1-3 unit map.
 SCROLL_PX_PER_AMOUNT = 140
 
 # Downscale the captured screenshot to this WIDTH (px), preserving aspect, before it
