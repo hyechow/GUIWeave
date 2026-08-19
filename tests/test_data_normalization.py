@@ -29,6 +29,9 @@ def test_declared_types_are_lossless_and_json_serializable() -> None:
 
     assert parsed == datetime.fromisoformat("1900-07-11 00:00:00+00:00")
     assert json_value(parsed) == "1900-07-11T00:00:00+00:00"
+    assert json_value(normalize_table_value("Date", "1/16/23", "datetime")) == (
+        "2023-01-16T00:00:00+00:00"
+    )
     assert normalize_table_value("amount", "￥ 367 .25", "money") == 367.25
     assert normalize_table_value("Content", "first\nsecond", "text_list") == ["first", "second"]
 

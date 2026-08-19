@@ -652,6 +652,8 @@ def test_screen_reader_transcribes_all_then_judge_filters_semantic_rows(
     assert "apply any explicit taxonomy equivalence" in judge_prompt
     assert "record's primary subject" in judge_prompt
     assert "component, accessory, or bundle inclusion" in judge_prompt
+    assert "primary function to perform the requested function" in judge_prompt
+    assert "unless the requested class explicitly includes those objects" in judge_prompt
     assert extracted["found"] is True
 
 
@@ -1809,6 +1811,112 @@ def test_linked_details_resolve_empty_values_from_related_records(tmp_path: Path
     assert collection.coverage["status"] == "complete"
     assert collection.row_count == 2
     assert materializer.data_store.collection_rows(collection.ref) == case["expected_rows"]
+
+
+def test_linked_detail_table_expands_filtered_parents_to_child_rows(tmp_path: Path) -> None:
+    requirement = DataRequirement(
+        id="entries",
+        description="Matching child entries in the requested date interval",
+        row_schema={
+            "type": "object",
+            "properties": {
+                "record_id": {"type": "string"},
+                "recorded_at": {"type": "string", "format": "date-time"},
+                "subject": {"type": "string"},
+                "amount": {"type": "number"},
+            },
+            "required": ["record_id", "recorded_at", "subject", "amount"],
+            "additionalProperties": False,
+        },
+        field_sources={
+            "record_id": "Record ID",
+            "recorded_at": "Date",
+            "subject": "Subject",
+            "amount": "Amount",
+        },
+        field_types={
+            "record_id": "text",
+            "recorded_at": "datetime",
+            "subject": "text",
+            "amount": "money",
+        },
+        filters={
+            "recorded_at": {
+                "min": "2023-01-01T00:00:00+00:00",
+                "max": "2023-01-31T23:59:59+00:00",
+            },
+            "subject_contains": "target class",
+        },
+    )
+    parent_table = {
+        "caption": "Records",
+        "headers": ["Record ID", "Date", "Action"],
+        "rows": [
+            {"Record ID": "group-001", "Date": "1/29/23", "Action": "Open"},
+            {"Record ID": "group-002", "Date": "1/16/23", "Action": "Open"},
+            {"Record ID": "group-003", "Date": "12/18/22", "Action": "Open"},
+        ],
+        "total_records": 99,
+        "partial": True,
+        "traversal": {"type": "paged", "has_next_page": True},
+    }
+    materializer = _materializer(tmp_path, "enhanced")
+    materializer._semantic_judge = lambda _requirement, rows: [  # type: ignore[method-assign]
+        row for row in rows if row.get("subject") == "Target service"
+    ]
+
+    listed, _ = materializer.observe(
+        bundle=FakeBundle([parent_table]),
+        platform=FakePlatform(),
+        requirements=[requirement],
+        frame_no=1,
+    )
+    assert listed.requirement_scopes[requirement.id]["detail_resolution"][
+        "candidate_records"
+    ] == 2
+    assert materializer._expected_totals == {}
+
+    unrelated_child = {
+        "caption": "Entries",
+        "headers": ["Subject", "Amount"],
+        "rows": [{"Subject": "Unrelated service", "Amount": "$4.00"}],
+        "total_records": 200,
+        "partial": True,
+        "traversal": {"type": "static"},
+    }
+    first, _ = materializer.observe(
+        bundle=FakeBundle([unrelated_child], observation={"title": "Record group-001"}),
+        platform=FakePlatform(),
+        requirements=[requirement],
+        frame_no=2,
+    )
+    progress = first.requirement_scopes[requirement.id]["detail_resolution"]
+    assert progress["resolved_candidate_ordinals"] == [1]
+    assert progress["next_unresolved_candidate"]["fields"]["record_id"] == "group-002"
+
+    matching_child = {
+        **unrelated_child,
+        "rows": [
+            {"Subject": "Target service", "Amount": "$7.25"},
+            {"Subject": "Accessory", "Amount": "$2.00"},
+        ],
+    }
+    completed, _ = materializer.observe(
+        bundle=FakeBundle([matching_child], observation={"title": "Record group-002"}),
+        platform=FakePlatform(),
+        requirements=[requirement],
+        frame_no=3,
+    )
+
+    assert completed.requirement_scopes[requirement.id]["detail_resolution"][
+        "status"
+    ] == "resolved"
+    assert materializer.data_store.collection_rows(completed.collections[0].ref) == [{
+        "record_id": "group-002",
+        "recorded_at": "2023-01-16T00:00:00+00:00",
+        "subject": "Target service",
+        "amount": 7.25,
+    }]
 
 
 def test_vision_detail_row_advances_unresolved_candidate(tmp_path: Path) -> None:

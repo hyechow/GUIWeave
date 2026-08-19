@@ -46,6 +46,23 @@ def test_shopping_query_transform_is_worker_only() -> None:
     assert "full requested class unchanged" in master
 
 
+def test_shopping_order_history_knowledge_separates_planning_and_navigation() -> None:
+    knowledge = load_knowledge_for_app("shopping", "browser")
+    assert knowledge is not None
+
+    worker = knowledge.worker_context()
+    master = knowledge.orchestrator_context(
+        "amount spent on a product class within an order date interval"
+    )
+    master_text = " ".join(master.split())
+
+    assert "ten per page" in worker
+    assert "first row older than the lower boundary" in worker
+    assert "one linked order-detail collection" in master_text
+    assert "required stable parent identity" in master_text
+    assert "Grand Total" in master_text
+
+
 def test_android_orchestrator_selects_compact_interface_documents() -> None:
     cases = {
         "Calendar": ("check the calendar time slot", "Event"),
