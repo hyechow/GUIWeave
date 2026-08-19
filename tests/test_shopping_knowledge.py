@@ -42,6 +42,22 @@ def test_shopping_buy_goal_combines_catalog_selection_and_checkout_commit() -> N
     assert "Place Order" in context
 
 
+def test_shopping_catalog_knowledge_preserves_exact_price_boundaries() -> None:
+    knowledge = _shopping_knowledge()
+    goal = "Open a category filtered to under $40."
+    worker = " ".join(knowledge.worker_context().split())
+    context = " ".join(knowledge.orchestrator_context(goal).split())
+
+    assert knowledge.orchestrator_sections(goal) == ["catalog_planning"]
+    assert "price=<lower>-<upper>" in worker
+    assert '"under X" maps to `price=0-X`' in context
+    assert "`cat=<id>` alias" in context
+    assert "/women/<leaf>.html" in context
+    assert "invalid unless its canonical URL" in context
+    assert "every successive category choice" in context
+    assert "not a nested hierarchy" in context
+
+
 def test_shopping_contact_draft_selects_order_data_without_crossing_submit() -> None:
     knowledge = _shopping_knowledge()
     goal = "Fill Contact Us with a refund message using my order amount; do not submit."

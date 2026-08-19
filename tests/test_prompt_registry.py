@@ -173,6 +173,7 @@ def test_worker_keeps_action_grounding_and_memory_boundaries() -> None:
             'coverage="first_match"', "ResultRefs cannot serve as hidden Worker memory",
             "complete—not merely visible—candidate traversal", "Do not enumerate atomic GUI actions",
             "Preserve every user-supplied string predicate verbatim",
+            "generic activity such as navigation, search, filtering",
             "standalone `\" Label \"`", "bare alphabetic `find`",
             "never truncate on spaces or capitalization",
         )),
