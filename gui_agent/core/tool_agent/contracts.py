@@ -147,6 +147,14 @@ class DataRequirement(StrictModel):
                 "filter fields must be present in row_schema so logical row scope can "
                 f"be verified: {sorted(unknown_filters)}"
             )
+        optional_filters = filter_fields.difference(
+            self.row_schema.get("required") or []
+        )
+        if optional_filters:
+            raise ValueError(
+                "filter fields must be required in row_schema so missing evidence cannot "
+                f"satisfy logical scope: {sorted(optional_filters)}"
+            )
         unknown_sources = set(self.field_sources).difference(properties)
         if unknown_sources:
             raise ValueError(
