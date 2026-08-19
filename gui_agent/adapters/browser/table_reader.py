@@ -380,8 +380,22 @@ def table_snapshot_js() -> str:
     if (nextBtn) has_next_page = !disabled(nextBtn);
     if (prevBtn) has_prev_page = !disabled(prevBtn);
 
-    const pageItems = Array.from(pager.querySelectorAll('button, a, [role="button"]'))
-      .map(el => ({{ el, value: /^\\d+$/.test(text(el)) ? parseInt(text(el)) : null }}))
+    const pageValue = (el) => {{
+      const raw = text(el);
+      if (/^\\d+$/.test(raw)) return parseInt(raw);
+      const active = el.matches('.current, [aria-current="page"]')
+        || el.parentElement?.matches('.current, [aria-current="page"]');
+      const actionable = el.matches('a, button, [role="button"]');
+      if (!active && !actionable) return null;
+      const match = raw.match(/(\\d+)\\s*$/);
+      return match ? parseInt(match[1]) : null;
+    }};
+    // Current pages are often non-link elements. Include semantic current-page
+    // state so a terminal pager with only Previous still resolves deterministically.
+    const pageItems = Array.from(pager.querySelectorAll(
+      'button, a, [role="button"], .current, [aria-current="page"]'
+    ))
+      .map(el => ({{ el, value: pageValue(el) }}))
       .filter(item => item.value != null);
     const pageNumbers = pageItems.map(item => item.value);
     if (!page_count && pageNumbers.length) page_count = Math.max(...pageNumbers);
@@ -648,6 +662,7 @@ def table_snapshot_js() -> str:
     }}
     if (headerSet.length < 2 || rows.length < 2) continue;
     const listHeaders = headerSet;
+    const traversal = detectPagerState(parent);
     snapshots.push(finalize({{
       source: "list",
       caption: nearbyTitle(parent),
@@ -656,6 +671,7 @@ def table_snapshot_js() -> str:
       rowLinks: rows.map(() => []),
       totalRecords: null,
       path: uniquePath(parent),
+      traversal,
       ...viewportState(parent),
     }}));
     seen.add(parent);

@@ -161,6 +161,7 @@ def test_traversal_action_marks_record_and_page_navigation() -> None:
         {"label": "上一条", "kind": "button"},
         {"label": "下一頁", "kind": "button"},
         {"label": "上一條", "kind": "button"},
+        {"label": "Next", "value": "Page Next", "kind": "a"},
     ]})
 
     assert [c.get("traversal_action") for c in controls] == [
@@ -172,6 +173,7 @@ def test_traversal_action_marks_record_and_page_navigation() -> None:
         "record_previous",
         "page_next",
         "record_previous",
+        "page_next",
     ]
 
 

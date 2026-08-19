@@ -49,6 +49,7 @@ _CONTROL_PROMPT_FIELDS = (
     "is_filter",
     "query_action",
     "form_action",
+    "traversal_action",
     "is_datepicker",
     "group_index",
     "group_field",
@@ -154,9 +155,10 @@ def _offscreen_action_controls(controls: list[dict[str, Any]]) -> list[dict[str,
 
     ``_semantic_controls`` drops everything off-viewport, which made the
     reveal capability unusable — the Worker had no way to read the target
-    rect. Row links (``a``) stay out: they are reached through collection
-    regions, not reveal. Duplicate labels (mass-action buttons on every row)
-    collapse to their nearest-fold instance so long forms stay compact.
+    rect. Ordinary row links (``a``) stay out because they are reached through
+    collection regions; explicit page-traversal anchors remain revealable.
+    Duplicate labels (mass-action buttons on every row) collapse to their
+    nearest-fold instance so long forms stay compact.
     """
 
     def _fold_distance(control: dict[str, Any]) -> float:
@@ -166,27 +168,29 @@ def _offscreen_action_controls(controls: list[dict[str, Any]]) -> list[dict[str,
             return float("inf")
         return abs(float(y)) if float(y) < 0 else abs(float(y) - 1000.0)
 
-    nearest: dict[tuple[str, str], dict[str, Any]] = {}
+    nearest: dict[tuple[str, str, str], dict[str, Any]] = {}
     for control in controls:
         if not (
             isinstance(control, dict)
             and control.get("in_viewport") is False
-            and str(control.get("kind") or "") in _OFFSCREEN_ACTION_KINDS
+            and (
+                str(control.get("kind") or "") in _OFFSCREEN_ACTION_KINDS
+                or str(control.get("kind") or "") == "a"
+                and str(control.get("traversal_action") or "").startswith("page_")
+            )
             and str(control.get("label") or "").strip()
             and positioned_rect(control) is not None
         ):
             continue
-        key = (str(control["kind"]), str(control["label"]).strip())
+        key = tuple(str(control.get(field) or "").strip()
+                    for field in ("kind", "label", "traversal_action"))
         if _fold_distance(control) < _fold_distance(nearest.get(key) or {}):
             nearest[key] = control
     candidates = sorted(nearest.values(), key=_fold_distance)
     return [
-        {
-            "kind": control["kind"],
-            "label": control["label"],
-            "rect": control["rect"],
-            **({"viewport_pos": control["viewport_pos"]} if control.get("viewport_pos") else {}),
-        }
+        {key: control[key] for key in (
+            "kind", "label", "rect", "value", "traversal_action", "viewport_pos",
+        ) if control.get(key)}
         for control in candidates[:_OFFSCREEN_ACTION_LIMIT]
     ]
 

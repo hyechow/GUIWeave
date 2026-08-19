@@ -26,7 +26,8 @@ _RECORD_NAV_LABEL_RE = re.compile(
     re.IGNORECASE,
 )
 _PAGE_NAV_LABEL_RE = re.compile(
-    r"^(?:next|previous|prev)\s+page$|^(?:下一页|上一页|下一頁|上一頁)$",
+    r"^(?:(?:next|previous|prev)\s+page|page\s+(?:next|previous|prev))$"
+    r"|^(?:下一页|上一页|下一頁|上一頁)$",
     re.IGNORECASE,
 )
 _TRAVERSAL_CONTROL_KINDS = frozenset({"button", "a"})
@@ -110,18 +111,26 @@ def traversal_action_of(control: dict[str, Any]) -> str | None:
         or control.get("is_filter")
     ):
         return None
-    label = re.sub(
-        r"\s+", " ", str(control.get("label") or control.get("value") or ""),
-    ).strip()
-    if not label:
+    labels = tuple(filter(None, (
+        re.sub(r"\s+", " ", str(control.get(key) or "")).strip()
+        for key in ("label", "value")
+    )))
+    if not labels:
         return None
-    if _PAGE_NAV_LABEL_RE.match(label):
-        scope = "page"
-    elif _RECORD_NAV_LABEL_RE.match(label):
-        scope = "record"
-    else:
+    navigation_label = next(
+        (label for label in labels if _PAGE_NAV_LABEL_RE.match(label)), "",
+    )
+    scope = "page" if navigation_label else "record"
+    navigation_label = navigation_label or next(
+        (label for label in labels if _RECORD_NAV_LABEL_RE.match(label)), "",
+    )
+    if not navigation_label:
         return None
-    direction = "previous" if re.match(r"(?:prev|上)", label, re.IGNORECASE) else "next"
+    direction = (
+        "previous"
+        if re.search(r"(?:previous|prev|上)", navigation_label, re.IGNORECASE)
+        else "next"
+    )
     return f"{scope}_{direction}"
 
 

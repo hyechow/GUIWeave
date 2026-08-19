@@ -594,7 +594,20 @@ def test_offscreen_action_controls_expose_reveal_targets() -> None:
     frame = MaterializedFrame(
         frame_id="frame:550p",
         screenshot_path="",
-        controls=fixture["controls"],
+        controls=[
+            *fixture["controls"],
+            {
+                "kind": "a", "label": "Page Next", "value": "Page Next",
+                "traversal_action": "page_next",
+                "rect": {"x": 500, "y": 2400, "w": 40, "h": 30},
+                "in_viewport": False, "viewport_pos": "below",
+            },
+            {
+                "kind": "a", "label": "Visible Next", "value": "Page Next",
+                "traversal_action": "page_next",
+                "rect": {"x": 500, "y": 500, "w": 40, "h": 30},
+            },
+        ],
     )
 
     projection = project_worker_context(
@@ -612,6 +625,9 @@ def test_offscreen_action_controls_expose_reveal_targets() -> None:
     assert section.count('"kind"') <= 24
     assert '"label": "Nona Fitness Tank' not in section
     assert section.count('"label": "Select"') <= 1
+    assert '"label": "Page Next"' in section
+    assert '"traversal_action": "page_next"' in section
+    assert '"label": "Visible Next"' in projection.text
 
 
 def test_collection_stability_note_appears_after_revisits_with_no_new_rows() -> None:

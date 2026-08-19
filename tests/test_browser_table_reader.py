@@ -22,6 +22,8 @@ def test_table_snapshot_js_is_serialized_expression():
     assert "return { type: 'static' }" in js
     assert "pagerFromControls" in js
     assert "pageNumbers" in js
+    assert "const traversal = detectPagerState(parent)" in js
+    assert '[aria-current="page"]' in js
     assert "getComputedStyle(item.el)" in js
     assert 'getAttribute("aria-colspan")' in js
     assert 'row.closest("table") === table' in js

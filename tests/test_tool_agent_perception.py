@@ -691,6 +691,7 @@ def test_structured_list_snapshot_deterministically_reads_reviews(
             "type": "object",
             "properties": {
                 "reviewer_name": {"type": "string"},
+                "review_title": {"type": "string"},
                 "star_rating": {"type": "number"},
                 "review_text": {"type": "string"},
             },
@@ -698,10 +699,14 @@ def test_structured_list_snapshot_deterministically_reads_reviews(
         },
         field_sources={
             "reviewer_name": "reviewer name",
+            "review_title": "review title",
             "star_rating": "star rating",
             "review_text": "review text",
         },
-        field_types={"reviewer_name": "text", "star_rating": "number", "review_text": "text"},
+        field_types={
+            "reviewer_name": "text", "review_title": "text",
+            "star_rating": "number", "review_text": "text",
+        },
         filters={"star_rating": {"max": 3}, "review_text_contains": "print quality"},
         coverage="complete",
     )
@@ -719,13 +724,51 @@ def test_structured_list_snapshot_deterministically_reads_reviews(
         frame_no=1,
     )
 
-    names = sorted(
-        row["reviewer_name"]
-        for row in materializer.data_store.collection_rows(frame.collections[0].ref)
-    )
+    rows = materializer.data_store.collection_rows(frame.collections[0].ref)
+    names = sorted(row["reviewer_name"] for row in rows)
     # Gold (1-star reviewers who mention print quality) — Roxanne and Nelson; the
     # 4-star reviewers (Goldfish/Imajin8) and non-print-quality 1-stars are excluded.
     assert names == ["Nelson", "Roxanne Brandon Coffey"]
+    assert all(row.get("review_title") for row in rows)
+
+
+def test_unrelated_surface_total_does_not_contaminate_visual_collection(
+    tmp_path: Path,
+) -> None:
+    requirement = DataRequirement(
+        id="reviews",
+        description="Product review titles",
+        row_schema={"review_title": "string"},
+        field_sources={"review_title": "review title"},
+        field_types={"review_title": "text"},
+        coverage="complete",
+    )
+    unrelated = {
+        "caption": "Product Description",
+        "headers": ["Feature", "Value"],
+        "rows": [{"Feature": "Capacity", "Value": "16 GB"}],
+        "total_records": 2000,
+        "partial": True,
+        "in_viewport": True,
+        "traversal": {"type": "static"},
+    }
+    materializer = _materializer(tmp_path, "enhanced")
+    materializer._vision_extract = lambda *_args, **_kwargs: {  # type: ignore[method-assign]
+        "found": True,
+        "rows": [{"review_title": "Came Defective"}],
+        "start_visible": True,
+        "end_visible": False,
+        "scope_satisfied": None,
+    }
+
+    frame, _ = materializer.observe(
+        bundle=FakeBundle([unrelated]),
+        platform=FakePlatform(),
+        requirements=[requirement],
+        frame_no=1,
+    )
+
+    assert frame.collections[0].coverage["known_total"] is None
 
 
 def test_known_filter_mismatch_wins_over_unknown_row() -> None:

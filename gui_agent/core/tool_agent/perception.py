@@ -90,6 +90,7 @@ def _words(text: str) -> set[str]:
 # list reader's ``author``/``description``/``ratingValue`` headers map onto a
 # requirement's ``reviewer name``/``review text``/``star rating`` sources.
 _SEMANTIC_FIELD_ALIASES = {
+    "name": ("title", "record title", "item title", "review title"),
     "author": ("reviewer name", "reviewer", "author name"),
     "description": ("review text", "review", "text", "comment"),
     "reviewbody": ("review text", "text"),
@@ -1251,6 +1252,12 @@ class PerceptionMaterializer:
                 candidate_rows = _logical_rows(
                     requirement, candidate_rows, keep_unknown=True
                 )
+            target = _normalize(requirement.target_label)
+            caption = _normalize(str((table or {}).get("caption") or ""))
+            table_aligned = bool(table is not None and (
+                _source_keys(requirement, table)
+                or target and (target == caption or target in caption or caption in target)
+            ))
             if table_complete or empty_complete or candidate_rows:
                 scope = _scope_descriptor(
                     requirement,
@@ -1393,7 +1400,7 @@ class PerceptionMaterializer:
                         _structured_coverage(
                             table, requirement, scope=scope, url=url
                         )
-                        if table is not None and rows
+                        if table is not None and rows and table_aligned
                         else {}
                     )
                     surface_complete = bool(
@@ -1512,7 +1519,11 @@ class PerceptionMaterializer:
                 else None
             )
             totals_key = (state_scope, requirement.id, requested_fingerprint)
-            table_total = table.get("total_records") if table is not None else None
+            table_total = (
+                table.get("total_records")
+                if table is not None and table_aligned
+                else None
+            )
             if table_total not in (None, ""):  # ReAct: capture totals from surfaces even if scope not "met" yet
                 try:
                     expected_totals[totals_key] = max(0, int(table_total))
