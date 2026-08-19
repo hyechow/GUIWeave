@@ -158,17 +158,33 @@ def _approach_order_is_applied(spec: WorkerSpec, frame: MaterializedFrame) -> bo
             break
     if not requested or selected != requested:
         return False
-    pending_direction = any(
-        direction in contract
-        and re.search(
-            rf"\b(?:set|sort)\s+(?:to\s+)?{direction}\b",
+    return not _requested_sort_direction_is_pending(spec, frame)
+
+
+def _requested_sort_direction_is_pending(
+    spec: WorkerSpec, frame: MaterializedFrame,
+) -> bool:
+    """Whether a visible action offers the sort direction still requested."""
+
+    contract = " ".join([
+        spec.goal, *spec.success_criteria, spec.strategy.approach,
+    ]).casefold()
+    if not re.search(r"\b(?:sort|order|alphabetic)", contract):
+        return False
+    if re.search(r"\b(?:descending|reverse\s+alphabetical(?:ly)?)\b", contract):
+        direction = "descending"
+    elif re.search(r"\b(?:ascending|alphabetical(?:ly)?)\b", contract):
+        direction = "ascending"
+    else:
+        return False
+    return any(
+        re.search(
+            rf"\b(?:set|change|switch)(?:\s+direction)?(?:\s+to)?\s+{direction}\b",
             str(control.get("label") or ""),
             re.I,
         )
-        for direction in ("ascending", "descending")
         for control in frame.controls
     )
-    return not pending_direction
 
 
 def assess_frame(
@@ -211,7 +227,11 @@ def assess_frame(
     if boundary_ready:
         actions = []
     if spec.profile == "operator":
-        mode: Literal["unavailable", "operator", "collector"] = "operator"
+        mode: Literal["unavailable", "operator", "collector"] = (
+            "unavailable"
+            if _requested_sort_direction_is_pending(spec, frame)
+            else "operator"
+        )
     elif spec.profile == "collector":
         mode = (
             "unavailable"
