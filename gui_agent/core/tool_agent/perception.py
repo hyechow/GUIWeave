@@ -1185,6 +1185,7 @@ class PerceptionMaterializer:
         for requirement in requirements:
             detail_key = (state_scope, requirement.id)
             required_predicates = dict(requirement.filters)
+            semantic_predicate = _requirement_has_semantic_predicate(requirement)
             rows: list[dict[str, Any]] = []
             scope_rows: list[dict[str, Any]] = []
             provider: Literal["vision", "structured"] = "vision"
@@ -1221,7 +1222,7 @@ class PerceptionMaterializer:
             if table_complete:
                 rows = _structured_rows(requirement, table)
                 scope_rows = rows
-                if _requirement_has_semantic_predicate(requirement) and rows:
+                if semantic_predicate and rows:
                     # Structured rows carry the complete, accurate text: literal
                     # matches are authoritative and always collected; the text
                     # judge only supplements the rows a deterministic substring
@@ -1242,7 +1243,7 @@ class PerceptionMaterializer:
                 rows = _logical_rows(
                     requirement,
                     rows,
-                    keep_unknown=_requirement_has_semantic_predicate(requirement),
+                    keep_unknown=semantic_predicate,
                 )
             elif self.mode == "enhanced" and table is not None and not empty_complete:
                 candidate_rows, detail_fields = _partial_structured_rows(requirement, table)
@@ -1252,6 +1253,22 @@ class PerceptionMaterializer:
                 candidate_rows = _logical_rows(
                     requirement, candidate_rows, keep_unknown=True
                 )
+            traversal = (
+                table.get("traversal")
+                if table is not None and isinstance(table.get("traversal"), dict)
+                else {}
+            )
+            structured_filter_empty = bool(
+                table_complete
+                and scope_rows
+                and not rows
+                and not semantic_predicate
+                and not table.get("partial")
+                and (
+                    traversal.get("type") == "static"
+                    or table.get("total_records") == len(scope_rows)
+                )
+            )
             target = _normalize(requirement.target_label)
             caption = _normalize(str((table or {}).get("caption") or ""))
             table_aligned = bool(table is not None and (
@@ -1268,7 +1285,7 @@ class PerceptionMaterializer:
                     rows=scope_rows,
                 )
                 scope["query_outcome"] = (
-                    "empty" if empty_complete else "candidates"
+                    "empty" if empty_complete or structured_filter_empty else "candidates"
                 )
                 requirement_scopes[requirement.id] = scope
                 if required_predicates and scope["status"] in {"met", "unmet"}:
@@ -1281,7 +1298,11 @@ class PerceptionMaterializer:
                         self._visual_filter_states[filter_key] = "confirmed"
                     else:
                         self._visual_filter_states.pop(filter_key, None)
-                if rows or (empty_complete and scope["empty_authoritative"]):
+                if (
+                    rows
+                    or structured_filter_empty
+                    or empty_complete and scope["empty_authoritative"]
+                ):
                     # Emit for current visible rows (ReAct support).
                     # Previously gated on scope["status"] == "met"; now emit whenever
                     # we have logical rows so ReAct collector can complete and snapshot
@@ -1298,6 +1319,8 @@ class PerceptionMaterializer:
                         source_total = coverage.pop("total_records", None)
                         if source_total is not None:
                             coverage["source_total_records"] = source_total
+                    if structured_filter_empty:
+                        coverage["coverage_evidence"] = "deterministic_filter_empty"
                     collection_found = True
             detail_state = self._detail_collections.get(detail_key)
             structured_detail = bool(
@@ -1382,7 +1405,7 @@ class PerceptionMaterializer:
                     rows = _logical_rows(
                         requirement,
                         valid_visual_rows,
-                        keep_unknown=_requirement_has_semantic_predicate(requirement),
+                        keep_unknown=semantic_predicate,
                     )
                     if len(raw_visual_rows) != len(valid_visual_rows):
                         scope["collection_blockers"] = [

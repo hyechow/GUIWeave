@@ -187,7 +187,7 @@ def _finalize_response(
 ) -> WAResponse:
     """Apply deterministic WebArena response invariants after LLM synthesis.
 
-    A RETRIEVE task counts as success when the Program completed and produced a list answer.
+    A RETRIEVE task counts as success when the Program completed and produced a non-empty list answer.
     Verification remains evidence quality; it does not reinterpret a completed coding result.
     The typed terminal itself is failed when, for example, a required read came back empty.
     """
@@ -200,7 +200,7 @@ def _finalize_response(
 
     completed = phase == "completed"
     retrieve_invalid = task_type == "RETRIEVE" and (
-        not completed or not isinstance(retrieved_data, list)
+        not completed or not isinstance(retrieved_data, list) or not retrieved_data
     )
     if retrieve_invalid and status == "SUCCESS":
         updates.update({
@@ -209,7 +209,7 @@ def _finalize_response(
             "error_details": (
                 resp.error_details
                 or ("Run did not reach completed phase." if not completed
-                    else "No retrieved_data list was produced for this RETRIEVE task.")
+                    else "No non-empty retrieved_data list was produced for this RETRIEVE task.")
             ),
         })
 
