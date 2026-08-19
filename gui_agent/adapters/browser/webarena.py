@@ -6,7 +6,7 @@ final answer, judged by AgentResponseEvaluator) and ``network.har`` (the recorde
 requests, judged by NetworkEventEvaluator). This entry reuses the browser Tool Agent
 adapter and adds the WebArena plumbing around it:
 
-  pre-run  : inject auth cookies (raw CDP) + start HAR capture + navigate start_url
+  pre-run  : inject auth cookies (raw CDP) + start HAR capture + open start_urls
              on the just-connected session.
   run      : execute the task intent with Tool Agent Master and visual Workers.
   post-run : dump network.har + synthesize agent_response.json from the run result.
@@ -289,12 +289,30 @@ def _rewrite_url_host(url: str, host_override: str) -> str:
     ports (shopping_admin=7780, shopping=7770, ...) survive an IP-only override;
     an override with a port (e.g. ``host:port``) replaces the whole netloc.
     """
+    placeholder = re.match(r"^__[A-Z0-9_]+__(/.*)?$", url)
+    if placeholder:
+        origin = host_override if "://" in host_override else f"http://{host_override}"
+        return origin.rstrip("/") + (placeholder.group(1) or "")
     parts = urlsplit(url)
     if ":" in host_override or parts.port is None:
         new_netloc = host_override
     else:
         new_netloc = f"{host_override}:{parts.port}"
     return urlunsplit(parts._replace(netloc=new_netloc))
+
+
+def _open_start_urls(device, start_urls: list[str]) -> list[str]:
+    """Open all task-owned URLs as tabs while keeping the first one active."""
+
+    if not start_urls:
+        return []
+    reports = [str(device.navigate(start_urls[0]))]
+    reports.extend(str(device.new_tab(url)) for url in start_urls[1:])
+    if len(start_urls) > 1:
+        reports.append(str(device.select_tab(start_urls[0])))
+    if any("failed:" in report.casefold() for report in reports):
+        raise RuntimeError(f"WebArena start URL setup failed: {reports}")
+    return reports
 
 
 def _run_reset_ssh(host: str, port: int, *remote_args: str) -> str:
@@ -1180,14 +1198,15 @@ def main() -> int:
                                 "[webarena]",
                                 device.load_cookies(str(args.storage_state)),
                             )
-                        recorder = HarRecorder(device).start()
-                        if start_url:
-                            print("[webarena]", device.navigate(start_url))
+                        if start_urls:
+                            for report in _open_start_urls(device, start_urls):
+                                print("[webarena]", report)
                             if hasattr(device, "eval_js"):
                                 try:
                                     device.eval_js("window.scrollTo(0, 0); true")
                                 except Exception as exc:  # noqa: BLE001
                                     print(f"[webarena] viewport reset skipped ({exc})")
+                        recorder = HarRecorder(device).start()
                         if hasattr(device, "wait_settled"):
                             device.wait_settled("navigate")
                         if hud is not None and hasattr(hud, "reposition"):

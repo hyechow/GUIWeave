@@ -91,6 +91,7 @@ class HarRecorder:
     def __init__(self, device: object):
         self._device = device
         self._sess = None
+        self._sessions: list[object] = []
         # requestId -> partial entry dict (request filled first, response merged in).
         self._reqs: dict[str, dict] = {}
         self._order: list[str] = []
@@ -106,28 +107,44 @@ class HarRecorder:
 
     # ----- lifecycle -------------------------------------------------------
     def start(self) -> "HarRecorder":
-        """Open a dedicated CDP session on the page target, enable Network and
+        """Open dedicated CDP sessions on every page target, enable Network and
         subscribe. Best-effort: on any failure the recorder simply captures nothing
         (the entry still writes a valid empty HAR so eval can load it)."""
         try:
-            ctx = getattr(self._device, "_context", None)
-            page = getattr(self._device, "page", None)
-            if ctx is None or page is None:
-                return self
-            self._sess = ctx.new_cdp_session(page)
-            self._sess.send("Network.enable", {})
-            self._sess.on("Network.requestWillBeSent", self._on_request)
-            self._sess.on("Network.requestWillBeSentExtraInfo", self._on_request_extra_info)
-            self._sess.on("Network.responseReceived", self._on_response)
-            self._sess.on("Network.loadingFinished", self._on_finished)
+            pages = getattr(self._device, "_all_pages", lambda: [])()
         except Exception:
-            self._sess = None
+            pages = []
+        pages = pages or [getattr(self._device, "page", None)]
+        for page in filter(None, pages):
+            try:
+                session = page.context.new_cdp_session(page)
+                source = str(len(self._sessions))
+                session.send("Network.enable", {})
+                for event, callback in (
+                    ("Network.requestWillBeSent", self._on_request),
+                    ("Network.requestWillBeSentExtraInfo", self._on_request_extra_info),
+                    ("Network.responseReceived", self._on_response),
+                    ("Network.loadingFinished", self._on_finished),
+                ):
+                    session.on(
+                        event,
+                        lambda params, cb=callback, src=source: cb(params, src),
+                    )
+                self._sessions.append(session)
+            except Exception:
+                continue
+        self._sess = self._sessions[0] if self._sessions else None
         return self
 
+    @staticmethod
+    def _request_id(params: dict, source: str) -> str | None:
+        value = params.get("requestId")
+        return f"{source}:{value}" if source and value is not None else value
+
     # ----- CDP event handlers ---------------------------------------------
-    def _on_request(self, params: dict) -> None:
+    def _on_request(self, params: dict, source: str = "") -> None:
         try:
-            rid = params.get("requestId")
+            rid = self._request_id(params, source)
             if rid is None:
                 return
             req = params.get("request") or {}
@@ -190,9 +207,9 @@ class HarRecorder:
         except Exception:
             pass
 
-    def _on_request_extra_info(self, params: dict) -> None:
+    def _on_request_extra_info(self, params: dict, source: str = "") -> None:
         try:
-            rid = params.get("requestId")
+            rid = self._request_id(params, source)
             headers = params.get("headers") or {}
             if rid is None or not headers:
                 return
@@ -206,9 +223,9 @@ class HarRecorder:
         except Exception:
             pass
 
-    def _on_response(self, params: dict) -> None:
+    def _on_response(self, params: dict, source: str = "") -> None:
         try:
-            rid = params.get("requestId")
+            rid = self._request_id(params, source)
             entry = self._reqs.get(rid) if rid is not None else None
             if entry is None:
                 return
@@ -224,9 +241,9 @@ class HarRecorder:
         except Exception:
             pass
 
-    def _on_finished(self, params: dict) -> None:
+    def _on_finished(self, params: dict, source: str = "") -> None:
         try:
-            rid = params.get("requestId")
+            rid = self._request_id(params, source)
             entry = self._reqs.get(rid) if rid is not None else None
             if entry is None:
                 return
