@@ -54,8 +54,15 @@ def test_shopping_catalog_knowledge_preserves_exact_price_boundaries() -> None:
     assert "`cat=<id>` alias" in context
     assert "/women/<leaf>.html" in context
     assert "invalid unless its canonical URL" in context
+    assert "retain the matching segment" in worker
     assert "every successive category choice" in context
     assert "not a nested hierarchy" in context
+
+
+def test_shopping_navigation_exposes_nested_makeup_taxonomy() -> None:
+    worker = " ".join(_shopping_knowledge().worker_context().split())
+
+    assert "/beauty-personal-care/makeup/makeup-remover.html" in worker
 
 
 def test_shopping_contact_draft_selects_order_data_without_crossing_submit() -> None:
