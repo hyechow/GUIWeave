@@ -178,6 +178,46 @@ def test_headless_navigation_uses_bounded_commit_wait():
     )]
 
 
+def test_new_tab_snapshots_the_explicitly_created_page() -> None:
+    page = object()
+    dev = PlaywrightDevice.__new__(PlaywrightDevice)
+    dev._context = SimpleNamespace(new_page=lambda: page)
+    dev._switch_page = lambda selected: setattr(dev, "page", selected)
+    dev.navigate = lambda url: f"OK navigate {url}"
+    dev._all_pages = lambda: [page]
+    dev._prev_pages = []
+
+    assert dev.new_tab("https://example.test/") == (
+        "OK new_tab; OK navigate https://example.test/"
+    )
+    assert dev._prev_pages == [page]
+
+
+def test_select_tab_next_cycles_through_open_pages() -> None:
+    first = SimpleNamespace(
+        url="https://first.test", context=object(), bring_to_front=lambda: None,
+    )
+    second = SimpleNamespace(
+        url="https://second.test", context=object(), bring_to_front=lambda: None,
+    )
+    dev = PlaywrightDevice.__new__(PlaywrightDevice)
+    dev.page = first
+    dev._cdp = None
+    dev._tab_switched = False
+    dev._all_pages = lambda: [first, second]
+    dev._target_meta = lambda: {second.url: "Second"}
+
+    assert dev.select_tab("next").startswith("OK select_tab 'Second'")
+    assert dev.page is second
+    assert dev.select_tab("next").startswith("OK select_tab ''")
+    assert dev.page is first
+    assert dev.select_tab("next").startswith("failed: 已遍历全部标签页")
+    assert dev.page is first
+    assert dev.select_tab("Second").startswith("OK select_tab 'Second'")
+    assert dev.tab_cycle_finalized is True
+    assert dev.select_tab("next").startswith("failed: 已遍历全部标签页")
+
+
 def test_failed_start_navigation_stops_before_first_observation() -> None:
     dev = PlaywrightDevice.__new__(PlaywrightDevice)
     dev.start_url = "https://unreachable.example/"

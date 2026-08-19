@@ -143,6 +143,8 @@ def test_master_keeps_visual_conditional_dependencies_in_one_worker() -> None:
         "drive a later conditional GUI mutation", "including across application switches",
         "ResultRefs cannot serve as hidden Worker memory", "including by nesting it in an object",
         "authorized authentication method", "exact acceptance set", "never prescribe per-record commits",
+        "source: <source name>", "selects among current GUI candidates",
+        "never a collector plus transform plus operator",
         "traverses every prerequisite collection", "compares each candidate", "mutates only nonmatches",
         "candidate-local evidence", "complete—not merely visible—candidate traversal",
         "excluded/already-processed identities", "intermediate identities",

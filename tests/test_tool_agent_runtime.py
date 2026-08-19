@@ -448,6 +448,17 @@ def test_surface_cycle_blocks_traversal_loop_with_coordinate_jitter() -> None:
     assert stuck.blocked is True
     assert "surface cycle" in stuck.reason
 
+    commit = step2.model_copy(update={"controls": [{
+        "kind": "button",
+        "label": "Save",
+        "value": "Save",
+        "form_action": "commit",
+        "rect": {"x": 500, "y": 500, "w": 100, "h": 40},
+    }]})
+    assert breaker.inspect(
+        tool="tap", capability="tap", args={"x": 500, "y": 500}, frame=commit,
+    ).blocked is False
+
     # Progressing flows keep minting new surfaces and never trip the fuse.
     breaker = WorkerActionCircuitBreaker()
     frames = [
@@ -590,6 +601,47 @@ def test_runtime_blocks_navigation_outside_unfinished_scroll_collection() -> Non
         journal=journal,
         frame=frame,
     ) == ""
+
+
+def test_action_guard_blocks_next_after_finite_tab_traversal() -> None:
+    frame = MaterializedFrame(
+        frame_id="frame:tabs-complete",
+        screenshot_path="frame.png",
+        structured_surfaces=[{
+            "caption": "Open tabs",
+            "traversal": {"type": "tabs", "status": "complete"},
+        }],
+    )
+    breaker = WorkerActionCircuitBreaker()
+
+    decision = breaker.inspect(
+        tool="select_tab",
+        capability="select_tab",
+        args={"tab_match": "next"},
+        frame=frame,
+    )
+
+    assert decision.blocked is True
+    assert "finite traversal is complete" in decision.reason
+    assert breaker.inspect(
+        tool="select_tab",
+        capability="select_tab",
+        args={"tab_match": "known title"},
+        frame=frame,
+    ).blocked is False
+
+    selected = frame.model_copy(update={"structured_surfaces": [{
+        "caption": "Open tabs",
+        "traversal": {
+            "type": "tabs", "status": "complete", "selection_finalized": True,
+        },
+    }]})
+    assert "current result page" in breaker.inspect(
+        tool="select_tab",
+        capability="select_tab",
+        args={"tab_match": "another title"},
+        frame=selected,
+    ).reason
 
 
 def test_action_guard_allows_typing_into_editable_aria_combobox() -> None:

@@ -68,3 +68,4 @@ def test_browser_bundle_defaults_start_url_to_bing(monkeypatch) -> None:
 
     assert factory.build_browser_bundle(start_url="https://example.com/").open_session() is session
     assert captured[-1]["start_url"] == "https://example.com/"
+    assert "select_tab" in factory.build_browser_bundle().tool_agent_capabilities

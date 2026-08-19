@@ -24,6 +24,41 @@ def _dump(rec: HarRecorder) -> dict:
         os.unlink(path)
 
 
+def test_start_records_all_existing_tabs_without_request_id_collisions():
+    class _Session:
+        def __init__(self):
+            self.listeners = {}
+
+        def send(self, method, params):
+            assert (method, params) == ("Network.enable", {})
+
+        def on(self, event, callback):
+            self.listeners[event] = callback
+
+    sessions = [_Session(), _Session()]
+    context = type("Context", (), {
+        "new_cdp_session": lambda self, page: sessions[page.index],
+    })()
+    pages = [
+        type("Page", (), {"index": index, "context": context})()
+        for index in range(2)
+    ]
+    device = type("Device", (), {"_all_pages": lambda self: pages})()
+    rec = HarRecorder(device).start()
+
+    for index, session in enumerate(sessions):
+        session.listeners["Network.requestWillBeSent"]({
+            "requestId": "same-id",
+            "timestamp": index,
+            "request": {"method": "POST", "url": f"http://tab-{index}/add"},
+        })
+
+    assert len(rec._sessions) == 2
+    assert [entry["request"]["url"] for entry in _dump(rec)["log"]["entries"]] == [
+        "http://tab-0/add", "http://tab-1/add",
+    ]
+
+
 def test_redirect_preserves_pre_redirect_save_post():
     rec = HarRecorder(device=object())
     rid = "REQ-1"

@@ -114,6 +114,11 @@ ctx.fail(outcome["summary"])
         "WORKER_SUCCESS_BOUNDARY",
         "WORKER_APPROACH_BOUNDARY",
     }
+    approach_issue = next(
+        item for item in diagnostics if item.code == "WORKER_APPROACH_BOUNDARY"
+    )
+    assert "'Type the query and press Enter in Bing search'" in approach_issue.message
+    assert "source: Type the query and press Enter in Bing search" in approach_issue.message
     filter_issue = next(
         item for item in diagnostics if item.code == "DATA_FILTER_BOUNDARY"
     )

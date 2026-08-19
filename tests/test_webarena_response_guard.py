@@ -11,6 +11,8 @@ from gui_agent.adapters.browser.webarena import (
     _finalize_response,
     _guess_webarena_task_type,
     _normalize_retrieved_data_for_intent,
+    _open_start_urls,
+    _rewrite_url_host,
     _run_official_eval,
     _synthesize_response,
     _official_eval_summary,
@@ -18,6 +20,49 @@ from gui_agent.adapters.browser.webarena import (
     _write_webarena_report_context,
 )
 from gui_agent.core.runtime.result import AgentResult
+
+
+class _StartUrlDevice:
+    def __init__(self) -> None:
+        self.calls: list[tuple[str, str]] = []
+
+    def navigate(self, url: str) -> str:
+        self.calls.append(("navigate", url))
+        return f"OK navigate {url}"
+
+    def new_tab(self, url: str) -> str:
+        self.calls.append(("new_tab", url))
+        return f"OK new_tab {url}"
+
+    def select_tab(self, url: str) -> str:
+        self.calls.append(("select_tab", url))
+        return f"OK select_tab {url}"
+
+
+def test_webarena_host_override_renders_official_site_placeholder() -> None:
+    assert _rewrite_url_host("__SHOPPING__/products", "localhost:7770") == (
+        "http://localhost:7770/products"
+    )
+
+
+def test_webarena_opens_every_start_url_and_restores_the_first_tab() -> None:
+    device = _StartUrlDevice()
+
+    _open_start_urls(device, ["https://first.test", "https://second.test"])
+
+    assert device.calls == [
+        ("navigate", "https://first.test"),
+        ("new_tab", "https://second.test"),
+        ("select_tab", "https://first.test"),
+    ]
+
+
+def test_webarena_keeps_single_start_url_setup_unchanged() -> None:
+    device = _StartUrlDevice()
+
+    _open_start_urls(device, ["https://only.test"])
+
+    assert device.calls == [("navigate", "https://only.test")]
 
 
 def _result(**updates) -> AgentResult:

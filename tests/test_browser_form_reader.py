@@ -362,6 +362,12 @@ def test_browser_perception_reads_form_controls(tmp_path):
         def read_tables(self):
             return []
 
+        def list_tabs(self):
+            return [
+                (0, "Orders", "http://x/admin/orders"),
+                (1, "Customers", "http://x/admin/customers"),
+            ]
+
         def read_form_controls(self):
             return [{"label": "Status", "kind": "native_select"}]
 
@@ -401,6 +407,19 @@ def test_browser_perception_reads_form_controls(tmp_path):
         "fallback_channel": "present",
     }
     assert obs.title == "Orders / Operations / Sales / Commerce Admin"
+    assert obs.tables == [{
+        "caption": "Browser tab inventory",
+        "headers": ["Tab", "Title", "URL", "Active"],
+        "rows": [
+            {"Tab": 1, "Title": "Orders", "URL": "http://x/admin/orders", "Active": True},
+            {"Tab": 2, "Title": "Customers", "URL": "http://x/admin/customers", "Active": False},
+        ],
+        "total_records": 2,
+        "partial": False,
+        "traversal": {
+            "type": "tabs", "status": "available", "selection_finalized": False,
+        },
+    }]
 
 
 def test_normalize_form_controls_reserves_slots_for_offscreen_controls():
