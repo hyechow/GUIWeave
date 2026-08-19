@@ -12,7 +12,7 @@ source: mobileworld_app_contract
 confidence: medium
 sensitivity: internal
 ttl: session
-version: 2
+version: 3
 ---
 # Calendar on Android
 
@@ -30,9 +30,12 @@ version: 2
 - Event display by view:
   - the MONTH grid renders each event as a compact cell carrying its title plus a single
     display range string (e.g. `08:00 AM - 09:00 AM`); that range is not structured into
-    `start_ts`/`end_ts` fields and is not reliably machine-extractable from the grid.
+    authoritative `start_ts`/`end_ts` fields.
+  - for title-only date-range counts, collect `title` and visible `date` from the MONTH grid,
+    filter on `date`, and complete when every requested cell and chip is visible. Month cells
+    do not scroll internally; do not enter DAY view or scroll beyond the range.
   - tapping a day opens the DAY view, where events are listed as rows with readable start
-    and end times.
+    and end times. Tap its date-number glyph; the cell center or a chip can open an event.
   - availability/overlap checks must acquire events from the DAY view (or an interval view),
     not from the month grid.
   - an interval-scoped `Event` view can be opened for the exact date/time visibly observed
@@ -71,14 +74,6 @@ version: 2
     inclusive: `end - start + 1` days (Oct 4-10 = 7 days).
   - sum the day counts across every matching event; if two events share a date it is
     still counted once overall, so collect each event's start/end and union the days.
-- Collect a month-scoped set of events by SEARCH, not the month grid: use the top
-  search box and type the distinctive title term (e.g. `conference`). Search returns
-  the matching event rows as an accessible list, which structured perception can
-  read as rows (the month grid is rendered as opaque date cells that perception
-  does not extract). The requirement filter carries the date range (e.g.
-  `'start_ts': '2025-10-*'`) so rows from other months/years are rejected by scope
-  validation. The month view is only a visual confirmation surface, not the
-  acquisition surface.
-- A natural date phrase in search (e.g. `conference october 2025`) is unreliable:
-  it can return events from a different year or an empty result. Prefer the bare
-  title term and let the filter date scope do the year bounding.
+- For a deduplicated event count with no explicit key, equal visible titles count once.
+- Use SEARCH only when the task supplies a literal title predicate. Never invent a search
+  term. Natural date phrases are unreliable; use the bare title and filter the date scope.

@@ -17,6 +17,7 @@ from gui_agent.core.tool_agent.contracts import (
     MaterializedFrame,
     WorkerSpec,
 )
+from gui_agent.core.tool_agent.filter_state import compile_filter_predicates
 
 
 _GUARDED_CAPABILITIES = {
@@ -213,6 +214,28 @@ def is_candidate_commit(
     )
 
 
+def _fully_visible_bounded_scope(frame: MaterializedFrame) -> bool:
+    if frame.missing_requirements or {
+        scope.get("status") for scope in frame.requirement_scopes.values()
+    } != {"met"}:
+        return False
+    for chunk in frame.chunks:
+        scope = frame.requirement_scopes.get(chunk.requirement_id) or {}
+        predicates = compile_filter_predicates(scope.get("requested_filters"))
+        if (
+            chunk.provider != "vision"
+            or chunk.row_count == 0
+            or not all(
+                chunk.coverage.get(edge) is True
+                for edge in ("start_visible", "end_visible")
+            )
+        ):
+            continue
+        if any(predicate.operator == "range" for predicate in predicates.values()):
+            return True
+    return False
+
+
 def _action_boundary_error(
     capability: str,
     args: dict[str, Any],
@@ -221,6 +244,11 @@ def _action_boundary_error(
 ) -> str:
     """Reject actions contradicted by authoritative enhanced observation."""
 
+    if capability == "scroll" and _fully_visible_bounded_scope(frame):
+        return (
+            "blocked scroll: the exact bounded scope is fully visible; complete "
+            "from the current rows"
+        )
     control = control_at_point(args, frame)
     if control is not None:
         kind = str(control.get("kind") or "").casefold()
