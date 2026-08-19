@@ -83,6 +83,8 @@ def test_master_exposes_only_tool_agent_runtime_api() -> None:
     assert "Runtime supplies the active adapter's generic capabilities" in prompt
     assert "Never guess enum/status labels" in prompt
     assert "Preserve every user-supplied string predicate verbatim" in prompt
+    assert "inclusive range on one field" in prompt
+    assert "uniquely anchored by `task_reference_time`" in prompt
     assert "never require perception to invent a missing year" in prompt
     assert "When success criteria guarantee exactly one target record" in prompt
     assert "Source layout order is not a data contract" in prompt
@@ -125,6 +127,8 @@ def test_worker_keeps_data_private_and_coordinates_normalized() -> None:
     assert "Complete a single-element operator only" in prompt
     assert "consumes a plan array element-wise" in prompt
     assert "after EACH element's target UI state" in prompt
+    assert "exact bounded scope is exhaustive" in prompt
+    assert "without traversing outside that bound" in prompt
     assert "Coordinates are normalized 0..999" in prompt
     assert "Use only Runtime-supplied actions" in prompt
     assert "request_action_patch" not in prompt

@@ -158,6 +158,38 @@ ctx.finish(outcome["collection_ref"]["ref"], effect="data")
     assert not [item for item in ok if item.code == "DATA_FILTER_DATE_SCOPE"]
 
 
+def test_master_review_accepts_exact_inclusive_date_range_filter() -> None:
+    source = _program(
+        '''
+outcome = ctx.gui_worker(
+    worker_id="collect_events",
+    profile="collector",
+    goal="Collect events from 2025-10-20 to 2025-10-26",
+    success_criteria=["All events from 2025-10-20 to 2025-10-26 are collected"],
+    data_requirements=[{
+        "id": "events",
+        "description": "Events from 2025-10-20 to 2025-10-26",
+        "cardinality": "many",
+        "row_schema": {"start_ts": "string"},
+        "field_sources": {"start_ts": "Start time"},
+        "field_types": {"start_ts": "datetime"},
+        "filters": {"start_ts": "2025-10-20 - 2025-10-26"},
+        "coverage": "complete",
+    }],
+    approach="Calendar event collection",
+)
+ctx.finish(outcome["collection_ref"]["ref"], effect="data")
+'''.strip()
+    )
+
+    diagnostics = validate_master_source(
+        source,
+        user_goal="How many events are there from October 20 to October 26?",
+    )
+
+    assert not [item for item in diagnostics if item.code == "DATA_FILTER_BOUNDARY"]
+
+
 def test_master_review_accepts_semantic_contract_and_source_approach() -> None:
     source = _program(
         '''

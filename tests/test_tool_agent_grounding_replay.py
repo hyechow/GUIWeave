@@ -17,7 +17,7 @@ from gui_agent.core.tool_agent.action_guard import (
     auth_codes_from_frame,
     auth_codes_from_text,
 )
-from gui_agent.core.tool_agent.contracts import MaterializedFrame
+from gui_agent.core.tool_agent.contracts import DataChunkRef, MaterializedFrame
 
 
 _FIXTURE = (
@@ -476,6 +476,48 @@ def test_type_template_placeholder_text_is_blocked() -> None:
     # A binding action carries no Worker-authored text; the injected value must pass.
     bound = _action_boundary_error("type", {"x": 500, "y": 510}, frame, set())
     assert bound == ""
+
+
+def test_action_guard_blocks_only_fully_visible_bounded_scope_scroll() -> None:
+    chunk = DataChunkRef(
+        ref="chunk:events:1",
+        requirement_id="events",
+        frame_id="calendar-month",
+        provider="vision",
+        row_count=16,
+        row_schema={"type": "object", "properties": {}},
+        coverage={"start_visible": True, "end_visible": True},
+    )
+    frame = MaterializedFrame(
+        frame_id="calendar-month",
+        screenshot_path="calendar-month.png",
+        requirement_scopes={"events": {
+            "status": "met",
+            "requested_filters": {"date": "2025-10-20 - 2025-10-26"},
+        }},
+        chunks=[chunk],
+    )
+    error = _action_boundary_error(
+        "scroll", {"direction": "down"}, frame, set()
+    )
+    assert "exact bounded scope is fully visible" in error
+
+    incomplete = chunk.model_copy(update={
+        "coverage": {"start_visible": True, "end_visible": False},
+    })
+    allowed = (
+        frame.model_copy(update={"chunks": [incomplete]}),
+        frame.model_copy(update={
+            "requirement_scopes": {"events": {
+                "status": "met", "requested_filters": {"title": "Conference"},
+            }},
+        }),
+        frame.model_copy(update={"missing_requirements": ["events"]}),
+    )
+    assert all(
+        not _action_boundary_error("scroll", {"direction": "down"}, item, set())
+        for item in allowed
+    )
 
 
 def test_task108_replay_blocks_one_unchanged_repeat_until_target_progresses() -> None:

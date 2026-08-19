@@ -39,6 +39,18 @@ def test_mattermost_knowledge_distinguishes_replies_from_channel_posts() -> None
     assert "Sam is the task user" not in context
 
 
+def test_calendar_knowledge_scopes_title_deduplication_and_search() -> None:
+    knowledge = load_knowledge_for_app("Calendar", "android")
+    assert knowledge is not None
+
+    context = knowledge.worker_context()
+    assert "equal visible titles count once" in context
+    assert "collect `title` and visible `date` from the MONTH grid" in context
+    assert "do not enter DAY view or scroll beyond the range" in context
+    assert "date-number glyph" in context
+    assert "Use SEARCH only when the task supplies a literal title predicate" in context
+
+
 def test_knowledge_has_no_planner_owned_markdown_sections() -> None:
     forbidden = ("Planning boundary", "planning-boundary")
 
