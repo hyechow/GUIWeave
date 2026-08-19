@@ -647,6 +647,11 @@ def test_screen_reader_transcribes_all_then_judge_filters_semantic_rows(
     assert names == ["Catso", "Anglebert"], (
         "judge keeps the paraphrase match (Anglebert) and drops non-matches"
     )
+    judge_prompt = calls[1][-1].content
+    assert "Requirement context:" in judge_prompt
+    assert "apply any explicit taxonomy equivalence" in judge_prompt
+    assert "record's primary subject" in judge_prompt
+    assert "component, accessory, or bundle inclusion" in judge_prompt
     assert extracted["found"] is True
 
 

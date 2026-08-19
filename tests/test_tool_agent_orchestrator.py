@@ -121,6 +121,35 @@ ctx.fail(outcome["summary"])
     assert "Shenzhen weather" not in filter_issue.message
 
 
+def test_master_review_does_not_parse_possessive_as_quoted_scope() -> None:
+    source = _program(
+        '''
+outcome = ctx.gui_worker(
+    worker_id="collect_records",
+    profile="collector",
+    goal="Compare each candidate's primary record against the phrase 'requested class'.",
+    success_criteria="Matching records are collected.",
+    approach="authoritative record index",
+    data_requirements=[{
+        "id": "records",
+        "description": "Records matching the requested class",
+        "cardinality": "many",
+        "row_schema": {"record": "string"},
+        "field_sources": {"record": "Record"},
+        "field_types": {"record": "text"},
+        "filters": {"record_contains": "requested class"},
+        "coverage": "complete",
+    }],
+)
+ctx.fail(outcome["summary"])
+'''.strip()
+    )
+
+    diagnostics = validate_master_source(source)
+
+    assert not [item for item in diagnostics if item.code == "DATA_FILTER_BOUNDARY"]
+
+
 def test_master_review_accepts_semantic_contract_and_source_approach() -> None:
     source = _program(
         '''

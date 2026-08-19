@@ -607,6 +607,11 @@ def test_offscreen_action_controls_expose_reveal_targets() -> None:
                 "traversal_action": "page_next",
                 "rect": {"x": 500, "y": 500, "w": 40, "h": 30},
             },
+            {
+                "kind": "native_select", "label": "Order", "value": "recent",
+                "rect": {"x": 800, "y": -200, "w": 120, "h": 30},
+                "in_viewport": False, "viewport_pos": "above",
+            },
         ],
     )
 
@@ -627,6 +632,7 @@ def test_offscreen_action_controls_expose_reveal_targets() -> None:
     assert section.count('"label": "Select"') <= 1
     assert '"label": "Page Next"' in section
     assert '"traversal_action": "page_next"' in section
+    assert '"label": "Order"' in section
     assert '"label": "Visible Next"' in projection.text
 
 
