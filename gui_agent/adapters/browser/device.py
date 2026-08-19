@@ -1328,8 +1328,9 @@ class PlaywrightDevice:
     def dom_snap(
         self, x: float, y: float, target_text: str = ""
     ) -> "tuple[float, float, Optional[str]]":
-        """Snap a viewport-CSS click point to the center of the small clickable element under it
-        — browser's coordinate correction, the DOM analogue of iphone's YOLO snap.
+        """Snap a viewport-CSS click to an exposed point on the small control under it.
+
+        This is the browser coordinate correction analogue of iphone's YOLO snap.
 
         TEXT RETARGET (the OCR-snap analogue): when ``target_text`` is given (the label quoted
         in the action description, e.g. 「操作」) and the element under the point carries a
@@ -1365,6 +1366,13 @@ class PlaywrightDevice:
             "const accessibleName=e=>norm((e.getAttribute&&"
             "(e.getAttribute('aria-label')||e.getAttribute('title')))"
             "||e.innerText||e.textContent||'');"
+            "const exposedPoint=e=>{const br=e.getBoundingClientRect();"
+            "for(const r of Array.from(e.getClientRects())){for(const f of [.5,.25,.75]){"
+            "const cx=r.left+r.width*f,cy=r.top+r.height/2;"
+            "if(cx<0||cy<0||cx>=innerWidth||cy>=innerHeight)continue;"
+            "const h=document.elementFromPoint(cx,cy);"
+            "if(h&&(h===e||e.contains(h)))return {cx:Math.round(cx),cy:Math.round(cy),"
+            "w:Math.round(br.width),h:Math.round(br.height)};}}return null;};"
             "const textMatch=e=>!!(e&&e.matches&&e.matches(RETARGET)"
             "&&accessibleName(e)===norm(target));"
             # Form controls match identity, never their current value.
@@ -1413,10 +1421,8 @@ class PlaywrightDevice:
             "    const r=c.getBoundingClientRect();"
             "    if(r.width<=0||r.height<=0||r.bottom<=0||r.right<=0"
             "      ||r.top>=innerHeight||r.left>=innerWidth)continue;"
-            "    const cx=r.x+r.width/2,cy=r.y+r.height/2,dd=Math.hypot(cx-x,cy-y);"
-            "    if(cx<0||cy<0||cx>=innerWidth||cy>=innerHeight)continue;"
-            "    if(dd<bd){bd=dd;best={cx:Math.round(cx),cy:Math.round(cy),"
-            "      w:Math.round(r.width),h:Math.round(r.height)};}}"
+            "    const p=exposedPoint(c);if(!p)continue;"
+            "    const dd=Math.hypot(p.cx-x,p.cy-y);if(dd<bd){bd=dd;best=p;}}"
             "  if(best&&bd<=R)return JSON.stringify({...best,tag:'text'});"
             "}"
             "if(!n)return '';const tag=n.tagName.toLowerCase();"
@@ -1426,11 +1432,9 @@ class PlaywrightDevice:
             "if(['slider','scrollbar'].includes(role)||itype==='range')return '';"
             "const r=n.getBoundingClientRect(),vw=innerWidth,vh=innerHeight;"
             "if(r.width<=0||r.height<=0||r.width>vw*0.9||r.height>vh*0.6)return '';"
-            "const cx=r.x+r.width/2,cy=r.y+r.height/2;"
-            "if(r.bottom<=0||r.right<=0||r.top>=vh||r.left>=vw"
-            "  ||cx<0||cy<0||cx>=vw||cy>=vh)return '';"
-            "return JSON.stringify({cx:Math.round(cx),cy:Math.round(cy),"
-            "tag,w:Math.round(r.width),h:Math.round(r.height)});})()"
+            "if(r.bottom<=0||r.right<=0||r.top>=vh||r.left>=vw)return '';"
+            "const p=exposedPoint(n);if(!p)return '';"
+            "return JSON.stringify({...p,tag});})()"
             % (int(round(x)), int(round(y)), target_js, TEXT_RETARGET_RADIUS_PX)
         )
         try:

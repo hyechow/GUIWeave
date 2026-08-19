@@ -165,6 +165,20 @@ def form_controls_js() -> str:
     if (r.top > vh) return 'below';
     return 'in';
   };
+  const exposedPoint = (el) => {
+    const vw = innerWidth || document.documentElement.clientWidth;
+    const vh = innerHeight || document.documentElement.clientHeight;
+    for (const r of Array.from(el.getClientRects())) {
+      for (const fraction of [0.5, 0.25, 0.75]) {
+        const x = r.left + r.width * fraction;
+        const y = r.top + r.height / 2;
+        if (x < 0 || x >= vw || y < 0 || y >= vh) continue;
+        const hit = document.elementFromPoint(x, y);
+        if (hit && (hit === el || el.contains(hit))) return {x, y};
+      }
+    }
+    return null;
+  };
   const viewState = (el) => {
     const r = el.getBoundingClientRect();
     const vw = innerWidth || document.documentElement.clientWidth;
@@ -180,12 +194,9 @@ def form_controls_js() -> str:
         viewport_pos: cy < 0 ? 'above' : cy >= vh ? 'below' : (cx < vw / 2 ? 'above' : 'below'),
       };
     }
-    const hit = document.elementFromPoint(cx, cy);
-    const exposed = Boolean(hit && (hit === el || el.contains(hit)));
-    if (exposed) return {in_viewport: true, viewport_pos: 'in'};
-    // Sticky headers and fixed toolbars can geometrically overlap a row while hiding its center.
-    // Such a control is not actionable from the screenshot.  Mark it toward the nearest vertical
-    // edge so the visual policy reveals it before clicking instead of trusting stale geometry.
+    if (exposedPoint(el)) return {in_viewport: true, viewport_pos: 'in'};
+    // Sticky headers and fixed toolbars can geometrically overlap every actionable fragment.
+    // Mark such a control toward the nearest edge so policy reveals it before clicking.
     return {
       in_viewport: false,
       viewport_pos: cy < vh / 2 ? 'above' : 'below',
@@ -424,9 +435,13 @@ def form_controls_js() -> str:
     const r = el.getBoundingClientRect();
     const w = innerWidth || document.documentElement.clientWidth || 1;
     const h = innerHeight || document.documentElement.clientHeight || 1;
+    const point = exposedPoint(el) || {
+      x: r.left + r.width / 2,
+      y: r.top + r.height / 2,
+    };
     return {
-      x: Math.round((r.left + r.width / 2) / w * 1000),
-      y: Math.round((r.top + r.height / 2) / h * 1000),
+      x: Math.round(point.x / w * 1000),
+      y: Math.round(point.y / h * 1000),
       w: Math.round(r.width),
       h: Math.round(r.height),
     };

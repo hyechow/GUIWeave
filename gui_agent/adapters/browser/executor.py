@@ -245,7 +245,7 @@ class BrowserExecutor(VisionExecutor):
             action.snap = {
                 "method": "dom",
                 "original": [action.x, action.y],          # LLM's normalized coords
-                "snapped": [sx / w * 1000, sy / h * 1000],  # DOM center, normalized back
+                "snapped": [sx / w * 1000, sy / h * 1000],  # DOM point, normalized back
                 "info": info,
             }
         except Exception:  # noqa: BLE001
