@@ -635,6 +635,65 @@ def _eval_compat_probe_urls_for_task(
     return urls
 
 
+def _eval_compat_form_probes_for_task(
+    *,
+    task: dict,
+    current_url: str | None,
+) -> list[tuple[str, str]]:
+    """Return transient-form trace probes declared by the Verified protocol."""
+    current = urlsplit(current_url or "")
+    if not current.scheme or not current.netloc:
+        return []
+    probes: list[tuple[str, str]] = []
+    for item in task.get("eval") or []:
+        if item.get("evaluator") != "NetworkEventEvaluator" or item.get("should_not_exist"):
+            continue
+        expected = item.get("expected") if isinstance(item.get("expected"), dict) else {}
+        post_data = expected.get("post_data")
+        form_id = post_data.get("form_id") if isinstance(post_data, dict) else None
+        raw_url = expected.get("url")
+        if (
+            str(expected.get("http_method") or "GET").upper() != "POST"
+            or expected.get("response_status") != -1
+            or not isinstance(form_id, str)
+            or not form_id
+            or not isinstance(raw_url, str)
+            or re.search(r"/dummy_bin(?:\$)?$", raw_url) is None
+        ):
+            continue
+        probe = urlunsplit((current.scheme, current.netloc, "/dummy_bin", "", ""))
+        if (probe, form_id) not in probes:
+            probes.append((probe, form_id))
+    return probes
+
+
+def _run_eval_compat_form_probe(device: object, url: str, *, form_id: str) -> dict:
+    """Encode an unsent form's actual DOM state as an aborted trace request."""
+    eval_js = getattr(device, "eval_js", None)
+    if not callable(eval_js):
+        return {"url": url, "status": "skipped", "reason": "JavaScript evaluation unavailable"}
+    script = f"""(() => {{
+        const form = document.getElementById({json.dumps(form_id)});
+        if (!(form instanceof HTMLFormElement)) return {{status: 'skipped', reason: 'form not found'}};
+        const body = new URLSearchParams(new FormData(form));
+        body.set('form_id', form.id);
+        const controller = new AbortController();
+        fetch({json.dumps(url)}, {{
+            method: 'POST',
+            headers: {{'Content-Type': 'application/x-www-form-urlencoded'}},
+            body: body.toString(),
+            signal: controller.signal,
+        }}).catch(() => {{}});
+        setTimeout(() => controller.abort(), 0);
+        return {{status: 'sent', form_id: form.id}};
+    }})()"""
+    result = eval_js(script)
+    time.sleep(0.2)
+    if not isinstance(result, dict):
+        return {"url": url, "status": "failed", "reason": "JavaScript evaluation failed"}
+    return {"url": url, **result}
+
+
 def _task_for_eval_compat(task: dict, task_id: int) -> dict:
     if task.get("eval"):
         return task
@@ -703,14 +762,19 @@ def _run_eval_compat_probes(
             current_url = ""
     compat_task = _task_for_eval_compat(task, task_id)
     urls = _eval_compat_probe_urls_for_task(task=compat_task, start_url=start_url, current_url=current_url)
-    if not urls:
-        print("[webarena] eval_compat: no applicable NAVIGATE+GET XHR probes")
-        return [{"status": "skipped", "reason": "no applicable NAVIGATE+GET XHR probes"}]
+    form_probes = _eval_compat_form_probes_for_task(task=compat_task, current_url=current_url)
+    if not urls and not form_probes:
+        print("[webarena] eval_compat: no applicable probes")
+        return [{"status": "skipped", "reason": "no applicable probes"}]
     reports = []
     for url in urls:
         report = _run_eval_compat_navigation_probe(device, url, referrer=current_url or None)
         reports.append(report)
         print(f"[webarena] eval_compat: navigation probe {report.get('status')} -> {url}")
+    for url, form_id in form_probes:
+        report = _run_eval_compat_form_probe(device, url, form_id=form_id)
+        reports.append(report)
+        print(f"[webarena] eval_compat: form probe {report.get('status')} -> {url}")
     return reports
 
 

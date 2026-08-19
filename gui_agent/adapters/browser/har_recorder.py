@@ -125,6 +125,7 @@ class HarRecorder:
                     ("Network.requestWillBeSentExtraInfo", self._on_request_extra_info),
                     ("Network.responseReceived", self._on_response),
                     ("Network.loadingFinished", self._on_finished),
+                    ("Network.loadingFailed", self._on_failed),
                 ):
                     session.on(
                         event,
@@ -251,6 +252,22 @@ class HarRecorder:
             t1 = params.get("timestamp")
             if isinstance(t0, (int, float)) and isinstance(t1, (int, float)):
                 entry["time"] = max(0.0, (t1 - t0) * 1000.0)
+        except Exception:
+            pass
+
+    def _on_failed(self, params: dict, source: str = "") -> None:
+        """Preserve failed requests with Playwright-compatible status ``-1``."""
+        try:
+            rid = self._request_id(params, source)
+            entry = self._reqs.get(rid) if rid is not None else None
+            if entry is None:
+                return
+            entry["response"].update({
+                "status": -1,
+                "statusText": "",
+                "_failureText": str(params.get("errorText") or ""),
+            })
+            self._on_finished(params, source)
         except Exception:
             pass
 
