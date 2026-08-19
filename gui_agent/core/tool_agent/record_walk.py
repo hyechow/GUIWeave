@@ -112,63 +112,72 @@ def _open_candidate_step(
     state: RecordWalkState,
     resolved: tuple[int, ...],
     candidate_records: int,
+    navigation_url: str,
 ) -> RecordWalkStep | None:
-    """Deterministically open the exact next unresolved candidate's row.
+    """Deterministically open the exact next unresolved candidate.
 
-    The row is identified by its recorded id (``review_id``/``ID``/``id`` in
+    Prefer its observed same-origin detail URL. Otherwise the row is identified
+    by its recorded id (``review_id``/``ID``/``id`` in
     the unresolved candidate's fields) against the leading token of the row
     group's checkbox label; the row's single visible action anchor is the tap
-    target. Any ambiguity (no id, several matching groups, zero or several
-    anchors) yields to the Worker.
+    target. Any ambiguity yields to the Worker.
     """
 
     candidate = detail.get("next_unresolved_candidate")
     if not isinstance(candidate, dict):
         return None
+    control: dict[str, Any] = {}
+    open_id = navigation_url
+    reason = "open next unresolved candidate via its linked-detail URL"
     fields = candidate.get("fields") or {}
     row_id = str(
         fields.get("review_id") or fields.get("ID") or fields.get("id") or ""
     ).strip()
-    if not row_id:
-        return None
-    groups = {
-        str(control.get("group_id"))
-        for control in (frame.controls or [])
-        if control.get("kind") == "checkbox_input"
-        and control.get("group_id")
-        and str(control.get("label") or "").strip().split(" ", 1)[0] == row_id
-    }
-    if len(groups) != 1:
-        return None
-    group = groups.pop()
-    anchors = [
-        control
-        for control in (frame.controls or [])
-        if str(control.get("group_id")) == group
-        and control.get("kind") == "a"
-        and control.get("in_viewport") is not False
-        and positioned_rect(control) is not None
-    ]
-    if len(anchors) != 1:
-        return None
+    if not navigation_url:
+        if not row_id:
+            return None
+        groups = {
+            str(item.get("group_id"))
+            for item in (frame.controls or [])
+            if item.get("kind") == "checkbox_input"
+            and item.get("group_id")
+            and str(item.get("label") or "").strip().split(" ", 1)[0] == row_id
+        }
+        if len(groups) != 1:
+            return None
+        group = groups.pop()
+        anchors = [
+            item
+            for item in (frame.controls or [])
+            if str(item.get("group_id")) == group
+            and item.get("kind") == "a"
+            and item.get("in_viewport") is not False
+            and positioned_rect(item) is not None
+        ]
+        if len(anchors) != 1:
+            return None
+        control = anchors[0]
+        open_id = row_id
+        reason = (
+            f"open next unresolved candidate ordinal {candidate.get('ordinal')} "
+            f"(id {row_id}) via its row action"
+        )
     progress = progress_signature(frame)
     if (
         state.engaged
-        and state.last_open_id == row_id
+        and state.last_open_id == open_id
         and progress == state.last_progress
     ):
         return None
-    state.last_open_id = row_id
+    state.last_open_id = open_id
     state.last_progress = progress
     state.engaged = True
     return RecordWalkStep(
-        control=anchors[0],
+        control=control,
         resolved=resolved,
         candidate_records=candidate_records,
-        reason=(
-            f"open next unresolved candidate ordinal {candidate.get('ordinal')} "
-            f"(id {row_id}) via its row action"
-        ),
+        reason=reason,
+        navigation_url=navigation_url,
     )
 
 
@@ -240,8 +249,15 @@ def record_walk_step(
         # candidate when its row is visibly present — the Worker's most
         # expensive navigation (scroll-hunting a named row) is deterministic
         # here. Then: page the list while the assembly is short of the total.
-        open_step = _open_candidate_step(frame, detail, state, resolved, candidate_records)
-        if open_step is not None:
+        candidate = detail.get("next_unresolved_candidate")
+        navigation_url = same_origin_navigation(
+            frame,
+            candidate.get("navigation_url") if isinstance(candidate, dict) else "",
+        )
+        open_step = _open_candidate_step(
+            frame, detail, state, resolved, candidate_records, navigation_url,
+        )
+        if open_step is not None or navigation_url:
             return open_step
         total = _surface_total_records(frame)
         page_next = _tappable("page_next")
