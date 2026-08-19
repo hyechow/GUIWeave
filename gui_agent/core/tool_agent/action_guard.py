@@ -34,6 +34,7 @@ _GUARDED_CAPABILITIES = {
     "home",
     "app_switch",
     "launch_app",
+    "select_tab",
 }
 _SIGNATURE_FIELDS = (
     "text",
@@ -43,6 +44,7 @@ _SIGNATURE_FIELDS = (
     "amount",
     "duration_ms",
     "target_area",
+    "tab_match",
 )
 _AUTH_CODE_MARKER = r"(?:verification code|one-time code|otp|验证码|校验码|动态码)"
 _AUTH_CODE_RE = re.compile(
@@ -386,6 +388,27 @@ def _action_boundary_error(
 ) -> str:
     """Reject actions contradicted by authoritative enhanced observation."""
 
+    if capability == "select_tab":
+        tab_match = str(args.get("tab_match") or "").casefold()
+        traversals = [
+            traversal for surface in frame.structured_surfaces
+            if (traversal := surface.get("traversal") or {}).get("type") == "tabs"
+        ]
+        if tab_match == "next" and any(
+            traversal.get("status") == "complete" for traversal in traversals
+        ):
+            return (
+                "blocked next tab because the finite traversal is complete; select the "
+                "winning known tab once and continue the goal without revisiting candidates"
+            )
+        if tab_match != "next" and any(
+            traversal.get("selection_finalized") is True for traversal in traversals
+        ):
+            return (
+                "blocked tab revisit because the winning tab was already selected after "
+                "complete traversal; continue the goal on the current result page"
+            )
+
     control = control_at_point(args, frame)
     if control is not None:
         kind = str(control.get("kind") or "").casefold()
@@ -582,7 +605,17 @@ class WorkerActionCircuitBreaker:
             len(window) == _CYCLE_WINDOW
             and len(set(window)) <= _CYCLE_MAX_DISTINCT
         )
-        blocked = capability in _GUARDED_CAPABILITIES and (repeated or surface_cycle)
+        target = control_at_point(args, frame)
+        mutation_escape = capability in {"type", "clear_text", "select_option"} or bool(
+            target and (
+                target.get("form_action") == "commit"
+                or str(target.get("kind") or "").casefold()
+                in {"checkbox", "checkbox_input", "radio", "radio_input", "switch"}
+            )
+        )
+        blocked = capability in _GUARDED_CAPABILITIES and (
+            repeated or surface_cycle and not mutation_escape
+        )
         reason = ""
         if blocked:
             reason = (

@@ -161,6 +161,10 @@ _CAPABILITY_SCHEMAS: dict[str, dict[str, Any]] = {
                        "navigation replaces the current document and is not blocked by its "
                        "dialogs or overlays.",
     }}, ("url",)),
+    "select_tab": _args({"tab_match": {
+        "type": "string", "minLength": 1, "maxLength": 240,
+        "description": "A known tab title/URL substring, or 'next' to cycle through open tabs.",
+    }}, ("tab_match",)),
     "back": _EMPTY_ARGS,
     "home": _EMPTY_ARGS,
     "app_switch": _EMPTY_ARGS,
@@ -194,6 +198,11 @@ _CAPABILITY_DESCRIPTIONS = {
     "open_url": (
         "Replace the current browser document with an absolute HTTP(S) URL that executes "
         "the current approach; current-page dialogs and overlays do not block this action."
+    ),
+    "select_tab": (
+        "Switch among already-open browser tabs. tab_match='next' traverses one bounded "
+        "cycle. When tab traversal status is complete, do not revisit tabs: select the "
+        "winning known title/URL once and continue the goal there."
     ),
     "back": "Navigate back once within the current execution path.",
     "home": "Return to the platform home surface.",

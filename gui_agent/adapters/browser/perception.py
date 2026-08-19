@@ -15,13 +15,40 @@ from __future__ import annotations
 
 import os
 from pathlib import Path
-from typing import Optional
+from typing import Any, Optional
 
 from gui_agent.adapters.browser.filter_state import typed_applied_filter_state
 from gui_agent.core.schemas import Observation
 
 ROOT = Path(__file__).resolve().parents[3]
 SCREENSHOT = ROOT / "logs" / "gui_agent" / "scratch" / "browser_screenshot.png"
+
+
+def _open_tabs_table(client: Any, current_url: str) -> dict[str, Any] | None:
+    """Expose open-tab coverage through the existing read-only table channel."""
+    try:
+        tabs = client.list_tabs()
+    except Exception:  # noqa: BLE001 - optional browser sensor
+        return None
+    if len(tabs) < 2:
+        return None
+    return {
+        "caption": "Browser tab inventory",
+        "headers": ["Tab", "Title", "URL", "Active"],
+        "rows": [
+            {"Tab": index + 1, "Title": title, "URL": url, "Active": url == current_url}
+            for index, title, url in tabs
+        ],
+        "total_records": len(tabs),
+        "partial": False,
+        "traversal": {
+            "type": "tabs",
+            "status": (
+                "complete" if getattr(client, "tab_cycle_complete", False) else "available"
+            ),
+            "selection_finalized": bool(getattr(client, "tab_cycle_finalized", False)),
+        },
+    }
 
 
 class BrowserSession:
@@ -142,9 +169,13 @@ class BrowserPerception:
         tables = []
         viewport = None
         if client is not None and hasattr(client, "read_tables"):
-            tables = client.read_tables()
+            tables = list(client.read_tables())
             if hasattr(client, "read_viewport"):
                 viewport = client.read_viewport()
+        if client is not None and hasattr(client, "list_tabs"):
+            tab_table = _open_tabs_table(client, url or "")
+            if tab_table is not None:
+                tables.append(tab_table)
         form_controls = []
         form_controls_meta = None
         form_control_state = []

@@ -217,6 +217,7 @@ ToolActionCapability: TypeAlias = Literal[
     "long_press",
     "select_option",
     "open_url",
+    "select_tab",
     "back",
     "home",
     "app_switch",

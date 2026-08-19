@@ -217,6 +217,7 @@ def build_browser_bundle(
             "scroll",
             "select_option",
             "open_url",
+            "select_tab",
             "back",
             "reveal_control",
         ),

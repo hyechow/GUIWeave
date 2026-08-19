@@ -108,6 +108,7 @@ _EXECUTABLE_CAPABILITIES = {
     "clear_text",
     "press_enter",
     "open_url",
+    "select_tab",
     "back",
     "home",
     "app_switch",

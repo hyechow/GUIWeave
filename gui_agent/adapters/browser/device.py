@@ -387,6 +387,10 @@ class PlaywrightDevice:
         self._cdp = None  # cached raw CDP session (for window_bounds / eval_js fallback)
         self._browser_cdp = None  # cached browser-level CDP session (Target.* for tabs)
         self._prev_pages = None  # last-seen page list, for new-tab-appearance follow
+        self._tab_cycle_start = None
+        self._tab_cycle_pages: tuple[int, ...] = ()
+        self._tab_cycle_complete = False
+        self._tab_cycle_finalized = False
         self._tab_switched = False  # set by _switch_page; cleared by pop_tab_switched()
         self._last_viewport = None  # CSS-px (w, h) derived from the last screenshot
         self._dpr = None  # cached devicePixelRatio (stable; only changes across monitors)
@@ -1975,40 +1979,69 @@ class PlaywrightDevice:
             out.append((i, meta.get(url, ""), url))
         return out
 
+    @property
+    def tab_cycle_complete(self) -> bool:
+        return self._tab_cycle_complete
+
+    @property
+    def tab_cycle_finalized(self) -> bool:
+        return self._tab_cycle_finalized
+
     def new_tab(self, url: Optional[str] = None) -> str:
         """Open a new tab (optionally navigate to ``url``) and make it the active tab."""
         try:
             p = self._context.new_page()
             self._switch_page(p)
+            result = "OK new_tab"
             if url:
-                return "OK new_tab; " + self.navigate(url)
-            try:
-                p.bring_to_front()
-            except Exception:
-                pass
+                result += "; " + self.navigate(url)
+            else:
+                try:
+                    p.bring_to_front()
+                except Exception:
+                    pass
+            self._prev_pages = self._all_pages()
         except Exception as exc:  # noqa: BLE001
             return f"failed: {exc}"
-        return "OK new_tab"
+        return result
 
     def select_tab(self, match: str) -> str:
         """Switch to the tab whose title or url contains ``match`` (case-insensitive)."""
         m = (match or "").strip().lower()
         if not m:
             return "failed: select_tab 需要 tab 标题或 url 子串"
+        pages = self._all_pages()
+        if m == "next":
+            if len(pages) < 2:
+                return "failed: 没有其他标签页"
+            page_ids = tuple(id(page) for page in pages)
+            if getattr(self, "_tab_cycle_pages", ()) != page_ids:
+                self._tab_cycle_start = self.page
+                self._tab_cycle_pages = page_ids
+                self._tab_cycle_complete = False
+                self._tab_cycle_finalized = False
+            elif getattr(self, "_tab_cycle_complete", False):
+                return "failed: 已遍历全部标签页，请按已知标题或 URL 选择"
+            current = pages.index(self.page) if self.page in pages else -1
+            pages = [pages[(current + 1) % len(pages)]]
         meta = self._target_meta()
-        for p in self._all_pages():
+        for p in pages:
             try:
                 url = p.url
             except Exception:
                 url = ""
             title = meta.get(url, "")
-            if m in title.lower() or m in url.lower():
+            if m == "next" or m in title.lower() or m in url.lower():
                 try:
                     p.bring_to_front()
                     self._context = p.context
                     self._switch_page(p)
                 except Exception as exc:  # noqa: BLE001
                     return f"failed: {exc}"
+                if m == "next" and p is getattr(self, "_tab_cycle_start", None):
+                    self._tab_cycle_complete = True
+                elif m != "next" and getattr(self, "_tab_cycle_complete", False):
+                    self._tab_cycle_finalized = True
                 return f"OK select_tab {title[:30]!r} {url[:40]}"
         return f"failed: 没有标题/url 含 {match!r} 的标签页"
 
