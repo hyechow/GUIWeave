@@ -1710,8 +1710,9 @@ class PerceptionMaterializer:
                     and detail_progress.get("window_exhausted") is not True
                 )
                 enough = (
-                    requirement.cardinality == "one" and bool(assembled_rows)
-                    or expected_total is None
+                    bool(assembled_rows)
+                    if requirement.cardinality == "one"
+                    else expected_total is None
                     or int(detail_progress["candidate_records"]) >= int(expected_total)
                 )
                 ready_to_complete = ready and enough
@@ -1920,9 +1921,11 @@ class PerceptionMaterializer:
             "as a clear near-paraphrase; general topical relation is insufficient. For an "
             "identity or category field, apply any explicit taxonomy equivalence in the "
             "requirement context, then match when the record's primary subject is the "
-            "requested entity or class, including clear synonyms and subtypes; reject a "
-            "different primary subject that only mentions it as a component, accessory, or "
-            "bundle inclusion. For a functional category, require the record's primary "
+            "requested entity or class, including clear synonyms and subtypes. When requirement "
+            "context asks for membership or inclusion, an explicit bundle inclusion is a match; "
+            "compatibility or accessory mentions that do not assert inclusion are not. Otherwise "
+            "reject a different primary subject that only mentions the requested entity. For a "
+            "functional category, require the record's primary "
             "function to perform the requested function. Reject objects that merely decorate, "
             "store, support, accessorize, or accompany that function unless the requested "
             "class explicitly includes those objects.\n"

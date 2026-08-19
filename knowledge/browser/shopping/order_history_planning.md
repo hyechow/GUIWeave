@@ -30,6 +30,8 @@ provides Subtotal, Shipping & Handling, and Grand Total. The storefront does not
 date, so its value is unavailable even when a status is visible. When the response asks for that
 field, collect only the newest row's visible Status and set the arrival date to `null` in the
 deterministic transform; do not add an unavailable arrival field to the acquisition schema.
+For a purchased-item lookup, a sold bundle qualifies when Product Name explicitly says that it
+includes the requested item; compatibility or accessory mentions without inclusion do not qualify.
 
 ## Chronology and linked item lookup
 

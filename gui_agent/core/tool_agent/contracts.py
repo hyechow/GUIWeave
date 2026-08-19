@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import re
 from copy import deepcopy
+from datetime import datetime
 from typing import Any, Literal, TypeAlias, get_args
 
 from pydantic import BaseModel, ConfigDict, Field, model_validator
@@ -196,6 +197,23 @@ class DataRequirement(StrictModel):
                 )
             if field_type == "datetime":
                 field_schema.setdefault("format", "date-time")
+                constraint = self.filters.get(field)
+                values = constraint.values() if isinstance(constraint, dict) else [constraint]
+                for value in values:
+                    try:
+                        parsed = datetime.fromisoformat(str(value).replace("Z", "+00:00"))
+                    except (TypeError, ValueError):
+                        parsed = None
+                    if constraint is not None and (
+                        not isinstance(value, str)
+                        or "T" not in value
+                        or parsed is None
+                        or parsed.tzinfo is None
+                    ):
+                        raise ValueError(
+                            f"datetime filter {field!r} requires a full timezone-aware "
+                            "ISO 8601 date-time"
+                        )
             if field_type == "text_list" and (
                 not isinstance(field_schema.get("items"), dict)
                 or field_schema["items"].get("type") != "string"
