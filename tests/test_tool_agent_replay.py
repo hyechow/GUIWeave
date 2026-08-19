@@ -202,3 +202,50 @@ def test_load_recorded_run_replays_normal_runtime_artifacts(tmp_path, monkeypatc
     assert result.ok, result.error
     assert result.output == 7
     assert result.platform_time["source"] == "browser_cdp"
+
+
+def test_load_recorded_run_restores_shared_collection_snapshots(tmp_path) -> None:
+    spec = _worker_spec()
+    source = "def run(ctx):\n    ctx.fail('unused')"
+    first_ref = _collection().model_copy(update={"row_count": 1})
+    final_ref = _collection().model_copy(update={"row_count": 3})
+    events = [
+        {"event": "master_program_execution_started", "execution": 1, "source": source},
+    ]
+    for worker_id, descriptor in (("first", first_ref), ("second", final_ref)):
+        events.extend([
+            {
+                "event": "master_worker_dispatch",
+                "worker_id": worker_id,
+                "kind": "gui",
+                "spec": spec.model_dump(mode="json"),
+            },
+            {
+                "event": "master_worker_result",
+                "worker_id": worker_id,
+                "kind": "gui",
+                "outcome": WorkerOutcome(
+                    phase="completed",
+                    summary="Collected records",
+                    collection_ref=descriptor,
+                    steps=0,
+                ).model_dump(mode="json"),
+            },
+        ])
+    events.append({
+        "event": "master_program_completed",
+        "execution": 1,
+        "phase": "completed",
+        "result_ref": "result:1",
+    })
+    (tmp_path / "tool_agent_trace.json").write_text(json.dumps({
+        "phase": "completed", "trace": events,
+    }), encoding="utf-8")
+    rows = [{"value": 1}, {"value": 2}, {"value": 3}]
+    (tmp_path / "tool_agent_data_store.json").write_text(json.dumps({
+        "values": {"collection:records": rows},
+    }), encoding="utf-8")
+    recorded = load_recorded_run(tmp_path)
+    workers = recorded.context.gui_workers
+    assert workers["first"][0].value == rows[:1]
+    assert workers["second"][0].value == rows
