@@ -27,6 +27,11 @@ from gui_agent.core.tool_agent.contracts import (
 
 MAX_ORDERED_ACTIONS = 5
 _TERMINAL_TOOL_BY_STATE = {"completed": "complete", "failed": "report_blocked"}
+_PENDING_TERMINAL_ACTION = re.compile(
+    r"(?:^|[.;]\s+)(?:advancing|clicking|collecting|entering|going|navigating|"
+    r"opening|pressing|returning|scrolling|selecting|submitting|switching|tapping|typing)\b",
+    re.IGNORECASE,
+)
 _INPUT_TARGETS = {
     "text_input": ("type", "text"),
     "choice": ("select_option", "text"),
@@ -53,6 +58,12 @@ def validate_worker_tool_state(tool: str, state: WorkerState) -> None:
     ) and _TERMINAL_TOOL_BY_STATE.get(state.status) != tool:
         raise ProtocolError(
             f"terminal state/tool mismatch: state.status={state.status!r}, tool={tool!r}"
+        )
+    if tool in _TERMINAL_TOOL_BY_STATE.values() and _PENDING_TERMINAL_ACTION.search(
+        state.summary,
+    ):
+        raise ProtocolError(
+            "terminal summary describes a pending action; select an executable action first"
         )
 
 

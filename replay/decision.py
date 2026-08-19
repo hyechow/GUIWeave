@@ -23,6 +23,7 @@ from gui_agent.core.tool_agent.contracts import (
     DynamicActionSpec,
     MaterializedFrame,
     WorkerSpec,
+    WorkerState,
     approach_atomic_action_count,
     approach_is_procedural,
 )
@@ -34,6 +35,7 @@ from gui_agent.core.tool_agent.protocol import (
     dynamic_worker_tools,
     generic_action_spec,
     image_message,
+    validate_worker_tool_state,
     worker_attempt_contract,
 )
 from gui_agent.prompts import load_prompt_text
@@ -410,6 +412,9 @@ def _worker_decision(
         protocol=action_protocol,
         tools=tools,
     )
+    state_model = WorkerState.model_validate(state)
+    validate_worker_tool_state(call["name"], state_model)
+    state = state_model.model_dump(mode="json")
     names = [call["name"]]
     ordered = [{"name": call["name"], "args": call["args"]}]
     if call["name"] == "continue_with_actions":
@@ -551,7 +556,7 @@ def replay_worker_decision(
     results = []
     for number in range(1, samples + 1):
         replay_messages, repairs = list(messages), 0
-        for protocol_attempt in range(2):
+        for protocol_attempt in range(3):
             response = bound.invoke(replay_messages)
             try:
                 decision = _worker_decision(
@@ -562,8 +567,8 @@ def replay_worker_decision(
                     action_protocol=action_protocol,
                 )
                 break
-            except Exception as exc:  # noqa: BLE001 - mirrors one production repair
-                if protocol_attempt:
+            except Exception as exc:  # noqa: BLE001 - mirrors production repairs
+                if protocol_attempt == 2:
                     raise
                 repairs += 1
                 replay_messages.extend([response, HumanMessage(content=(

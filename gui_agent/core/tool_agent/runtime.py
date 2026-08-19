@@ -981,7 +981,7 @@ class ToolAgentRuntime:
                 bound_worker, decision_instruction, transport_repair = transport
                 if decision_instruction:
                     messages.append(HumanMessage(content=decision_instruction))
-                for attempt in range(2):
+                for attempt in range(3):
                     started_at = time.perf_counter()
                     response = bound_worker.invoke(messages)
                     llm_elapsed_s += time.perf_counter() - started_at
@@ -1002,7 +1002,7 @@ class ToolAgentRuntime:
                         state = WorkerState.model_validate(raw_state)
                         validate_worker_tool_state(call["name"], state)
                         break
-                    except Exception as exc:  # noqa: BLE001 - one same-frame protocol repair
+                    except Exception as exc:  # noqa: BLE001 - bounded same-frame protocol repair
                         self._trace(
                             "worker_protocol_error",
                             step=step,
@@ -1016,7 +1016,7 @@ class ToolAgentRuntime:
                                 schema=protocol_schema,
                             ) + context_reports,
                         )
-                        if attempt:
+                        if attempt == 2:
                             return WorkerOutcome(
                                 phase="failed",
                                 summary=(
