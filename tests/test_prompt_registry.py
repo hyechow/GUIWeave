@@ -158,7 +158,11 @@ def test_worker_keeps_action_grounding_and_memory_boundaries() -> None:
         "exactly one visible control", "do not relabel a nearby or generic control",
         "complete task-relevant record identities", "bounded cross-frame reasoning",
         "Stable page identity",
+        "names the next state, not the current state",
         "A `no_effect` result requires inspecting the next frame",
+        "one sentence of at most 160 characters",
+        "never pair that conclusion with another action",
+        "it does not require scrolling through or validating every result row",
     ):
         assert rule in prompt
 
