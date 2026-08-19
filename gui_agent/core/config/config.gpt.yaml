@@ -1,0 +1,72 @@
+# LLM settings on the private STANDARD gateway using GPT models.
+# The gateway's qwen (token-plan) channel exhausted its 1-week quota, but the
+# gpt-5.4 family routes to a separate upstream with its own quota. This file
+# keeps the same tool-agent architecture on working models.
+# Select with AGENT_CONFIG=config.gpt.yaml; creds from STANDARD_* in .env.
+
+_standard: &standard
+  provider: standard
+
+llm:
+  action_policy:
+    <<: *standard
+    model: gpt-5.4
+  recon:
+    navigator:
+      <<: *standard
+      model: gpt-5.4
+  supervisor:
+    <<: *standard
+    model: gpt-5.4
+    intent:
+      <<: *standard
+      model: gpt-5.4
+  orchestrator:
+    <<: *standard
+    model: gpt-5.4
+  observation:
+    <<: *standard
+    model: gpt-5.4
+  output:
+    <<: *standard
+    model: gpt-5.4-mini
+  router:
+    <<: *standard
+    model: gpt-5.4-mini
+  fingerprint:
+    <<: *standard
+    model: gpt-5.4-mini
+  loading:
+    <<: *standard
+    model: gpt-5.4-mini
+  target_verify:
+    <<: *standard
+    model: gpt-5.4-mini
+  tool_agent:
+    master:
+      <<: *standard
+      model: gpt-5.4
+    worker:
+      <<: *standard
+      model: gpt-5.4
+      action_protocol: json
+    perception:
+      <<: *standard
+      model: gpt-5.4
+      image_scale: 1.0
+    screen_reader:
+      <<: *standard
+      model: gpt-5.4-mini
+      image_scale: 1.0
+    presentation:
+      <<: *standard
+      model: gpt-5.4-mini
+
+profiles: {}
+
+pricing:
+  currency: "$"
+  default: {input: 1.0, output: 4.0}
+  models:
+    gpt-5.4:      {input: 2.0, output: 8.0}
+    gpt-5.4-mini: {input: 0.5, output: 4.0}
