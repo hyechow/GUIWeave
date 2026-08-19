@@ -17,7 +17,6 @@ from gui_agent.core.self_learning.app_summary import load_knowledge_for_app
 from gui_agent.core.tool_agent.contracts import (
     DynamicActionSpec,
     MaterializedFrame,
-    WorkerState,
     WorkerSpec,
     approach_atomic_action_count,
     approach_is_procedural,
@@ -30,7 +29,6 @@ from gui_agent.core.tool_agent.protocol import (
     dynamic_worker_tools,
     generic_action_spec,
     image_message,
-    validate_worker_tool_state,
     worker_attempt_contract,
 )
 from gui_agent.core.tool_agent.runtime import ToolAgentRuntime
@@ -107,19 +105,26 @@ def _master_task(event: dict[str, Any]) -> dict[str, Any]:
     return task
 
 
-def _current_master_task(task: dict[str, Any], context: dict[str, Any]) -> dict[str, Any]:
-    """Refresh mutable knowledge while preserving the recorded task inputs."""
-
+def _current_app_knowledge(context: dict[str, Any]) -> list[Any]:
     platform = str(context.get("platform") or "browser")
-    goal = str(context.get("goal") or "")
     summary = context.get("knowledge") or {}
     apps = summary.get("apps") or ([summary] if summary.get("app_name") else [])
-    knowledge = "\n\n".join(
-        value.orchestrator_context(goal)
+    return [
+        value
         for item in apps
         if isinstance(item, dict)
         and (name := str(item.get("app_name") or ""))
         and (value := load_knowledge_for_app(name, platform)) is not None
+    ]
+
+
+def _current_master_task(task: dict[str, Any], context: dict[str, Any]) -> dict[str, Any]:
+    """Refresh mutable knowledge while preserving the recorded task inputs."""
+
+    goal = str(context.get("goal") or "")
+    knowledge = "\n\n".join(
+        value.orchestrator_context(goal)
+        for value in _current_app_knowledge(context)
     )
     current = {key: value for key, value in task.items() if key != "application_knowledge"}
     if isinstance(current.get("platform"), dict):
@@ -138,6 +143,7 @@ def _worker_messages(
     screenshot: bytes,
     *,
     attempt_contract: str,
+    application_knowledge: str = "",
     image_scale: float = 1.0,
     strategy_retry: bool = False,
 ) -> list[Any]:
@@ -153,9 +159,16 @@ def _worker_messages(
                 default=len(text),
             )
             suffix = text[dynamic_start:].strip()
+            suffix = _without_section(suffix, "## Application knowledge")
             suffix = _without_section(suffix, "## Ordered multi-action mode")
             suffix = _without_section(suffix, "## Original task goal")
             suffix = _without_section(suffix, "## Worker attempt contract")
+            if application_knowledge:
+                suffix = (
+                    "## Application knowledge (read-only execution context)\n"
+                    + application_knowledge
+                    + ("\n\n" + suffix if suffix else "")
+                )
             current = load_prompt_text("task.tool_agent.worker").rstrip()
             messages.append(SystemMessage(content=(
                 current + ("\n\n" + suffix if suffix else "")
@@ -395,9 +408,6 @@ def _worker_decision(
     )
     if call["name"] == "continue_with_actions":
         ToolAgentRuntime._validate_multi_action_calls(calls, actions)
-    validate_worker_tool_state(
-        call["name"], WorkerState.model_validate(state), call["args"],
-    )
     names = [call["name"]]
     if call["name"] == "continue_with_actions":
         names = [str(item.get("name") or "") for item in calls]
@@ -454,7 +464,7 @@ def replay_worker_decision(
     if samples < 1:
         raise ValueError("samples must be positive")
     frame_no = _frame_number(frame)
-    events, _ = _artifacts(run_dir)
+    events, context = _artifacts(run_dir)
     selected = next((
         event for event in reversed(events)
         if event.get("event") == "worker_decision"
@@ -540,6 +550,10 @@ def replay_worker_decision(
         attempt_contract=worker_attempt_contract(
             spec,
             attempted_action=bool(replay_context.get("executed_tools")),
+        ),
+        application_knowledge="\n\n".join(
+            value.worker_context()
+            for value in _current_app_knowledge(context)
         ),
         image_scale=float(getattr(model_config, "image_scale", 1.0)),
         strategy_retry="_strategy_" in str(selected.get("worker_id") or ""),

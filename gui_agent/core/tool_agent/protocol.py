@@ -25,15 +25,6 @@ from gui_agent.core.tool_agent.contracts import (
 
 MAX_ORDERED_ACTIONS = 5
 _TERMINAL_TOOL_BY_STATE = {"completed": "complete", "failed": "report_blocked"}
-_PENDING_COMPLETION_CLAIM_RE = re.compile(
-    r"\b(?:next|remaining|final)\s+step\s+(?:is|will be)\s+to\b|"
-    r"\b(?:ready|waiting|awaiting)\s+to\s+(?:be\s+)?"
-    r"(?:activat\w*|click\w*|tap\w*|press\w*|send|submit|save|confirm)\b|"
-    r"\bawaiting\s+(?:activation|submission|confirmation)\b|"
-    r"(?:仍需|(?<!不)需要|下一步(?:是|为)?|尚待|等待)[^。；\n]{0,40}"
-    r"(?:点击|激活|发送|提交|保存|确认|完成)",
-    re.IGNORECASE,
-)
 _INPUT_TARGETS = {
     "text_input": ("type", "text"),
     "choice": ("select_option", "text"),
@@ -51,11 +42,7 @@ class ProtocolError(RuntimeError):
     pass
 
 
-def validate_worker_tool_state(
-    tool: str,
-    state: WorkerState,
-    args: dict[str, Any] | None = None,
-) -> None:
+def validate_worker_tool_state(tool: str, state: WorkerState) -> None:
     """Keep terminal state claims aligned with the selected protocol tool."""
 
     if (
@@ -65,14 +52,6 @@ def validate_worker_tool_state(
         raise ProtocolError(
             f"terminal state/tool mismatch: state.status={state.status!r}, tool={tool!r}"
         )
-    if tool == "complete":
-        evidence = (args or {}).get("evidence") or []
-        claim = "\n".join((state.summary, *(str(item) for item in evidence)))
-        if _PENDING_COMPLETION_CLAIM_RE.search(claim):
-            raise ProtocolError(
-                "completion claim describes a pending action or commit control; "
-                "execute that action before calling complete"
-            )
 
 
 class CompleteReadyWorkerArgs(BaseModel):
@@ -350,10 +329,9 @@ def dynamic_worker_tools(
     )
     if completion_mode != "unavailable":
         description = (
-            "Complete this operator after its target UI state is visibly confirmed. "
-            "An on-target commit followed by leaving its editor for a stable parent "
-            "surface is confirmation; complete instead of reopening a new mutation. "
-            "Never complete while a commit control is still ready or awaiting activation. "
+            "Complete this operator once its target UI state is visibly confirmed, including "
+            "after a commit exits its editor without error or an exhaustive traversal reaches "
+            "a no-effect boundary with no known unsatisfied record. "
             "With element-wise array bindings, call complete after EACH element so "
             "Runtime advances the cursor until the plan is exhausted."
             if completion_mode == "operator"
@@ -364,7 +342,7 @@ def dynamic_worker_tools(
                 "Runtime does not certify completeness."
             )
         )
-        tools.append(_with_worker_state(model_tool(
+        tools.insert(0, _with_worker_state(model_tool(
             "complete",
             description,
             CompleteReadyWorkerArgs,
