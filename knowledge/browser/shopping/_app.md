@@ -16,7 +16,7 @@ source: manual_distilled
 confidence: high
 sensitivity: internal
 ttl: session
-version: 8
+version: 9
 ---
 # One Stop Market storefront
 
@@ -52,9 +52,9 @@ version: 8
   canonical paths retain the top category and every choice as lowercase, hyphenated segments.
 - Exact ranges bypass coarse visible facets: open the canonical URL with
   `price=<lower>-<upper>`; "under X" maps to `price=0-X`. Do not preserve a `cat=<id>` alias.
-- Sort By includes Price but not customer rating. The direction link label names the action it will
-  perform: `Set Ascending Direction` means the current order is descending, while
-  `Set Descending Direction` means it is ascending.
+- Sort By includes Price but not customer rating. Direction labels name the next action, not state:
+  `Set Ascending Direction` proves descending is active; `Set Descending Direction` proves ascending
+  is active. When active order matches the goal, complete without clicking the link.
 - Product grids preserve the selected order from left to right across each row, then top to bottom.
   For a price boundary, sort in the needed direction and take the first row that satisfies all
   remaining predicates; do not traverse the whole category.

@@ -10,7 +10,7 @@ source: manual_distilled
 confidence: high
 sensitivity: internal
 ttl: session
-version: 3
+version: 4
 ---
 # One Stop Market catalog data
 
@@ -42,7 +42,9 @@ preserve a `cat=<id>` alias; visible price facets are coarse alternatives, not a
 For minimum, maximum, cheapest, or most-expensive requests, apply the complete product-class and
 budget predicates, sort by Price in the needed direction, and use `coverage="first_match"`. A
 category grid has row-major display order. The direction control's accessible label describes the
-next action, not the current state.
+next action, not the current state: `Set Ascending Direction` proves descending is active, while
+`Set Descending Direction` proves ascending is active. Complete without clicking when active order
+matches the goal.
 
 Sort By does not offer customer rating. For highest/best-rated requests, collect the bounded
 candidate set with rating, review count, current price, and detail link, then rank deterministically.
