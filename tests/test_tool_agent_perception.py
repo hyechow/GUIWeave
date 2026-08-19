@@ -2000,14 +2000,14 @@ def test_singleton_linked_detail_stops_or_continues_source(
         row_schema={
             "type": "object",
             "properties": {
-                field: {"type": "string"} for field in ("record_id", "subject")
+                field: {"type": "string"} for field in ("record_id", "item_name")
             },
-            "required": ["record_id", "subject"],
+            "required": ["record_id", "item_name"],
             "additionalProperties": False,
         },
-        field_sources={"record_id": "Record ID", "subject": "Subject"},
-        field_types={"record_id": "text", "subject": "text"},
-        filters={"subject_contains": "target class"},
+        field_sources={"record_id": "Record ID", "item_name": "Item Name"},
+        field_types={"record_id": "text", "item_name": "text"},
+        filters={"item_name_contains": "target class"},
     )
     parent = {
         "caption": "Records",
@@ -2026,7 +2026,7 @@ def test_singleton_linked_detail_stops_or_continues_source(
     }
     materializer = _materializer(tmp_path, "enhanced")
     materializer._semantic_judge = lambda _requirement, rows: [  # type: ignore[method-assign]
-        row for row in rows if row.get("subject") == "Target service"
+        row for row in rows if row.get("item_name") == "Target service"
     ]
     source_url = "http://example.test/records/" + ("?p=4" if has_previous else "")
     materializer.observe(
@@ -2039,8 +2039,8 @@ def test_singleton_linked_detail_stops_or_continues_source(
         bundle=FakeBundle(
             [{
                 "caption": "Entries",
-                "headers": ["Subject"],
-                "rows": [{"Subject": subject}],
+                "headers": ["Product Name"],
+                "rows": [{"Product Name": subject}],
                 "partial": False,
                 "traversal": {"type": "static"},
             }],
@@ -2065,7 +2065,7 @@ def test_singleton_linked_detail_stops_or_continues_source(
     assert completed.collections[0].coverage["cardinality"] == "one"
     assert materializer.data_store.collection_rows(
         completed.collections[0].ref
-    ) == [{"record_id": "group-001", "subject": "Target service"}]
+    ) == [{"record_id": "group-001", "item_name": "Target service"}]
 
 
 def _linked_entry_requirement() -> DataRequirement:
