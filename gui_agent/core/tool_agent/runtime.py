@@ -764,6 +764,12 @@ class ToolAgentRuntime:
             attempted_strategies.append(revised)
             strategy_attempt += 1
             next_id = self._strategy_worker_id(worker_id, strategy_attempt)
+            breakers = getattr(self, "_worker_action_breakers", {})
+            if (
+                outcome.failure_kind == "action_contract_invalid"
+                and current_id in breakers
+            ):
+                breakers[next_id] = breakers[current_id]
             self._trace(
                 "strategy_worker_dispatched",
                 logical_worker_id=worker_id,

@@ -12,7 +12,7 @@ source: manual_verified
 confidence: medium
 sensitivity: internal
 ttl: session
-version: 1
+version: 2
 ---
 # Mattermost on Android
 
@@ -27,6 +27,12 @@ version: 1
   list / invite action can add every member to the channel.
 - A welcome message is sent by composing it in the opened channel's message input
   and sending it.
+- Replying is scoped to one existing message: long-press the visible message body,
+  choose `Reply`, then compose and send in the thread view. Posting in the channel
+  composer is a new message, not a reply.
+- In this MobileWorld deployment, Harry is the task user represented by first-person
+  references such as `I`, `me`, `my`, and `own`. Deployment login names are access
+  credentials, not the task user's identity.
 
 ## Interface contract
 
