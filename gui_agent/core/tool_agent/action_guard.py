@@ -604,6 +604,7 @@ class WorkerActionCircuitBreaker:
         surface_cycle = (
             len(window) == _CYCLE_WINDOW
             and len(set(window)) <= _CYCLE_MAX_DISTINCT
+            and progress in window
         )
         target = control_at_point(args, frame)
         mutation_escape = capability in {"type", "clear_text", "select_option"} or bool(

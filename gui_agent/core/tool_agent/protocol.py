@@ -528,7 +528,7 @@ def input_binding_action(binding: WorkerInputBinding) -> DynamicActionSpec:
     action = DynamicActionSpec(
         name=binding.name,
         capability=capability,
-        description=binding.description,
+        description=f"{_CAPABILITY_DESCRIPTIONS[capability]} Binding: {binding.description}",
         input_args={
             argument: RuntimeInputBinding(
                 input=binding.input,
