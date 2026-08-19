@@ -16,7 +16,7 @@ source: manual_distilled
 confidence: high
 sensitivity: internal
 ttl: session
-version: 11
+version: 13
 ---
 # One Stop Market storefront
 
@@ -92,10 +92,10 @@ version: 11
   first row older than the lower boundary, later pages cannot qualify. The first page is
   authoritative for latest;
   the last reachable row is authoritative for first/oldest.
-- View Order opens a detail page with Order Date and Status, Items Ordered, Shipping Address,
-  Shipping Method, Billing Address, and order totals. Items Ordered rows expose Product Name, Price,
-  Qty, and line Subtotal. Product Name includes the purchased title and SKU plus selected option
-  labels and values, such as size or color; options are not separate table columns.
+- View Order shows date/status, addresses, totals, and Items Ordered rows with Product Name, Price,
+  Qty, and line Subtotal. Product Name embeds title, SKU, and selected option labels and values.
+- If exhaustive pagination finds no detail-view order, use `Page 1` to return to canonical My Orders
+  before reporting not found. Terminal reporting from later pages is invalid.
 - The totals block separates Subtotal, Shipping & Handling, and Grand Total. An arrival date is not
   displayed. A placed order's delivery address cannot be edited from the storefront order detail.
 - Reorder on an order detail adds that order's products to the cart. It does not itself complete a

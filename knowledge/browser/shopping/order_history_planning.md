@@ -5,12 +5,12 @@ platform: browser
 app: shopping
 scope:
   - orchestrator
-selector_when: orders order number history bought purchased date status total price cost spend spent subtotal shipping refund first latest oldest item SKU size color option configuration canceled cancelled reorder
+selector_when: orders order number history bought purchased date status processing total price cost spend spent subtotal shipping refund first latest oldest item SKU size color option configuration canceled cancelled reorder
 source: official_trace_distilled
 confidence: high
 sensitivity: internal
 ttl: session
-version: 5
+version: 7
 ---
 # One Stop Market order-history data
 
@@ -37,6 +37,10 @@ newest-first list. Stop as soon as it satisfies all list-level predicates. For f
 traverse to the final page and use the oldest qualifying row. For the date last ordered a product,
 traverse orders newest first and inspect linked Items Ordered until the first matching line item is
 found; do not open every remaining order after that.
+
+For a detail-opening request with no matching order, return to the canonical first My Orders page
+after exhaustive traversal before reporting not found. While a later page is current, terminal
+reporting is invalid; this is required failure handling, not a successful completion.
 
 For spending over a date interval and product class, use one linked order-detail collection at
 line-item grain. Retain Order # as the required stable parent identity because the detail title
