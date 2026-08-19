@@ -16,7 +16,7 @@ source: manual_distilled
 confidence: high
 sensitivity: internal
 ttl: session
-version: 6
+version: 7
 ---
 # One Stop Market storefront
 
@@ -41,12 +41,13 @@ version: 6
 - The top navigation is a category hierarchy. Use the narrowest category only when its taxonomy
   directly covers the full requested class. Earbud products are under Electronics > Headphones >
   Earbud Headphones; in this catalog, in-ear or behind-neck headphones/headsets are earphones.
+  Makeup Remover's canonical path is `/beauty-personal-care/makeup/makeup-remover.html`.
 - Category and search-result pages offer Grid/List mode, Sort By, a separate direction link, a
   per-page selector, and pagination. Product cards expose name and current price, and may expose
   rating percentage and review count. A struck-through old price is not the current sale price.
-- `Women` and `Men` are category levels, not product modifiers. Their leaf paths are
-  `/<top-category>/women/<leaf>.html` and `/<top-category>/men/<leaf>.html`. A target or navigation
-  history containing either level is invalid unless its canonical URL contains `/women/` or `/men/`.
+- `Women` and `Men` are path-bearing categories. Leaf URLs are
+  `/<top>/women/<leaf>.html` or `/<top>/men/<leaf>.html`; retain the matching segment whenever the
+  target or history contains it.
 - Sidebar category choices may replace the prior chip and leave a `cat=<id>` alias on the parent
   path. A canonical path instead preserves the top category and every successive category choice as
   lowercase, hyphenated path segments.
