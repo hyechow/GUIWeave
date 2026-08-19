@@ -1,0 +1,52 @@
+{
+  "source_run": "webarena shopping task 149, turn 3",
+  "frame": {
+    "frame_id": "frame:3",
+    "url": "http://localhost:7770/sales/order/history/",
+    "title": "My Orders",
+    "controls": [
+      {
+        "kind": "a",
+        "label": "View Order",
+        "group_id": "my-orders-table:6",
+        "rect": {"x": 782.0, "y": 767.0, "w": 79.0, "h": 19.0}
+      },
+      {
+        "kind": "a",
+        "label": "Next",
+        "traversal_action": "page_next",
+        "rect": {"x": 648.0, "y": 971.0, "w": 36.0, "h": 34.0}
+      }
+    ],
+    "structured_surfaces": [
+      {
+        "kind": "rendered_data_surface",
+        "caption": "Orders",
+        "total_records": 23,
+        "row_count": 10
+      }
+    ],
+    "requirement_scopes": {
+      "line_item": {
+        "status": "unknown",
+        "detail_resolution": {
+          "status": "active",
+          "candidate_records": 4,
+          "resolved_candidate_ordinals": [],
+          "next_unresolved_candidate": {
+            "ordinal": 1,
+            "fields": {
+              "date": "2023-02-27T00:00:00+00:00",
+              "order_number": "000000161"
+            },
+            "navigation_url": "http://localhost:7770/sales/order/view/order_id/161/"
+          },
+          "candidate_source_url": "http://localhost:7770/sales/order/history/",
+          "detail_fields": ["primary_product"],
+          "pending_candidate_ordinal": null,
+          "window_exhausted": false
+        }
+      }
+    }
+  }
+}

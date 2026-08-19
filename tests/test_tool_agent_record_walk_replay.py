@@ -23,6 +23,9 @@ from gui_agent.core.tool_agent.record_walk import (
 )
 
 _FIXTURE = Path(__file__).parent / "fixtures" / "tool_agent" / "task116_review_walk.json"
+_ORDER_CANDIDATE_FIXTURE = (
+    Path(__file__).parent / "fixtures" / "tool_agent" / "task149_order_candidate.json"
+)
 _EDITOR_TURNS = ("10", "11", "14", "16", "34", "37", "39")
 _GRID_TURNS = ("13", "26")
 # Full recorded order: editor visits interleaved with grid frames. Grid frames
@@ -185,6 +188,29 @@ def test_driver_engages_every_editor_and_yields_grids(recording: dict) -> None:
             assert step is None, (
                 f"turn {turn}: driver must yield grid navigation to the Worker"
             )
+
+
+def test_linked_order_candidate_url_preempts_page_replay() -> None:
+    payload = json.loads(_ORDER_CANDIDATE_FIXTURE.read_text())
+    recorded = payload["frame"]
+    frame = MaterializedFrame(
+        frame_id=recorded["frame_id"],
+        screenshot_path="",
+        url=recorded["url"],
+        title=recorded["title"],
+        controls=recorded["controls"],
+        structured_surfaces=recorded["structured_surfaces"],
+        requirement_scopes=recorded["requirement_scopes"],
+    )
+
+    state = RecordWalkState()
+    step = record_walk_step(frame, state)
+
+    assert step is not None
+    assert step.control == {}
+    assert step.navigation_url.endswith("/sales/order/view/order_id/161/")
+    assert step.reason == "open next unresolved candidate via its linked-detail URL"
+    assert record_walk_step(frame, state) is None
 
 
 def test_driver_crediting_chain_reproduces_live_sequence(recording: dict) -> None:

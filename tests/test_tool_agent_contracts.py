@@ -642,7 +642,10 @@ def test_worker_profile_inference_selects_relevant_attempt_rules() -> None:
     for rule in (
         "scope_blockers", "evidence against that query",
         "detail_resolution.status = active", "next_unresolved_candidate",
+        "pagination cannot improve an already exact identity",
         "load more candidates instead of declaring completion",
+        "never page farther past that boundary",
+        "below the lower bound require Previous",
     ):
         assert rule in collector_contract and rule not in operator_contract
     for rule in (
