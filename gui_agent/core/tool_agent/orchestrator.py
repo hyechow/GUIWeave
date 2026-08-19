@@ -75,7 +75,8 @@ _UI_SURFACE_SUCCESS = re.compile(
     re.IGNORECASE,
 )
 _EXACT_SCOPE_LITERAL = re.compile(
-    r"\b\d{4}-\d{2}-\d{2}\b|(?P<quote>['\"])(?P<quoted>[^'\"\n]{1,80})(?P=quote)"
+    r"\b\d{4}-\d{2}-\d{2}\b|(?<!\w)(?P<quote>['\"])(?P<quoted>[^'\"\n]{1,80})"
+    r"(?P=quote)(?!\w)"
 )
 _CTX_METHODS = {
     "gui_worker",

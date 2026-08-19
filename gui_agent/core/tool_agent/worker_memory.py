@@ -144,7 +144,7 @@ def _observed_choice_state(controls: list[dict[str, Any]]) -> list[dict[str, Any
     ]
 
 
-_OFFSCREEN_ACTION_KINDS = frozenset({"button", "section_toggle"})
+_OFFSCREEN_ACTION_KINDS = frozenset({"button", "native_select", "section_toggle"})
 # Keeps the projection compact on long forms; sorted nearest-fold-first, so a
 # form with more distinct off-fold actions than this drops only the farthest.
 _OFFSCREEN_ACTION_LIMIT = 24

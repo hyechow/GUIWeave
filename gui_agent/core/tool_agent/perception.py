@@ -1227,7 +1227,7 @@ class PerceptionMaterializer:
                     # matches are authoritative and always collected; the text
                     # judge only supplements the rows a deterministic substring
                     # cannot decide (paraphrases). This keeps a literal match like
-                    # "print quality" from being dropped by judge variance.
+                    # literal matches from being dropped by judge variance.
                     literal, undecided = [], []
                     for row in rows:
                         match = _rows_satisfy_filters(requirement, [row])
@@ -1750,27 +1750,29 @@ class PerceptionMaterializer:
     ) -> list[dict[str, Any]]:
         """Text-only filter of transcribed rows by a semantic predicate.
 
-        The screen reader transcribes everything; this judge keeps the rows whose
-        content field mentions or describes the phrase, paraphrases included —
-        the exact judgment the fused transcribe-and-filter perception kept missing
-        (e.g. "half my ear into it" for small ear cups).
+        The screen reader transcribes everything; this judge resolves semantic
+        predicates against normalized fields after transcription.
         """
         predicates = display_filter_predicates(requirement.filters)
         prompt = (
+            "Requirement context: "
+            f"description={requirement.description!r}, "
+            f"target_surface={requirement.target_label!r}, "
+            f"visible_sources={json.dumps(requirement.field_sources, ensure_ascii=False)}.\n"
             "Transcribed records are below. Keep the subset that satisfies this semantic "
             f"predicate: {json.dumps(predicates, ensure_ascii=False)}\n"
-            "A record matches ONLY when its content field states the phrase directly — the "
-            "exact words, or a clear near-paraphrase whose subject is clearly that phrase "
-            "(e.g. 'for very small ears' for 'ear cups being small'). A record that merely "
-            "relates to the general topic (hardware, printing, quality, the product) without "
-            "stating the phrase does NOT match.\n"
+            "For a content/mention field, match only when it states the phrase directly or "
+            "as a clear near-paraphrase; general topical relation is insufficient. For an "
+            "identity or category field, apply any explicit taxonomy equivalence in the "
+            "requirement context, then match when the record's primary subject is the "
+            "requested entity or class, including clear synonyms and subtypes; reject a "
+            "different primary subject that only mentions it as a component, accessory, or "
+            "bundle inclusion.\n"
             'Return ONLY a JSON object with the 0-based indices of the kept records: '
             '{"matched_indices": [0, 2, ...]}\n'
             f"Records:\n{json.dumps(rows, ensure_ascii=False)}"
         )
-        # The judge is a precision task — use the stronger perception model, not
-        # the cheap flash reader (flash over-matches "print quality" to printing
-        # topics; plus returns the exact paraphrase set).
+        # Use the stronger perception model for precision semantic classification.
         cfg = getattr(self, "_vision_cfg", None) or self._reader_config()
         model = getattr(cfg, "model", None) or self.model
         reader = getattr(self, "_vision", None) or getattr(self, "_screen_reader", None)
