@@ -179,7 +179,9 @@ ctx.fail(outcome["summary"])
         user_goal="Retrieve the latest record with status under review",
     )
 
-    assert any(item.code == "DATA_FILTER_LITERAL" for item in diagnostics)
+    mismatch = next(item for item in diagnostics if item.code == "DATA_FILTER_LITERAL")
+    assert "'Under Review'" in mismatch.message
+    assert "'under review'" in mismatch.message
     canonicalized = validate_master_source(
         source.replace("Under Review", "Complete"),
         user_goal="Retrieve the latest completed record",

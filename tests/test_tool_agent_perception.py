@@ -1329,6 +1329,48 @@ def test_enhanced_materializes_partial_dom_table_with_incomplete_coverage(tmp_pa
     }
 
 
+def test_structured_pagination_accumulates_across_page_query_urls(tmp_path: Path) -> None:
+    materializer = _materializer(tmp_path, "enhanced")
+
+    def observe(page: int, terms: list[str]):
+        table = {
+            "caption": "Top Terms",
+            "headers": ["Search Term", "Uses"],
+            "rows": [{"Search Term": term, "Uses": "1"} for term in terms],
+            "partial": page == 1,
+            "traversal": {
+                "type": "paged",
+                "page_index": page,
+                "page_count": 2,
+                "has_next_page": page == 1,
+                "has_prev_page": page == 2,
+            },
+        }
+        frame, _ = materializer.observe(
+            bundle=FakeBundle(
+                [table],
+                observation={"url": f"https://example.test/terms?p={page}"},
+            ),
+            platform=FakePlatform(),
+            requirements=[_requirement()],
+            frame_no=page,
+        )
+        return frame
+
+    first = observe(1, ["alpha", "beta"])
+    completed = observe(2, ["gamma"])
+
+    assert first.collections[0].row_count == 2
+    assert completed.collections[0].row_count == 3
+    assert completed.collections[0].coverage["pages_seen"] == [1, 2]
+    assert completed.collections[0].coverage["status"] == "complete"
+    assert materializer.data_store.collection_rows(completed.collections[0].ref) == [
+        {"term": "alpha", "uses": 1},
+        {"term": "beta", "uses": 1},
+        {"term": "gamma", "uses": 1},
+    ]
+
+
 @pytest.mark.parametrize("rows,total,filters", [
     ([], 0, {}),
     ([{"Search Term": "visible", "Uses": "1"}], 1, {"uses": {"max": 0}}),

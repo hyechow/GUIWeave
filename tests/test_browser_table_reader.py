@@ -28,6 +28,8 @@ def test_table_snapshot_js_is_serialized_expression():
     assert 'getAttribute("aria-colspan")' in js
     assert 'row.closest("table") === table' in js
     assert 'cell.closest("tr") === row' in js
+    assert "\\bpage\\s*(\\d+)" in js
+    assert "pagerText.match(/(?:page\\s*)?" not in js
 
 
 def test_normalize_table_snapshots_maps_rows_to_headers():

@@ -443,7 +443,7 @@ def test_worker_replay_supports_plain_json_action_protocol(tmp_path, monkeypatch
     assert "JSON object with only tool and args" in model.calls[1][-1].content
 
 
-def test_master_replay_uses_current_prompt_knowledge_and_structural_expectation(
+def test_master_replay_recovers_failed_recording_with_current_prompt_and_knowledge(
     monkeypatch, tmp_path,
 ) -> None:
     source = """def run(ctx):
@@ -481,7 +481,7 @@ def test_master_replay_uses_current_prompt_knowledge_and_structural_expectation(
         "event": "master_compile_attempt",
         "attempt": 1,
         "source": source,
-        "diagnostics": [],
+        "diagnostics": ["recorded compile failure"],
         "context_reports": [report],
     }]}), encoding="utf-8")
     knowledge = SimpleNamespace(orchestrator_context=lambda _goal: "current fact")
