@@ -9,10 +9,19 @@ visualizer draw original→snapped — the same as iphone YOLO/OCR.
 
 from __future__ import annotations
 
+import inspect
 import types
 
 from gui_agent.adapters.browser.actions import BrowserAction, BrowserActionDecision
 from gui_agent.adapters.browser.executor import BrowserExecutor
+from gui_agent.adapters.browser.device import PlaywrightDevice
+
+
+def test_dom_snap_targets_exposed_element_fragments() -> None:
+    source = inspect.getsource(PlaywrightDevice.dom_snap)
+
+    assert "getClientRects" in source
+    assert "exposedPoint" in source
 
 
 class _FakeClient:

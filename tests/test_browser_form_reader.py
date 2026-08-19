@@ -39,6 +39,8 @@ def test_form_controls_js_is_serialized_expression():
     assert "cell.contains(el)" in js
     assert "filter[-_].*(apply|submit)" in js
     assert "document.elementFromPoint" in js
+    assert "getClientRects" in js
+    assert "exposedPoint" in js
     assert "occluded: true" in js
     assert "radioGroupLabelOf" in js
     assert "input[type=\"radio\"]" in js
