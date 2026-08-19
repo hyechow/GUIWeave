@@ -278,6 +278,8 @@ def worker_attempt_contract(
             "initially empty or filtered selector is not exhausted.\n"
             "- Finish comparison evidence before mutation, skip excluded or already processed "
             "identities, and advance only through explicitly remaining candidates.\n"
+            "- After returning from a rejected record in an authoritative boundary order, "
+            "inspect the immediate next record; never reopen it or jump to a later match.\n"
             "- Observe the post-action frame before repeating or completing a mutation.\n"
             "- Clear unrelated inherited values with the group-local bulk-clear control "
             "before selecting the requested subset; `observed_choice_state` is "

@@ -16,7 +16,7 @@ source: manual_distilled
 confidence: high
 sensitivity: internal
 ttl: session
-version: 10
+version: 11
 ---
 # One Stop Market storefront
 
@@ -25,9 +25,8 @@ version: 10
 - The signed-in account menu exposes My Account, My Wish List, and Sign Out. My Account has
   sidebar links for My Orders, My Wish List, Address Book, Account Information, My Product Reviews,
   and Newsletter Subscriptions.
-- The header cart opens a mini-cart; View and Edit Cart opens the full Shopping Cart. Footer links
-  include Advanced Search and Contact Us, and the footer newsletter form has an Email field and
-  Subscribe button.
+- The header mini-cart links to the full Shopping Cart. Footer exposes Advanced Search, Contact Us,
+  and newsletter Email/Subscribe.
 - If a task starts on a product page and says "the product on the current page", keep that product
   identity. Do not replace it by searching for another product.
 
@@ -55,9 +54,10 @@ version: 10
 - Sort By includes Price but not customer rating. Direction labels name the next action, not state.
   For ascending, click `Set Ascending Direction`; `Set Descending Direction` means complete.
   For descending, click `Set Descending Direction`; `Set Ascending Direction` means complete.
-- Product grids preserve the selected order from left to right across each row, then top to bottom.
-  For a price boundary, sort in the needed direction and take the first row that satisfies all
-  remaining predicates; do not traverse the whole category.
+- Product grids are row-major. For a price boundary, sort and take the first match. Back from a
+  rejected detail preserves query/order; continue after it and never rerun search.
+- Shoe-storage capacity: N boxes/slots = N pairs; N single-shoe pockets = N/2 pairs. Reject a
+  below-minimum detail and Back to the ordered grid.
 
 ## Product pages and reviews
 

@@ -48,6 +48,7 @@ from gui_agent.core.tool_agent.action_guard import (
     auth_codes_from_text,
     control_at_point,
     is_candidate_commit,
+    ordered_boundary_resume_feedback,
     ready_collection,
 )
 from gui_agent.core.tool_agent.data_store import RuntimeDataStore
@@ -1395,6 +1396,9 @@ class ToolAgentRuntime:
     ) -> tuple[list[Any], list[dict[str, Any]]]:
         """Rebuild one frame from bounded Journal memory; never replay chat history."""
         memory = build_worker_memory_view(journal)
+        same_frame_feedback = same_frame_feedback or ordered_boundary_resume_feedback(
+            spec, frame, memory.render_prompt_section(),
+        )
         projection = project_worker_context(
             memory=memory,
             frame=frame,

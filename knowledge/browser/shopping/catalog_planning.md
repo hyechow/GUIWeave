@@ -10,7 +10,7 @@ source: manual_distilled
 confidence: high
 sensitivity: internal
 ttl: session
-version: 5
+version: 6
 ---
 # One Stop Market catalog data
 
@@ -39,11 +39,11 @@ For an exact range, navigate directly to the canonical category URL with
 `price=<lower>-<upper>`; "under X" maps to `price=0-X`. Do not first apply a wider visible facet or
 preserve a `cat=<id>` alias; visible price facets are coarse alternatives, not a nested hierarchy.
 
-For minimum, maximum, cheapest, or most-expensive requests, apply the complete product-class and
-budget predicates, sort by Price in the needed direction, and use `coverage="first_match"`. A
-category grid has row-major display order. A direction label describes the next action, not current
-state. For ascending, click `Set Ascending Direction` and complete on `Set Descending Direction`;
-for descending, do the inverse.
+For a price boundary, apply every predicate, sort by Price in the needed direction, and use
+`coverage="first_match"`; the grid is row-major. From a rejected product detail, Back preserves the
+ordered grid: continue after that product and never rerun the search. A direction label names the
+next action. For ascending, click `Set Ascending Direction` and complete on `Set Descending
+Direction`; for descending, do the inverse.
 
 Sort By does not offer customer rating. For highest/best-rated requests, collect the bounded
 candidate set with rating, review count, current price, and detail link, then rank deterministically.
@@ -57,6 +57,9 @@ content rather than catalog sort fields. Collect enough Product Name/detail cont
 requested attribute, reject accessories or bundles that do not satisfy the primary product class,
 and rank only the validated candidates. When the task asks for a product page, the final action is
 navigation to the selected product detail, not merely returning its name.
+
+For shoe storage, N dedicated boxes/slots = N pairs and N single-shoe pockets = N/2 pairs. Reject a
+below-minimum detail and Back to the ordered grid.
 
 For a price range, use the same bounded recall source for both ends. Do not take a minimum from one
 query/category and a maximum from another. Return not-found only after the bounded source is

@@ -13,7 +13,11 @@ from langchain_core.messages import AIMessage, HumanMessage, SystemMessage
 from gui_agent.core.config import build_llm
 from gui_agent.core.runtime.executor import REDACTED_ACCESS_VALUE as _REDACTED_ACCESS_VALUE
 from gui_agent.core.runtime.clock import PlatformTimeSnapshot
-from gui_agent.core.tool_agent.action_guard import assess_frame, control_at_point
+from gui_agent.core.tool_agent.action_guard import (
+    assess_frame,
+    control_at_point,
+    ordered_boundary_resume_feedback,
+)
 from gui_agent.core.self_learning.app_summary import load_knowledge_for_app
 from gui_agent.core.tool_agent.contracts import (
     DynamicActionSpec,
@@ -135,6 +139,7 @@ def _worker_messages(
     attempt_contract: str,
     context: dict[str, Any] | None = None,
     image_scale: float = 1.0,
+    same_frame_feedback: dict[str, Any] | None = None,
 ) -> list[Any]:
     messages: list[Any] = []
     for role in report.get("roles", []):
@@ -161,6 +166,10 @@ def _worker_messages(
             )))
         elif name == "human":
             text = _without_section(text, "## Current Worker attempt")
+            if same_frame_feedback:
+                text += "\n\n## Same-frame runtime feedback\n" + json.dumps(
+                    same_frame_feedback, ensure_ascii=False,
+                )
             text = (text.rstrip() + "\n\n" + attempt_contract).strip()
             messages.append(
                 image_message(text, screenshot, scale=image_scale)
@@ -505,8 +514,13 @@ def replay_worker_decision(
         "tool": str(selected.get("tool") or ""),
         "action_capabilities": recorded_capabilities,
     }
+    worker_report = _report(selected, "tool_agent.worker")
+    recorded_memory = _text(next(
+        role.get("parts", []) for role in worker_report.get("roles", [])
+        if role.get("role") == "human"
+    )).split("## Current MaterializedFrame", 1)[0]
     messages = _worker_messages(
-        _report(selected, "tool_agent.worker"),
+        worker_report,
         _screenshot(run_dir, frame_no, observation),
         attempt_contract=worker_attempt_contract(
             spec,
@@ -514,6 +528,9 @@ def replay_worker_decision(
         ),
         context=context,
         image_scale=float(getattr(model_config, "image_scale", 1.0)),
+        same_frame_feedback=ordered_boundary_resume_feedback(
+            spec, materialized, recorded_memory,
+        ),
     )
     request_model = getattr(model_config, "model", None)
     if request_model is None:

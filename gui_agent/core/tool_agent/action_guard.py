@@ -297,6 +297,68 @@ def control_at_point(
     return min(matches, key=lambda item: item[0])[1] if matches else None
 
 
+def ordered_boundary_resume_feedback(
+    spec: WorkerSpec,
+    frame: MaterializedFrame,
+    memory: str,
+) -> dict[str, Any] | None:
+    """Name the next same-row record after a boundary inspection Back."""
+
+    contract = " ".join((spec.goal, *spec.success_criteria, spec.strategy.approach))
+    tools = re.findall(r"\btool=([a-z_]+)\b", memory)
+    last_back = max((index for index, tool in enumerate(tools) if tool == "back"), default=-1)
+    if not (
+        re.search(
+            r"\b(?:cheapest|lowest|highest|earliest|latest|oldest|newest|"
+            r"minimum|maximum|least expensive|most expensive)\b",
+            contract,
+            re.I,
+        )
+        and re.search(r"\b(?:ascending|descending|sort|order)\b", contract, re.I)
+        and last_back >= 0
+        and all(tool in {"scroll", "reveal_control"} for tool in tools[last_back + 1:])
+    ):
+        return None
+    anchors = [
+        (control, rect) for control in frame.controls
+        if (rect := positioned_rect(control)) is not None
+        if control.get("kind") == "a"
+        and control.get("in_viewport") is not False
+        and str(control.get("label") or "").strip()
+    ]
+    inspected_memory = memory[:memory.rfind("tool=back")]
+    seen = [
+        (inspected_memory.rfind(str(control["label"]).rstrip("…").strip()), control, rect)
+        for control, rect in anchors
+    ]
+    opened = max((item for item in seen if item[0] >= 0), default=None)
+    if opened is None:
+        return None
+    rect = opened[2]
+    successors = [
+        (control, candidate_rect) for control, candidate_rect in anchors
+        if abs(float(candidate_rect["y"]) - float(rect["y"])) <= 2
+        and float(candidate_rect["x"]) > float(rect["x"])
+    ]
+    successor = min(
+        successors,
+        key=lambda item: float(item[1]["x"]),
+        default=None,
+    )
+    if successor is None:
+        return None
+    control, rect = successor
+    return {
+        "status": "ordered_boundary_resume",
+        "next_record": control.get("label"),
+        "next_record_rect": rect,
+        "instruction": (
+            "The preceding record was rejected. Open this exact immediate next "
+            "record at its Runtime rect center; do not reopen or skip."
+        ),
+    }
+
+
 def is_candidate_commit(
     args: dict[str, Any], frame: MaterializedFrame,
 ) -> bool:
