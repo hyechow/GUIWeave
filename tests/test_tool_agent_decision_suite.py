@@ -19,6 +19,7 @@ _FIXTURE = (
     / "decision_replay"
     / "mobileworld_checkout"
 )
+_MAIL_FIXTURE = _FIXTURE.parent / "mobileworld_mail_reply"
 
 
 def test_mobileworld_recorded_decision_suite() -> None:
@@ -45,6 +46,15 @@ def test_mobileworld_decision_suite_can_run_one_group() -> None:
     assert result["group"] == "cross_app_auth"
     assert [case["id"] for case in result["cases"]] == [
         "direct_open_messages", "return_with_observed_code",
+    ]
+
+
+def test_mobileworld_mail_recorded_decision_suite() -> None:
+    result = replay_decision_suite(_MAIL_FIXTURE, recorded=True)
+
+    assert result["status"] == "passed"
+    assert [case["id"] for case in result["cases"]] == [
+        "complete_after_confirmed_commit",
     ]
 
 

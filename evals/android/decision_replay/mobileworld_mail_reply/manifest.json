@@ -1,0 +1,22 @@
+{
+  "version": 1,
+  "name": "mobileworld_mail_reply",
+  "source_run": "20260819_144521",
+  "cases": [
+    {
+      "id": "complete_after_confirmed_commit",
+      "group": "post_commit",
+      "frame": 7,
+      "min_pass_rate": 0.66,
+      "expected": {
+        "tool": "complete",
+        "protocol_repairs_max": 0,
+        "required_prefix": [
+          {
+            "capability": "complete"
+          }
+        ]
+      }
+    }
+  ]
+}

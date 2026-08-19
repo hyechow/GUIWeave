@@ -17,6 +17,7 @@ from gui_agent.core.self_learning.app_summary import load_knowledge_for_app
 from gui_agent.core.tool_agent.contracts import (
     DynamicActionSpec,
     MaterializedFrame,
+    WorkerState,
     WorkerSpec,
     approach_atomic_action_count,
     approach_is_procedural,
@@ -29,6 +30,7 @@ from gui_agent.core.tool_agent.protocol import (
     dynamic_worker_tools,
     generic_action_spec,
     image_message,
+    validate_worker_tool_state,
     worker_attempt_contract,
 )
 from gui_agent.core.tool_agent.runtime import ToolAgentRuntime
@@ -393,6 +395,9 @@ def _worker_decision(
     )
     if call["name"] == "continue_with_actions":
         ToolAgentRuntime._validate_multi_action_calls(calls, actions)
+    validate_worker_tool_state(
+        call["name"], WorkerState.model_validate(state), call["args"],
+    )
     names = [call["name"]]
     if call["name"] == "continue_with_actions":
         names = [str(item.get("name") or "") for item in calls]

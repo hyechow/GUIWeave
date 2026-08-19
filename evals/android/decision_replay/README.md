@@ -6,6 +6,8 @@ frames. Do not commit an entire runtime log directory.
 
 The MobileWorld checkout suite contains five groups: `cross_app_auth`,
 `login_batch`, `cart_checkout`, `grounding_edge`, and `guard_repair`.
+The Mail reply suite covers completing after a grounded commit transitions out
+of its editor, without reopening the same mutation.
 
 PR CI replays the normalized recorded response without a model or device:
 

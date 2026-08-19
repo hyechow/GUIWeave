@@ -160,6 +160,9 @@ def test_worker_keeps_action_grounding_and_memory_boundaries() -> None:
         "complete task-relevant record identities", "bounded cross-frame reasoning",
         "Stable page identity",
         "A `no_effect` result requires inspecting the next frame",
+        "followed by leaving its editor or form", "complete immediately instead of reopening",
+        "starts a new mutation and must not be activated", "no toast is required",
+        "commit control still awaiting activation is not completion",
     ):
         assert rule in prompt
 
