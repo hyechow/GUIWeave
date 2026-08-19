@@ -64,6 +64,8 @@ def test_shopping_order_history_knowledge_separates_planning_and_navigation() ->
     assert "Order Total is the list rendering" in master_text
     assert "sum Order Total directly from the list" in master_text
     assert "not replacement filter values" in master_text
+    assert "Do not nest Items Ordered as an array" in master_text
+    assert "flat line sum" in master_text
 
 
 def test_shopping_purchased_option_uses_real_order_detail_fields() -> None:
