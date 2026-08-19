@@ -16,7 +16,7 @@ source: manual_distilled
 confidence: high
 sensitivity: internal
 ttl: session
-version: 7
+version: 8
 ---
 # One Stop Market storefront
 
@@ -41,19 +41,17 @@ version: 7
 - The top navigation is a category hierarchy. Use the narrowest category only when its taxonomy
   directly covers the full requested class. Earbud products are under Electronics > Headphones >
   Earbud Headphones; in this catalog, in-ear or behind-neck headphones/headsets are earphones.
-  Makeup Remover's canonical path is `/beauty-personal-care/makeup/makeup-remover.html`.
+- Canonical category paths: `Makeup Remover` is `/beauty-personal-care/makeup/makeup-remover.html`;
+  `Accent Furniture` is `/home-kitchen/furniture/accent-furniture.html`.
 - Category and search-result pages offer Grid/List mode, Sort By, a separate direction link, a
   per-page selector, and pagination. Product cards expose name and current price, and may expose
   rating percentage and review count. A struck-through old price is not the current sale price.
-- `Women` and `Men` are path-bearing categories. Leaf URLs are
-  `/<top>/women/<leaf>.html` or `/<top>/men/<leaf>.html`; retain the matching segment whenever the
-  target or history contains it.
-- Sidebar category choices may replace the prior chip and leave a `cat=<id>` alias on the parent
-  path. A canonical path instead preserves the top category and every successive category choice as
-  lowercase, hyphenated path segments.
-- Visible price facets are coarse. For an exact range, navigate directly to the canonical category
-  URL with `price=<lower>-<upper>`; "under X" maps to `price=0-X`. Do not first apply a wider facet
-  or preserve a `cat=<id>` alias.
+- `Women` and `Men` are path segments: leaf URLs use `/<top>/women/<leaf>.html` or
+  `/<top>/men/<leaf>.html`; retain the segment when the target or history includes it.
+- Sidebar choices may replace the prior chip and keep a `cat=<id>` alias on the parent path;
+  canonical paths retain the top category and every choice as lowercase, hyphenated segments.
+- Exact ranges bypass coarse visible facets: open the canonical URL with
+  `price=<lower>-<upper>`; "under X" maps to `price=0-X`. Do not preserve a `cat=<id>` alias.
 - Sort By includes Price but not customer rating. The direction link label names the action it will
   perform: `Set Ascending Direction` means the current order is descending, while
   `Set Descending Direction` means it is ascending.
