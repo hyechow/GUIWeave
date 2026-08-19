@@ -1919,6 +1919,73 @@ def test_linked_detail_table_expands_filtered_parents_to_child_rows(tmp_path: Pa
     }]
 
 
+@pytest.mark.parametrize("subject", ["Target service", "Unrelated service"])
+def test_singleton_linked_detail_stops_or_continues_source(
+    tmp_path: Path, subject: str,
+) -> None:
+    requirement = DataRequirement(
+        id="entries",
+        description="One matching linked entry",
+        cardinality="one",
+        row_schema={"record_id": "string", "subject": "string"},
+        field_sources={"record_id": "Record ID", "subject": "Subject"},
+        field_types={"record_id": "text", "subject": "text"},
+        filters={"subject_contains": "target class"},
+    )
+    parent = {
+        "caption": "Records",
+        "headers": ["Record ID", "Action"],
+        "rows": [{
+            "Record ID": "group-001",
+            "Action": "Open",
+            "Action_url": "http://example.test/record/1/",
+        }],
+        "total_records": 20,
+        "partial": True,
+        "traversal": {"type": "paged", "has_next_page": True},
+    }
+    materializer = _materializer(tmp_path, "enhanced")
+    materializer._semantic_judge = lambda _requirement, rows: [  # type: ignore[method-assign]
+        row for row in rows if row.get("subject") == "Target service"
+    ]
+    materializer.observe(
+        bundle=FakeBundle([parent], observation={"url": "http://example.test/records/"}),
+        platform=FakePlatform(),
+        requirements=[requirement],
+        frame_no=1,
+    )
+    completed, _ = materializer.observe(
+        bundle=FakeBundle(
+            [{
+                "caption": "Entries",
+                "headers": ["Subject"],
+                "rows": [{"Subject": subject}],
+                "partial": False,
+                "traversal": {"type": "static"},
+            }],
+            observation={
+                "url": "http://example.test/record/1/",
+                "title": "Record group-001",
+            },
+        ),
+        platform=FakePlatform(),
+        requirements=[requirement],
+        frame_no=2,
+    )
+
+    scope = completed.requirement_scopes[requirement.id]["detail_resolution"]
+    if subject != "Target service":
+        assert scope["status"] == "active"
+        assert scope["window_exhausted"] is True
+        assert scope["candidate_source_url"] == "http://example.test/records/"
+        return
+    assert scope["status"] == "resolved"
+    assert completed.collections[0].coverage["cardinality"] == "one"
+    assert materializer.data_store.collection_rows(
+        completed.collections[0].ref
+    ) == [{"record_id": "group-001", "subject": "Target service"}]
+
+
 def test_vision_detail_row_advances_unresolved_candidate(tmp_path: Path) -> None:
     """Vision-only detail fields (absent from form controls) must resolve the candidate."""
 

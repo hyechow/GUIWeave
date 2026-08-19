@@ -9,6 +9,8 @@ from __future__ import annotations
 
 from typing import Any
 
+import pytest
+
 from gui_agent.core.tool_agent.contracts import MaterializedFrame
 from gui_agent.core.tool_agent.record_walk import (
     MAX_WALK_STALLS,
@@ -279,6 +281,22 @@ def test_grid_paging_yields_when_both_directions_exist() -> None:
     assert step is None
 
 
+def test_exhausted_window_pages_forward_when_both_directions_exist() -> None:
+    frame = _grid_frame(
+        candidates=7,
+        total=27,
+        page_next_visible=True,
+        page_previous_visible=True,
+    )
+    detail = frame.requirement_scopes["reviews"]["detail_resolution"]
+    detail.update(window_exhausted=True, next_unresolved_candidate=None)
+
+    step = record_walk_step(frame, RecordWalkState())
+
+    assert step is not None
+    assert step.control["traversal_action"] == "page_next"
+
+
 def _candidate_grid_frame(
     *,
     row_id: str = "335",
@@ -399,6 +417,34 @@ def test_current_editor_verdict_gates_engagement() -> None:
     # Identity unmatched (record outside the candidate set): yield.
     outsider = _editor_frame_with_verdict(None)
     assert record_walk_step(outsider, RecordWalkState()) is None
+
+
+@pytest.mark.parametrize(
+    ("frame_url", "target_url", "expected"),
+    [
+        (
+            "http://example.test/edit/id/2/",
+            "http://example.test/edit/id/3/",
+            "http://example.test/edit/id/3/",
+        ),
+        ("http://example.test/edit/id/2/", "https://other.example/edit/id/3/", ""),
+        ("", "http://example.test/edit/id/3/", ""),
+    ],
+)
+def test_linked_detail_url_requires_the_current_origin(
+    frame_url: str, target_url: str, expected: str,
+) -> None:
+    frame = _editor_frame_with_verdict(
+        {"ordinal": 2, "pre_resolved": False, "resolved": True}
+    )
+    detail = frame.requirement_scopes["reviews"]["detail_resolution"]
+    detail["next_unresolved_candidate"]["navigation_url"] = target_url
+    frame.url = frame_url
+    frame.controls = []
+
+    step = record_walk_step(frame, RecordWalkState())
+
+    assert (step.navigation_url if step else "") == expected
 
 
 def test_step_cap_scales_with_candidate_count() -> None:

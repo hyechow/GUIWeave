@@ -16,7 +16,7 @@ from gui_agent.core.tool_agent.strategy import Strategy
 from gui_agent.core.tool_agent.protocol import generic_action_spec
 
 
-def _collector() -> WorkerSpec:
+def _collector(*, cardinality: str = "many", coverage: str = "complete") -> WorkerSpec:
     return WorkerSpec.model_validate({
         "profile": "collector",
         "goal": "Collect the requested records",
@@ -24,6 +24,8 @@ def _collector() -> WorkerSpec:
         "data_requirements": [{
             "id": "records",
             "description": "Requested records",
+            "cardinality": cardinality,
+            "coverage": coverage,
             "row_schema": {"value": "string"},
         }],
         "strategy": {
@@ -53,6 +55,20 @@ def test_action_guard_owns_collector_readiness() -> None:
     spec = _collector()
     frame = MaterializedFrame(
         frame_id="frame:1",
+        screenshot_path="frame.png",
+        collections=[_collection()],
+    )
+
+    assessment = assess_frame(spec, [generic_action_spec("scroll")], frame)
+
+    assert assessment.ready_collection is not None
+    assert assessment.completion_mode == "collector"
+
+
+def test_singleton_first_match_can_complete_from_retained_collection() -> None:
+    spec = _collector(cardinality="one", coverage="first_match")
+    frame = MaterializedFrame(
+        frame_id="frame:2",
         screenshot_path="frame.png",
         collections=[_collection()],
     )

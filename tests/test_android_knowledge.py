@@ -63,6 +63,29 @@ def test_shopping_order_history_knowledge_separates_planning_and_navigation() ->
     assert "Grand Total" in master_text
 
 
+def test_shopping_purchased_option_uses_real_order_detail_fields() -> None:
+    knowledge = load_knowledge_for_app("shopping", "browser")
+    assert knowledge is not None
+
+    worker = " ".join(knowledge.worker_context().split())
+    master = knowledge.orchestrator_context(
+        "Get the size of a product I bought during a calendar year"
+    )
+    master_text = " ".join(master.split())
+
+    assert "selected option labels and values" in worker
+    assert "raw Product Name cell" in master_text
+    assert "required `order_number` from Order #" in master
+    assert "primary_product_contains" in master_text
+    assert "sole schema field" in master_text
+    assert 'cardinality="one"' in master_text
+    assert "width-by-height" in master_text
+    assert "<number> inches" in master_text
+    assert "Forest Canvas" in master_text
+    assert "explicit taxonomy equivalence" in master_text
+    assert "Do not invent separate Purchase Year" in master_text
+
+
 def test_android_orchestrator_selects_compact_interface_documents() -> None:
     cases = {
         "Calendar": ("check the calendar time slot", "Event"),

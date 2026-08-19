@@ -2218,12 +2218,18 @@ def test_runtime_recovers_missing_exposed_action_description(monkeypatch) -> Non
 
 
 @pytest.mark.parametrize(
-    ("capability", "args", "action_type"),
+    ("capability", "args", "action_type", "frame_url"),
     [
-        ("open_url", {"url": "https://example.test/reviews"}, "navigate"),
-        ("back", {}, "back"),
-        ("clear_text", {}, "clear_text"),
-        ("press_enter", {}, "press_enter"),
+        ("open_url", {"url": "https://example.test/reviews"}, "navigate", ""),
+        (
+            "open_url",
+            {"url": "http://localhost:7770/detail/2/"},
+            "navigate",
+            "http://localhost:7770/records/",
+        ),
+        ("back", {}, "back", ""),
+        ("clear_text", {}, "clear_text", ""),
+        ("press_enter", {}, "press_enter", ""),
     ],
 )
 def test_runtime_executes_nonspatial_browser_capabilities_through_adapter_action(
@@ -2231,6 +2237,7 @@ def test_runtime_executes_nonspatial_browser_capabilities_through_adapter_action
     capability: str,
     args: dict[str, str],
     action_type: str,
+    frame_url: str,
 ) -> None:
     runtime = object.__new__(ToolAgentRuntime)
     runtime.bundle = SimpleNamespace(
@@ -2263,7 +2270,9 @@ def test_runtime_executes_nonspatial_browser_capabilities_through_adapter_action
         [action],
         {"name": action.name, "args": args},
         b"png",
-        MaterializedFrame(frame_id="frame:1", screenshot_path="frame.png"),
+        MaterializedFrame(
+            frame_id="frame:1", screenshot_path="frame.png", url=frame_url
+        ),
     )
 
     executed = runtime._executor.actions[-1]
