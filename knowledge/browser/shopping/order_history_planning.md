@@ -10,7 +10,7 @@ source: official_trace_distilled
 confidence: high
 sensitivity: internal
 ttl: session
-version: 11
+version: 12
 ---
 # One Stop Market order-history data
 
@@ -21,11 +21,11 @@ Status, and a View Order link. Date is a complete calendar date displayed as `M/
 as `datetime`. Order Total is the list rendering of the whole-order Grand Total and includes
 Shipping & Handling, so use the list alone for status/date/order-total questions. Status is an exact label,
 not free text: visible `Canceled` and `Complete` are semantic equivalents for user wording such as
-"canceled", "cancelled", or "completed", not replacement filter values. Keep the user's exact
-spelling and capitalization in the filter while perception applies the visible-label equivalence.
+"canceled", "cancelled", or "completed", not replacement filter values. Keep the user's
+exact spelling and capitalization in the filter while perception applies the visible-label equivalence.
 
 Each View Order detail provides order date/status, addresses, Items Ordered, and a totals block.
-Items Ordered rows provide Product Name, Price, Qty, and line Subtotal. The totals block separately
+Items Ordered rows use the literal source labels Product Name, Price, Qty, and Subtotal. The totals block separately
 provides Subtotal, Shipping & Handling, and Grand Total. The storefront does not expose an arrival
 date, so its value is unavailable even when a status is visible. When the response asks for that
 field, collect only the newest row's visible Status and set the arrival date to `null` in the
