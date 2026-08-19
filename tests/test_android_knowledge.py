@@ -32,6 +32,20 @@ def test_knowledge_has_no_planner_owned_markdown_sections() -> None:
         assert not [token for token in forbidden if token in text], path
 
 
+def test_shopping_query_transform_is_worker_only() -> None:
+    knowledge = load_knowledge_for_app("shopping", "browser")
+    assert knowledge is not None
+
+    worker = knowledge.worker_context()
+    master = knowledge.orchestrator_context(
+        "price range of a product in One Stop Market"
+    )
+
+    assert "noun-plus-gerund" in worker
+    assert "noun-plus-gerund" not in master
+    assert "full requested class unchanged" in master
+
+
 def test_android_orchestrator_selects_compact_interface_documents() -> None:
     cases = {
         "Calendar": ("check the calendar time slot", "Event"),

@@ -51,7 +51,10 @@ def _snapshot(label: str, *, image: bool = False) -> dict:
                 "parts": [{
                     "label": "part_1",
                     "type": "text",
-                    "text": "recorded static prompt\n\n## Worker attempt contract\n{}",
+                    "text": (
+                        "recorded static prompt\n\n## Application knowledge\n"
+                        "old fact\n\n## Worker attempt contract\n{}"
+                    ),
                 }],
             },
             {"role": "human", "parts": human_parts},
@@ -162,7 +165,9 @@ def _worker_run(
     return tmp_path
 
 
-def test_worker_replay_compares_equivalent_actions_by_capability(tmp_path) -> None:
+def test_worker_replay_compares_equivalent_actions_by_capability(
+    tmp_path, monkeypatch,
+) -> None:
     run_dir = _worker_run(
         tmp_path,
         recorded_tool="continue_with_actions",
@@ -179,6 +184,17 @@ def test_worker_replay_compares_equivalent_actions_by_capability(tmp_path) -> No
             },
         }],
     }))
+    context_path = run_dir / "context.json"
+    context_path.write_text(json.dumps({
+        "platform": "android",
+        "goal": "test",
+        "knowledge": {"app_name": "Files"},
+    }), encoding="utf-8")
+    knowledge = SimpleNamespace(
+        worker_context=lambda: "current worker fact",
+        orchestrator_context=lambda _goal: "current master fact",
+    )
+    monkeypatch.setattr(decision_module, "load_knowledge_for_app", lambda *_: knowledge)
 
     result = replay_worker_decision(run_dir, frame=1, llm=model)
 
@@ -195,6 +211,8 @@ def test_worker_replay_compares_equivalent_actions_by_capability(tmp_path) -> No
         "report_blocked",
     }
     assert "recorded static prompt" not in model.calls[0][0].content
+    assert "current worker fact" in model.calls[0][0].content
+    assert "old fact" not in model.calls[0][0].content
     assert "Execute the binding `approach`" in model.calls[0][0].content
     assert "## Worker attempt contract" not in model.calls[0][0].content
     turn_context = model.calls[0][1].content[0]["text"]
@@ -485,6 +503,7 @@ def test_master_replay_uses_current_prompt_knowledge_and_structural_expectation(
             "worker_count": 1,
             "worker_profiles": ["operator"],
             "data_cardinalities": [],
+            "data_filter_values": [],
             "finish_effect": "mutation",
         },
     )

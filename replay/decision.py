@@ -99,17 +99,7 @@ def _master_task(event: dict[str, Any]) -> dict[str, Any]:
 def _current_master_task(task: dict[str, Any], context: dict[str, Any]) -> dict[str, Any]:
     """Refresh mutable knowledge while preserving the recorded task inputs."""
 
-    platform = str(context.get("platform") or "browser")
-    goal = str(context.get("goal") or "")
-    summary = context.get("knowledge") or {}
-    apps = summary.get("apps") or ([summary] if summary.get("app_name") else [])
-    knowledge = "\n\n".join(
-        value.orchestrator_context(goal)
-        for item in apps
-        if isinstance(item, dict)
-        and (name := str(item.get("app_name") or ""))
-        and (value := load_knowledge_for_app(name, platform)) is not None
-    )
+    knowledge = _current_application_knowledge(context)
     current = {key: value for key, value in task.items() if key != "application_knowledge"}
     if isinstance(current.get("platform"), dict):
         current["platform"] = {
@@ -122,11 +112,28 @@ def _current_master_task(task: dict[str, Any], context: dict[str, Any]) -> dict[
     return current
 
 
+def _current_application_knowledge(
+    context: dict[str, Any], *, worker: bool = False,
+) -> str:
+    platform = str(context.get("platform") or "browser")
+    goal = str(context.get("goal") or "")
+    summary = context.get("knowledge") or {}
+    apps = summary.get("apps") or ([summary] if summary.get("app_name") else [])
+    return "\n\n".join(
+        value.worker_context() if worker else value.orchestrator_context(goal)
+        for item in apps
+        if isinstance(item, dict)
+        and (name := str(item.get("app_name") or ""))
+        and (value := load_knowledge_for_app(name, platform)) is not None
+    )
+
+
 def _worker_messages(
     report: dict[str, Any],
     screenshot: bytes,
     *,
     attempt_contract: str,
+    context: dict[str, Any] | None = None,
     image_scale: float = 1.0,
 ) -> list[Any]:
     messages: list[Any] = []
@@ -144,6 +151,10 @@ def _worker_messages(
             suffix = _without_section(suffix, "## Ordered multi-action mode")
             suffix = _without_section(suffix, "## Original task goal")
             suffix = _without_section(suffix, "## Worker attempt contract")
+            suffix = _without_section(suffix, "## Application knowledge")
+            knowledge = _current_application_knowledge(context or {}, worker=True)
+            if knowledge:
+                suffix = ("## Application knowledge\n" + knowledge + "\n\n" + suffix).strip()
             current = load_prompt_text("task.tool_agent.worker").rstrip()
             messages.append(SystemMessage(content=(
                 current + ("\n\n" + suffix if suffix else "")
@@ -208,6 +219,7 @@ def _master_shape(source: str, *, reviewed: bool = True) -> dict[str, Any]:
     cardinalities = []
     field_counts = []
     required_field_counts = []
+    data_filter_values = []
     procedural_approaches = []
     approach_action_counts = []
     for call in workers:
@@ -225,6 +237,7 @@ def _master_shape(source: str, *, reviewed: bool = True) -> dict[str, Any]:
         for item in requirements:
             if not isinstance(item, dict):
                 continue
+            data_filter_values.extend((item.get("filters") or {}).values())
             schema = item.get("row_schema") or {}
             field_counts.append(len(schema.get("properties") or {}))
             required_field_counts.append(len(schema.get("required") or []))
@@ -236,6 +249,9 @@ def _master_shape(source: str, *, reviewed: bool = True) -> dict[str, Any]:
         "data_cardinalities": cardinalities,
         "data_field_counts": field_counts,
         "required_data_field_counts": required_field_counts,
+        "data_filter_values": sorted(
+            data_filter_values, key=lambda value: json.dumps(value, sort_keys=True)
+        ),
         "procedural_approaches": procedural_approaches,
         "approach_action_counts": approach_action_counts,
         "api_calls": [call.func.attr for call in calls],
@@ -397,6 +413,11 @@ def _worker_decision(
             for action in ordered
             if isinstance(action, dict)
         ],
+        "action_texts": [
+            str(action["args"]["text"])
+            for action in ordered
+            if isinstance(action.get("args"), dict) and "text" in action["args"]
+        ],
         "state_status": str(state.get("status") or ""),
         "state_summary": str(state.get("summary") or ""),
         "args": {**call["args"], "state": state},
@@ -414,7 +435,7 @@ def replay_worker_decision(
     if samples < 1:
         raise ValueError("samples must be positive")
     frame_no = _frame_number(frame)
-    events, _ = _artifacts(run_dir)
+    events, context = _artifacts(run_dir)
     selected = next((
         event for event in reversed(events)
         if event.get("event") == "worker_decision"
@@ -451,7 +472,10 @@ def replay_worker_decision(
             else action
         )
     assessment = assess_frame(
-        spec, actions, materialized,
+        spec,
+        actions,
+        materialized,
+        attempted_action=bool(replay_context.get("executed_tools")),
     )
     model, model_config, model_name = _selected_model("tool_agent.worker", llm)
     multi_action = bool(replay_context.get("multi_action"))
@@ -488,6 +512,7 @@ def replay_worker_decision(
             spec,
             attempted_action=bool(replay_context.get("executed_tools")),
         ),
+        context=context,
         image_scale=float(getattr(model_config, "image_scale", 1.0)),
     )
     request_model = getattr(model_config, "model", None)
@@ -511,7 +536,7 @@ def replay_worker_decision(
             try:
                 decision = _worker_decision(
                     response,
-                    actions,
+                    frame_actions,
                     tools_by_name,
                     materialized,
                     action_protocol=action_protocol,

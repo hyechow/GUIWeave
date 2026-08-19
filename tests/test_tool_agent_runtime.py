@@ -18,6 +18,7 @@ from gui_agent.core.tool_agent.contracts import (
 from gui_agent.core.tool_agent.action_guard import (
     WorkerActionCircuitBreaker,
     action_signature,
+    assess_frame,
     is_candidate_commit,
 )
 from gui_agent.core.tool_agent.data_store import RuntimeDataStore
@@ -148,6 +149,88 @@ def test_action_guard_canonicalizes_equivalent_actions() -> None:
         "scroll", direction="down", amount=9, y=560,
     )
     assert signature("tap", x=210, y=150) == signature("tap", x=219, y=151)
+
+
+def test_order_guard_uses_explicit_contract_field_over_approach_overlap() -> None:
+    spec = _worker_spec(
+        actions=[],
+        profile="collector",
+        goal="Collect the lower boundary",
+        success_criteria=["Collected the first matching record"],
+        approach="advanced search product name with ascending Price sort",
+        data_requirements=[{
+            "id": "records",
+            "description": "Matching records",
+            "coverage": "first_match",
+            "row_schema": {
+                "type": "object",
+                "properties": {"value": {"type": "number"}},
+                "required": ["value"],
+            },
+        }],
+    )
+
+    def frame(
+        selected: str,
+        *,
+        complete: bool = False,
+        start_seen: bool = False,
+    ) -> MaterializedFrame:
+        return MaterializedFrame(
+            frame_id="frame:1",
+            screenshot_path="frame.png",
+            controls=[{
+                "kind": "native_select",
+                "label": "Sort By",
+                "value": selected.casefold().replace(" ", "_"),
+                "selected_text_primary": selected,
+                "options": ["Product Name", "Price"],
+            }],
+            collections=[{
+                "ref": "collection:records",
+                "requirement_id": "records",
+                "chunk_refs": ["chunk:records:1"],
+                "row_count": 1,
+                "row_schema": {},
+                "coverage": {"status": "complete", "start_seen": start_seen},
+            }] if complete else [],
+            chunks=[{
+                "ref": "chunk:records:1",
+                "requirement_id": "records",
+                "frame_id": "frame:1",
+                "provider": "vision",
+                "row_count": 1,
+                "row_schema": {},
+                "coverage": {"start_visible": True},
+            }] if complete and start_seen else [],
+        )
+
+    action = DynamicActionSpec(
+        name="scroll",
+        capability="scroll",
+        description="Continue traversing",
+    )
+    reveal = DynamicActionSpec(
+        name="reveal_control",
+        capability="reveal_control",
+        description="Reveal an off-screen control",
+    )
+    wrong_order = assess_frame(
+        spec, [action], frame("Product Name", complete=True, start_seen=True)
+    )
+    initial = assess_frame(spec, [action, reveal], frame("Price"))
+    accumulated = assess_frame(spec, [action], frame("Price", complete=True))
+    proven = assess_frame(
+        spec, [action], frame("Price", complete=True, start_seen=True)
+    )
+
+    assert wrong_order.allowed_actions == [action]
+    assert wrong_order.completion_mode == "unavailable"
+    assert initial.allowed_actions == [action]
+    assert accumulated.allowed_actions == [action]
+    assert initial.completion_mode == accumulated.completion_mode == "unavailable"
+    assert proven.allowed_actions == []
+    assert proven.completion_mode == "collector"
 
 
 def test_action_guard_blocks_one_unchanged_repeat() -> None:
@@ -2938,4 +3021,3 @@ def test_runtime_interruption_is_sealed_as_a_reportable_failed_run(tmp_path) -> 
     )
     assert replay["status"] == "unavailable"
     assert runtime._visualizer.clear_calls == 1
-
