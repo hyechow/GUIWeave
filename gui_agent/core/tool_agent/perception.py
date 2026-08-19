@@ -7,7 +7,7 @@ import html
 import json
 import re
 import time
-from dataclasses import dataclass
+from dataclasses import dataclass, field
 from decimal import Decimal, InvalidOperation
 from pathlib import Path
 from typing import Any, Callable, Literal
@@ -65,6 +65,7 @@ class _DetailCollectionState:
     location: str
     pending_index: int | None = None
     scope_key: str = ""
+    expanded_rows: dict[int, list[dict[str, Any]]] = field(default_factory=dict)
 
 
 def _normalize_runtime_value(
@@ -901,6 +902,7 @@ class PerceptionMaterializer:
         scope_status: str,
         surface: str,
         location: str,
+        page_identity: dict[str, str] | None = None,
         observed_rows: list[dict[str, Any]] | None = None,
         scope_key: str = "",
     ) -> tuple[_DetailCollectionState, list[dict[str, Any]], dict[str, Any]] | None:
@@ -915,7 +917,45 @@ class PerceptionMaterializer:
         ):
             state = None
             self._detail_collections.pop(state_key, None)
-        if candidate_rows and detail_fields:  # ReAct: assemble candidates without requiring scope "met"
+        expanded_target = None
+        expanded_pre_resolved = False
+        if state is not None and candidate_rows and detail_fields:
+            incoming_fields = set().union(*(row.keys() for row in candidate_rows))
+            parent_fields = set(requirement.row_schema.get("properties") or {}).difference(
+                state.detail_fields
+            )
+            is_child_table = bool(
+                incoming_fields
+                and incoming_fields.issubset(state.detail_fields)
+                and detail_fields.issubset(parent_fields)
+            )
+            if is_child_table:
+                identity = _normalize(" ".join((page_identity or {}).values()))
+                targets = [
+                    index
+                    for index, row in enumerate(state.rows)
+                    if any(
+                        len(token := _normalize(str(value))) >= 3
+                        and token in identity
+                        for key, value in row.items()
+                        if key in parent_fields
+                    )
+                ]
+                if len(targets) == 1:
+                    expanded_target = targets[0]
+                    expanded_pre_resolved = expanded_target in state.expanded_rows
+                    merged = [
+                        {**state.rows[expanded_target], **row}
+                        for row in candidate_rows
+                    ]
+                    state.expanded_rows[expanded_target] = self._matching_rows(
+                        requirement, merged
+                    )
+                    state.pending_index = None
+
+        if (
+            candidate_rows and detail_fields and expanded_target is None
+        ):  # ReAct: assemble candidates without requiring scope "met"
             identity_fields = detail_fields | (state.detail_fields if state else set())
 
             def identities(items: list[dict[str, Any]]) -> list[dict[str, Any]]:
@@ -991,14 +1031,21 @@ class PerceptionMaterializer:
             return scores.index(best) if best > 0 and scores.count(best) == 1 else None
 
         detail, observed = _control_row(requirement, controls)
+        current_editor = None
+        if expanded_target is not None:
+            observed.update(state.detail_fields)
+            current_editor = {
+                "ordinal": expanded_target + 1,
+                "pre_resolved": expanded_pre_resolved,
+                "resolved": True,
+            }
         for extra in (*structured_rows, *(observed_rows or [])):
             if (target := matching_row(extra)) is not None:
                 for key in state.detail_fields:
                     if _nonempty(extra.get(key)):
                         state.rows[target][key] = extra[key]
                         observed.add(key)
-        current_editor = None
-        if observed.intersection(state.detail_fields):
+        if expanded_target is None and observed.intersection(state.detail_fields):
 
             def hard_contradiction(row: dict[str, Any]) -> bool:
                 for key, value in detail.items():
@@ -1077,7 +1124,8 @@ class PerceptionMaterializer:
 
         unresolved_indexes = [
             index for index, row in enumerate(state.rows)
-            if any(not _nonempty(row.get(field)) for field in state.detail_fields)
+            if index not in state.expanded_rows
+            and any(not _nonempty(row.get(field)) for field in state.detail_fields)
         ]
         progress = {
             "candidate_records": len(state.rows),
@@ -1103,7 +1151,15 @@ class PerceptionMaterializer:
                 else None
             ),
         }
-        rows = [dict(row) for row in state.rows] if not unresolved_indexes else []
+        rows = (
+            [
+                dict(row)
+                for index in range(len(state.rows))
+                for row in state.expanded_rows.get(index, [])
+            ]
+            if not unresolved_indexes and state.expanded_rows
+            else [dict(row) for row in state.rows] if not unresolved_indexes else []
+        )
         return state, rows, progress
 
     def observe(
@@ -1222,29 +1278,7 @@ class PerceptionMaterializer:
             if table_complete:
                 rows = _structured_rows(requirement, table)
                 scope_rows = rows
-                if semantic_predicate and rows:
-                    # Structured rows carry the complete, accurate text: literal
-                    # matches are authoritative and always collected; the text
-                    # judge only supplements the rows a deterministic substring
-                    # cannot decide (paraphrases). This keeps a literal match like
-                    # literal matches from being dropped by judge variance.
-                    literal, undecided = [], []
-                    for row in rows:
-                        match = _rows_satisfy_filters(requirement, [row])
-                        if match is True:
-                            literal.append(row)
-                        elif match is None:
-                            undecided.append(row)
-                        # False = a deterministic filter failed; excluded.
-                    rows = literal + (
-                        self._semantic_judge(requirement, undecided)
-                        if undecided else []
-                    )
-                rows = _logical_rows(
-                    requirement,
-                    rows,
-                    keep_unknown=semantic_predicate,
-                )
+                rows = self._matching_rows(requirement, rows)
             elif self.mode == "enhanced" and table is not None and not empty_complete:
                 candidate_rows, detail_fields = _partial_structured_rows(requirement, table)
                 if not allow_linked_details:
@@ -1253,6 +1287,9 @@ class PerceptionMaterializer:
                 candidate_rows = _logical_rows(
                     requirement, candidate_rows, keep_unknown=True
                 )
+            logical_candidate_subset = bool(
+                not table_complete and len(candidate_rows) != len(scope_rows)
+            )
             traversal = (
                 table.get("traversal")
                 if table is not None and isinstance(table.get("traversal"), dict)
@@ -1323,6 +1360,12 @@ class PerceptionMaterializer:
                         coverage["coverage_evidence"] = "deterministic_filter_empty"
                     collection_found = True
             detail_state = self._detail_collections.get(detail_key)
+            candidate_fields = set().union(*(row.keys() for row in candidate_rows))
+            child_candidate_surface = bool(
+                detail_state
+                and candidate_fields
+                and candidate_fields.issubset(detail_state.detail_fields)
+            )
             structured_detail = bool(
                 detail_state
                 and detail_state.detail_fields.intersection(
@@ -1536,6 +1579,7 @@ class PerceptionMaterializer:
                     ),
                     surface=_fingerprint(_surface_marker(table)),
                     location=str((table or {}).get("location") or ""),
+                    page_identity={"url": url, "title": title},
                     scope_key=requested_fingerprint,
                 )
                 if self.mode == "enhanced"
@@ -1547,7 +1591,9 @@ class PerceptionMaterializer:
                 if table is not None and table_aligned
                 else None
             )
-            if table_total not in (None, ""):  # ReAct: capture totals from surfaces even if scope not "met" yet
+            if logical_candidate_subset or child_candidate_surface:
+                expected_totals.pop(totals_key, None)
+            elif table_total not in (None, ""):  # ReAct: capture totals from surfaces even if scope not "met" yet
                 try:
                     expected_totals[totals_key] = max(0, int(table_total))
                 except (TypeError, ValueError):
@@ -1555,7 +1601,7 @@ class PerceptionMaterializer:
             expected_total = expected_totals.get(totals_key)
             if assembled is not None:
                 detail_state, assembled_rows, detail_progress = assembled
-                ready = bool(assembled_rows)
+                ready = detail_progress.get("next_unresolved_candidate") is None
                 enough = (
                     expected_total is None
                     or int(detail_progress["candidate_records"]) >= int(expected_total)
@@ -1613,7 +1659,7 @@ class PerceptionMaterializer:
                             "window_context": requirement.id,
                             "at_end": True,
                             "partial": False,
-                            "total_records": detail_progress["candidate_records"],
+                            "total_records": len(assembled_rows),
                             "coverage_evidence": "linked_detail_assembly",
                             **detail_progress,
                         }
@@ -1767,7 +1813,10 @@ class PerceptionMaterializer:
             "requirement context, then match when the record's primary subject is the "
             "requested entity or class, including clear synonyms and subtypes; reject a "
             "different primary subject that only mentions it as a component, accessory, or "
-            "bundle inclusion.\n"
+            "bundle inclusion. For a functional category, require the record's primary "
+            "function to perform the requested function. Reject objects that merely decorate, "
+            "store, support, accessorize, or accompany that function unless the requested "
+            "class explicitly includes those objects.\n"
             'Return ONLY a JSON object with the 0-based indices of the kept records: '
             '{"matched_indices": [0, 2, ...]}\n'
             f"Records:\n{json.dumps(rows, ensure_ascii=False)}"
@@ -1784,6 +1833,26 @@ class PerceptionMaterializer:
         if not isinstance(indices, list):
             return []  # undecided judge → keep nothing; a later frame re-reads
         return [rows[i] for i in indices if isinstance(i, int) and 0 <= i < len(rows)]
+
+    def _matching_rows(
+        self,
+        requirement: DataRequirement,
+        rows: list[dict[str, Any]],
+    ) -> list[dict[str, Any]]:
+        """Apply deterministic filters, asking the text judge only for undecided rows."""
+
+        semantic = _requirement_has_semantic_predicate(requirement)
+        if not semantic:
+            return _logical_rows(requirement, rows)
+        literal, undecided = [], []
+        for row in rows:
+            match = _rows_satisfy_filters(requirement, [row])
+            if match is True:
+                literal.append(row)
+            elif match is None:
+                undecided.append(row)
+        judged = self._semantic_judge(requirement, undecided) if undecided else []
+        return _logical_rows(requirement, literal + judged, keep_unknown=True)
 
     def _vision_extract(
         self,

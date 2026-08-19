@@ -55,6 +55,7 @@ _DATETIME_FORMATS = (
     "%m/%d/%Y %I:%M:%S %p",
     "%m/%d/%Y %I:%M %p",
     "%m/%d/%Y",
+    "%m/%d/%y",
     "%Y-%m-%d %H:%M:%S",
     "%Y-%m-%d %H:%M",
     "%Y-%m-%d",

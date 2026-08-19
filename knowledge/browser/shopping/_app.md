@@ -14,9 +14,11 @@ source: manual_distilled
 confidence: high
 sensitivity: internal
 ttl: session
-version: 2
+version: 3
 ---
-# One Stop Market catalog
+# One Stop Market
+
+## Catalog
 
 - The mini-search uses broad OR term matching, so it is not a bounded product-class source.
 - Advanced Search > Product Name performs contiguous substring matching. When no catalog category
@@ -39,3 +41,11 @@ version: 2
   from top to bottom.
 - For a filtered price boundary, sort in the needed direction and take the first row that
   satisfies the remaining row-level predicate. Do not traverse the whole category.
+
+## Order history
+
+- My Account > My Orders lists Order # and Date newest first, ten per page, without date or category
+  filters. For a closed date interval, advance until the upper boundary appears; after the
+  first row older than the lower boundary, later pages cannot qualify.
+- View Order opens Items Ordered rows with Product Name, Price, Qty, and line Subtotal. The
+  order summary separately shows Subtotal, Shipping & Handling, and Grand Total.
