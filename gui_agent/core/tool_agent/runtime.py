@@ -25,7 +25,12 @@ from gui_agent.core.runtime.clock import (
     PlatformTimeSnapshot,
     host_time_fallback,
 )
-from gui_agent.core.schemas import BaseAction, BaseActionDecision, TargetVerify
+from gui_agent.core.schemas import (
+    BaseAction,
+    BaseActionDecision,
+    TargetGrounding,
+    TargetVerify,
+)
 from gui_agent.core.tool_agent.contracts import (
     CollectionRef,
     DynamicActionSpec,
@@ -80,7 +85,12 @@ from gui_agent.core.tool_agent.worker_memory import (
     build_worker_memory_view,
     project_worker_context,
 )
-from gui_agent.core.vision.target_verify import verify_target
+from gui_agent.core.vision.frame_analysis import visual_surface_fingerprint
+from gui_agent.core.vision.target_verify import (
+    ground_target,
+    resolve_target_grounding,
+    verify_target,
+)
 from llm.provider_config import (
     build_chat_model,
     chat_request_kwargs,
@@ -90,10 +100,6 @@ _MASTER_SYSTEM = load_prompt_text("task.tool_agent.master")
 _WORKER_SYSTEM = load_prompt_text("task.tool_agent.worker")
 _MAX_ACTION_GUARD_REPAIRS_PER_FRAME = 1
 _MAX_PREDISPATCH_REPAIRS_PER_FRAME = 1
-# A guard-blocked action whose identical (signature, progress) already appears
-# twice in the window is a loop, not a transient: escalate the batch to a typed
-# Worker failure so Strategy can replace the approach.
-_BATCH_GUARD_ESCALATION_THRESHOLD = 2
 _SPATIAL_CAPABILITIES = {
     "tap", "type", "scroll", "drag", "long_press", "select_option",
 }
@@ -135,6 +141,9 @@ _WORKER_VERIFY_POOL = ThreadPoolExecutor(
 )
 _TARGET_VERIFIED_ACTION_TYPES = {
     "tap", "click", "type", "long_press", "select_option",
+}
+_BATCH_FINAL_CAPABILITIES = {
+    "back", "home", "app_switch", "launch_app", "open_url", "scroll", "drag",
 }
 def _worker_action_error(exc: Exception) -> dict[str, Any]:
     payload = {"status": "error", "error": f"{type(exc).__name__}: {exc}"}
@@ -181,12 +190,18 @@ def _action_feedback(items: object, action_type: str) -> list[dict[str, Any]]:
     return feedback
 
 
-def _target_verification_result(future: Any) -> tuple[dict[str, Any] | None, Exception | None]:
+def _vision_future_result(future: Any, schema: Any) -> tuple[Any | None, Exception | None]:
     try:
-        verification = TargetVerify.model_validate(future.result(timeout=VERIFY_TIMEOUT_S))
-    except Exception as exc:  # noqa: BLE001 - optional verifier fails open
+        return schema.model_validate(future.result(timeout=VERIFY_TIMEOUT_S)), None
+    except Exception as exc:  # noqa: BLE001 - optional vision checks fail open
         future.cancel()
         return None, exc
+
+
+def _target_verification_result(future: Any) -> tuple[dict[str, Any] | None, Exception | None]:
+    verification, error = _vision_future_result(future, TargetVerify)
+    if error is not None:
+        return None, error
     return {
         "status": "on_target" if verification.on_target else "off_target",
         "actual_element": verification.actual_element,
@@ -346,7 +361,7 @@ class ToolAgentRuntime:
         self._worker_knowledge = ""
         self._installed_app_names: tuple[str, ...] | None = None
         self._executor = bundle.make_executor(platform)
-        self._target_verify_pool = _WORKER_VERIFY_POOL
+        self._target_ground_pool = self._target_verify_pool = _WORKER_VERIFY_POOL
         try:
             self._visualizer = bundle.make_action_visualizer(platform)
         except Exception:  # noqa: BLE001 - action visualization is cosmetic
@@ -587,7 +602,7 @@ class ToolAgentRuntime:
             return
         for event in base.events:
             if (
-                event.kind in {"worker_observation", "worker_reaffirmed"}
+                event.kind == "worker_observation"
                 and event.durable_text
                 and event.event_ref not in {item.event_ref for item in journal.events}
             ):
@@ -844,6 +859,10 @@ class ToolAgentRuntime:
                 frame, png = self._observe(spec)
                 step += 1
                 observed_auth_codes.update(auth_codes_from_frame(frame))
+                # Screenshot-only delivery surfaces preserve codes through journal facts.
+                observed_auth_codes.update(
+                    auth_codes_from_text(" ".join(journal.established_fact_texts))
+                )
                 initial_same_frame_feedback = None
                 predispatch_repair_turn = 0
             else:
@@ -1006,14 +1025,11 @@ class ToolAgentRuntime:
                     None,
                 )
                 if action_spec is not None:
-                    if action_spec.capability in {
-                        "app_switch", "launch_app", "back", "home",
-                    }:
-                        observed_auth_codes.update(
-                            code
-                            for text in (state.summary, *state.established_facts)
-                            for code in auth_codes_from_text(text)
-                        )
+                    observed_auth_codes.update(
+                        code
+                        for text in state.established_facts
+                        for code in auth_codes_from_text(text)
+                    )
                     resolved_guard_args = {
                         "description": action_spec.description,
                         **action_spec.fixed_args,
@@ -1095,7 +1111,7 @@ class ToolAgentRuntime:
                 result_payload = _worker_action_error(exc)
                 terminal = None
                 self._trace("worker_tool_error", step=step, tool=call["name"], error=result_payload["error"])
-            if circuit_decision is not None:
+            if circuit_decision is not None and not result_payload.get("reuse_current_frame"):
                 self._record_action_attempt(
                     circuit_breaker, circuit_decision, action_spec, result_payload
                 )
@@ -1107,16 +1123,6 @@ class ToolAgentRuntime:
                     tool=call["name"],
                     args=call["args"],
                     result=result_payload,
-                )
-            if result_payload.get("batch_guard_escalated"):
-                return WorkerOutcome(
-                    phase="failed",
-                    summary=(
-                        "Worker repeated a guard-blocked action inside a multi-action "
-                        "batch after same-frame corrective feedback."
-                    ),
-                    failure_kind="action_contract_invalid",
-                    steps=step,
                 )
             if result_payload.get("reuse_current_frame") is True:
                 predispatch_repair_turn += 1
@@ -1272,7 +1278,11 @@ class ToolAgentRuntime:
             structured_surfaces=frame.structured_surfaces,
             readiness=frame.readiness,
             platform_time=frame.platform_time,
-            control_count=len(frame.controls),
+            # Absence of a structured-control inventory is not evidence that the
+            # visible surface has zero controls. Android native observation is
+            # screenshot-only, so omit this signal instead of manufacturing a
+            # misleading count.
+            **({"control_count": len(frame.controls)} if frame.controls else {}),
             observe_seconds=round(time.perf_counter() - observe_started_at, 3),
             capture_timing=getattr(self.platform, "last_capture_timing", None),
         )
@@ -1406,41 +1416,6 @@ class ToolAgentRuntime:
         else:
             breaker.record(decision)
 
-    def _can_continue_batch(
-        self,
-        action: DynamicActionSpec,
-        args: dict[str, Any],
-        remaining: list[dict[str, Any]],
-        action_by_name: dict[str, DynamicActionSpec],
-        frame: MaterializedFrame,
-    ) -> bool:
-        if action.capability == "clear_text" or (
-            action.capability == "type"
-            and bool(getattr(self._executor, "type_suffix_safe", True))
-        ):
-            return True
-        refresh_controls = getattr(self._executor, "refresh_controls", None)
-        refreshable = bool(
-            getattr(self, "perception_mode", "enhanced") == "enhanced"
-            and callable(refresh_controls)
-            and all(
-                action_by_name[call["name"]].capability not in {"tap", "type"}
-                or call.get("_control_ref")
-                for call in remaining
-            )
-        )
-        if action.capability != "tap" or not refreshable:
-            return False
-        target = control_at_point({**action.fixed_args, **args}, frame)
-        kind = str((target or {}).get("kind") or "").casefold()
-        return bool(
-            target
-            and (
-                target.get("selection_mode") in {"single", "multiple"}
-                or any(token in kind for token in ("input", "textbox", "textarea", "editor"))
-            )
-        )
-
     def _refresh_next_action(
         self,
         call: dict[str, Any],
@@ -1487,11 +1462,17 @@ class ToolAgentRuntime:
                 + ", ".join(unknown)
             )
         action_by_name = {action.name: action for action in actions}
-        for call in calls:
+        for index, call in enumerate(calls):
             ToolAgentRuntime._validated_action_call_args(
                 action_by_name[call["name"]],
                 call["args"],
             )
+            capability = action_by_name[call["name"]].capability
+            if index < len(calls) - 1 and capability in _BATCH_FINAL_CAPABILITIES:
+                raise ProtocolError(
+                    f"{capability} changes geometry or surface and must be the final batch action; "
+                    "launch_app can run directly without home or app_switch"
+                )
 
     @staticmethod
     def _validated_action_call_args(
@@ -1560,7 +1541,6 @@ class ToolAgentRuntime:
         reason = ""
         terminal: str | None = None
         rejected_before_dispatch = False
-        batch_guard_escalated = False
         for index, action_call in enumerate(calls, start=1):
             action_spec = action_by_name[action_call["name"]]
             if action_call.get("_control_ref") and not self._refresh_next_action(
@@ -1574,9 +1554,6 @@ class ToolAgentRuntime:
                 **action_call["args"],
             }
             remaining = calls[index:]
-            suffix_safe = not remaining or self._can_continue_batch(
-                action_spec, action_call["args"], remaining, action_by_name, frame,
-            )
             circuit_decision = circuit_breaker.inspect(
                 tool=action_call["name"],
                 capability=action_spec.capability,
@@ -1593,25 +1570,6 @@ class ToolAgentRuntime:
                     tool=action_call["name"],
                     reason=reason,
                 )
-                # A repeated action inside a batch previously only broke the
-                # suffix and reobserved: in a loop the same blocked element keeps
-                # getting re-scheduled behind a progressing head action, so the
-                # batch never escalates and the run dies on the turn budget.
-                # Record the blocked repeat into the window so prior_attempts
-                # grows across frames, and escalate once it has been hit a few
-                # times — the Worker is re-scheduling an action it was told not
-                # to retry.
-                if circuit_decision.prior_attempts > 0:
-                    circuit_breaker.record(circuit_decision)
-                    if circuit_decision.prior_attempts >= _BATCH_GUARD_ESCALATION_THRESHOLD:
-                        batch_guard_escalated = True
-                        reason = (
-                            "blocked repeated action inside a multi-action batch "
-                            f"({circuit_decision.signature[:60]}); reobserve "
-                            "and change approach instead of re-scheduling it"
-                        )
-                        rejected_before_dispatch = executed == 0
-                        break
                 break
             self._trace(
                 "runtime_action_started",
@@ -1642,10 +1600,10 @@ class ToolAgentRuntime:
             except Exception as exc:  # noqa: BLE001 - abort suffix and reobserve
                 result = _worker_action_error(exc)
                 terminal = None
-            self._record_action_attempt(
-                circuit_breaker, circuit_decision, action_spec, result
-            )
             if not rejected_before_dispatch:
+                self._record_action_attempt(
+                    circuit_breaker, circuit_decision, action_spec, result
+                )
                 executed += 1
             journal.record_turn(
                 step=step,
@@ -1680,12 +1638,6 @@ class ToolAgentRuntime:
                 break
             if not remaining:
                 continue
-            if not suffix_safe:
-                reason = (
-                    f"{action_spec.capability} can invalidate the action suffix; "
-                    "reobserve before continuing"
-                )
-                break
             try:
                 current_png = self.platform.screenshot()
             except Exception as exc:  # noqa: BLE001 - never execute a blind suffix
@@ -1699,12 +1651,14 @@ class ToolAgentRuntime:
                 reason = "page identity changed before the action suffix completed"
                 break
             page_identity = next_page_identity
+            frame.visual_fingerprint = visual_surface_fingerprint(current_png)
+            frame.url = next_page_identity[0] or frame.url
+            frame.title = next_page_identity[1] or frame.title
 
         payload = {
             "status": "executed" if executed == len(calls) and not reason else "aborted",
             "planned_actions": len(calls),
             "executed_actions": executed,
-            "batch_guard_escalated": batch_guard_escalated,
         }
         event = (
             "worker_multi_action_completed"
@@ -1825,6 +1779,94 @@ class ToolAgentRuntime:
                 except Exception:  # noqa: BLE001 - optional enhancement fails open
                     pass
             executed_action = decision.action
+            target_signal: dict[str, Any] | None = None
+            verify_future = None
+            verify_pool = getattr(self, "_target_verify_pool", None)
+            ground_pool = getattr(self, "_target_ground_pool", None)
+            can_verify_target = bool(
+                verify_pool is not None
+                and executed_action.action_type in _TARGET_VERIFIED_ACTION_TYPES
+                and executed_action.x is not None
+                and executed_action.y is not None
+            )
+            can_ground_target = bool(
+                ground_pool is not None
+                and executed_action.action_type in _TARGET_VERIFIED_ACTION_TYPES
+                and executed_action.x is not None
+                and executed_action.y is not None
+                and not has_snapped_point(decision)
+            )
+            grounding: TargetGrounding | None = None
+            if can_ground_target:
+                ground_future = ground_pool.submit(
+                    ground_target,
+                    png,
+                    float(executed_action.x),
+                    float(executed_action.y),
+                    str(executed_action.description or ""),
+                    str(executed_action.action_type or ""),
+                )
+                grounding, ground_error = _vision_future_result(
+                    ground_future, TargetGrounding,
+                )
+                if ground_error is not None:
+                    self._trace(
+                        "worker_target_grounding_error",
+                        tool=call["name"],
+                        error=f"{type(ground_error).__name__}: {ground_error}",
+                    )
+                elif grounding is not None:
+                    decision, target_signal, proposed_inside, rejection = (
+                        resolve_target_grounding(decision, grounding)
+                    )
+                    self._trace(
+                        "worker_target_grounding",
+                        tool=call["name"],
+                        target_found=grounding.target_found,
+                        target_box=(
+                            list(grounding.target_box)
+                            if grounding.target_box is not None else None
+                        ),
+                        control_type=grounding.control_type,
+                        label=grounding.label,
+                        confidence=grounding.confidence,
+                        proposed_inside=proposed_inside,
+                        reason=grounding.reason,
+                    )
+                    if rejection:
+                        raise _WorkerActionRejected(rejection)
+                    executed_action = decision.action
+            # Typing is a composite, destructive action: it taps, clears, then
+            # enters text. Reject a visually disproven field before dispatch so
+            # an off-target point cannot clear or type into an adjacent control.
+            if (
+                can_verify_target
+                and executed_action.action_type == "type"
+                and target_signal is None
+            ):
+                verify_future = verify_pool.submit(
+                    verify_target,
+                    png,
+                    float(executed_action.x),
+                    float(executed_action.y),
+                    str(executed_action.description or ""),
+                )
+                target_signal, verify_error = _target_verification_result(verify_future)
+                verify_future = None
+                if verify_error is not None:
+                    self._trace(
+                        "worker_target_verify_error",
+                        tool=call["name"],
+                        error=f"{type(verify_error).__name__}: {verify_error}",
+                    )
+                elif target_signal and target_signal.get("status") == "off_target":
+                    actual = str(target_signal.get("actual_element") or "").strip()
+                    reason = str(target_signal.get("reason") or "").strip()
+                    detail = f" on {actual!r}" if actual else ""
+                    suffix = f": {reason}" if reason else ""
+                    raise _WorkerActionRejected(
+                        f"predispatch target verifier reported off_target{detail}{suffix}"
+                    )
             # Grounding has already produced the best currently known point.
             # Show it before dispatch, then mirror the original runtime contract
             # by updating once more if the executor records a DOM snap.
@@ -1832,14 +1874,11 @@ class ToolAgentRuntime:
             executed = self._executor.execute(decision, png_bytes=png)
             if executed and has_snapped_point(decision):
                 self._show_action(decision.action)
-            verify_future = None
-            verify_pool = getattr(self, "_target_verify_pool", None)
             if (
                 executed
-                and verify_pool is not None
-                and executed_action.action_type in _TARGET_VERIFIED_ACTION_TYPES
-                and executed_action.x is not None
-                and executed_action.y is not None
+                and can_verify_target
+                and executed_action.action_type != "type"
+                and target_signal is None
             ):
                 verify_future = verify_pool.submit(
                     verify_target,
@@ -1850,10 +1889,26 @@ class ToolAgentRuntime:
                 )
             try:
                 if executed:
+                    focus_y = (
+                        float(executed_action.y)
+                        if executed_action.action_type == "type"
+                        and executed_action.y is not None
+                        else None
+                    )
+                    center = (
+                        (float(executed_action.x), float(executed_action.y))
+                        if executed_action.action_type
+                        in {"tap", "click", "long_press", "select_option"}
+                        and executed_action.x is not None
+                        and executed_action.y is not None
+                        else None
+                    )
                     elapsed, no_effect = settle_after_action(
                         self.platform,
                         png,
                         action_type=executed_action.action_type,
+                        focus_y=focus_y,
+                        center=center,
                     )
                 else:
                     elapsed, no_effect = 0.0, True
@@ -1861,7 +1916,6 @@ class ToolAgentRuntime:
                 if verify_future is not None:
                     verify_future.cancel()
                 raise
-            target_signal: dict[str, Any] | None = None
             if verify_future is not None:
                 target_signal, verify_error = _target_verification_result(verify_future)
                 if verify_error is not None:
@@ -2265,6 +2319,11 @@ class ToolAgentRuntime:
                 f"→ {payload.get('tool', '?')}"
                 + (f": {summary}" if summary else "")
             )
+        if event == "worker_target_grounding":
+            target = str(payload.get("label") or payload.get("control_type") or "target")
+            confidence = str(payload.get("confidence") or "unknown")
+            relation = "inside" if payload.get("proposed_inside") else "outside"
+            return f"Visual grounding {target!r}: {confidence}, point {relation} target box"
         if event == "runtime_action_started":
             return (
                 f"{payload.get('batch_index', '?')}/"
@@ -2411,11 +2470,16 @@ class ToolAgentRuntime:
                 }.items()
                 if value is not None
             )
+            control_count = entry.get("control_count")
+            control_text = (
+                f" · {int(control_count)} controls"
+                if isinstance(control_count, int)
+                else ""
+            )
             return (
                 f"\n--- Turn {turn_no} ---\n"
                 + (f"Screenshot : {screenshot}\n" if screenshot else "")
-                + f"Observation: {entry.get('mode', '?')} perception · "
-                f"{entry.get('control_count', 0)} controls\n"
+                + f"Observation: {entry.get('mode', '?')} perception{control_text}\n"
                 + (f"Timing     : {timing_text}\n" if timing_text else "")
                 + (f"Page       : {page}\n" if page else "")
                 + (f"Surfaces   : {surfaces}\n" if surfaces else "")
@@ -2513,6 +2577,15 @@ class ToolAgentRuntime:
         if event == "worker_tool_error":
             error = str(entry.get("error") or "").splitlines()[0]
             return f"Result     : ERROR · {error}"
+        if event == "worker_target_grounding":
+            target = str(entry.get("label") or entry.get("control_type") or "target")
+            confidence = str(entry.get("confidence") or "unknown")
+            relation = "inside" if entry.get("proposed_inside") else "outside"
+            box = entry.get("target_box")
+            return (
+                f"Grounding  : {confidence} · {target} · point {relation}"
+                + (f" · box={box}" if box else "")
+            )
         if event == "worker_same_frame_action_repair":
             return (
                 "Recovery   : action rejected before dispatch · reuse current frame "

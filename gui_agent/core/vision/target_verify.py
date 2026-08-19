@@ -20,12 +20,17 @@ from PIL import Image, ImageDraw
 
 from gui_agent.core.config import resolve_llm_config
 from gui_agent.core.runtime.action_settle import VERIFY_TIMEOUT_S
-from gui_agent.core.schemas import TargetVerify
+from gui_agent.core.schemas import (
+    BaseActionDecision,
+    TargetGrounding,
+    TargetVerify,
+)
 from gui_agent.prompts import load_prompt_text
 from llm.provider_config import build_chat_model
 from llm.structured import invoke_structured
 
 _SYSTEM = load_prompt_text("task.vision.target_verify")
+_GROUND_SYSTEM = load_prompt_text("task.vision.target_grounding")
 
 
 def render_marker(png: bytes, nx: float, ny: float) -> bytes:
@@ -51,7 +56,7 @@ def render_marker(png: bytes, nx: float, ny: float) -> bytes:
     return out.getvalue()
 
 
-def _verify_llm():
+def _vision_llm():
     cfg = resolve_llm_config("target_verify")
     return build_chat_model(
         cfg,
@@ -72,6 +77,33 @@ def _upscale(png: bytes, min_w: int = 900) -> bytes:
     return out.getvalue()
 
 
+def crop_target_region(
+    png: bytes,
+    proposed_x: float,
+    proposed_y: float,
+    *,
+    half_width: float = 400.0,
+    half_height: float = 180.0,
+) -> tuple[bytes, tuple[float, float, float, float]]:
+    """Crop a candidate-local region and return its full-frame normalized bounds."""
+
+    img = Image.open(io.BytesIO(png)).convert("RGB")
+    left = max(0.0, proposed_x - half_width)
+    top = max(0.0, proposed_y - half_height)
+    right = min(1000.0, proposed_x + half_width)
+    bottom = min(1000.0, proposed_y + half_height)
+    pixel_box = (
+        round(left / 1000 * img.width),
+        round(top / 1000 * img.height),
+        round(right / 1000 * img.width),
+        round(bottom / 1000 * img.height),
+    )
+    cropped = img.crop(pixel_box)
+    output = io.BytesIO()
+    cropped.save(output, format="PNG")
+    return output.getvalue(), (left, top, right, bottom)
+
+
 def verify_target(png: bytes, snapped_x: float, snapped_y: float, instruction: str) -> TargetVerify:
     """Render the snapped point on the frame and judge whether it is on target."""
     marked = render_marker(_upscale(png), snapped_x, snapped_y)
@@ -84,5 +116,113 @@ def verify_target(png: bytes, snapped_x: float, snapped_y: float, instruction: s
         ]),
     ]
     return invoke_structured(
-        _verify_llm(), msgs, TargetVerify, fallback_on_invalid=False,
+        _vision_llm(), msgs, TargetVerify, fallback_on_invalid=False,
     )
+
+
+def ground_target(
+    png: bytes,
+    proposed_x: float,
+    proposed_y: float,
+    instruction: str,
+    action_type: str,
+) -> TargetGrounding:
+    """Locate one intended control and its interactive bounds on the current frame."""
+
+    local_png, crop_bounds = crop_target_region(png, proposed_x, proposed_y)
+    crop_left, crop_top, crop_right, crop_bottom = crop_bounds
+    local_x = (proposed_x - crop_left) / (crop_right - crop_left) * 1000
+    local_y = (proposed_y - crop_top) / (crop_bottom - crop_top) * 1000
+    marked = render_marker(_upscale(local_png, min_w=540), local_x, local_y)
+    b64 = base64.b64encode(marked).decode()
+    msgs = [
+        SystemMessage(content=_GROUND_SYSTEM),
+        HumanMessage(content=[
+            {
+                "type": "text",
+                "text": (
+                    f"操作类型：{action_type}。操作指令：「{instruction}」。"
+                    "当前图片是候选点附近的局部裁剪；红色标记仅用于显示候选点。"
+                    "请在这张局部图中定位指令指定控件本体的可交互边界。"
+                ),
+            },
+            {"type": "image_url", "image_url": {"url": f"data:image/png;base64,{b64}"}},
+        ]),
+    ]
+    grounding = invoke_structured(
+        _vision_llm(), msgs, TargetGrounding, fallback_on_invalid=False,
+    )
+    if grounding.target_box is None:
+        return grounding
+    left, top, right, bottom = grounding.target_box
+    width, height = crop_right - crop_left, crop_bottom - crop_top
+    return grounding.model_copy(update={"target_box": (
+        crop_left + left / 1000 * width,
+        crop_top + top / 1000 * height,
+        crop_left + right / 1000 * width,
+        crop_top + bottom / 1000 * height,
+    )})
+
+
+def resolve_target_grounding(
+    decision: BaseActionDecision,
+    grounding: TargetGrounding,
+) -> tuple[BaseActionDecision, dict[str, str] | None, bool, str]:
+    """Resolve one grounding result into correction, signal, or rejection."""
+
+    action = decision.action
+    box = grounding.target_box
+    inside = bool(box and (
+        box[0] - 6 <= float(action.x or 0) <= box[2] + 6
+        and box[1] - 6 <= float(action.y or 0) <= box[3] + 6
+    ))
+    kind = grounding.control_type.casefold().replace("-", "_")
+    accepted_kinds = {
+        "type": ("input", "textbox", "editor", "textarea"),
+        "select_option": ("select", "combobox", "dropdown", "option"),
+    }.get(action.action_type)
+    compatible = not accepted_kinds or any(token in kind for token in accepted_kinds)
+    correctable = bool(
+        box and grounding.confidence == "high" and compatible
+    )
+    actual = grounding.label or grounding.control_type
+    signal = None
+    if correctable:
+        assert box is not None
+        center = ((box[0] + box[2]) / 2, (box[1] + box[3]) / 2)
+        if action.action_type == "type" or not inside:
+            grounded = action.model_copy(update={
+                "x": center[0],
+                "y": center[1],
+                "snap": {
+                    "method": "visual_target_grounding",
+                    "original": [action.x, action.y],
+                    "snapped": list(center),
+                    "target_box": list(box),
+                    "confidence": grounding.confidence,
+                    "info": actual or "visual target",
+                },
+            })
+            decision = decision.model_copy(update={"action": grounded})
+        signal = {
+            "status": "on_target",
+            "actual_element": actual,
+            "reason": "high-confidence visual grounding located the intended control",
+        }
+    elif grounding.confidence == "medium" and inside and compatible:
+        signal = {
+            "status": "on_target",
+            "actual_element": actual,
+            "reason": "the proposed point lies inside the visually grounded target",
+        }
+    reject = signal is None and (
+        action.action_type == "type"
+        or grounding.target_found and grounding.confidence in {"high", "medium"}
+    )
+    detail = f" for {actual!r}" if actual else ""
+    reason = f": {grounding.reason}" if grounding.reason else ""
+    error = (
+        f"predispatch visual grounding could not confirm the proposed target{detail}{reason}"
+        if reject else ""
+    )
+    return decision, signal, inside, error

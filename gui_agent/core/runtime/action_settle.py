@@ -28,6 +28,13 @@ def settle_after_action(
     """Wait until the surface changes and settles, or reaches the bounded cap."""
 
     screenshot = getattr(platform, "settle_screenshot", platform.screenshot)
+    def changed(current: bytes) -> bool:
+        if pre_frame is None:
+            return False
+        local = frame_changed(pre_frame, current, focus_y, center=center)
+        # A tap may change a keyboard/dialog outside its local target box. Type
+        # remains row-only so keyboard churn cannot impersonate entered text.
+        return local or center is not None and frame_changed(pre_frame, current)
 
     if action_type not in ("drag", "scroll", "scroll_to_ref"):
         cdp_settle = getattr(platform, "wait_settled", None)
@@ -36,7 +43,7 @@ def settle_after_action(
                 elapsed, no_effect = cdp_settle(action_type)
                 if no_effect and pre_frame is not None:
                     current = screenshot()
-                    if frame_changed(pre_frame, current, focus_y, center=center):
+                    if changed(current):
                         no_effect = False
                 return elapsed, no_effect
             except Exception as exc:  # noqa: BLE001
@@ -76,8 +83,7 @@ def settle_after_action(
         except Exception:  # noqa: BLE001
             return time.perf_counter() - started, False
         tab_switched = bool(pop_tab and pop_tab())
-        changed = frame_changed(pre_frame, current, focus_y, center=center)
-        ever_changed = ever_changed or changed or tab_switched
+        ever_changed = ever_changed or changed(current) or tab_switched
         stable = previous is not None and frame_diff(previous, current, focus_y) < STABLE_MEAN_THR
         if ever_changed and stable:
             return time.perf_counter() - started, False

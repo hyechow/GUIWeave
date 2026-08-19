@@ -45,6 +45,22 @@ BLANK_BODY_MEAN_MIN = 225.0     # body must be light (rules out dark splash/dark
 BLANK_BODY_STD_MAX = 12.0       # body must be near-uniform (text/icons push std up)
 
 
+def visual_surface_fingerprint(png_bytes: bytes) -> str:
+    """Return a private perceptual identity for loop detection."""
+    try:
+        img = Image.open(io.BytesIO(png_bytes)).convert("L")
+        width, height = img.size
+        content = img.crop((
+            0, round(height * 0.06), width, round(height * 0.96),
+        )).resize((16, 16), Image.BILINEAR)
+        values = list(content.get_flattened_data())
+        mean = sum(values) / len(values)
+        bits = sum(1 << index for index, value in enumerate(values) if value >= mean)
+        return f"{bits:064x}"
+    except Exception:  # malformed or unavailable optional visual evidence
+        return ""
+
+
 def frame_diff(png_a: bytes, png_b: bytes, focus_y: float | None = None) -> float:
     """两帧灰度图缩放到 160x320 后的平均绝对差（0-255 量级）。**仅作低层稳定性信号**
     （判相邻帧是否停稳），不要拿它判「动作是否生效」——用 ``frame_changed``。

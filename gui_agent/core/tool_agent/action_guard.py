@@ -305,10 +305,10 @@ def _action_boundary_error(
     return ""
 
 
-def _coordinate_bucket(value: Any, *, size: int = 50) -> int | None:
+def _coordinate_bucket(value: Any, *, size: int = 25) -> int | None:
     if not isinstance(value, (int, float)) or isinstance(value, bool):
         return None
-    return int(round(float(value) / size) * size)
+    return int(float(value) // size * size)
 
 
 def action_signature(
@@ -341,6 +341,7 @@ def progress_signature(frame: MaterializedFrame) -> str:
     control_fields = ("kind", "label", "value", "focused", "checked", "selected")
     payload = {
         "page": (frame.url, frame.title),
+        "visual_surface": frame.visual_fingerprint,
         "scopes": {
             key: (value.get("status"), value.get("applied_filters"))
             for key, value in sorted(frame.requirement_scopes.items())

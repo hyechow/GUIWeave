@@ -42,7 +42,10 @@ from gui_agent.core.tool_agent.protocol import (
     parse_json_object,
     response_usage,
 )
-from gui_agent.core.vision.frame_analysis import is_blank_screen
+from gui_agent.core.vision.frame_analysis import (
+    is_blank_screen,
+    visual_surface_fingerprint,
+)
 from llm.provider_config import build_chat_model, chat_request_kwargs
 
 PerceptionMode = Literal["vision-only", "enhanced"]
@@ -1480,6 +1483,7 @@ class PerceptionMaterializer:
         materialized = MaterializedFrame(
             frame_id=frame_id,
             screenshot_path=str(screenshot_path),
+            visual_fingerprint=visual_surface_fingerprint(png),
             readiness=readiness,
             readiness_reason=readiness_reason,
             platform_time=(

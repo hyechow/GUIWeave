@@ -467,6 +467,13 @@ class ResultRef(StrictModel):
 class MaterializedFrame(StrictModel):
     frame_id: str
     screenshot_path: str
+    visual_fingerprint: str = Field(
+        default="",
+        description=(
+            "Runtime-private rendered-surface identity used for action loop detection; "
+            "it is not projected into Worker context."
+        ),
+    )
     readiness: Literal["ready", "loading", "blank"] = "ready"
     readiness_reason: str = ""
     platform_time: dict[str, Any] = Field(default_factory=dict)

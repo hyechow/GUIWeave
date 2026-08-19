@@ -376,7 +376,6 @@ class WorkerJournal:
             durable_text=f"tool={tool}; {reason}",
         ))
 
-
 @dataclass(frozen=True)
 class WorkerMemoryView:
     worker_id: str
@@ -551,7 +550,10 @@ def _frame_payload(
             for item in frame.collections
         ],
         "missing_requirements": frame.missing_requirements,
-        "controls": _semantic_controls(frame.controls),
+        # An unavailable structured-control inventory is not evidence that the
+        # screenshot contains no controls. Omit the field entirely in pure-vision
+        # contexts (including Android native surfaces) and let pixels drive.
+        **({"controls": _semantic_controls(frame.controls)} if frame.controls else {}),
     }
 
 

@@ -300,7 +300,11 @@ def _tool_agent_report_steps(
                 if isinstance(item, dict)
             ],
             "collections": collections,
-            "controls": observation.get("control_count", 0),
+            **(
+                {"controls": observation["control_count"]}
+                if isinstance(observation.get("control_count"), int)
+                else {}
+            ),
         }
 
     def compact_action_batch(turn: dict, decision: dict) -> dict | None:

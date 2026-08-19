@@ -394,10 +394,12 @@ def dynamic_action_envelope_tool(
             "Apply task conditions first: excluded or already-processed candidates permit traversal, "
             "never their mutation path. If no eligible work remains, call complete directly; do not "
             "put terminal tools in this action list. "
-            "Later actions must not depend on newly revealed UI; they may depend on an earlier "
-            "selection or focus enabling another already-visible control. Put geometry- or "
-            "surface-changing actions last. Runtime rebinds structured controls and may discard "
-            "a stale or still-disabled suffix."
+            "All actions must form one immediate UI transaction; never mix discovery, reveal, "
+            "or recovery with mutation. Later actions must not depend on newly revealed UI. "
+            "Runtime settles each action and visually re-grounds the next target on a fresh "
+            "screenshot. Scroll, drag, home, back, app switching, app launch, and direct "
+            "navigation must be final. launch_app works directly from any current application; "
+            "never prepend home or app_switch to it."
         ),
         {
             "type": "object",

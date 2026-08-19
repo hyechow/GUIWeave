@@ -787,6 +787,36 @@ class TargetVerify(BaseModel):
     reason: str = Field(default="", description="一句话理由")
 
 
+class TargetGrounding(BaseModel):
+    """One screenshot-grounded target control for a proposed spatial action."""
+
+    target_found: bool = Field(description="当前截图中是否唯一找到指令指定的可交互目标控件")
+    target_box: Optional[tuple[float, float, float, float]] = Field(
+        default=None,
+        description="目标控件可交互区域 [left, top, right, bottom]，归一化到 0-1000",
+    )
+    control_type: str = Field(default="", description="目标控件通用类型")
+    label: str = Field(default="", description="目标控件或紧邻关联的可见标签")
+    confidence: Literal["high", "medium", "low"] = Field(
+        default="low", description="目标身份与边界的视觉置信度",
+    )
+    reason: str = Field(default="", description="一句话说明定位证据或不确定原因")
+
+    @model_validator(mode="after")
+    def _validate_target_box(self) -> "TargetGrounding":
+        if not self.target_found:
+            self.target_box = None
+            return self
+        if self.target_box is None:
+            raise ValueError("target_found requires target_box")
+        left, top, right, bottom = self.target_box
+        if min(self.target_box) < 0 or max(self.target_box) > 1000:
+            raise ValueError("target_box coordinates must be in [0, 1000]")
+        if left >= right or top >= bottom:
+            raise ValueError("target_box must have positive width and height")
+        return self
+
+
 CollectionBoundary = Literal["unknown", "at_end", "has_next_page", "not_at_end"]
 CollectionSource = Literal["table", "viewport", "visual"]
 
