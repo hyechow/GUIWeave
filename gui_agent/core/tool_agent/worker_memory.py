@@ -86,6 +86,11 @@ _FACT_TEXT_LIMIT = 300
 # recovery depends on them), everything else is bounded to the most recent few.
 _DURABLE_PRIVILEGED_LIMIT = 24
 _DURABLE_OTHER_LIMIT = 12
+_COMMIT_CONTROL_RE = re.compile(
+    r"\b(?:send|submit|save|confirm|apply|publish|post|finish|done)\b|"
+    r"发送|提交|保存|确认|发布|完成",
+    re.IGNORECASE,
+)
 
 
 def _is_disproven_fact(text: str) -> bool:
@@ -305,12 +310,29 @@ class WorkerJournal:
             and isinstance(result.get("target_signal"), dict)
             else {}
         )
+        commit_control = str(target_signal.get("actual_element") or "").strip()
+        if not (
+            result_status == "executed"
+            and isinstance(result, dict)
+            and result.get("no_effect") is False
+            and result.get("action_type") in {"tap", "click", "press_enter", "select_option"}
+            and target_signal.get("status") == "on_target"
+            and _COMMIT_CONTROL_RE.search(commit_control)
+        ):
+            commit_control = ""
         is_result_ref = result_kind == "result" or (
             isinstance(result, dict) and str(result.get("ref") or "").startswith("result:")
         )
         durable_text = ""
         if candidate_commit:
             durable_text = "candidate selection commit produced a confirmed transition"
+        elif commit_control:
+            durable_text = (
+                f"Runtime confirmed commit control {commit_control!r} executed on target "
+                "with a rendered transition; treat the current frame as post-action "
+                "evidence and do not activate a new entry point unless it shows an error "
+                "or the editor remained open"
+            )
         elif is_exception or result_status in {"error", "failed"}:
             durable_text = (
                 f"tool={tool}; failure={_bounded_json(memory_result, limit=420)}"
@@ -354,7 +376,11 @@ class WorkerJournal:
             )
         self.events.append(WorkerJournalEvent(
             event_ref=event_ref,
-            kind="candidate_commit" if candidate_commit else "action_result",
+            kind=(
+                "candidate_commit" if candidate_commit
+                else "commit_action" if commit_control
+                else "action_result"
+            ),
             durable_text=durable_text,
             narrative_text=(
                 f"state={state.status}; tool={tool}{args_text}; "

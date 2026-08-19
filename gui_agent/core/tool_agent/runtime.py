@@ -947,7 +947,7 @@ class ToolAgentRuntime:
                         if not isinstance(raw_state, dict):
                             raise ProtocolError("Worker decision state must be an object")
                         state = WorkerState.model_validate(raw_state)
-                        validate_worker_tool_state(call["name"], state)
+                        validate_worker_tool_state(call["name"], state, call["args"])
                         self._accumulate_observed_rows(spec, worker_id, call, step)
                         break
                     except Exception as exc:  # noqa: BLE001 - one same-frame protocol repair
