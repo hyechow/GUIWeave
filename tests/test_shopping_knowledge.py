@@ -30,6 +30,14 @@ def test_shopping_review_and_wishlist_goals_select_only_their_sections() -> None
     ) == ["wishlist_newsletter_planning"]
 
 
+def test_shopping_newsletter_uses_the_signed_in_account_email() -> None:
+    knowledge = _shopping_knowledge()
+    goal = "Subscribe to the newsletter of OneStopMarket."
+
+    assert "emma.lopez@gmail.com" in knowledge.worker_context()
+    assert "emma.lopez@gmail.com" in knowledge.orchestrator_context(goal)
+
+
 def test_shopping_buy_goal_combines_catalog_selection_and_checkout_commit() -> None:
     knowledge = _shopping_knowledge()
     goal = "Buy the highest rated product from a category under a budget and empty my cart."
