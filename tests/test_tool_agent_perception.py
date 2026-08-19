@@ -1982,15 +1982,29 @@ def test_linked_detail_table_expands_filtered_parents_to_child_rows(tmp_path: Pa
     }]
 
 
-@pytest.mark.parametrize("subject", ["Target service", "Unrelated service"])
+@pytest.mark.parametrize(
+    ("subject", "has_previous"),
+    [
+        ("Target service", False),
+        ("Unrelated service", False),
+        ("Unrelated service", True),
+    ],
+)
 def test_singleton_linked_detail_stops_or_continues_source(
-    tmp_path: Path, subject: str,
+    tmp_path: Path, subject: str, has_previous: bool,
 ) -> None:
     requirement = DataRequirement(
         id="entries",
         description="One matching linked entry",
         cardinality="one",
-        row_schema={"record_id": "string", "subject": "string"},
+        row_schema={
+            "type": "object",
+            "properties": {
+                field: {"type": "string"} for field in ("record_id", "subject")
+            },
+            "required": ["record_id", "subject"],
+            "additionalProperties": False,
+        },
         field_sources={"record_id": "Record ID", "subject": "Subject"},
         field_types={"record_id": "text", "subject": "text"},
         filters={"subject_contains": "target class"},
@@ -2003,16 +2017,20 @@ def test_singleton_linked_detail_stops_or_continues_source(
             "Action": "Open",
             "Action_url": "http://example.test/record/1/",
         }],
-        "total_records": 20,
         "partial": True,
-        "traversal": {"type": "paged", "has_next_page": True},
+        "traversal": {
+            "type": "paged",
+            "has_next_page": not has_previous,
+            "has_prev_page": has_previous,
+        },
     }
     materializer = _materializer(tmp_path, "enhanced")
     materializer._semantic_judge = lambda _requirement, rows: [  # type: ignore[method-assign]
         row for row in rows if row.get("subject") == "Target service"
     ]
+    source_url = "http://example.test/records/" + ("?p=4" if has_previous else "")
     materializer.observe(
-        bundle=FakeBundle([parent], observation={"url": "http://example.test/records/"}),
+        bundle=FakeBundle([parent], observation={"url": source_url}),
         platform=FakePlatform(),
         requirements=[requirement],
         frame_no=1,
@@ -2040,7 +2058,8 @@ def test_singleton_linked_detail_stops_or_continues_source(
     if subject != "Target service":
         assert scope["status"] == "active"
         assert scope["window_exhausted"] is True
-        assert scope["candidate_source_url"] == "http://example.test/records/"
+        assert scope["candidate_source_url"] == source_url
+        assert completed.collections == []
         return
     assert scope["status"] == "resolved"
     assert completed.collections[0].coverage["cardinality"] == "one"

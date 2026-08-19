@@ -80,8 +80,10 @@ def test_shopping_purchased_option_uses_real_order_detail_fields() -> None:
     assert "sole schema field" in master_text
     assert 'cardinality="one"' in master_text
     assert "width-by-height" in master_text
+    assert "join an option label directly to its value" in master_text
     assert "<number> inches" in master_text
     assert "Forest Canvas" in master_text
+    assert 'primary_product_contains: "Forest Canvas"' in master_text
     assert "explicit taxonomy equivalence" in master_text
     assert "Do not invent separate Purchase Year" in master_text
 
