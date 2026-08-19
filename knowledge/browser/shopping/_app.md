@@ -16,7 +16,7 @@ source: manual_distilled
 confidence: high
 sensitivity: internal
 ttl: session
-version: 13
+version: 14
 ---
 # One Stop Market storefront
 
@@ -117,5 +117,5 @@ version: 13
 - Contact Us contains Name, Email, Phone Number, What's on your mind?, and Submit. Signed-in customer
   details may be prefilled. A request to leave the form ready for review means fill the requested
   fields and remain on Contact Us without activating Submit.
-- The footer newsletter Email field posts a subscription directly with Subscribe. The signed-in
-  customer's account email is the subscription identity unless the request supplies another email.
+- The footer newsletter Email field posts directly via Subscribe. The signed-in email is
+  `emma.lopez@gmail.com`; use it unless the request supplies another email.

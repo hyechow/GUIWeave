@@ -10,7 +10,7 @@ source: manual_distilled
 confidence: high
 sensitivity: internal
 ttl: session
-version: 1
+version: 2
 ---
 # One Stop Market wish list and newsletter
 
@@ -19,8 +19,8 @@ card or detail page. For "the product on the current page", preserve the start-p
 that page's action directly. A plain addition uses the product's default quantity; only set a larger
 quantity when requested. Verify the confirmation and the product in My Wish List.
 
-Use the footer Email + Subscribe form for a direct newsletter subscription. The account email is
-the subscription identity when no other email is supplied. My Account > Newsletter Subscriptions is
-useful for checking or managing the stored subscription, but merely reaching it does not complete a
-new Subscribe request. Finish after the subscription confirmation, without logging out or changing
-accounts.
+Use the footer Email + Subscribe form for a direct newsletter subscription. The signed-in account is
+`emma.lopez@gmail.com`; use that email when no other email is supplied. My Account > Newsletter
+Subscriptions is useful for checking or managing the stored subscription, but merely reaching it
+does not complete a new Subscribe request. Finish after the subscription confirmation, without
+logging out or changing accounts.
