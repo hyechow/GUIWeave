@@ -150,6 +150,43 @@ ctx.fail(outcome["summary"])
     assert not [item for item in diagnostics if item.code == "DATA_FILTER_BOUNDARY"]
 
 
+def test_master_review_rejects_case_changed_string_filter() -> None:
+    source = _program(
+        '''
+outcome = ctx.gui_worker(
+    worker_id="collect_records",
+    profile="collector",
+    goal="Retrieve the latest record with status Under Review",
+    success_criteria="The latest matching record is collected.",
+    approach="authoritative record index",
+    data_requirements=[{
+        "id": "records",
+        "description": "Latest record with the requested status",
+        "cardinality": "one",
+        "row_schema": {"record": "string", "status": "string"},
+        "field_sources": {"record": "Record", "status": "Status"},
+        "field_types": {"record": "text", "status": "text"},
+        "filters": {"status": "Under Review"},
+        "coverage": "first_match",
+    }],
+)
+ctx.fail(outcome["summary"])
+'''.strip()
+    )
+
+    diagnostics = validate_master_source(
+        source,
+        user_goal="Retrieve the latest record with status under review",
+    )
+
+    assert any(item.code == "DATA_FILTER_LITERAL" for item in diagnostics)
+    canonicalized = validate_master_source(
+        source.replace("Under Review", "Complete"),
+        user_goal="Retrieve the latest completed record",
+    )
+    assert not any(item.code == "DATA_FILTER_LITERAL" for item in canonicalized)
+
+
 def test_master_review_accepts_semantic_contract_and_source_approach() -> None:
     source = _program(
         '''

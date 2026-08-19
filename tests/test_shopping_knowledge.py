@@ -69,6 +69,14 @@ def test_shopping_spend_and_reorder_goals_select_order_sources() -> None:
     knowledge = _shopping_knowledge()
 
     assert knowledge.orchestrator_sections(
+        "Find the number of my most recent order."
+    ) == ["order_history_planning"]
+    recent_context = knowledge.orchestrator_context(
+        "Find the number of my most recent order."
+    )
+    assert "exactly one order record" in recent_context
+    assert "exact spelling and capitalization" in recent_context
+    assert knowledge.orchestrator_sections(
         "How much did I spend on food in March without shipping?"
     ) == ["order_history_planning"]
     assert knowledge.orchestrator_sections(
