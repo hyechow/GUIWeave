@@ -1990,8 +1990,16 @@ def test_linked_detail_table_expands_filtered_parents_to_child_rows(tmp_path: Pa
         ("Unrelated service", True),
     ],
 )
+@pytest.mark.parametrize(
+    ("item_field", "item_source"),
+    [("item_name", "Item Name"), ("item_description", "Item Description")],
+)
 def test_singleton_linked_detail_stops_or_continues_source(
-    tmp_path: Path, subject: str, has_previous: bool,
+    tmp_path: Path,
+    subject: str,
+    has_previous: bool,
+    item_field: str,
+    item_source: str,
 ) -> None:
     requirement = DataRequirement(
         id="entries",
@@ -2000,14 +2008,14 @@ def test_singleton_linked_detail_stops_or_continues_source(
         row_schema={
             "type": "object",
             "properties": {
-                field: {"type": "string"} for field in ("record_id", "item_name")
+                field: {"type": "string"} for field in ("record_id", item_field)
             },
-            "required": ["record_id", "item_name"],
+            "required": ["record_id", item_field],
             "additionalProperties": False,
         },
-        field_sources={"record_id": "Record ID", "item_name": "Item Name"},
-        field_types={"record_id": "text", "item_name": "text"},
-        filters={"item_name_contains": "target class"},
+        field_sources={"record_id": "Record ID", item_field: item_source},
+        field_types={"record_id": "text", item_field: "text"},
+        filters={f"{item_field}_contains": "target class"},
     )
     parent = {
         "caption": "Records",
@@ -2026,7 +2034,7 @@ def test_singleton_linked_detail_stops_or_continues_source(
     }
     materializer = _materializer(tmp_path, "enhanced")
     materializer._semantic_judge = lambda _requirement, rows: [  # type: ignore[method-assign]
-        row for row in rows if row.get("item_name") == "Target service"
+        row for row in rows if row.get(item_field) == "Target service"
     ]
     source_url = "http://example.test/records/" + ("?p=4" if has_previous else "")
     materializer.observe(
@@ -2065,7 +2073,7 @@ def test_singleton_linked_detail_stops_or_continues_source(
     assert completed.collections[0].coverage["cardinality"] == "one"
     assert materializer.data_store.collection_rows(
         completed.collections[0].ref
-    ) == [{"record_id": "group-001", "item_name": "Target service"}]
+    ) == [{"record_id": "group-001", item_field: "Target service"}]
 
 
 def _linked_entry_requirement() -> DataRequirement:
