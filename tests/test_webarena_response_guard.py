@@ -2,6 +2,8 @@ import json
 import sys
 import types
 
+import pytest
+
 from gui_agent.adapters.browser.webarena import (
     WAResponse,
     _completed_mutate_response,
@@ -134,12 +136,13 @@ def test_keyed_rows_are_not_deduplicated_into_objects():
     assert _normalize_retrieved_data_for_intent(rows, intent="terms and uses") == rows
 
 
-def test_retrieve_success_without_data_is_not_success():
+@pytest.mark.parametrize("retrieved_data", [None, []])
+def test_retrieve_success_without_data_is_not_success(retrieved_data: object) -> None:
     resp = _finalize_response(
         WAResponse(
             task_type="RETRIEVE",
             status="SUCCESS",
-            retrieved_data=None,
+            retrieved_data=retrieved_data,
             error_details=None,
         )
     )

@@ -1301,12 +1301,21 @@ def test_enhanced_materializes_partial_dom_table_with_incomplete_coverage(tmp_pa
     }
 
 
-def test_enhanced_materializes_a_complete_empty_structured_collection(tmp_path: Path) -> None:
+@pytest.mark.parametrize("rows,total,filters", [
+    ([], 0, {}),
+    ([{"Search Term": "visible", "Uses": "1"}], 1, {"uses": {"max": 0}}),
+])
+def test_enhanced_materializes_a_complete_empty_structured_collection(
+    tmp_path: Path,
+    rows: list[dict[str, str]],
+    total: int,
+    filters: dict,
+) -> None:
     tables = [{
         "caption": "Top Terms",
         "headers": ["Search Term", "Uses"],
-        "rows": [],
-        "total_records": 0,
+        "rows": rows,
+        "total_records": total,
         "partial": False,
         "traversal": {
             "type": "static",
@@ -1321,7 +1330,7 @@ def test_enhanced_materializes_a_complete_empty_structured_collection(tmp_path: 
     frame, _ = materializer.observe(
         bundle=FakeBundle(tables),
         platform=FakePlatform(),
-        requirements=[_requirement()],
+        requirements=[_requirement().model_copy(update={"filters": filters})],
         frame_no=1,
     )
 
@@ -1329,6 +1338,28 @@ def test_enhanced_materializes_a_complete_empty_structured_collection(tmp_path: 
     assert frame.chunks[0].provider == "structured"
     assert frame.collections[0].row_count == 0
     assert frame.collections[0].coverage["status"] == "complete"
+
+
+def test_filtered_empty_partial_structured_surface_remains_missing(tmp_path: Path) -> None:
+    table = {
+        "caption": "Top Terms",
+        "rows": [{"Search Term": "visible", "Uses": "1"}],
+        "total_records": 10,
+        "partial": True,
+        "traversal": {"type": "paged", "page_index": 1, "page_count": 2},
+    }
+    materializer = _materializer(tmp_path, "enhanced")
+    requirement = _requirement().model_copy(update={"filters": {"uses": {"max": 0}}})
+
+    frame, _ = materializer.observe(
+        bundle=FakeBundle([table]),
+        platform=FakePlatform(),
+        requirements=[requirement],
+        frame_no=1,
+    )
+
+    assert frame.collections == []
+    assert frame.missing_requirements == [requirement.id]
 
 
 def test_empty_surface_is_authoritative_when_detail_fields_are_not_grid_columns(
