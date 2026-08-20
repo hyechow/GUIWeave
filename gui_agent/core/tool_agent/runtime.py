@@ -7,6 +7,7 @@ import json
 import re
 import time
 from concurrent.futures import ThreadPoolExecutor
+from dataclasses import replace
 from datetime import datetime
 from pathlib import Path
 from typing import Any, Callable, Literal
@@ -43,7 +44,7 @@ from gui_agent.core.tool_agent.contracts import (
 )
 from gui_agent.core.tool_agent.action_guard import (
     FrameAssessment,
-    WorkerActionCircuitBreaker,
+    action_boundary_error,
     assess_frame,
     assess_navigation_url,
     auth_codes_from_frame,
@@ -73,6 +74,7 @@ from gui_agent.core.tool_agent.protocol import (
     generic_action_spec,
     image_message,
     input_binding_action,
+    original_task_contract,
     response_usage,
     validate_dynamic_action_spec,
     validate_worker_tool_state,
@@ -143,7 +145,7 @@ _TARGET_VERIFIED_ACTION_TYPES = {
     "tap", "click", "type", "long_press", "select_option",
 }
 _BATCH_FINAL_CAPABILITIES = {
-    "back", "home", "app_switch", "launch_app", "open_url", "scroll", "drag",
+    "ask_user", "back", "home", "app_switch", "launch_app", "open_url", "scroll", "drag",
 }
 def _worker_action_error(exc: Exception) -> dict[str, Any]:
     payload = {"status": "error", "error": f"{type(exc).__name__}: {exc}"}
@@ -417,10 +419,7 @@ class ToolAgentRuntime:
             last_frames = getattr(self, "_worker_last_frames", None)
             if last_frames is not None:
                 last_frames.clear()
-            for name in (
-                "_worker_action_breakers",
-                "_each_cursors",
-            ):
+            for name in ("_each_cursors",):
                 state = getattr(self, name, None)
                 if isinstance(state, dict):
                     state.clear()
@@ -580,19 +579,12 @@ class ToolAgentRuntime:
         return f"{worker_id[:prefix_size]}_{digest}{suffix}"
 
     @staticmethod
-    def _inherit_disproven_facts(
+    def _inherit_task_memory(
         journals: dict[str, WorkerJournal],
         journal: WorkerJournal,
         worker_id: str,
     ) -> None:
-        """Copy disproven-path facts from the logical worker into a strategy retry.
-
-        A strategy worker (`worker_id_strategy_N`) starts with an empty journal,
-        so it would blindly re-attempt the very path the prior worker proved
-        impossible. Inherit the base worker's disproven observations (and only
-        those — narrative, candidate commits, and runtime evidence stay per
-        attempt) so the retry can rule them out without replaying the failure.
-        """
+        """Carry only Runtime-authored task facts into a strategy attempt."""
 
         if "_strategy_" not in worker_id:
             return
@@ -602,11 +594,12 @@ class ToolAgentRuntime:
             return
         for event in base.events:
             if (
-                event.kind == "worker_observation"
-                and event.durable_text
+                event.kind == "memory_update"
+                and event.lifetime == "task"
+                and event.origin == "runtime"
                 and event.event_ref not in {item.event_ref for item in journal.events}
             ):
-                journal.events.append(event)
+                journal._append(replace(event, attempt_id=worker_id))
 
     def _worker_recovery_experience(
         self,
@@ -631,7 +624,10 @@ class ToolAgentRuntime:
             }
         return {
             "worker_memory": (
-                build_worker_memory_view(journal).render_prompt_section()
+                build_worker_memory_view(
+                    journal,
+                    current_frame_id=frame.frame_id if frame is not None else "",
+                ).render_prompt_section()
                 if journal is not None else "No retained Worker memory."
             ),
             "current_observation": current,
@@ -764,12 +760,6 @@ class ToolAgentRuntime:
             attempted_strategies.append(revised)
             strategy_attempt += 1
             next_id = self._strategy_worker_id(worker_id, strategy_attempt)
-            breakers = getattr(self, "_worker_action_breakers", {})
-            if (
-                outcome.failure_kind == "action_contract_invalid"
-                and current_id in breakers
-            ):
-                breakers[next_id] = breakers[current_id]
             self._trace(
                 "strategy_worker_dispatched",
                 logical_worker_id=worker_id,
@@ -819,13 +809,8 @@ class ToolAgentRuntime:
         if journals is None:
             self._worker_journals = {}
             journals = self._worker_journals
-        breakers = getattr(self, "_worker_action_breakers", None)
-        if breakers is None:
-            self._worker_action_breakers = {}
-            breakers = self._worker_action_breakers
         journal = journals.setdefault(worker_id, WorkerJournal(worker_id=worker_id))
-        circuit_breaker = breakers.setdefault(worker_id, WorkerActionCircuitBreaker())
-        self._inherit_disproven_facts(journals, journal, worker_id)
+        self._inherit_task_memory(journals, journal, worker_id)
         retained_events = len(journal.events)
         self._trace(
             "worker_started",
@@ -866,9 +851,9 @@ class ToolAgentRuntime:
                 step += 1
                 observed_auth_codes.update(auth_codes_from_frame(frame))
                 # Screenshot-only delivery surfaces preserve codes through journal facts.
-                observed_auth_codes.update(
-                    auth_codes_from_text(" ".join(journal.established_fact_texts))
-                )
+                observed_auth_codes.update(auth_codes_from_text(
+                    " ".join(journal.active_memory_statements(frame_id=frame.frame_id))
+                ))
                 initial_same_frame_feedback = None
                 predispatch_repair_turn = 0
             else:
@@ -901,7 +886,6 @@ class ToolAgentRuntime:
             guard_repair_turn = 0
             completion_recheck_turn = 0
             commit_pending = False
-            circuit_decision = None
             same_frame_feedback = initial_same_frame_feedback
             while True:
                 messages, context_reports = self._worker_messages(
@@ -1072,7 +1056,6 @@ class ToolAgentRuntime:
                             ),
                         }
                         continue
-                circuit_decision = None
                 guarded_call = calls[0] if call["name"] == "continue_with_actions" else call
                 action_spec = next(
                     (item for item in frame_actions if item.name == guarded_call["name"]),
@@ -1081,7 +1064,7 @@ class ToolAgentRuntime:
                 if action_spec is not None:
                     observed_auth_codes.update(
                         code
-                        for text in state.established_facts
+                        for text in state.memory_statements
                         for code in auth_codes_from_text(text)
                     )
                     resolved_guard_args = {
@@ -1089,15 +1072,11 @@ class ToolAgentRuntime:
                         **action_spec.fixed_args,
                         **guarded_call["args"],
                     }
-                    circuit_decision = circuit_breaker.inspect(
-                        tool=guarded_call["name"],
-                        capability=action_spec.capability,
-                        args=resolved_guard_args,
-                        frame=frame,
-                        observed_auth_codes=observed_auth_codes,
-                    )
-                    blocked_reason = (
-                        circuit_decision.reason if circuit_decision.blocked else ""
+                    blocked_reason = action_boundary_error(
+                        action_spec.capability,
+                        resolved_guard_args,
+                        frame,
+                        observed_auth_codes,
                     )
                     if blocked_reason:
                         if guard_repair_turn >= _MAX_ACTION_GUARD_REPAIRS_PER_FRAME:
@@ -1109,20 +1088,19 @@ class ToolAgentRuntime:
                             )
                         guard_repair_turn += 1
                         feedback = {
-                            "status": "blocked_repeated_action",
+                            "status": "action_boundary_invalid",
                             "reason": blocked_reason,
-                            "prior_attempts": circuit_decision.prior_attempts,
-                            "instruction": circuit_decision.instruction,
+                            "instruction": (
+                                "Correct the action so it satisfies the current frame's "
+                                "explicit action contract."
+                            ),
                         }
                         self._trace(
-                            "worker_action_blocked",
+                            "worker_action_rejected",
                             step=step,
                             frame_id=frame.frame_id,
                             tool=guarded_call["name"],
                             args=guarded_call["args"],
-                            signature=circuit_decision.signature,
-                            progress=circuit_decision.progress,
-                            prior_attempts=circuit_decision.prior_attempts,
                             reason=blocked_reason,
                         )
                         journal.record_guard(
@@ -1133,9 +1111,36 @@ class ToolAgentRuntime:
                         )
                         same_frame_feedback = feedback
                         continue
-                if call["name"] == "continue_with_actions":
-                    # The executor owns per-atomic-action attempt accounting.
-                    circuit_decision = None
+                try:
+                    journal.record_memory_updates(
+                        step=step,
+                        frame_id=frame.frame_id,
+                        state=state,
+                    )
+                except ValueError as exc:
+                    if guard_repair_turn >= _MAX_ACTION_GUARD_REPAIRS_PER_FRAME:
+                        return WorkerOutcome(
+                            phase="failed",
+                            summary=f"invalid memory update: {exc}",
+                            failure_kind="protocol_invalid",
+                            steps=step - 1,
+                        )
+                    guard_repair_turn += 1
+                    same_frame_feedback = {
+                        "status": "memory_update_invalid",
+                        "reason": str(exc),
+                        "instruction": (
+                            "Correct the typed memory delta on this same frame. "
+                            "No action was executed and no partial memory was recorded."
+                        ),
+                    }
+                    self._trace(
+                        "worker_memory_update_rejected",
+                        step=step,
+                        frame_id=frame.frame_id,
+                        reason=str(exc),
+                    )
+                    continue
                 break
             try:
                 if call["name"] == "continue_with_actions":
@@ -1149,7 +1154,6 @@ class ToolAgentRuntime:
                         frame=frame,
                         png=png,
                         journal=journal,
-                        circuit_breaker=circuit_breaker,
                         observed_auth_codes=observed_auth_codes,
                     )
                 else:
@@ -1165,17 +1169,16 @@ class ToolAgentRuntime:
                 result_payload = _worker_action_error(exc)
                 terminal = None
                 self._trace("worker_tool_error", step=step, tool=call["name"], error=result_payload["error"])
-            if circuit_decision is not None and not result_payload.get("reuse_current_frame"):
-                self._record_action_attempt(
-                    circuit_breaker, circuit_decision, action_spec, result_payload
-                )
             if call["name"] != "continue_with_actions":
-                journal.record_turn(
+                journal.record_action_result(
                     step=step,
                     frame_id=frame.frame_id,
-                    state=state,
                     tool=call["name"],
                     args=call["args"],
+                    result=result_payload,
+                )
+                journal.record_runtime_result(
+                    step=step,
                     result=result_payload,
                 )
             if result_payload.get("reuse_current_frame") is True:
@@ -1235,10 +1238,6 @@ class ToolAgentRuntime:
                 # A consume="each" operator finished one plan element; the cursor
                 # was advanced inside _execute_worker_tool. Continue the loop so
                 # the next frame sees the next element's bound value.
-                # Reset the circuit breaker: each plan element is an independent
-                # GUI phase, and same-structured menus across elements (e.g. every
-                # rename dialog) would otherwise be misread as one repeated action.
-                circuit_breaker.reset()
                 self._trace(
                     "worker_each_advanced",
                     step=step,
@@ -1393,7 +1392,10 @@ class ToolAgentRuntime:
         assessment: FrameAssessment | None = None,
     ) -> tuple[list[Any], list[dict[str, Any]]]:
         """Rebuild one frame from bounded Journal memory; never replay chat history."""
-        memory = build_worker_memory_view(journal)
+        memory = build_worker_memory_view(
+            journal,
+            current_frame_id=frame.frame_id,
+        )
         assessment = assessment or assess_frame(
             spec, active_actions, frame,
         )
@@ -1406,6 +1408,9 @@ class ToolAgentRuntime:
                 current_element=self._current_each_element(
                     spec, journal.worker_id
                 ),
+            ),
+            task_contract=original_task_contract(
+                str(getattr(self, "_task_goal", "") or spec.goal)
             ),
             same_frame_feedback=same_frame_feedback,
         )
@@ -1469,7 +1474,7 @@ class ToolAgentRuntime:
             if isinstance(refreshed, list):
                 controls = refreshed
                 frame.controls = refreshed
-        claim = " ".join([state.summary, *state.established_facts]).casefold()
+        claim = " ".join([state.summary, *state.memory_statements]).casefold()
 
         def cited(control: dict[str, Any]) -> bool:
             label = str(control.get("label") or "").strip().casefold()
@@ -1489,24 +1494,6 @@ class ToolAgentRuntime:
             and control.get("enabled") is not False
             and cited(control)
         ]
-
-    @staticmethod
-    def _record_action_attempt(
-        breaker: WorkerActionCircuitBreaker,
-        decision: Any,
-        action: DynamicActionSpec | None,
-        result: dict[str, Any],
-    ) -> None:
-        effective_scroll = bool(
-            action
-            and action.capability == "scroll"
-            and result.get("status") == "executed"
-            and result.get("no_effect") is False
-        )
-        if result.get("candidate_commit") or effective_scroll:
-            breaker.reset(trigger_signature=decision.signature)
-        else:
-            breaker.record(decision)
 
     def _refresh_next_action(
         self,
@@ -1609,7 +1596,6 @@ class ToolAgentRuntime:
         frame: MaterializedFrame,
         png: bytes,
         journal: WorkerJournal,
-        circuit_breaker: WorkerActionCircuitBreaker,
         observed_auth_codes: set[str] | None = None,
     ) -> tuple[dict[str, Any], str | None]:
         """Execute one fused Worker decision as interruptible atomic actions."""
@@ -1646,15 +1632,14 @@ class ToolAgentRuntime:
                 **action_call["args"],
             }
             remaining = calls[index:]
-            circuit_decision = circuit_breaker.inspect(
-                tool=action_call["name"],
-                capability=action_spec.capability,
-                args=resolved_args,
-                frame=frame,
-                observed_auth_codes=observed_auth_codes,
+            boundary_error = action_boundary_error(
+                action_spec.capability,
+                resolved_args,
+                frame,
+                observed_auth_codes or set(),
             )
-            if circuit_decision.blocked:
-                reason = circuit_decision.reason
+            if boundary_error:
+                reason = boundary_error
                 rejected_before_dispatch = executed == 0
                 journal.record_guard(
                     step=step,
@@ -1693,17 +1678,18 @@ class ToolAgentRuntime:
                 result = _worker_action_error(exc)
                 terminal = None
             if not rejected_before_dispatch:
-                self._record_action_attempt(
-                    circuit_breaker, circuit_decision, action_spec, result
-                )
                 executed += 1
-            journal.record_turn(
+            journal.record_action_result(
                 step=step,
                 substep=index,
                 frame_id=frame.frame_id,
-                state=state,
                 tool=action_call["name"],
                 args=action_call["args"],
+                result=result,
+            )
+            journal.record_runtime_result(
+                step=step,
+                substep=index,
                 result=result,
             )
             if rejected_before_dispatch:
@@ -1832,6 +1818,33 @@ class ToolAgentRuntime:
             self._validate_runtime_open_url(str(full_args.get("url") or ""))
         if action_spec.capability == "launch_app":
             self._validate_runtime_launch_app(str(full_args.get("app") or ""))
+        if action_spec.capability == "ask_user":
+            request_user_input = getattr(self.bundle, "request_user_input", None)
+            if not callable(request_user_input):
+                raise _WorkerActionRejected(
+                    "ask_user is unavailable because the platform has no user-input bridge"
+                )
+            question = str(full_args.get("question") or "").strip()
+            answer = str(request_user_input(question) or "").strip()
+            if not answer:
+                raise RuntimeError("ask_user returned an empty response")
+            payload = {
+                "status": "executed",
+                "action_type": "ask_user",
+                "no_effect": False,
+                "_runtime_memory_statement": (
+                    f"Authoritative user response to {question!r}: {answer}"
+                ),
+            }
+            self._trace(
+                "runtime_action",
+                tool=call["name"],
+                profile=spec.profile,
+                status="executed",
+                action_type="ask_user",
+                no_effect=False,
+            )
+            return payload, None
         if action_spec.capability in _EXECUTABLE_CAPABILITIES:
             spatial = action_spec.capability in _SPATIAL_CAPABILITIES
             for coordinate in ("x", "y"):
@@ -2684,15 +2697,9 @@ class ToolAgentRuntime:
                 f"({entry.get('repair_turn', '?')}/"
                 f"{_MAX_PREDISPATCH_REPAIRS_PER_FRAME})"
             )
-        if event == "worker_action_blocked":
-            prior_attempts = int(entry.get("prior_attempts") or 0)
+        if event == "worker_action_rejected":
             reason = str(entry.get("reason") or "")
-            if prior_attempts:
-                return (
-                    f"Action fuse: blocked {entry.get('tool', '?')} after "
-                    f"{prior_attempts} equivalent attempts"
-                )
-            return f"Action guard: blocked {entry.get('tool', '?')} · {reason}"
+            return f"Action rejected: {entry.get('tool', '?')} · {reason}"
         if event == "worker_complete":
             collection = (
                 entry.get("collection_ref")

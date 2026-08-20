@@ -34,6 +34,7 @@ available.
 from __future__ import annotations
 
 import argparse
+from dataclasses import replace
 import json
 import os
 import shlex
@@ -166,6 +167,24 @@ class MobileWorldEnv:
             "POST", "/step",
             json={"device": self.device, "action": {"action_type": "answer", "text": text}},
         )
+
+    def ask_user(self, question: str) -> str:
+        """Ask MobileWorld's authoritative simulated user and return its exact answer."""
+
+        self.ensure_init()
+        response = self._req(
+            "POST",
+            "/step",
+            json={
+                "device": self.device,
+                "action": {"action_type": "ask_user", "text": question},
+            },
+            timeout=120,
+        ).json()
+        answer = str(response.get("result") or "").strip()
+        if not answer:
+            raise RuntimeError("MobileWorld ask_user returned an empty response")
+        return answer
 
     def eval(self, task_name: str) -> tuple[float, str]:
         self.ensure_init()
@@ -411,8 +430,8 @@ def _build_parser() -> argparse.ArgumentParser:
     parser.add_argument(
         "--perception",
         choices=("vision-only", "enhanced"),
-        default="enhanced",
-        help="perception provider (default enhanced)",
+        default="vision-only",
+        help="perception provider (default vision-only)",
     )
     parser.add_argument(
         "--multi-action",
@@ -477,6 +496,11 @@ def main() -> int:
     print(f"[mobileworld] backend: {args.base_url}   adb: {args.adb_serial}")
 
     bundle = build_platform()
+    bundle = replace(
+        bundle,
+        request_user_input=env.ask_user,
+        tool_agent_capabilities=(*bundle.tool_agent_capabilities, "ask_user"),
+    )
     if args.command == "prepare":
         try:
             _prepare_task(

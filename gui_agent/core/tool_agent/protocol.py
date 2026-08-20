@@ -152,6 +152,13 @@ _CAPABILITY_SCHEMAS: dict[str, dict[str, Any]] = {
         "type": "string", "minLength": 1, "maxLength": 120,
         "description": "Exact installed application name exposed by Runtime.",
     }}, ("app",)),
+    "ask_user": _args({"question": {
+        "type": "string", "minLength": 5, "maxLength": 500,
+        "description": (
+            "One concrete question whose answer supplies missing user-owned information "
+            "required by the immutable task."
+        ),
+    }}, ("question",)),
 }
 
 _CAPABILITY_DESCRIPTIONS = {
@@ -178,6 +185,16 @@ _CAPABILITY_DESCRIPTIONS = {
     "home": "Return to the platform home surface.",
     "app_switch": "Open the platform application switcher.",
     "launch_app": "Launch one exact Runtime-provided installed application.",
+    "ask_user": (
+        "Ask the authoritative user for one missing value that materially determines the "
+        "next task action. Do not ask for UI instructions, strategy, or already established "
+        "facts. A descriptive role such as the user's usual, dedicated, preferred, or "
+        "appropriate destination is not an exact identifier. If task context, active memory, "
+        "and the bound application do not resolve that role to one exact value, ask before "
+        "creating, typing, or selecting a guessed value. Authorization to mutate does not "
+        "authorize inventing an identifier. Runtime returns the answer as task-lifetime "
+        "Evidence on the next decision."
+    ),
 }
 
 def function_tool(name: str, description: str, parameters: dict[str, Any]) -> dict[str, Any]:
@@ -273,24 +290,101 @@ def worker_attempt_contract(
     )
 
 
+def original_task_contract(goal: str) -> str:
+    """Project the user's wording with authority limited to value provenance."""
+
+    return (
+        "## Original task source (runtime-preserved)\n"
+        "This verbatim goal is authoritative for whether a user-owned value is exact or "
+        "merely descriptive. The Worker attempt may narrow work, but its paraphrase never "
+        "creates a name, path, recipient, account, or other identifier absent here. Resolve "
+        "descriptive roles from active Evidence or the bound application; otherwise ask_user.\n"
+        + json.dumps({"goal": goal}, ensure_ascii=False)
+    )
+
+
 _WORKER_STATE_SCHEMA: dict[str, Any] = {
     "type": "object",
     "description": "Compact semantic state paired with this atomic action.",
     "properties": {
         "status": {
             "type": "string",
-            "enum": ["exploring", "collecting", "completed", "failed"],
+            "enum": ["exploring", "collecting", "executing", "completed", "failed"],
+            "description": (
+                "Current workflow phase: exploring locates the binding source; collecting "
+                "acquires unresolved evidence; executing consumes an active Commitment after "
+                "its acquisition boundary is closed; completed and failed are terminal."
+            ),
         },
         "summary": {"type": "string", "maxLength": 320},
-        "established_facts": {
+        "memory_updates": {
             "type": "array",
-            "items": {"type": "string", "minLength": 1, "maxLength": 500},
             "maxItems": 8,
-            "description": WorkerState.model_fields["established_facts"].description,
+            "description": WorkerState.model_fields["memory_updates"].description,
+            "items": {"oneOf": [
+                {
+                    "type": "object",
+                    "properties": {
+                        "fact_type": {"type": "string", "const": fact_type},
+                        "key": {
+                            "type": "string", "pattern": "^[a-z][a-z0-9_]{0,63}$",
+                        },
+                        "status": {
+                            "type": "string",
+                            "enum": (
+                                ["active"] if fact_type == "observation"
+                                else ["active", "retracted", "completed"]
+                            ),
+                        },
+                        "lifetime": {
+                            "type": "string",
+                            "enum": [
+                                "frame" if fact_type == "observation" else "attempt"
+                            ],
+                        },
+                        "statement": {
+                            "type": "string", "minLength": 1, "maxLength": 1_200,
+                        },
+                        "depends_on": {
+                            "type": "array",
+                            "items": {
+                                "type": "string", "minLength": 3, "maxLength": 76,
+                                **(
+                                    {"pattern": "^(evidence|claim):[a-z][a-z0-9_]{0,63}$"}
+                                    if fact_type == "claim"
+                                    else {"pattern": "^(evidence|claim):[a-z][a-z0-9_]{0,63}$"}
+                                    if fact_type == "commitment"
+                                    else {}
+                                ),
+                            },
+                            "minItems": 1 if fact_type in {"claim", "commitment"} else 0,
+                            "maxItems": (
+                                0 if fact_type in {"observation", "evidence"} else 16
+                            ),
+                            **(
+                                {
+                                    "contains": {
+                                        "type": "string",
+                                        "pattern": "^claim:[a-z][a-z0-9_]{0,63}$",
+                                    },
+                                    "minContains": 1,
+                                }
+                                if fact_type == "commitment" else {}
+                            ),
+                        },
+                    },
+                    "required": [
+                        "fact_type", "key", "status", "lifetime", "statement",
+                        "depends_on",
+                    ],
+                    "additionalProperties": False,
+                }
+                for fact_type in ("observation", "evidence", "claim", "commitment")
+            ]},
         },
     },
     "required": [
-        "status", "summary", "established_facts",
+        "status", "summary", "memory_updates",
     ],
     "additionalProperties": False,
 }
@@ -306,7 +400,7 @@ def _with_worker_state(tool: dict[str, Any]) -> dict[str, Any]:
         if name == wrapped["function"]["name"]
     ), None)
     state_schema["properties"]["status"]["enum"] = (
-        [terminal_state] if terminal_state else ["exploring", "collecting"]
+        [terminal_state] if terminal_state else ["exploring", "collecting", "executing"]
     )
     parameters["properties"] = {
         "state": state_schema,
@@ -329,14 +423,21 @@ def dynamic_worker_tools(
     max_ordered_actions: int = MAX_ORDERED_ACTIONS,
     allow_failure: bool = True,
 ) -> list[dict[str, Any]]:
-    tools = (
-        [_with_worker_state(dynamic_action_envelope_tool(
-            actions,
-            max_ordered_actions=max_ordered_actions,
-        ))]
-        if action_envelope and actions
-        else [_with_worker_state(dynamic_action_tool(item)) for item in actions]
-    )
+    if action_envelope:
+        interactions = [item for item in actions if item.capability == "ask_user"]
+        batchable = [item for item in actions if item.capability != "ask_user"]
+        tools = [
+            *(_with_worker_state(dynamic_action_tool(item)) for item in interactions),
+            *(
+                [_with_worker_state(dynamic_action_envelope_tool(
+                    batchable,
+                    max_ordered_actions=max_ordered_actions,
+                ))]
+                if batchable else []
+            ),
+        ]
+    else:
+        tools = [_with_worker_state(dynamic_action_tool(item)) for item in actions]
     if completion_mode != "unavailable":
         description = (
             "Complete only when the target UI state is visibly confirmed. For a requested "
@@ -356,7 +457,7 @@ def dynamic_worker_tools(
                 "Runtime does not certify completeness."
             )
         )
-        tools.insert(0, _with_worker_state(model_tool(
+        tools.append(_with_worker_state(model_tool(
             "complete",
             description,
             CompleteReadyWorkerArgs,
@@ -815,7 +916,7 @@ def bind_worker_decision_transport(
             **kwargs,
         ), "", (
             f"emit exactly one required tool call named one of: {names}; "
-            "executable actions belong inside continue_with_actions.args.actions"
+            "batched GUI actions belong inside continue_with_actions.args.actions"
         )
     raise ValueError(f"unsupported Worker action protocol {protocol!r}")
 

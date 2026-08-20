@@ -49,6 +49,7 @@ class PlatformBundle:
     ]
     read_time: Callable[["PerceptionSession"], "PlatformTimeSnapshot"]
     tool_agent_capabilities: tuple[str, ...]
+    request_user_input: Callable[[str], str] | None = None
 
 
 def build_platform(

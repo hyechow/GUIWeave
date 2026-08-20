@@ -2,13 +2,10 @@
 
 from __future__ import annotations
 
-import json
 import ipaddress
 import re
 import socket
-from collections import deque
-from dataclasses import dataclass, field
-from hashlib import sha256
+from dataclasses import dataclass
 from typing import Any, Literal
 from urllib.parse import urlsplit
 
@@ -20,46 +17,11 @@ from gui_agent.core.tool_agent.contracts import (
 from gui_agent.core.tool_agent.filter_state import compile_filter_predicates
 
 
-_GUARDED_CAPABILITIES = {
-    "tap",
-    "type",
-    "clear_text",
-    "press_enter",
-    "select_option",
-    "scroll",
-    "drag",
-    "long_press",
-    "open_url",
-    "back",
-    "home",
-    "app_switch",
-    "launch_app",
-}
-# Recent (signature, progress) attempts retained for repeat detection. Sized to
-# exceed a typical multi-step GUI cycle (select → menu → cancel → re-select ≈ 6)
-# so a repeated step lands inside the window before the cycle closes again.
-_ATTEMPT_WINDOW = 8
-# Entries kept after a progress reset() so a loop containing a commit/scroll step
-# still registers its repetition on the next cycle.
-_RESET_RETAIN = 2
-_SIGNATURE_FIELDS = (
-    "text",
-    "url",
-    "app",
-    "direction",
-    "amount",
-    "duration_ms",
-    "target_area",
-)
 _AUTH_CODE_MARKER = r"(?:verification code|one-time code|otp|验证码|校验码|动态码)"
 _AUTH_CODE_RE = re.compile(
     rf"{_AUTH_CODE_MARKER}\D{{0,32}}(?<!\d)(\d{{4,8}})(?!\d)"
     rf"|(?<!\d)(\d{{4,8}})(?!\d)\D{{0,32}}{_AUTH_CODE_MARKER}",
     re.IGNORECASE,
-)
-_DEFAULT_BLOCK_INSTRUCTION = (
-    "Treat the Runtime guard as authoritative. Do not retry the blocked action; "
-    "advance from the current observation or choose a materially different capability."
 )
 # A Worker hallucination: `{{new_name}}` (or `{new_name}`) typed literally because
 # the model could not see the Runtime-injected binding value. It is never a real
@@ -236,7 +198,7 @@ def _fully_visible_bounded_scope(frame: MaterializedFrame) -> bool:
     return False
 
 
-def _action_boundary_error(
+def action_boundary_error(
     capability: str,
     args: dict[str, Any],
     frame: MaterializedFrame,
@@ -331,141 +293,3 @@ def _action_boundary_error(
                 "blockers before opening a record"
             )
     return ""
-
-
-def _coordinate_bucket(value: Any, *, size: int = 25) -> int | None:
-    if not isinstance(value, (int, float)) or isinstance(value, bool):
-        return None
-    return int(float(value) // size * size)
-
-
-def action_signature(
-    *,
-    tool: str,
-    capability: str,
-    args: dict[str, Any],
-) -> str:
-    """Return a semantic signature tolerant of aliases and coordinate jitter."""
-    del tool  # Task action aliases must not bypass the logical-action fuse.
-    payload: dict[str, Any] = {
-        "capability": capability,
-    }
-    for field_name in _SIGNATURE_FIELDS:
-        if capability == "scroll" and field_name == "amount":
-            continue
-        value = args.get(field_name)
-        if value not in (None, ""):
-            payload[field_name] = value
-    if capability != "scroll":
-        for coordinate in ("x", "y", "to_x", "to_y"):
-            bucket = _coordinate_bucket(args.get(coordinate))
-            if bucket is not None:
-                payload[coordinate] = bucket
-    return json.dumps(payload, ensure_ascii=False, sort_keys=True, separators=(",", ":"))
-
-
-def progress_signature(frame: MaterializedFrame) -> str:
-    """Hash task-relevant progress while ignoring unrelated visual mutations."""
-    control_fields = ("kind", "label", "value", "focused", "checked", "selected")
-    payload = {
-        "page": (frame.url, frame.title),
-        "visual_surface": frame.visual_fingerprint,
-        "scopes": {
-            key: (value.get("status"), value.get("applied_filters"))
-            for key, value in sorted(frame.requirement_scopes.items())
-        },
-        "collections": [
-            (item.requirement_id, item.row_count)
-            for item in frame.collections
-        ],
-        "visible": frame.visible_collection_regions,
-        "controls": [
-            tuple(control.get(key) for key in control_fields)
-            for control in frame.controls
-            if any(control.get(key) not in (None, "") for key in control_fields[2:])
-        ],
-    }
-    rendered = json.dumps(payload, ensure_ascii=False, sort_keys=True, default=str)
-    return sha256(rendered.encode()).hexdigest()[:16]
-
-
-@dataclass(frozen=True)
-class ActionCircuitDecision:
-    blocked: bool
-    signature: str
-    progress: str
-    prior_attempts: int
-    reason: str = ""
-    instruction: str = ""
-
-
-@dataclass
-class WorkerActionCircuitBreaker:
-    """Block an action already executed in an identical task-relevant state.
-
-    A single-slot memory cannot see multi-step GUI loops (select → open menu →
-    cancel → re-select): intervening actions overwrite it before the cycle
-    closes, so each repeated step looks novel. Keep a bounded window of recent
-    (signature, progress) attempts and block when the same pair recurs inside
-    it; the window is sized to cover a full GUI cycle.
-    """
-
-    _attempts: deque[tuple[str, str]] = field(
-        default_factory=lambda: deque(maxlen=_ATTEMPT_WINDOW)
-    )
-
-    def inspect(
-        self,
-        *,
-        tool: str,
-        capability: str,
-        args: dict[str, Any],
-        frame: MaterializedFrame,
-        observed_auth_codes: set[str] | None = None,
-    ) -> ActionCircuitDecision:
-        signature = action_signature(tool=tool, capability=capability, args=args)
-        progress = progress_signature(frame)
-        attempt = (signature, progress)
-        prior_attempts = sum(1 for item in self._attempts if item == attempt)
-        compatibility_error = _action_boundary_error(
-            capability, args, frame, observed_auth_codes or set()
-        )
-        if compatibility_error:
-            return ActionCircuitDecision(
-                blocked=True,
-                signature=signature,
-                progress=progress,
-                prior_attempts=prior_attempts,
-                reason=compatibility_error,
-                instruction=_DEFAULT_BLOCK_INSTRUCTION,
-            )
-        blocked = capability in _GUARDED_CAPABILITIES and prior_attempts > 0
-        reason = (
-            f"blocked repeated {capability} action without task-relevant progress"
-            if blocked else ""
-        )
-        return ActionCircuitDecision(
-            blocked=blocked,
-            signature=signature,
-            progress=progress,
-            prior_attempts=prior_attempts,
-            reason=reason,
-            instruction=_DEFAULT_BLOCK_INSTRUCTION if blocked else "",
-        )
-
-    def record(self, decision: ActionCircuitDecision) -> None:
-        self._attempts.append((decision.signature, decision.progress))
-
-    def reset(self, trigger_signature: str | None = None) -> None:
-        # A "progress" event (candidate commit / effective scroll) releases the
-        # fuse for the action that produced it, but clearing the whole window
-        # would erase the evidence of a loop that happens to contain such a step
-        # (select → commit → undo → re-select). Release only the triggering
-        # action's entries and keep the rest so the next cycle still registers.
-        if trigger_signature is None:
-            self._attempts.clear()
-            return
-        retained = [
-            item for item in self._attempts if item[0] != trigger_signature
-        ]
-        self._attempts = deque(retained[-_RESET_RETAIN:], maxlen=_ATTEMPT_WINDOW)

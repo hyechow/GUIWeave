@@ -4,96 +4,23 @@ from __future__ import annotations
 
 import json
 import os
-import re
-from dataclasses import dataclass, field
-from typing import Any
+from dataclasses import dataclass, field, replace
+from typing import Any, Literal
 
 from gui_agent.context.blocks import (
     ContextBlock,
     ContextCompressor,
-    ContextVariant,
     render_context_blocks,
 )
 from gui_agent.core.tool_agent.contracts import MaterializedFrame, WorkerState
 
 
 DEFAULT_WORKER_RECENT_K = 4
-DEFAULT_WORKER_COMPRESSED_K = 6
 DEFAULT_WORKER_CONTEXT_MAX_CHARS = int(
     os.environ.get("TOOL_AGENT_WORKER_CONTEXT_MAX_CHARS") or 24_000
 )
 
-# An observation that an affordance or path is unavailable is task-critical for
-# the whole Worker run: without durable retention the narrative window evicts it
-# within a few turns and the Worker re-attempts the disproven path blindly.
-# Transient states (visibility, selection, pending loads) are excluded — they
-# change from frame to frame and must not become durable.
-_DISPROVEN_FACT_PATTERNS = tuple(
-    re.compile(pattern, re.IGNORECASE)
-    for pattern in (
-        # "no X option/button/menu item" — tightened so "no action required" and
-        # "no need to press the button" (benign no-op states) are not treated as
-        # a disproven path.
-        r"\bno\b(?![^.;]{0,40}(?:need|reason|point)\s+to)\b[^.;]{0,60}\b(?:option|button|menu item|menu)\b",
-        r"\bno\b[^.;]{0,40}\baction\s+(?:available|exists|is\s+provided|offered)\b",
-        r"\b(?:does|do|did)\s+not\s+(?:contain|include|offer|support|provide|have)\b",
-        r"\bdoesn'?t\s+(?:contain|include|offer|support|provide|have)\b",
-        r"\b(?:is|are|was|were)\s+not\s+(?:available|accessible|supported|provided|offered)\b",
-        r"\bunsupported\b",
-        r"\bmissing\b",
-        r"\bnot\s+found\b",
-        r"\bno\s+(?:match|result|results|files|items|records)\s+(?:for|found|in|to)\b",
-        r"\b(?:option|button|menu item|entry|control|feature)\b[^.;]{0,40}\b(?:missing|absent|unavailable)\b",
-        # "lacks a save button / lacks the option" — narrowed to UI controls so
-        # quality statements like "lacks contrast" are not treated as disproven.
-        # Allow one or two modifier words before the control noun (e.g. "save
-        # button") while still ending on a control noun.
-        r"\blacks?\s+(?:a\s+|an\s+|the\s+)?[\w-]+\s+(?:option|button|menu item|menu|feature|field|entry|checkbox|tab|panel|dialog|control)\b",
-        r"\blacks?\s+(?:a\s+|an\s+|the\s+)?(?:option|button|menu item|menu|feature|field|entry|checkbox|tab|panel|dialog|control)\b",
-        r"不包含",
-        r"不支持",
-        r"无法",
-        r"缺少",
-        r"没有",
-        r"找不到",
-        r"尚无",
-        r"暂无",
-        r"不存在",
-        r"无任何",
-        r"没有任何",
-    )
-)
-_TRANSIENT_FACT_PATTERNS = tuple(
-    re.compile(pattern, re.IGNORECASE)
-    for pattern in (
-        r"\bnot\s+(?:yet\s+)?(?:visible|displayed|shown|rendered|loaded)\b",
-        r"\bnot\s+(?:currently\s+)?(?:selected|checked|focused|enabled|expanded)\b",
-        r"\bnot\s+(?:available|accessible|supported)\s+(?:yet|right\s+now|currently)\b",
-        r"\bnot\s+yet\s+(?:available|accessible|supported)\b",
-        r"\bno\s+(?:action|further\s+action)\s+(?:required|needed|necessary)\b",
-        r"\bno\s+(?:new|more|additional)\s+(?:rows|items|results|files|content)\b",
-        # Chinese transient states: not-yet / not-displayed / no-more, which are
-        # frame-to-frame and must not be treated as a disproven path.
-        r"(?:还没有|尚未|暂无|尚无|没有)(?:显示|加载|出现|返回|选择)?",
-        r"没有(?:更多|新的)(?:文件|结果|内容|记录|条目)",
-        r"无法确定(?:当前)?(?:页面|状态|情况)",
-    )
-)
-# Cap disproven/reaffirmed fact text so one long observation cannot inflate the
-# durable section (which is projected without a size bound) to a huge blob.
-_FACT_TEXT_LIMIT = 300
-# Durable projection caps: disproven/reaffirmed facts are privileged (loop
-# recovery depends on them), everything else is bounded to the most recent few.
-_DURABLE_PRIVILEGED_LIMIT = 24
-_DURABLE_OTHER_LIMIT = 12
-
-
-def _is_disproven_fact(text: str) -> bool:
-    """Whether an observation reports a missing affordance, not a transient state."""
-
-    if any(pattern.search(text) for pattern in _TRANSIENT_FACT_PATTERNS):
-        return False
-    return any(pattern.search(text) for pattern in _DISPROVEN_FACT_PATTERNS)
+_RECENT_TRANSITION_LIMIT = 8
 
 
 def _bounded_json(value: Any, *, limit: int = 1_200) -> str:
@@ -215,12 +142,30 @@ def _observed_choice_state(controls: list[dict[str, Any]]) -> list[dict[str, Any
 
 @dataclass(frozen=True)
 class WorkerJournalEvent:
-    """One append-only event; only Runtime evidence may be durable."""
+    """One immutable event in the Worker's semantic and execution timeline."""
 
     event_ref: str
     kind: str
-    durable_text: str = ""
-    narrative_text: str = ""
+    sequence: int = 0
+    fact_type: Literal[
+        "observation", "evidence", "claim", "commitment"
+    ] | None = None
+    key: str = ""
+    status: Literal["active", "retracted", "completed"] | None = None
+    lifetime: Literal["frame", "attempt", "task"] | None = None
+    statement: str = ""
+    frame_id: str = ""
+    attempt_id: str = ""
+    origin: Literal["worker", "runtime"] = "runtime"
+    requires_integration: bool = False
+    depends_on: tuple[str, ...] = ()
+    supersedes: str = ""
+    preserves_window: bool = False
+    receipt_text: str = ""
+
+    @property
+    def fact_ref(self) -> str:
+        return f"{self.fact_type}:{self.key}" if self.fact_type and self.key else ""
 
 
 @dataclass
@@ -229,59 +174,164 @@ class WorkerJournal:
 
     worker_id: str
     events: list[WorkerJournalEvent] = field(default_factory=list)
-    established_fact_texts: set[str] = field(default_factory=set, repr=False)
     executed_tools: set[str] = field(default_factory=set, repr=False)
 
-    def record_established_fact(self, *, event_ref: str, text: str) -> None:
-        """Retain a model observation; disproven paths and reaffirmations stay durable.
+    def _append(self, event: WorkerJournalEvent) -> WorkerJournalEvent:
+        recorded = replace(event, sequence=len(self.events) + 1)
+        self.events.append(recorded)
+        return recorded
 
-        Plain observations are bounded narrative and leave the prompt within a
-        few turns. Two kinds must outlive that window: an observation that a
-        path is unavailable (else the Worker re-attempts it blindly), and an
-        observation the Worker restates verbatim (else journal-lifetime dedup
-        hides a re-discovery from the prompt entirely).
-        """
-
-        fact = " ".join(str(text or "").split())
-        if not fact:
-            return
-        # Keep the tail on truncation: the disqualifying detail (e.g. the file
-        # name and "was not found") typically sits at the end of the fact.
-        bounded = (
-            fact
-            if len(fact) <= _FACT_TEXT_LIMIT
-            else "…" + fact[-(_FACT_TEXT_LIMIT - 1):]
+    def _latest_fact(self, fact_ref: str) -> WorkerJournalEvent | None:
+        return next(
+            (
+                event for event in reversed(self.events)
+                if event.kind == "memory_update" and event.fact_ref == fact_ref
+            ),
+            None,
         )
-        if fact in self.established_fact_texts:
-            self.events.append(WorkerJournalEvent(
-                event_ref=event_ref,
-                kind="worker_reaffirmed",
-                durable_text=f"Worker reaffirmed this observation: {bounded}",
-            ))
-            return
-        self.established_fact_texts.add(fact)
-        durable_text = ""
-        if _is_disproven_fact(fact):
-            durable_text = f"Worker-observed disproven path: {bounded}"
-        self.events.append(WorkerJournalEvent(
-            event_ref=event_ref,
-            kind="worker_observation",
-            durable_text=durable_text,
-            narrative_text=f"Worker-observed visual context: {bounded}",
-        ))
 
-    def record_turn(
+    def record_memory_updates(
         self,
         *,
         step: int,
         frame_id: str,
         state: WorkerState,
+    ) -> tuple[WorkerJournalEvent, ...]:
+        """Append one validated, ordered memory delta from a Worker decision."""
+
+        pending: list[WorkerJournalEvent] = []
+
+        def latest(fact_ref: str) -> WorkerJournalEvent | None:
+            return next(
+                (event for event in reversed(pending) if event.fact_ref == fact_ref),
+                self._latest_fact(fact_ref),
+            )
+
+        for index, update in enumerate(state.memory_updates, start=1):
+            fact_ref = f"{update.fact_type}:{update.key}"
+            prior = latest(fact_ref)
+            if prior is not None and prior.origin == "runtime":
+                raise ValueError(
+                    f"cannot modify Runtime-owned memory {fact_ref!r}"
+                )
+            if update.status != "active" and prior is None:
+                raise ValueError(f"cannot {update.status} unknown memory {fact_ref!r}")
+            dependencies = []
+            for dependency in update.depends_on:
+                event = latest(dependency)
+                if event is None or event.status != "active":
+                    raise ValueError(
+                        f"memory {fact_ref!r} has no active dependency {dependency!r}"
+                    )
+                if event.lifetime == "frame" and event.frame_id != frame_id:
+                    raise ValueError(
+                        f"memory {fact_ref!r} depends on expired {dependency!r}"
+                    )
+                dependencies.append(event.event_ref)
+            pending.append(WorkerJournalEvent(
+                event_ref=f"step:{step}:memory:{index}",
+                kind="memory_update",
+                fact_type=update.fact_type,
+                key=update.key,
+                status=update.status,
+                lifetime=update.lifetime,
+                statement=" ".join(update.statement.split()),
+                frame_id=frame_id,
+                attempt_id=self.worker_id,
+                origin="worker",
+                depends_on=tuple(dependencies),
+                supersedes=prior.event_ref if prior is not None else "",
+            ))
+        if state.status == "executing":
+            staged_events = [
+                *self.events,
+                *(
+                    replace(event, sequence=len(self.events) + offset)
+                    for offset, event in enumerate(pending, start=1)
+                ),
+            ]
+            staged = WorkerJournal(worker_id=self.worker_id, events=staged_events)
+            staged_view = build_worker_memory_view(staged, current_frame_id=frame_id)
+            if not staged_view.active_commitments:
+                raise ValueError(
+                    "executing phase requires an active Commitment with valid dependencies"
+                )
+            if staged_view.pending_runtime_evidence:
+                raise ValueError(
+                    "executing phase requires authoritative runtime Evidence to be "
+                    "integrated through Claim and Commitment dependencies"
+                )
+        return tuple(self._append(event) for event in pending)
+
+    def record_runtime_input(
+        self,
+        *,
+        key: str,
+        statement: str,
+        event_ref: str = "runtime-input:1",
+        requires_integration: bool = False,
+    ) -> WorkerJournalEvent:
+        """Append authoritative task-lifetime evidence supplied by Runtime."""
+
+        prior = self._latest_fact(f"evidence:{key}")
+        return self._append(WorkerJournalEvent(
+            event_ref=event_ref,
+            kind="memory_update",
+            fact_type="evidence",
+            key=key,
+            status="active",
+            lifetime="task",
+            statement=" ".join(statement.split()),
+            attempt_id=self.worker_id,
+            origin="runtime",
+            requires_integration=requires_integration,
+            supersedes=prior.event_ref if prior is not None else "",
+        ))
+
+    def record_runtime_result(
+        self,
+        *,
+        step: int,
+        result: Any,
+        substep: int | None = None,
+    ) -> WorkerJournalEvent | None:
+        """Promote an explicit Runtime-owned action result into task Evidence."""
+
+        if not isinstance(result, dict):
+            return None
+        statement = str(result.get("_runtime_memory_statement") or "").strip()
+        if not statement:
+            return None
+        suffix = f"_{substep}" if substep is not None else ""
+        return self.record_runtime_input(
+            key=f"user_response_{step}{suffix}",
+            statement=statement,
+            event_ref=f"step:{step}{'.' + str(substep) if substep is not None else ''}:runtime-input",
+            requires_integration=True,
+        )
+
+    def active_memory_statements(self, *, frame_id: str = "") -> tuple[str, ...]:
+        view = build_worker_memory_view(self, current_frame_id=frame_id)
+        return tuple(
+            event.statement
+            for event in (
+                *view.current_observations,
+                *view.accumulated_evidence,
+                *view.established_claims,
+                *view.active_commitments,
+            )
+        )
+
+    def record_action_result(
+        self,
+        *,
+        step: int,
+        frame_id: str,
         tool: str,
         args: dict[str, Any],
         result: Any,
         substep: int | None = None,
     ) -> None:
-        del frame_id  # Frame identity and coordinates do not improve later decisions.
         memory_args = _semantic_action_args(args)
         memory_result = _semantic_result(result)
         result_status = (
@@ -318,9 +368,25 @@ class WorkerJournal:
         elif target_signal.get("status") == "off_target":
             actual = str(target_signal.get("actual_element") or "").strip()
             actual_text = f"; marker landed on {actual!r}" if actual else ""
+            intent = str(memory_args.get("description") or "").strip()
+            intent_text = f"; intent={intent!r}" if intent else ""
+            action_type = str(result.get("action_type") or "")
+            action_text = f"; action={action_type}" if action_type else ""
             durable_text = (
-                f"tool={tool}; flash verifier reported off_target{actual_text}; "
+                f"tool={tool}; flash verifier reported off_target{actual_text}"
+                f"{action_text}{intent_text}; "
                 "do not repeat the same point"
+            )
+        elif (
+            result_status == "executed"
+            and not is_no_effect
+            and target_signal.get("status") == "on_target"
+        ):
+            actual = str(target_signal.get("actual_element") or "").strip()
+            intent = str(memory_args.get("description") or "").strip()
+            durable_text = (
+                f"tool={tool}; action={str(result.get('action_type') or '')}; "
+                f"target={actual!r}; intent={intent!r}; status=executed"
             )
         elif is_no_effect:
             action_type = (
@@ -342,24 +408,21 @@ class WorkerJournal:
             if memory_args
             else ""
         )
+        receipt_text = durable_text or (
+            f"tool={tool}{args_text}; result={_bounded_json(memory_result, limit=260)}"
+        )
         event_ref = (
             f"step:{step}.{substep}"
             if substep is not None
             else f"step:{step}"
         )
-        for index, fact in enumerate(state.established_facts, start=1):
-            self.record_established_fact(
-                event_ref=f"{event_ref}:fact:{index}",
-                text=fact,
-            )
-        self.events.append(WorkerJournalEvent(
+        self._append(WorkerJournalEvent(
             event_ref=event_ref,
-            kind="candidate_commit" if candidate_commit else "action_result",
-            durable_text=durable_text,
-            narrative_text=(
-                f"state={state.status}; tool={tool}{args_text}; "
-                f"result={_bounded_json(memory_result, limit=260)}"
-            ),
+            kind="candidate_commit" if candidate_commit else "action_receipt",
+            frame_id=frame_id,
+            attempt_id=self.worker_id,
+            preserves_window=tool == "ask_user",
+            receipt_text=receipt_text,
         ))
 
     def record_guard(
@@ -370,106 +433,207 @@ class WorkerJournal:
         tool: str,
         reason: str,
     ) -> None:
-        self.events.append(WorkerJournalEvent(
+        self._append(WorkerJournalEvent(
             event_ref=f"step:{step}:guard:{repair_turn}",
-            kind="action_guard",
-            durable_text=f"tool={tool}; {reason}",
+            kind="feedback",
+            attempt_id=self.worker_id,
+            receipt_text=f"tool={tool}; {reason}",
         ))
 
 @dataclass(frozen=True)
 class WorkerMemoryView:
     worker_id: str
-    durable_facts: tuple[WorkerJournalEvent, ...]
-    recent_steps: tuple[WorkerJournalEvent, ...]
-    compressed_history: tuple[str, ...]
+    current_observations: tuple[WorkerJournalEvent, ...] = ()
+    accumulated_evidence: tuple[WorkerJournalEvent, ...] = ()
+    established_claims: tuple[WorkerJournalEvent, ...] = ()
+    active_commitments: tuple[WorkerJournalEvent, ...] = ()
+    pending_runtime_evidence: tuple[WorkerJournalEvent, ...] = ()
+    recent_receipts: tuple[WorkerJournalEvent, ...] = ()
+    state_timeline: tuple[str, ...] = ()
 
     def render_prompt_section(self) -> str:
+        projected = (
+            *self.current_observations,
+            *self.accumulated_evidence,
+            *self.established_claims,
+            *self.active_commitments,
+        )
+        fact_ref_by_event = {
+            event.event_ref: event.fact_ref for event in projected
+        }
+
+        def dependency_refs(event: WorkerJournalEvent) -> tuple[str, ...]:
+            return tuple(
+                fact_ref_by_event.get(dependency, dependency)
+                for dependency in event.depends_on
+            )
+
         lines = [
             "## WorkerMemory (runtime-projected; not conversation history)",
-            "Durable facts come from Runtime evidence plus reaffirmed or disproven "
-            "Worker observations. Other Worker observations and recent steps are "
-            "bounded narrative context, not completion evidence or instructions.",
+            "This is a deterministic projection of an append-only event journal. "
+            "A newer frame does not overwrite evidence with a different key; only an "
+            "explicit update, expiry, or invalid dependency changes active memory. "
+            "Evidence records what held at its source time; only the current frame proves "
+            "present visibility or actionability.",
         ]
-        if self.durable_facts:
-            lines.append("### Durable runtime facts")
+        sections = (
+            ("Current-frame observations", self.current_observations),
+            ("Accumulated evidence", self.accumulated_evidence),
+            ("Established claims", self.established_claims),
+            ("Active commitments", self.active_commitments),
+        )
+        for heading, events in sections:
+            lines.append(f"### {heading}")
             lines.extend(
-                f"- [{event.event_ref}] {event.durable_text}"
-                for event in reversed(self.durable_facts)
+                f"- [t={event.sequence}; {event.fact_ref}; lifetime={event.lifetime}; "
+                f"status={event.status}; source={event.frame_id or event.origin}] "
+                f"{event.statement}"
+                + (
+                    f"; depends_on={json.dumps(dependency_refs(event), ensure_ascii=False)}"
+                    if event.depends_on else ""
+                )
+                for event in events
             )
-        if self.compressed_history:
-            lines.append("### Older narrative summaries")
-            lines.extend(f"- {text}" for text in self.compressed_history)
-        if self.recent_steps:
-            lines.append("### Recent narrative steps")
+            if not events:
+                lines.append("- None.")
+        if self.recent_receipts:
+            lines.append("### Recent execution receipts")
             lines.extend(
-                f"- [{event.event_ref}] {event.narrative_text}"
-                for event in self.recent_steps
-                if event.narrative_text
+                f"- [t={event.sequence}; {event.event_ref}] "
+                f"{event.receipt_text}"
+                for event in self.recent_receipts
             )
-        if not self.durable_facts and not self.recent_steps:
+        if self.pending_runtime_evidence:
+            lines.append("### Authoritative evidence awaiting integration")
+            lines.extend(
+                f"- {event.fact_ref}: {event.statement}"
+                for event in self.pending_runtime_evidence
+            )
+        lines.append("### Permitted next phase")
+        if self.pending_runtime_evidence:
+            lines.append(
+                "- Before executing, establish a Claim that depends on each authoritative "
+                "Evidence above and update the Commitment to depend on that Claim. The "
+                "Claim must preserve the answer's value semantics; do not treat a hierarchy, "
+                "range, or compound identifier as one leaf value. For path p0/.../pn under "
+                "a current visible parent p0/.../pk, a single-name field receives exactly "
+                "p(k+1). The answer establishes the path, not the current parent."
+            )
+        elif self.active_commitments:
+            lines.append(
+                "- Execute the active Commitment only with exact values established by its "
+                "dependencies. A Commitment never resolves a descriptive user-owned role or "
+                "authorizes an invented identifier; ask_user for any such missing value before "
+                "creating, typing, or selecting it. An exact identifier does not prove its "
+                "container exists; use the current frame to enter it or create an authorized "
+                "missing container. Do not return to acquisition unless Runtime invalidates an "
+                "exact dependency."
+            )
+        elif self.established_claims:
+            lines.append(
+                "- Preserve established Claims and acquire only evidence that is still "
+                "unresolved; do not reopen a claimed boundary without invalidating evidence."
+            )
+        else:
+            lines.append("- Continue the current attempt from verified current-frame evidence.")
+        lines.append("### State timeline")
+        lines.extend(f"- {item}" for item in self.state_timeline)
+        if not self.state_timeline:
+            lines.append("- No memory transitions recorded.")
+        if not any((projected, self.recent_receipts, self.state_timeline)):
             lines.extend(["### History", "- No prior Worker actions."])
         return "\n".join(lines)
-
-
-def _disproven_only_memory_section(memory: WorkerMemoryView) -> str:
-    """The memory section reduced to disproven/reaffirmed paths only.
-
-    Compressor fallback when the full projection exceeds the context ceiling:
-    the load-bearing fact for loop recovery is which paths are known impossible,
-    so keep exactly that and drop narrative/recent/other-durable detail.
-    """
-
-    lines = [
-        "## WorkerMemory (disproven paths only; reduced for context budget)",
-        "Disproven/reaffirmed observations remain; other narrative is omitted.",
-    ]
-    for event in memory.durable_facts:
-        if event.kind in {"worker_observation", "worker_reaffirmed"} and event.durable_text:
-            lines.append(f"- [{event.event_ref}] {event.durable_text}")
-    return "\n".join(lines) if len(lines) > 2 else (
-        "## WorkerMemory (disproven paths only)\n- No disproven paths recorded."
-    )
 
 
 def build_worker_memory_view(
     journal: WorkerJournal,
     *,
+    current_frame_id: str = "",
     recent_k: int = DEFAULT_WORKER_RECENT_K,
-    compressed_k: int = DEFAULT_WORKER_COMPRESSED_K,
 ) -> WorkerMemoryView:
-    narrative = [event for event in journal.events if event.narrative_text]
-    recent_limit = max(0, int(recent_k))
-    recent = narrative[-recent_limit:] if recent_limit else []
-    older = narrative[:-recent_limit] if recent_limit else narrative
-    compressed_limit = max(0, int(compressed_k))
-    compressed_events = older[-compressed_limit:] if compressed_limit else []
-    compressed = tuple(
-        f"[{event.event_ref}] {event.narrative_text}"
-        for event in compressed_events
+    memory_events = [
+        event for event in journal.events
+        if event.kind == "memory_update" and event.fact_ref
+    ]
+    if not current_frame_id:
+        current_frame_id = next(
+            (event.frame_id for event in reversed(memory_events) if event.frame_id),
+            "",
+        )
+    latest: dict[str, WorkerJournalEvent] = {}
+    for event in memory_events:
+        latest[event.fact_ref] = event
+    def observation_is_current(event: WorkerJournalEvent) -> bool:
+        if event.frame_id == current_frame_id:
+            return True
+        later_receipts = [
+            item for item in journal.events
+            if item.sequence > event.sequence
+            and item.kind in {"action_receipt", "candidate_commit"}
+        ]
+        return bool(later_receipts) and all(
+            item.preserves_window for item in later_receipts
+        )
+
+    candidates = [
+        event for event in latest.values()
+        if event.status == "active"
+        and (
+            event.lifetime != "frame"
+            or observation_is_current(event)
+        )
+    ]
+    valid_by_ref: dict[str, WorkerJournalEvent] = {}
+    for event in sorted(candidates, key=lambda item: item.sequence):
+        if all(dependency in valid_by_ref for dependency in event.depends_on):
+            valid_by_ref[event.event_ref] = event
+    valid = tuple(valid_by_ref.values())
+    observations = tuple(
+        event for event in valid if event.fact_type == "observation"
     )
-    durable_by_key: dict[tuple[str, str], WorkerJournalEvent] = {}
-    for event in journal.events:
-        if event.durable_text:
-            durable_by_key[(event.kind, event.durable_text)] = event
-    # Durable facts are projected unbounded, so bound them: keep every disproven /
-    # reaffirmed path (the load-bearing memory for loop recovery) plus the most
-    # recent other durable events. Without this cap a failure-dense run inflates
-    # the memory block past the context ceiling. durable_by_key preserves first-
-    # appearance (time) order, so keep the newest by slicing the tail; a string
-    # sort on event_ref would misorder step>=10 lexicographically.
-    durable = list(durable_by_key.values())
-    privileged = [event for event in durable
-                  if event.kind in {"worker_observation", "worker_reaffirmed"}]
-    others = [event for event in durable if event not in privileged]
-    kept_durable = (
-        privileged[-_DURABLE_PRIVILEGED_LIMIT:]
-        + others[-_DURABLE_OTHER_LIMIT:]
+    evidence = tuple(event for event in valid if event.fact_type == "evidence")
+    claims = tuple(event for event in valid if event.fact_type == "claim")
+    commitments = tuple(event for event in valid if event.fact_type == "commitment")
+    integrated: set[str] = set()
+    pending_dependencies = [
+        dependency
+        for commitment in commitments
+        for dependency in commitment.depends_on
+    ]
+    while pending_dependencies:
+        dependency = pending_dependencies.pop()
+        if dependency in integrated:
+            continue
+        integrated.add(dependency)
+        parent = valid_by_ref.get(dependency)
+        if parent is not None:
+            pending_dependencies.extend(parent.depends_on)
+    pending_runtime = tuple(
+        event for event in evidence
+        if event.requires_integration and event.event_ref not in integrated
+    )
+    recent_limit = max(0, int(recent_k))
+    receipts = [
+        event for event in journal.events
+        if event.kind in {"action_receipt", "candidate_commit", "feedback"}
+        and event.receipt_text
+    ]
+    recent = tuple(receipts[-recent_limit:] if recent_limit else ())
+    timeline = tuple(
+        f"t={event.sequence}: {event.fact_ref} -> {event.status}; "
+        f"lifetime={event.lifetime}"
+        + ("; version=updated" if event.supersedes else "; version=initial")
+        for event in memory_events[-_RECENT_TRANSITION_LIMIT:]
     )
     return WorkerMemoryView(
         worker_id=journal.worker_id,
-        durable_facts=tuple(kept_durable),
-        recent_steps=tuple(recent),
-        compressed_history=compressed,
+        current_observations=observations,
+        accumulated_evidence=evidence,
+        established_claims=claims,
+        active_commitments=commitments,
+        pending_runtime_evidence=pending_runtime,
+        recent_receipts=recent,
+        state_timeline=timeline,
     )
 
 
@@ -568,15 +732,20 @@ def project_worker_context(
     memory: WorkerMemoryView,
     frame: MaterializedFrame,
     attempt_contract: str = "",
+    task_contract: str = "",
     same_frame_feedback: dict[str, Any] | None = None,
     max_chars: int = DEFAULT_WORKER_CONTEXT_MAX_CHARS,
 ) -> WorkerContextProjection:
     """Build one capacity-managed context; the screenshot is supplied separately."""
     memory_text = memory.render_prompt_section()
+    if len(memory_text) > max_chars:
+        raise MemoryError(
+            "memory_overflow: active WorkerMemory exceeds the context budget"
+        )
     compact_frame = json.dumps(_frame_payload(
         frame,
         candidate_committed=any(
-            event.kind == "candidate_commit" for event in memory.durable_facts
+            event.kind == "candidate_commit" for event in memory.recent_receipts
         ),
     ), ensure_ascii=False)
     blocks = [
@@ -596,22 +765,21 @@ def project_worker_context(
             if same_frame_feedback
             else None
         ),
-        ContextBlock(
-            id="tool_agent.worker.memory",
-            source_type="runtime_state",
-            source="worker_journal_projection",
-            ttl="turn",
-            budget="required",
-            priority=10,
-            content=memory_text,
-            variants=(
-                ContextVariant(
-                    strategy="durable_disproven_only",
-                    content=_disproven_only_memory_section(memory),
-                    priority=90,
-                    reason="Context over budget; keep only disproven/reaffirmed paths.",
-                ),
-            ),
+        (
+            ContextBlock(
+                id="tool_agent.worker.current_attempt",
+                source_type="runtime_contract",
+                source="worker_spec",
+                ttl="turn",
+                budget="required",
+                priority=5,
+                authoritative_for=("goal", "output_contract", "approach"),
+                freshness="turn",
+                coverage="complete",
+                content=attempt_contract,
+            )
+            if attempt_contract.strip()
+            else None
         ),
         ContextBlock(
             id="tool_agent.worker.current_frame",
@@ -632,20 +800,29 @@ def project_worker_context(
                 + compact_frame
             ),
         ),
+        ContextBlock(
+            id="tool_agent.worker.memory",
+            source_type="runtime_state",
+            source="worker_journal_projection",
+            ttl="turn",
+            budget="required",
+            priority=10,
+            content=memory_text,
+        ),
         (
             ContextBlock(
-                id="tool_agent.worker.current_attempt",
-                source_type="runtime_contract",
-                source="worker_spec",
-                ttl="turn",
+                id="tool_agent.worker.original_task",
+                source_type="runtime_task",
+                source="original_task_goal",
+                ttl="task",
                 budget="required",
                 priority=5,
-                authoritative_for=("goal", "output_contract", "approach"),
-                freshness="turn",
+                authoritative_for=("user_value_provenance",),
+                freshness="task",
                 coverage="complete",
-                content=attempt_contract,
+                content=task_contract,
             )
-            if attempt_contract.strip()
+            if task_contract.strip()
             else None
         ),
     ]
@@ -657,7 +834,6 @@ def project_worker_context(
 
 
 __all__ = [
-    "DEFAULT_WORKER_COMPRESSED_K",
     "DEFAULT_WORKER_CONTEXT_MAX_CHARS",
     "DEFAULT_WORKER_RECENT_K",
     "WorkerContextProjection",

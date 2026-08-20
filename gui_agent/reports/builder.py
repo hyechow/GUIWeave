@@ -105,7 +105,7 @@ def _reduce_tool_agent_events(events: list[dict]) -> list[dict]:
         if pending is not None and name in {
             "worker_action_patch",
             "worker_action_patch_error",
-            "worker_action_blocked",
+            "worker_action_rejected",
             "worker_protocol_error",
             "worker_tool_error",
             "worker_complete",
@@ -546,7 +546,7 @@ def _tool_agent_report_steps(
                     "observation": compact_observation(turn.get("observation") or turn),
                     "state": {
                         "status": state.get("status"),
-                        "established_facts": state.get("established_facts") or [],
+                        "memory_updates": state.get("memory_updates") or [],
                     },
                     "action": {
                         "tool": turn.get("tool"),

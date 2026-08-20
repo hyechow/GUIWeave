@@ -208,6 +208,7 @@ ToolActionCapability: TypeAlias = Literal[
     "home",
     "app_switch",
     "launch_app",
+    "ask_user",
 ]
 
 
@@ -418,22 +419,83 @@ class WorkerSpec(StrictModel):
         return self
 
 
-class WorkerState(StrictModel):
-    """Compact evidence channel paired with a Worker action decision."""
+class WorkerMemoryUpdate(StrictModel):
+    """One explicit semantic-memory delta emitted with a Worker decision."""
 
-    status: Literal["exploring", "collecting", "completed", "failed"]
+    fact_type: Literal["observation", "evidence", "claim", "commitment"]
+    key: str = Field(pattern=r"^[a-z][a-z0-9_]{0,63}$")
+    status: Literal["active", "retracted", "completed"] = "active"
+    lifetime: Literal["frame", "attempt"]
+    statement: str = Field(min_length=1, max_length=1_200)
+    depends_on: list[str] = Field(default_factory=list, max_length=16)
+
+    @model_validator(mode="after")
+    def _validate_memory_semantics(self) -> "WorkerMemoryUpdate":
+        if self.fact_type == "observation":
+            if self.lifetime != "frame":
+                raise ValueError("observations require lifetime='frame'")
+            if self.status != "active":
+                raise ValueError("frame observations expire automatically")
+            if self.depends_on:
+                raise ValueError("observations cannot have validity dependencies")
+            return self
+        if self.lifetime != "attempt":
+            raise ValueError(
+                "evidence, claims, and commitments require lifetime='attempt'"
+            )
+        if self.status == "completed" and self.fact_type != "commitment":
+            raise ValueError("only commitments may use status='completed'")
+        if self.status != "active":
+            return self
+        if self.fact_type == "evidence" and self.depends_on:
+            raise ValueError("evidence facts cannot have validity dependencies")
+        if self.fact_type == "claim" and not self.depends_on:
+            raise ValueError("active claims require evidence dependencies")
+        if self.fact_type == "claim" and any(
+            not ref.startswith(("evidence:", "claim:"))
+            for ref in self.depends_on
+        ):
+            raise ValueError("claims may depend only on evidence or claims")
+        if self.fact_type == "commitment" and not any(
+            ref.startswith("claim:") for ref in self.depends_on
+        ):
+            raise ValueError("active commitments require a claim dependency")
+        return self
+
+
+class WorkerState(StrictModel):
+    """Compact state and typed memory deltas paired with one Worker decision."""
+
+    status: Literal["exploring", "collecting", "executing", "completed", "failed"]
     summary: str
-    established_facts: list[str] = Field(
+    memory_updates: list[WorkerMemoryUpdate] = Field(
         default_factory=list,
+        max_length=8,
         description=(
-            "New exact visual observations not already present in WorkerMemory. Runtime "
-            "keeps them only as bounded Worker narrative, never as authoritative completion "
-            "evidence. Include only task evidence needed after leaving the current frame; "
-            "exclude page chrome, dialogs, coordinates, approach alignment, and visible-control "
-            "inventories. For later record matching, retain the complete application-declared "
-            "identity without pronouns, prefixes, ellipses, summaries, or repetition."
+            "Only facts in this typed delta list enter WorkerMemory; summary is not memory. "
+            "Current screenshot/MaterializedFrame is the Observation layer. Use "
+            "observation/frame only for present-surface facts, which expire on the next "
+            "frame; use evidence/attempt for verified facts that remain true after the frame "
+            "changes; use claim/attempt for conclusions backed by "
+            "evidence keys, and commitment/attempt for the execution target justified by a "
+            "claim. A key is a stable fact slot, not an event or planned action; update or "
+            "retract that key when the fact changes. Evidence records what was verified at "
+            "its source frame and does not establish current visibility. When active Evidence "
+            "plus the current update closes every unresolved "
+            "branch of a required boundary, the same delta must establish its Claim and "
+            "execution Commitment; do not leave a closed boundary as bare Evidence or "
+            "restart its acquisition. Refer to dependencies as '<fact_type>:<key>'. Emit "
+            "only new, corrected, retracted, or completed versions; Runtime retains earlier "
+            "active versions."
         ),
     )
+
+    @property
+    def memory_statements(self) -> tuple[str, ...]:
+        return tuple(
+            item.statement for item in self.memory_updates
+            if item.status == "active"
+        )
 
 
 class DataChunkRef(StrictModel):
