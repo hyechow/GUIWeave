@@ -258,6 +258,42 @@ def test_worker_replay_can_replace_recorded_memory_with_production_projection(
     assert "## Worker attempt contract" not in model.calls[0][0].content
     turn_context = model.calls[0][1].content[0]["text"]
     assert "stale" not in turn_context
+
+
+def test_worker_replay_preserves_memory_from_current_production_order(
+    tmp_path,
+) -> None:
+    run_dir = _worker_run(
+        tmp_path,
+        recorded_tool="continue_with_actions",
+        recorded_actions=[{"name": "scroll", "args": {}}],
+    )
+    trace_path = run_dir / "tool_agent_trace.json"
+    trace = json.loads(trace_path.read_text(encoding="utf-8"))
+    human = trace["trace"][-1]["context_reports"][0]["roles"][1]
+    human["parts"][0]["text"] = (
+        "## Current MaterializedFrame frame:old\n{\"title\": \"stale\"}\n\n"
+        "## Current Worker attempt\nold contract\n\n"
+        "## WorkerMemory (runtime-compacted current belief)\nretained traversal\n\n"
+        "## Current frame anchor (authoritative now)\nold anchor"
+    )
+    trace_path.write_text(json.dumps(trace), encoding="utf-8")
+    model = _RecordedModel(_tool_call("continue_with_actions", {
+        "state": _state(),
+        "actions": [{
+            "name": "scroll",
+            "args": {"direction": "down", "description": "Current collection"},
+        }],
+    }))
+
+    result = replay_worker_decision(run_dir, frame=1, llm=model)
+
+    assert result["status"] == "passed"
+    turn_context = model.calls[0][1].content[0]["text"]
+    assert "retained traversal" in turn_context
+    assert "stale" not in turn_context
+    assert "old contract" not in turn_context
+    assert turn_context.count("## Current frame anchor") == 1
     assert '"frame_id": "frame:1"' in turn_context
     assert turn_context.index("Current MaterializedFrame") < turn_context.index(
         "Current Worker attempt"

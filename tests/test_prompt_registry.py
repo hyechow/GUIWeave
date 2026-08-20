@@ -129,6 +129,7 @@ def test_worker_keeps_data_private_and_coordinates_normalized() -> None:
     assert "A successful mutation does not prove navigation" in prompt
     assert "Runtime-owned ResultRef and collection values are private" in prompt
     assert "bounded cross-frame reasoning" in prompt
+    assert "may satisfy historical inspection prerequisites" in prompt
     assert "Never guess credentials" in prompt
     assert "transient code from its delivery surface" in prompt
     assert "immutable goal, success criteria" in prompt
@@ -166,6 +167,7 @@ def test_master_keeps_visual_conditional_dependencies_in_one_worker() -> None:
         "such as `type.text`", "finishing with `effect=\"data\"`",
         "neither typed data nor a transferable scope",
         "application-knowledge-defined unavailable/not-found failure-handling requirement",
+        "describe unavailability only as failure handling",
         "valid even within one application workflow",
         "Source fields are values, not UI action handles", "hidden link as data",
         "stable visible identity", "bind it to `text_input`",
@@ -179,13 +181,15 @@ def test_worker_keeps_action_grounding_and_memory_boundaries() -> None:
     for rule in (
         "exactly one visible control", "do not relabel a nearby or generic control",
         "complete task-relevant record identities", "bounded cross-frame reasoning",
+        "never reopen it to reconfirm",
         "Stable page identity",
         "selected sort field proves only that field, never its direction",
         "names the next state, not the current state",
         "current frame supersedes prior action feedback",
         "A current input value equal to the requested or just-bound value completes entry",
         "Advance through its visible option or submit control; never re-enter it",
-        "failure-handling UI state required by the criteria or application knowledge is a precondition",
+        "satisfy every required failure UI state",
+        "retained exact-target inspection is sufficient",
         "Call a named input binding action for its Runtime-injected value",
         "never send its name, a placeholder, or a model-authored substitute",
         "one sentence of at most 160 characters",
@@ -224,7 +228,7 @@ def test_worker_keeps_action_grounding_and_memory_boundaries() -> None:
                 "human-presence challenge", "Runtime-supplied actions", "`report_blocked`",
             "Coordinates are normalized 0..999", "binding approach",
                 "Worker observations and recent steps", "Do not interact with residue",
-                "Do not claim completion from visible pixels alone",
+                "retained inspection evidence may support failure reporting",
         )),
         ("task.tool_agent.strategy_decide", (
             "materially different, falsifiable implementation approach",

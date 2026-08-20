@@ -47,6 +47,70 @@ def test_worker_memory_is_a_bounded_projection_of_append_only_runtime_facts() ->
     assert "Recent narrative steps" not in rendered
 
 
+def test_worker_memory_compacts_repeated_bidirectional_viewports_into_progress() -> None:
+    journal = WorkerJournal(worker_id="detail_traversal")
+    frames = []
+    for step, (label, direction) in enumerate((
+        ("Order header", "down"),
+        ("Order footer", "up"),
+        ("Order header", "down"),
+    ), start=1):
+        frame = MaterializedFrame(
+            frame_id=f"frame:{step}",
+            screenshot_path=f"frame-{step}.png",
+            url="https://example.test/orders/169",
+            title="Order 169",
+            controls=[{"kind": "text", "label": label, "in_viewport": True}],
+        )
+        frames.append(frame)
+        journal.record_collection_stability(frame)
+        journal.record_turn(
+            step=step,
+            frame_id=frame.frame_id,
+            state=_state(step).model_copy(update={
+                "established_facts": [
+                    "Order 169 static address has no edit control",
+                ],
+            }),
+            tool="scroll",
+            args={"direction": direction},
+            result={
+                "status": "executed",
+                "action_type": "scroll",
+                "direction": direction,
+                "no_effect": False,
+            },
+        )
+
+    progress = journal.traversal_progress_note(frames[-1])
+    projection = project_worker_context(
+        memory=build_worker_memory_view(journal),
+        frame=frames[-1],
+        attempt_contract="## Current Worker attempt\nFailure destination: Orders",
+        traversal_progress=progress,
+    )
+
+    assert "revisited prior semantic viewports" in progress
+    assert "### Completed historical prerequisites" in projection.text
+    assert "### Pending terminal requirements" in projection.text
+    assert projection.text.index("### Pending terminal requirements") < projection.text.index(
+        "## Current frame anchor"
+    )
+
+    destination = MaterializedFrame(
+        frame_id="frame:5",
+        screenshot_path="frame-5.png",
+        url="https://example.test/orders",
+        title="Orders",
+        controls=[],
+    )
+    journal.record_collection_stability(destination)
+    historical = journal.traversal_progress_note(destination)
+    assert "already completed for previously visited surface" in historical
+    assert "Order 169" in historical
+    assert "https://example.test/orders/169" not in historical
+
+
 def test_worker_memory_omits_spatial_and_execution_metadata() -> None:
     journal = WorkerJournal(worker_id="compact_worker")
     journal.record_turn(
@@ -134,6 +198,7 @@ def test_worker_memory_accumulates_explicit_visual_facts() -> None:
 
     rendered = build_worker_memory_view(journal).render_prompt_section()
 
+    assert "historical prerequisite evidence only" in rendered
     assert "author=pupper; content=Border Collie" in rendered
     assert "author=demo; content=Golden Retriever" in rendered
     assert rendered.index("author=pupper") < rendered.index("author=demo")
@@ -343,6 +408,9 @@ def test_worker_context_always_uses_compact_semantic_frame() -> None:
     assert '"rect": {"x": 100, "y": 200, "w": 80, "h": 30}' in projection.text
     assert projection.text.index("## Current MaterializedFrame") < projection.text.index(
         "## Current Worker attempt"
+    ) < projection.text.index("## WorkerMemory")
+    assert projection.text.index("## WorkerMemory") < projection.text.index(
+        "## Current frame anchor"
     )
     assert next(
         item for item in projection.report["blocks"]

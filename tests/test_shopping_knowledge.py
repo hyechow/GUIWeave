@@ -14,7 +14,9 @@ def test_shopping_worker_knowledge_covers_storefront_without_becoming_a_manual()
     assert len(knowledge.worker_context()) < 7_000
     assert len(knowledge.sections) == 7
     assert "Buy" in worker and "order-success page" in worker
-    assert "cannot be edited" in worker
+    assert "no arrival date or delivery edit" in worker
+    assert "canonical unpaginated My Orders" in worker
+    assert "never reopen the order" in worker
     assert "without activating Submit" in worker
     assert "never sidebar My Wish List entries" in worker
     assert "Full cart: `http://localhost:7770/checkout/cart/`. Open it directly" in worker

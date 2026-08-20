@@ -53,6 +53,14 @@ _WORKER_DYNAMIC_SECTIONS = (
     "## Worker attempt contract",
 )
 
+_WORKER_TURN_SECTIONS = (
+    "## WorkerMemory",
+    "## Current MaterializedFrame",
+    "## Current Worker attempt",
+    "## Current frame anchor",
+    "## Same-frame runtime feedback",
+)
+
 
 def _selected_model(name: str, llm: Any) -> tuple[Any, Any, str]:
     if llm is not None:
@@ -171,22 +179,27 @@ def _worker_messages(
                 current + ("\n\n" + suffix if suffix else "")
             )))
         elif name == "human":
-            text = _without_section(text, "## Current Worker attempt")
-            if worker_memory_override is not None:
-                memory_start = text.find("## WorkerMemory")
-                frame_start = text.find("## Current MaterializedFrame", memory_start)
-                if memory_start >= 0 and frame_start >= 0:
-                    text = (
-                        text[:memory_start].rstrip()
-                        + "\n\n"
-                        + worker_memory_override.strip()
-                        + "\n\n"
-                        + text[frame_start:]
-                    )
+            original_text = text
+            memory_start = original_text.find("## WorkerMemory")
+            memory_boundaries = [
+                offset for marker in _WORKER_TURN_SECTIONS
+                if marker != "## WorkerMemory"
+                and (offset := original_text.find(marker, memory_start + 1)) >= 0
+            ] if memory_start >= 0 else []
+            memory_end = min(memory_boundaries, default=len(original_text))
+            memory_text = (
+                worker_memory_override.strip()
+                if worker_memory_override is not None
+                else original_text[memory_start:memory_end].strip()
+                if memory_start >= 0
+                else ""
+            )
+            dynamic_starts = [
+                offset for marker in _WORKER_TURN_SECTIONS
+                if (offset := original_text.find(marker)) >= 0
+            ]
+            text = original_text[:min(dynamic_starts, default=len(original_text))].rstrip()
             if materialized_frame is not None:
-                frame_start = text.find("## Current MaterializedFrame")
-                if frame_start >= 0:
-                    text = text[:frame_start].rstrip()
                 text = (
                     text.rstrip()
                     + "\n\n"
@@ -196,7 +209,23 @@ def _worker_messages(
                 text += "\n\n## Same-frame runtime feedback\n" + json.dumps(
                     same_frame_feedback, ensure_ascii=False,
                 )
-            text = (text.rstrip() + "\n\n" + attempt_contract).strip()
+            text = (
+                text.rstrip()
+                + "\n\n"
+                + attempt_contract
+                + ("\n\n" + memory_text if memory_text else "")
+                + (
+                    "\n\n## Current frame anchor (authoritative now)\n"
+                    "A terminal decision's required UI state must match this frame; historical "
+                    "or planned navigation cannot substitute.\n"
+                    + json.dumps({
+                        "frame_id": materialized_frame.frame_id,
+                        "url": materialized_frame.url,
+                        "title": materialized_frame.title,
+                    }, ensure_ascii=False)
+                    if materialized_frame is not None else ""
+                )
+            ).strip()
             messages.append(
                 image_message(text, screenshot, scale=image_scale)
                 if any(part.get("type") == "image" for part in parts)
