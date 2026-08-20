@@ -102,6 +102,39 @@ def test_plain_get_still_recorded_once():
     assert len(entries) == 1 and entries[0]["request"]["method"] == "GET"
 
 
+def test_finished_json_response_captures_body_from_originating_session():
+    class _Session:
+        def send(self, method, params):
+            assert (method, params) == (
+                "Network.getResponseBody", {"requestId": "JSON"},
+            )
+            return {
+                "body": "eyJpdGVtc19xdHkiOjF9",
+                "base64Encoded": True,
+            }
+
+    rec = HarRecorder(device=object())
+    rec._sessions = [_Session()]
+    rec._on_request({
+        "requestId": "JSON", "timestamp": 1.0,
+        "request": {"method": "GET", "url": "http://host/api/totals"},
+    }, "0")
+    rec._on_response({
+        "requestId": "JSON",
+        "response": {"status": 200, "mimeType": "application/json"},
+    }, "0")
+    rec._on_finished({
+        "requestId": "JSON", "timestamp": 2.0,
+    }, "0")
+
+    response = _dump(rec)["log"]["entries"][0]["response"]
+    assert response["content"] == {
+        "size": 15,
+        "mimeType": "application/json",
+        "text": '{"items_qty":1}',
+    }
+
+
 def test_failed_request_keeps_post_body_and_uses_playwright_status():
     rec = HarRecorder(device=object())
     rec._on_request({

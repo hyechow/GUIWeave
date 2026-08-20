@@ -8,6 +8,7 @@ import pytest
 from gui_agent.core.tool_agent.contracts import DataRequirement
 from gui_agent.core.tool_agent.perception import (
     DataNormalizationError,
+    _rows_satisfy_filters,
     _structured_rows,
 )
 from gui_agent.core.tool_agent.sandbox import execute_transform
@@ -97,3 +98,20 @@ def test_declared_datetime_rejects_unparseable_source_value() -> None:
                 "Purchase Date": "not a date",
             }]},
         )
+
+
+def test_missing_typed_filter_value_is_unknown_instead_of_invalid() -> None:
+    requirement = DataRequirement(
+        id="priced_products",
+        description="Products above a price boundary",
+        row_schema={
+            "type": "object",
+            "properties": {"price": {"type": "number"}},
+            "required": ["price"],
+        },
+        field_sources={"price": "Price"},
+        field_types={"price": "money"},
+        filters={"price": {"min": 1000}},
+    )
+
+    assert _rows_satisfy_filters(requirement, [{"price": None}]) is None

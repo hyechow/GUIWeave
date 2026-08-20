@@ -322,6 +322,14 @@ def test_worker_context_hides_offscreen_inventory_but_keeps_choice_state() -> No
                 "viewport_pos": "below",
             },
             {
+                "kind": "status_message",
+                "label": "success: Item added",
+                "value": "Item added",
+                "in_viewport": False,
+                "viewport_pos": "above",
+                "rect": {"x": 500, "y": -300, "w": 800, "h": 40},
+            },
+            {
                 "kind": "checkbox",
                 "label": "alex",
                 "value": False,
@@ -343,6 +351,13 @@ def test_worker_context_hides_offscreen_inventory_but_keeps_choice_state() -> No
     assert '"selected_text": ""' in projection.text
     assert "Edit row" not in projection.text
     assert '"observed_choice_state"' in projection.text
+    assert '"offscreen_status_messages"' in projection.text
+    status = projection.text.split('"offscreen_status_messages"', 1)[1].split(
+        '"offscreen_action_controls"', 1,
+    )[0]
+    assert '"label": "success: Item added"' in status
+    assert '"viewport_pos": "above"' in status
+    assert '"rect"' not in status
     observed = projection.text.split('"observed_choice_state"', 1)[1]
     assert '"in_viewport"' not in observed.split('"structured_surfaces"', 1)[0]
     controls = projection.text.split('"controls"', 1)[1]

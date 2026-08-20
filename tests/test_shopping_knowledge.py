@@ -16,8 +16,15 @@ def test_shopping_worker_knowledge_covers_storefront_without_becoming_a_manual()
     assert "Buy" in worker and "order-success page" in worker
     assert "cannot be edited" in worker
     assert "without activating Submit" in worker
-    assert "Product Name query `EYZUTAK`" in worker
-    assert "sidebar My Wish List entries are unrelated" in worker
+    assert "never sidebar My Wish List entries" in worker
+    assert "Full cart: `http://localhost:7770/checkout/cart/`. Open it directly" in worker
+    assert "`My Cart` and `View and Edit Cart` are previews, not navigation" in worker
+    assert "For a handed-off exact Product Name it tolerates punctuation variants" in worker
+    assert "resolve the exact card via header mini-search" in worker
+    assert "once the next frame is empty, begin product lookup" in worker
+    assert "do not revisit until the target has been added" in worker
+    assert "hidden hrefs are action targets, not row data" in worker
+    assert "Hand off Product Name" in worker
     assert "check_rules" in knowledge.metadata["_check"]["id"]
 
 
@@ -69,7 +76,11 @@ def test_shopping_buy_goal_combines_catalog_selection_and_checkout_commit() -> N
 
     assert sections == ["cart_checkout_planning", "catalog_planning"]
     assert "completed checkout" in context
-    assert "rating, review count, current price" in context
+    assert "product name, rating, review count" in context
+    assert "resolving a handed-off exact identity" in context
+    assert "resolve its exact matching card through header mini-search" in context
+    assert "source: Full Shopping Cart and Checkout flow" in context
+    assert "canonical full-cart URL from application knowledge" in context
     assert "Place Order" in context
 
 
@@ -100,6 +111,17 @@ def test_shopping_navigation_exposes_nested_category_paths() -> None:
 
     assert "/beauty-personal-care/makeup/makeup-remover.html" in worker
     assert "/home-kitchen/furniture/accent-furniture.html" in worker
+    assert "/tools-home-improvement/lighting-ceiling-fans/ceiling-lights.html" in worker
+
+
+def test_shopping_catalog_handoff_uses_visible_product_identity() -> None:
+    orchestrator = _shopping_knowledge().orchestrator_context(
+        "Buy the highest rated product from a category under a budget."
+    )
+
+    assert "hidden href is an action target, not source data" in orchestrator
+    assert "stable visible `product_name`" in orchestrator
+    assert "hand off the selected name" in orchestrator
 
 
 def test_shopping_contact_draft_selects_order_data_without_crossing_submit() -> None:

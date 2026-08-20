@@ -53,7 +53,8 @@ def _snapshot(label: str, *, image: bool = False) -> dict:
                     "type": "text",
                     "text": (
                         "recorded static prompt\n\n## Application knowledge\n"
-                        "old fact\n\n## Worker attempt contract\n{}"
+                        "old fact\n\n## Nested old app section\nold nested fact\n\n"
+                        "## Worker attempt contract\n{}"
                     ),
                 }],
             },
@@ -218,9 +219,11 @@ def test_worker_replay_compares_equivalent_actions_by_capability(
     assert "current worker fact" in model.calls[0][0].content
     assert "old fact" not in model.calls[0][0].content
     assert "Execute the binding `approach`" in model.calls[0][0].content
+    assert "old nested fact" not in model.calls[0][0].content
     assert "## Worker attempt contract" not in model.calls[0][0].content
     turn_context = model.calls[0][1].content[0]["text"]
-    assert "stale" in turn_context
+    assert "stale" not in turn_context
+    assert '"frame_id": "frame:1"' in turn_context
     assert turn_context.index("Current MaterializedFrame") < turn_context.index(
         "Current Worker attempt"
     )

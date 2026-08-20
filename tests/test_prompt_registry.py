@@ -151,8 +151,8 @@ def test_master_keeps_visual_conditional_dependencies_in_one_worker() -> None:
         "ResultRefs cannot serve as hidden Worker memory", "including by nesting it in an object",
         "authorized authentication method", "exact acceptance set", "never prescribe per-record commits",
         "source: <source name>", "selects among current GUI candidates",
-        "never a collector plus transform plus operator", "distinct source surfaces",
-        "exact stable scalar", "exact-scalar handoff above is typed data flow",
+        "distinct source surfaces", "deterministic filtering, ranking, joining, or calculation",
+        "exact stable visible scalar", "deterministic exact-scalar handoff above",
         "traverses every prerequisite collection", "compares each candidate", "mutates only nonmatches",
         "candidate-local evidence", "complete—not merely visible—candidate traversal",
         "excluded/already-processed identities", "intermediate identities",
@@ -160,6 +160,9 @@ def test_master_keeps_visual_conditional_dependencies_in_one_worker() -> None:
         "such as `type.text`", "finishing with `effect=\"data\"`",
         "neither typed data nor a transferable scope",
         "application-knowledge-defined unavailable/not-found failure-handling requirement",
+        "valid even within one application workflow",
+        "Source fields are values, not UI action handles", "hidden link as data",
+        "stable visible identity", "bind it to `text_input`",
     ):
         assert rule in prompt
 
@@ -174,7 +177,11 @@ def test_worker_keeps_action_grounding_and_memory_boundaries() -> None:
         "selected sort field proves only that field, never its direction",
         "names the next state, not the current state",
         "current frame supersedes prior action feedback",
+        "A current input value equal to the requested or just-bound value completes entry",
+        "Advance through its visible option or submit control; never re-enter it",
         "failure-handling UI state required by the criteria or application knowledge is a precondition",
+        "Call a named input binding action for its Runtime-injected value",
+        "never send its name, a placeholder, or a model-authored substitute",
         "one sentence of at most 160 characters",
         "never pair that conclusion with another action",
         "it does not require scrolling through or validating every result row",

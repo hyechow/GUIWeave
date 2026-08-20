@@ -193,6 +193,8 @@ def test_select_option_uses_rendered_radio_group_target() -> None:
             assert 'input[type="radio"]' in script
             assert "radio.name === anchorRadio.name" in script
             assert "document.elementFromPoint(point.x, point.y)" in script
+            assert "byPoint?.closest?." in script
+            assert "return mouseTarget(pointedOption)" in script
             assert args == {"x": 180, "y": 519, "target": "19", "deselect": False}
             return {"ok": True, "mode": "mouse", "x": 234, "y": 519, "label": "4 stars"}
 
