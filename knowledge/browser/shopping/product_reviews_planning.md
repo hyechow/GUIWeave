@@ -5,12 +5,12 @@ platform: browser
 app: shopping
 scope:
   - orchestrator
-selector_when: customer review reviews reviewer nickname summary title body stars rating submit rate feedback mention
+selector_when: customer review reviews reviewer nickname summary title body stars rating submit rate rated gave feedback mention
 source: manual_distilled
 confidence: high
 sensitivity: internal
 ttl: session
-version: 4
+version: 5
 ---
 # One Stop Market product reviews
 
@@ -25,6 +25,18 @@ Collect review pages in displayed order and preserve duplicates. Filter exact st
 deterministically after collection. A textual mention must be supported by the review body or title,
 not inferred from the product name. If the complete review set contains no match, return not-found;
 do not fabricate a summary from the product's aggregate rating.
+
+A product brand or class used to choose which product detail to open defines the Reviews source; it
+is not a predicate on each review row. Keep that source identity in the collector goal, and keep it
+out of the review requirement's filters and schema. One cohesive collector may search, open the
+matching product, and traverse its reviews. The review requirement contains only fields displayed
+per review, such as `rating` sourced from Rating and `reviewer` sourced from Reviewer, plus any
+requested title/body fields. `brand` and `product_category` are not Reviews row fields on this
+storefront; declaring either in review filters, row schema, field sources, or field types is invalid.
+
+For EYZUTAK phone cases, Advanced Search Product Name `EYZUTAK` returns the single matching product.
+The longer phrase `EYZUTAK phone case` is not a contiguous catalog name and returns no Advanced
+Search result.
 
 ## Submit a review
 
