@@ -10,14 +10,10 @@ to the score. This entry reuses the Android Tool Agent adapter (perception, exec
 and visualizer) by driving the emulator over **adb**
 (the existing :class:`AndroidDevice`, e.g. ``adb connect <host>:5556``) — which is more
 capable than the backend's ``/step`` (it has clear_text / keycodes / amount-aware
-scroll). MobileWorld's HTTP API is used ONLY for the task lifecycle:
-
-  pre-run  : POST /init (controller) + POST /task/init (reset the app to the task's
-             start state), wait for external adb to recover, then open a fresh
-             Android session; GET /task/goal supplies the intent.
-  run      : execute Tool Agent's Master + autonomous visual Workers over adb.
-  post-run : (optional) POST /step answer to set the backend's interaction_cache for
-             answer-style tasks + GET /task/eval (score, reason) + POST /task/tear_down.
+scroll). MobileWorld's HTTP API is used only for lifecycle and grading. ``prepare``
+performs the configured reset plus ``/task/init`` and writes a readiness marker.
+``run`` consumes that marker, checks adb without resetting, executes and grades the
+agent, then starts the next ``prepare`` in a detached process.
 
 The agent reaches BOTH the emulator (adb, e.g. host:5556) and the backend (HTTP,
 host:6800). On the MobileWorld Docker host those container ports must be reachable
@@ -40,6 +36,8 @@ from __future__ import annotations
 import argparse
 import json
 import os
+import shlex
+import subprocess
 import sys
 import time
 from pathlib import Path
@@ -49,6 +47,8 @@ if __package__ is None or __package__ == "":
     sys.path.insert(0, str(Path(__file__).resolve().parents[3]))
 
 from gui_agent.core.runtime.result import AgentResult, failed_result
+
+ROOT = Path(__file__).resolve().parents[3]
 
 # Tags that mark non-GUI-only task subsets; excluded from the default task list (the
 # GUI-only subset is the integration target — see the MobileWorld paper).
@@ -208,6 +208,25 @@ def _init_task_then_wait_for_android(
     env.init_task(task_name)
     print("[mobileworld] init_task OK; waiting for external adb...")
 
+    return _wait_for_android(
+        setup_check,
+        ready_timeout_s=ready_timeout_s,
+        poll_s=poll_s,
+        monotonic=monotonic,
+        sleep=sleep,
+    )
+
+
+def _wait_for_android(
+    setup_check: Callable[[], object],
+    *,
+    ready_timeout_s: float = 120.0,
+    poll_s: float = 2.0,
+    monotonic: Callable[[], float] = time.monotonic,
+    sleep: Callable[[float], None] = time.sleep,
+):
+    """Check an already-prepared emulator without mutating task state."""
+
     deadline = monotonic() + max(0.0, ready_timeout_s)
     attempt = 0
     while True:
@@ -226,6 +245,102 @@ def _init_task_then_wait_for_android(
             f"retrying in {min(poll_s, remaining):.1f}s"
         )
         sleep(min(poll_s, remaining))
+
+
+def _prepared_state_path() -> Path:
+    return Path(os.environ.get(
+        "MW_PREPARED_STATE_FILE",
+        ROOT / "logs/gui_agent/mobileworld/prepared_task.json",
+    )).expanduser()
+
+
+def _prepared_task_error(
+    path: Path,
+    *,
+    task_name: str,
+    base_url: str,
+    adb_serial: str,
+) -> str:
+    try:
+        state = json.loads(path.read_text(encoding="utf-8"))
+    except (OSError, ValueError):
+        return "no prepared task marker"
+    expected = {
+        "task_name": task_name,
+        "base_url": base_url.rstrip("/"),
+        "adb_serial": adb_serial,
+    }
+    mismatches = [key for key, value in expected.items() if state.get(key) != value]
+    return f"prepared task mismatch: {', '.join(mismatches)}" if mismatches else ""
+
+
+def _prepare_task(
+    env: MobileWorldEnv,
+    task_name: str,
+    setup_check: Callable[[], object],
+    *,
+    base_url: str,
+    adb_serial: str,
+    reset_command: str,
+    ready_timeout_s: float,
+):
+    """Reset once, initialize the task, and persist readiness for the next run."""
+
+    path = _prepared_state_path()
+    path.unlink(missing_ok=True)
+    if reset_command:
+        print("[mobileworld] running configured reset command")
+        subprocess.run(shlex.split(reset_command), check=True)
+        deadline = time.monotonic() + 600
+        while not env.health():
+            if time.monotonic() >= deadline:
+                raise TimeoutError("MobileWorld backend did not recover after reset command")
+            time.sleep(2)
+        env._initialized = False
+    setup = _init_task_then_wait_for_android(
+        env,
+        task_name,
+        setup_check,
+        ready_timeout_s=ready_timeout_s,
+    )
+    if not getattr(setup, "ok", False):
+        raise RuntimeError(getattr(setup, "summary", "android environment unavailable"))
+    path.parent.mkdir(parents=True, exist_ok=True)
+    pending_path = path.with_suffix(path.suffix + ".tmp")
+    pending_path.write_text(json.dumps({
+        "task_name": task_name,
+        "base_url": base_url.rstrip("/"),
+        "adb_serial": adb_serial,
+    }, ensure_ascii=False, indent=2), encoding="utf-8")
+    pending_path.replace(path)
+    print(f"[mobileworld] prepared {task_name}; marker={path}")
+    return setup
+
+
+def _spawn_task_prepare(args: argparse.Namespace) -> tuple[int, Path]:
+    """Prepare the next run in a detached process and return immediately."""
+
+    log_path = _prepared_state_path().with_name("prepare.log")
+    log_path.parent.mkdir(parents=True, exist_ok=True)
+    command = [
+        sys.executable, "-m", "gui_agent.adapters.android.mobileworld",
+        args.task, "--command", "prepare",
+        "--base-url", args.base_url,
+        "--adb-serial", args.adb_serial,
+        "--device", args.device,
+        "--adb-ready-timeout", str(args.adb_ready_timeout),
+    ]
+    if args.reset_command:
+        command.extend(["--reset-command", args.reset_command])
+    with log_path.open("ab") as output:
+        process = subprocess.Popen(
+            command,
+            stdout=output,
+            stderr=subprocess.STDOUT,
+            start_new_session=True,
+            env=os.environ.copy(),
+        )
+    return process.pid, log_path
 
 
 def _final_answer(result: AgentResult) -> str:
@@ -278,6 +393,10 @@ def _guess_task_type(goal: str) -> str:
 def _build_parser() -> argparse.ArgumentParser:
     parser = argparse.ArgumentParser(description="Run a MobileWorld task with Tool Agent Master")
     parser.add_argument("task", nargs="?", help="MobileWorld task name (omit with --list)")
+    parser.add_argument(
+        "--command", choices=("run", "prepare"), default="run",
+        help="run an already-prepared task, or reset and prepare it (default run)",
+    )
     parser.add_argument("--base-url", default=os.environ.get("MW_BASE_URL", "http://192.168.1.103:6800"),
                         help="MobileWorld backend URL (env MW_BASE_URL; default :6800)")
     parser.add_argument("--adb-serial", default=os.environ.get("MW_ADB_SERIAL")
@@ -314,6 +433,14 @@ def _build_parser() -> argparse.ArgumentParser:
     )
     parser.add_argument("--headless", action="store_true", help="run fully headless (no HUD / cursor overlay)")
     parser.add_argument("--no-teardown", action="store_true", help="skip /task/tear_down (leave app state for inspection)")
+    parser.add_argument(
+        "--no-auto-prepare", action="store_true",
+        help="do not reset and prepare the same task after a run",
+    )
+    parser.add_argument(
+        "--reset-command", default=os.environ.get("MW_RESET_COMMAND", ""),
+        help="external reset command used by prepare (env MW_RESET_COMMAND)",
+    )
     parser.add_argument("--no-answer-bridge", action="store_true", help="do not POST a final answer to the backend before eval")
     return parser
 
@@ -346,19 +473,51 @@ def main() -> int:
     load_dotenv()
 
     from gui_agent.core.runtime.factory import build_platform
-    from gui_agent.core.runtime.io import create_run_dir, tee_stdio
-    from gui_agent.core.tool_agent.result import execute_tool_agent
+    print(f"[mobileworld] task: {args.task}")
+    print(f"[mobileworld] backend: {args.base_url}   adb: {args.adb_serial}")
+
+    bundle = build_platform()
+    if args.command == "prepare":
+        try:
+            _prepare_task(
+                env,
+                args.task,
+                bundle.setup_check,
+                base_url=args.base_url,
+                adb_serial=args.adb_serial,
+                reset_command=args.reset_command,
+                ready_timeout_s=args.adb_ready_timeout,
+            )
+            return 0
+        except Exception as exc:  # noqa: BLE001
+            print(f"[mobileworld] prepare failed: {exc}")
+            return 1
+
+    marker = _prepared_state_path()
+    marker_error = _prepared_task_error(
+        marker,
+        task_name=args.task,
+        base_url=args.base_url,
+        adb_serial=args.adb_serial,
+    )
+    if marker_error:
+        print(
+            f"[mobileworld] run refused: {marker_error}; use "
+            f"--command prepare {args.task} first"
+        )
+        return 2
+    print("[mobileworld] prepared task marker OK; startup will not reset task state")
 
     if not env.health():
         print(f"[mobileworld] WARN backend /health not ok at {args.base_url} (continuing)")
     goal = env.get_goal(args.task)
-    print(f"[mobileworld] task: {args.task}")
     print(f"[mobileworld] goal: {goal}")
-    print(f"[mobileworld] backend: {args.base_url}   adb: {args.adb_serial}")
+    marker.unlink(missing_ok=True)
 
-    # Task initialization may restart the emulator.  Defer HUD/scrcpy construction
-    # until after it finishes for the same reason we defer AndroidSession: neither
-    # should retain a pre-reset adb transport.
+    from gui_agent.core.runtime.io import create_run_dir, tee_stdio
+    from gui_agent.core.tool_agent.result import execute_tool_agent
+
+    # Run mode consumes a marker and only checks the already-prepared emulator.
     hud = None
     log_dir = create_run_dir("mobileworld", "android")
     print(f"[mobileworld] agent logs: {log_dir}")
@@ -398,26 +557,23 @@ def main() -> int:
 
         result: AgentResult | None = None
         tool_presentation: object | None = None
-        task_initialized = False
+        task_ready = False
         try:
-            bundle = build_platform()
             try:
-                setup = _init_task_then_wait_for_android(
-                    env,
-                    args.task,
+                setup = _wait_for_android(
                     bundle.setup_check,
                     ready_timeout_s=args.adb_ready_timeout,
                 )
-                task_initialized = True
+                task_ready = True
             except Exception as exc:  # noqa: BLE001
                 setup = None
                 result = failed_result(
                     goal,
-                    f"MobileWorld 任务初始化失败：{exc}",
+                    f"MobileWorld 准备状态检查失败：{exc}",
                     task_type="RETRIEVE",
                     failure_kind="environment",
                 )
-                print(f"[mobileworld] init_task failed: {exc}")
+                print(f"[mobileworld] prepared task check failed: {exc}")
 
             if setup is not None:
                 for line in setup.lines:
@@ -425,7 +581,7 @@ def main() -> int:
             if result is None and setup is not None and not setup.ok:
                 result = failed_result(
                     goal,
-                    f"任务初始化完成，但外部 adb 未恢复：{setup.summary}",
+                    f"任务已标记为准备完成，但外部 adb 不可用：{setup.summary}",
                     task_type="RETRIEVE",
                     failure_kind="environment",
                 )
@@ -465,7 +621,7 @@ def main() -> int:
                 print(reply)
             except Exception as exc:  # noqa: BLE001 - reply is not evaluator input
                 print(f"[mobileworld] reply generation failed ({exc})")
-            if task_initialized and not args.no_answer_bridge:
+            if task_ready and not args.no_answer_bridge:
                 answer = _final_answer(result)
                 if answer:
                     try:
@@ -476,16 +632,16 @@ def main() -> int:
 
             score: float | None = None
             reason: str | None = None
-            if task_initialized:
+            if task_ready:
                 try:
                     score, reason = env.eval(args.task)
                     print(f"[mobileworld] OFFICIAL_EVAL score={score} reason={reason!r}")
                 except Exception as exc:  # noqa: BLE001
                     print(f"[mobileworld] eval failed ({exc})")
             else:
-                print("[mobileworld] eval skipped (task initialization did not complete)")
+                print("[mobileworld] eval skipped (prepared task was not runnable)")
 
-            if task_initialized and not args.no_teardown:
+            if task_ready and not args.no_teardown:
                 try:
                     env.tear_down(args.task)
                     print("[mobileworld] tear_down OK")
@@ -510,6 +666,16 @@ def main() -> int:
                     print(f"[mobileworld] OK report -> {report_path}")
                 except Exception as exc:  # noqa: BLE001
                     print(f"[mobileworld] report generation failed ({exc})")
+
+            if not args.no_auto_prepare and not args.no_teardown:
+                try:
+                    pid, prepare_log = _spawn_task_prepare(args)
+                    print(
+                        f"[mobileworld] background prepare started pid={pid}; "
+                        f"log={prepare_log}"
+                    )
+                except Exception as exc:  # noqa: BLE001
+                    print(f"[mobileworld] post-run prepare failed: {exc}")
 
             return 0 if (score is not None and score > 0) else 1
         finally:

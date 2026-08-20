@@ -1,17 +1,23 @@
 #!/usr/bin/env bash
 # 跑一条 MobileWorld 任务(Android agent;动作走 adb,任务生命周期+评分走 MobileWorld HTTP 后端)。
-# 用法: bin/mobileworld [--headless] <task-name> [额外参数...]
+# 用法: bin/mobileworld [run|prepare] [--headless] <task-name> [额外参数...]
 #       bin/mobileworld --list                       # 列出 GUI-only 任务名
-#   例: bin/mobileworld <task-name>                  # 跑一条任务(默认带状态 HUD)
+#   例: bin/mobileworld prepare <task-name>          # 重置并准备任务
+#       bin/mobileworld run <task-name>              # 只检查准备状态并运行
+#       bin/mobileworld <task-name>                  # 同 run（默认带状态 HUD）
 #       bin/mobileworld --headless <task-name>       # 全后台(无 HUD/光标覆盖)
 #       bin/mobileworld <task-name> --max-turns 30   # 透传给 mobileworld.py
 # 前置(MobileWorld Docker 宿主上,容器端口需对本机可达):
 #   1) emulator adb: 容器 5556 经 adb relay + portproxy 暴露 → `adb connect <host>:5556`
 #   2) backend HTTP: 容器 6800 经 portproxy 暴露 → MW_BASE_URL=http://<host>:6800
 # 覆盖: MW_BASE_URL=<url> MW_ADB_SERIAL=<host:port> bin/mobileworld <task-name>
+#       MW_RESET_COMMAND='<external reset command>' 配置 prepare 的容器重置步骤
 #   默认 MW_BASE_URL=http://192.168.1.103:6800  MW_ADB_SERIAL=192.168.1.103:5556
 set -e
 cd "$(dirname "$0")/.."
+
+: "${MW_RESET_COMMAND:=ssh -o BatchMode=yes -o ConnectTimeout=8 -p 2222 root@192.168.1.103 docker restart mobile_world_env_0}"
+export MW_RESET_COMMAND
 
 headless=0
 args=()
@@ -24,6 +30,13 @@ for arg in "$@"; do
 done
 set -- "${args[@]}"
 
+if [[ "$1" == "run" || "$1" == "prepare" ]]; then
+  command_arg=(--command "$1")
+  shift
+else
+  command_arg=()
+fi
+
 if [[ "$headless" == "1" ]]; then
   headless_arg=(--headless)
 else
@@ -33,4 +46,4 @@ fi
 # headless 是唯一可见性开关:headed 模式默认显示状态 HUD + 光标覆盖,--headless 则全关。
 # "$@" 在后，其余参数由 Tool Agent MobileWorld CLI 处理。
 exec uv run python -m gui_agent.adapters.android.mobileworld \
-         "${headless_arg[@]}" "$@"
+         "${command_arg[@]}" "${headless_arg[@]}" "$@"
