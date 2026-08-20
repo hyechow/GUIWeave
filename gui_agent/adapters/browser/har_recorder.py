@@ -14,9 +14,8 @@ That is the whole point of buffering in memory: the entry regains control only o
 ``run_agent_loop`` has returned and the session is gone.
 
 Captured per request: method, url, headers, query string, and post body (when CDP
-inlines it) + response status/headers/mimeType — exactly the fields the evaluator
-matches on. Response BODIES are not fetched (would need a live ``getResponseBody``);
-add that later if a task evaluates on response content.
+inlines it) + response status/headers/mimeType. JSON response bodies are fetched at
+``loadingFinished`` while the CDP session is live, for response-content evaluators.
 
 ``Network.requestWillBeSent.request.headers`` only carries headers the
 page/renderer explicitly set — browser-injected ones (``Accept``, ``Sec-Fetch-*``,
@@ -30,6 +29,7 @@ navigations — so we subscribe to both events and merge.
 
 from __future__ import annotations
 
+import base64
 from datetime import datetime, timezone
 from urllib.parse import urlsplit, parse_qsl
 
@@ -252,6 +252,19 @@ class HarRecorder:
             t1 = params.get("timestamp")
             if isinstance(t0, (int, float)) and isinstance(t1, (int, float)):
                 entry["time"] = max(0.0, (t1 - t0) * 1000.0)
+            content = entry["response"]["content"]
+            if "json" not in str(content.get("mimeType") or "").casefold():
+                return
+            session = self._sessions[int(source)]
+            result = session.send(
+                "Network.getResponseBody", {"requestId": params["requestId"]}
+            )
+            body = result.get("body")
+            if not isinstance(body, str):
+                return
+            if result.get("base64Encoded"):
+                body = base64.b64decode(body).decode("utf-8")
+            content.update({"text": body, "size": len(body.encode("utf-8"))})
         except Exception:
             pass
 
