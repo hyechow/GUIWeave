@@ -10,6 +10,9 @@ from gui_agent.adapters.android.mobileworld import (
     _guess_task_type,
     _init_task_then_wait_for_android,
     _mobileworld_access_context,
+    _prepared_state_path,
+    _prepared_task_error,
+    _wait_for_android,
 )
 from gui_agent.core.runtime.result import AgentResult
 from gui_agent.core.runtime.factory import SetupCheckResult
@@ -51,6 +54,13 @@ def test_mobileworld_cli_accepts_tool_agent_options():
     assert args.task == "OpenFlightModeTask"
     assert args.perception == "vision-only"
     assert args.multi_action is True
+
+
+def test_mobileworld_cli_separates_prepare_from_default_run() -> None:
+    assert _build_parser().parse_args(["Task"]).command == "run"
+    assert _build_parser().parse_args(["Task", "--command", "prepare"]).command == (
+        "prepare"
+    )
 
 
 def test_mobileworld_enables_tool_agent_multi_action_by_default() -> None:
@@ -124,6 +134,39 @@ def test_mobileworld_returns_last_failed_probe_at_ready_timeout():
 
     assert setup.ok is False
     assert events == ["init:CloseFlightModeTask", "probe"]
+
+
+def test_mobileworld_run_check_does_not_initialize_task() -> None:
+    checks = []
+
+    setup = _wait_for_android(
+        lambda: checks.append("probe") or SetupCheckResult(ok=True, summary="ready")
+    )
+
+    assert setup.ok is True
+    assert checks == ["probe"]
+
+
+def test_mobileworld_prepared_marker_matches_exact_environment(
+    tmp_path, monkeypatch,
+) -> None:
+    marker = tmp_path / "prepared.json"
+    monkeypatch.setenv("MW_PREPARED_STATE_FILE", str(marker))
+    marker.write_text(json.dumps({
+        "task_name": "Task",
+        "base_url": "http://backend:6800",
+        "adb_serial": "backend:5556",
+    }), encoding="utf-8")
+
+    assert _prepared_state_path() == marker
+    assert _prepared_task_error(
+        marker, task_name="Task", base_url="http://backend:6800/",
+        adb_serial="backend:5556",
+    ) == ""
+    assert "task_name" in _prepared_task_error(
+        marker, task_name="Other", base_url="http://backend:6800",
+        adb_serial="backend:5556",
+    )
 
 
 def test_mobileworld_preserves_exact_evaluator_answer():
