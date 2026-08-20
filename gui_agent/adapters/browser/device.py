@@ -1261,6 +1261,56 @@ class PlaywrightDevice:
                         };
                     }
 
+                    function radioAtPointOrFocus() {
+                        for (const el of [byPoint, document.activeElement]) {
+                            if (!el) continue;
+                            if (el.matches?.('input[type="radio"]')) return el;
+                            const labeled = el.closest?.('label')?.control;
+                            if (labeled?.matches?.('input[type="radio"]')) return labeled;
+                        }
+                        return null;
+                    }
+
+                    const anchorRadio = radioAtPointOrFocus();
+                    if (anchorRadio) {
+                        const radios = Array.from(
+                            (anchorRadio.form || document).querySelectorAll('input[type="radio"]')
+                        ).filter((radio) => radio.name === anchorRadio.name);
+                        const optionLabel = (radio) => {
+                            if (radio.labels?.[0]) return radio.labels[0];
+                            const escaped = globalThis.CSS?.escape?.(radio.id || '');
+                            return escaped ? document.querySelector(`label[for="${escaped}"]`) : null;
+                        };
+                        const radio = radios.find((item) => norm(item.value) === wanted)
+                            || radios.find((item) => norm(labelOf(optionLabel(item))) === wanted)
+                            || radios.find((item) => norm(labelOf(optionLabel(item))).includes(wanted));
+                        if (!radio) {
+                            return {
+                                ok: false,
+                                reason: `radio option not found: ${target}`,
+                                options: radios.map((item) => item.value || labelOf(optionLabel(item))).filter(Boolean),
+                            };
+                        }
+                        const hit = optionLabel(radio) || radio;
+                        const r = hit.getBoundingClientRect();
+                        const hitPoint = [0.5, 0.95, 0.05, 0.85, 0.15, 0.75, 0.25].map(
+                            (fraction) => ({x: r.x + r.width * fraction, y: r.y + r.height / 2})
+                        ).find((point) => {
+                            const top = document.elementFromPoint(point.x, point.y);
+                            return top === hit || hit.contains(top) || top?.closest?.('label') === hit;
+                        });
+                        if (hitPoint) {
+                            return {
+                                ok: true,
+                                mode: 'mouse',
+                                x: hitPoint.x,
+                                y: hitPoint.y,
+                                label: labelOf(hit) || radio.value,
+                            };
+                        }
+                        return {ok: false, reason: `radio option has no visible hit point: ${target}`};
+                    }
+
                     const candidates = Array.from(document.querySelectorAll(
                         '[role=option], [role=menuitem], [role=menuitemcheckbox], '
                         + '[role=menuitemradio], option, li, '

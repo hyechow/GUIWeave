@@ -407,7 +407,7 @@ def _control_family(control: dict) -> str:
         "button", "submit", "reset", "image",
     }:
         return "button"
-    if "checkbox" in kind or "radio" in kind:
+    if kind == "rating" or "checkbox" in kind or "radio" in kind:
         return "choice"
     if kind == "aria_combobox":
         return "select" if any(
@@ -433,7 +433,7 @@ def _compatible_with_action(control: dict, action_type: str) -> bool:
     if action_type == "type":
         return family == "input"
     if action_type == "select_option":
-        return family == "select"
+        return family in {"choice", "select"}
     return action_type in {"tap", "click"}
 
 
