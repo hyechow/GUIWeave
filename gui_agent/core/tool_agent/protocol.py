@@ -279,7 +279,7 @@ def worker_attempt_contract(
     return (
         "## Current Worker attempt\n"
         "`approach` is binding for this attempt. Choose actions that execute it; do not "
-        "continue a different source, application, or mechanism visible in the frame. "
+        "continue an unrelated source, application, or mechanism visible in the frame. "
         "When `phase` is `start`, the first action's visible target or destination must "
         "identify the approach; the residue surface's usefulness for the goal is irrelevant. "
         "The goal and output contract are immutable. Runtime actions are generic "

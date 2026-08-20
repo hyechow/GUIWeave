@@ -1366,17 +1366,6 @@ class ToolAgentRuntime:
     def _worker_system_prompt(self) -> str:
         # Keep reusable role instructions and deployment context cacheable.
         prompt = _WORKER_SYSTEM
-        application_knowledge = getattr(
-            self, "_worker_knowledge", getattr(self, "_master_knowledge", ""),
-        ).strip()
-        if application_knowledge:
-            prompt += (
-                "\n\n## Application knowledge (read-only execution context)\n"
-                "Use relevant application facts to choose efficient navigation and "
-                "interaction strategies. Treat the current screenshot and Observer "
-                "state as authoritative for what is presently visible.\n"
-                + application_knowledge
-            )
         installed_apps = self._installed_applications()
         if installed_apps:
             prompt += (
@@ -1417,6 +1406,9 @@ class ToolAgentRuntime:
         projection = project_worker_context(
             memory=memory,
             frame=frame,
+            application_knowledge=getattr(
+                self, "_worker_knowledge", getattr(self, "_master_knowledge", ""),
+            ).strip(),
             attempt_contract=worker_attempt_contract(
                 spec,
                 attempted_action=bool(journal.executed_tools),

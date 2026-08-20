@@ -23,6 +23,23 @@ DEFAULT_WORKER_CONTEXT_MAX_CHARS = int(
 _RECENT_TRANSITION_LIMIT = 8
 
 
+def render_application_knowledge_context(application_knowledge: str) -> str:
+    """Render routed application facts consistently for live and replay contexts."""
+    knowledge = application_knowledge.strip()
+    if not knowledge:
+        return ""
+    return (
+        "## Application knowledge (session-scoped execution facts)\n"
+        "These facts define application mechanics and non-visual postconditions, "
+        "not task requirements. Reconcile them with ordered action receipts; "
+        "current-frame visibility alone cannot negate a matching non-visual "
+        "postcondition. A helper application named here for the current artifact "
+        "belongs to the same bounded approach; return to the binding source after "
+        "use.\n"
+        + knowledge
+    )
+
+
 def _bounded_json(value: Any, *, limit: int = 1_200) -> str:
     text = json.dumps(value, ensure_ascii=False, sort_keys=True, default=str)
     return text if len(text) <= limit else text[: limit - 1] + "…"
@@ -394,15 +411,20 @@ class WorkerJournal:
                 if isinstance(result, dict)
                 else ""
             )
+            actual = str(target_signal.get("actual_element") or "").strip()
+            target_text = f"; target={actual!r}" if actual else ""
             if action_type in {"type", "select_option", "clear_text"}:
                 durable_text = (
-                    f"tool={tool}; status=executed; visual effect unconfirmed; inspect "
-                    "the current control value before deciding whether any retry is needed"
+                    f"tool={tool}; action={action_type}{target_text}; "
+                    "invocation=confirmed; screen_transition=none_observed; verify the "
+                    "current control value before any retry"
                 )
             else:
                 durable_text = (
-                    f"tool={tool}; status=executed; visual effect unconfirmed; "
-                    "inspect the current state before any retry"
+                    f"tool={tool}; action={action_type}{target_text}; "
+                    "invocation=confirmed; screen_transition=none_observed; reconcile "
+                    "application mechanics and current evidence; an unchanged screen alone "
+                    "does not justify repeating the action"
                 )
         elif is_result_ref:
             durable_text = f"tool={tool}; result={_bounded_json(memory_result, limit=420)}"
@@ -789,6 +811,7 @@ def project_worker_context(
     *,
     memory: WorkerMemoryView,
     frame: MaterializedFrame,
+    application_knowledge: str = "",
     attempt_contract: str = "",
     task_contract: str = "",
     same_frame_feedback: dict[str, Any] | None = None,
@@ -866,6 +889,22 @@ def project_worker_context(
             budget="required",
             priority=10,
             content=memory_text,
+        ),
+        (
+            ContextBlock(
+                id="tool_agent.worker.application_knowledge",
+                source_type="application_knowledge",
+                source="routed_application_knowledge",
+                ttl="session",
+                budget="required",
+                priority=15,
+                authoritative_for=("application_mechanics", "non_visual_postconditions"),
+                freshness="session",
+                coverage="complete",
+                content=render_application_knowledge_context(application_knowledge),
+            )
+            if application_knowledge.strip()
+            else None
         ),
         (
             ContextBlock(

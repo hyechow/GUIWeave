@@ -12,7 +12,7 @@ source: manual_verified
 confidence: medium
 sensitivity: internal
 ttl: session
-version: 3
+version: 4
 ---
 # Mail on Android
 
@@ -23,6 +23,13 @@ version: 3
   typed as an email address.
 - Attaching files opens a file picker rooted in the file directories; the files moved
   into the destination folder are selectable there and are attached by name.
+- One invocation of an incoming attachment's blue download control copies the file into Android
+  `Downloads`. This control has no visual completion state: the open email and blue control remain
+  unchanged after the copy. A matching Runtime invocation receipt therefore completes the download
+  step; do not invoke the same control again on that unchanged screen. When the task needs content
+  inside the file, open the exact `Downloads` row through `Files` and a compatible viewer, record
+  the visible content as Evidence, then return to Mail. Repeating the download can fail because the
+  destination file already exists.
 - For “all files in a folder”, include every direct file regardless of type. Use `Show roots` and
   device storage because the `Documents` category can omit types. The picker may return after one
   selection; verify the attachment in compose and reopen it for each remaining file.

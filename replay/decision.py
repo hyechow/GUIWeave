@@ -38,6 +38,7 @@ from gui_agent.core.tool_agent.protocol import (
     worker_attempt_contract,
 )
 from gui_agent.core.tool_agent.runtime import ToolAgentRuntime
+from gui_agent.core.tool_agent.worker_memory import render_application_knowledge_context
 from gui_agent.prompts import load_prompt_text
 from llm.provider_config import (
     build_chat_model,
@@ -178,12 +179,6 @@ def _worker_messages(
             suffix = _without_section(suffix, "## Ordered multi-action mode")
             suffix = _without_section(suffix, "## Original task goal")
             suffix = _without_section(suffix, "## Worker attempt contract")
-            if application_knowledge:
-                suffix = (
-                    "## Application knowledge (read-only execution context)\n"
-                    + application_knowledge
-                    + ("\n\n" + suffix if suffix else "")
-                )
             current = load_prompt_text("task.tool_agent.worker").rstrip()
             messages.append(SystemMessage(content=(
                 current + ("\n\n" + suffix if suffix else "")
@@ -191,8 +186,9 @@ def _worker_messages(
         elif name == "human":
             text = text.replace(
                 "runtime reported no_effect",
-                "status=executed; visual effect unconfirmed; inspect the current "
-                "state before any retry",
+                "invocation=confirmed; screen_transition=none_observed; reconcile "
+                "application mechanics and current evidence; an unchanged screen alone "
+                "does not justify repeating the action",
             )
             text = _replace_section(
                 text,
@@ -202,6 +198,14 @@ def _worker_messages(
             if task_contract:
                 text = _without_section(text, "## Original task source")
                 text = text.rstrip() + "\n\n" + task_contract.strip()
+            if application_knowledge:
+                knowledge = render_application_knowledge_context(application_knowledge)
+                marker = text.find("## Original task source")
+                text = (
+                    text[:marker].rstrip() + "\n\n" + knowledge + "\n\n" + text[marker:]
+                    if marker >= 0
+                    else text.rstrip() + "\n\n" + knowledge
+                )
             messages.append(
                 image_message(text, screenshot, scale=image_scale)
                 if any(part.get("type") == "image" for part in parts)
