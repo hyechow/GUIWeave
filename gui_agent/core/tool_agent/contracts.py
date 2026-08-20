@@ -343,6 +343,19 @@ class WorkerStrategy(StrictModel):
     approach: str = Field(min_length=1)
 
 
+class TaskSemanticContract(StrictModel):
+    """Typed expansions of task predicates that must survive orchestration."""
+
+    conditional_predicates: list[str] = Field(
+        default_factory=list,
+        max_length=8,
+        description=(
+            "Affirmative propositions whose truth selects a conditional task branch. "
+            "They refine task semantics without replacing original user values."
+        ),
+    )
+
+
 class WorkerSpec(StrictModel):
     """An immutable logical goal paired with one replaceable execution strategy."""
 

@@ -22,6 +22,7 @@ from langchain_core.messages import HumanMessage
 from gui_agent.core.tool_agent.contracts import (
     DataRequirement,
     ResultRef,
+    TaskSemanticContract,
     WorkerOutcome,
     WorkerSpec,
     approach_is_procedural,
@@ -40,6 +41,7 @@ from gui_agent.core.tool_agent.sandbox import (
     validate_transform_source,
 )
 from llm.provider_config import chat_request_kwargs
+from llm.structured import invoke_structured
 
 
 _MASTER_FILENAME = "<tool-agent-master>"
@@ -988,6 +990,7 @@ def validate_master_source(
     *,
     platform_context: dict[str, Any] | None = None,
     user_goal: str = "",
+    require_success_path: bool = True,
 ) -> list[MasterDiagnostic]:
     """Validate one restricted Worker-orchestration program."""
     try:
@@ -1015,6 +1018,8 @@ def validate_master_source(
             diagnostics.append(_diagnostic("RUN_SIGNATURE", "run must accept exactly one argument named ctx", fn))
 
     terminal_calls = 0
+    worker_calls = 0
+    finish_calls = 0
     for node in ast.walk(tree):
         if isinstance(node, _BANNED_NODES):
             diagnostics.append(_diagnostic("UNSAFE_SYNTAX", f"{type(node).__name__} is disallowed", node))
@@ -1052,6 +1057,7 @@ def validate_master_source(
             if method in {"gui_worker", "transform"} and node.args:
                 diagnostics.append(_diagnostic("CALL_SIGNATURE", f"ctx.{method} accepts keyword arguments only", node))
             if method == "gui_worker":
+                worker_calls += 1
                 diagnostics.extend(_validate_gui_worker_call(
                     node,
                     platform_context=platform_context,
@@ -1079,6 +1085,7 @@ def validate_master_source(
             elif method in {"finish", "fail"}:
                 terminal_calls += 1
                 if method == "finish":
+                    finish_calls += 1
                     diagnostics.extend(_validate_finish_call(node))
                     if destination_only:
                         try:
@@ -1098,6 +1105,11 @@ def validate_master_source(
 
     if terminal_calls == 0:
         diagnostics.append(_diagnostic("TERMINAL_REQUIRED", "program must call ctx.finish or ctx.fail"))
+    if require_success_path and worker_calls and not finish_calls:
+        diagnostics.append(_diagnostic(
+            "SUCCESS_TERMINAL_REQUIRED",
+            "a program that dispatches a Worker must include a ctx.finish success path",
+        ))
     diagnostics.extend(_static_flow_diagnostics(tree))
     unique: list[MasterDiagnostic] = []
     seen: set[tuple[str, str, int]] = set()
@@ -1113,6 +1125,44 @@ def _extract_source(content: Any) -> str:
     text = message_text(content).strip()
     fenced = re.search(r"```(?:python)?\s*(.*?)```", text, re.DOTALL | re.IGNORECASE)
     return (fenced.group(1) if fenced else text).strip()
+
+
+def normalize_task_semantics(
+    *,
+    llm: Any,
+    system_prompt: str,
+    goal: str,
+    cache_system_prompt: bool = False,
+    on_event: Callable[[str, dict[str, Any]], None] | None = None,
+) -> TaskSemanticContract:
+    """Project conditional predicates without replacing the original task."""
+
+    messages = [
+        cacheable_system_message(system_prompt, enabled=cache_system_prompt),
+        HumanMessage(content=goal),
+    ]
+    trace: list[dict[str, Any]] = []
+    started_at = time.perf_counter()
+    error = ""
+    try:
+        contract = invoke_structured(
+            llm.bind(max_tokens=320),
+            messages,
+            TaskSemanticContract,
+            trace_sink=trace,
+            trace_label="tool_agent.semantic_contract",
+        )
+    except Exception as exc:  # noqa: BLE001 - optional context enrichment fails open
+        contract = TaskSemanticContract()
+        error = f"{type(exc).__name__}: {exc}"
+    if on_event is not None:
+        on_event("master_semantic_contract", {
+            "semantic_contract": contract.model_dump(mode="json"),
+            "error": error,
+            "llm_elapsed_s": round(time.perf_counter() - started_at, 3),
+            "structured_trace": trace,
+        })
+    return contract
 
 
 def compile_master_program(
@@ -1441,7 +1491,7 @@ def execute_master_program(
     max_lines: int = 10_000,
 ) -> MasterExecution:
     """Execute one reviewed orchestration program with a bounded line budget."""
-    diagnostics = validate_master_source(source)
+    diagnostics = validate_master_source(source, require_success_path=False)
     if diagnostics:
         return MasterExecution(error="; ".join(item.render() for item in diagnostics))
     namespace: dict[str, Any] = {"__builtins__": _SAFE_BUILTINS}
@@ -1487,5 +1537,6 @@ __all__ = [
     "WorkerOrchestrationContext",
     "compile_master_program",
     "execute_master_program",
+    "normalize_task_semantics",
     "validate_master_source",
 ]

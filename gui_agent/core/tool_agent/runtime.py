@@ -58,6 +58,7 @@ from gui_agent.core.tool_agent.orchestrator import (
     WorkerOrchestrationContext,
     compile_master_program,
     execute_master_program,
+    normalize_task_semantics,
 )
 from gui_agent.core.tool_agent.perception import PerceptionMaterializer, PerceptionMode
 from gui_agent.core.tool_agent.protocol import (
@@ -99,6 +100,7 @@ from llm.provider_config import (
 )
 
 _MASTER_SYSTEM = load_prompt_text("task.tool_agent.master")
+_SEMANTIC_CONTRACT_SYSTEM = load_prompt_text("task.tool_agent.semantic_contract")
 _WORKER_SYSTEM = load_prompt_text("task.tool_agent.worker")
 _MAX_ACTION_GUARD_REPAIRS_PER_FRAME = 1
 _MAX_PREDISPATCH_REPAIRS_PER_FRAME = 1
@@ -328,6 +330,7 @@ class ToolAgentRuntime:
         )
         self.data_store = RuntimeDataStore()
         self.master, self.master_cfg = _llm("tool_agent.master")
+        self._semantic_model = self.master
         self.worker, self.worker_cfg = _llm("tool_agent.worker")
         self._master_explicit_cache = _supports_explicit_prompt_cache(self.master_cfg)
         self.strategy = Strategy(
@@ -464,6 +467,18 @@ class ToolAgentRuntime:
             trace=self._trace,
         )
         try:
+            self._raise_if_cancelled()
+            semantic_model = getattr(self, "_semantic_model", None)
+            if semantic_model is not None:
+                semantic_contract = normalize_task_semantics(
+                    llm=semantic_model,
+                    system_prompt=_SEMANTIC_CONTRACT_SYSTEM,
+                    goal=goal,
+                    cache_system_prompt=getattr(self, "_master_explicit_cache", False),
+                    on_event=lambda event, payload: self._trace(event, **payload),
+                )
+                if semantic_contract.conditional_predicates:
+                    task_context["semantic_contract"] = semantic_contract.model_dump(mode="json")
             self._raise_if_cancelled()
             program = compile_master_program(
                 llm=self.master,
