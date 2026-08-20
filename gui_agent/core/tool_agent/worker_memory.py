@@ -396,8 +396,8 @@ class WorkerJournal:
             )
             if action_type in {"type", "select_option", "clear_text"}:
                 durable_text = (
-                    f"tool={tool}; effect unconfirmed; inspect the current control value "
-                    "before deciding whether any retry is needed"
+                    f"tool={tool}; status=executed; visual effect unconfirmed; inspect "
+                    "the current control value before deciding whether any retry is needed"
                 )
             else:
                 durable_text = f"tool={tool}; runtime reported no_effect"
@@ -408,8 +408,10 @@ class WorkerJournal:
             if memory_args
             else ""
         )
-        receipt_text = durable_text or (
-            f"tool={tool}{args_text}; result={_bounded_json(memory_result, limit=260)}"
+        receipt_text = (
+            f"{durable_text}{args_text if is_no_effect else ''}"
+            if durable_text
+            else f"tool={tool}{args_text}; result={_bounded_json(memory_result, limit=260)}"
         )
         event_ref = (
             f"step:{step}.{substep}"
@@ -448,6 +450,7 @@ class WorkerMemoryView:
     established_claims: tuple[WorkerJournalEvent, ...] = ()
     active_commitments: tuple[WorkerJournalEvent, ...] = ()
     pending_runtime_evidence: tuple[WorkerJournalEvent, ...] = ()
+    latest_gui_transition: tuple[WorkerJournalEvent, ...] = ()
     recent_receipts: tuple[WorkerJournalEvent, ...] = ()
     state_timeline: tuple[str, ...] = ()
 
@@ -496,12 +499,28 @@ class WorkerMemoryView:
             )
             if not events:
                 lines.append("- None.")
-        if self.recent_receipts:
-            lines.append("### Recent execution receipts")
+        if self.latest_gui_transition:
+            lines.extend([
+                "### Latest GUI transition (immediately before the current frame)",
+                "- Reconcile these ordered invocation receipts as one transaction with "
+                "the current frame before retrying. Each receipt proves its action was "
+                "invoked; the current frame shows the transaction's effect. 'Visual effect "
+                "unconfirmed' is not an execution failure.",
+            ])
+            lines.extend(
+                f"- [t={event.sequence}; {event.event_ref}] {event.receipt_text}"
+                for event in self.latest_gui_transition
+            )
+        earlier_receipts = tuple(
+            event for event in self.recent_receipts
+            if event not in self.latest_gui_transition
+        )
+        if earlier_receipts:
+            lines.append("### Earlier execution receipts")
             lines.extend(
                 f"- [t={event.sequence}; {event.event_ref}] "
                 f"{event.receipt_text}"
-                for event in self.recent_receipts
+                for event in earlier_receipts
             )
         if self.pending_runtime_evidence:
             lines.append("### Authoritative evidence awaiting integration")
@@ -534,9 +553,16 @@ class WorkerMemoryView:
                 "- Preserve established Claims and acquire only evidence that is still "
                 "unresolved; do not reopen a claimed boundary without invalidating evidence."
             )
+        elif self.latest_gui_transition:
+            lines.append(
+                "- Reconcile the latest GUI transition with the current frame first. If a "
+                "requested terminal commit exited its editor or form to the expected stable "
+                "surface without an error or pending state, complete; do not restart merely "
+                "because the application shows no success banner."
+            )
         else:
             lines.append("- Continue the current attempt from verified current-frame evidence.")
-        lines.append("### State timeline")
+        lines.append("### Memory update history (event-time status; current validity is above)")
         lines.extend(f"- {item}" for item in self.state_timeline)
         if not self.state_timeline:
             lines.append("- No memory transitions recorded.")
@@ -613,17 +639,45 @@ def build_worker_memory_view(
         if event.requires_integration and event.event_ref not in integrated
     )
     recent_limit = max(0, int(recent_k))
-    receipts = [
-        event for event in journal.events
-        if event.kind in {"action_receipt", "candidate_commit", "feedback"}
-        and event.receipt_text
-    ]
+    receipt_by_ref = {
+        event.event_ref: event for event in journal.events
+        if (
+            event.kind in {"action_receipt", "candidate_commit", "feedback"}
+            and event.receipt_text
+        )
+    }
+    receipts = sorted(receipt_by_ref.values(), key=lambda event: event.sequence)
     recent = tuple(receipts[-recent_limit:] if recent_limit else ())
+    def current_validity(event: WorkerJournalEvent) -> str:
+        if latest.get(event.fact_ref) is not event:
+            return "superseded"
+        if event.status != "active":
+            return str(event.status)
+        if event.event_ref in valid_by_ref:
+            return "active"
+        if event.lifetime == "frame":
+            return "expired"
+        return "invalidated"
+
     timeline = tuple(
-        f"t={event.sequence}: {event.fact_ref} -> {event.status}; "
-        f"lifetime={event.lifetime}"
-        + ("; version=updated" if event.supersedes else "; version=initial")
+        f"t={event.sequence}: {event.fact_ref}; event_status={event.status}; "
+        f"now={current_validity(event)}; lifetime={event.lifetime}"
         for event in memory_events[-_RECENT_TRANSITION_LIMIT:]
+    )
+    transition_anchor = receipts[-1] if receipts else None
+    if not (
+        transition_anchor
+        and current_frame_id
+        and transition_anchor.frame_id
+        and transition_anchor.frame_id != current_frame_id
+        and not transition_anchor.preserves_window
+    ):
+        transition_anchor = None
+    latest_gui_transition = tuple(
+        event for event in receipts
+        if transition_anchor is not None
+        and event.frame_id == transition_anchor.frame_id
+        and not event.preserves_window
     )
     return WorkerMemoryView(
         worker_id=journal.worker_id,
@@ -632,6 +686,7 @@ def build_worker_memory_view(
         established_claims=claims,
         active_commitments=commitments,
         pending_runtime_evidence=pending_runtime,
+        latest_gui_transition=latest_gui_transition,
         recent_receipts=recent,
         state_timeline=timeline,
     )

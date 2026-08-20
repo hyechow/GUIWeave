@@ -316,7 +316,11 @@ _WORKER_STATE_SCHEMA: dict[str, Any] = {
                 "its acquisition boundary is closed; completed and failed are terminal."
             ),
         },
-        "summary": {"type": "string", "maxLength": 320},
+        "summary": {
+            "type": "string",
+            "maxLength": 320,
+            "description": "One concise evidence summary under 240 characters.",
+        },
         "memory_updates": {
             "type": "array",
             "maxItems": 8,
@@ -506,7 +510,9 @@ def dynamic_action_envelope_tool(
     return function_tool(
         "continue_with_actions",
         (
-            f"Continue with {action_range}. Spatial actions require current-frame visible "
+            f"Continue with {action_range}; this tool never represents completion and its "
+            "action list cannot be empty. If the goal is complete, call complete directly; "
+            "never set state.status=completed here. Spatial actions require current-frame visible "
             "targets; non-spatial actions follow their own capability contracts. "
             "Apply task conditions first: excluded or already-processed candidates permit traversal, "
             "never their mutation path. If no eligible work remains, call complete directly; do not "
