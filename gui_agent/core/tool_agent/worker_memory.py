@@ -538,6 +538,13 @@ class WorkerMemoryView:
                 "a current visible parent p0/.../pk, a single-name field receives exactly "
                 "p(k+1). The answer establishes the path, not the current parent."
             )
+        elif self.latest_gui_transition:
+            lines.append(
+                "- Reconcile the latest GUI transition with the current frame first. If a "
+                "requested terminal commit exited its editor or form to the expected stable "
+                "surface without an error or pending state, complete; do not restart merely "
+                "because the application shows no success banner."
+            )
         elif self.active_commitments:
             lines.append(
                 "- Execute the active Commitment only with exact values established by its "
@@ -552,13 +559,6 @@ class WorkerMemoryView:
             lines.append(
                 "- Preserve established Claims and acquire only evidence that is still "
                 "unresolved; do not reopen a claimed boundary without invalidating evidence."
-            )
-        elif self.latest_gui_transition:
-            lines.append(
-                "- Reconcile the latest GUI transition with the current frame first. If a "
-                "requested terminal commit exited its editor or form to the expected stable "
-                "surface without an error or pending state, complete; do not restart merely "
-                "because the application shows no success banner."
             )
         else:
             lines.append("- Continue the current attempt from verified current-frame evidence.")
