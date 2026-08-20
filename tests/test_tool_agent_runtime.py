@@ -1294,13 +1294,15 @@ def _run_fused_worker(
     journal: WorkerJournal | None = None,
     breaker: WorkerActionCircuitBreaker | None = None,
     bundle=None,
+    executor=None,
+    max_steps: int = 1,
 ) -> ToolAgentRuntime:
     runtime = object.__new__(ToolAgentRuntime)
     runtime.trace = []
     runtime.statuses = []
     runtime._status_cb = runtime.statuses.append
     runtime.worker = worker or _MultiActionWorker()
-    runtime._executor = _Executor()
+    runtime._executor = executor or _Executor()
     if bundle is not None:
         runtime.bundle = bundle
     runtime._installed_app_names = installed_apps
@@ -1354,11 +1356,91 @@ def _run_fused_worker(
                 description="Submit the visible login form",
             ),
         ],
-        max_steps=1,
+        max_steps=max_steps,
     )
     _install_test_worker_contract(runtime, spec)
     runtime.outcome = runtime._run_worker("fused-worker", spec)
     return runtime
+
+
+class _PrematureCompleteWorker(_MultiActionWorker):
+    def __init__(self) -> None:
+        super().__init__()
+        self.all_messages = []
+
+    def invoke(self, messages):
+        self.calls += 1
+        self.all_messages.append(messages)
+        terminal = self.calls != 2
+        args = {"state": {
+            "status": "completed" if terminal else "exploring",
+            "summary": "The visible Apply control was activated.",
+            "established_facts": [],
+        }}
+        if not terminal:
+            args["actions"] = [{"name": "submit_login", "args": {
+                "x": 500, "y": 500,
+                "description": "Activate the visible Apply control",
+            }}]
+        return SimpleNamespace(content="", tool_calls=[{
+            "id": f"decision-{self.calls}",
+            "name": "complete" if terminal else "continue_with_actions",
+            "args": args,
+        }])
+
+
+class _CompletionAuditExecutor(_Executor):
+    def __init__(self) -> None:
+        super().__init__()
+        self.pending = True
+
+    def refresh_controls(self):
+        return [{
+            "ref": "apply", "kind": "button", "label": "Apply",
+            "form_action": "commit",
+            "enabled": True, "in_viewport": True,
+            "rect": {"x": 500, "y": 500, "w": 100, "h": 40},
+        }] if self.pending else []
+
+    def execute(self, decision, **kwargs):
+        result = super().execute(decision, **kwargs)
+        self.pending = False
+        return result
+
+
+def test_operator_completion_rechecks_visible_commit_control_once(monkeypatch) -> None:
+    worker = _PrematureCompleteWorker()
+    executor = _CompletionAuditExecutor()
+
+    runtime = _run_fused_worker(
+        monkeypatch,
+        current_url="https://example.test/login",
+        worker=worker,
+        executor=executor,
+        max_steps=2,
+    )
+
+    assert (runtime.outcome.phase, worker.calls, len(executor.actions)) == (
+        "completed", 3, 1,
+    )
+    rechecks = [
+        event for event in runtime.trace
+        if event["event"] == "worker_completion_recheck"
+    ]
+    assert [event["controls"] for event in rechecks] == [
+        [{"label": "Apply", "kind": "button"}],
+    ]
+    assert "completion_requires_recheck" in str(worker.all_messages[1][-1].content)
+
+
+def test_completion_audit_ignores_uncited_commit_control() -> None:
+    runtime = object.__new__(ToolAgentRuntime)
+    runtime._executor = _CompletionAuditExecutor()
+
+    assert runtime._visible_commit_controls(
+        MaterializedFrame(frame_id="frame:1", screenshot_path="frame.png"),
+        WorkerState(status="completed", summary="The requested state is visible."),
+    ) == []
 
 
 @pytest.mark.parametrize(

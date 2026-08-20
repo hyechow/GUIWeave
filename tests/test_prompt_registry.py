@@ -168,7 +168,7 @@ def test_worker_keeps_action_grounding_and_memory_boundaries() -> None:
         "Stable page identity",
         "A `no_effect` result requires inspecting the next frame",
         "A no-effect traversal establishes the boundary", "call `complete`",
-        "After a commit exits its editor or form", "instead of reopening the mutation",
+        "never claim an unrecorded activation", "do not re-query, reselect, or navigate",
         "no encountered record is known unsatisfied", "without rechecking handled records",
         "never establish a collection boundary",
     ):

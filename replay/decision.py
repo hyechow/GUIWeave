@@ -17,6 +17,7 @@ from gui_agent.core.self_learning.app_summary import load_knowledge_for_app
 from gui_agent.core.tool_agent.contracts import (
     DynamicActionSpec,
     MaterializedFrame,
+    WorkerState,
     WorkerSpec,
     approach_atomic_action_count,
     approach_is_procedural,
@@ -29,6 +30,7 @@ from gui_agent.core.tool_agent.protocol import (
     dynamic_worker_tools,
     generic_action_spec,
     image_message,
+    validate_worker_tool_state,
     worker_attempt_contract,
 )
 from gui_agent.core.tool_agent.runtime import ToolAgentRuntime
@@ -77,6 +79,15 @@ def _report(event: dict[str, Any], label: str) -> dict[str, Any]:
         )
     except StopIteration as exc:
         raise ValueError(f"recording has no {label} prompt snapshot") from exc
+
+
+def _worker_report(event: dict[str, Any]) -> dict[str, Any]:
+    for label in ("tool_agent.worker", "tool_agent.worker.protocol_repair"):
+        try:
+            return _report(event, label)
+        except ValueError:
+            pass
+    raise ValueError("recording has no Worker prompt snapshot")
 
 
 def _text(parts: list[dict[str, Any]], *, omit_calls: bool = False) -> str:
@@ -145,7 +156,6 @@ def _worker_messages(
     attempt_contract: str,
     application_knowledge: str = "",
     image_scale: float = 1.0,
-    strategy_retry: bool = False,
 ) -> list[Any]:
     messages: list[Any] = []
     for role in report.get("roles", []):
@@ -175,11 +185,6 @@ def _worker_messages(
             )))
         elif name == "human":
             text = _without_section(text, "## Current Worker attempt")
-            if strategy_retry:
-                text = "\n".join(
-                    line for line in text.splitlines()
-                    if "Worker reaffirmed this observation:" not in line
-                )
             text = (text.rstrip() + "\n\n" + attempt_contract).strip()
             messages.append(
                 image_message(text, screenshot, scale=image_scale)
@@ -274,6 +279,18 @@ def _master_shape(source: str, *, reviewed: bool = True) -> dict[str, Any]:
 
 
 def _mismatches(expected: Any, actual: Any, path: str = "$") -> list[str]:
+    if isinstance(expected, dict) and set(expected) == {"$contains_any"}:
+        alternatives = expected["$contains_any"]
+        if not isinstance(actual, str):
+            return [f"{path}: expected string, got {type(actual).__name__}"]
+        if not isinstance(alternatives, list) or not all(
+            isinstance(item, str) and item for item in alternatives
+        ):
+            return [f"{path}: $contains_any requires non-empty string alternatives"]
+        folded = actual.casefold()
+        return [] if any(item.casefold() in folded for item in alternatives) else [
+            f"{path}: expected one of {alternatives!r} within {actual!r}"
+        ]
     if isinstance(expected, list):
         if not isinstance(actual, list):
             return [f"{path}: expected array, got {type(actual).__name__}"]
@@ -324,7 +341,14 @@ def replay_master_decision(
     attempts = [event for event in events if event.get("event") == "master_compile_attempt"]
     selected = next((event for event in reversed(attempts) if not event.get("diagnostics")), None)
     if selected is None:
-        raise ValueError("recording has no reviewed Master compile attempt")
+        if not attempts:
+            raise ValueError("recording has no Master compile attempt")
+        if expectation is None:
+            raise ValueError(
+                "recording has no reviewed Master compile attempt; pass an explicit "
+                "expectation to replay the failed Master decision"
+            )
+        selected = attempts[-1]
     expected = expectation or _master_shape(str(selected.get("source") or ""))
     model, _, model_name = _selected_model("tool_agent.master", llm)
     results = []
@@ -408,6 +432,8 @@ def _worker_decision(
     )
     if call["name"] == "continue_with_actions":
         ToolAgentRuntime._validate_multi_action_calls(calls, actions)
+    worker_state = WorkerState.model_validate(state)
+    validate_worker_tool_state(call["name"], worker_state)
     names = [call["name"]]
     if call["name"] == "continue_with_actions":
         names = [str(item.get("name") or "") for item in calls]
@@ -417,8 +443,8 @@ def _worker_decision(
         "actions": names,
         "action_capabilities": [capabilities.get(name, name) for name in names],
         "action_semantics": _action_semantics(calls, capabilities),
-        "state_status": str(state.get("status") or ""),
-        "state_summary": str(state.get("summary") or ""),
+        "state_status": worker_state.status,
+        "state_summary": worker_state.summary,
         "args": {**call["args"], "state": state},
     }
 
@@ -459,6 +485,7 @@ def replay_worker_decision(
     frame: str | int,
     samples: int = 1,
     expectation: dict[str, Any] | None = None,
+    visible_commit_control: str = "",
     llm: Any = None,
 ) -> dict[str, Any]:
     if samples < 1:
@@ -514,6 +541,11 @@ def replay_worker_decision(
         action_envelope=multi_action,
         max_ordered_actions=max_ordered_actions,
     )
+    if visible_commit_control:
+        tools = [
+            tool for tool in tools
+            if tool.get("function", {}).get("name") != "complete"
+        ]
     capabilities = {action.name: action.capability for action in actions}
     action_names = (
         [
@@ -544,19 +576,36 @@ def replay_worker_decision(
         "action_capabilities": recorded_capabilities,
         "action_semantics": _action_semantics(recorded_calls, capabilities),
     }
+    attempt_contract = worker_attempt_contract(
+        spec,
+        attempted_action=bool(replay_context.get("executed_tools")),
+    )
+    if visible_commit_control:
+        attempt_contract += (
+            "\n\n## Same-frame runtime feedback\n"
+            + json.dumps({
+                "status": "completion_requires_recheck",
+                "visible_commit_controls": [{
+                    "label": visible_commit_control,
+                    "kind": "button",
+                }],
+                "instruction": (
+                    "Re-evaluate completion against the current frame and the last "
+                    "actually recorded action. Complete is withheld on this frame; "
+                    "activate the pending requested commit and never claim an activation "
+                    "absent from WorkerMemory."
+                ),
+            }, ensure_ascii=False)
+        )
     messages = _worker_messages(
-        _report(selected, "tool_agent.worker"),
+        _worker_report(selected),
         _screenshot(run_dir, frame_no, observation),
-        attempt_contract=worker_attempt_contract(
-            spec,
-            attempted_action=bool(replay_context.get("executed_tools")),
-        ),
+        attempt_contract=attempt_contract,
         application_knowledge="\n\n".join(
             value.worker_context()
             for value in _current_app_knowledge(context)
         ),
         image_scale=float(getattr(model_config, "image_scale", 1.0)),
-        strategy_retry="_strategy_" in str(selected.get("worker_id") or ""),
     )
     request_model = getattr(model_config, "model", None)
     if request_model is None:
@@ -621,6 +670,7 @@ def main() -> int:
     mode.add_argument("--worker-frame", metavar="N")
     parser.add_argument("--samples", type=int, default=1)
     parser.add_argument("--expect-json", default="")
+    parser.add_argument("--visible-commit-control", default="")
     parser.add_argument("--json", action="store_true", dest="as_json")
     args = parser.parse_args()
     if not 1 <= args.samples <= 10:
@@ -634,6 +684,7 @@ def main() -> int:
     else:
         result = replay_worker_decision(
             run_dir, frame=args.worker_frame, samples=args.samples, expectation=expected,
+            visible_commit_control=args.visible_commit_control,
         )
     if args.as_json:
         print(json.dumps(result, ensure_ascii=False, indent=2, default=str))

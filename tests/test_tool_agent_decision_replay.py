@@ -193,6 +193,9 @@ def test_worker_replay_compares_equivalent_actions_by_capability(tmp_path) -> No
     }
     assert "recorded static prompt" not in model.calls[0][0].content
     assert "Execute the binding `approach`" in model.calls[0][0].content
+    assert "A visible ancestor never establishes an unshown descendant" in (
+        model.calls[0][0].content
+    )
     assert "## Worker attempt contract" not in model.calls[0][0].content
     turn_context = model.calls[0][1].content[0]["text"]
     assert "stale" in turn_context
@@ -214,6 +217,29 @@ def test_worker_replay_compares_equivalent_actions_by_capability(tmp_path) -> No
         scroll_variant["description"]
     )
     assert "recorded static action description" not in scroll_variant["description"]
+
+
+def test_worker_replay_withholds_complete_for_visible_commit(tmp_path) -> None:
+    run_dir = _worker_run(
+        tmp_path,
+        recorded_tool="continue_with_actions",
+        recorded_actions=[{"name": "scroll", "args": {}}],
+    )
+    model = _RecordedModel(_tool_call("continue_with_actions", {
+        "state": _state(),
+        "actions": [{"name": "scroll", "args": {
+            "direction": "down",
+            "description": "Activate the pending commit",
+        }}],
+    }))
+
+    replay_worker_decision(
+        run_dir, frame=1, visible_commit_control="Apply", llm=model,
+    )
+
+    names = {tool["function"]["name"] for tool in model.bound_tools}
+    assert "complete" not in names
+    assert "completion_requires_recheck" in model.calls[0][1].content[0]["text"]
 
 
 def test_worker_replay_detects_wrong_launch_app_argument(tmp_path) -> None:
@@ -568,7 +594,16 @@ def test_master_replay_uses_current_prompt_knowledge_and_structural_expectation(
     assert result["status"] == "passed"
     assert result["samples"][0]["compile_attempts"] == 1
     assert "Coding Master" in model.calls[0][0].content
+    assert "For one cohesive mutation operator" in model.calls[0][0].content
+    assert "A month without a stated year remains month-only" in model.calls[0][0].content
     assert "recorded static prompt" not in model.calls[0][0].content
     assert "current fact" in model.calls[0][1].content
     assert "old fact" not in model.calls[0][1].content
     assert "action_contracts" not in model.calls[0][1].content
+
+
+def test_decision_replay_matcher_supports_string_alternatives() -> None:
+    expected = {"$contains_any": ["create folder", "new folder"]}
+
+    assert decision_module._mismatches(expected, "Tap New Folder control") == []
+    assert decision_module._mismatches(expected, "Tap COPY button")
