@@ -313,7 +313,15 @@ def _mismatches(expected: Any, actual: Any, path: str = "$") -> list[str]:
     return errors
 
 
-def _result(kind: str, model: str, expectation: dict[str, Any], samples: list[dict], **where: Any) -> dict:
+def _result(
+    kind: str,
+    model: str,
+    expectation: dict[str, Any],
+    samples: list[dict],
+    *,
+    uses_llm: bool = True,
+    **where: Any,
+) -> dict:
     passed = sum(item["passed"] for item in samples)
     return {
         "status": "passed" if passed == len(samples) else "failed",
@@ -323,7 +331,7 @@ def _result(kind: str, model: str, expectation: dict[str, Any], samples: list[di
         **where,
         "expectation": expectation,
         "samples": samples,
-        "uses_llm": True,
+        "uses_llm": uses_llm,
         "uses_device": False,
     }
 
@@ -543,6 +551,7 @@ def replay_worker_decision(
         completion_mode=assessment.completion_mode,
         action_envelope=multi_action,
         max_ordered_actions=max_ordered_actions,
+        allow_failure=not assessment.collector_completion_required,
     )
     capabilities = {action.name: action.capability for action in actions}
     action_names = (
@@ -561,6 +570,32 @@ def replay_worker_decision(
         "tool": str(selected.get("tool") or ""),
         "action_capabilities": recorded_capabilities,
     }
+    if assessment.collector_completion_required:
+        decision = {
+            "tool": "complete",
+            "actions": ["complete"],
+            "action_capabilities": ["complete"],
+            "action_targets": ["complete"],
+            "action_texts": [],
+            "state_status": "completed",
+            "state_summary": "Runtime-authoritative collection boundary complete.",
+            "args": {"evidence": ["Runtime-authoritative collection boundary complete"]},
+            "first_action_capability": "complete",
+            "first_action_target": "complete",
+            "protocol_repairs": 0,
+        }
+        errors = _mismatches(expected, decision)
+        return _result(
+            "worker",
+            str(getattr(model_config, "model", "runtime")),
+            expected,
+            [{"sample": number, **decision, "passed": not errors, "errors": errors}
+             for number in range(1, samples + 1)],
+            frame_id=f"frame:{frame_no}",
+            worker_id=selected.get("worker_id"),
+            step=selected.get("step"),
+            uses_llm=False,
+        )
     worker_report = _report(selected, "tool_agent.worker")
     recorded_memory = _text(next(
         role.get("parts", []) for role in worker_report.get("roles", [])

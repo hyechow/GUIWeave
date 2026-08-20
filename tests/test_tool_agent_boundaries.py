@@ -105,6 +105,29 @@ def test_singleton_first_match_can_complete_from_retained_collection() -> None:
     assert assessment.allowed_actions == []
 
 
+def test_singleton_first_match_accepts_completed_linked_detail_evidence() -> None:
+    spec = _collector(cardinality="one", coverage="first_match")
+    collection = _collection().model_copy(update={
+        "coverage": {
+            **_collection().coverage,
+            "requested": "first_match",
+            "cardinality": "one",
+            "scope_status": "unknown",
+            "coverage_evidence": "linked_detail_assembly",
+        },
+    })
+    frame = MaterializedFrame(
+        frame_id="frame:detail",
+        screenshot_path="frame.png",
+        collections=[collection],
+    )
+
+    assessment = assess_frame(spec, [generic_action_spec("scroll")], frame)
+
+    assert assessment.allowed_actions == []
+    assert assessment.completion_mode == "collector"
+
+
 def test_frame_guard_preserves_capabilities_until_an_unready_attempt() -> None:
     spec = _collector()
     frame = MaterializedFrame(frame_id="frame:1", screenshot_path="frame.png")

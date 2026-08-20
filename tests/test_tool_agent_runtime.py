@@ -2857,6 +2857,8 @@ def test_ready_collector_completion_uses_runtime_bound_collection_ref() -> None:
         coverage={
             "scope_status": "met",
             "source_scope": "structured_surface",
+            "requested": "first_match",
+            "cardinality": "one",
             "total_records": 1,
             "page_index": 1,
             "page_count": 1,
@@ -2871,6 +2873,8 @@ def test_ready_collector_completion_uses_runtime_bound_collection_ref() -> None:
         data_requirements=[{
             "id": "records",
             "description": "Collect all records",
+            "cardinality": "one",
+            "coverage": "first_match",
             "row_schema": collection.row_schema,
         }],
         actions=[DynamicActionSpec(
@@ -2888,6 +2892,9 @@ def test_ready_collector_completion_uses_runtime_bound_collection_ref() -> None:
     )
 
     tools = runtime._worker_tools_for_frame(spec, spec._test_actions, frame)
+    assert "report_blocked" not in {
+        tool["function"]["name"] for tool in tools
+    }
     complete = next(tool for tool in tools if tool["function"]["name"] == "complete")
     assert "collection_ref" not in complete["function"]["parameters"]["properties"]
     payload, terminal = runtime._execute_worker_tool(
