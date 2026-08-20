@@ -27,4 +27,6 @@ address in Address Book.
 A placed order's Shipping Address is historical and has no edit action on this storefront. For a
 request to change the delivery address of an existing order, inspect the qualifying order detail to
 confirm this limitation, then report that the action is not supported. Do not edit Address Book as a
-substitute because that changes future checkout defaults, not the placed order.
+substitute because that changes future checkout defaults, not the placed order. After inspecting the
+qualifying detail, return to the canonical My Orders list without pagination parameters before
+reporting the unavailable action; the order list is the terminal account context for this result.

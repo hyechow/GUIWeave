@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import hashlib
 import json
 import os
 import re
@@ -273,9 +274,40 @@ class WorkerJournal:
     # ReAct stop cue: consecutive observed frames that added no new collection rows.
     _collection_row_counts: dict[str, int] = field(default_factory=dict, repr=False)
     _collection_stable_frames: dict[str, int] = field(default_factory=dict, repr=False)
+    _current_surface_key: str = field(default="", repr=False)
+    _surface_view_counts: dict[str, dict[str, int]] = field(default_factory=dict, repr=False)
+    _surface_scroll_directions: dict[str, list[str]] = field(default_factory=dict, repr=False)
+    _completed_traversal_surfaces: set[str] = field(default_factory=set, repr=False)
+
+    def _surface_traversal_complete(self, key: str) -> bool:
+        directions = self._surface_scroll_directions.get(key, [])
+        return (
+            any(count >= 2 for count in self._surface_view_counts.get(key, {}).values())
+            and "up" in directions
+            and "down" in directions
+        )
 
     def record_collection_stability(self, frame: MaterializedFrame) -> None:
         """Track consecutive frames that add no new rows to an accumulated collection."""
+        self._current_surface_key = "|".join((frame.url, frame.title))
+        visible_semantics = [
+            (
+                str(control.get("kind") or ""),
+                str(control.get("label") or ""),
+                str(control.get("value") or ""),
+            )
+            for control in frame.controls
+            if isinstance(control, dict) and control.get("in_viewport") is not False
+        ]
+        signature = hashlib.sha256(json.dumps(
+            visible_semantics,
+            ensure_ascii=False,
+            separators=(",", ":"),
+        ).encode("utf-8")).hexdigest()
+        counts = self._surface_view_counts.setdefault(self._current_surface_key, {})
+        counts[signature] = counts.get(signature, 0) + 1
+        if self._surface_traversal_complete(self._current_surface_key):
+            self._completed_traversal_surfaces.add(self._current_surface_key)
         for collection in frame.collections:
             rid = collection.requirement_id
             row_count = collection.row_count
@@ -323,6 +355,30 @@ class WorkerJournal:
                     f"accumulated {collection.row_count} row(s)"
                 )
         return "; ".join(notes)
+
+    def traversal_progress_note(self, frame: MaterializedFrame) -> str:
+        """Summarize a repeated bidirectional viewport cycle on one document."""
+
+        key = "|".join((frame.url, frame.title))
+        if self._surface_traversal_complete(key):
+            self._completed_traversal_surfaces.add(key)
+        if key in self._completed_traversal_surfaces:
+            return (
+                "Inspection traversal is complete: this document revisited prior semantic "
+                "viewports after scrolling both directions; further scroll is repetition, "
+                "not progress. A control absent throughout those covered viewports is absent "
+                "from the inspected document."
+            )
+        if self._completed_traversal_surfaces:
+            surfaces = "; ".join(
+                key.rsplit("|", 1)[-1]
+                for key in sorted(self._completed_traversal_surfaces)[-3:]
+            )
+            return (
+                "Inspection traversal already completed for previously visited surface(s): "
+                f"{surfaces}. Do not reopen them; continue with remaining contract requirements."
+            )
+        return ""
 
     def observe_collection(self, frame: MaterializedFrame) -> str:
         """Return the collection ref carrying downward-scroll end evidence, if any."""
@@ -426,6 +482,10 @@ class WorkerJournal:
                 self.last_scroll_direction = str(
                     result.get("direction") or args.get("direction") or ""
                 )
+                if self._current_surface_key and self.last_scroll_direction in {"up", "down"}:
+                    self._surface_scroll_directions.setdefault(
+                        self._current_surface_key, []
+                    ).append(self.last_scroll_direction)
                 self.last_scroll_collection_ref = self.collection_ref
                 x = args.get("x")
                 y = args.get("y")
@@ -543,7 +603,9 @@ class WorkerMemoryView:
                 for event in reversed(self.durable_facts)
             )
         if self.stable_beliefs:
-            lines.append("### Stable semantic observations (not completion evidence)")
+            lines.append(
+                "### Stable semantic observations (historical prerequisite evidence only)"
+            )
             lines.extend(f"- {text}" for text in self.stable_beliefs)
         if self.transient_context_omitted:
             lines.extend([
@@ -698,9 +760,22 @@ def project_worker_context(
     same_frame_feedback: dict[str, Any] | None = None,
     max_chars: int = DEFAULT_WORKER_CONTEXT_MAX_CHARS,
     collection_stability: str = "",
+    traversal_progress: str = "",
 ) -> WorkerContextProjection:
     """Build one capacity-managed context; the screenshot is supplied separately."""
     memory_text = memory.render_prompt_section()
+    if traversal_progress:
+        memory_text = memory_text.replace(
+            "### Stable semantic observations (historical prerequisite evidence only)",
+            "### Completed historical prerequisites (not final completion)",
+        )
+        memory_text += (
+            "\n### Traversal coverage\n- " + traversal_progress
+            + "\n### Pending terminal requirements\n"
+            "- Any failure destination required by the immutable contract that does not "
+            "match the current frame remains pending; terminal reporting is not permitted "
+            "until it matches."
+        )
     blocks = [
         (
             ContextBlock(
@@ -717,15 +792,6 @@ def project_worker_context(
             )
             if same_frame_feedback
             else None
-        ),
-        ContextBlock(
-            id="tool_agent.worker.memory",
-            source_type="runtime_state",
-            source="worker_journal_projection",
-            ttl="turn",
-            budget="required",
-            priority=10,
-            content=memory_text,
         ),
         ContextBlock(
             id="tool_agent.worker.current_frame",
@@ -759,6 +825,35 @@ def project_worker_context(
             )
             if attempt_contract.strip()
             else None
+        ),
+        ContextBlock(
+            id="tool_agent.worker.memory",
+            source_type="runtime_state",
+            source="worker_journal_projection",
+            ttl="turn",
+            budget="required",
+            priority=10,
+            content=memory_text,
+        ),
+        ContextBlock(
+            id="tool_agent.worker.current_frame_anchor",
+            source_type="runtime_observation",
+            source="materialized_frame_identity",
+            ttl="turn",
+            budget="required",
+            priority=25,
+            freshness="turn",
+            authoritative_for=("current_surface",),
+            content=(
+                "## Current frame anchor (authoritative now)\n"
+                "A terminal decision's required UI state must match this frame; historical "
+                "or planned navigation cannot substitute.\n"
+                + json.dumps({
+                    "frame_id": frame.frame_id,
+                    "url": frame.url,
+                    "title": frame.title,
+                }, ensure_ascii=False)
+            ),
         ),
     ]
     result = ContextCompressor(max_chars).apply(blocks)

@@ -25,5 +25,7 @@ version: 1
 - A Contact Us draft is complete when required fields retain the requested content on Contact Us and
   Submit has not been activated. A success/thank-you page is evidence that the draft was wrongly sent.
 - An address update requires a saved confirmation or the new address rendered in Address Book.
+- A placed-order delivery-address change that is unavailable terminates on canonical My Orders
+  after the qualifying order detail has been inspected; a paginated history URL is not terminal.
 - A placed order has no storefront delivery-address edit capability. Reaching the qualifying order
   detail and observing no edit action supports action-not-allowed; changing Address Book does not.

@@ -22,8 +22,8 @@ version: 27
 
 ## Global navigation
 
-- Account menu links My Account, My Wish List, Sign Out; My Account contains My Orders,
-  Address Book, Account Information, Product Reviews, and Newsletter.
+- Account menu links My Account, My Wish List, Sign Out. My Account contains My Orders, Address
+  Book, Account Information, Product Reviews, Newsletter.
 - Full cart: `http://localhost:7770/checkout/cart/`. Open it directly; `My Cart` and
   `View and Edit Cart` are previews, not navigation or authoritative full-cart state.
 - For "the product on the current page", preserve the starting product; do not search.
@@ -87,25 +87,26 @@ version: 27
 
 ## Orders
 
-- My Account > My Orders lists Order #, Date, Order Total, Status, and View Order, newest first,
-  ten per page. It has no date, product, category, or status filters.
-- For a closed date interval, advance until the upper boundary appears. After the
-  first row older than the lower boundary, later pages cannot qualify. The first page is
-  authoritative for latest;
-  the last reachable row is authoritative for first/oldest.
+- My Orders: `http://localhost:7770/sales/order/history/`; open directly for the
+  unpaginated list.
+- My Orders lists Order #, Date, Total, Status, View Order, newest first, ten per page, without date,
+  product, category, or status filters.
+- For a closed date interval, advance until the upper boundary appears; after the
+  first row older than the lower boundary, later pages cannot qualify. Page 1 is authoritative for latest; the last
+  reachable row is authoritative for first/oldest.
 - View Order shows date/status, addresses, totals, and Items Ordered rows with Product Name, Price,
   Qty, and line Subtotal. Product Name embeds title, SKU, and selected option labels and values.
-- If exhaustive pagination finds no detail-view order, use `Page 1` to return to canonical My Orders
-  before reporting not found. Terminal reporting from later pages is invalid.
-- The totals block separates Subtotal, Shipping & Handling, and Grand Total. An arrival date is not
-  displayed. A placed order's delivery address cannot be edited from the storefront order detail.
+- If exhaustive pagination finds no detail order, return via `Page 1` before reporting not found.
+  Terminal reporting from later pages is invalid.
+- Totals show Subtotal, Shipping, Grand Total; no arrival date or delivery edit exists. Retain this,
+  never reopen the order, return to canonical unpaginated My Orders, then report unavailable.
 - Reorder on an order detail adds that order's products to the cart. It does not itself complete a
   new checkout.
 
 ## Customer account
 
-- Address Book separates default billing, default shipping, and additional address entries. Edit
-  Address opens First Name, Last Name, Company, Phone Number, Street Address lines, City,
+- Address Book separates default billing, shipping, and additional entries. Edit Address opens First
+  Name, Last Name, Company, Phone Number, Street Address lines, City,
   State/Province, ZIP/Postal Code, Country, and default-address checkboxes.
 - A general moved/address-update request refers to editing the existing account address, not a
   placed order's immutable shipping address. Preserve existing identity and phone fields unless the

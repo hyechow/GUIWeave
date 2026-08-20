@@ -1501,6 +1501,7 @@ class ToolAgentRuntime:
             ),
             same_frame_feedback=same_frame_feedback,
             collection_stability=journal.collection_stability_note(frame),
+            traversal_progress=journal.traversal_progress_note(frame),
         )
         system_prompt = self._worker_system_prompt()
         messages = [
