@@ -178,6 +178,32 @@ def test_headless_navigation_uses_bounded_commit_wait():
     )]
 
 
+def test_select_option_uses_rendered_radio_group_target() -> None:
+    clicks = []
+
+    class Page:
+        mouse = SimpleNamespace(click=lambda x, y: clicks.append((x, y)))
+
+        @staticmethod
+        def bring_to_front():
+            return None
+
+        @staticmethod
+        def evaluate(script, args):
+            assert 'input[type="radio"]' in script
+            assert "radio.name === anchorRadio.name" in script
+            assert "document.elementFromPoint(point.x, point.y)" in script
+            assert args == {"x": 180, "y": 519, "target": "19", "deselect": False}
+            return {"ok": True, "mode": "mouse", "x": 234, "y": 519, "label": "4 stars"}
+
+    dev = PlaywrightDevice.__new__(PlaywrightDevice)
+    dev._follow_active_tab = lambda: None
+    dev._require_page = lambda: Page()
+
+    assert dev.select_option(180, 519, "19") == "OK select_option '4 stars' (mouse)"
+    assert clicks == [(234.0, 519.0)]
+
+
 def test_new_tab_snapshots_the_explicitly_created_page() -> None:
     page = object()
     dev = PlaywrightDevice.__new__(PlaywrightDevice)

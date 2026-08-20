@@ -493,6 +493,28 @@ def test_surface_cycle_blocks_traversal_loop_with_coordinate_jitter() -> None:
         tool="nav", capability="tap", args={"x": 340, "y": 100}, frame=step2,
     ).blocked is False
 
+    # A repeated detail surface may mean one list-row target was off by one.
+    # The corrected, previously untried row must remain available as the escape.
+    breaker = WorkerActionCircuitBreaker()
+    listing, detail_a, detail_b = (
+        _wizard_frame("records"), _wizard_frame("detail a"), _wizard_frame("detail b")
+    )
+    for capability, args, frame in (
+        ("tap", {"x": 100, "y": 500, "description": "record a"}, listing),
+        ("back", {}, detail_a),
+        ("tap", {"x": 200, "y": 500, "description": "record b"}, listing),
+        ("back", {}, detail_b),
+        ("tap", {"x": 300, "y": 500, "description": "record c"}, listing),
+        ("back", {}, detail_b),
+    ):
+        breaker.record(breaker.inspect(
+            tool="nav", capability=capability, args=args, frame=frame,
+        ))
+    assert breaker.inspect(
+        tool="nav", capability="tap",
+        args={"x": 400, "y": 500, "description": "record c"}, frame=listing,
+    ).blocked is False
+
 
 def test_batched_actions_on_one_frame_do_not_fake_a_surface_cycle() -> None:
     """A login batch (type, type, tap) is decided on ONE frame; per-atomic

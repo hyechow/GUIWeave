@@ -316,6 +316,10 @@ def test_grounding_respects_editable_control_family_with_mixed_language_labels()
     assert _compatible_with_action(aria, "type")
     assert _matches_described_control_type("Assignee combobox", aria)
 
+    rating = {"kind": "rating", "label": "Your Rating", "options": ["1", "2"]}
+    assert _compatible_with_action(rating, "select_option")
+    assert not _compatible_with_action(rating, "type")
+
     for kind in (
         "submit_input", "button_input", "checkbox_input", "radio_input",
         "file_input", "hidden_input", "color_input", "range_input",
