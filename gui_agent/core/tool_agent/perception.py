@@ -589,6 +589,9 @@ def _rows_satisfy_filters(
                 unknown = True
                 continue
             value = row[row_field]
+            if value is None:
+                unknown = True
+                continue
             field_type = requirement.field_types.get(row_field)
             field_name = requirement.field_sources.get(row_field, row_field)
             if _is_semantic_predicate(predicate, field_type=field_type):

@@ -144,6 +144,22 @@ def _observed_choice_state(controls: list[dict[str, Any]]) -> list[dict[str, Any
     ]
 
 
+def _offscreen_status_messages(controls: list[dict[str, Any]]) -> list[dict[str, Any]]:
+    """Keep rendered feedback as evidence after scrolling moves it off-screen."""
+
+    return [
+        {
+            key: control[key]
+            for key in ("kind", "label", "value", "viewport_pos")
+            if control.get(key) not in (None, "")
+        }
+        for control in controls
+        if isinstance(control, dict)
+        and control.get("kind") == "status_message"
+        and control.get("in_viewport") is False
+    ][:8]
+
+
 _OFFSCREEN_ACTION_KINDS = frozenset({"button", "native_select", "section_toggle"})
 # Keeps the projection compact on long forms; sorted nearest-fold-first, so a
 # form with more distinct off-fold actions than this drops only the farthest.
@@ -560,6 +576,7 @@ def _frame_payload(
         "requirement_scopes": frame.requirement_scopes,
         "scope_blockers": scope_blockers,
         "observed_choice_state": _observed_choice_state(frame.controls),
+        "offscreen_status_messages": _offscreen_status_messages(frame.controls),
         "offscreen_action_controls": _offscreen_action_controls(frame.controls),
         "candidate_set_state": candidate_state,
         "visible_collection_regions": frame.visible_collection_regions,
@@ -589,6 +606,29 @@ def _frame_payload(
     }
 
 
+def render_worker_frame_context(
+    frame: MaterializedFrame,
+    *,
+    candidate_committed: bool = False,
+    collection_stability: str = "",
+) -> str:
+    """Render the current observation for both live decisions and replay."""
+
+    return (
+        "## Current MaterializedFrame (compact semantic projection)\n"
+        "Runtime-owned collection/data values remain private. "
+        "Visible collection cell text is exact current-frame evidence, but cells "
+        "do not declare record boundaries; clipped cells may be incomplete. "
+        "For every control rect, x/y are its normalized center coordinates; "
+        "never add half of w/h to derive the action point.\n"
+        + json.dumps(_frame_payload(
+            frame,
+            candidate_committed=candidate_committed,
+            collection_stability=collection_stability,
+        ), ensure_ascii=False)
+    )
+
+
 @dataclass(frozen=True)
 class WorkerContextProjection:
     text: str
@@ -606,13 +646,6 @@ def project_worker_context(
 ) -> WorkerContextProjection:
     """Build one capacity-managed context; the screenshot is supplied separately."""
     memory_text = memory.render_prompt_section()
-    compact_frame = json.dumps(_frame_payload(
-        frame,
-        candidate_committed=any(
-            event.kind == "candidate_commit" for event in memory.durable_facts
-        ),
-        collection_stability=collection_stability,
-    ), ensure_ascii=False)
     blocks = [
         (
             ContextBlock(
@@ -648,14 +681,12 @@ def project_worker_context(
             priority=20,
             freshness="turn",
             coverage="complete",
-            content=(
-                "## Current MaterializedFrame (compact semantic projection)\n"
-                "Runtime-owned collection/data values remain private. "
-                "Visible collection cell text is exact current-frame evidence, but cells "
-                "do not declare record boundaries; clipped cells may be incomplete. "
-                "For every control rect, x/y are its normalized center coordinates; "
-                "never add half of w/h to derive the action point.\n"
-                + compact_frame
+            content=render_worker_frame_context(
+                frame,
+                candidate_committed=any(
+                    event.kind == "candidate_commit" for event in memory.durable_facts
+                ),
+                collection_stability=collection_stability,
             ),
         ),
         (
@@ -692,4 +723,5 @@ __all__ = [
     "WorkerMemoryView",
     "build_worker_memory_view",
     "project_worker_context",
+    "render_worker_frame_context",
 ]

@@ -39,6 +39,7 @@ from gui_agent.core.tool_agent.protocol import (
     validate_worker_tool_state,
     worker_attempt_contract,
 )
+from gui_agent.core.tool_agent.worker_memory import render_worker_frame_context
 from gui_agent.prompts import load_prompt_text
 from llm.provider_config import chat_request_kwargs
 
@@ -143,6 +144,7 @@ def _worker_messages(
     context: dict[str, Any] | None = None,
     image_scale: float = 1.0,
     same_frame_feedback: dict[str, Any] | None = None,
+    materialized_frame: MaterializedFrame | None = None,
 ) -> list[Any]:
     messages: list[Any] = []
     for role in report.get("roles", []):
@@ -169,6 +171,15 @@ def _worker_messages(
             )))
         elif name == "human":
             text = _without_section(text, "## Current Worker attempt")
+            if materialized_frame is not None:
+                frame_start = text.find("## Current MaterializedFrame")
+                if frame_start >= 0:
+                    text = text[:frame_start].rstrip()
+                text = (
+                    text.rstrip()
+                    + "\n\n"
+                    + render_worker_frame_context(materialized_frame)
+                ).strip()
             if same_frame_feedback:
                 text += "\n\n## Same-frame runtime feedback\n" + json.dumps(
                     same_frame_feedback, ensure_ascii=False,
@@ -201,8 +212,13 @@ def _without_section(text: str, heading: str) -> str:
     start = text.find(heading)
     if start < 0:
         return text
-    end = text.find("\n\n## ", start + len(heading))
-    return (text[:start] + (text[end:] if end >= 0 else "")).strip()
+    boundaries = [
+        offset for marker in _WORKER_DYNAMIC_SECTIONS
+        if marker != heading
+        and (offset := text.find(marker, start + len(heading))) >= 0
+    ]
+    end = min(boundaries, default=len(text))
+    return (text[:start] + text[end:]).strip()
 
 
 def _literal(call: ast.Call | None, name: str, default: Any = None) -> Any:
@@ -548,6 +564,7 @@ def replay_worker_decision(
         same_frame_feedback=ordered_boundary_resume_feedback(
             spec, materialized, recorded_memory,
         ),
+        materialized_frame=materialized,
     )
     request_model = getattr(model_config, "model", None)
     if request_model is None:
