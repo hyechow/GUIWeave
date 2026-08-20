@@ -31,6 +31,7 @@ from gui_agent.core.tool_agent.protocol import (
     normalize_action_arguments,
     response_usage,
     generic_action_spec,
+    value_provenance_contract,
     worker_attempt_contract,
 )
 
@@ -888,6 +889,30 @@ def test_worker_attempt_contract_keeps_descriptive_roles_unresolved() -> None:
     assert "Only literal identifiers in this attempt" in contract
     assert "usual, dedicated, preferred" in contract
     assert "ask_user before mutation" in contract
+
+
+def test_value_provenance_is_projected_only_for_descriptive_attempt_values() -> None:
+    descriptive = WorkerSpec.model_validate({
+        "profile": "operator",
+        "goal": "Copy the records into my dedicated archive folder",
+        "success_criteria": ["The records are copied into that folder"],
+        "strategy": {"approach": "File collection workflow"},
+    })
+    exact = WorkerSpec.model_validate({
+        "profile": "operator",
+        "goal": "Send the records to archive@example.com",
+        "success_criteria": ["The records are sent with subject Records"],
+        "strategy": {"approach": "Messaging workflow"},
+    })
+
+    provenance = value_provenance_contract(
+        "Copy the records into my dedicated archive folder.", descriptive,
+    )
+
+    assert "task-scoped; non-executable" in provenance
+    assert "authoritative only" in provenance
+    assert "verbatim_user_source" in provenance
+    assert value_provenance_contract("Send the records.", exact) == ""
 
 
 def test_worker_rejects_missing_input_binding_description() -> None:

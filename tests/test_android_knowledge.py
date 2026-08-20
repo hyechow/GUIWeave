@@ -148,6 +148,9 @@ def test_files_mail_use_physical_folder_and_single_file_picker() -> None:
     assert "destination file already exists" in worker_context
     assert "Activating an exact file row attaches that file" in worker_context
     assert "Android Back leaves the visible file unattached" in worker_context
+    assert "does not interpret advanced date operators" in worker_context
+    assert "distinctive content terms for recall" in worker_context
+    assert "`All mail` source" in worker_context
 
 
 def test_files_archive_content_exposes_only_application_facts() -> None:

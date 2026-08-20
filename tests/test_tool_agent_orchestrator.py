@@ -405,6 +405,78 @@ ctx.finish(result["ref"], effect="data")
     assert any(item.code == "OPERATOR_COLLECTION_REF" for item in diagnostics)
 
 
+def test_master_review_rejects_counting_collection_input_slots() -> None:
+    source = _program(
+        f'''
+outcome = ctx.gui_worker(
+    worker_id="collect_records",
+    profile="collector",
+    goal="Collect all requested records",
+    success_criteria=["Every requested record is returned as one raw row"],
+    data_requirements=[{{
+        "id": "records",
+        "description": "Requested records",
+        "cardinality": "many",
+        "row_schema": {ROW_SCHEMA!r},
+        "field_sources": {{"amount": "Amount"}},
+        "field_types": {{"amount": "number"}},
+        "filters": {{}},
+        "coverage": "complete",
+    }}],
+    approach="Record collection workflow",
+)
+result = ctx.transform(
+    transform_id="count_records",
+    inputs=[outcome["collection_ref"]["ref"]],
+    source="def transform(inputs):\\n    return len(inputs)",
+    result_schema={{"type": "integer"}},
+)
+ctx.finish(result["ref"], effect="data")
+'''.strip()
+    )
+
+    diagnostics = validate_master_source(source)
+
+    assert any(item.code == "TRANSFORM_INPUT_CONTAINER" for item in diagnostics)
+
+
+def test_master_review_accepts_counting_rows_in_one_collection_input() -> None:
+    source = _program(
+        f'''
+outcome = ctx.gui_worker(
+    worker_id="collect_records",
+    profile="collector",
+    goal="Collect all requested records",
+    success_criteria=["Every requested record is returned as one raw row"],
+    data_requirements=[{{
+        "id": "records",
+        "description": "Requested records",
+        "cardinality": "many",
+        "row_schema": {ROW_SCHEMA!r},
+        "field_sources": {{"amount": "Amount"}},
+        "field_types": {{"amount": "number"}},
+        "filters": {{}},
+        "coverage": "complete",
+    }}],
+    approach="Record collection workflow",
+)
+result = ctx.transform(
+    transform_id="count_records",
+    inputs=[outcome["collection_ref"]["ref"]],
+    source="def transform(inputs):\\n    return len(inputs[0])",
+    result_schema={{"type": "integer"}},
+)
+ctx.finish(result["ref"], effect="data")
+'''.strip()
+    )
+
+    diagnostics = validate_master_source(source)
+
+    assert not [
+        item for item in diagnostics if item.code == "TRANSFORM_INPUT_CONTAINER"
+    ]
+
+
 def test_master_review_explains_visual_only_worker_dependencies() -> None:
     source = _program(
         '''
@@ -1161,8 +1233,23 @@ def test_task_semantic_contract_extracts_conditional_world_state() -> None:
     assert contract.conditional_predicates == [
         "a source affirmatively states that approval has been granted",
     ]
+    assert contract.counted_entity == ""
     assert events[0][0] == "master_semantic_contract"
     assert events[0][1]["error"] == ""
+
+
+def test_task_semantic_contract_extracts_counted_entity_grain() -> None:
+    llm = _SequenceLLM(
+        '{"conditional_predicates":[],"counted_entity":"signed attachments"}'
+    )
+
+    contract = normalize_task_semantics(
+        llm=llm,
+        system_prompt="Normalize typed task semantics.",
+        goal="Tell me how many signed attachments were received as a single number.",
+    )
+
+    assert contract.counted_entity == "signed attachments"
 
 
 def test_master_review_rejects_data_collection_for_destination_only_goal() -> None:

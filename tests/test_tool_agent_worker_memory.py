@@ -162,6 +162,25 @@ def test_worker_context_projects_session_knowledge_after_temporal_memory() -> No
     assert block["ttl"] == "session"
 
 
+def test_worker_context_types_task_lifetime_value_provenance() -> None:
+    projection = project_worker_context(
+        memory=build_worker_memory_view(WorkerJournal(worker_id="provenance")),
+        frame=MaterializedFrame(frame_id="frame:1", screenshot_path="frame.png"),
+        value_provenance=(
+            "## Value provenance archive (task-scoped; non-executable)\n"
+            '{"verbatim_user_source": "Use my dedicated folder"}'
+        ),
+    )
+
+    block = next(
+        item for item in projection.report["blocks"]
+        if item["id"] == "tool_agent.worker.value_provenance"
+    )
+    assert block["source_type"] == "runtime_value_provenance"
+    assert block["ttl"] == "task"
+    assert "Value provenance archive" in projection.text
+
+
 def test_worker_memory_preserves_flash_off_target_signal() -> None:
     journal = WorkerJournal(worker_id="target_feedback")
     _record_turn(
@@ -1001,6 +1020,19 @@ def test_runtime_answer_must_be_integrated_before_execution() -> None:
     )
     integrated = build_worker_memory_view(journal, current_frame_id="frame:3")
     assert integrated.pending_runtime_evidence == ()
+
+    journal.record_memory_updates(
+        step=4,
+        frame_id="frame:4",
+        state=_memory_state({
+            "fact_type": "commitment", "key": "apply_candidate",
+            "status": "completed", "lifetime": "attempt",
+            "statement": "Candidate A was applied to Root/team/archive",
+            "depends_on": ["claim:candidate_set", "claim:destination"],
+        }),
+    )
+    after_completion = build_worker_memory_view(journal, current_frame_id="frame:4")
+    assert after_completion.pending_runtime_evidence == ()
 
 
 def test_worker_cannot_modify_runtime_owned_memory() -> None:

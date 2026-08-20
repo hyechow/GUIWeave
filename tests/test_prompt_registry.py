@@ -100,6 +100,10 @@ def test_master_exposes_only_tool_agent_runtime_api() -> None:
     assert "use a scalar JSON Schema" in prompt
     assert "does not convert a differently displayed source value" in prompt
     assert "Current, first, or visually prominent values are not extrema" in prompt
+    assert "one row represents exactly one entity being counted" in prompt
+    assert "a parent record is not the row grain" in prompt
+    assert "never synthesize one combined predicate field" in prompt
+    assert "`len(inputs)` counts input slots rather than records" in prompt
     assert 'Set `cardinality="one"` only' in prompt
     assert "the first visible candidate is not" in prompt
     assert "execution experience" not in prompt
@@ -172,6 +176,8 @@ def test_master_preserves_typed_conditional_predicates() -> None:
 
     assert "task.semantic_contract.conditional_predicates" in prompt
     assert "copy every relevant predicate verbatim" in prompt
+    assert "task.semantic_contract.counted_entity" in prompt
+    assert "never substitute its source container or parent record" in prompt
 
 
 def test_worker_keeps_action_grounding_and_memory_boundaries() -> None:
