@@ -570,6 +570,11 @@ def test_visible_android_menu_controls_count_as_task_progress() -> None:
             "value": "Create New Channel",
             "in_viewport": True,
             "rect": {"x": 500, "y": 900, "w": 1000, "h": 45},
+        }, {
+            "kind": "text_input",
+            "label": "Purchase Date To",
+            "in_viewport": True,
+            "rect": {"x": 200, "y": 450, "w": 240, "h": 48},
         }],
     })
     breaker = WorkerActionCircuitBreaker()
@@ -719,6 +724,5 @@ def test_action_guard_blocks_unscoped_row() -> None:
         frame=empty,
     )
     assert blocked_empty.blocked, blocked_empty.reason
-
 
 

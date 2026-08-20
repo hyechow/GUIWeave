@@ -2058,7 +2058,7 @@ def test_worker_normalizes_provider_point_schema_and_executes_type(monkeypatch) 
     assert decision["args"]["y"] == 380
 
 
-def test_worker_blocks_unchanged_repeat_and_accepts_same_frame_ref_repair(
+def test_worker_blocks_uncontrolled_geometry_before_adapter_grounding(
     monkeypatch,
 ) -> None:
     runtime = object.__new__(ToolAgentRuntime)
@@ -2112,21 +2112,13 @@ def test_worker_blocks_unchanged_repeat_and_accepts_same_frame_ref_repair(
     outcome = runtime._run_worker("ground_date", spec)
 
     assert outcome.phase == "failed"
-    assert len(observed) == 2
-    assert runtime.worker.calls == 3
-    assert len(runtime._executor.actions) == 2
-    assert (runtime._executor.actions[-1].x, runtime._executor.actions[-1].y) == (
-        212,
-        428,
-    )
-    assert runtime._executor.actions[-1].snap["method"] == "control_geometry"
-    assert runtime._visualizer.points[-2:] == [
-        (212.0, 428.0),
-        (212.0, 428.0),
-    ]
+    assert len(observed) == 1
+    assert runtime.worker.calls == 2
+    assert runtime._executor.actions == []
     blocked = [event for event in runtime.trace if event["event"] == "worker_action_blocked"]
     assert len(blocked) == 1
-    assert blocked[0]["prior_attempts"] == 1
+    assert "current visible control" in blocked[-1]["reason"]
+    assert blocked[0]["prior_attempts"] == 0
 
 
 def test_worker_allows_effective_scrolls_until_bounded_step_limit(

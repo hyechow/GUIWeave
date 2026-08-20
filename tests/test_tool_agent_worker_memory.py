@@ -39,20 +39,12 @@ def test_worker_memory_is_a_bounded_projection_of_append_only_runtime_facts() ->
     memory = build_worker_memory_view(journal)
 
     assert [item.event_ref for item in memory.durable_facts] == ["step:12"]
-    assert [item.event_ref for item in memory.recent_steps] == [
-        "step:9",
-        "step:10",
-        "step:11",
-        "step:12",
-    ]
-    assert len(memory.compressed_history) == 6
-    assert memory.compressed_history[0].startswith("[step:3]")
-    assert memory.compressed_history[-1].startswith("[step:8]")
     rendered = memory.render_prompt_section()
     assert "Pending subgoal" not in rendered
     assert "runtime reported no_effect" in rendered
     assert "[step:1]" not in rendered
-    assert "Worker observations" in rendered
+    assert "runtime-compacted current belief" in rendered
+    assert "Recent narrative steps" not in rendered
 
 
 def test_worker_memory_omits_spatial_and_execution_metadata() -> None:
@@ -88,8 +80,6 @@ def test_worker_memory_omits_spatial_and_execution_metadata() -> None:
     assert '"y"' not in rendered
     assert "settle_seconds" not in rendered
     assert "grounding" not in rendered
-    assert "Complete" in rendered
-    assert "select_option" in rendered
     assert "flash verifier reported off_target" in rendered
     assert "Status label" in rendered
     assert "do not repeat the same point" in rendered
@@ -152,6 +142,73 @@ def test_worker_memory_accumulates_explicit_visual_facts() -> None:
         event for event in build_worker_memory_view(journal).durable_facts
         if "author=" in event.durable_text
     ]
+
+
+def test_compacted_memory_invalidates_historical_spatial_observations() -> None:
+    journal = WorkerJournal(worker_id="spatial_lifecycle")
+    journal.record_turn(
+        step=1,
+        frame_id="frame:29",
+        state=_state(1).model_copy(update={"established_facts": [
+            "Add to Cart is below the viewport at y=2219",
+            "Product identity: Example Configurable Product",
+        ]}),
+        tool="reveal_control",
+        args={"x": 703, "y": 2219, "description": "Add to Cart below the fold"},
+        result={"status": "executed", "action_type": "reveal_control"},
+    )
+
+    memory = build_worker_memory_view(journal)
+    rendered = memory.render_prompt_section()
+
+    assert any(event.frame_id == "frame:29" for event in journal.events)
+    assert "Product identity: Example Configurable Product" in rendered
+    assert "y=2219" not in rendered
+    assert "below the viewport" not in rendered
+    assert "Historical geometry" in rendered
+
+
+def test_compacted_memory_drops_transient_semantic_state_in_both_languages() -> None:
+    journal = WorkerJournal(worker_id="semantic_lifecycle")
+    journal.record_turn(
+        step=1,
+        frame_id="frame:1",
+        state=_state(1).model_copy(update={"established_facts": [
+            "Color Black is selected",
+            "当前 Size 值为 085 M US",
+            "Product identity: Example Configurable Product",
+        ]}),
+        tool="select_option",
+        args={"text": "Black", "description": "Color choice"},
+        result={"status": "executed", "action_type": "select_option"},
+    )
+
+    rendered = build_worker_memory_view(journal).render_prompt_section()
+
+    assert "Color Black is selected" not in rendered
+    assert "当前 Size 值为" not in rendered
+    assert "Product identity: Example Configurable Product" in rendered
+    assert "Historical geometry" in rendered
+
+
+def test_compacted_memory_does_not_project_action_descriptions() -> None:
+    journal = WorkerJournal(worker_id="description_lifecycle")
+    journal.record_turn(
+        step=1,
+        frame_id="frame:1",
+        state=_state(1),
+        tool="tap",
+        args={
+            "x": 400,
+            "y": 900,
+            "description": "Old Submit button below the fold",
+        },
+        result={"status": "executed", "action_type": "tap"},
+    )
+
+    rendered = build_worker_memory_view(journal).render_prompt_section()
+
+    assert "Old Submit button" not in rendered
 
 
 def test_worker_memory_tracks_collection_anchor_without_persisting_raw_cells() -> None:
@@ -266,6 +323,9 @@ def test_worker_context_always_uses_compact_semantic_frame() -> None:
         ),
         max_chars=4_000,
     )
+
+    assert "## Current MaterializedFrame frame:1 (sole action authority)" in projection.text
+    assert '"label": "Apply"' in projection.text
 
     frame_decision = next(
         item for item in projection.report["blocks"]
@@ -519,9 +579,14 @@ def test_worker_rebuilds_fresh_messages_each_frame_instead_of_replaying_chat_his
         [getattr(message, "type", "") for message in messages]
         for messages in runtime.worker.calls
     ] == [["system", "human"]] * 3
-    assert "No prior Worker actions" in _human_text(runtime.worker.calls[0])
+    assert "No retained cross-frame state" in _human_text(runtime.worker.calls[0])
     assert "step:1" in _human_text(runtime.worker.calls[1])
     assert "step:2" in _human_text(runtime.worker.calls[2])
+    assert "Advance step 1" not in _human_text(runtime.worker.calls[1])
+    assert "Observed state 1" not in _human_text(runtime.worker.calls[1])
+    assert "Current-frame controls are the sole authority" in _human_text(
+        runtime.worker.calls[2]
+    )
     assert all(
         sum(
             1
@@ -647,7 +712,7 @@ def test_offscreen_action_controls_expose_reveal_targets() -> None:
     assert '"y": 2647' in section
     # Row links stay out and duplicate labels collapse: 89 offscreen
     # controls compress to a compact actionable set.
-    assert section.count('"kind"') <= 24
+    assert section.count('"kind"') <= 32
     assert '"label": "Nona Fitness Tank' not in section
     assert section.count('"label": "Select"') <= 1
     assert '"label": "Page Next"' in section
@@ -655,6 +720,30 @@ def test_offscreen_action_controls_expose_reveal_targets() -> None:
     assert '"label": "Next"' in section
     assert '"label": "Order"' in section
     assert '"label": "Visible Next"' in projection.text
+
+
+def test_offscreen_choice_is_a_direct_current_frame_target() -> None:
+    frame = MaterializedFrame(
+        frame_id="frame:choice",
+        screenshot_path="frame.png",
+        controls=[{
+            "kind": "rating",
+            "label": "085 M US",
+            "options": ["286303", "286291"],
+            "in_viewport": False,
+            "viewport_pos": "above",
+            "rect": {"x": 639, "y": -757, "w": 63, "h": 19},
+        }],
+    )
+
+    projection = project_worker_context(
+        memory=build_worker_memory_view(WorkerJournal(worker_id="choice")),
+        frame=frame,
+    )
+
+    assert '"offscreen_action_controls"' in projection.text
+    assert '"label": "085 M US"' in projection.text
+    assert '"direct_capability": "select_option"' in projection.text
 
 
 def test_collection_stability_note_appears_after_revisits_with_no_new_rows() -> None:

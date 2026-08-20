@@ -396,6 +396,20 @@ def test_reveal_control_schema_accepts_offscreen_coordinates() -> None:
     validate({"x": 500, "y": -300, "description": "Section toggle above the fold"}, schema=schema)
 
 
+def test_select_option_schema_accepts_known_offscreen_control_coordinates() -> None:
+    from gui_agent.core.tool_agent.protocol import _CAPABILITY_SCHEMAS
+
+    validate(
+        {
+            "x": 900,
+            "y": 2698,
+            "text": "36",
+            "description": "Show choice control below the fold",
+        },
+        schema=_CAPABILITY_SCHEMAS["select_option"],
+    )
+
+
 def test_collector_completion_tool_is_frame_gated_and_runtime_bound() -> None:
     actions = _declared_form_actions()
 

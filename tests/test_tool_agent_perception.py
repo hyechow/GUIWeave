@@ -59,20 +59,22 @@ def test_product_card_fields_preserve_percentage_rating_semantics() -> None:
             "properties": {
                 "product_name": {"type": "string"},
                 "rating": {"type": "number"},
+                "review_count": {"type": "number"},
                 "price": {"type": "number"},
             },
-            "required": ["product_name", "rating", "price"],
+            "required": ["product_name", "rating", "review_count", "price"],
         },
         field_sources={
             "product_name": "Product Name",
             "rating": "Rating",
+            "review_count": "Reviews",
             "price": "Price",
         },
     )
 
     keys = _source_keys(requirement, {
         "headers": [
-            "productName", "price", "ratingPercentage", "ratingValue",
+            "productName", "price", "reviewCount", "ratingPercentage", "ratingValue",
         ],
         "rows": [],
     })
@@ -80,6 +82,7 @@ def test_product_card_fields_preserve_percentage_rating_semantics() -> None:
     assert keys == {
         "product_name": "productname",
         "rating": "ratingpercentage",
+        "review_count": "reviewcount",
         "price": "price",
     }
 
@@ -239,12 +242,153 @@ def _materializer(tmp_path: Path, mode: str) -> PerceptionMaterializer:
     materializer._expected_totals = {}
     materializer._detail_collections = {}
     materializer._visual_filter_states = {}
+    materializer._source_field_capabilities = {}
     materializer._vision_extract = lambda _requirement, _png, **_kwargs: {  # type: ignore[method-assign]
         "found": False,
         "rows": [],
         "end_visible": False,
     }
     return materializer
+
+
+def test_sparse_window_retains_same_source_field_capability(tmp_path: Path) -> None:
+    requirement = DataRequirement(
+        id="products",
+        description="Products with ratings",
+        target_label="Products",
+        row_schema={
+            "type": "object",
+            "properties": {
+                "name": {"type": "string"},
+                "rating": {"type": "number"},
+                "price": {"type": "number"},
+            },
+            "required": ["name", "rating", "price"],
+            "additionalProperties": False,
+        },
+        field_sources={
+            "name": "Product Name", "rating": "Rating", "price": "Price",
+        },
+    )
+    materializer = _materializer(tmp_path, "enhanced")
+    complete = {
+        "caption": "Products",
+        "headers": ["productName", "ratingValue", "price"],
+        "rows": [{"productName": "Rated", "ratingValue": 5, "price": 20}],
+        "partial": False,
+        "traversal": {"type": "paged", "page_index": 1, "page_count": 2},
+    }
+    sparse = {
+        "caption": "Products",
+        "headers": ["productName", "price"],
+        "rows": [{"productName": "Unrated", "price": 10}],
+        "partial": False,
+        "traversal": {"type": "paged", "page_index": 2, "page_count": 2},
+    }
+
+    materializer.observe(
+        bundle=FakeBundle(
+            [complete], observation={"url": "https://shop.test/products?p=1"},
+        ),
+        platform=FakePlatform(),
+        requirements=[requirement],
+        state_scope="worker-a",
+        frame_no=1,
+    )
+    frame, _ = materializer.observe(
+        bundle=FakeBundle(
+            [sparse], observation={"url": "https://shop.test/products?p=2"},
+        ),
+        platform=FakePlatform(),
+        requirements=[requirement],
+        state_scope="worker-a",
+        frame_no=2,
+    )
+
+    assert "detail_resolution" not in frame.requirement_scopes[requirement.id]
+    assert frame.requirement_scopes[requirement.id]["query_outcome"] == (
+        "no_matching_rows_on_complete_page"
+    )
+
+
+def test_source_field_capability_does_not_cross_resource_path(tmp_path: Path) -> None:
+    requirement = DataRequirement(
+        id="products",
+        description="Products with ratings",
+        target_label="Products",
+        row_schema={
+            "type": "object",
+            "properties": {
+                "name": {"type": "string"}, "rating": {"type": "number"},
+            },
+            "required": ["name", "rating"],
+            "additionalProperties": False,
+        },
+        field_sources={"name": "Name", "rating": "Rating"},
+    )
+    materializer = _materializer(tmp_path, "enhanced")
+    materializer.observe(
+        bundle=FakeBundle([{
+            "caption": "Products", "headers": ["Name", "Rating"],
+            "rows": [{"Name": "A", "Rating": 5}], "partial": False,
+        }], observation={"url": "https://shop.test/products"}),
+        platform=FakePlatform(), requirements=[requirement],
+        state_scope="worker-a", frame_no=1,
+    )
+    frame, _ = materializer.observe(
+        bundle=FakeBundle([{
+            "caption": "Products", "headers": ["Name"],
+            "rows": [{"Name": "B"}], "partial": False,
+        }], observation={"url": "https://shop.test/archive"}),
+        platform=FakePlatform(), requirements=[requirement],
+        state_scope="worker-a", frame_no=2,
+    )
+
+    assert frame.requirement_scopes[requirement.id]["detail_resolution"]["status"] == "active"
+
+
+def test_source_field_capability_does_not_cross_nonpagination_query(tmp_path: Path) -> None:
+    requirement = DataRequirement(
+        id="products",
+        description="Products with ratings",
+        target_label="Products",
+        row_schema={
+            "type": "object",
+            "properties": {
+                "name": {"type": "string"}, "rating": {"type": "number"},
+            },
+            "required": ["name", "rating"],
+            "additionalProperties": False,
+        },
+        field_sources={"name": "Name", "rating": "Rating"},
+    )
+    materializer = _materializer(tmp_path, "enhanced")
+    full = {
+        "caption": "Products", "headers": ["Name", "Rating"],
+        "rows": [{"Name": "A", "Rating": 5}], "partial": False,
+        "traversal": {"type": "paged", "page_index": 1, "page_count": 2},
+    }
+    sparse = {
+        "caption": "Products", "headers": ["Name"],
+        "rows": [{"Name": "B"}], "partial": False,
+        "traversal": {"type": "paged", "page_index": 1, "page_count": 2},
+    }
+    materializer.observe(
+        bundle=FakeBundle(
+            [full], observation={"url": "https://shop.test/products?q=boots&p=1"},
+        ),
+        platform=FakePlatform(), requirements=[requirement],
+        state_scope="worker-a", frame_no=1,
+    )
+    frame, _ = materializer.observe(
+        bundle=FakeBundle(
+            [sparse], observation={"url": "https://shop.test/products?q=shoes&p=1"},
+        ),
+        platform=FakePlatform(), requirements=[requirement],
+        state_scope="worker-a", frame_no=2,
+    )
+
+    assert frame.requirement_scopes[requirement.id]["detail_resolution"]["status"] == "active"
 
 
 def _observe_requirement(

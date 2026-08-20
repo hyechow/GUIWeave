@@ -145,6 +145,7 @@ def _worker_messages(
     image_scale: float = 1.0,
     same_frame_feedback: dict[str, Any] | None = None,
     materialized_frame: MaterializedFrame | None = None,
+    worker_memory_override: str | None = None,
 ) -> list[Any]:
     messages: list[Any] = []
     for role in report.get("roles", []):
@@ -171,6 +172,17 @@ def _worker_messages(
             )))
         elif name == "human":
             text = _without_section(text, "## Current Worker attempt")
+            if worker_memory_override is not None:
+                memory_start = text.find("## WorkerMemory")
+                frame_start = text.find("## Current MaterializedFrame", memory_start)
+                if memory_start >= 0 and frame_start >= 0:
+                    text = (
+                        text[:memory_start].rstrip()
+                        + "\n\n"
+                        + worker_memory_override.strip()
+                        + "\n\n"
+                        + text[frame_start:]
+                    )
             if materialized_frame is not None:
                 frame_start = text.find("## Current MaterializedFrame")
                 if frame_start >= 0:
@@ -468,6 +480,7 @@ def replay_worker_decision(
     samples: int = 1,
     expectation: dict[str, Any] | None = None,
     same_frame_feedback: dict[str, Any] | None = None,
+    worker_memory_override: str | None = None,
     llm: Any = None,
 ) -> dict[str, Any]:
     if samples < 1:
@@ -567,6 +580,7 @@ def replay_worker_decision(
             or ordered_boundary_resume_feedback(spec, materialized, recorded_memory)
         ),
         materialized_frame=materialized,
+        worker_memory_override=worker_memory_override,
     )
     request_model = getattr(model_config, "model", None)
     if request_model is None:

@@ -99,6 +99,65 @@ def test_first_match_collection_completes_without_exhaustive_traversal() -> None
     assert collection.coverage["status"] == "complete"
 
 
+def test_singleton_first_match_ignores_source_page_count() -> None:
+    store = RuntimeDataStore()
+    _, collection, _ = store.put_chunk(
+        requirement_id="records",
+        frame_id="frame:1",
+        provider="structured",
+        rows=[{"label": "target", "metric": 3}],
+        row_schema=ROW_SCHEMA,
+        coverage={
+            "requested": "first_match",
+            "scope_status": "met",
+            "cardinality": "one",
+            "source_scope": "structured_surface",
+            "page_index": 4,
+            "page_count": 8,
+            "has_next_page": True,
+            "partial": False,
+        },
+    )
+
+    assert collection.coverage["status"] == "complete"
+
+
+def test_singleton_first_match_latches_first_matching_window() -> None:
+    store = RuntimeDataStore()
+    common = {
+        "requirement_id": "records",
+        "provider": "structured",
+        "row_schema": ROW_SCHEMA,
+    }
+    first_chunk, first, _ = store.put_chunk(
+        frame_id="frame:17",
+        rows=[{"label": "first", "metric": 17}],
+        coverage={
+            "requested": "first_match", "scope_status": "met",
+            "cardinality": "one", "source_scope": "structured_surface",
+            "collection_key": "ordered:records", "page_index": 17,
+            "page_count": 19, "has_next_page": True, "partial": False,
+        },
+        **common,
+    )
+    second_chunk, second, created = store.put_chunk(
+        frame_id="frame:18",
+        rows=[{"label": "later", "metric": 18}],
+        coverage={
+            "requested": "first_match", "scope_status": "met",
+            "cardinality": "one", "source_scope": "structured_surface",
+            "collection_key": "ordered:records", "page_index": 18,
+            "page_count": 19, "has_next_page": True, "partial": False,
+        },
+        **common,
+    )
+
+    assert created is False
+    assert second_chunk.ref == first_chunk.ref
+    assert second == first
+    assert store.collection_rows(second.ref) == [{"label": "first", "metric": 17}]
+
+
 def test_collection_rows_remove_overlap_between_visual_windows() -> None:
     store = RuntimeDataStore()
     _put_window(

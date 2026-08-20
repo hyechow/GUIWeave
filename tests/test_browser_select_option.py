@@ -23,8 +23,8 @@ class _Client:
         self.clicked = (x, y)
         return f"OK tap ({x:.0f},{y:.0f})"
 
-    def select_option(self, x, y, option_text, *, deselect=False):
-        self.selected = (x, y, option_text, deselect)
+    def select_option(self, x, y, option_text, *, deselect=False, control_id=None):
+        self.selected = (x, y, option_text, deselect, control_id)
         return f"OK select_option {option_text!r}"
 
     def scroll_to_ref(self, target_ref):
@@ -49,7 +49,7 @@ def test_select_option_action_dispatches_client():
     )
 
     assert _exec(client).execute(decision) is True
-    assert client.selected == (600.0, 500.0, "Complete", False)
+    assert client.selected == (600.0, 500.0, "Complete", False, None)
     assert client.clicked is None
 
 
@@ -66,7 +66,7 @@ def test_tool_agent_base_action_dispatches_browser_select_option():
     )
 
     assert _exec(client).execute(decision) is True
-    assert client.selected == (600.0, 500.0, "Complete", False)
+    assert client.selected == (600.0, 500.0, "Complete", False, None)
     assert client.clicked is None
 
 
@@ -92,7 +92,26 @@ def test_select_option_deselect_intent_is_forwarded():
     )
 
     assert _exec(client).execute(decision) is True
-    assert client.selected == (600.0, 500.0, "NOT LOGGED IN", True)
+    assert client.selected == (600.0, 500.0, "NOT LOGGED IN", True, None)
+
+
+def test_offscreen_select_dispatches_runtime_control_identity() -> None:
+    client = _Client()
+    decision = BrowserActionDecision(
+        action=BrowserAction(
+            action_type="select_option",
+            x=900,
+            y=2698,
+            text="36",
+            description="Show choice control below the fold",
+            target_control_id="limiter",
+        )
+    )
+
+    assert _exec(client).execute(decision) is True
+    # Coordinates are clamped at the executor boundary; the Runtime-owned id,
+    # rather than the stale offscreen point, authorizes and locates the action.
+    assert client.selected == (900.0, 999, "36", False, "limiter")
 
 
 def test_scroll_to_ref_dispatches_transport_without_click():

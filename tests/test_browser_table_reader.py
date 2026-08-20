@@ -21,11 +21,15 @@ def test_table_snapshot_js_is_serialized_expression():
     assert "document.documentElement.scrollHeight" in js
     assert "return { type: 'static' }" in js
     assert "pagerFromControls" in js
+    assert "const next_url = navigationUrl(nextBtn)" in js
+    assert "const previous_url = navigationUrl(prevBtn)" in js
     assert "pageNumbers" in js
+    assert "pageNumbers.length && has_next_page === false" in js
     assert "const traversal = detectPagerState(parent)" in js
     assert ".product-item-link" in js
     assert 'row["ratingPercentage"] = Number(pctMatch[1])' in js
     assert 'getAttribute("data-price-amount")' in js
+    assert 'row["reviewCount"] = Number' in js
     assert '[aria-current="page"]' in js
     assert "getComputedStyle(item.el)" in js
     assert 'getAttribute("aria-colspan")' in js

@@ -85,6 +85,10 @@ def test_shopping_buy_goal_combines_catalog_selection_and_checkout_commit() -> N
     assert "completed checkout" in context
     assert "Product Name, exact Rating Percentage" in context
     assert "never invent review count or price as a tie-breaker" in context
+    assert "known upper bound of 100" in context
+    assert "exact `rating_percentage: 100` predicate" in context
+    assert '`coverage="first_match"`' in context
+    assert "global lexicographic optimum" in context
     assert "resolving a handed-off exact identity" in context
     assert "resolve its exact matching card through header mini-search" in context
     assert "source: Full Shopping Cart and Checkout flow" in context
@@ -122,6 +126,7 @@ def test_shopping_navigation_exposes_nested_category_paths() -> None:
     assert "/beauty-personal-care/makeup/makeup-remover.html" in worker
     assert "/home-kitchen/furniture/accent-furniture.html" in worker
     assert "/tools-home-improvement/lighting-ceiling-fans/ceiling-lights.html" in worker
+    assert "/clothing-shoes-jewelry/men/shoes.html" in worker
 
 
 def test_shopping_catalog_handoff_uses_visible_product_identity() -> None:

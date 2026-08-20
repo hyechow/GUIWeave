@@ -195,7 +195,10 @@ def test_select_option_uses_rendered_radio_group_target() -> None:
             assert "document.elementFromPoint(point.x, point.y)" in script
             assert "byPoint?.closest?." in script
             assert "return mouseTarget(pointedOption)" in script
-            assert args == {"x": 180, "y": 519, "target": "19", "deselect": False}
+            assert args == {
+                "x": 180, "y": 519, "target": "19", "deselect": False,
+                "controlId": "",
+            }
             return {"ok": True, "mode": "mouse", "x": 234, "y": 519, "label": "4 stars"}
 
     dev = PlaywrightDevice.__new__(PlaywrightDevice)
@@ -204,6 +207,34 @@ def test_select_option_uses_rendered_radio_group_target() -> None:
 
     assert dev.select_option(180, 519, "19") == "OK select_option '4 stars' (mouse)"
     assert clicks == [(234.0, 519.0)]
+
+
+def test_select_option_transports_offscreen_control_by_runtime_id() -> None:
+    captured = {}
+
+    class Page:
+        mouse = SimpleNamespace(click=lambda *_args: None)
+
+        @staticmethod
+        def bring_to_front():
+            return None
+
+        @staticmethod
+        def evaluate(script, args):
+            captured.update(args)
+            assert "getElementById(controlId)" in script
+            assert "scrollIntoView" in script
+            return {"ok": True, "mode": "native", "label": "36", "value": "36"}
+
+    dev = PlaywrightDevice.__new__(PlaywrightDevice)
+    dev._follow_active_tab = lambda: None
+    dev._require_page = lambda: Page()
+    dev._dismiss_choice_overlay = lambda: None
+
+    assert dev.select_option(
+        900, 999, "36", control_id="limiter",
+    ) == "OK select_option '36' (select) value='36'"
+    assert captured["controlId"] == "limiter"
 
 
 def test_new_tab_snapshots_the_explicitly_created_page() -> None:

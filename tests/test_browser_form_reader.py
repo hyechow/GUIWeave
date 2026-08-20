@@ -46,6 +46,8 @@ def test_form_controls_js_is_serialized_expression():
     assert "input[type=\"radio\"]" in js
     assert "radio_group" in js
     assert "selectedScale" in js
+    assert "const ratingScale = numericValues" in js
+    assert "semantic group label" in js
     assert "effect_kind" not in js
 
 

@@ -35,7 +35,8 @@ class _RecordedModel:
 
 def _snapshot(label: str, *, image: bool = False) -> dict:
     text = (
-        "memory\n\n## Current MaterializedFrame (compact semantic projection)\n"
+        "## WorkerMemory (recorded)\nold memory\n\n"
+        "## Current MaterializedFrame (compact semantic projection)\n"
         "instructions\n{\"title\": \"stale\"}"
         if image else "frozen frame"
     )
@@ -218,6 +219,40 @@ def test_worker_replay_compares_equivalent_actions_by_capability(
     assert "recorded static prompt" not in model.calls[0][0].content
     assert "current worker fact" in model.calls[0][0].content
     assert "old fact" not in model.calls[0][0].content
+
+
+def test_worker_replay_can_replace_recorded_memory_with_production_projection(
+    tmp_path,
+) -> None:
+    run_dir = _worker_run(
+        tmp_path,
+        recorded_tool="continue_with_actions",
+        recorded_actions=[{"name": "scroll", "args": {}}],
+    )
+    model = _RecordedModel(_tool_call("continue_with_actions", {
+        "state": _state(),
+        "actions": [{
+            "name": "scroll",
+            "args": {"direction": "down", "description": "Current collection"},
+        }],
+    }))
+    projection = "## WorkerMemory (runtime-compacted current belief)\n- stable belief"
+
+    result = replay_worker_decision(
+        run_dir,
+        frame=1,
+        worker_memory_override=projection,
+        llm=model,
+    )
+
+    assert result["status"] == "passed"
+    human = "\n".join(
+        str(item.get("text") or "")
+        for item in model.calls[0][-1].content
+        if isinstance(item, dict) and item.get("type") == "text"
+    )
+    assert projection in human
+    assert "old memory" not in human
     assert "Execute the binding `approach`" in model.calls[0][0].content
     assert "old nested fact" not in model.calls[0][0].content
     assert "## Worker attempt contract" not in model.calls[0][0].content
