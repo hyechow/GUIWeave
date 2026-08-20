@@ -125,7 +125,7 @@ def test_files_mail_use_physical_folder_and_single_file_picker() -> None:
         "move review pdf from Documents to paper and email files"
     )
     mail_context = mail.orchestrator_context(
-        "Mail email send compose subject attachment"
+        "Mail email send compose subject body attachment"
     )
     for fact in (
         "indexed category", "matches descendants recursively",
@@ -135,8 +135,11 @@ def test_files_mail_use_physical_folder_and_single_file_picker() -> None:
     for fact in (
         "regardless of type", "`Documents` category can omit types",
         "return after one selection", "verify the attachment in compose",
+        "message **body**", "must visibly contain that content",
     ):
         assert fact in mail_context
+    assert "message body" in mail.worker_context()
+    assert "fill the body with that content before Send" in mail.worker_context()
 
 
 def test_files_archive_content_exposes_only_application_facts() -> None:

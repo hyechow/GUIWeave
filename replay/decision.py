@@ -22,7 +22,10 @@ from gui_agent.core.tool_agent.contracts import (
     approach_atomic_action_count,
     approach_is_procedural,
 )
-from gui_agent.core.tool_agent.orchestrator import compile_master_program
+from gui_agent.core.tool_agent.orchestrator import (
+    compile_master_program,
+    normalize_task_semantics,
+)
 from gui_agent.core.tool_agent.protocol import (
     MAX_ORDERED_ACTIONS,
     bind_worker_decision_transport,
@@ -376,6 +379,15 @@ def replay_master_decision(
         selected = attempts[-1]
     expected = expectation or _master_shape(str(selected.get("source") or ""))
     model, _, model_name = _selected_model("tool_agent.master", llm)
+    task = _current_master_task(_master_task(selected), context)
+    if llm is None:
+        semantic_contract = normalize_task_semantics(
+            llm=model,
+            system_prompt=load_prompt_text("task.tool_agent.semantic_contract"),
+            goal=str(task.get("goal") or ""),
+        )
+        if semantic_contract.conditional_predicates:
+            task["semantic_contract"] = semantic_contract.model_dump(mode="json")
     results = []
     for number in range(1, samples + 1):
         compile_history = []
@@ -383,7 +395,7 @@ def replay_master_decision(
             program = compile_master_program(
                 llm=model,
                 system_prompt=load_prompt_text("task.tool_agent.master"),
-                task_context=_current_master_task(_master_task(selected), context),
+                task_context=task,
                 max_attempts=5,
                 on_event=lambda event, payload: compile_history.append({
                     "attempt": payload.get("attempt"),
@@ -672,7 +684,7 @@ def replay_worker_decision(
     tools_by_name = {tool["function"]["name"]: tool for tool in tools}
     results = []
     for number in range(1, samples + 1):
-        replay_messages, repairs = list(messages), 0
+        replay_messages, repairs, repair_errors = list(messages), 0, []
         for protocol_attempt in range(2):
             response = bound.invoke(replay_messages)
             try:
@@ -685,6 +697,7 @@ def replay_worker_decision(
                 if protocol_attempt:
                     raise
                 repairs += 1
+                repair_errors.append(f"{type(exc).__name__}: {exc}")
                 replay_messages.extend([response, HumanMessage(content=(
                     f"Protocol repair: {exc}. On this SAME frame, "
                     f"{repair_instruction} including its "
@@ -695,6 +708,7 @@ def replay_worker_decision(
             "sample": number,
             **decision,
             "protocol_repairs": repairs,
+            "protocol_repair_errors": repair_errors,
             "passed": not errors,
             "errors": errors,
         })

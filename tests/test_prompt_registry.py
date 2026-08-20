@@ -22,6 +22,7 @@ def test_prompt_registry_loads_all_assets() -> None:
         "task.chat.router",
         "task.tool_agent.master",
         "task.tool_agent.presentation",
+        "task.tool_agent.semantic_contract",
         "task.tool_agent.strategy_decide",
         "task.tool_agent.visual_transcription",
         "task.tool_agent.worker",
@@ -157,6 +158,13 @@ def test_master_keeps_visual_conditional_dependencies_in_one_worker() -> None:
         "neither typed data nor a transferable scope",
     ):
         assert rule in prompt
+
+
+def test_master_preserves_typed_conditional_predicates() -> None:
+    prompt = load_prompt_text("task.tool_agent.master")
+
+    assert "task.semantic_contract.conditional_predicates" in prompt
+    assert "copy every relevant predicate verbatim" in prompt
 
 
 def test_worker_keeps_action_grounding_and_memory_boundaries() -> None:

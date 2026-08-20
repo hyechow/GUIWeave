@@ -9,6 +9,7 @@ from gui_agent.core.tool_agent.orchestrator import (
     _schema_contains_array,
     compile_master_program,
     execute_master_program,
+    normalize_task_semantics,
     validate_master_source,
 )
 
@@ -1045,6 +1046,45 @@ def test_master_compiler_regenerates_only_during_static_review() -> None:
     assert llm.bind_kwargs["extra_body"] == {"enable_thinking": False}
     assert events[0][1]["diagnostics"]
     assert events[1][1]["diagnostics"] == []
+
+
+def test_master_review_rejects_worker_program_without_success_path() -> None:
+    source = _program(
+        f'''\
+outcome = {GUI_CALL}
+if outcome["phase"] != "completed":
+    ctx.fail(outcome["summary"])
+ctx.fail("restructuring required")
+'''.strip()
+    )
+
+    diagnostics = validate_master_source(source)
+
+    assert any(
+        item.code == "SUCCESS_TERMINAL_REQUIRED"
+        and "must include a ctx.finish success path" in item.message
+        for item in diagnostics
+    )
+
+
+def test_task_semantic_contract_extracts_conditional_world_state() -> None:
+    llm = _SequenceLLM(
+        '{"conditional_predicates":["a source affirmatively states that approval has been granted"]}'
+    )
+    events = []
+
+    contract = normalize_task_semantics(
+        llm=llm,
+        system_prompt="Normalize conditional predicates.",
+        goal="If approval has not been granted, request it.",
+        on_event=lambda event, payload: events.append((event, payload)),
+    )
+
+    assert contract.conditional_predicates == [
+        "a source affirmatively states that approval has been granted",
+    ]
+    assert events[0][0] == "master_semantic_contract"
+    assert events[0][1]["error"] == ""
 
 
 def test_master_review_rejects_data_collection_for_destination_only_goal() -> None:

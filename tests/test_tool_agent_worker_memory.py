@@ -863,6 +863,47 @@ def test_existing_valid_commitment_permits_later_executing_decisions() -> None:
     assert "never resolves a descriptive user-owned role" in rendered
 
 
+def test_latest_gui_transition_precedes_active_commitment_execution() -> None:
+    journal = WorkerJournal(worker_id="commit_reconciliation")
+    journal.record_memory_updates(
+        step=1,
+        frame_id="frame:1",
+        state=_memory_state(
+            {
+                "fact_type": "evidence", "key": "target_ready",
+                "status": "active", "lifetime": "attempt",
+                "statement": "The target is ready", "depends_on": [],
+            },
+            {
+                "fact_type": "claim", "key": "mutation_required",
+                "status": "active", "lifetime": "attempt",
+                "statement": "The mutation is required",
+                "depends_on": ["evidence:target_ready"],
+            },
+            {
+                "fact_type": "commitment", "key": "submit_mutation",
+                "status": "active", "lifetime": "attempt",
+                "statement": "Submit the mutation",
+                "depends_on": ["claim:mutation_required"],
+            },
+        ),
+    )
+    journal.record_action_result(
+        step=2,
+        frame_id="frame:2",
+        tool="tap",
+        args={"description": "Activate the final submit control"},
+        result={"status": "executed"},
+    )
+
+    rendered = build_worker_memory_view(
+        journal, current_frame_id="frame:3",
+    ).render_prompt_section()
+
+    assert "Reconcile the latest GUI transition" in rendered
+    assert "Execute the active Commitment" not in rendered
+
+
 def test_runtime_answer_must_be_integrated_before_execution() -> None:
     journal = WorkerJournal(worker_id="runtime_answer")
     journal.record_memory_updates(
