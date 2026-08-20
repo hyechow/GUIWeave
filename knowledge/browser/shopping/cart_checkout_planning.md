@@ -10,7 +10,7 @@ source: manual_distilled
 confidence: high
 sensitivity: internal
 ttl: session
-version: 1
+version: 2
 ---
 # One Stop Market cart and checkout
 
@@ -18,9 +18,11 @@ Distinguish the commit boundary from the verb. "Add to cart" completes when the 
 quantity, and requested options are visible in the cart. "Buy" requires a completed checkout and
 the order-success page. Place Order is authorized only by an explicit purchase request.
 
-When the task says to discard existing items, open the full Shopping Cart before adding the target,
-remove every row, and verify the empty state. Do not assume the mini-cart count is current, and do
-not leave an unrelated row because the target product was added successfully. Then add exactly one
+When the task says to discard existing items, make `source: Full Shopping Cart and Checkout flow`
+the operator's initial approach. Open the canonical full-cart URL from application knowledge before
+adding the target, remove every row, and verify the empty state. Do not assume the mini-cart count
+is current or leave an unrelated row because the target was added successfully. Treat the observed
+empty frame as satisfying that precondition; do not revisit the cart before adding exactly one
 target unless another quantity is requested.
 
 For a product selected by category/rating/price criteria, finish selection from the catalog data

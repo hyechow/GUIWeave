@@ -16,36 +16,35 @@ source: manual_distilled
 confidence: high
 sensitivity: internal
 ttl: session
-version: 15
+version: 24
 ---
 # One Stop Market storefront
 
 ## Global navigation
 
-- The signed-in account menu exposes My Account, My Wish List, and Sign Out. My Account has
-  sidebar links for My Orders, My Wish List, Address Book, Account Information, My Product Reviews,
-  and Newsletter Subscriptions.
-- The header mini-cart links to the full Shopping Cart. Footer exposes Advanced Search, Contact Us,
-  and newsletter Email/Subscribe.
-- For "the product on the current page", preserve the starting product; do not search for another.
+- Account menu links My Account, My Wish List, Sign Out; My Account contains My Orders,
+  Address Book, Account Information, Product Reviews, Newsletter Subscriptions.
+- Full cart: `http://localhost:7770/checkout/cart/`. Open it directly; `My Cart` and
+  `View and Edit Cart` are previews, not navigation or authoritative full-cart state.
+  Footer: Advanced Search, Contact Us, newsletter.
+- For "the product on the current page", preserve the starting product; do not search.
 
 ## Catalog and search
 
-- The mini-search uses broad OR term matching, so it is not a bounded product-class source.
-- Advanced Search > Product Name uses contiguous matching. For classes without exact categories,
-  query the supplied use/problem phrase or unmodified base type and validate every result;
-  equivalent titles may vary the base-type label.
-- EYZUTAK phone cases: Product Name query `EYZUTAK`; `EYZUTAK phone case` returns none.
-- Only main-grid cards are search results; sidebar My Wish List entries are unrelated. Reveal a main
-  card's product name before opening when its identity is below the fold.
-- The top navigation is a category hierarchy. Use the narrowest category only when its taxonomy
-  directly covers the full requested class. Earbud products are under Electronics > Headphones >
-  Earbud Headphones; in this catalog, in-ear or behind-neck headphones/headsets are earphones.
-- Canonical category paths: `Makeup Remover` is `/beauty-personal-care/makeup/makeup-remover.html`;
-  `Accent Furniture` is `/home-kitchen/furniture/accent-furniture.html`.
-- Category and search-result pages offer Grid/List mode, Sort By, a separate direction link, a
-  per-page selector, and pagination. Product cards expose name and current price, and may expose
-  rating percentage and review count. A struck-through old price is not the current sale price.
+- Header mini-search uses broad OR matching. For a handed-off exact Product Name it tolerates
+  punctuation variants; activate the exact result card. It is not a bounded class source.
+- Advanced Search > Product Name uses contiguous matching. Without an exact category, query the
+  supplied use/problem phrase or unchanged base type and validate every result; titles may vary.
+- Results are main-grid cards, never sidebar My Wish List entries; reveal a below-fold name first.
+- Top navigation is hierarchical. Use the narrowest category only when it covers the full class.
+  Earbuds: Electronics > Headphones > Earbud Headphones; in-ear/behind-neck models are earphones.
+- Paths: Makeup Remover `/beauty-personal-care/makeup/makeup-remover.html`; Accent Furniture
+  `/home-kitchen/furniture/accent-furniture.html`; Ceiling Lights
+  `/tools-home-improvement/lighting-ceiling-fans/ceiling-lights.html`.
+- Category and search-result pages offer Grid/List mode, Sort By, direction, per-page, and pagination.
+  Cards expose stable Product Name, current price, and sometimes rating percentage/review count;
+  hidden hrefs are action targets, not row data. Hand off Product Name; resolve the exact card via
+  header mini-search. A struck-through old price is not the current sale price.
 - `Women` and `Men` are path segments: leaf URLs use `/<top>/women/<leaf>.html` or
   `/<top>/men/<leaf>.html`; retain the segment when the target or history includes it.
 - Sidebar choices may replace the prior chip and keep a `cat=<id>` alias on the parent path;
@@ -76,9 +75,9 @@ version: 15
 
 ## Shopping cart and checkout
 
-- The full Shopping Cart shows each product, selected options, item price, quantity, subtotal, and
-  a Remove item control. To empty it, remove every existing row and verify the empty-cart state
-  before adding the requested product.
+- Full Shopping Cart rows expose product, options, price, quantity, subtotal, and Remove. To discard
+  existing items, remove every row; once the next frame is empty, begin product lookup and do not
+  revisit until the target has been added.
 - "Add" means stop after the item is in the requested cart or wish list. "Buy" means continue from
   the cart through checkout until the order-success page; reaching the cart alone is incomplete.
 - Checkout proceeds through Shipping, then Review & Payments. The saved customer address may already

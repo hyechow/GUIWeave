@@ -10,7 +10,7 @@ source: manual_distilled
 confidence: high
 sensitivity: internal
 ttl: session
-version: 6
+version: 9
 ---
 # One Stop Market catalog data
 
@@ -18,14 +18,15 @@ version: 6
 
 Use a category as the recall source only when its taxonomy covers the full requested product class.
 Otherwise use Advanced Search > Product Name, whose matching is contiguous substring matching. The
-header mini-search uses broad OR matching and is suitable for discovery, not as proof of a complete
-class. Keep the full requested class unchanged in collector filters even when the search query must
-be shortened.
+header mini-search uses broad OR matching and is suitable for discovery or resolving a handed-off
+exact identity, not as proof of a complete class. Keep the full requested class unchanged in
+collector filters even when the search query must be shortened.
 
-Catalog rows can provide `product_name`, current `price`, rating percentage, review count, and the
-product-detail link. Treat the current/special price as `price`; do not use a crossed-out regular
-price for budget or ranking decisions. Rating shown on a product card is a percentage, while an
-individual customer review uses a one-to-five star rating. Do not interchange the two scales.
+Catalog rows provide `product_name`, current `price`, and sometimes rating percentage/review count.
+A title's hidden href is an action target, not source data; use stable visible `product_name` for a
+typed handoff and resolve its exact matching card through header mini-search. Treat current/special
+price as `price`, not a crossed-out regular price. Card rating is a percentage; customer reviews
+use one-to-five stars.
 
 ## Price boundaries and ranking
 
@@ -46,9 +47,9 @@ next action. For ascending, click `Set Ascending Direction` and complete on `Set
 Direction`; for descending, do the inverse.
 
 Sort By does not offer customer rating. For highest/best-rated requests, collect the bounded
-candidate set with rating, review count, current price, and detail link, then rank deterministically.
-Apply any minimum review-count and budget predicates before rating and price tie-breakers. A missing
-rating or review count is not equivalent to zero unless the request explicitly defines it that way.
+candidate set with product name, rating, review count, and current price, then rank deterministically
+and hand off the selected name. Apply review-count and budget predicates before rating/price
+tie-breakers. A missing rating or review count is not zero unless the request defines it that way.
 
 ## Content-derived product attributes
 
