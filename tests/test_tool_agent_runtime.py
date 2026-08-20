@@ -757,6 +757,64 @@ def test_runtime_supplies_generic_navigation_without_master_actions() -> None:
     assert {action.name for action in actions} == {"back", "open_url", "scroll"}
 
 
+def test_runtime_blocks_destructive_reversal_of_confirmed_bound_target() -> None:
+    spec = WorkerSpec.model_validate({
+        "goal": "Add the selected target and finish the workflow",
+        "success_criteria": ["The selected target remains in the final state"],
+        "input_refs": {"target": "result:1"},
+        "input_bindings": [{
+            "name": "enter_target",
+            "input": "target",
+            "target": "text_input",
+            "description": "Search for the target to add",
+        }],
+        "strategy": {"approach": "Target workflow"},
+    })
+    journal = WorkerJournal(worker_id="operator")
+    journal.record_bound_confirmations(MaterializedFrame(
+        frame_id="success",
+        screenshot_path="success.png",
+        title="Target Record",
+        controls=[{"kind": "status_message", "label": "success: saved"}],
+    ), {"enter_target": "Target Record"})
+    frame = MaterializedFrame(
+        frame_id="review",
+        screenshot_path="review.png",
+        controls=[
+            {
+                "kind": "a", "label": "Target Record",
+                "rect": {"x": 300, "y": 400, "w": 200, "h": 30},
+            },
+            {
+                "kind": "a", "label": "Remove item",
+                "rect": {"x": 300, "y": 500, "w": 100, "h": 30},
+            },
+        ],
+    )
+
+    reason = ToolAgentRuntime._bound_target_reversal_reason(
+        spec=spec,
+        journal=journal,
+        capability="tap",
+        args={"x": 300, "y": 500},
+        frame=frame,
+    )
+
+    assert "destructive reversal" in reason
+    remove_spec = spec.model_copy(update={
+        "input_bindings": [
+            spec.input_bindings[0].model_copy(update={"description": "Target to remove"})
+        ],
+    })
+    assert not ToolAgentRuntime._bound_target_reversal_reason(
+        spec=remove_spec,
+        journal=journal,
+        capability="tap",
+        args={"x": 300, "y": 500},
+        frame=frame,
+    )
+
+
 def test_navigation_validates_transport_safety_without_approach_semantics() -> None:
     runtime = _browser_runtime()
     runtime._validate_runtime_open_url("https://initial.example.test/")

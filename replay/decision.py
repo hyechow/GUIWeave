@@ -467,6 +467,7 @@ def replay_worker_decision(
     frame: str | int,
     samples: int = 1,
     expectation: dict[str, Any] | None = None,
+    same_frame_feedback: dict[str, Any] | None = None,
     llm: Any = None,
 ) -> dict[str, Any]:
     if samples < 1:
@@ -561,8 +562,9 @@ def replay_worker_decision(
         ),
         context=context,
         image_scale=float(getattr(model_config, "image_scale", 1.0)),
-        same_frame_feedback=ordered_boundary_resume_feedback(
-            spec, materialized, recorded_memory,
+        same_frame_feedback=(
+            same_frame_feedback
+            or ordered_boundary_resume_feedback(spec, materialized, recorded_memory)
         ),
         materialized_frame=materialized,
     )
@@ -632,11 +634,16 @@ def main() -> int:
     mode.add_argument("--worker-frame", metavar="N")
     parser.add_argument("--samples", type=int, default=1)
     parser.add_argument("--expect-json", default="")
+    parser.add_argument("--same-frame-feedback-json", default="")
     parser.add_argument("--json", action="store_true", dest="as_json")
     args = parser.parse_args()
     if not 1 <= args.samples <= 10:
         parser.error("--samples must be between 1 and 10")
     expected = json.loads(args.expect_json) if args.expect_json else None
+    same_frame_feedback = (
+        json.loads(args.same_frame_feedback_json)
+        if args.same_frame_feedback_json else None
+    )
     run_dir = args.run_dir.expanduser().resolve()
     if args.master:
         result = replay_master_decision(
@@ -644,7 +651,11 @@ def main() -> int:
         )
     else:
         result = replay_worker_decision(
-            run_dir, frame=args.worker_frame, samples=args.samples, expectation=expected,
+            run_dir,
+            frame=args.worker_frame,
+            samples=args.samples,
+            expectation=expected,
+            same_frame_feedback=same_frame_feedback,
         )
     if args.as_json:
         print(json.dumps(result, ensure_ascii=False, indent=2, default=str))

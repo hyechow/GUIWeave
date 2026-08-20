@@ -17,6 +17,10 @@ from gui_agent.core.tool_agent.contracts import DataRequirement
 from gui_agent.core.tool_agent.data_store import RuntimeDataStore
 from gui_agent.core.tool_agent.perception import (
     PerceptionMaterializer,
+    _match_table,
+    _source_keys,
+    _structured_rows,
+    _visual_collection_key,
     _visible_row_schema,
     _rows_satisfy_filters,
 )
@@ -44,6 +48,108 @@ def _requirement() -> DataRequirement:
         row_schema=ROW_SCHEMA,
         field_sources={"term": "Search Term", "uses": "Uses"},
     )
+
+
+def test_product_card_fields_preserve_percentage_rating_semantics() -> None:
+    requirement = DataRequirement(
+        id="products",
+        description="Ranked products",
+        row_schema={
+            "type": "object",
+            "properties": {
+                "product_name": {"type": "string"},
+                "rating": {"type": "number"},
+                "price": {"type": "number"},
+            },
+            "required": ["product_name", "rating", "price"],
+        },
+        field_sources={
+            "product_name": "Product Name",
+            "rating": "Rating",
+            "price": "Price",
+        },
+    )
+
+    keys = _source_keys(requirement, {
+        "headers": [
+            "productName", "price", "ratingPercentage", "ratingValue",
+        ],
+        "rows": [],
+    })
+
+    assert keys == {
+        "product_name": "productname",
+        "rating": "ratingpercentage",
+        "price": "price",
+    }
+
+
+def test_structured_rows_reject_blank_required_number_without_aborting() -> None:
+    requirement = DataRequirement(
+        id="products",
+        description="Rated products",
+        row_schema={
+            "type": "object",
+            "properties": {
+                "product_name": {"type": "string"},
+                "rating": {"type": "number"},
+            },
+            "required": ["product_name", "rating"],
+        },
+        field_sources={"product_name": "Product Name", "rating": "Rating"},
+        field_types={"product_name": "text", "rating": "number"},
+    )
+
+    rows = _structured_rows(requirement, {
+        "headers": ["productName", "ratingPercentage"],
+        "rows": [
+            {"productName": "Rated", "ratingPercentage": 100},
+            {"productName": "Unrated", "ratingPercentage": ""},
+        ],
+    })
+
+    assert rows == [{"product_name": "Rated", "rating": 100.0}]
+
+
+def test_known_target_caption_rejects_field_compatible_sibling_surface() -> None:
+    requirement = DataRequirement(
+        id="invoices",
+        description="Invoice records",
+        target_label="Invoices",
+        row_schema={
+            "type": "object",
+            "properties": {"name": {"type": "string"}},
+            "required": ["name"],
+        },
+        field_sources={"name": "Name"},
+    )
+    sibling = {"caption": "Dashboard", "headers": ["Name"], "rows": []}
+    target = {"caption": "Invoices", "headers": ["Name"], "rows": []}
+
+    assert _match_table(requirement, [sibling]) is None
+    assert _match_table(requirement, [sibling, target]) is target
+
+
+def test_visual_collection_key_isolates_routes_but_ignores_page_number() -> None:
+    requirement = _requirement()
+    scope = {"requested_filters": {"Status": "open"}}
+    table = {
+        "caption": "Records",
+        "traversal": {"type": "paged"},
+    }
+
+    first = _visual_collection_key(
+        requirement, scope, table, "https://example.test/orders?p=1",
+    )
+    second = _visual_collection_key(
+        requirement, scope, table, "https://example.test/orders?p=2",
+    )
+    residue = _visual_collection_key(
+        requirement, scope, table, "https://example.test/dashboard?p=1",
+    )
+
+    assert first == second
+    assert first != residue
 
 
 class FakePlatform:

@@ -392,6 +392,7 @@ def test_reveal_control_schema_accepts_offscreen_coordinates() -> None:
     schema = _CAPABILITY_SCHEMAS["reveal_control"]
     # Off-screen rect positions below the fold exceed 1000 by design.
     validate({"x": 500, "y": 1650, "description": "Edit Configurations button below the fold"}, schema=schema)
+    validate({"x": 500, "y": 7500, "description": "Pagination control on a long page"}, schema=schema)
     validate({"x": 500, "y": -300, "description": "Section toggle above the fold"}, schema=schema)
 
 
@@ -686,7 +687,8 @@ def test_worker_profile_inference_selects_relevant_attempt_rules() -> None:
         assert rule in collector_contract and rule not in operator_contract
     for rule in (
         "platform_feedback", "unobscured central viewport",
-        "advance, never retype",
+        "advance, never retype", "already selected and authoritative",
+        "regardless of broader result count or apparent class",
     ):
         assert rule in operator_contract and rule not in collector_contract
     for rule in ("observed_choice_state", "offscreen_action_controls", "bulk-clear"):

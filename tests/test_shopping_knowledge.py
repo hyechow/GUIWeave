@@ -21,10 +21,17 @@ def test_shopping_worker_knowledge_covers_storefront_without_becoming_a_manual()
     assert "`My Cart` and `View and Edit Cart` are previews, not navigation" in worker
     assert "For a handed-off exact Product Name it tolerates punctuation variants" in worker
     assert "resolve the exact card via header mini-search" in worker
-    assert "once the next frame is empty, begin product lookup" in worker
-    assert "do not revisit until the target has been added" in worker
+    assert "activate its title, verify the product-page title" in worker
+    assert "never the result-card control" in worker
+    assert "Cleanup is pre-add only" in worker
+    assert "matching cart row is intended" in worker
+    assert "never remove it or repeat cleanup" in worker
     assert "hidden hrefs are action targets, not row data" in worker
     assert "Hand off Product Name" in worker
+    assert "Canonical Nintendo Switch entry" in worker
+    assert "`http://localhost:7770/video-games/nintendo-switch.html`" in worker
+    assert "select Show 36 before paging" in worker
+    assert "exact rating percent" in worker
     assert "check_rules" in knowledge.metadata["_check"]["id"]
 
 
@@ -76,7 +83,8 @@ def test_shopping_buy_goal_combines_catalog_selection_and_checkout_commit() -> N
 
     assert sections == ["cart_checkout_planning", "catalog_planning"]
     assert "completed checkout" in context
-    assert "product name, rating, review count" in context
+    assert "Product Name, exact Rating Percentage" in context
+    assert "never invent review count or price as a tie-breaker" in context
     assert "resolving a handed-off exact identity" in context
     assert "resolve its exact matching card through header mini-search" in context
     assert "source: Full Shopping Cart and Checkout flow" in context
@@ -93,6 +101,8 @@ def test_shopping_catalog_knowledge_preserves_exact_price_boundaries() -> None:
     assert knowledge.orchestrator_sections(goal) == ["catalog_planning"]
     assert "price=<lower>-<upper>" in worker
     assert '"under X" maps to `price=0-X`' in context
+    assert 'strict "under X" is `max=X-0.01`' in context
+    assert "exact `target_label` to exclude broader catalogs" in context
     assert "`cat=<id>` alias" in context
     assert "/women/<leaf>.html" in context
     assert "invalid unless its canonical URL" in context

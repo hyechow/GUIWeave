@@ -82,6 +82,7 @@ def test_master_exposes_only_tool_agent_runtime_api() -> None:
     assert "Preserve every user-supplied string predicate verbatim" in prompt
     assert "Fix the final record grain before declaring filters" in prompt
     assert "source identity, not a row predicate" in prompt
+    assert "distinguishes the target from broader or sibling surfaces" in prompt
     assert "never copy it into filters or schema" in prompt
     assert "Two adjacent numeric alternatives" in prompt
     assert "Preserve both explicitly stated endpoints" in prompt
@@ -96,6 +97,8 @@ def test_master_exposes_only_tool_agent_runtime_api() -> None:
     assert "use a scalar JSON Schema" in prompt
     assert "does not convert a differently displayed source value" in prompt
     assert "Current, first, or visually prominent values are not extrema" in prompt
+    assert "Never invent a secondary ranking" in prompt
+    assert "preserve stable source order" in prompt
     assert 'Set `cardinality="one"` when' in prompt
     assert "single aggregate value over the scope" in prompt
     assert "the first visible candidate is not" in prompt
@@ -134,6 +137,9 @@ def test_worker_keeps_data_private_and_coordinates_normalized() -> None:
     assert "Use only Runtime-supplied actions" in prompt
     assert "request_action_patch" not in prompt
     assert "`state.status = completed | failed` is terminal" in prompt
+    assert "not that all of its rows were observed" in prompt
+    assert "complete final record or physical end" in prompt
+    assert "`conflicting` collection status is unresolved evidence" in prompt
 
 
 def test_worker_prompt_stays_a_compact_role_contract() -> None:
