@@ -400,7 +400,10 @@ class WorkerJournal:
                     "the current control value before deciding whether any retry is needed"
                 )
             else:
-                durable_text = f"tool={tool}; runtime reported no_effect"
+                durable_text = (
+                    f"tool={tool}; status=executed; visual effect unconfirmed; "
+                    "inspect the current state before any retry"
+                )
         elif is_result_ref:
             durable_text = f"tool={tool}; result={_bounded_json(memory_result, limit=420)}"
         args_text = (

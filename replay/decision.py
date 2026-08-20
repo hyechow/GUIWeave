@@ -189,6 +189,11 @@ def _worker_messages(
                 current + ("\n\n" + suffix if suffix else "")
             )))
         elif name == "human":
+            text = text.replace(
+                "runtime reported no_effect",
+                "status=executed; visual effect unconfirmed; inspect the current "
+                "state before any retry",
+            )
             text = _replace_section(
                 text,
                 "## Current Worker attempt",

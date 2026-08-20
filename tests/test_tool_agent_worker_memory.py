@@ -68,7 +68,8 @@ def test_worker_memory_is_a_bounded_projection_of_append_only_runtime_facts() ->
     ]
     rendered = memory.render_prompt_section()
     assert "Pending subgoal" not in rendered
-    assert "runtime reported no_effect" in rendered
+    assert "visual effect unconfirmed" in rendered
+    assert "inspect the current state before any retry" in rendered
     assert "[step:1]" not in rendered
     assert "append-only event journal" in rendered
 

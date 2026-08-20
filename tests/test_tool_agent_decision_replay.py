@@ -423,6 +423,9 @@ def test_worker_replay_uses_current_application_knowledge(
         "recorded static prompt\n\n## Application knowledge\nold fact"
         "\n\n## Worker attempt contract\n{}"
     )
+    report["roles"][1]["parts"][0]["text"] += (
+        "\n\n- tool=tap; runtime reported no_effect"
+    )
     trace_path.write_text(json.dumps(trace), encoding="utf-8")
     knowledge = SimpleNamespace(worker_context=lambda: "current fact")
     monkeypatch.setattr(
@@ -442,6 +445,9 @@ def test_worker_replay_uses_current_application_knowledge(
     assert result["status"] == "passed"
     assert "current fact" in model.calls[0][0].content
     assert "old fact" not in model.calls[0][0].content
+    human_text = model.calls[0][1].content[0]["text"]
+    assert "runtime reported no_effect" not in human_text
+    assert "inspect the current state before any retry" in human_text
 
 
 def test_worker_replay_preserves_recorded_singleton_contract(tmp_path) -> None:
