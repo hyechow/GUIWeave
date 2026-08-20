@@ -565,12 +565,17 @@ class WorkerMemoryView:
             )
         elif self.latest_gui_transition:
             lines.append(
-                "- Reconcile the latest GUI transition with the current frame first. When "
-                "its receipt and application mechanics satisfy an active Commitment, mark "
-                "that same Commitment key completed. If this closes the contract, select "
-                "complete directly; do not create a verification Commitment or interact "
-                "with an unrelated control. A requested terminal commit that exited its "
-                "editor or form without error is complete even without a success banner."
+                "- Reconcile the latest GUI transition with the current frame first. If its "
+                "receipt and application mechanics satisfy an active Commitment, mark that "
+                "same Commitment key completed by copying its exact key from Active commitments; "
+                "never rename it, and do not create a verification Commitment. "
+                "Then select complete if the contract closes, otherwise resume acquisition "
+                "or navigation with `collecting` or `exploring`. Never "
+                "repeat that completed Commitment. If the receipt does not satisfy it, keep "
+                "the Commitment active and select the next visible action that advances it; "
+                "a navigation receipt proves only the reached surface and never implies Back. "
+                "A requested terminal commit that exited its editor or form without error is "
+                "complete even without a success banner."
             )
         elif self.active_commitments:
             lines.append(

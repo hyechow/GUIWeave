@@ -75,6 +75,18 @@ class DataRequirement(StrictModel):
 
     id: str = Field(pattern=r"^[a-z][a-z0-9_]{0,63}$")
     description: str
+    record_grain: str = Field(
+        default="",
+        max_length=160,
+        description="Exact semantic entity represented by one collected row.",
+    )
+    semantic_predicates: list[str] = Field(
+        default_factory=list,
+        description=(
+            "Externally verifiable scope predicates that are not safely attributable "
+            "to one known source field."
+        ),
+    )
     target_label: str = Field(
         default="",
         description="Visible label/caption that identifies the data surface, when known.",
@@ -352,6 +364,14 @@ class TaskSemanticContract(StrictModel):
         description=(
             "Affirmative propositions whose truth selects a conditional task branch. "
             "They refine task semantics without replacing original user values."
+        ),
+    )
+    semantic_predicates: list[str] = Field(
+        default_factory=list,
+        max_length=16,
+        description=(
+            "Record-scope propositions that require whole-source Evidence because "
+            "the task names no single field that contains them."
         ),
     )
     counted_entity: str = Field(

@@ -391,7 +391,11 @@ def replay_master_decision(
             system_prompt=load_prompt_text("task.tool_agent.semantic_contract"),
             goal=str(task.get("goal") or ""),
         )
-        if semantic_contract.conditional_predicates or semantic_contract.counted_entity:
+        if (
+            semantic_contract.conditional_predicates
+            or semantic_contract.semantic_predicates
+            or semantic_contract.counted_entity
+        ):
             task["semantic_contract"] = semantic_contract.model_dump(mode="json")
     results = []
     for number in range(1, samples + 1):

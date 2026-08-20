@@ -417,6 +417,18 @@ def _validate_gui_worker_call(
     for requirement in values.get("data_requirements") or []:
         if not isinstance(requirement, dict):
             continue
+        alternative_sources = {
+            field: source
+            for field, source in (requirement.get("field_sources") or {}).items()
+            if re.search(r"(?:\s+(?:and/)?or\s+|_or_)", source, re.IGNORECASE)
+        }
+        if alternative_sources:
+            diagnostics.append(_diagnostic(
+                "DATA_FIELD_SOURCE",
+                "each field_sources value must name one actual source, not alternatives: "
+                f"{alternative_sources}",
+                call,
+            ))
         scope_text = "\n".join([
             str(values["goal"]),
             *(
@@ -463,7 +475,7 @@ def _validate_gui_worker_call(
                     re.IGNORECASE,
                 )
                 and not re.search(r"\b\d{4}\b", user_goal)
-                and re.search(r"\b\d{4}[-/]\d{1,2}[-/]\d{1,2}\b", filter_values)
+                and re.search(r"\b\d{4}[-/]\d{1,2}[-/]\d{1,2}(?!\d)", filter_values)
             ):
                 diagnostics.append(_diagnostic(
                     "DATA_FILTER_DATE_COMPONENTS",
@@ -1050,6 +1062,8 @@ def validate_master_source(
     *,
     platform_context: dict[str, Any] | None = None,
     user_goal: str = "",
+    counted_entity: str = "",
+    semantic_predicates: tuple[str, ...] = (),
     require_success_path: bool = True,
 ) -> list[MasterDiagnostic]:
     """Validate one restricted Worker-orchestration program."""
@@ -1170,6 +1184,53 @@ def validate_master_source(
             "SUCCESS_TERMINAL_REQUIRED",
             "a program that dispatches a Worker must include a ctx.finish success path",
         ))
+    typed_predicates = tuple(value for value in semantic_predicates if value.strip())
+    requirements: list[dict[str, Any]] = []
+    if counted_entity.strip() or typed_predicates:
+        for node in ast.walk(tree):
+            if not (
+                isinstance(node, ast.Call)
+                and isinstance(node.func, ast.Attribute)
+                and isinstance(node.func.value, ast.Name)
+                and node.func.value.id == "ctx"
+                and node.func.attr == "gui_worker"
+            ):
+                continue
+            try:
+                declared = _literal_keyword(node, "data_requirements")
+            except ValueError:
+                continue
+            requirements.extend(
+                item for item in declared if isinstance(item, dict)
+            )
+    if counted_entity.strip():
+        grains = [str(item.get("record_grain") or "") for item in requirements]
+        normalized_counted_entity = " ".join(counted_entity.casefold().split())
+        normalized_grains = {
+            " ".join(value.casefold().split()) for value in grains
+        }
+        if normalized_counted_entity not in normalized_grains:
+            diagnostics.append(_diagnostic(
+                "DATA_RECORD_GRAIN",
+                "a counted result requires one data requirement whose record_grain "
+                f"exactly preserves task.semantic_contract.counted_entity={counted_entity!r}",
+            ))
+    if typed_predicates:
+        declared_predicates = {
+            " ".join(str(value).casefold().split())
+            for requirement in requirements
+            for value in requirement.get("semantic_predicates") or []
+        }
+        missing = [
+            value for value in typed_predicates
+            if " ".join(value.casefold().split()) not in declared_predicates
+        ]
+        if missing:
+            diagnostics.append(_diagnostic(
+                "DATA_SEMANTIC_PREDICATE",
+                "data requirements must preserve every typed non-field predicate in "
+                f"semantic_predicates: {missing!r}",
+            ))
     diagnostics.extend(_static_flow_diagnostics(tree))
     unique: list[MasterDiagnostic] = []
     seen: set[tuple[str, str, int]] = set()
@@ -1243,6 +1304,9 @@ def compile_master_program(
         if callable(getattr(llm, "bind", None))
         else llm
     )
+    semantic_contract = task_context.get("semantic_contract")
+    if not isinstance(semantic_contract, dict):
+        semantic_contract = {}
     rejected = ""
     last_diagnostics: list[MasterDiagnostic] = []
     for attempt in range(1, max_attempts + 1):
@@ -1268,6 +1332,8 @@ def compile_master_program(
                 platform_context if isinstance(platform_context, dict) else None
             ),
             user_goal=str(task_context.get("goal") or ""),
+            counted_entity=str(semantic_contract.get("counted_entity") or ""),
+            semantic_predicates=tuple(semantic_contract.get("semantic_predicates") or ()),
         )
         if on_event is not None:
             on_event(

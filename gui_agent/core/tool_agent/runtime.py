@@ -479,6 +479,7 @@ class ToolAgentRuntime:
                 )
                 if (
                     semantic_contract.conditional_predicates
+                    or semantic_contract.semantic_predicates
                     or semantic_contract.counted_entity
                 ):
                     task_context["semantic_contract"] = semantic_contract.model_dump(mode="json")

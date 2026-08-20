@@ -12,12 +12,14 @@ source: manual_verified
 confidence: medium
 sensitivity: internal
 ttl: session
-version: 6
+version: 8
 ---
 # Mail on Android
 
 - Mail is the email application. The inbox lists received messages; the compose
   action opens a new-message form.
+- A message exposes its subject, body, received date, and each attachment filename as separate
+  visible values; Mail has no combined subject-or-attachment identity field.
 - The compose form carries a recipient (`To`) field, a subject field, a message body,
   and an attach action; the send action submits the message. The `To` recipient is
   typed as an email address.
@@ -25,8 +27,9 @@ version: 6
   date phrases as scope syntax. Search with distinctive content terms for recall, then verify
   date predicates from the visible message date or opened message. Use the navigation drawer's
   `All mail` source when the current folder does not contain the requested received messages.
-- Attaching files opens a file picker rooted in the file directories. Activating an exact file
-  row attaches that file and returns to Compose; Android Back leaves the visible file unattached.
+- Attaching files opens a file picker rooted in the file directories. Activating an exact requested
+  file row is the only selection that attaches that file and returns to Compose. Android Back cancels
+  the picker and adds no attachment; never press Back before selecting the requested visible row.
   Reopen the picker for each additional file and verify each returned attachment by name.
 - One invocation of an incoming attachment's blue download control copies the file into Android
   `Downloads`. This control has no visual completion state: the open email and blue control remain
