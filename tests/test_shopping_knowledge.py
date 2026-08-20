@@ -16,6 +16,8 @@ def test_shopping_worker_knowledge_covers_storefront_without_becoming_a_manual()
     assert "Buy" in worker and "order-success page" in worker
     assert "cannot be edited" in worker
     assert "without activating Submit" in worker
+    assert "Product Name query `EYZUTAK`" in worker
+    assert "sidebar My Wish List entries are unrelated" in worker
     assert "check_rules" in knowledge.metadata["_check"]["id"]
 
 
@@ -49,7 +51,6 @@ def test_shopping_review_and_wishlist_goals_select_only_their_sections() -> None
     assert "not a predicate on each review row" in review_context
     assert "`brand` and `product_category` are not Reviews row fields" in review_context
     assert "declaring either in review filters" in review_context
-    assert "Advanced Search Product Name `EYZUTAK`" in review_context
 
 
 def test_shopping_newsletter_uses_the_signed_in_account_email() -> None:
