@@ -387,6 +387,24 @@ def test_failed_tool_agent_platform_rejection_is_action_not_allowed_without_outp
     )
 
 
+def test_failed_tool_agent_verified_unavailable_action_maps_without_platform_rejection():
+    resp = _synthesize_response(
+        "Change an existing record",
+        _result(
+            task_type="MUTATE",
+            phase="failed",
+            orchestrator={
+                "kind": "tool_agent",
+                "effect": "mutation",
+                "action_not_allowed": "The exact target UI exposes no change action.",
+            },
+        ),
+    )
+
+    assert resp.status == "ACTION_NOT_ALLOWED_ERROR"
+    assert resp.error_details == "The exact target UI exposes no change action."
+
+
 def test_completed_mutate_response_does_not_infer_failure_from_summary_text():
     resp = _completed_mutate_response(
         "Update product",

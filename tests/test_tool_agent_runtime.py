@@ -1136,7 +1136,9 @@ def test_bound_type_remains_a_worker_choice_on_closed_query_surface() -> None:
         tool["function"]["name"]
         for tool in runtime._worker_tools_for_frame(spec, list(actions), opener)
     }
-    assert names == {"enter_query", "complete", "report_blocked"}
+    assert names == {
+        "enter_query", "complete", "report_blocked", "report_action_not_allowed",
+    }
 
 
 def test_global_turn_budget_is_shared_across_logical_workers() -> None:

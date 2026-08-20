@@ -330,6 +330,7 @@ def test_structured_pagination_maximizes_page_size_before_advancing() -> None:
         (WorkerOutcome(phase="failed", summary="blocked", failure_kind="worker_blocked", steps=1), "replace"),
         (WorkerOutcome(phase="failed", summary="blocked", failure_kind="navigation_blocked", steps=1), "replace"),
         (WorkerOutcome(phase="failed", summary="invalid", failure_kind="protocol_invalid", steps=1), "abort"),
+        (WorkerOutcome(phase="failed", summary="unsupported", failure_kind="action_not_allowed", steps=1), "abort"),
         (WorkerOutcome(phase="completed", summary="done", steps=1), "complete"),
     ],
 )

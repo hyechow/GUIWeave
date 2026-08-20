@@ -431,6 +431,14 @@ def test_collector_completion_tool_is_frame_gated_and_runtime_bound() -> None:
     )
     failure_state = failure["function"]["parameters"]["properties"]["state"]
     assert failure_state["properties"]["status"]["enum"] == ["failed"]
+    operator_tools = dynamic_worker_tools(actions, completion_mode="operator")
+    unavailable = next(
+        tool for tool in operator_tools
+        if tool["function"]["name"] == "report_action_not_allowed"
+    )
+    assert unavailable["function"]["parameters"]["properties"]["state"][
+        "properties"
+    ]["status"]["enum"] == ["failed"]
 
 
 def test_provider_coordinate_variants_are_normalized_before_strict_validation() -> None:
@@ -688,6 +696,7 @@ def test_worker_profile_inference_selects_relevant_attempt_rules() -> None:
     for rule in (
         "candidate_set_state.status = exhausted", "Finish comparison evidence",
         "inspect the immediate next record",
+        "exact ranked candidate detail",
     ):
         assert rule in operator_contract and rule not in collector_contract
     for rule in (
