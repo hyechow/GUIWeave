@@ -54,6 +54,10 @@ class BrowserAction(BaseAction):
         default=None,
         description="scroll_to_ref 要移入视口的当前帧 backendDOMNodeId",
     )
+    target_control_id: Optional[str] = Field(
+        default=None,
+        description="Runtime-only current-frame DOM control id for atomic offscreen actions",
+    )
 
     @model_validator(mode="before")
     @classmethod
@@ -86,6 +90,7 @@ class BrowserAction(BaseAction):
                 # controls, which legitimately exceed the viewport when off-fold.
                 if (
                     self.action_type == "reveal_control"
+                    or self.action_type == "select_option" and self.target_control_id
                     and REVEAL_COORD_MIN <= value <= REVEAL_COORD_MAX
                 ):
                     continue

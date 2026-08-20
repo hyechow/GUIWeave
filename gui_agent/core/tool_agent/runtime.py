@@ -828,6 +828,50 @@ class ToolAgentRuntime:
                 attempted_action=bool(journal.executed_tools),
             )
             frame_actions = frame_assessment.allowed_actions
+            deterministic_action = next((
+                action for action in frame_actions
+                if len(frame_actions) == 1
+                and initial_same_frame_feedback is None
+                and bool(action.fixed_args)
+                and not action.input_args
+                and not action.exposed_args
+            ), None)
+            if deterministic_action is not None:
+                self._trace(
+                    "deterministic_frame_action",
+                    worker_id=worker_id,
+                    step=step,
+                    frame_id=frame.frame_id,
+                    capability=deterministic_action.capability,
+                    fixed_args=deterministic_action.fixed_args,
+                )
+                deterministic_result, _deterministic_terminal = (
+                    self._execute_multi_action_calls(
+                        worker_id=worker_id,
+                        spec=spec,
+                        actions=frame_actions,
+                        calls=[{"name": deterministic_action.name, "args": {}}],
+                        state=WorkerState(
+                            status=(
+                                "collecting"
+                                if spec.profile == "collector" else "exploring"
+                            ),
+                            summary=deterministic_action.description,
+                        ),
+                        step=step,
+                        frame=frame,
+                        png=png,
+                        journal=journal,
+                        circuit_breaker=circuit_breaker,
+                        observed_auth_codes=observed_auth_codes,
+                    )
+                )
+                if deterministic_result.get("status") != "executed":
+                    initial_same_frame_feedback = deterministic_result
+                    reusable_observation = (frame, png, initial_same_frame_feedback)
+                # Runtime-bound transitions are not policy decisions.
+                step -= 1
+                continue
             walk_step = (
                 record_walk_step(frame, walk_state)
                 if (
@@ -1905,9 +1949,19 @@ class ToolAgentRuntime:
             # Standard spatial capabilities target the visible viewport;
             # reveal_control also accepts off-screen frame positions.
             spatial = action_spec.capability in _SPATIAL_CAPABILITIES
+            semantic_control = (
+                control_at_point(full_args, frame, include_offscreen=True)
+                if frame is not None and action_spec.capability == "select_option"
+                else None
+            )
+            atomic_offscreen_select = bool(
+                semantic_control
+                and semantic_control.get("in_viewport") is False
+                and str(semantic_control.get("id") or "").strip()
+            )
             coord_range = (
                 (float(REVEAL_COORD_MIN), float(REVEAL_COORD_MAX), True)
-                if action_spec.capability == "reveal_control"
+                if action_spec.capability == "reveal_control" or atomic_offscreen_select
                 else (0.0, 1000.0, False)
                 if spatial
                 else None
@@ -1929,6 +1983,8 @@ class ToolAgentRuntime:
                 "description": full_args.pop("description", action_spec.description),
                 **full_args,
             }
+            if atomic_offscreen_select:
+                action_payload["target_control_id"] = str(semantic_control["id"])
             bundle = getattr(self, "bundle", None)
             make_action = getattr(bundle, "make_action", None)
             action = (
@@ -1967,6 +2023,7 @@ class ToolAgentRuntime:
                 executed
                 and verify_pool is not None
                 and executed_action.action_type in _TARGET_VERIFIED_ACTION_TYPES
+                and not getattr(executed_action, "target_control_id", None)
                 and executed_action.x is not None
                 and executed_action.y is not None
             ):

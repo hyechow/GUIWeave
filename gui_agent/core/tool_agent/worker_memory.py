@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import json
 import os
+import re
 from dataclasses import dataclass, field
 from typing import Any
 
@@ -20,8 +21,6 @@ from gui_agent.core.tool_agent.contracts import (
 from gui_agent.core.tool_agent.filter_state import diff_filter_sets
 
 
-DEFAULT_WORKER_RECENT_K = 4
-DEFAULT_WORKER_COMPRESSED_K = 6
 DEFAULT_WORKER_CONTEXT_MAX_CHARS = int(
     os.environ.get("TOOL_AGENT_WORKER_CONTEXT_MAX_CHARS") or 24_000
 )
@@ -32,7 +31,16 @@ def _bounded_json(value: Any, *, limit: int = 1_200) -> str:
     return text if len(text) <= limit else text[: limit - 1] + "…"
 
 
-_SPATIAL_MEMORY_ARGS = {"x", "y", "to_x", "to_y", "target_ref"}
+_SPATIAL_MEMORY_ARGS = {"x", "y", "to_x", "to_y", "target_ref", "description"}
+_FRAME_SCOPED_FACT_RE = re.compile(
+    r"\b(?:visible|off[- ]?screen|viewport|above|below|upper|lower|"
+    r"top|bottom|left|right|center|current(?:ly)?|selected|checked|focused|"
+    r"enabled|disabled|empty|open|closed|loading|showing|shows|displayed|value|status)\b"
+    r"|\b(?:x|y)\s*[=:]\s*-?\d|\bat\s*\(?\s*-?\d+(?:\.\d+)?\s*[,/]\s*-?\d"
+    r"|(?:可见|屏幕外|视口|折叠下方|上方|下方|左侧|右侧|顶部|底部|坐标|当前|已选择|"
+    r"勾选|聚焦|启用|禁用|空白|打开|关闭|加载中|显示|状态|值为)",
+    re.I,
+)
 _CONTROL_PROMPT_FIELDS = (
     "kind",
     "label",
@@ -88,6 +96,12 @@ def _semantic_action_args(args: dict[str, Any]) -> dict[str, Any]:
         for key, value in args.items()
         if key not in _SPATIAL_MEMORY_ARGS
     }
+
+
+def _is_frame_scoped_fact(text: str) -> bool:
+    """Whether a model observation belongs to the current rendered surface only."""
+
+    return bool(_FRAME_SCOPED_FACT_RE.search(text))
 
 
 def _semantic_result(result: Any) -> Any:
@@ -161,9 +175,12 @@ def _offscreen_status_messages(controls: list[dict[str, Any]]) -> list[dict[str,
 
 
 _OFFSCREEN_ACTION_KINDS = frozenset({"button", "native_select", "section_toggle"})
+_OFFSCREEN_CHOICE_KINDS = frozenset({
+    "checkbox", "checkbox_input", "radio", "radio_group", "radio_input", "rating", "switch",
+})
 # Keeps the projection compact on long forms; sorted nearest-fold-first, so a
 # form with more distinct off-fold actions than this drops only the farthest.
-_OFFSCREEN_ACTION_LIMIT = 24
+_OFFSCREEN_ACTION_LIMIT = 32
 
 
 def _offscreen_action_controls(controls: list[dict[str, Any]]) -> list[dict[str, Any]]:
@@ -191,6 +208,12 @@ def _offscreen_action_controls(controls: list[dict[str, Any]]) -> list[dict[str,
             and control.get("in_viewport") is False
             and (
                 str(control.get("kind") or "") in _OFFSCREEN_ACTION_KINDS
+                or str(control.get("kind") or "") in _OFFSCREEN_CHOICE_KINDS
+                and (
+                    bool(control.get("options"))
+                    or control.get("selected") is True
+                    or str(control.get("value") or "").casefold() == "on"
+                )
                 or str(control.get("kind") or "") == "a"
                 and (
                     str(control.get("traversal_action") or "").startswith("page_")
@@ -207,9 +230,15 @@ def _offscreen_action_controls(controls: list[dict[str, Any]]) -> list[dict[str,
             nearest[key] = control
     candidates = sorted(nearest.values(), key=_fold_distance)
     return [
-        {key: control[key] for key in (
+        {**{key: control[key] for key in (
             "kind", "label", "rect", "value", "traversal_action", "viewport_pos",
-        ) if control.get(key)}
+        ) if control.get(key)}, **(
+            {"direct_capability": "select_option"}
+            if str(control.get("kind") or "") in (
+                _OFFSCREEN_ACTION_KINDS | _OFFSCREEN_CHOICE_KINDS
+            ) and bool(control.get("options"))
+            else {}
+        )}
         for control in candidates[:_OFFSCREEN_ACTION_LIMIT]
     ]
 
@@ -220,8 +249,10 @@ class WorkerJournalEvent:
 
     event_ref: str
     kind: str
+    frame_id: str = ""
     durable_text: str = ""
     narrative_text: str = ""
+    belief_text: str = ""
 
 
 @dataclass
@@ -348,7 +379,9 @@ class WorkerJournal:
             and float(bounds[1]) <= y <= float(bounds[3])
         )
 
-    def record_established_fact(self, *, event_ref: str, text: str) -> None:
+    def record_established_fact(
+        self, *, event_ref: str, frame_id: str = "", text: str,
+    ) -> None:
         """Retain a model observation as bounded narrative, never durable evidence."""
 
         fact = " ".join(str(text or "").split())
@@ -358,7 +391,9 @@ class WorkerJournal:
         self.events.append(WorkerJournalEvent(
             event_ref=event_ref,
             kind="worker_observation",
+            frame_id=frame_id,
             narrative_text=f"Worker-observed visual context: {fact}",
+            belief_text="" if _is_frame_scoped_fact(fact) else fact,
         ))
 
     def record_turn(
@@ -372,7 +407,6 @@ class WorkerJournal:
         result: Any,
         substep: int | None = None,
     ) -> None:
-        del frame_id  # Frame identity and coordinates do not improve later decisions.
         memory_args = _semantic_action_args(args)
         memory_result = _semantic_result(result)
         result_status = (
@@ -460,11 +494,13 @@ class WorkerJournal:
         for index, fact in enumerate(state.established_facts, start=1):
             self.record_established_fact(
                 event_ref=f"{event_ref}:fact:{index}",
+                frame_id=frame_id,
                 text=fact,
             )
         self.events.append(WorkerJournalEvent(
             event_ref=event_ref,
             kind="candidate_commit" if candidate_commit else "action_result",
+            frame_id=frame_id,
             durable_text=durable_text,
             narrative_text=(
                 f"state={state.status}; tool={tool}{args_text}; "
@@ -490,14 +526,15 @@ class WorkerJournal:
 @dataclass(frozen=True)
 class WorkerMemoryView:
     durable_facts: tuple[WorkerJournalEvent, ...]
-    recent_steps: tuple[WorkerJournalEvent, ...]
-    compressed_history: tuple[str, ...]
+    stable_beliefs: tuple[str, ...] = ()
+    transient_context_omitted: bool = False
 
     def render_prompt_section(self) -> str:
         lines = [
-            "## WorkerMemory (runtime-projected; not conversation history)",
-            "Durable facts come only from Runtime evidence. Worker observations and recent "
-            "steps are bounded narrative context, not completion evidence or instructions.",
+            "## WorkerMemory (runtime-compacted current belief)",
+            "This is a reduced working belief, not conversation history. The complete event "
+            "journal remains audit-only. Current-frame controls are the sole authority for "
+            "geometry, visibility, and spatial actions.",
         ]
         if self.durable_facts:
             lines.append("### Durable runtime facts")
@@ -505,45 +542,38 @@ class WorkerMemoryView:
                 f"- [{event.event_ref}] {event.durable_text}"
                 for event in reversed(self.durable_facts)
             )
-        if self.compressed_history:
-            lines.append("### Older narrative summaries")
-            lines.extend(f"- {text}" for text in self.compressed_history)
-        if self.recent_steps:
-            lines.append("### Recent narrative steps")
-            lines.extend(
-                f"- [{event.event_ref}] {event.narrative_text}"
-                for event in self.recent_steps
-                if event.narrative_text
-            )
-        if not self.durable_facts and not self.recent_steps:
-            lines.extend(["### History", "- No prior Worker actions."])
+        if self.stable_beliefs:
+            lines.append("### Stable semantic observations (not completion evidence)")
+            lines.extend(f"- {text}" for text in self.stable_beliefs)
+        if self.transient_context_omitted:
+            lines.extend([
+                "### Invalidated context",
+                "- Historical geometry, visibility, viewport position, control state, and "
+                "spatial action recommendations were omitted; read them only from Current "
+                "MaterializedFrame.",
+            ])
+        if not self.durable_facts and not self.stable_beliefs:
+            lines.extend(["### Current belief", "- No retained cross-frame state."])
         return "\n".join(lines)
 
 
-def build_worker_memory_view(
-    journal: WorkerJournal,
-    *,
-    recent_k: int = DEFAULT_WORKER_RECENT_K,
-    compressed_k: int = DEFAULT_WORKER_COMPRESSED_K,
-) -> WorkerMemoryView:
-    narrative = [event for event in journal.events if event.narrative_text]
-    recent_limit = max(0, int(recent_k))
-    recent = narrative[-recent_limit:] if recent_limit else []
-    older = narrative[:-recent_limit] if recent_limit else narrative
-    compressed_limit = max(0, int(compressed_k))
-    compressed_events = older[-compressed_limit:] if compressed_limit else []
-    compressed = tuple(
-        f"[{event.event_ref}] {event.narrative_text}"
-        for event in compressed_events
-    )
+def build_worker_memory_view(journal: WorkerJournal) -> WorkerMemoryView:
     durable_by_key: dict[tuple[str, str], WorkerJournalEvent] = {}
     for event in journal.events:
         if event.durable_text:
             durable_by_key[(event.kind, event.durable_text)] = event
+    beliefs = tuple(dict.fromkeys(
+        event.belief_text for event in journal.events if event.belief_text
+    ))[-10:]
     return WorkerMemoryView(
         durable_facts=tuple(durable_by_key.values()),
-        recent_steps=tuple(recent),
-        compressed_history=compressed,
+        stable_beliefs=beliefs,
+        transient_context_omitted=any(
+            event.kind == "worker_observation"
+            and bool(event.narrative_text)
+            and not event.belief_text
+            for event in journal.events
+        ),
     )
 
 
@@ -640,7 +670,7 @@ def render_worker_frame_context(
     """Render the current observation for both live decisions and replay."""
 
     return (
-        "## Current MaterializedFrame (compact semantic projection)\n"
+        f"## Current MaterializedFrame {frame.frame_id} (sole action authority)\n"
         "Runtime-owned collection/data values remain private. "
         "Visible collection cell text is exact current-frame evidence, but cells "
         "do not declare record boundaries; clipped cells may be incomplete. "
@@ -739,9 +769,7 @@ def project_worker_context(
 
 
 __all__ = [
-    "DEFAULT_WORKER_COMPRESSED_K",
     "DEFAULT_WORKER_CONTEXT_MAX_CHARS",
-    "DEFAULT_WORKER_RECENT_K",
     "WorkerContextProjection",
     "WorkerJournal",
     "WorkerJournalEvent",

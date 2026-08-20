@@ -104,6 +104,7 @@ _SEMANTIC_FIELD_ALIASES = {
     "author": ("reviewer name", "reviewer", "author name"),
     "description": ("review text", "review", "text", "comment"),
     "reviewbody": ("review text", "text"),
+    "reviewcount": ("review count", "reviews", "reviews count"),
     "ratingpercentage": ("rating percentage", "rating percent", "rating"),
     "ratingvalue": ("star rating", "rating", "stars", "rating value"),
 }
@@ -820,6 +821,48 @@ def _collection_route(table: dict[str, Any], url: str) -> str:
     return parts._replace(query=query).geturl()
 
 
+def _schema_source_key(
+    *,
+    state_scope: str,
+    requirement: DataRequirement,
+    table: dict[str, Any],
+    url: str,
+) -> tuple[str, str, str]:
+    """Identify a logical structured source independently of its window."""
+
+    return (
+        state_scope,
+        requirement.id,
+        _fingerprint({
+            # Pagination windows share a source schema; non-pagination query
+            # parameters remain part of the identity so a new query/filter
+            # cannot inherit capabilities from an unrelated result set.
+            "route": _collection_route(table, url),
+            "surface": {
+                "path": table.get("path"),
+                "location": table.get("location"),
+                "caption": _normalize(str(table.get("caption") or "")),
+            },
+        }),
+    )
+
+
+def _table_with_known_source_fields(
+    table: dict[str, Any], known_fields: dict[str, str],
+) -> dict[str, Any]:
+    """Project source capability onto a sparse window without filling row data."""
+
+    projected = dict(table)
+    headers = list(table.get("headers") or [])
+    normalized = {_normalize(str(header)) for header in headers}
+    for source_key in known_fields.values():
+        if source_key not in normalized:
+            headers.append(source_key)
+            normalized.add(source_key)
+    projected["headers"] = headers
+    return projected
+
+
 def _collection_key(
     table: dict[str, Any],
     requirement: DataRequirement,
@@ -877,6 +920,8 @@ def _structured_coverage(
         "has_prev_page",
         "page_size",
         "page_size_options",
+        "next_url",
+        "previous_url",
         "can_scroll_more",
         "can_scroll_back",
         "at_scroll_end",
@@ -901,6 +946,8 @@ def _structured_coverage(
         "page_index": page_index,
         "page_count": page_count,
         "has_next_page": has_next,
+        "next_url": traversal.get("next_url"),
+        "previous_url": traversal.get("previous_url"),
         "traversal_type": traversal_type,
         "movement": movement,
         "window_key": f"page:{page_index}" if page_index not in (None, "") else "",
@@ -938,6 +985,9 @@ class PerceptionMaterializer:
         self._expected_totals: dict[tuple[str, str, str], int] = {}
         self._detail_collections: dict[tuple[str, str], _DetailCollectionState] = {}
         self._visual_filter_states: dict[tuple[str, str, str], str] = {}
+        self._source_field_capabilities: dict[
+            tuple[str, str, str], dict[str, str]
+        ] = {}
         cfg = resolve_llm_config("tool_agent.perception")
         self._vision_cfg = cfg
         self.model = cfg.model
@@ -1382,6 +1432,20 @@ class PerceptionMaterializer:
                 ]
                 if len(empty_tables) == 1:
                     table = empty_tables[0]
+            if table is not None and not _authoritative_empty_table(table):
+                schema_key = _schema_source_key(
+                    state_scope=state_scope,
+                    requirement=requirement,
+                    table=table,
+                    url=url,
+                )
+                known_fields = self._source_field_capabilities.setdefault(schema_key, {})
+                known_fields.update(_source_keys(requirement, table))
+                required_field_count = len(
+                    requirement.row_schema.get("properties") or {}
+                )
+                if len(known_fields) == required_field_count:
+                    table = _table_with_known_source_fields(table, known_fields)
             table_complete = bool(
                 table is not None and _table_supports_requirement(requirement, table)
             )
@@ -1408,12 +1472,15 @@ class PerceptionMaterializer:
                 if table is not None and isinstance(table.get("traversal"), dict)
                 else {}
             )
-            structured_filter_empty = bool(
+            structured_page_empty = bool(
                 table_complete
-                and scope_rows
+                and list(table.get("rows") or [])
                 and not rows
                 and not semantic_predicate
                 and not table.get("partial")
+            )
+            structured_filter_empty = bool(
+                structured_page_empty
                 and (
                     traversal.get("type") == "static"
                     or table.get("total_records") == len(scope_rows)
@@ -1435,7 +1502,11 @@ class PerceptionMaterializer:
                     rows=scope_rows,
                 )
                 scope["query_outcome"] = (
-                    "empty" if empty_complete or structured_filter_empty else "candidates"
+                    "empty"
+                    if empty_complete or structured_filter_empty
+                    else "no_matching_rows_on_complete_page"
+                    if structured_page_empty
+                    else "candidates"
                 )
                 requirement_scopes[requirement.id] = scope
                 if required_predicates and scope["status"] in {"met", "unmet"}:
@@ -1487,6 +1558,7 @@ class PerceptionMaterializer:
             )
             if (
                 not collection_found
+                and not table_complete
                 and not structured_detail
                 and allow_linked_details
                 and (

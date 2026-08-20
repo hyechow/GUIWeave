@@ -35,6 +35,7 @@ _GUARDED_CAPABILITIES = {
     "app_switch",
     "launch_app",
     "select_tab",
+    "reveal_control",
 }
 _SIGNATURE_FIELDS = (
     "text",
@@ -189,6 +190,90 @@ def _requested_sort_direction_is_pending(
     )
 
 
+def _larger_page_size_control(frame: MaterializedFrame) -> tuple[dict[str, Any], str] | None:
+    """Return a structural numeric page-window selector that can grow."""
+
+    for control in frame.controls:
+        if control.get("kind") != "native_select" or control.get("is_filter") is not True:
+            continue
+        options = [str(value).strip() for value in control.get("options") or ()]
+        selected = str(
+            control.get("selected_text_primary")
+            or control.get("selected_text")
+            or control.get("value")
+            or ""
+        ).strip()
+        if not options or not selected.isdigit() or not all(value.isdigit() for value in options):
+            continue
+        largest = max(options, key=int)
+        if int(largest) > int(selected) and isinstance(control.get("rect"), dict):
+            return control, largest
+    return None
+
+
+def _bind_action(
+    actions: list[DynamicActionSpec],
+    *,
+    capability: str,
+    fixed: dict[str, Any],
+    description: str,
+) -> list[DynamicActionSpec]:
+    """Narrow one capability to a Runtime-owned semantic transition."""
+
+    return [
+        action.model_copy(update={
+            "description": description,
+            "fixed_args": {**action.fixed_args, **fixed},
+            "input_args": {
+                key: value for key, value in action.input_args.items()
+                if key not in fixed
+            },
+            "exposed_args": [key for key in action.exposed_args if key not in fixed],
+        })
+        for action in actions
+        if action.capability == capability
+    ]
+
+
+def _next_page_url(
+    spec: WorkerSpec, frame: MaterializedFrame, requirement: Any,
+) -> str:
+    """Return a requirement-bound structured transition when its window is closed."""
+
+    scope = frame.requirement_scopes.get(requirement.id, {})
+    singleton = requirement.coverage == "first_match" and requirement.cardinality == "one"
+    if singleton and not (
+        scope.get("query_outcome") == "no_matching_rows_on_complete_page"
+        and _approach_order_is_applied(spec, frame)
+    ):
+        return ""
+    for chunk in frame.chunks:
+        movement = chunk.coverage.get("movement") or {}
+        if (
+            chunk.requirement_id == requirement.id
+            and chunk.frame_id == frame.frame_id
+            and chunk.provider == "structured"
+            and chunk.coverage.get("partial") is False
+            and chunk.coverage.get("has_next_page") is True
+            and movement.get("next_url")
+        ):
+            return str(movement["next_url"])
+    if scope.get("query_outcome") != "no_matching_rows_on_complete_page":
+        return ""
+    for surface in frame.structured_surfaces:
+        if not isinstance(surface, dict):
+            continue
+        traversal = surface.get("traversal")
+        if (
+            surface.get("partial") is False
+            and isinstance(traversal, dict)
+            and traversal.get("has_next_page") is True
+            and traversal.get("next_url")
+        ):
+            return str(traversal["next_url"])
+    return ""
+
+
 def assess_frame(
     spec: WorkerSpec,
     actions: list[DynamicActionSpec],
@@ -207,6 +292,39 @@ def assess_frame(
         )
     collection = ready_collection(spec, frame)
     requirement = spec.data_requirements[0] if spec.data_requirements else None
+    next_page_url = _next_page_url(spec, frame, requirement) if requirement else ""
+    if next_page_url and (
+        collection is None or collection.coverage.get("status") != "complete"
+    ):
+        # The structured reader has already materialized every row in this
+        # page. Expose its authoritative transition as one semantic action;
+        # viewport scrolling cannot discover additional current-page records.
+        page_size = _larger_page_size_control(frame)
+        if page_size is not None:
+            control, largest = page_size
+            rect = control["rect"]
+            fixed = {
+                # Enhanced rect x/y are already normalized control centers.
+                "x": int(rect.get("x", 0)),
+                "y": int(rect.get("y", 0)),
+                "text": largest,
+            }
+            actions = _bind_action(
+                actions,
+                capability="select_option",
+                fixed=fixed,
+                description=(
+                    "Increase the authoritative structured source window to its "
+                    f"largest available page size ({largest}) before advancing."
+                ),
+            )
+        else:
+            actions = _bind_action(
+                actions,
+                capability="open_url",
+                fixed={"url": next_page_url},
+                description="Open the authoritative next window of this structured source.",
+            )
     boundary = requirement if requirement and (
         requirement.coverage == "first_match" and requirement.cardinality == "many"
     ) else None
@@ -226,7 +344,16 @@ def assess_frame(
     )
     if boundary and order_applied:
         actions = [action for action in actions if action.capability != "reveal_control"]
-    if boundary_ready:
+    singleton_boundary_ready = bool(
+        requirement
+        and requirement.coverage == "first_match"
+        and requirement.cardinality == "one"
+        and collection is not None
+        and collection.coverage.get("scope_status") == "met"
+        and collection.coverage.get("status") == "complete"
+        and collection.row_count == 1
+    )
+    if boundary_ready or singleton_boundary_ready:
         actions = []
     if spec.profile == "operator":
         mode: Literal["unavailable", "operator", "collector"] = (
@@ -279,6 +406,8 @@ def _is_scope_control(control: dict[str, Any] | None) -> bool:
 
 def control_at_point(
     args: dict[str, Any], frame: MaterializedFrame,
+    *,
+    include_offscreen: bool = False,
 ) -> dict[str, Any] | None:
     """Return the smallest visible enhanced control containing the action point."""
 
@@ -287,14 +416,16 @@ def control_at_point(
         return None
     matches: list[tuple[float, dict[str, Any]]] = []
     for control in frame.controls:
-        if control.get("in_viewport") is False:
+        if control.get("in_viewport") is False and not include_offscreen:
             continue
         rect = positioned_rect(control)
         if rect is None:
             continue
         cx, cy = float(rect["x"]), float(rect["y"])
         width, height = float(rect.get("w") or 0), float(rect.get("h") or 0)
-        if abs(float(x) - cx) <= width / 2 and abs(float(y) - cy) <= height / 2:
+        # Worker points are visual estimates. Keep a small grounding tolerance
+        # while rejecting coordinates that belong to a different/expired frame.
+        if abs(float(x) - cx) <= width / 2 + 12 and abs(float(y) - cy) <= height / 2 + 12:
             matches.append((max(1.0, width * height), control))
     return min(matches, key=lambda item: item[0])[1] if matches else None
 
@@ -409,7 +540,38 @@ def _action_boundary_error(
                 "complete traversal; continue the goal on the current result page"
             )
 
-    control = control_at_point(args, frame)
+    control = control_at_point(
+        args,
+        frame,
+        include_offscreen=capability == "select_option",
+    )
+    positioned_controls = [
+        item for item in frame.controls if positioned_rect(item) is not None
+    ]
+    if capability == "reveal_control" and positioned_controls:
+        target = control_at_point(args, frame, include_offscreen=True)
+        if target is None:
+            return (
+                "blocked reveal_control without a current-frame off-screen control at "
+                "that point; historical geometry cannot authorize a spatial action"
+            )
+        if target.get("in_viewport") is not False:
+            label = str(target.get("label") or target.get("kind") or "control")
+            return (
+                f"blocked reveal_control because {label!r} is already visible in the "
+                "current frame; act on its current visible rect"
+            )
+    if (
+        capability in {"tap", "type", "select_option", "long_press"}
+        and positioned_controls
+        and control is None
+        and str(args.get("description") or "").strip()
+    ):
+        return (
+            f"blocked {capability} without a current "
+            f"{'frame' if capability == 'select_option' else 'visible'} control at that point; "
+            "historical or inferred geometry cannot authorize a spatial action"
+        )
     if control is not None:
         kind = str(control.get("kind") or "").casefold()
         label = str(control.get("label") or kind or "control")

@@ -1178,6 +1178,7 @@ class PlaywrightDevice:
         option_text: str,
         *,
         deselect: bool = False,
+        control_id: str | None = None,
     ) -> str:
         """Select an option: mouse-click for rendered dropdowns, JS only for native ``<select>``.
 
@@ -1199,7 +1200,7 @@ class PlaywrightDevice:
             except Exception:
                 pass
             result = page.evaluate(
-                r"""({x, y, target, deselect}) => {
+                r"""({x, y, target, deselect, controlId}) => {
                     const norm = (v) => String(v ?? '')
                         .replace(/\s+/g, ' ')
                         .trim()
@@ -1208,12 +1209,14 @@ class PlaywrightDevice:
                     const labelOf = (el) => String(
                         el?.innerText || el?.textContent || el?.value || ''
                     ).replace(/\s+/g, ' ').trim();
+                    const byId = controlId ? document.getElementById(controlId) : null;
+                    if (byId) byId.scrollIntoView({block: 'center', behavior: 'instant'});
                     const byPoint = (
                         Number.isFinite(x) && Number.isFinite(y)
                     ) ? document.elementFromPoint(x, y) : null;
 
                     function selectAtPointOrFocus() {
-                        let el = byPoint;
+                        let el = byId || byPoint;
                         if (el && el.tagName === 'OPTION') el = el.parentElement;
                         if (el?.closest) {
                             const direct = el.closest('select');
@@ -1262,7 +1265,7 @@ class PlaywrightDevice:
                     }
 
                     function radioAtPointOrFocus() {
-                        for (const el of [byPoint, document.activeElement]) {
+                        for (const el of [byId, byPoint, document.activeElement]) {
                             if (!el) continue;
                             if (el.matches?.('input[type="radio"]')) return el;
                             const labeled = el.closest?.('label')?.control;
@@ -1358,7 +1361,10 @@ class PlaywrightDevice:
                         reason: 'no select at point/focus and no visible matching option',
                     };
                 }""",
-                {"x": x, "y": y, "target": option_text, "deselect": bool(deselect)},
+                {
+                    "x": x, "y": y, "target": option_text,
+                    "deselect": bool(deselect), "controlId": control_id or "",
+                },
             )
         except Exception as exc:  # noqa: BLE001
             return f"failed: {exc}"

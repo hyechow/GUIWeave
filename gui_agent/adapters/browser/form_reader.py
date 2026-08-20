@@ -729,10 +729,13 @@ def form_controls_js() -> str:
   const collapsedRadioNames = new Set();
   for (const [name, radios] of radiosByName.entries()) {
     const values = radios.map((radio) => clean(radio.value));
-    const numericScale = values.length >= 2 && values.every((value) => /^\d+$/.test(value));
-    if (radios.length < 2 && !numericScale) continue;
+    const numericValues = values.length >= 2 && values.every((value) => /^\d+$/.test(value));
+    if (radios.length < 2) continue;
     const label = radioGroupLabelOf(radios[0]);
     if (!clean(label)) continue;
+    // Numeric option ids are common for ordinary product variants. A radio
+    // group is a rating scale only when its semantic group label says so.
+    const ratingScale = numericValues && /\b(?:rating|score|stars?)\b/i.test(label);
     collapsedRadioNames.add(name);
     const checked = radios.find((radio) => radio.checked);
     const visibleLabel = radios.map((radio) => {
@@ -756,15 +759,15 @@ def form_controls_js() -> str:
     ));
     const checkedIndex = radios.findIndex((radio) => radio.checked);
     let selectedScale = '';
-    if (checked && numericScale) {
+    if (checked && ratingScale) {
       const ranked = values.slice().sort((left, right) => Number(left) - Number(right));
       selectedScale = String(ranked.indexOf(clean(checked.value)) + 1);
     } else if (checkedIndex >= 0 && uniqueNumericLabels.length === radios.length) {
       selectedScale = optionLabels[checkedIndex];
     } else if (checkedIndex >= 0) {
-      selectedScale = String(checkedIndex + 1);
+      selectedScale = optionLabels[checkedIndex] || clean(checked.value);
     }
-    const options = (numericScale ? values : optionLabels)
+    const options = (ratingScale ? values : optionLabels)
       .map((text) => cut(text, 40))
       .filter(Boolean);
     totalRendered += 1;
@@ -774,7 +777,7 @@ def form_controls_js() -> str:
     }
     pushControl({
       label: cut(label, 80),
-      kind: numericScale ? 'rating' : 'radio_group',
+      kind: ratingScale ? 'rating' : 'radio_group',
       name: cut(name, 80),
       id: cut((checked && checked.id) || radios[0].id || '', 80),
       value: checked ? clean(checked.value) : '',

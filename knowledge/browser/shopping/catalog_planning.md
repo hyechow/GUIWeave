@@ -51,11 +51,14 @@ ordered grid: continue after that product and never rerun the search. A directio
 next action. For ascending, click `Set Ascending Direction` and complete on `Set Descending
 Direction`; for descending, do the inverse.
 
-Sort By does not offer customer rating. For highest/best-rated requests, collect the bounded
-candidate set with Product Name, exact Rating Percentage, and current Price, then rank by the
-requested keys and hand off the selected name. Include Reviews only when the task states a review-
-count predicate or ranking key; never invent review count or price as a tie-breaker. A missing
-rating or review count is not zero unless the request defines it that way.
+Sort By does not offer customer rating. Rating Percentage has a known upper bound of 100. For a
+highest-rated request whose stated tie-break is minimum price, sort Price ascending and request one
+record with the exact `rating_percentage: 100` predicate plus every other stated predicate, using
+`coverage="first_match"`. The first match is the global lexicographic optimum; exhaustive acquisition
+and post-hoc ranking are invalid for this bounded case; hand off the selected name. Otherwise collect
+the bounded candidate set with Product Name, exact Rating Percentage, current Price, and Reviews only
+when review count is a stated predicate or ranking key; never invent review count or price as a
+tie-breaker, and do not treat a missing rating or review count as zero.
 
 ## Content-derived product attributes
 

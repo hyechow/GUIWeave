@@ -102,6 +102,22 @@ class RuntimeDataStore:
             coverage.get("collection_key") or f"default:{requirement_id}"
         )
         bucket = (requirement_id, collection_key)
+        collection_id = f"collection:{requirement_id}"
+        locked = self._collections.get(collection_id)
+        locked_coverage = locked.coverage if locked is not None else {}
+        if (
+            locked is not None
+            and locked_coverage.get("collection_key") == collection_key
+            and locked_coverage.get("requested") == "first_match"
+            and locked_coverage.get("cardinality") == "one"
+            and locked_coverage.get("scope_status") == "met"
+            and locked_coverage.get("status") == "complete"
+            and locked.chunk_refs
+        ):
+            # A first match in an ordered source is a terminal boundary result.
+            # Later windows cannot improve it and must not turn it into a
+            # conflicting singleton by appending another row.
+            return self._chunks[locked.chunk_refs[-1]], locked, False
         window_key = str(coverage.get("window_key") or "")
         window_context = str(coverage.get("window_context") or "")
         window_state = "end" if coverage.get(
@@ -130,7 +146,6 @@ class RuntimeDataStore:
             chunk = self._chunks[existing]
 
         chunk_ids = list(self._requirement_chunks[bucket])
-        collection_id = f"collection:{requirement_id}"
         chunk_coverage = [self._chunks[item].coverage for item in chunk_ids]
         coverage_samples = chunk_coverage if created else [*chunk_coverage, coverage]
         structured = any(
@@ -260,10 +275,13 @@ class RuntimeDataStore:
         cardinality = "one" if last_coverage.get("cardinality") == "one" else "many"
         combined_coverage["cardinality"] = cardinality
         if scope_status == "met" and cardinality == "one":
-            proves_multiple = row_count > 1 or any(
-                isinstance(value, (int, float)) and value > 1
-                for value in (known_total, page_count)
-            ) or combined_coverage["movement"].get("has_next_page") is True
+            proves_multiple = row_count > 1 or requested != "first_match" and (
+                any(
+                    isinstance(value, (int, float)) and value > 1
+                    for value in (known_total, page_count)
+                )
+                or combined_coverage["movement"].get("has_next_page") is True
+            )
             if proves_multiple:
                 combined_coverage["status"] = "conflicting"
             elif row_count == 1 and coverage_status != "conflicting":

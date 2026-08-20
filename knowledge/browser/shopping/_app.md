@@ -23,7 +23,7 @@ version: 27
 ## Global navigation
 
 - Account menu links My Account, My Wish List, Sign Out; My Account contains My Orders,
-  Address Book, Account Information, Product Reviews, Newsletter Subscriptions.
+  Address Book, Account Information, Product Reviews, and Newsletter.
 - Full cart: `http://localhost:7770/checkout/cart/`. Open it directly; `My Cart` and
   `View and Edit Cart` are previews, not navigation or authoritative full-cart state.
 - For "the product on the current page", preserve the starting product; do not search.
@@ -38,18 +38,20 @@ version: 27
   title, then use that page's Add to Cart, never the result-card control.
 - Advanced Search > Product Name uses contiguous matching. Without an exact category, query the
   supplied use/problem phrase or unchanged base type and validate every result; titles may vary.
-- Results are main-grid cards, never sidebar My Wish List entries; reveal a below-fold name first.
+- Results are main-grid cards, never sidebar My Wish List entries.
 - Top navigation is hierarchical. Use the narrowest category only when it covers the full class.
   Earbuds: Electronics > Headphones > Earbud Headphones; in-ear/behind-neck models are earphones.
 - Other paths: Makeup Remover `/beauty-personal-care/makeup/makeup-remover.html`; Accent Furniture
   `/home-kitchen/furniture/accent-furniture.html`; Ceiling Lights
   `/tools-home-improvement/lighting-ceiling-fans/ceiling-lights.html`.
 - Category and search results offer Sort By, direction, Show up to 36, and pagination. For complete
-  collection select Show 36 before paging. Cards expose Product Name, price, and exact rating percent;
+  collection select Show 36 before paging. Cards expose Product Name, price, exact rating percent,
+  and review count when present;
   hidden hrefs are action targets, not row data. Hand off Product Name; resolve the exact card via
   header mini-search. A struck-through old price is not the current sale price.
 - `Women` and `Men` are path segments: leaf URLs use `/<top>/women/<leaf>.html` or
   `/<top>/men/<leaf>.html`; retain the segment when the target or history includes it.
+- Men's Shoes: `/clothing-shoes-jewelry/men/shoes.html`.
 - Canonical paths retain the top category and every choice as lowercase, hyphenated segments.
   Exact ranges use `price=<lower>-<upper>`; "under X" maps to `price=0-X`.
 - Sort By includes Price but not customer rating. Direction labels name the next action, not state.

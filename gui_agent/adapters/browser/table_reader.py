@@ -378,6 +378,16 @@ def table_snapshot_js() -> str:
     const nextBtn = pagerControl(pager, 'next');
     const prevBtn = pagerControl(pager, 'previous');
 
+    const navigationUrl = (control) => {{
+      if (!control) return null;
+      const anchor = control.matches?.('a[href]')
+        ? control
+        : control.querySelector?.('a[href]');
+      return anchor?.href || null;
+    }};
+    const next_url = navigationUrl(nextBtn);
+    const previous_url = navigationUrl(prevBtn);
+
     if (nextBtn) has_next_page = !disabled(nextBtn);
     if (prevBtn) has_prev_page = !disabled(prevBtn);
 
@@ -399,7 +409,12 @@ def table_snapshot_js() -> str:
       .map(el => ({{ el, value: pageValue(el) }}))
       .filter(item => item.value != null);
     const pageNumbers = pageItems.map(item => item.value);
-    if (!page_count && pageNumbers.length) page_count = Math.max(...pageNumbers);
+    // A sliding pager exposes only a local window (for example 3,4,5,6,7).
+    // Its largest visible number is not the terminal page while Next remains
+    // enabled. Only infer a total from numbered controls at the proven end.
+    if (!page_count && pageNumbers.length && has_next_page === false) {{
+      page_count = Math.max(...pageNumbers);
+    }}
 
     if (!page_index) {{
       const activeSelector = '.active, .current, [aria-current="page"], '
@@ -431,6 +446,8 @@ def table_snapshot_js() -> str:
       page_count,
       has_next_page,
       has_prev_page,
+      next_url,
+      previous_url,
       ...pageSize,
     }};
   }};
@@ -642,6 +659,9 @@ def table_snapshot_js() -> str:
       if (productNameEl) row["productName"] = text(productNameEl);
       const priceEl = sib.querySelector("[data-price-amount], [itemprop='price']");
       if (priceEl) row["price"] = priceEl.getAttribute("data-price-amount") || text(priceEl);
+      const reviewText = Array.from(sib.querySelectorAll("a,[itemprop='reviewCount']"))
+        .map(text).find((value) => /^\\d+\\s+reviews?$/i.test(value)) || "";
+      if (reviewText) row["reviewCount"] = Number(reviewText.match(/^\\d+/)[0]);
       const titleEl = sib.querySelector("h1,h2,h3,h4,h5,h6,[class*='title' i],[data-role='title']");
       if (titleEl) {{
         const t = text(titleEl);

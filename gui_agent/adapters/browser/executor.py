@@ -357,6 +357,7 @@ class BrowserExecutor(VisionExecutor):
                 py,
                 action.text,
                 deselect=_wants_multi_select_deselect(action.description),
+                control_id=getattr(action, "target_control_id", None),
             )
             print(f"  结果: {result}")
             return self._result_succeeded(result, "选择下拉选项")

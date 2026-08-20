@@ -150,10 +150,13 @@ _CAPABILITY_SCHEMAS: dict[str, dict[str, Any]] = {
         "description": _description("Describe the one visible control or item to hold."),
     }, ("x", "y")),
     "select_option": _args({
-        "x": _COORD, "y": _COORD,
+        "x": _REVEAL_COORD, "y": _REVEAL_COORD,
         "text": {"type": "string", "minLength": 1,
                  "description": "Visible option label to select."},
-        "description": _description("Describe only the current visible choice control."),
+        "description": _description(
+            "Describe the exact current-frame choice control. It may be off-screen when "
+            "Runtime listed it as directly actionable; Runtime transports it atomically."
+        ),
     }, ("x", "y", "text")),
     "open_url": _args({"url": {
         "type": "string", "minLength": 1, "maxLength": 2048,
@@ -194,7 +197,10 @@ _CAPABILITY_DESCRIPTIONS = {
     ),
     "drag": "Drag one visible object to one visible destination.",
     "long_press": "Long-press one visible control or item.",
-    "select_option": "Select one visible option from one visible choice control.",
+    "select_option": (
+        "Select one option from an exact current-frame choice control. Known off-screen "
+        "controls are transported and mutated atomically; do not reveal them first."
+    ),
     "open_url": (
         "Replace the current browser document with an absolute HTTP(S) URL that executes "
         "the current approach; current-page dialogs and overlays do not block this action."
@@ -287,8 +293,10 @@ def worker_attempt_contract(
         "choices; a bulk-clear requirement is an action to perform, not a state to verify. "
         "When it shows `value=on` for a choice believed clear, apply the section's "
         "bulk-clear control, then re-select only the requested values.\n"
-        "- Reveal a target listed in `offscreen_action_controls` with the reveal capability "
-        "and its frame rect instead of repeated blind scrolls.\n"
+        "- In `offscreen_action_controls`, act directly on a control when it declares "
+        "`direct_capability`; Runtime "
+        "transports that semantic action atomically. Reveal only other listed off-screen "
+        "targets instead of blind scrolling.\n"
         if spec.profile == "collector"
         else (
             "Operator rules for this attempt:\n"
@@ -307,8 +315,10 @@ def worker_attempt_contract(
             "- Clear unrelated inherited values with the group-local bulk-clear control "
             "before selecting the requested subset; `observed_choice_state` is "
             "authoritative for off-screen choice values.\n"
-            "- Reveal a target listed in `offscreen_action_controls` with the reveal "
-            "capability and its frame rect instead of repeated blind scrolls.\n"
+            "- In `offscreen_action_controls`, act directly on a control when it declares "
+            "`direct_capability`; "
+            "Runtime transports that semantic action atomically. Reveal only other listed "
+            "off-screen targets instead of blind scrolling.\n"
             "- `platform_feedback` is authoritative application feedback; with "
             "`rejected=true`, recover only a correctable input, otherwise report the "
             "exact platform message.\n"
