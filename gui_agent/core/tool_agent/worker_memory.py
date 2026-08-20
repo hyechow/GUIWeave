@@ -763,6 +763,13 @@ def project_worker_context(
     traversal_progress: str = "",
 ) -> WorkerContextProjection:
     """Build one capacity-managed context; the screenshot is supplied separately."""
+    traversal_phase = (
+        "complete"
+        if traversal_progress.startswith("Inspection traversal is complete:")
+        else "completed_elsewhere"
+        if traversal_progress.startswith("Inspection traversal already completed")
+        else "open"
+    )
     memory_text = memory.render_prompt_section()
     if traversal_progress:
         memory_text = memory_text.replace(
@@ -847,11 +854,14 @@ def project_worker_context(
             content=(
                 "## Current frame anchor (authoritative now)\n"
                 "A terminal decision's required UI state must match this frame; historical "
-                "or planned navigation cannot substitute.\n"
+                "or planned navigation cannot substitute. When inspection_traversal is "
+                "complete, scrolling this document is no longer valid progress; when it is "
+                "completed_elsewhere, do not reopen that completed surface.\n"
                 + json.dumps({
                     "frame_id": frame.frame_id,
                     "url": frame.url,
                     "title": frame.title,
+                    "inspection_traversal": traversal_phase,
                 }, ensure_ascii=False)
             ),
         ),
