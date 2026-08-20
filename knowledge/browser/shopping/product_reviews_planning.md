@@ -34,10 +34,6 @@ per review, such as `rating` sourced from Rating and `reviewer` sourced from Rev
 requested title/body fields. `brand` and `product_category` are not Reviews row fields on this
 storefront; declaring either in review filters, row schema, field sources, or field types is invalid.
 
-For EYZUTAK phone cases, Advanced Search Product Name `EYZUTAK` returns the single matching product.
-The longer phrase `EYZUTAK phone case` is not a contiguous catalog name and returns no Advanced
-Search result.
-
 ## Submit a review
 
 For "recently purchased" review tasks, acquisition and submission use separate sources. Collect the

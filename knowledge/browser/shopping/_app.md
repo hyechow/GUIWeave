@@ -16,7 +16,7 @@ source: manual_distilled
 confidence: high
 sensitivity: internal
 ttl: session
-version: 14
+version: 15
 ---
 # One Stop Market storefront
 
@@ -27,16 +27,17 @@ version: 14
   and Newsletter Subscriptions.
 - The header mini-cart links to the full Shopping Cart. Footer exposes Advanced Search, Contact Us,
   and newsletter Email/Subscribe.
-- If a task starts on a product page and says "the product on the current page", keep that product
-  identity. Do not replace it by searching for another product.
+- For "the product on the current page", preserve the starting product; do not search for another.
 
 ## Catalog and search
 
 - The mini-search uses broad OR term matching, so it is not a bounded product-class source.
-- Advanced Search > Product Name performs contiguous substring matching. When no catalog category
-  covers the full class, use this recall source. Equivalent titles may preserve use/problem wording
-  while varying the base-type label. Search with an exact noun-plus-gerund use/problem phrase when
-  supplied, or the base type without modifiers; validate every result against the full class.
+- Advanced Search > Product Name uses contiguous matching. For classes without exact categories,
+  query the supplied use/problem phrase or unmodified base type and validate every result;
+  equivalent titles may vary the base-type label.
+- EYZUTAK phone cases: Product Name query `EYZUTAK`; `EYZUTAK phone case` returns none.
+- Only main-grid cards are search results; sidebar My Wish List entries are unrelated. Reveal a main
+  card's product name before opening when its identity is below the fold.
 - The top navigation is a category hierarchy. Use the narrowest category only when its taxonomy
   directly covers the full requested class. Earbud products are under Electronics > Headphones >
   Earbud Headphones; in this catalog, in-ear or behind-neck headphones/headsets are earphones.
