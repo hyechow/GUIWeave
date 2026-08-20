@@ -535,6 +535,51 @@ ctx.finish(computed["ref"], effect="mutation")
     assert any(item.code == "RESULT_REF_UNROUTED" for item in diagnostics)
 
 
+def test_master_review_rejects_boolean_bound_to_gui_text_input() -> None:
+    source = _program(
+        '''
+condition = ctx.transform(
+    transform_id="check_condition",
+    inputs=[],
+    source="def transform(inputs):\\n    return True",
+    result_schema={"type": "boolean"},
+)
+updated = ctx.gui_worker(
+    worker_id="conditionally_update_record",
+    profile="operator",
+    goal="Update the record only when the condition requires it",
+    success_criteria=["The conditional update is complete"],
+    input_refs={"condition": condition["ref"]},
+    input_bindings=[{
+        "name": "condition",
+        "input": "condition",
+        "target": "text_input",
+        "description": "Use the computed condition",
+    }],
+    data_requirements=[],
+    approach="Execute the declared actions.",
+)
+if updated["phase"] != "completed":
+    ctx.fail(updated["summary"])
+done = ctx.transform(
+    transform_id="done",
+    inputs=[],
+    source="def transform(inputs):\\n    return True",
+    result_schema={"type": "boolean"},
+)
+ctx.finish(done["ref"], effect="mutation")
+'''.strip()
+    )
+
+    diagnostics = validate_master_source(source)
+
+    assert any(
+        item.code == "BINDING_VALUE_SCHEMA"
+        and "one cohesive operator" in item.message
+        for item in diagnostics
+    )
+
+
 def test_master_review_rejects_collector_used_only_as_navigation_handle() -> None:
     source = _program(
         '''

@@ -525,6 +525,28 @@ def test_worker_protocol_never_silently_retypes_dependent_evidence() -> None:
         WorkerState.model_validate(state)
 
 
+def test_worker_tool_schema_matches_memory_status_and_dependency_contract() -> None:
+    tool = dynamic_worker_tools(
+        [generic_action_spec("tap")], action_envelope=True,
+    )[0]
+    variants = tool["function"]["parameters"]["properties"]["state"][
+        "properties"
+    ]["memory_updates"]["items"]["oneOf"]
+    by_type = {
+        variant["properties"]["fact_type"]["const"]: variant
+        for variant in variants
+    }
+
+    evidence = by_type["evidence"]["properties"]
+    commitment = by_type["commitment"]["properties"]
+    assert evidence["status"]["enum"] == ["active", "retracted"]
+    assert commitment["status"]["enum"] == [
+        "active", "retracted", "completed",
+    ]
+    assert evidence["depends_on"]["maxItems"] == 0
+    assert "without self-dependency" in evidence["depends_on"]["description"]
+
+
 def test_worker_claim_accepts_frame_observation_dependency() -> None:
     state = WorkerState.model_validate({
         "status": "executing",
