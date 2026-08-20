@@ -643,6 +643,63 @@ def test_observation_dependency_invalidates_claim_and_commitment_next_frame() ->
     assert [event.key for event in current.active_commitments] == ["activate_control"]
     assert later.established_claims == ()
     assert later.active_commitments == ()
+    rendered = later.render_prompt_section()
+    assert "event_status=active; now=expired" in rendered
+    assert "event_status=active; now=invalidated" in rendered
+
+
+def test_latest_gui_transition_is_separated_from_earlier_receipts() -> None:
+    journal = WorkerJournal(worker_id="post_commit_transition")
+    journal.record_action_result(
+        step=1, frame_id="frame:1", tool="tap",
+        args={"description": "Focus the editor"},
+        result={"status": "executed", "action_type": "tap"},
+    )
+    journal.record_action_result(
+        step=2, substep=1, frame_id="frame:2", tool="type",
+        args={"description": "Enter the requested value", "text": "requested value"},
+        result={"status": "error", "error": "predispatch target rejected"},
+    )
+    journal.record_action_result(
+        step=2, substep=1, frame_id="frame:2", tool="type",
+        args={"description": "Enter the requested value", "text": "requested value"},
+        result={"status": "executed", "action_type": "type", "no_effect": True},
+    )
+    journal.record_action_result(
+        step=2, substep=2, frame_id="frame:2", tool="tap",
+        args={"description": "Activate the final commit"},
+        result={
+            "status": "executed", "action_type": "tap",
+            "target_signal": {
+                "status": "on_target", "actual_element": "Activate the final commit",
+            },
+        },
+    )
+
+    memory = build_worker_memory_view(journal, current_frame_id="frame:3")
+    rendered = memory.render_prompt_section()
+
+    assert [event.event_ref for event in memory.latest_gui_transition] == [
+        "step:2.1", "step:2.2",
+    ]
+    assert [event.event_ref for event in memory.recent_receipts] == [
+        "step:1", "step:2.1", "step:2.2",
+    ]
+    assert "Latest GUI transition (immediately before the current frame)" in rendered
+    assert "Activate the final commit" in rendered
+    assert "Earlier execution receipts" in rendered
+    assert "predispatch target rejected" not in rendered
+    assert '"text": "requested value"' in rendered
+    assert "status=executed; visual effect unconfirmed" in rendered
+    assert rendered.count("[t=4; step:2.2]") == 1
+    assert "do not restart merely because the application shows no success banner" in rendered
+
+    journal.record_action_result(
+        step=3, frame_id="frame:3", tool="ask_user", args={},
+        result={"status": "executed"},
+    )
+    after_user_input = build_worker_memory_view(journal, current_frame_id="frame:4")
+    assert after_user_input.latest_gui_transition == ()
 
 
 def test_observation_lifetime_is_structurally_enforced() -> None:

@@ -115,6 +115,8 @@ def test_action_envelope_preserves_dynamic_atomic_schemas() -> None:
         if tool["function"]["name"] == "continue_with_actions"
     )
     description = envelope["function"]["description"]
+    assert "this tool never represents completion" in description
+    assert "action list cannot be empty" in description
     assert "excluded or already-processed candidates permit traversal" in description
     assert "call complete directly" in description
     assert "do not put terminal tools" in description
