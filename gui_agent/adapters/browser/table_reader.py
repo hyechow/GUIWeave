@@ -638,6 +638,10 @@ def table_snapshot_js() -> str:
         const val = text(el);
         if (key && val && !(key in row)) row[key] = val;
       }}
+      const productNameEl = sib.querySelector("[itemprop='name'],.product-item-link");
+      if (productNameEl) row["productName"] = text(productNameEl);
+      const priceEl = sib.querySelector("[data-price-amount], [itemprop='price']");
+      if (priceEl) row["price"] = priceEl.getAttribute("data-price-amount") || text(priceEl);
       const titleEl = sib.querySelector("h1,h2,h3,h4,h5,h6,[class*='title' i],[data-role='title']");
       if (titleEl) {{
         const t = text(titleEl);
@@ -656,6 +660,7 @@ def table_snapshot_js() -> str:
       const pctMatch = pctAttr.match(/(\\d+(?:\\.\\d+)?)%/);
       if (pctMatch) {{
         // width percentage of a 5-star row -> star count (20% = 1, 80% = 4).
+        row["ratingPercentage"] = Number(pctMatch[1]);
         row["ratingValue"] = Math.round(Number(pctMatch[1]) / 20 * 10) / 10;
       }}
       rows.push(row);

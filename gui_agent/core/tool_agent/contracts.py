@@ -248,7 +248,7 @@ ToolActionCapability: TypeAlias = Literal[
 # controls whose positions legitimately exceed it when off-fold. Shared by the
 # protocol schema, the runtime arg check, and the browser adapter validator.
 REVEAL_COORD_MIN = -2000
-REVEAL_COORD_MAX = 4000
+REVEAL_COORD_MAX = 100_000
 
 # Capabilities whose x/y/description the screenshot-owning Worker must supply.
 _SPATIAL_ARG_CAPABILITIES = frozenset({

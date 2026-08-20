@@ -777,6 +777,11 @@ class ToolAgentRuntime:
             strategy=spec.strategy.approach,
         )
         active_actions = self._initial_worker_actions(spec)
+        binding_values = {
+            action.name: str(action.fixed_args.get("text") or "").strip()
+            for action in active_actions
+            if str(action.fixed_args.get("text") or "").strip()
+        }
         observed_auth_codes = {
             code
             for text in (
@@ -815,6 +820,7 @@ class ToolAgentRuntime:
                 self._worker_last_frames = {}
                 last_frames = self._worker_last_frames
             last_frames[worker_id] = frame
+            journal.record_bound_confirmations(frame, binding_values)
             frame_assessment = assess_frame(
                 spec,
                 active_actions,
@@ -1105,7 +1111,14 @@ class ToolAgentRuntime:
                         journal=journal,
                         frame=frame,
                     )
-                    blocked_reason = collection_exit_reason or (
+                    reversal_reason = self._bound_target_reversal_reason(
+                        spec=spec,
+                        journal=journal,
+                        capability=action_spec.capability,
+                        args=resolved_guard_args,
+                        frame=frame,
+                    )
+                    blocked_reason = collection_exit_reason or reversal_reason or (
                         circuit_decision.reason if circuit_decision.blocked else ""
                     )
                     if blocked_reason:
@@ -1129,6 +1142,8 @@ class ToolAgentRuntime:
                                 "The collection end is not established. Scroll this same "
                                 "collection now; do not navigate away."
                                 if collection_exit_reason else
+                                "Choose a non-destructive action that advances the final outcome."
+                                if reversal_reason else
                                 circuit_decision.instruction
                             ),
                         }
@@ -1471,6 +1486,45 @@ class ToolAgentRuntime:
         else:
             breaker.record(decision)
 
+    @staticmethod
+    def _bound_target_reversal_reason(
+        *,
+        spec: WorkerSpec,
+        journal: WorkerJournal,
+        capability: str,
+        args: dict[str, Any],
+        frame: MaterializedFrame,
+    ) -> str:
+        """Block an accidental inverse action on a confirmed bound target."""
+
+        if capability not in {"tap", "long_press"}:
+            return ""
+        target = control_at_point(args, frame)
+        if not re.search(
+            r"\b(?:remove|delete|discard)\b",
+            " ".join(str((target or {}).get(key) or "") for key in ("label", "value")),
+            re.IGNORECASE,
+        ):
+            return ""
+        labels = {
+            " ".join(str(control.get("label") or "").casefold().split())
+            for control in frame.controls
+            if isinstance(control, dict) and str(control.get("label") or "").strip()
+        }
+        protected = {
+            journal.confirmed_bindings[binding.name]
+            for binding in spec.input_bindings
+            if binding.name in journal.confirmed_bindings
+            and not re.search(
+                r"\b(?:remove|delete|discard)\b", binding.description, re.IGNORECASE,
+            )
+        }
+        return (
+            "blocked destructive reversal of a Runtime-bound target whose mutation "
+            "was already confirmed; continue toward the final outcome"
+            if protected.intersection(labels) else ""
+        )
+
     def _can_continue_batch(
         self,
         action: DynamicActionSpec,
@@ -1654,6 +1708,13 @@ class ToolAgentRuntime:
                     args=resolved_args,
                     state=state,
                     journal=journal,
+                    frame=frame,
+                )
+                or self._bound_target_reversal_reason(
+                    spec=spec,
+                    journal=journal,
+                    capability=action_spec.capability,
+                    args=resolved_args,
                     frame=frame,
                 )
             )

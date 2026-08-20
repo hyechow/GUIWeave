@@ -16,7 +16,7 @@ source: manual_distilled
 confidence: high
 sensitivity: internal
 ttl: session
-version: 24
+version: 27
 ---
 # One Stop Market storefront
 
@@ -26,31 +26,32 @@ version: 24
   Address Book, Account Information, Product Reviews, Newsletter Subscriptions.
 - Full cart: `http://localhost:7770/checkout/cart/`. Open it directly; `My Cart` and
   `View and Edit Cart` are previews, not navigation or authoritative full-cart state.
-  Footer: Advanced Search, Contact Us, newsletter.
 - For "the product on the current page", preserve the starting product; do not search.
 
 ## Catalog and search
 
-- Header mini-search uses broad OR matching. For a handed-off exact Product Name it tolerates
-  punctuation variants; activate the exact result card. It is not a bounded class source.
+- Canonical Nintendo Switch entry: `http://localhost:7770/video-games/nintendo-switch.html`.
+  Open it directly with exact `price` and `product_list_limit`; search, menu/sidebar `cat` aliases,
+  and coarse price facets are not equivalent sources.
+- Header mini-search uses broad OR matching, not bounded class evidence. For a handed-off exact
+  Product Name it tolerates punctuation variants; activate its title, verify the product-page
+  title, then use that page's Add to Cart, never the result-card control.
 - Advanced Search > Product Name uses contiguous matching. Without an exact category, query the
   supplied use/problem phrase or unchanged base type and validate every result; titles may vary.
 - Results are main-grid cards, never sidebar My Wish List entries; reveal a below-fold name first.
 - Top navigation is hierarchical. Use the narrowest category only when it covers the full class.
   Earbuds: Electronics > Headphones > Earbud Headphones; in-ear/behind-neck models are earphones.
-- Paths: Makeup Remover `/beauty-personal-care/makeup/makeup-remover.html`; Accent Furniture
+- Other paths: Makeup Remover `/beauty-personal-care/makeup/makeup-remover.html`; Accent Furniture
   `/home-kitchen/furniture/accent-furniture.html`; Ceiling Lights
   `/tools-home-improvement/lighting-ceiling-fans/ceiling-lights.html`.
-- Category and search-result pages offer Grid/List mode, Sort By, direction, per-page, and pagination.
-  Cards expose stable Product Name, current price, and sometimes rating percentage/review count;
+- Category and search results offer Sort By, direction, Show up to 36, and pagination. For complete
+  collection select Show 36 before paging. Cards expose Product Name, price, and exact rating percent;
   hidden hrefs are action targets, not row data. Hand off Product Name; resolve the exact card via
   header mini-search. A struck-through old price is not the current sale price.
 - `Women` and `Men` are path segments: leaf URLs use `/<top>/women/<leaf>.html` or
   `/<top>/men/<leaf>.html`; retain the segment when the target or history includes it.
-- Sidebar choices may replace the prior chip and keep a `cat=<id>` alias on the parent path;
-  canonical paths retain the top category and every choice as lowercase, hyphenated segments.
-- Exact ranges bypass coarse visible facets: open the canonical URL with
-  `price=<lower>-<upper>`; "under X" maps to `price=0-X`. Do not preserve a `cat=<id>` alias.
+- Canonical paths retain the top category and every choice as lowercase, hyphenated segments.
+  Exact ranges use `price=<lower>-<upper>`; "under X" maps to `price=0-X`.
 - Sort By includes Price but not customer rating. Direction labels name the next action, not state.
   For ascending, click `Set Ascending Direction`; `Set Descending Direction` means complete.
   For descending, click `Set Descending Direction`; `Set Ascending Direction` means complete.
@@ -61,10 +62,8 @@ version: 24
 
 ## Product pages and reviews
 
-- A product page contains the product name, current price, SKU, availability, rating summary,
-  review-count link, details, quantity, and purchase controls. Configurable products also expose
-  required option controls such as size or color; select any available value only when the task
-  permits any variant.
+- Configurable product pages expose required options such as size or color; select any available
+  value only when the task permits any variant.
 - Add to Cart and Add to Wish List act on the current product. A successful action produces a
   confirmation message and the destination collection contains the product.
 - The Reviews link/tab reaches the current product's review list. Each review exposes a star rating,
@@ -75,9 +74,9 @@ version: 24
 
 ## Shopping cart and checkout
 
-- Full Shopping Cart rows expose product, options, price, quantity, subtotal, and Remove. To discard
-  existing items, remove every row; once the next frame is empty, begin product lookup and do not
-  revisit until the target has been added.
+- Full Shopping Cart rows expose product, options, price, quantity, subtotal, and Remove. Cleanup is
+  pre-add only: remove inherited rows and confirm empty, then add the target. After Add success, its
+  matching cart row is intended; proceed to checkout and never remove it or repeat cleanup.
 - "Add" means stop after the item is in the requested cart or wish list. "Buy" means continue from
   the cart through checkout until the order-success page; reaching the cart alone is incomplete.
 - Checkout proceeds through Shipping, then Review & Payments. The saved customer address may already

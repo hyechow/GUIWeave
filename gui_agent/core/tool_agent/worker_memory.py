@@ -192,7 +192,10 @@ def _offscreen_action_controls(controls: list[dict[str, Any]]) -> list[dict[str,
             and (
                 str(control.get("kind") or "") in _OFFSCREEN_ACTION_KINDS
                 or str(control.get("kind") or "") == "a"
-                and str(control.get("traversal_action") or "").startswith("page_")
+                and (
+                    str(control.get("traversal_action") or "").startswith("page_")
+                    or str(control.get("value") or "").casefold().startswith("page ")
+                )
             )
             and str(control.get("label") or "").strip()
             and positioned_rect(control) is not None
@@ -235,6 +238,7 @@ class WorkerJournal:
     last_scroll_point: tuple[float, float] | None = None
     established_fact_texts: set[str] = field(default_factory=set, repr=False)
     executed_tools: set[str] = field(default_factory=set, repr=False)
+    confirmed_bindings: dict[str, str] = field(default_factory=dict, repr=False)
     # ReAct stop cue: consecutive observed frames that added no new collection rows.
     _collection_row_counts: dict[str, int] = field(default_factory=dict, repr=False)
     _collection_stable_frames: dict[str, int] = field(default_factory=dict, repr=False)
@@ -254,6 +258,27 @@ class WorkerJournal:
             else:
                 self._collection_stable_frames[rid] = 0
             self._collection_row_counts[rid] = row_count
+
+    def record_bound_confirmations(
+        self,
+        frame: MaterializedFrame,
+        binding_values: dict[str, str],
+    ) -> None:
+        """Privately retain bound identities confirmed by rendered success feedback."""
+
+        success = any(
+            str(control.get("label") or "").casefold().startswith("success:")
+            for control in frame.controls
+            if isinstance(control, dict) and control.get("kind") == "status_message"
+        )
+        title = " ".join(frame.title.casefold().split())
+        if not success or not title:
+            return
+        self.confirmed_bindings.update({
+            name: " ".join(value.casefold().split())
+            for name, value in binding_values.items()
+            if " ".join(value.casefold().split()) == title
+        })
 
     def collection_stability_note(self, frame: MaterializedFrame) -> str:
         """ReAct stop cue surfaced to the worker when revisits add no new rows."""

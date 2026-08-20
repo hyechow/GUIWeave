@@ -10,7 +10,7 @@ source: manual_distilled
 confidence: high
 sensitivity: internal
 ttl: session
-version: 9
+version: 12
 ---
 # One Stop Market catalog data
 
@@ -21,7 +21,6 @@ Otherwise use Advanced Search > Product Name, whose matching is contiguous subst
 header mini-search uses broad OR matching and is suitable for discovery or resolving a handed-off
 exact identity, not as proof of a complete class. Keep the full requested class unchanged in
 collector filters even when the search query must be shortened.
-
 Catalog rows provide `product_name`, current `price`, and sometimes rating percentage/review count.
 A title's hidden href is an action target, not source data; use stable visible `product_name` for a
 typed handoff and resolve its exact matching card through header mini-search. Treat current/special
@@ -39,6 +38,12 @@ top category and every successive category choice as lowercase, hyphenated segme
 For an exact range, navigate directly to the canonical category URL with
 `price=<lower>-<upper>`; "under X" maps to `price=0-X`. Do not first apply a wider visible facet or
 preserve a `cat=<id>` alias; visible price facets are coarse alternatives, not a nested hierarchy.
+Catalog money has cent precision: the logical predicate for strict "under X" is `max=X-0.01`
+(`min=X+0.01` for strict "over X") even though the UI range endpoint remains X.
+Nintendo Switch is `/video-games/nintendo-switch.html`. For complete catalog collection, use the
+largest available Show value (36, or `product_list_limit=36`) before traversing pages; this changes
+only acquisition volume, not product scope or order. Its visible collection caption is
+`Nintendo Switch`; use that exact `target_label` to exclude broader catalogs.
 
 For a price boundary, apply every predicate, sort by Price in the needed direction, and use
 `coverage="first_match"`; the grid is row-major. From a rejected product detail, Back preserves the
@@ -47,9 +52,10 @@ next action. For ascending, click `Set Ascending Direction` and complete on `Set
 Direction`; for descending, do the inverse.
 
 Sort By does not offer customer rating. For highest/best-rated requests, collect the bounded
-candidate set with product name, rating, review count, and current price, then rank deterministically
-and hand off the selected name. Apply review-count and budget predicates before rating/price
-tie-breakers. A missing rating or review count is not zero unless the request defines it that way.
+candidate set with Product Name, exact Rating Percentage, and current Price, then rank by the
+requested keys and hand off the selected name. Include Reviews only when the task states a review-
+count predicate or ranking key; never invent review count or price as a tie-breaker. A missing
+rating or review count is not zero unless the request defines it that way.
 
 ## Content-derived product attributes
 

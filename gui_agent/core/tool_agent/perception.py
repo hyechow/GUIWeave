@@ -104,6 +104,7 @@ _SEMANTIC_FIELD_ALIASES = {
     "author": ("reviewer name", "reviewer", "author name"),
     "description": ("review text", "review", "text", "comment"),
     "reviewbody": ("review text", "text"),
+    "ratingpercentage": ("rating percentage", "rating percent", "rating"),
     "ratingvalue": ("star rating", "rating", "stars", "rating value"),
 }
 
@@ -245,9 +246,14 @@ def _match_table(requirement: DataRequirement, tables: list[dict[str, Any]]) -> 
     for table in tables:
         caption = _normalize(str(table.get("caption") or ""))
         caption_words = _words(str(table.get("caption") or ""))
+        target_matches = bool(
+            target and (target == caption or target in caption or caption in target)
+        )
+        if target and not target_matches:
+            continue
         field_matches = len(_source_keys(requirement, table))
         rank = (
-            bool(target and (target == caption or target in caption or caption in target)),
+            target_matches,
             bool(field_count) and field_matches == field_count,
             field_matches,
             len(wanted_words.intersection(caption_words)),
@@ -275,8 +281,10 @@ def _structured_rows(
         for field, field_schema in properties.items():
             source = source_map.get(field, field)
             value = normalized_sources.get(source_keys.get(field, ""))
+            if not _nonempty(value):
+                continue
             declared_type = requirement.field_types.get(field)
-            if value is not None and declared_type is not None:
+            if declared_type is not None:
                 try:
                     value = _normalize_runtime_value(source, value, declared_type)
                 except ValueNormalizationError as exc:
@@ -284,7 +292,7 @@ def _structured_rows(
                         f"row {row_index} field {field!r} cannot normalize as "
                         f"{declared_type}"
                     ) from exc
-            elif value is not None:
+            else:
                 json_type = field_schema.get("type") if isinstance(field_schema, dict) else None
                 if json_type in {"integer", "number"}:
                     try:
@@ -826,9 +834,16 @@ def _collection_key(
     })
 
 
-def _visual_collection_key(requirement: DataRequirement, scope: dict[str, Any]) -> str:
+def _visual_collection_key(
+    requirement: DataRequirement,
+    scope: dict[str, Any],
+    table: dict[str, Any] | None,
+    url: str,
+) -> str:
     return "visual:" + _fingerprint({
         "requirement": requirement.id,
+        "surface": _surface_marker(table),
+        "route": _collection_route(table or {}, url),
         "filters": scope["requested_filters"],
     })
 
@@ -1600,7 +1615,9 @@ class PerceptionMaterializer:
                         "scope_status": scope["status"],
                         "requested_filters": scope["requested_filters"],
                         "applied_filters": scope["applied_filters"],
-                        "collection_key": _visual_collection_key(requirement, scope),
+                        "collection_key": _visual_collection_key(
+                            requirement, scope, table, url,
+                        ),
                         "source_scope": "visual_viewport",
                         "window_context": _fingerprint({
                             "route": url,
@@ -1766,7 +1783,9 @@ class PerceptionMaterializer:
                             "scope_status": str(scope.get("status") or "unknown"),
                             "requested_filters": scope["requested_filters"],
                             "applied_filters": scope["applied_filters"],
-                            "collection_key": _visual_collection_key(requirement, scope),
+                            "collection_key": _visual_collection_key(
+                                requirement, scope, table, url,
+                            ),
                             "source_scope": "linked_detail",
                             "window_context": requirement.id,
                             "at_end": True,
