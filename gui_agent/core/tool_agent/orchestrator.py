@@ -663,6 +663,26 @@ def _collector_requirements(call: ast.Call) -> list[dict[str, Any]]:
     return requirements if profile != "operator" and isinstance(requirements, list) else []
 
 
+def _binding_value_schema(
+    schema: dict[str, Any], binding: dict[str, Any],
+) -> dict[str, Any] | None:
+    """Resolve the JSON schema for one value injected into a GUI capability."""
+
+    current: Any = schema
+    if binding.get("consume") == "each":
+        current = current.get("items") if current.get("type") == "array" else None
+    for key in binding.get("path") or []:
+        if not isinstance(current, dict):
+            return None
+        if isinstance(key, str) and current.get("type") == "object":
+            current = (current.get("properties") or {}).get(key)
+        elif isinstance(key, int) and current.get("type") == "array":
+            current = current.get("items")
+        else:
+            return None
+    return current if isinstance(current, dict) else None
+
+
 def _static_flow_diagnostics(tree: ast.AST) -> list[MasterDiagnostic]:
     """Build one ordered symbol flow for Worker and transform contracts."""
 
@@ -671,6 +691,7 @@ def _static_flow_diagnostics(tree: ast.AST) -> list[MasterDiagnostic]:
     collectors: dict[str, ast.Call] = {}
     operators: dict[str, ast.Call] = {}
     transforms: set[str] = set()
+    result_schemas: dict[str, dict[str, Any]] = {}
     array_results: set[str] = set()
     pending_results: set[str] = set()
     consumed_collectors: set[str] = set()
@@ -727,6 +748,23 @@ def _static_flow_diagnostics(tree: ast.AST) -> list[MasterDiagnostic]:
                 for ref_key, ref_value in zip(ref_dict.keys, ref_dict.values):
                     key = getattr(ref_key, "value", ref_key)
                     ref_by_input_key[str(key)] = _base_name(ref_value)
+            for binding in bindings if isinstance(bindings, list) else []:
+                if not isinstance(binding, dict):
+                    continue
+                result_name = ref_by_input_key.get(str(binding.get("input") or ""), "")
+                schema = _binding_value_schema(
+                    result_schemas.get(result_name, {}), binding,
+                )
+                value_type = schema.get("type") if schema else None
+                if value_type and value_type != "string":
+                    diagnostics.append(_diagnostic(
+                        "BINDING_VALUE_SCHEMA",
+                        f"input binding {str(binding.get('name') or '')!r} routes "
+                        f"{value_type!r} data into {str(binding.get('target') or '')!r}, "
+                        "but every GUI input target requires a non-null string; keep a "
+                        "visual or conditional dependency inside one cohesive operator",
+                        worker,
+                    ))
             bound_inputs = {
                 ref_by_input_key.get(str(item.get("input") or ""), str(item.get("input") or ""))
                 for item in bindings
@@ -799,6 +837,7 @@ def _static_flow_diagnostics(tree: ast.AST) -> list[MasterDiagnostic]:
             except ValueError:
                 schema = None
             if isinstance(schema, dict):
+                result_schemas[name] = schema
                 items = schema.get("items")
                 if schema.get("type") == "array" and isinstance(items, dict):
                     rows[name] = (items, ("ref",), "")

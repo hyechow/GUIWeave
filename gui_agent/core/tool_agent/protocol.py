@@ -338,6 +338,8 @@ _WORKER_STATE_SCHEMA: dict[str, Any] = {
                             "enum": (
                                 ["active"] if fact_type == "observation"
                                 else ["active", "retracted", "completed"]
+                                if fact_type == "commitment"
+                                else ["active", "retracted"]
                             ),
                         },
                         "lifetime": {
@@ -351,6 +353,12 @@ _WORKER_STATE_SCHEMA: dict[str, Any] = {
                         },
                         "depends_on": {
                             "type": "array",
+                            "description": (
+                                "Always []; source facts do not depend on memory. To refine "
+                                "Evidence, update the same key directly without self-dependency."
+                                if fact_type in {"observation", "evidence"}
+                                else "Non-empty typed validity dependencies."
+                            ),
                             "items": {
                                 "type": "string", "minLength": 3, "maxLength": 76,
                                 **(
