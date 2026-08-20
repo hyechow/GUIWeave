@@ -568,6 +568,7 @@ class WorkerActionCircuitBreaker:
 
     _last_attempt: tuple[str, str] | None = None
     _progress_window: tuple[str, ...] = ()
+    _attempt_window: tuple[tuple[str, str], ...] = ()
 
     def inspect(
         self,
@@ -604,7 +605,7 @@ class WorkerActionCircuitBreaker:
         surface_cycle = (
             len(window) == _CYCLE_WINDOW
             and len(set(window)) <= _CYCLE_MAX_DISTINCT
-            and progress in window
+            and attempt in self._attempt_window
         )
         target = control_at_point(args, frame)
         mutation_escape = capability in {"type", "clear_text", "select_option"} or bool(
@@ -645,7 +646,12 @@ class WorkerActionCircuitBreaker:
             self._progress_window = (
                 *self._progress_window[-_CYCLE_WINDOW + 1:], decision.progress,
             )
+            self._attempt_window = (
+                *self._attempt_window[-_CYCLE_WINDOW + 1:],
+                (decision.signature, decision.progress),
+            )
 
     def reset(self) -> None:
         self._last_attempt = None
         self._progress_window = ()
+        self._attempt_window = ()
