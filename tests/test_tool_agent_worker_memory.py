@@ -606,6 +606,45 @@ def test_observation_expires_with_frame_and_evidence_is_attempt_scoped() -> None
     assert "only the current frame proves present visibility or actionability" in rendered
 
 
+def test_observation_dependency_invalidates_claim_and_commitment_next_frame() -> None:
+    journal = WorkerJournal(worker_id="frame_local_claim")
+    journal.record_memory_updates(
+        step=1,
+        frame_id="frame:1",
+        state=WorkerState.model_validate({
+            "status": "executing",
+            "summary": "Use the visible control",
+            "memory_updates": [
+                {
+                    "fact_type": "observation", "key": "control_visible",
+                    "status": "active", "lifetime": "frame",
+                    "statement": "The requested control is visible", "depends_on": [],
+                },
+                {
+                    "fact_type": "claim", "key": "control_actionable",
+                    "status": "active", "lifetime": "attempt",
+                    "statement": "The requested control is actionable now",
+                    "depends_on": ["observation:control_visible"],
+                },
+                {
+                    "fact_type": "commitment", "key": "activate_control",
+                    "status": "active", "lifetime": "attempt",
+                    "statement": "Activate the requested control",
+                    "depends_on": ["claim:control_actionable"],
+                },
+            ],
+        }),
+    )
+
+    current = build_worker_memory_view(journal, current_frame_id="frame:1")
+    later = build_worker_memory_view(journal, current_frame_id="frame:2")
+
+    assert [event.key for event in current.established_claims] == ["control_actionable"]
+    assert [event.key for event in current.active_commitments] == ["activate_control"]
+    assert later.established_claims == ()
+    assert later.active_commitments == ()
+
+
 def test_observation_lifetime_is_structurally_enforced() -> None:
     with pytest.raises(ValueError, match="lifetime='frame'"):
         _memory_state({

@@ -523,6 +523,41 @@ def test_worker_protocol_never_silently_retypes_dependent_evidence() -> None:
         WorkerState.model_validate(state)
 
 
+def test_worker_claim_accepts_frame_observation_dependency() -> None:
+    state = WorkerState.model_validate({
+        "status": "executing",
+        "summary": "Open the next surface",
+        "memory_updates": [
+            {
+                "fact_type": "observation",
+                "key": "control_visible",
+                "status": "active",
+                "lifetime": "frame",
+                "statement": "The next control is visible",
+                "depends_on": [],
+            },
+            {
+                "fact_type": "claim",
+                "key": "control_will_open_surface",
+                "status": "active",
+                "lifetime": "attempt",
+                "statement": "Activating the control will open the next surface",
+                "depends_on": ["observation:control_visible"],
+            },
+            {
+                "fact_type": "commitment",
+                "key": "open_surface",
+                "status": "active",
+                "lifetime": "attempt",
+                "statement": "Activate the control",
+                "depends_on": ["claim:control_will_open_surface"],
+            },
+        ],
+    })
+
+    assert state.memory_updates[1].depends_on == ["observation:control_visible"]
+
+
 def test_worker_memory_accepts_bounded_window_evidence_over_500_chars() -> None:
     statement = "verified row; " * 50
     state = WorkerState.model_validate({
