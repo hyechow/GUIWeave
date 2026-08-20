@@ -5,6 +5,7 @@ from types import SimpleNamespace
 
 from gui_agent.adapters.android.mobileworld import (
     MOBILEWORLD_PACKAGE_MANAGER,
+    MobileWorldEnv,
     _build_parser,
     _final_answer,
     _guess_task_type,
@@ -71,6 +72,7 @@ def test_mobileworld_enables_tool_agent_multi_action_by_default() -> None:
     ])
 
     assert enabled.multi_action is True
+    assert enabled.perception == "vision-only"
     assert disabled.multi_action is False
 
 
@@ -178,6 +180,35 @@ def test_mobileworld_preserves_exact_evaluator_answer():
         verification="confirmed",
     )
     assert _final_answer(result) == "42"
+
+
+def test_mobileworld_ask_user_uses_backend_result_verbatim() -> None:
+    calls = []
+    env = object.__new__(MobileWorldEnv)
+    env.device = "emulator-test"
+    env.ensure_init = lambda: None
+    env._req = lambda method, path, **kwargs: (
+        calls.append((method, path, kwargs))
+        or SimpleNamespace(json=lambda: {"result": "Documents/expense/invoice"})
+    )
+
+    answer = env.ask_user("Which destination folder should I use?")
+
+    assert answer == "Documents/expense/invoice"
+    assert calls == [(
+        "POST",
+        "/step",
+        {
+            "json": {
+                "device": "emulator-test",
+                "action": {
+                    "action_type": "ask_user",
+                    "text": "Which destination folder should I use?",
+                },
+            },
+            "timeout": 120,
+        },
+    )]
 
 
 def test_tool_agent_execution_persists_android_mobileworld_context(

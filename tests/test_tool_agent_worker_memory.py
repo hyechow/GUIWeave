@@ -2,6 +2,8 @@ from __future__ import annotations
 
 from types import SimpleNamespace
 
+import pytest
+
 from gui_agent.core.tool_agent.contracts import (
     MaterializedFrame,
     WorkerSpec,
@@ -19,14 +21,35 @@ def _state(step: int) -> WorkerState:
     return WorkerState(
         status="exploring",
         summary=f"Observed state {step}",
-        established_facts=[],
+        memory_updates=[],
+    )
+
+
+def _record_turn(
+    journal: WorkerJournal,
+    *,
+    step: int,
+    frame_id: str,
+    state: WorkerState,
+    tool: str,
+    args: dict,
+    result: dict,
+) -> None:
+    journal.record_memory_updates(step=step, frame_id=frame_id, state=state)
+    journal.record_action_result(
+        step=step,
+        frame_id=frame_id,
+        tool=tool,
+        args=args,
+        result=result,
     )
 
 
 def test_worker_memory_is_a_bounded_projection_of_append_only_runtime_facts() -> None:
     journal = WorkerJournal(worker_id="bounded_worker")
     for step in range(1, 13):
-        journal.record_turn(
+        _record_turn(
+            journal,
             step=step,
             frame_id=f"frame:{step}",
             state=_state(step),
@@ -37,26 +60,23 @@ def test_worker_memory_is_a_bounded_projection_of_append_only_runtime_facts() ->
 
     memory = build_worker_memory_view(journal)
 
-    assert [item.event_ref for item in memory.durable_facts] == ["step:12"]
-    assert [item.event_ref for item in memory.recent_steps] == [
+    assert [item.event_ref for item in memory.recent_receipts] == [
         "step:9",
         "step:10",
         "step:11",
         "step:12",
     ]
-    assert len(memory.compressed_history) == 6
-    assert memory.compressed_history[0].startswith("[step:3]")
-    assert memory.compressed_history[-1].startswith("[step:8]")
     rendered = memory.render_prompt_section()
     assert "Pending subgoal" not in rendered
     assert "runtime reported no_effect" in rendered
     assert "[step:1]" not in rendered
-    assert "Worker observations" in rendered
+    assert "append-only event journal" in rendered
 
 
 def test_worker_memory_omits_spatial_and_execution_metadata() -> None:
     journal = WorkerJournal(worker_id="compact_worker")
-    journal.record_turn(
+    _record_turn(
+        journal,
         step=1,
         frame_id="volatile-frame:17",
         state=_state(1),
@@ -113,7 +133,8 @@ def test_worker_context_omits_unavailable_structured_controls() -> None:
 
 def test_worker_memory_preserves_flash_off_target_signal() -> None:
     journal = WorkerJournal(worker_id="target_feedback")
-    journal.record_turn(
+    _record_turn(
+        journal,
         step=1,
         frame_id="frame:1",
         state=_state(1),
@@ -144,15 +165,27 @@ def test_worker_memory_preserves_flash_off_target_signal() -> None:
 
 def test_worker_memory_accumulates_explicit_visual_facts() -> None:
     journal = WorkerJournal(worker_id="identity_memory")
-    for step, fact in enumerate((
-        "Bookmarks identity: author=pupper; content=Border Collie",
-        "Bookmarks identity: author=demo; content=Golden Retriever",
-        "Bookmarks identity: author=pupper; content=Border Collie",
-    ), start=1):
-        journal.record_turn(
+    for step, key, fact in (
+        (1, "pupper_record", "Bookmarks identity: author=pupper; content=Border Collie"),
+        (2, "demo_record", "Bookmarks identity: author=demo; content=Golden Retriever"),
+        (3, "pupper_record", "Bookmarks identity: author=pupper; content=Border Collie; verified"),
+    ):
+        _record_turn(
+            journal,
             step=step,
             frame_id=f"frame:{step}",
-            state=_state(step).model_copy(update={"established_facts": [fact]}),
+            state=WorkerState.model_validate({
+                "status": "collecting",
+                "summary": f"Observed state {step}",
+                "memory_updates": [{
+                    "fact_type": "evidence",
+                    "key": key,
+                    "status": "active",
+                    "lifetime": "attempt",
+                    "statement": fact,
+                    "depends_on": [],
+                }],
+            }),
             tool="scroll_records",
             args={},
             result={"status": "executed", "action_type": "scroll", "no_effect": False},
@@ -162,15 +195,13 @@ def test_worker_memory_accumulates_explicit_visual_facts() -> None:
 
     assert "author=pupper; content=Border Collie" in rendered
     assert "author=demo; content=Golden Retriever" in rendered
-    assert rendered.index("author=pupper") < rendered.index("author=demo")
-    assert sum(event.kind == "worker_observation" for event in journal.events) == 2
-    durable = build_worker_memory_view(journal).durable_facts
-    # The verbatim-restated fact is load-bearing to the Worker: it is promoted
-    # to durable instead of being silently dropped by journal-lifetime dedup.
-    reaffirmed = [event for event in durable if event.kind == "worker_reaffirmed"]
-    assert len(reaffirmed) == 1
-    assert "author=pupper; content=Border Collie" in reaffirmed[0].durable_text
-    assert not [event for event in durable if "author=demo" in event.durable_text]
+    assert len(build_worker_memory_view(journal).accumulated_evidence) == 2
+    latest = next(
+        event for event in build_worker_memory_view(journal).accumulated_evidence
+        if event.key == "pupper_record"
+    )
+    assert latest.supersedes == "step:1:memory:1"
+    assert latest.sequence == 5
 
 
 def test_worker_memory_keeps_collection_cells_out_of_durable_memory() -> None:
@@ -253,6 +284,10 @@ def test_worker_context_always_uses_compact_semantic_frame() -> None:
             "## Current Worker attempt\n"
             '{"approach": "Inspect the requested records"}'
         ),
+        task_contract=(
+            "## Original task source (runtime-preserved)\n"
+            '{"goal": "Inspect records in my usual destination"}'
+        ),
         max_chars=4_000,
     )
 
@@ -270,8 +305,10 @@ def test_worker_context_always_uses_compact_semantic_frame() -> None:
     assert "private-group-id" not in projection.text
     assert '"form_action": "commit"' in projection.text
     assert '"rect": {"x": 100, "y": 200, "w": 80, "h": 30}' in projection.text
-    assert projection.text.index("## Current MaterializedFrame") < projection.text.index(
-        "## Current Worker attempt"
+    assert projection.text.index("## Current Worker attempt") < projection.text.index(
+        "## Current MaterializedFrame"
+    ) < projection.text.index("## WorkerMemory") < projection.text.index(
+        "## Original task source"
     )
     assert next(
         item for item in projection.report["blocks"]
@@ -427,6 +464,7 @@ class _RecordingWorker:
                     "state": {
                         "status": "exploring",
                         "summary": f"Observed state {self.step}",
+                        "memory_updates": [],
                     },
                     "x": 100 + self.step * 30,
                     "y": 200 + self.step * 30,
@@ -526,95 +564,372 @@ def test_worker_rebuilds_fresh_messages_each_frame_instead_of_replaying_chat_his
     )
 
 
-def test_disproven_path_fact_stays_durable_beyond_narrative_window() -> None:
-    """A "path is unavailable" observation must outlive the narrative window;
-    otherwise the Worker re-attempts the disproven path blindly."""
-    journal = WorkerJournal(worker_id="disproven_memory")
-    journal.record_established_fact(
-        event_ref="step:12:fact:1",
-        text="More options menu shows: Sort by..., Select all, Copy to..., "
-        "Move to..., Compress - no Rename option available",
+def _memory_state(*updates: dict) -> WorkerState:
+    return WorkerState.model_validate({
+        "status": "collecting",
+        "summary": "Typed memory update",
+        "memory_updates": list(updates),
+    })
+
+
+def test_observation_expires_with_frame_and_evidence_is_attempt_scoped() -> None:
+    journal = WorkerJournal(worker_id="scope_memory")
+    journal.record_memory_updates(
+        step=1,
+        frame_id="frame:1",
+        state=_memory_state({
+            "fact_type": "observation", "key": "rename_absent",
+            "status": "active", "lifetime": "frame",
+            "statement": "The menu does not contain Rename", "depends_on": [],
+        }),
     )
-    for step in range(13, 30):
-        journal.record_established_fact(
-            event_ref=f"step:{step}:fact:1",
-            text=f"Some unrelated visible row fact {step}",
+    journal.record_memory_updates(
+        step=2,
+        frame_id="frame:1",
+        state=_memory_state({
+            "fact_type": "evidence", "key": "rename_path_unavailable",
+            "status": "active", "lifetime": "attempt",
+            "statement": "The inspected menu has no Rename action", "depends_on": [],
+        }),
+    )
+
+    current = build_worker_memory_view(journal, current_frame_id="frame:1")
+    later = build_worker_memory_view(journal, current_frame_id="frame:2")
+
+    assert [event.key for event in current.current_observations] == ["rename_absent"]
+    assert later.current_observations == ()
+    assert [event.key for event in later.accumulated_evidence] == [
+        "rename_path_unavailable"
+    ]
+    rendered = later.render_prompt_section()
+    assert "source=frame:1" in rendered
+    assert "only the current frame proves present visibility or actionability" in rendered
+
+
+def test_observation_lifetime_is_structurally_enforced() -> None:
+    with pytest.raises(ValueError, match="lifetime='frame'"):
+        _memory_state({
+            "fact_type": "observation", "key": "current_location",
+            "status": "active", "lifetime": "attempt",
+            "statement": "The current location is Documents", "depends_on": [],
+        })
+
+
+def test_ask_user_preserves_observation_window_but_gui_action_expires_it() -> None:
+    journal = WorkerJournal(worker_id="observation_window")
+    journal.record_memory_updates(
+        step=1,
+        frame_id="frame:1",
+        state=_memory_state({
+            "fact_type": "observation", "key": "current_parent",
+            "status": "active", "lifetime": "frame",
+            "statement": "The new-item dialog is open under Root/team", "depends_on": [],
+        }),
+    )
+    journal.record_action_result(
+        step=1,
+        frame_id="frame:1",
+        tool="ask_user",
+        args={"question": "Which exact child is required?"},
+        result={"status": "executed", "action_type": "ask_user"},
+    )
+
+    same_window = build_worker_memory_view(journal, current_frame_id="frame:2")
+    assert [event.key for event in same_window.current_observations] == [
+        "current_parent"
+    ]
+
+    journal.record_action_result(
+        step=2,
+        frame_id="frame:2",
+        tool="type",
+        args={"text": "archive"},
+        result={"status": "executed", "action_type": "type"},
+    )
+    changed_window = build_worker_memory_view(journal, current_frame_id="frame:3")
+    assert changed_window.current_observations == ()
+    with pytest.raises(ValueError, match="require lifetime='attempt'"):
+        _memory_state({
+            "fact_type": "evidence", "key": "verified_identity",
+            "status": "active", "lifetime": "frame",
+            "statement": "The exact selected identity is record-7", "depends_on": [],
+        })
+
+
+def test_memory_dependency_versions_invalidate_claim_and_commitment() -> None:
+    journal = WorkerJournal(worker_id="dependency_memory")
+    journal.record_memory_updates(
+        step=1,
+        frame_id="frame:1",
+        state=_memory_state(
+            {
+                "fact_type": "evidence", "key": "bounded_results",
+                "status": "active", "lifetime": "attempt",
+                "statement": "The bounded result set has one qualifying record",
+                "depends_on": [],
+            },
+            {
+                "fact_type": "claim", "key": "candidate_set_complete",
+                "status": "active", "lifetime": "attempt",
+                "statement": "The qualifying candidate set is complete",
+                "depends_on": ["evidence:bounded_results"],
+            },
+            {
+                "fact_type": "commitment", "key": "process_candidate",
+                "status": "active", "lifetime": "attempt",
+                "statement": "Process the established qualifying record",
+                "depends_on": ["claim:candidate_set_complete"],
+            },
+        ),
+    )
+    established = build_worker_memory_view(journal, current_frame_id="frame:2")
+    assert len(established.established_claims) == 1
+    assert len(established.active_commitments) == 1
+    rendered = established.render_prompt_section()
+    assert 'depends_on=["evidence:bounded_results"]' in rendered
+    assert 'depends_on=["claim:candidate_set_complete"]' in rendered
+    assert "step:1:memory" not in rendered
+
+    journal.record_memory_updates(
+        step=2,
+        frame_id="frame:2",
+        state=_memory_state({
+            "fact_type": "evidence", "key": "bounded_results",
+            "status": "active", "lifetime": "attempt",
+            "statement": "The result set was corrected and needs reevaluation",
+            "depends_on": [],
+        }),
+    )
+    invalidated = build_worker_memory_view(journal, current_frame_id="frame:2")
+    assert invalidated.established_claims == ()
+    assert invalidated.active_commitments == ()
+
+
+def test_executing_phase_requires_a_valid_active_commitment_atomically() -> None:
+    journal = WorkerJournal(worker_id="execution_phase")
+    invalid = WorkerState.model_validate({
+        "status": "executing",
+        "summary": "Start execution without a commitment",
+        "memory_updates": [{
+            "fact_type": "evidence", "key": "candidate_observed",
+            "status": "active", "lifetime": "attempt",
+            "statement": "One candidate was observed", "depends_on": [],
+        }],
+    })
+
+    with pytest.raises(ValueError, match="requires an active Commitment"):
+        journal.record_memory_updates(step=1, frame_id="frame:1", state=invalid)
+
+    assert journal.events == []
+
+
+def test_existing_valid_commitment_permits_later_executing_decisions() -> None:
+    journal = WorkerJournal(worker_id="execution_phase")
+    journal.record_memory_updates(
+        step=1,
+        frame_id="frame:1",
+        state=_memory_state(
+            {
+                "fact_type": "evidence", "key": "bounded_results",
+                "status": "active", "lifetime": "attempt",
+                "statement": "The bounded result set is closed", "depends_on": [],
+            },
+            {
+                "fact_type": "claim", "key": "selection_established",
+                "status": "active", "lifetime": "attempt",
+                "statement": "The next target is established",
+                "depends_on": ["evidence:bounded_results"],
+            },
+            {
+                "fact_type": "commitment", "key": "execute_selection",
+                "status": "active", "lifetime": "attempt",
+                "statement": "Execute the established selection",
+                "depends_on": ["claim:selection_established"],
+            },
+        ),
+    )
+
+    journal.record_memory_updates(
+        step=2,
+        frame_id="frame:2",
+        state=WorkerState(
+            status="executing",
+            summary="Continue the active commitment",
+            memory_updates=[],
+        ),
+    )
+
+    rendered = build_worker_memory_view(
+        journal, current_frame_id="frame:2",
+    ).render_prompt_section()
+    assert "Execute the active Commitment" in rendered
+    assert "only with exact values established by its dependencies" in rendered
+    assert "never resolves a descriptive user-owned role" in rendered
+
+
+def test_runtime_answer_must_be_integrated_before_execution() -> None:
+    journal = WorkerJournal(worker_id="runtime_answer")
+    journal.record_memory_updates(
+        step=1,
+        frame_id="frame:1",
+        state=_memory_state(
+            {
+                "fact_type": "evidence", "key": "candidate",
+                "status": "active", "lifetime": "attempt",
+                "statement": "Candidate A is established", "depends_on": [],
+            },
+            {
+                "fact_type": "claim", "key": "candidate_set",
+                "status": "active", "lifetime": "attempt",
+                "statement": "The candidate set is established",
+                "depends_on": ["evidence:candidate"],
+            },
+            {
+                "fact_type": "commitment", "key": "apply_candidate",
+                "status": "active", "lifetime": "attempt",
+                "statement": "Apply Candidate A to the user-owned destination",
+                "depends_on": ["claim:candidate_set"],
+            },
+        ),
+    )
+    journal.record_runtime_result(
+        step=2,
+        result={"_runtime_memory_statement": "The exact destination is Root/team/archive"},
+    )
+
+    pending = build_worker_memory_view(journal, current_frame_id="frame:3")
+    assert [event.key for event in pending.pending_runtime_evidence] == [
+        "user_response_2"
+    ]
+    assert "Authoritative evidence awaiting integration" in pending.render_prompt_section()
+    with pytest.raises(ValueError, match="integrated through Claim"):
+        journal.record_memory_updates(
+            step=3,
+            frame_id="frame:3",
+            state=WorkerState(
+                status="executing",
+                summary="Execute without consuming the answer",
+                memory_updates=[],
+            ),
+        )
+
+    journal.record_memory_updates(
+        step=3,
+        frame_id="frame:3",
+        state=WorkerState.model_validate({
+            "status": "executing",
+            "summary": "Integrate the authoritative destination before execution",
+            "memory_updates": [
+                {
+                    "fact_type": "claim", "key": "destination",
+                    "status": "active", "lifetime": "attempt",
+                    "statement": "The exact destination is Root/team/archive",
+                    "depends_on": ["evidence:user_response_2"],
+                },
+                {
+                    "fact_type": "commitment", "key": "apply_candidate",
+                    "status": "active", "lifetime": "attempt",
+                    "statement": "Apply Candidate A to Root/team/archive",
+                    "depends_on": ["claim:candidate_set", "claim:destination"],
+                },
+            ],
+        }),
+    )
+    integrated = build_worker_memory_view(journal, current_frame_id="frame:3")
+    assert integrated.pending_runtime_evidence == ()
+
+
+def test_worker_cannot_modify_runtime_owned_memory() -> None:
+    journal = WorkerJournal(worker_id="runtime_ownership")
+    journal.record_runtime_input(
+        key="user_response_2",
+        statement="The exact destination is Root/team/archive",
+    )
+    before = tuple(journal.events)
+
+    for status in ("active", "retracted"):
+        with pytest.raises(ValueError, match="Runtime-owned memory"):
+            journal.record_memory_updates(
+                step=3,
+                frame_id="frame:3",
+                state=_memory_state({
+                    "fact_type": "evidence", "key": "user_response_2",
+                    "status": status, "lifetime": "attempt",
+                    "statement": "A Worker-authored replacement", "depends_on": [],
+                }),
+            )
+
+    assert tuple(journal.events) == before
+
+
+def test_memory_retraction_is_versioned_and_atomic() -> None:
+    journal = WorkerJournal(worker_id="atomic_memory")
+    journal.record_memory_updates(
+        step=1,
+        frame_id="frame:1",
+        state=_memory_state({
+            "fact_type": "evidence", "key": "record_match",
+            "status": "active", "lifetime": "attempt",
+            "statement": "Record A matches", "depends_on": [],
+        }),
+    )
+    before = tuple(journal.events)
+    try:
+        journal.record_memory_updates(
+            step=2,
+            frame_id="frame:2",
+            state=_memory_state(
+                {
+                    "fact_type": "evidence", "key": "other_match",
+                    "status": "active", "lifetime": "attempt",
+                    "statement": "Record B matches", "depends_on": [],
+                },
+                {
+                    "fact_type": "claim", "key": "bad_claim",
+                    "status": "active", "lifetime": "attempt",
+                    "statement": "An unsupported conclusion",
+                    "depends_on": ["evidence:missing"],
+                },
+            ),
+        )
+    except ValueError as exc:
+        assert "no active dependency" in str(exc)
+    else:
+        raise AssertionError("invalid dependency must reject the whole delta")
+    assert tuple(journal.events) == before
+
+    journal.record_memory_updates(
+        step=3,
+        frame_id="frame:3",
+        state=_memory_state({
+            "fact_type": "evidence", "key": "record_match",
+            "status": "retracted", "lifetime": "attempt",
+            "statement": "Record A was corrected", "depends_on": [],
+        }),
+    )
+    assert build_worker_memory_view(journal).accumulated_evidence == ()
+    assert journal.events[-1].supersedes == "step:1:memory:1"
+
+
+def test_memory_projection_compacts_versions_but_keeps_ordered_journal() -> None:
+    journal = WorkerJournal(worker_id="temporal_memory")
+    for step in range(1, 13):
+        journal.record_memory_updates(
+            step=step,
+            frame_id=f"frame:{step}",
+            state=_memory_state({
+                "fact_type": "evidence", "key": "progress",
+                "status": "active", "lifetime": "attempt",
+                "statement": f"Progress version {step}", "depends_on": [],
+            }),
         )
 
     view = build_worker_memory_view(journal)
-    rendered = view.render_prompt_section()
 
-    assert any(
-        event.kind == "worker_observation" and "no Rename option" in event.durable_text
-        for event in view.durable_facts
-    )
-    assert "no Rename option" in rendered
-    # The plain observations filled and rotated the narrative window meanwhile.
-    assert not any(
-        "row fact 13" in (event.narrative_text or "") for event in view.recent_steps
-    )
-
-
-def test_transient_negations_stay_narrative_only() -> None:
-    """Visibility/selection states change every frame; they must not go durable."""
-    journal = WorkerJournal(worker_id="transient_memory")
-    journal.record_established_fact(
-        event_ref="step:1:fact:1", text="The Rename dialog is not visible yet"
-    )
-    journal.record_established_fact(
-        event_ref="step:1:fact:2", text="The target row is not selected"
-    )
-    journal.record_established_fact(
-        event_ref="step:1:fact:3", text="No new rows appeared after the scroll"
-    )
-
-    assert not build_worker_memory_view(journal).durable_facts
-
-
-def test_disproven_detection_covers_common_phrasings() -> None:
-    from gui_agent.core.tool_agent.worker_memory import _is_disproven_fact
-
-    assert _is_disproven_fact("The menu does not contain Rename")
-    assert _is_disproven_fact("Bulk rename is not available")
-    assert _is_disproven_fact("This screen lacks a save button")
-    assert _is_disproven_fact("该菜单不包含重命名选项")
-    assert not _is_disproven_fact("The dialog is not visible")
-    assert not _is_disproven_fact("Three files are selected")
-
-
-def test_durable_projection_keeps_newest_facts_across_step_10() -> None:
-    """The durable cap must keep the newest disproven facts even when step
-    numbers pass 9 (a lexicographic sort would misorder '9' > '10')."""
-    from gui_agent.core.tool_agent.worker_memory import _DURABLE_PRIVILEGED_LIMIT
-    from gui_agent.core.tool_agent.worker_memory import _is_disproven_fact
-
-    journal = WorkerJournal(worker_id="order_memory")
-    for step in range(1, 16):
-        journal.record_established_fact(
-            event_ref=f"step:{step}:fact:1",
-            text=f"step {step}: the menu does not contain Rename",
-        )
-    view = build_worker_memory_view(journal)
-    assert len(view.durable_facts) <= _DURABLE_PRIVILEGED_LIMIT
-    # The newest fact (step 15) must be present.
-    assert any("step 15" in (e.durable_text or "") for e in view.durable_facts)
-    # And the oldest within the privileged window must be step 15-24+1 = the tail.
-    rendered = view.render_prompt_section()
-    assert "step 15" in rendered
-
-
-def test_chinese_transient_negations_stay_narrative_only() -> None:
-    """Chinese not-yet / no-more states are transient, not disproven paths."""
-    journal = WorkerJournal(worker_id="zh_transient")
-    for text in ("还没有加载完成", "暂无更多结果", "没有显示任何内容", "没有更多文件了"):
-        journal.record_established_fact(event_ref="step:1:fact:1", text=text)
-    assert not build_worker_memory_view(journal).durable_facts
-
-
-def test_disproven_patterns_reject_benign_statements() -> None:
-    from gui_agent.core.tool_agent.worker_memory import _is_disproven_fact
-
-    assert not _is_disproven_fact("No need to press the save button again")
-    assert not _is_disproven_fact("The screenshot lacks contrast")
-    assert not _is_disproven_fact("The plan lacks clarity")
-    assert _is_disproven_fact("This screen lacks a save button")
+    assert len(journal.events) == 12
+    assert [event.sequence for event in journal.events] == list(range(1, 13))
+    assert [event.statement for event in view.accumulated_evidence] == [
+        "Progress version 12"
+    ]
+    assert len(view.state_timeline) == 8
+    assert view.state_timeline[-1].startswith("t=12:")

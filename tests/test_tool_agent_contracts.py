@@ -15,6 +15,7 @@ from gui_agent.core.tool_agent.contracts import (
     DataRequirement,
     DynamicActionSpec,
     WorkerSpec,
+    WorkerState,
     approach_is_procedural,
 )
 from gui_agent.core.tool_agent.protocol import (
@@ -28,7 +29,9 @@ from gui_agent.core.tool_agent.protocol import (
     image_message,
     json_worker_decision_instruction,
     normalize_action_arguments,
+    original_task_contract,
     response_usage,
+    generic_action_spec,
     worker_attempt_contract,
 )
 
@@ -126,12 +129,12 @@ def test_action_envelope_preserves_dynamic_atomic_schemas() -> None:
     ]
     state_schema = parameters["properties"]["state"]
     assert set(state_schema["properties"]) == {
-        "status", "summary", "established_facts",
+        "status", "summary", "memory_updates",
     }
     state = {
         "status": "exploring",
         "summary": "The complete form is visible.",
-        "established_facts": [],
+        "memory_updates": [],
     }
     actions = [
         {
@@ -373,10 +376,14 @@ def test_collector_completion_tool_is_frame_gated_and_runtime_bound() -> None:
     waiting = dynamic_worker_tools(actions, completion_mode="unavailable")
     assert "complete" not in {tool["function"]["name"] for tool in waiting}
     action_state = waiting[0]["function"]["parameters"]["properties"]["state"]
-    assert action_state["properties"]["status"]["enum"] == ["exploring", "collecting"]
+    assert action_state["properties"]["status"]["enum"] == [
+        "exploring", "collecting", "executing",
+    ]
 
     ready = dynamic_worker_tools(actions, completion_mode="collector")
-    assert ready[0]["function"]["name"] == "complete"
+    assert [tool["function"]["name"] for tool in ready] == [
+        "enter_visible_value", "submit_visible_form", "complete", "report_blocked",
+    ]
     complete = next(
         tool for tool in ready if tool["function"]["name"] == "complete"
     )
@@ -435,7 +442,7 @@ def test_json_worker_protocol_preserves_dynamic_action_contract() -> None:
     instruction = json_worker_decision_instruction(tools)
     response = SimpleNamespace(content=(
         '{"tool":"complete","args":{"state":{"status":"completed",'
-        '"summary":"Done","established_facts":[]},'
+        '"summary":"Done","memory_updates":[]},'
         '"evidence":["Visible target state confirmed"]}}'
     ))
 
@@ -472,7 +479,7 @@ def test_worker_protocol_normalizes_flat_ordered_action_arguments() -> None:
             "state": {
                 "status": "exploring",
                 "summary": "The city selector is visible.",
-                "established_facts": [],
+                "memory_updates": [],
             },
             "actions": [raw_action],
         },
@@ -485,6 +492,98 @@ def test_worker_protocol_normalizes_flat_ordered_action_arguments() -> None:
     expected = {"name": "tap", "args": {k: v for k, v in raw_action.items() if k != "name"}}
     assert state["status"] == "exploring"
     assert calls == call["args"]["actions"] == [expected]
+
+
+def test_worker_protocol_never_silently_retypes_dependent_evidence() -> None:
+    response = SimpleNamespace(tool_calls=[{
+        "name": "tap",
+        "args": {
+            "state": {
+                "status": "collecting",
+                "summary": "The bounded evidence establishes a conclusion.",
+                "memory_updates": [{
+                    "fact_type": "evidence",
+                    "key": "scope_complete",
+                    "status": "active",
+                    "lifetime": "attempt",
+                    "statement": "The bounded scope is complete",
+                    "depends_on": ["evidence:bounded_results"],
+                }],
+            },
+            "x": 500,
+            "y": 500,
+            "description": "Tap the visible next control",
+        },
+    }])
+
+    _call, state, _calls = decode_worker_action(response)
+
+    assert state["memory_updates"][0]["fact_type"] == "evidence"
+    with pytest.raises(PydanticValidationError, match="evidence facts cannot"):
+        WorkerState.model_validate(state)
+
+
+def test_worker_memory_accepts_bounded_window_evidence_over_500_chars() -> None:
+    statement = "verified row; " * 50
+    state = WorkerState.model_validate({
+        "status": "collecting",
+        "summary": "Retain one bounded observation window.",
+        "memory_updates": [{
+            "fact_type": "evidence",
+            "key": "window_evidence",
+            "status": "active",
+            "lifetime": "attempt",
+            "statement": statement,
+            "depends_on": [],
+        }],
+    })
+    schema = next(
+        tool for tool in dynamic_worker_tools(
+            [generic_action_spec("tap")], action_envelope=True,
+        )
+        if tool["function"]["name"] == "continue_with_actions"
+    )["function"]["parameters"]
+
+    validate(instance={
+        "state": state.model_dump(),
+        "actions": [{
+            "name": "tap", "args": {
+                "x": 500, "y": 500, "description": _TARGET_DESCRIPTION,
+            },
+        }],
+    }, schema=schema)
+
+
+def test_ask_user_is_a_generic_nonspatial_capability() -> None:
+    action = generic_action_spec("ask_user")
+    tool = dynamic_action_tool(action)["function"]
+    parameters = tool["parameters"]
+
+    assert action.exposed_args == ["question"]
+    assert "descriptive role" in tool["description"]
+    assert "inventing an identifier" in tool["description"]
+    validate(
+        instance={"question": "Which destination should receive the selected files?"},
+        schema=parameters,
+    )
+    with pytest.raises(ValidationError):
+        validate(instance={"question": "?"}, schema=parameters)
+
+
+def test_ask_user_is_a_top_level_interaction_outside_action_batches() -> None:
+    tools = dynamic_worker_tools(
+        [generic_action_spec("tap"), generic_action_spec("ask_user")],
+        action_envelope=True,
+    )
+    names = [tool["function"]["name"] for tool in tools]
+    envelope = next(
+        tool for tool in tools
+        if tool["function"]["name"] == "continue_with_actions"
+    )
+    variants = envelope["function"]["parameters"]["properties"]["actions"]["items"]["oneOf"]
+
+    assert "ask_user" in names
+    assert [variant["properties"]["name"]["const"] for variant in variants] == ["tap"]
 
 
 def test_declared_type_action_keeps_text_dynamic_and_coordinates_visual() -> None:
@@ -716,6 +815,14 @@ def test_worker_attempt_contract_keeps_input_binding_in_immutable_contract() -> 
     assert '"input_bindings"' in contract
     assert '"name": "enter_target"' in contract
     assert '"approach": "Search for the Runtime-bound target."' in contract
+
+
+def test_original_task_contract_preserves_descriptive_value_provenance() -> None:
+    contract = original_task_contract("Send it to my usual review destination")
+
+    assert "runtime-preserved" in contract
+    assert "paraphrase never creates" in contract
+    assert '"goal": "Send it to my usual review destination"' in contract
 
 
 def test_worker_rejects_missing_input_binding_description() -> None:

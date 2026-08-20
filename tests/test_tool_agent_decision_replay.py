@@ -63,7 +63,7 @@ def _state(status: str = "exploring") -> dict:
     return {
         "status": status,
         "summary": "Replay decision",
-        "established_facts": [],
+        "memory_updates": [],
     }
 
 
@@ -199,8 +199,8 @@ def test_worker_replay_compares_equivalent_actions_by_capability(tmp_path) -> No
     assert "## Worker attempt contract" not in model.calls[0][0].content
     turn_context = model.calls[0][1].content[0]["text"]
     assert "stale" in turn_context
-    assert turn_context.index("Current MaterializedFrame") < turn_context.index(
-        "Current Worker attempt"
+    assert turn_context.index("Current Worker attempt") < turn_context.index(
+        "Current MaterializedFrame"
     )
     assert turn_context.index('"approach"') < turn_context.index('"goal"')
     assert '"approach": "Traverse the visible collection."' in turn_context
@@ -303,6 +303,48 @@ def test_worker_replay_applies_one_same_frame_protocol_repair(tmp_path) -> None:
     assert sample["protocol_repairs"] == 1
     assert len(model.calls) == 2
     assert "Protocol repair" in model.calls[1][-1].content
+
+
+def test_worker_replay_supports_protocol_failed_frame_with_expectation(tmp_path) -> None:
+    run_dir = _worker_run(
+        tmp_path,
+        recorded_tool="continue_with_actions",
+        recorded_actions=[{"name": "scroll", "args": {}}],
+    )
+    trace_path = run_dir / "tool_agent_trace.json"
+    trace = json.loads(trace_path.read_text(encoding="utf-8"))
+    recorded = trace["trace"][-1]
+    prior = {**recorded, "index": 3, "step": 0, "frame_id": "frame:0"}
+    failure = {
+        "index": 4,
+        "event": "worker_protocol_error",
+        "worker_id": "worker",
+        "step": 1,
+        "attempt": 1,
+        "context_reports": recorded["context_reports"],
+    }
+    trace["trace"] = [*trace["trace"][:-1], prior, failure]
+    trace_path.write_text(json.dumps(trace), encoding="utf-8")
+    model = _RecordedModel(_tool_call("continue_with_actions", {
+        "state": _state(),
+        "actions": [{"name": "scroll", "args": {
+            "direction": "down",
+            "description": "Scroll the visible collection downward",
+        }}],
+    }))
+
+    result = replay_worker_decision(
+        run_dir,
+        frame=1,
+        expectation={
+            "tool": "continue_with_actions",
+            "action_capabilities": ["scroll"],
+        },
+        llm=model,
+    )
+
+    assert result["status"] == "passed"
+    assert result["samples"][0]["action_capabilities"] == ["scroll"]
 
 
 def test_worker_replay_repairs_surface_change_before_batch_suffix(tmp_path) -> None:

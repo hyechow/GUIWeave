@@ -30,6 +30,7 @@ from gui_agent.core.tool_agent.protocol import (
     dynamic_worker_tools,
     generic_action_spec,
     image_message,
+    original_task_contract,
     validate_worker_tool_state,
     worker_attempt_contract,
 )
@@ -154,6 +155,7 @@ def _worker_messages(
     screenshot: bytes,
     *,
     attempt_contract: str,
+    task_contract: str = "",
     application_knowledge: str = "",
     image_scale: float = 1.0,
 ) -> list[Any]:
@@ -184,8 +186,14 @@ def _worker_messages(
                 current + ("\n\n" + suffix if suffix else "")
             )))
         elif name == "human":
-            text = _without_section(text, "## Current Worker attempt")
-            text = (text.rstrip() + "\n\n" + attempt_contract).strip()
+            text = _replace_section(
+                text,
+                "## Current Worker attempt",
+                attempt_contract,
+            )
+            if task_contract:
+                text = _without_section(text, "## Original task source")
+                text = text.rstrip() + "\n\n" + task_contract.strip()
             messages.append(
                 image_message(text, screenshot, scale=image_scale)
                 if any(part.get("type") == "image" for part in parts)
@@ -215,6 +223,23 @@ def _without_section(text: str, heading: str) -> str:
         return text
     end = text.find("\n\n## ", start + len(heading))
     return (text[:start] + (text[end:] if end >= 0 else "")).strip()
+
+
+def _replace_section(text: str, heading: str, replacement: str) -> str:
+    """Refresh one dynamic section without changing its authority order."""
+
+    start = text.find(heading)
+    if start < 0:
+        return (replacement.strip() + "\n\n" + text.strip()).strip()
+    end = text.find("\n\n## ", start + len(heading))
+    suffix = text[end:] if end >= 0 else ""
+    prefix = text[:start].rstrip()
+    return (
+        prefix
+        + ("\n\n" if prefix else "")
+        + replacement.strip()
+        + suffix
+    ).strip()
 
 
 def _literal(call: ast.Call | None, name: str, default: Any = None) -> Any:
@@ -498,7 +523,29 @@ def replay_worker_decision(
         and event.get("frame_id") == f"frame:{frame_no}"
     ), None)
     if selected is None:
-        raise ValueError(f"recording has no Worker decision for frame:{frame_no}")
+        failure = next((
+            event for event in events
+            if event.get("event") == "worker_protocol_error"
+            and int(event.get("step") or 0) == frame_no
+            and int(event.get("attempt") or 1) == 1
+        ), None)
+        prior = next((
+            event for event in reversed(events)
+            if failure is not None
+            and event.get("event") == "worker_decision"
+            and event.get("worker_id") == failure.get("worker_id")
+            and int(event.get("step") or 0) < frame_no
+        ), None)
+        if expectation is None or failure is None or prior is None:
+            raise ValueError(f"recording has no Worker decision for frame:{frame_no}")
+        selected = {
+            **failure,
+            "event": "worker_decision",
+            "frame_id": f"frame:{frame_no}",
+            "replay_context": prior.get("replay_context"),
+            "tool": str(expectation.get("tool") or ""),
+            "args": {},
+        }
     replay_context = selected.get("replay_context")
     if not isinstance(replay_context, dict) or replay_context.get("version") != 2:
         return _unavailable(
@@ -601,6 +648,9 @@ def replay_worker_decision(
         _worker_report(selected),
         _screenshot(run_dir, frame_no, observation),
         attempt_contract=attempt_contract,
+        task_contract=original_task_contract(
+            str(context.get("goal") or spec.goal)
+        ),
         application_knowledge="\n\n".join(
             value.worker_context()
             for value in _current_app_knowledge(context)

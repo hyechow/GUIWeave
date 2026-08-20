@@ -12,8 +12,7 @@ from gui_agent.adapters.android.control_grounding import ground_action_to_androi
 from gui_agent.adapters.browser.actions import BrowserAction, BrowserActionDecision
 from gui_agent.adapters.browser.control_grounding import ground_action_to_nearest_control
 from gui_agent.core.tool_agent.action_guard import (
-    WorkerActionCircuitBreaker,
-    _action_boundary_error,
+    action_boundary_error,
     auth_codes_from_frame,
     auth_codes_from_text,
 )
@@ -431,50 +430,19 @@ def test_task549_wide_keyword_input_near_miss_snaps_to_unique_text_field() -> No
     }
 
 
-def test_progress_signature_ignores_coverage_status_verdicts() -> None:
-    # The coverage status verdict no longer gates anything, so it must not feed
-    # the circuit-breaker progress hash: only accumulated row counts count as
-    # collection progress.
-    from gui_agent.core.tool_agent.action_guard import progress_signature
-    from gui_agent.core.tool_agent.contracts import CollectionRef
-
-    def frame_with(status: str, rows: int) -> MaterializedFrame:
-        return MaterializedFrame(
-            frame_id="frame:1",
-            screenshot_path="",
-            collections=[CollectionRef(
-                kind="collection",
-                ref="collection:records",
-                requirement_id="records",
-                chunk_refs=["chunk:records:1"],
-                row_count=rows,
-                row_schema={"type": "object", "properties": {}},
-                coverage={"status": status, "pages_seen": [1] if status == "complete" else []},
-            )],
-        )
-
-    same_rows = progress_signature(frame_with("incomplete", 3)) == progress_signature(
-        frame_with("complete", 3)
-    )
-    assert same_rows
-    assert progress_signature(frame_with("complete", 3)) != progress_signature(
-        frame_with("complete", 4)
-    )
-
-
 def test_type_template_placeholder_text_is_blocked() -> None:
     # R2 regression: a Worker hallucinated `{{new_name}}` as literal type text
     # because the bound value is opaque, silently creating a phantom file. The
     # guard must reject template placeholders instead of executing them.
     frame = MaterializedFrame(frame_id="frame:1", screenshot_path="", readiness="ready")
     for bad in ("{{new_name}}", "{new_name}", "rename to {{new_name}}"):
-        error = _action_boundary_error("type", {"text": bad}, frame, set())
+        error = action_boundary_error("type", {"text": bad}, frame, set())
         assert error and "placeholder" in error, bad
 
-    real = _action_boundary_error("type", {"text": "bid_1.txt"}, frame, set())
+    real = action_boundary_error("type", {"text": "bid_1.txt"}, frame, set())
     assert real == ""
     # A binding action carries no Worker-authored text; the injected value must pass.
-    bound = _action_boundary_error("type", {"x": 500, "y": 510}, frame, set())
+    bound = action_boundary_error("type", {"x": 500, "y": 510}, frame, set())
     assert bound == ""
 
 
@@ -497,7 +465,7 @@ def test_action_guard_blocks_only_fully_visible_bounded_scope_scroll() -> None:
         }},
         chunks=[chunk],
     )
-    error = _action_boundary_error(
+    error = action_boundary_error(
         "scroll", {"direction": "down"}, frame, set()
     )
     assert "exact bounded scope is fully visible" in error
@@ -515,180 +483,9 @@ def test_action_guard_blocks_only_fully_visible_bounded_scope_scroll() -> None:
         frame.model_copy(update={"missing_requirements": ["events"]}),
     )
     assert all(
-        not _action_boundary_error("scroll", {"direction": "down"}, item, set())
+        not action_boundary_error("scroll", {"direction": "down"}, item, set())
         for item in allowed
     )
-
-
-def test_task108_replay_blocks_one_unchanged_repeat_until_target_progresses() -> None:
-    case = _case()
-    attempt = case["attempt"]
-    frame = _frame(case)
-    breaker = WorkerActionCircuitBreaker()
-
-    first = breaker.inspect(
-        tool=attempt["tool"],
-        capability=attempt["capability"],
-        args=attempt["args"],
-        frame=frame,
-    )
-    assert first.blocked is False
-    breaker.record(first)
-    second = breaker.inspect(
-        tool=attempt["tool"],
-        capability=attempt["capability"],
-        args=attempt["args"],
-        frame=frame,
-    )
-    assert second.blocked is True
-    assert second.prior_attempts == 1
-
-    progressed = breaker.inspect(
-        tool=attempt["tool"],
-        capability=attempt["capability"],
-        args=attempt["args"],
-        frame=_frame(case, scope_status="met"),
-    )
-    assert progressed.blocked is False
-    assert progressed.progress != second.progress
-    breaker.record(progressed)
-    # Only genuine state progress (a new tuple) releases the fuse. Returning to
-    # the exact earlier measured state and re-attempting the same action is a
-    # cycle, and the attempt window still remembers it.
-    returned = breaker.inspect(
-        tool=attempt["tool"], capability=attempt["capability"],
-        args=attempt["args"], frame=frame,
-    )
-    assert returned.prior_attempts == 1
-    assert returned.blocked is True
-
-
-def test_action_alias_cannot_bypass_repeated_action_fuse() -> None:
-    case = _case()
-    attempt = case["attempt"]
-    frame = _frame(case)
-    breaker = WorkerActionCircuitBreaker()
-
-    decision = breaker.inspect(
-        tool="search_by_date",
-        capability=attempt["capability"],
-        args=attempt["args"],
-        frame=frame,
-    )
-    assert decision.blocked is False
-    breaker.record(decision)
-
-    aliased = breaker.inspect(
-        tool="runtime_type_visible",
-        capability=attempt["capability"],
-        args=attempt["args"],
-        frame=frame,
-    )
-
-    assert aliased.blocked is True
-    assert aliased.prior_attempts == 1
-
-
-def test_distinct_prerequisite_action_without_state_change_keeps_fuse() -> None:
-    """An intervening distinct action releases the fuse only when it changes the
-    measured task state (a new progress signature). When it does not, allowing
-    the retry would make multi-step loops (select → menu → cancel → re-select)
-    look novel at every step."""
-    case = _case()
-    attempt = case["attempt"]
-    frame = _frame(case)
-    breaker = WorkerActionCircuitBreaker()
-
-    decision = breaker.inspect(
-        tool=attempt["tool"], capability=attempt["capability"],
-        args=attempt["args"], frame=frame,
-    )
-    breaker.record(decision)
-    prerequisite = breaker.inspect(
-        tool="accept_terms", capability="tap",
-        args={"x": 100, "y": 700}, frame=frame,
-    )
-    breaker.record(prerequisite)
-
-    retry = breaker.inspect(
-        tool=attempt["tool"], capability=attempt["capability"],
-        args=attempt["args"], frame=frame,
-    )
-
-    assert retry.blocked is True
-    assert retry.prior_attempts == 1
-
-
-def test_control_value_change_counts_as_task_progress() -> None:
-    case = _case()
-    attempt = case["attempt"]
-    initial = _frame(case).model_copy(update={
-        "controls": [{
-            "kind": "rich_textarea",
-            "label": "Description",
-            "value": "old value",
-            "focused": True,
-        }],
-    })
-    cleared = initial.model_copy(update={
-        "controls": [{
-            "kind": "rich_textarea",
-            "label": "Description",
-            "value": "",
-            "focused": True,
-        }],
-    })
-    breaker = WorkerActionCircuitBreaker()
-
-    decision = breaker.inspect(
-        tool=attempt["tool"],
-        capability=attempt["capability"],
-        args=attempt["args"],
-        frame=initial,
-    )
-    breaker.record(decision)
-
-    progressed = breaker.inspect(
-        tool=attempt["tool"],
-        capability=attempt["capability"],
-        args=attempt["args"],
-        frame=cleared,
-    )
-
-    assert progressed.blocked is False
-
-
-def test_visible_android_menu_controls_count_as_task_progress() -> None:
-    case = _case()
-    attempt = case["attempt"]
-    closed = _frame(case).model_copy(update={"controls": []})
-    opened = closed.model_copy(update={
-        "controls": [{
-            "kind": "button",
-            "label": "Create New Channel",
-            "value": "Create New Channel",
-            "in_viewport": True,
-            "rect": {"x": 500, "y": 900, "w": 1000, "h": 45},
-        }],
-    })
-    breaker = WorkerActionCircuitBreaker()
-
-    decision = breaker.inspect(
-        tool=attempt["tool"],
-        capability=attempt["capability"],
-        args=attempt["args"],
-        frame=closed,
-    )
-    breaker.record(decision)
-
-    progressed = breaker.inspect(
-        tool=attempt["tool"],
-        capability=attempt["capability"],
-        args=attempt["args"],
-        frame=opened,
-    )
-
-    assert progressed.blocked is False
 
 
 def test_action_guard_rejects_control_capability_mismatches() -> None:
@@ -711,15 +508,15 @@ def test_action_guard_rejects_control_capability_mismatches() -> None:
         controls=controls,
     )
 
-    tap = WorkerActionCircuitBreaker().inspect(
-        tool="tap", capability="tap", args={"x": 500, "y": 200}, frame=frame
+    tap_error = action_boundary_error(
+        "tap", {"x": 500, "y": 200}, frame, set(),
     )
-    typed = WorkerActionCircuitBreaker().inspect(
-        tool="type", capability="type", args={"x": 500, "y": 300}, frame=frame
+    type_error = action_boundary_error(
+        "type", {"x": 500, "y": 300}, frame, set(),
     )
 
-    assert tap.blocked and "use select_option" in tap.reason
-    assert typed.blocked and "editable input" in typed.reason
+    assert "use select_option" in tap_error
+    assert "editable input" in type_error
 
 
 def test_action_guard_requires_observed_transient_authentication_code() -> None:
@@ -735,25 +532,17 @@ def test_action_guard_requires_observed_transient_authentication_code() -> None:
     assert auth_codes_from_text(
         "Verification code 654321 is visible; phone 13802138888 is the recipient"
     ) == {"654321"}
-    breaker = WorkerActionCircuitBreaker()
     args = {
         "text": "123456",
         "description": "Enter the SMS verification code",
     }
 
-    assert breaker.inspect(
-        tool="type", capability="type", args=args, frame=message,
-        observed_auth_codes=codes,
-    ).blocked
+    assert action_boundary_error("type", args, message, codes)
     args["text"] = "654321"
-    assert not breaker.inspect(
-        tool="type", capability="type", args=args, frame=message,
-        observed_auth_codes=codes,
-    ).blocked
+    assert not action_boundary_error("type", args, message, codes)
 
 
 def test_action_guard_blocks_unscoped_row() -> None:
-    breaker = WorkerActionCircuitBreaker()
     detail = MaterializedFrame(
         frame_id="detail",
         screenshot_path="detail.png",
@@ -774,6 +563,4 @@ def test_action_guard_blocks_unscoped_row() -> None:
             "rect": {"x": 800, "y": 500, "w": 80, "h": 30},
         }],
     })
-    assert breaker.inspect(
-        tool="tap", capability="tap", args={"x": 800, "y": 500}, frame=row
-    ).blocked
+    assert action_boundary_error("tap", {"x": 800, "y": 500}, row, set())

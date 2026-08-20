@@ -16,8 +16,7 @@ from gui_agent.core.tool_agent.contracts import (
     WorkerStrategy,
 )
 from gui_agent.core.tool_agent.action_guard import (
-    WorkerActionCircuitBreaker,
-    action_signature,
+    action_boundary_error,
     is_candidate_commit,
 )
 from gui_agent.core.tool_agent.data_store import RuntimeDataStore
@@ -48,7 +47,7 @@ def _state() -> str:
         {
             "status": "exploring",
             "summary": "A separate apply control is visible.",
-            "established_facts": [],
+            "memory_updates": [],
         }
     )
 
@@ -140,121 +139,6 @@ def test_runtime_rejects_max_turns_above_50(tmp_path) -> None:
         )
 
 
-def test_action_guard_canonicalizes_equivalent_actions() -> None:
-    def signature(capability, **args):
-        return action_signature(tool="alias", capability=capability, args=args)
-
-    assert signature("scroll", direction="down", amount=5, y=400) == signature(
-        "scroll", direction="down", amount=9, y=560,
-    )
-    assert signature("tap", x=210, y=150) == signature("tap", x=219, y=151)
-    assert signature("type", x=500, y=140) != signature("type", x=500, y=160)
-
-
-def test_action_guard_blocks_one_unchanged_repeat() -> None:
-    frame = MaterializedFrame(frame_id="frame:stable", screenshot_path="frame.png")
-    breaker = WorkerActionCircuitBreaker()
-    first = breaker.inspect(
-        tool="scroll", capability="scroll",
-        args={"direction": "down", "amount": 5}, frame=frame,
-    )
-    breaker.record(first)
-    second = breaker.inspect(
-        tool="scroll", capability="scroll",
-        args={"direction": "down", "amount": 9}, frame=frame,
-    )
-    assert second.blocked and second.prior_attempts == 1
-
-
-def test_action_guard_allows_same_action_after_progress() -> None:
-    breaker = WorkerActionCircuitBreaker()
-    first = breaker.inspect(
-        tool="open_url",
-        capability="open_url",
-        args={"url": "https://example.test/"},
-        frame=MaterializedFrame(
-            frame_id="frame:1",
-            screenshot_path="frame:1.png",
-            url="https://before.example/",
-        ),
-    )
-    breaker.record(first)
-
-    repeated = breaker.inspect(
-        tool="open_url",
-        capability="open_url",
-        args={"url": "https://example.test/"},
-        frame=MaterializedFrame(
-            frame_id="frame:2",
-            screenshot_path="frame:2.png",
-            url="https://redirected.example/",
-        ),
-    )
-
-    assert not repeated.blocked
-    assert repeated.prior_attempts == 0
-
-
-def test_action_guard_allows_same_coordinate_on_a_different_visual_surface() -> None:
-    breaker = WorkerActionCircuitBreaker()
-    first = breaker.inspect(
-        tool="tap",
-        capability="tap",
-        args={"x": 500, "y": 140},
-        frame=MaterializedFrame(
-            frame_id="frame:search",
-            screenshot_path="search.png",
-            visual_fingerprint="surface-search",
-        ),
-    )
-    breaker.record(first)
-
-    next_surface = breaker.inspect(
-        tool="tap",
-        capability="tap",
-        args={"x": 500, "y": 140},
-        frame=MaterializedFrame(
-            frame_id="frame:address",
-            screenshot_path="address.png",
-            visual_fingerprint="surface-address",
-        ),
-    )
-
-    assert next_surface.blocked is False
-    assert next_surface.prior_attempts == 0
-
-
-def test_explicit_no_effect_exhausts_an_unchanged_action_retry() -> None:
-    frame = MaterializedFrame(frame_id="frame:stable", screenshot_path="frame.png")
-    breaker = WorkerActionCircuitBreaker()
-    first = breaker.inspect(
-        tool="submit",
-        capability="press_enter",
-        args={},
-        frame=frame,
-    )
-
-    ToolAgentRuntime._record_action_attempt(
-        breaker,
-        first,
-        DynamicActionSpec(
-            name="submit",
-            capability="press_enter",
-            description="Submit the focused form",
-        ),
-        {"status": "executed", "no_effect": True},
-    )
-    repeated = breaker.inspect(
-        tool="submit",
-        capability="press_enter",
-        args={},
-        frame=frame,
-    )
-
-    assert repeated.blocked
-    assert repeated.prior_attempts == 1
-
-
 def test_runtime_blocks_disabled_structured_control() -> None:
     frame = MaterializedFrame(
         frame_id="frame:disabled", screenshot_path="frame.png",
@@ -264,12 +148,11 @@ def test_runtime_blocks_disabled_structured_control() -> None:
         }],
     )
 
-    decision = WorkerActionCircuitBreaker().inspect(
-        tool="tap", capability="tap", args={"x": 500, "y": 500}, frame=frame,
+    error = action_boundary_error(
+        "tap", {"x": 500, "y": 500}, frame, set(),
     )
 
-    assert decision.blocked is True
-    assert "disabled control" in decision.reason
+    assert "disabled control" in error
 
 
 def test_runtime_guard_does_not_choose_query_entry_recovery() -> None:
@@ -281,12 +164,11 @@ def test_runtime_guard_does_not_choose_query_entry_recovery() -> None:
         }],
     )
 
-    decision = WorkerActionCircuitBreaker().inspect(
-        tool="type", capability="type", args={"x": 500, "y": 500}, frame=frame,
+    error = action_boundary_error(
+        "type", {"x": 500, "y": 500}, frame, set(),
     )
 
-    assert decision.blocked is True
-    assert "Runtime guard as authoritative" in decision.instruction
+    assert "target an editable input" in error
 
 
 def test_runtime_rejects_spatial_target_inside_clipped_collection_cell() -> None:
@@ -301,17 +183,14 @@ def test_runtime_rejects_spatial_target_inside_clipped_collection_cell() -> None
         }]}],
     )
 
-    def inspect(target_frame: MaterializedFrame, capability: str, y: int):
-        return WorkerActionCircuitBreaker().inspect(
-            tool=capability,
-            capability=capability,
-            args={"x": 500, "y": y},
-            frame=target_frame,
+    def inspect(target_frame: MaterializedFrame, capability: str, y: int) -> str:
+        return action_boundary_error(
+            capability, {"x": 500, "y": y}, target_frame, set(),
         )
 
-    assert "clipped collection cell" in inspect(frame, "tap", 948).reason
-    assert inspect(frame, "tap", 700).blocked is False
-    assert inspect(frame, "scroll", 948).blocked is False
+    assert "clipped collection cell" in inspect(frame, "tap", 948)
+    assert inspect(frame, "tap", 700) == ""
+    assert inspect(frame, "scroll", 948) == ""
 
     selectable = frame.model_copy(update={"controls": [{
         "kind": "checkbox",
@@ -320,17 +199,17 @@ def test_runtime_rejects_spatial_target_inside_clipped_collection_cell() -> None
         "selection_mode": "multiple",
         "rect": {"x": 500, "y": 948, "w": 40, "h": 40},
     }]})
-    assert "clipped collection cell" in inspect(selectable, "tap", 948).reason
+    assert "clipped collection cell" in inspect(selectable, "tap", 948)
 
     unrelated = selectable.model_copy(update={"controls": [
         {**selectable.controls[0], "ref": "toolbar:button"},
     ]})
-    assert inspect(unrelated, "tap", 948).blocked is False
+    assert inspect(unrelated, "tap", 948) == ""
 
 
 def test_navigation_outside_clipped_collection_is_not_mechanically_blocked() -> None:
     # The ReAct collector owns traversal: navigating away from a clipped scroll
-    # collection is a Worker judgment call, guarded only by the circuit breaker.
+    # collection is a Worker judgment call.
     # The old `_incomplete_collection_exit_reason` gate is gone.
     frame = MaterializedFrame(
         frame_id="frame:9",
@@ -341,17 +220,13 @@ def test_navigation_outside_clipped_collection_is_not_mechanically_blocked() -> 
             "cells": [],
         }],
     )
-    breaker = WorkerActionCircuitBreaker()
-    decision = breaker.inspect(
-        tool="tap", capability="tap",
-        args={"x": 375, "y": 930, "description": "Back"},
-        frame=frame,
+    error = action_boundary_error(
+        "tap", {"x": 375, "y": 930, "description": "Back"}, frame, set(),
     )
-    assert decision.blocked is False
+    assert error == ""
 
 
-def test_action_guard_allows_typing_into_editable_aria_combobox() -> None:
-    breaker = WorkerActionCircuitBreaker()
+def test_action_boundary_allows_typing_into_editable_aria_combobox() -> None:
     frame = MaterializedFrame(
         frame_id="frame:editable-combobox",
         screenshot_path="frame.png",
@@ -363,14 +238,11 @@ def test_action_guard_allows_typing_into_editable_aria_combobox() -> None:
         }],
     )
 
-    decision = breaker.inspect(
-        tool="runtime_type_visible",
-        capability="type",
-        args={"x": 478, "y": 233, "text": "Alex"},
-        frame=frame,
+    error = action_boundary_error(
+        "type", {"x": 478, "y": 233, "text": "Alex"}, frame, set(),
     )
 
-    assert not decision.blocked
+    assert error == ""
 
 
 def test_runtime_decodes_provider_encoded_coordinate_pair() -> None:
@@ -995,47 +867,6 @@ def test_strategy_replacements_use_only_the_global_turn_budget() -> None:
     ]
 
 
-def test_repeated_action_failure_shares_breaker_with_strategy_retry() -> None:
-    runtime = object.__new__(ToolAgentRuntime)
-    runtime.max_turns = 2
-    runtime._frame_no = 0
-    runtime._trace = lambda *_args, **_kwargs: None
-    breaker = WorkerActionCircuitBreaker()
-    runtime._worker_action_breakers = {"logical_worker": breaker}
-    outcomes = iter([
-        WorkerOutcome(
-            phase="failed",
-            summary="blocked repeated scroll action without task-relevant progress",
-            failure_kind="action_contract_invalid",
-            steps=1,
-        ),
-        WorkerOutcome(phase="completed", summary="alternative completed", steps=1),
-    ])
-
-    def run_worker(worker_id, _spec, *, require_attempt=False):
-        del require_attempt
-        if "_strategy_" in worker_id:
-            assert runtime._worker_action_breakers[worker_id] is breaker
-        runtime._frame_no += 1
-        return next(outcomes)
-
-    runtime._run_worker = run_worker
-    runtime._request_strategy_decision = lambda **_kwargs: (
-        WorkerStrategy(approach="channel search"),
-        "selected",
-    )
-    spec = _worker_spec(
-        profile="operator",
-        goal="Reply to the target record",
-        success_criteria=["The reply is posted"],
-        actions=[],
-    )
-
-    outcome = runtime._run_logical_worker("logical_worker", spec)
-
-    assert outcome.phase == "completed"
-
-
 class _Executor:
     def __init__(self) -> None:
         self.actions = []
@@ -1251,7 +1082,7 @@ class _MultiActionWorker:
         self.state_status = state_status
         self.messages = []
         self.state_summary = "The complete login form is visible."
-        self.established_facts = []
+        self.memory_updates = []
 
     def bind_tools(self, tools, **kwargs):
         assert kwargs.get("parallel_tool_calls") is False
@@ -1274,7 +1105,7 @@ class _MultiActionWorker:
                 "state": {
                     "status": self.state_status,
                     "summary": self.state_summary,
-                    "established_facts": self.established_facts,
+                    "memory_updates": self.memory_updates,
                 },
                 "actions": actions,
             },
@@ -1292,7 +1123,6 @@ def _run_fused_worker(
     visible_collection_regions: list[dict] | None = None,
     installed_apps: tuple[str, ...] = (),
     journal: WorkerJournal | None = None,
-    breaker: WorkerActionCircuitBreaker | None = None,
     bundle=None,
     executor=None,
     max_steps: int = 1,
@@ -1314,8 +1144,6 @@ def _run_fused_worker(
     runtime.allow_multi_action = True
     if journal is not None:
         runtime._worker_journals = {"fused-worker": journal}
-    if breaker is not None:
-        runtime._worker_action_breakers = {"fused-worker": breaker}
     runtime.observe_calls = 0
 
     def observe(_spec):
@@ -1375,7 +1203,7 @@ class _PrematureCompleteWorker(_MultiActionWorker):
         args = {"state": {
             "status": "completed" if terminal else "exploring",
             "summary": "The visible Apply control was activated.",
-            "established_facts": [],
+            "memory_updates": [],
         }}
         if not terminal:
             args["actions"] = [{"name": "submit_login", "args": {
@@ -1611,11 +1439,20 @@ def test_explicit_auth_fact_allows_code_entry_across_frames(
     worker = _MultiActionWorker([[_code_action(code)]])
     journal = None
     if code == "757570":
-        worker.established_facts = [f"The visible verification code is {code}."]
+        worker.memory_updates = [{
+            "fact_type": "evidence",
+            "key": "verification_code",
+            "status": "active",
+            "lifetime": "attempt",
+            "statement": f"The visible verification code is {code}.",
+            "depends_on": [],
+        }]
     else:
         journal = WorkerJournal(worker_id="fused-worker")
-        journal.record_established_fact(
-            event_ref="step:6:fact:1", text=f"验证码为{code}",
+        journal.record_runtime_input(
+            key="verification_code",
+            event_ref="runtime-input:verification-code",
+            statement=f"验证码为{code}",
         )
 
     runtime = _run_fused_worker(
@@ -1730,7 +1567,7 @@ def test_confirmed_candidate_commit_marks_matching_unfiltered_reopen_exhausted()
     selected = _candidate_frame("selected", selected=True)
     committed = is_candidate_commit({"x": 500, "y": 900}, selected)
     journal = WorkerJournal(worker_id="select-all", events=[WorkerJournalEvent(
-        event_ref="commit", kind="candidate_commit", durable_text="confirmed",
+        event_ref="commit", kind="candidate_commit", receipt_text="confirmed",
     )])
 
     def context(frame: MaterializedFrame) -> str:
@@ -1838,37 +1675,43 @@ def test_replacement_strategy_starts_with_fresh_journal(monkeypatch) -> None:
         "advance_subgoal",
         "advance_subgoal_strategy_1",
     }
-    assert set(runtime._worker_action_breakers) == set(runtime._worker_journals)
     assert runtime._active_worker_journal() is runtime._worker_journals[
         "advance_subgoal_strategy_1"
     ]
 
 
-def test_replacement_strategy_inherits_only_disproven_paths() -> None:
+def test_replacement_strategy_inherits_only_runtime_task_memory() -> None:
     base = WorkerJournal(worker_id="worker")
-    base.record_established_fact(
-        event_ref="step:1:fact:1",
-        text="The screen shows an application not responding dialog",
+    base.record_runtime_input(
+        key="authorized_destination",
+        statement="The authoritative destination is the requested collection",
     )
-    base.record_established_fact(
-        event_ref="step:2:fact:1",
-        text="The screen shows an application not responding dialog",
-    )
-    base.record_established_fact(
-        event_ref="step:3:fact:1",
-        text="The menu does not contain the required option",
+    base.record_memory_updates(
+        step=1,
+        frame_id="frame:1",
+        state=WorkerState.model_validate({
+            "status": "collecting",
+            "summary": "Attempt-local evidence",
+            "memory_updates": [{
+                "fact_type": "evidence", "key": "attempt_path",
+                "status": "active", "lifetime": "attempt",
+                "statement": "The current attempt path is unavailable",
+                "depends_on": [],
+            }],
+        }),
     )
     retry = WorkerJournal(worker_id="worker_strategy_1")
 
-    ToolAgentRuntime._inherit_disproven_facts(
+    ToolAgentRuntime._inherit_task_memory(
         {"worker": base, "worker_strategy_1": retry},
         retry,
         retry.worker_id,
     )
 
     assert len(retry.events) == 1
-    assert retry.events[0].kind == "worker_observation"
-    assert "does not contain" in retry.events[0].durable_text
+    assert retry.events[0].origin == "runtime"
+    assert retry.events[0].lifetime == "task"
+    assert retry.events[0].key == "authorized_destination"
 
 
 def test_worker_normalizes_provider_point_schema_and_executes_type(monkeypatch) -> None:
@@ -1913,7 +1756,7 @@ def test_worker_normalizes_provider_point_schema_and_executes_type(monkeypatch) 
     assert decision["args"]["y"] == 380
 
 
-def test_worker_blocks_unchanged_repeat_and_accepts_same_frame_ref_repair(
+def test_worker_allows_repeated_action_without_history_based_blocking(
     monkeypatch,
 ) -> None:
     runtime = object.__new__(ToolAgentRuntime)
@@ -1968,20 +1811,20 @@ def test_worker_blocks_unchanged_repeat_and_accepts_same_frame_ref_repair(
 
     assert outcome.phase == "failed"
     assert len(observed) == 2
-    assert runtime.worker.calls == 3
+    assert runtime.worker.calls == 2
     assert len(runtime._executor.actions) == 2
     assert (runtime._executor.actions[-1].x, runtime._executor.actions[-1].y) == (
         212,
         428,
     )
-    assert runtime._executor.actions[-1].snap["method"] == "control_geometry"
+    assert runtime._executor.actions[-1].snap["method"] == "control_semantic_geometry"
     assert runtime._visualizer.points[-2:] == [
         (212.0, 428.0),
         (212.0, 428.0),
     ]
-    blocked = [event for event in runtime.trace if event["event"] == "worker_action_blocked"]
-    assert len(blocked) == 1
-    assert blocked[0]["prior_attempts"] == 1
+    assert not any(
+        event["event"] == "worker_action_rejected" for event in runtime.trace
+    )
 
 
 def test_worker_allows_effective_scrolls_until_bounded_step_limit(
@@ -2030,7 +1873,7 @@ def test_worker_allows_effective_scrolls_until_bounded_step_limit(
     assert len(observe_calls) == runtime.worker.calls == 3
     assert len(runtime._executor.actions) == 3
     assert not any(
-        event["event"] == "worker_action_blocked" for event in runtime.trace
+        event["event"] == "worker_action_rejected" for event in runtime.trace
     )
 
 
@@ -2283,7 +2126,6 @@ def test_type_is_rejected_before_dispatch_when_target_is_off_target(monkeypatch)
         },
     ]
 
-    breaker = WorkerActionCircuitBreaker()
     payload, terminal = runtime._execute_multi_action_calls(
         worker_id="login",
         spec=spec,
@@ -2297,7 +2139,6 @@ def test_type_is_rejected_before_dispatch_when_target_is_off_target(monkeypatch)
         frame=MaterializedFrame(frame_id="frame:1", screenshot_path="frame.png"),
         png=b"png",
         journal=journal,
-        circuit_breaker=breaker,
     )
 
     assert terminal is None
@@ -2306,7 +2147,6 @@ def test_type_is_rejected_before_dispatch_when_target_is_off_target(monkeypatch)
     assert payload["reuse_current_frame"] is True
     assert "predispatch visual grounding" in payload["reason"]
     assert len(runtime._executor.actions) == 0
-    assert not breaker._attempts
 
 
 def test_runtime_recovers_missing_exposed_action_description(monkeypatch) -> None:
@@ -2510,6 +2350,56 @@ def test_runtime_rejects_launching_an_unlisted_android_app() -> None:
             b"png",
             MaterializedFrame(frame_id="frame:1", screenshot_path="frame.png"),
         )
+
+
+def test_runtime_ask_user_records_authoritative_task_evidence() -> None:
+    questions = []
+    runtime = object.__new__(ToolAgentRuntime)
+    runtime.bundle = SimpleNamespace(
+        platform="android",
+        request_user_input=lambda question: (
+            questions.append(question) or "Documents/expense/invoice"
+        ),
+    )
+    runtime._trace = lambda *_args, **_kwargs: None
+    action = DynamicActionSpec(
+        name="ask_user",
+        capability="ask_user",
+        description="Ask for missing user-owned information",
+        exposed_args=["question"],
+    )
+    spec = _worker_spec(
+        goal="Use the user's destination",
+        success_criteria=["The target is handled using the supplied destination"],
+        actions=[action],
+    )
+
+    payload, terminal = runtime._execute_worker_tool(
+        spec,
+        [action],
+        {
+            "name": "ask_user",
+            "args": {"question": "Which destination folder should I use?"},
+        },
+        b"png",
+        MaterializedFrame(frame_id="frame:1", screenshot_path="frame.png"),
+    )
+    journal = WorkerJournal(worker_id="ask_user_worker")
+    journal.record_action_result(
+        step=1,
+        frame_id="frame:1",
+        tool="ask_user",
+        args={"question": questions[0]},
+        result=payload,
+    )
+    journal.record_runtime_result(step=1, result=payload)
+
+    view = build_worker_memory_view(journal, current_frame_id="frame:2")
+    assert terminal is None
+    assert payload["action_type"] == "ask_user"
+    assert questions == ["Which destination folder should I use?"]
+    assert [event.lifetime for event in view.accumulated_evidence] == ["task"]
+    assert "Documents/expense/invoice" in view.accumulated_evidence[0].statement
 
 
 def _browser_execution_runtime(
@@ -3299,140 +3189,6 @@ def test_runtime_interruption_is_sealed_as_a_reportable_failed_run(tmp_path) -> 
     assert runtime._visualizer.clear_calls == 1
 
 
-def test_action_guard_blocks_repeat_inside_multi_step_cycle() -> None:
-    """A 4-6 step GUI loop (select → menu → cancel → re-select) recurs inside the
-    attempt window even though no two consecutive actions are identical."""
-    frame = MaterializedFrame(frame_id="frame:stable", screenshot_path="frame.png")
-    breaker = WorkerActionCircuitBreaker()
-
-    def attempt(capability: str, x: int) -> None:
-        decision = breaker.inspect(
-            tool=capability, capability=capability,
-            args={"x": x, "y": 100}, frame=frame,
-        )
-        breaker.record(decision)
-        return decision
-
-    attempt("long_press", 500)   # cycle step 1
-    attempt("tap", 950)          # cycle step 2 (e.g. open menu)
-    attempt("back", 0)           # cycle step 3
-    repeated = attempt("long_press", 500)  # cycle restarts: same state, same action
-
-    assert repeated.blocked
-    assert repeated.prior_attempts == 1
-
-
-def test_action_guard_window_forgets_attempts_beyond_eight() -> None:
-    frame = MaterializedFrame(frame_id="frame:stable", screenshot_path="frame.png")
-
-    def run_gap(gap: int) -> bool:
-        breaker = WorkerActionCircuitBreaker()
-        first = breaker.inspect(
-            tool="tap", capability="tap", args={"x": 500, "y": 100}, frame=frame,
-        )
-        breaker.record(first)
-        for index in range(gap):
-            decision = breaker.inspect(
-                tool="tap", capability="tap",
-                args={"x": 100 + index, "y": 900}, frame=frame,
-            )
-            breaker.record(decision)
-        return breaker.inspect(
-            tool="tap", capability="tap", args={"x": 500, "y": 100}, frame=frame,
-        ).blocked
-
-    assert run_gap(7) is True
-    assert run_gap(8) is False
-
-
-def test_action_guard_reset_releases_trigger_but_keeps_loop_evidence() -> None:
-    """A progress reset releases the fuse for the action that produced it, but
-    keeps other recent entries so a loop containing a commit/scroll step still
-    registers its next repetition instead of erasing all evidence."""
-    frame = MaterializedFrame(frame_id="frame:stable", screenshot_path="frame.png")
-    breaker = WorkerActionCircuitBreaker()
-    first = breaker.inspect(
-        tool="tap", capability="tap", args={"x": 500, "y": 100}, frame=frame,
-    )
-    breaker.record(first)
-    # A distinct commit action that produced the progress reset.
-    second = breaker.inspect(
-        tool="tap", capability="tap", args={"x": 900, "y": 100}, frame=frame,
-    )
-    breaker.record(second)
-    breaker.reset(trigger_signature=second.signature)
-
-    # The commit step itself is released after reset.
-    committed = breaker.inspect(
-        tool="tap", capability="tap", args={"x": 900, "y": 100}, frame=frame,
-    )
-    assert not committed.blocked
-    assert committed.prior_attempts == 0
-    # The loop's earlier step is still remembered inside the retained window.
-    repeated = breaker.inspect(
-        tool="tap", capability="tap", args={"x": 500, "y": 100}, frame=frame,
-    )
-    assert repeated.prior_attempts == 1
-    assert repeated.blocked is True
-
-
-def test_action_guard_reset_without_trigger_clears_window() -> None:
-    """Bare reset() (no triggering signature) keeps the old clear-all semantics."""
-    frame = MaterializedFrame(frame_id="frame:stable", screenshot_path="frame.png")
-    breaker = WorkerActionCircuitBreaker()
-    first = breaker.inspect(
-        tool="tap", capability="tap", args={"x": 500, "y": 100}, frame=frame,
-    )
-    breaker.record(first)
-    breaker.reset()
-
-    repeated = breaker.inspect(
-        tool="tap", capability="tap", args={"x": 500, "y": 100}, frame=frame,
-    )
-    assert not repeated.blocked
-    assert repeated.prior_attempts == 0
-
-
-def test_batch_guard_feedback_does_not_count_rejection_as_attempt(monkeypatch) -> None:
-    frame = MaterializedFrame(
-        frame_id="frame:stable", screenshot_path="frame.png",
-        url="https://example.test/login", title="Login",
-    )
-    breaker = WorkerActionCircuitBreaker()
-    tap_attempt = breaker.inspect(
-        tool="tap", capability="tap", args={"x": 500, "y": 100}, frame=frame,
-    )
-    breaker.record(tap_attempt)
-    actions = [
-        DynamicActionSpec(name="clear", capability="clear_text", description="Clear field"),
-        DynamicActionSpec(name="tap", capability="tap", description="Tap target"),
-    ]
-    worker = _MultiActionWorker([[
-        {"name": "clear", "args": {}},
-        {"name": "tap", "args": {"x": 500, "y": 100}},
-    ]])
-    runtime = _run_fused_worker(
-        monkeypatch,
-        current_url="https://example.test/login",
-        worker=worker,
-        actions=actions,
-        breaker=breaker,
-    )
-
-    repeated = breaker.inspect(
-        tool="tap", capability="tap", args={"x": 500, "y": 100}, frame=frame,
-    )
-    aborted = next(
-        event for event in runtime.trace
-        if event["event"] == "worker_multi_action_aborted"
-    )
-    assert aborted["executed_actions"] == 1
-    assert repeated.blocked and repeated.prior_attempts == 1
-    assert "blocked repeated tap" in build_worker_memory_view(
-        runtime._worker_journals["fused-worker"]
-    ).render_prompt_section()
-
-
 def test_each_binding_advances_cursor_on_complete_and_exhausts() -> None:
     """consume="each" bindings materialize one array element per cursor, advance
     on complete, and drop the action once the array is exhausted."""
@@ -3602,9 +3358,8 @@ class _QueueWorker:
         }])
 
 
-def test_each_element_boundary_resets_the_circuit_breaker() -> None:
-    """Completing plan element N must clear the breaker window so a structurally
-    identical menu action on element N+1 is not misread as a repeated tap."""
+def test_each_element_allows_same_structural_action() -> None:
+    """The same menu action may be valid for consecutive plan elements."""
     rename_frame = MaterializedFrame(
         frame_id="frame:menu",
         screenshot_path="frame.png",
@@ -3618,7 +3373,6 @@ def test_each_element_boundary_resets_the_circuit_breaker() -> None:
     runtime._status_cb = None
     runtime._worker_journals = {}
     runtime._worker_last_frames = {}
-    runtime._worker_action_breakers = {}
     runtime._each_cursors = {}
     runtime._observe = lambda _spec: (rename_frame, b"png")
     runtime.data_store = SimpleNamespace(
