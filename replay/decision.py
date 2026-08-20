@@ -217,11 +217,20 @@ def _worker_messages(
                 + (
                     "\n\n## Current frame anchor (authoritative now)\n"
                     "A terminal decision's required UI state must match this frame; historical "
-                    "or planned navigation cannot substitute.\n"
+                    "or planned navigation cannot substitute. When inspection_traversal is "
+                    "complete, scrolling this document is no longer valid progress; when it is "
+                    "completed_elsewhere, do not reopen that completed surface.\n"
                     + json.dumps({
                         "frame_id": materialized_frame.frame_id,
                         "url": materialized_frame.url,
                         "title": materialized_frame.title,
+                        "inspection_traversal": (
+                            "complete"
+                            if "Inspection traversal is complete:" in memory_text
+                            else "completed_elsewhere"
+                            if "Inspection traversal already completed" in memory_text
+                            else "open"
+                        ),
                     }, ensure_ascii=False)
                     if materialized_frame is not None else ""
                 )

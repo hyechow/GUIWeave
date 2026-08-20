@@ -294,6 +294,7 @@ def test_worker_replay_preserves_memory_from_current_production_order(
     assert "stale" not in turn_context
     assert "old contract" not in turn_context
     assert turn_context.count("## Current frame anchor") == 1
+    assert '"inspection_traversal": "open"' in turn_context
     assert '"frame_id": "frame:1"' in turn_context
     assert turn_context.index("Current MaterializedFrame") < turn_context.index(
         "Current Worker attempt"

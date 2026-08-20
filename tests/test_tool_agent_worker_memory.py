@@ -96,6 +96,7 @@ def test_worker_memory_compacts_repeated_bidirectional_viewports_into_progress()
     assert projection.text.index("### Pending terminal requirements") < projection.text.index(
         "## Current frame anchor"
     )
+    assert '"inspection_traversal": "complete"' in projection.text
 
     destination = MaterializedFrame(
         frame_id="frame:5",
@@ -109,6 +110,12 @@ def test_worker_memory_compacts_repeated_bidirectional_viewports_into_progress()
     assert "already completed for previously visited surface" in historical
     assert "Order 169" in historical
     assert "https://example.test/orders/169" not in historical
+    historical_projection = project_worker_context(
+        memory=build_worker_memory_view(journal),
+        frame=destination,
+        traversal_progress=historical,
+    )
+    assert '"inspection_traversal": "completed_elsewhere"' in historical_projection.text
 
 
 def test_worker_memory_omits_spatial_and_execution_metadata() -> None:
