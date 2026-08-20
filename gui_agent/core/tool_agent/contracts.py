@@ -452,10 +452,10 @@ class WorkerMemoryUpdate(StrictModel):
         if self.fact_type == "claim" and not self.depends_on:
             raise ValueError("active claims require evidence dependencies")
         if self.fact_type == "claim" and any(
-            not ref.startswith(("evidence:", "claim:"))
+            not ref.startswith(("observation:", "evidence:", "claim:"))
             for ref in self.depends_on
         ):
-            raise ValueError("claims may depend only on evidence or claims")
+            raise ValueError("claims may depend only on observations, evidence, or claims")
         if self.fact_type == "commitment" and not any(
             ref.startswith("claim:") for ref in self.depends_on
         ):
@@ -476,9 +476,12 @@ class WorkerState(StrictModel):
             "Current screenshot/MaterializedFrame is the Observation layer. Use "
             "observation/frame only for present-surface facts, which expire on the next "
             "frame; use evidence/attempt for verified facts that remain true after the frame "
-            "changes; use claim/attempt for conclusions backed by "
-            "evidence keys, and commitment/attempt for the execution target justified by a "
-            "claim. A key is a stable fact slot, not an event or planned action; update or "
+            "changes; use claim/attempt for conclusions backed by typed dependencies, and "
+            "commitment/attempt for the execution target justified by a claim. A Claim that "
+            "depends on an Observation is valid only while that frame remains current; use "
+            "Evidence dependencies for conclusions that must survive navigation. Evidence is "
+            "never a prediction about what a visible control will do. A key is a stable fact "
+            "slot, not an event or planned action; update or "
             "retract that key when the fact changes. Evidence records what was verified at "
             "its source frame and does not establish current visibility. When active Evidence "
             "plus the current update closes every unresolved "

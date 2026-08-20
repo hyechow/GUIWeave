@@ -350,7 +350,7 @@ _WORKER_STATE_SCHEMA: dict[str, Any] = {
                             "items": {
                                 "type": "string", "minLength": 3, "maxLength": 76,
                                 **(
-                                    {"pattern": "^(evidence|claim):[a-z][a-z0-9_]{0,63}$"}
+                                    {"pattern": "^(observation|evidence|claim):[a-z][a-z0-9_]{0,63}$"}
                                     if fact_type == "claim"
                                     else {"pattern": "^(evidence|claim):[a-z][a-z0-9_]{0,63}$"}
                                     if fact_type == "commitment"
