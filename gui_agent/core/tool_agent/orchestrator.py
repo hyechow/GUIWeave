@@ -821,9 +821,11 @@ def _static_flow_diagnostics(tree: ast.AST) -> list[MasterDiagnostic]:
         if base in operators and path and path[0] == "collection_ref":
             diagnostics.append(_diagnostic(
                 "OPERATOR_COLLECTION_REF",
-                f"operator {base!r} cannot produce collection_ref; make the cohesive "
-                "Worker a collector with one data requirement when downstream Python "
-                "needs observed rows",
+                f"operator {base!r} cannot produce collection_ref; after a completed "
+                "mutation or UI-state operator, materialize a boolean acknowledgement "
+                "with ctx.transform(inputs=[], source='def transform(inputs):\\n"
+                "    return True', ...) and finish that result['ref']; make the Worker "
+                "a collector only when downstream Python genuinely needs observed rows",
                 node,
             ))
         finish = _ctx_call(node, "finish")

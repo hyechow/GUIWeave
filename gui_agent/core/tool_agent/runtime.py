@@ -899,6 +899,8 @@ class ToolAgentRuntime:
                 getattr(getattr(self, "worker_cfg", None), "action_protocol", "tool_call")
             )
             guard_repair_turn = 0
+            completion_recheck_turn = 0
+            commit_pending = False
             circuit_decision = None
             same_frame_feedback = initial_same_frame_feedback
             while True:
@@ -925,9 +927,17 @@ class ToolAgentRuntime:
                 request_kwargs = chat_request_kwargs(
                     getattr(getattr(self, "worker_cfg", None), "model", None)
                 )
+                decision_tools = (
+                    [
+                        tool for tool in worker_tools
+                        if tool.get("function", {}).get("name") != "complete"
+                    ]
+                    if commit_pending
+                    else worker_tools
+                )
                 transport = bind_worker_decision_transport(
                     self.worker,
-                    worker_tools,
+                    decision_tools,
                     protocol=action_protocol,
                     bind_kwargs=request_kwargs,
                 )
@@ -1024,6 +1034,44 @@ class ToolAgentRuntime:
                         "multi_action": bool(getattr(self, "allow_multi_action", False)),
                     },
                 )
+                if (
+                    call["name"] == "complete"
+                    and spec.profile == "operator"
+                    and completion_recheck_turn == 0
+                ):
+                    commit_controls = self._visible_commit_controls(frame, state)
+                    if commit_controls:
+                        completion_recheck_turn += 1
+                        commit_pending = True
+                        reason = (
+                            "visible enabled commit controls require one same-frame "
+                            "completion recheck"
+                        )
+                        self._trace(
+                            "worker_completion_recheck",
+                            step=step,
+                            frame_id=frame.frame_id,
+                            controls=commit_controls,
+                        )
+                        journal.record_guard(
+                            step=step,
+                            repair_turn=completion_recheck_turn,
+                            tool="complete",
+                            reason=reason,
+                        )
+                        same_frame_feedback = {
+                            "status": "completion_requires_recheck",
+                            "reason": reason,
+                            "visible_commit_controls": commit_controls,
+                            "instruction": (
+                                "Re-evaluate completion against the current frame and the "
+                                "last actually recorded action. If one of these controls is "
+                                "the requested commit, activate it now. Complete is withheld "
+                                "on this frame; never claim an activation absent from "
+                                "WorkerMemory."
+                            ),
+                        }
+                        continue
                 circuit_decision = None
                 guarded_call = calls[0] if call["name"] == "continue_with_actions" else call
                 action_spec = next(
@@ -1403,6 +1451,44 @@ class ToolAgentRuntime:
             if bool(getattr(self, "allow_multi_action", False))
             else 1
         )
+
+    def _visible_commit_controls(
+        self,
+        frame: MaterializedFrame,
+        state: WorkerState,
+    ) -> list[dict[str, str]]:
+        """Expose enabled commit controls cited by the completion claim itself."""
+
+        controls = frame.controls
+        refresh = getattr(getattr(self, "_executor", None), "refresh_controls", None)
+        if callable(refresh):
+            try:
+                refreshed = refresh()
+            except Exception:  # noqa: BLE001 - completion audit is best-effort
+                refreshed = None
+            if isinstance(refreshed, list):
+                controls = refreshed
+                frame.controls = refreshed
+        claim = " ".join([state.summary, *state.established_facts]).casefold()
+
+        def cited(control: dict[str, Any]) -> bool:
+            label = str(control.get("label") or "").strip().casefold()
+            return bool(label and re.search(
+                rf"(?<!\w){re.escape(label)}(?!\w)", claim,
+            ))
+
+        return [
+            {
+                "label": str(control.get("label") or ""),
+                "kind": str(control.get("kind") or ""),
+            }
+            for control in controls
+            if isinstance(control, dict)
+            and control.get("form_action") == "commit"
+            and control.get("in_viewport") is not False
+            and control.get("enabled") is not False
+            and cited(control)
+        ]
 
     @staticmethod
     def _record_action_attempt(

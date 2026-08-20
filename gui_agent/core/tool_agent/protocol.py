@@ -246,7 +246,17 @@ def worker_attempt_contract(
             "initially empty or filtered selector is not exhausted.\n"
             "- Finish comparison evidence before mutation, skip excluded or already processed "
             "identities, and advance only through explicitly remaining candidates.\n"
-            "- Observe the post-action frame before repeating or completing a mutation.\n"
+            "- Durable facts resolve candidates across frames: a recorded no-match query or "
+            "classified candidate stays resolved unless later evidence disproves it; never "
+            "rerun that branch.\n"
+            "- Never call `complete` while a visible final commit control for the requested "
+            "mutation remains unactivated. Activate it and observe the next frame; readiness "
+            "is not completion.\n"
+            "- Observe the post-action frame. If the requested terminal mutation's commit "
+            "just returned to a stable parent/source surface without error and durable "
+            "facts name no unsatisfied identity, call `complete`; do not restart the "
+            "mutation or rerun a resolved query. A preparatory scope/container commit is "
+            "not terminal.\n"
         )
     )
     return (
@@ -329,9 +339,13 @@ def dynamic_worker_tools(
     )
     if completion_mode != "unavailable":
         description = (
-            "Complete this operator once its target UI state is visibly confirmed, including "
-            "after a commit exits its editor without error or an exhaustive traversal reaches "
-            "a no-effect boundary with no known unsatisfied record. "
+            "Complete only when the target UI state is visibly confirmed. For a requested "
+            "commit, WorkerMemory must record the actual final activation and the current frame "
+            "must show its post-commit state; never infer activation from a ready screen or a "
+            "visible commit control. A preparatory scope/container commit is not terminal. Once "
+            "the terminal commit returns to a stable parent/source without error and no durable "
+            "fact names an unsatisfied candidate, complete without re-querying or restarting. "
+            "Also complete at an exhaustive no-effect boundary with no known unsatisfied record. "
             "With element-wise array bindings, call complete after EACH element so "
             "Runtime advances the cursor until the plan is exhausted."
             if completion_mode == "operator"
@@ -395,7 +409,7 @@ def dynamic_action_envelope_tool(
             "targets; non-spatial actions follow their own capability contracts. "
             "Apply task conditions first: excluded or already-processed candidates permit traversal, "
             "never their mutation path. If no eligible work remains, call complete directly; do not "
-            "put terminal tools in this action list. "
+            "put terminal tools in this action list or re-run a query already resolved by durable facts. "
             "All actions must form one immediate UI transaction; never mix discovery, reveal, "
             "or recovery with mutation. Later actions must not depend on newly revealed UI. "
             "Runtime settles each action and visually re-grounds the next target on a fresh "
@@ -789,12 +803,20 @@ def bind_worker_decision_transport(
             "return exactly one JSON object with only tool and args",
         )
     if protocol == "tool_call":
+        names = ", ".join(
+            str(tool.get("function", {}).get("name") or "")
+            for tool in tools
+            if tool.get("function", {}).get("name")
+        )
         return llm.bind_tools(
             tools,
             tool_choice="required",
             parallel_tool_calls=False,
             **kwargs,
-        ), "", "emit exactly one required tool call"
+        ), "", (
+            f"emit exactly one required tool call named one of: {names}; "
+            "executable actions belong inside continue_with_actions.args.actions"
+        )
     raise ValueError(f"unsupported Worker action protocol {protocol!r}")
 
 

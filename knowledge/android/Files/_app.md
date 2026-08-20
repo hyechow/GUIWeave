@@ -48,6 +48,15 @@ version: 2
   the destination.
 - In `Move to…`, keep the selection active and use the picker's `Show roots` and device storage to
   reach the destination before activating `MOVE`.
+- `Copy to…` opens a destination picker while preserving the selected source rows. Its bottom
+  `COPY` button commits immediately into the folder named by the current title/breadcrumb; it
+  does not advance to another selection step. Use `Show roots` → device storage, open every
+  requested destination folder, and create and enter an authorized missing subfolder with the
+  new-folder control. A parent title establishes only that parent, never an unshown descendant;
+  activate `COPY` only when the exact requested destination is the visible current folder. An
+  empty destination is still pre-commit while `CANCEL` and `COPY` remain visible. After activation,
+  DocumentsUI returns to the source list; that first returned frame confirms success. Finish there
+  when the candidate set was already resolved; do not start another selection workflow.
 
 ## Interface contract
 
