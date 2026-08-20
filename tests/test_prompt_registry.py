@@ -80,6 +80,11 @@ def test_master_exposes_only_tool_agent_runtime_api() -> None:
     assert "Runtime supplies the active adapter's generic capabilities" in prompt
     assert "Never guess enum/status labels" in prompt
     assert "Preserve every user-supplied string predicate verbatim" in prompt
+    assert "Fix the final record grain before declaring filters" in prompt
+    assert "source identity, not a row predicate" in prompt
+    assert "never copy it into filters or schema" in prompt
+    assert "Two adjacent numeric alternatives" in prompt
+    assert "Preserve both explicitly stated endpoints" in prompt
     assert "never require perception to invent a missing year" in prompt
     assert "complete calendar date" in prompt
     assert "full timezone-aware ISO date-times" in prompt

@@ -26,6 +26,9 @@ def test_shopping_review_and_wishlist_goals_select_only_their_sections() -> None
         "Get all review titles with 2 stars or below for the product on the current page."
     ) == ["product_reviews_planning"]
     assert knowledge.orchestrator_sections(
+        "Who gave five stars for the product on the current page?"
+    ) == ["product_reviews_planning"]
+    assert knowledge.orchestrator_sections(
         "Add the product on the current page to my wishlist."
     ) == ["wishlist_newsletter_planning"]
 
@@ -42,6 +45,11 @@ def test_shopping_review_and_wishlist_goals_select_only_their_sections() -> None
     assert "normalize any appended order-option text" in review_context
     assert "not part of the searchable catalog name" in review_context
     assert "returning the raw `primary_product` unchanged is invalid" in review_context
+    assert "defines the Reviews source" in review_context
+    assert "not a predicate on each review row" in review_context
+    assert "`brand` and `product_category` are not Reviews row fields" in review_context
+    assert "declaring either in review filters" in review_context
+    assert "Advanced Search Product Name `EYZUTAK`" in review_context
 
 
 def test_shopping_newsletter_uses_the_signed_in_account_email() -> None:
