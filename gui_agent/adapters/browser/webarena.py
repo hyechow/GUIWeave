@@ -823,6 +823,14 @@ def _synthesize_response(
         return completed_mutate
     orchestrator = result.orchestrator or {}
     platform_rejections = orchestrator.get("platform_rejections") or []
+    action_not_allowed = str(orchestrator.get("action_not_allowed") or "").strip()
+    if result.phase != "completed" and action_not_allowed:
+        return WAResponse(
+            task_type=_webarena_task_type_from_result(intent, result),
+            status="ACTION_NOT_ALLOWED_ERROR",
+            retrieved_data=None,
+            error_details=action_not_allowed,
+        )
     if (
         result.phase != "completed"
         and orchestrator.get("kind") == "tool_agent"

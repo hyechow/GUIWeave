@@ -1339,6 +1339,15 @@ class ToolAgentRuntime:
                     failure_kind="worker_blocked",
                     steps=step,
                 )
+            if terminal == "action_not_allowed":
+                reason = FailWorkerArgs.model_validate(call["args"]).reason
+                self._trace("worker_action_not_allowed", step=step, reason=reason)
+                return WorkerOutcome(
+                    phase="failed",
+                    summary=reason,
+                    failure_kind="action_not_allowed",
+                    steps=step,
+                )
             if terminal in {"platform_rejected", "navigation_blocked"}:
                 reason = str(
                     result_payload.get("reason")
@@ -1959,6 +1968,9 @@ class ToolAgentRuntime:
         if call["name"] == "report_blocked":
             parsed = FailWorkerArgs.model_validate(call["args"])
             return {"status": "failed", "reason": parsed.reason}, "report_blocked"
+        if call["name"] == "report_action_not_allowed":
+            parsed = FailWorkerArgs.model_validate(call["args"])
+            return {"status": "failed", "reason": parsed.reason}, "action_not_allowed"
         action_by_name = {item.name: item for item in actions}
         action_spec = action_by_name.get(call["name"])
         if action_spec is None:

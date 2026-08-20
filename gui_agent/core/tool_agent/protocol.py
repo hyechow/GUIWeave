@@ -26,7 +26,11 @@ from gui_agent.core.tool_agent.contracts import (
 
 
 MAX_ORDERED_ACTIONS = 5
-_TERMINAL_TOOL_BY_STATE = {"completed": "complete", "failed": "report_blocked"}
+_TERMINAL_STATE_BY_TOOL = {
+    "complete": "completed",
+    "report_blocked": "failed",
+    "report_action_not_allowed": "failed",
+}
 _PENDING_TERMINAL_ACTION = re.compile(
     r"(?:^|[.;]\s+)(?:advancing|clicking|collecting|entering|going|navigating|"
     r"opening|pressing|returning|scrolling|selecting|submitting|switching|tapping|typing)\b",
@@ -53,13 +57,13 @@ def validate_worker_tool_state(tool: str, state: WorkerState) -> None:
     """Keep terminal state claims aligned with the selected protocol tool."""
 
     if (
-        state.status in _TERMINAL_TOOL_BY_STATE
-        or tool in _TERMINAL_TOOL_BY_STATE.values()
-    ) and _TERMINAL_TOOL_BY_STATE.get(state.status) != tool:
+        state.status in {"completed", "failed"}
+        or tool in _TERMINAL_STATE_BY_TOOL
+    ) and _TERMINAL_STATE_BY_TOOL.get(tool) != state.status:
         raise ProtocolError(
             f"terminal state/tool mismatch: state.status={state.status!r}, tool={tool!r}"
         )
-    if tool in _TERMINAL_TOOL_BY_STATE.values() and _PENDING_TERMINAL_ACTION.search(
+    if tool in _TERMINAL_STATE_BY_TOOL and _PENDING_TERMINAL_ACTION.search(
         state.summary,
     ):
         raise ProtocolError(
@@ -308,6 +312,10 @@ def worker_attempt_contract(
             "identities, and advance only through explicitly remaining candidates.\n"
             "- After returning from a rejected record in an authoritative boundary order, "
             "inspect the immediate next record; never reopen it or jump to a later match.\n"
+            "- Once the exact ranked candidate detail is open, absence of a required action "
+            "or field in the current viewport does not justify returning to the parent list. "
+            "Traverse that detail to its explicit end before reporting capability or returning; "
+            "never reopen the same ranked candidate to inspect content below the fold.\n"
             "- Observe the post-action frame before repeating or completing a mutation.\n"
             "- A bound identity is already selected and authoritative. After querying it, "
             "activate an exact visible match regardless of broader result count or apparent "
@@ -371,10 +379,7 @@ def _with_worker_state(tool: dict[str, Any]) -> dict[str, Any]:
     wrapped = deepcopy(tool)
     parameters = wrapped["function"]["parameters"]
     state_schema = deepcopy(_WORKER_STATE_SCHEMA)
-    terminal_state = next((
-        state for state, name in _TERMINAL_TOOL_BY_STATE.items()
-        if name == wrapped["function"]["name"]
-    ), None)
+    terminal_state = _TERMINAL_STATE_BY_TOOL.get(wrapped["function"]["name"])
     state_schema["properties"]["status"]["enum"] = (
         [terminal_state] if terminal_state else ["exploring", "collecting"]
     )
@@ -422,6 +427,14 @@ def dynamic_worker_tools(
             "complete",
             description,
             CompleteReadyWorkerArgs,
+        )))
+    if completion_mode == "operator":
+        tools.append(_with_worker_state(model_tool(
+            "report_action_not_allowed",
+            "Report that the requested target action is unavailable only after the exact "
+            "target UI has been inspected and exposes no permitted action for that change. "
+            "This is a terminal application-capability result, not a search failure.",
+            FailWorkerArgs,
         )))
     if allow_failure:
         tools.append(_with_worker_state(model_tool(

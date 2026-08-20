@@ -30,6 +30,7 @@ _FAILURE_ROUTES = {
     "navigation_blocked": "replace",
     "action_contract_invalid": "replace",
     "platform_rejected": "replace",
+    "action_not_allowed": "abort",
 }
 
 

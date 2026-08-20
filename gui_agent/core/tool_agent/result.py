@@ -66,6 +66,11 @@ def project_tool_agent_result(
         for feedback in (event.get("platform_feedback") or [])
         if isinstance(feedback, dict) and feedback.get("rejected") is True
     ]
+    action_not_allowed = next((
+        str(event.get("reason") or "").strip()
+        for event in reversed(getattr(run, "trace", None) or [])
+        if isinstance(event, dict) and event.get("event") == "worker_action_not_allowed"
+    ), "")
     result = AgentResult(
         goal=intent,
         output=json.dumps(output_value, ensure_ascii=False),
@@ -79,6 +84,7 @@ def project_tool_agent_result(
             "perception_mode": getattr(run, "perception_mode", ""),
             "result_ref": result_ref.model_dump(mode="json") if result_ref else None,
             "platform_rejections": platform_rejections,
+            "action_not_allowed": action_not_allowed,
             "models": models,
             "platform_time": platform_time,
             "app_router": app_router,

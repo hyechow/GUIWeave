@@ -25,6 +25,7 @@ FailureKind: TypeAlias = Literal[
     "protocol_invalid",
     "action_contract_invalid",
     "platform_rejected",
+    "action_not_allowed",
     "navigation_blocked",
     "budget_exhausted",
     "generator_invalid",
