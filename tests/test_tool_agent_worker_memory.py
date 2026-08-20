@@ -68,8 +68,9 @@ def test_worker_memory_is_a_bounded_projection_of_append_only_runtime_facts() ->
     ]
     rendered = memory.render_prompt_section()
     assert "Pending subgoal" not in rendered
-    assert "visual effect unconfirmed" in rendered
-    assert "inspect the current state before any retry" in rendered
+    assert "invocation=confirmed" in rendered
+    assert "screen_transition=none_observed" in rendered
+    assert "unchanged screen alone does not justify repeating" in rendered
     assert "[step:1]" not in rendered
     assert "append-only event journal" in rendered
 
@@ -130,6 +131,39 @@ def test_worker_context_omits_unavailable_structured_controls() -> None:
 
     assert '"controls"' not in projection.text
     assert "runtime-private-surface" not in projection.text
+
+
+def test_worker_context_projects_session_knowledge_after_temporal_memory() -> None:
+    journal = WorkerJournal(worker_id="knowledge")
+    _record_turn(
+        journal,
+        step=1,
+        frame_id="frame:1",
+        state=_state(1),
+        tool="tap",
+        args={"description": "Invoke a non-visual control"},
+        result={"status": "executed", "action_type": "tap", "no_effect": True},
+    )
+
+    projection = project_worker_context(
+        memory=build_worker_memory_view(journal, current_frame_id="frame:2"),
+        frame=MaterializedFrame(frame_id="frame:2", screenshot_path="frame.png"),
+        application_knowledge="The invoked control has a non-visual postcondition.",
+        task_contract="## Original task source\n{}",
+    )
+
+    assert projection.text.index("### Latest GUI transition") < projection.text.index(
+        "## Application knowledge"
+    )
+    assert projection.text.index("## Application knowledge") < projection.text.index(
+        "## Original task source"
+    )
+    block = next(
+        item for item in projection.report["blocks"]
+        if item["id"] == "tool_agent.worker.application_knowledge"
+    )
+    assert block["source_type"] == "application_knowledge"
+    assert block["ttl"] == "session"
 
 
 def test_worker_memory_preserves_flash_off_target_signal() -> None:
@@ -691,7 +725,7 @@ def test_latest_gui_transition_is_separated_from_earlier_receipts() -> None:
     assert "Earlier execution receipts" in rendered
     assert "predispatch target rejected" not in rendered
     assert '"text": "requested value"' in rendered
-    assert "status=executed; visual effect unconfirmed" in rendered
+    assert "invocation=confirmed; screen_transition=none_observed" in rendered
     assert rendered.count("[t=4; step:2.2]") == 1
     assert "do not restart merely because the application shows no success banner" in rendered
 

@@ -140,6 +140,12 @@ def test_files_mail_use_physical_folder_and_single_file_picker() -> None:
         assert fact in mail_context
     assert "message body" in mail.worker_context()
     assert "fill the body with that content before Send" in mail.worker_context()
+    worker_context = " ".join(mail.worker_context().split())
+    assert "copies the file into Android `Downloads`" in worker_context
+    assert "matching Runtime invocation receipt" in worker_context
+    assert "do not invoke the same control again" in worker_context
+    assert "open the exact `Downloads` row through `Files`" in worker_context
+    assert "destination file already exists" in worker_context
 
 
 def test_files_archive_content_exposes_only_application_facts() -> None:

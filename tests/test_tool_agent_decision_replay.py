@@ -443,11 +443,14 @@ def test_worker_replay_uses_current_application_knowledge(
     result = replay_worker_decision(run_dir, frame=1, llm=model)
 
     assert result["status"] == "passed"
-    assert "current fact" in model.calls[0][0].content
+    assert "current fact" not in model.calls[0][0].content
     assert "old fact" not in model.calls[0][0].content
     human_text = model.calls[0][1].content[0]["text"]
+    assert "current fact" in human_text
+    assert "session-scoped execution facts" in human_text
     assert "runtime reported no_effect" not in human_text
-    assert "inspect the current state before any retry" in human_text
+    assert "invocation=confirmed" in human_text
+    assert "unchanged screen alone does not justify repeating" in human_text
 
 
 def test_worker_replay_preserves_recorded_singleton_contract(tmp_path) -> None:

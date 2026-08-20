@@ -170,6 +170,8 @@ def test_master_preserves_typed_conditional_predicates() -> None:
 def test_worker_keeps_action_grounding_and_memory_boundaries() -> None:
     prompt = load_prompt_text("task.tool_agent.worker")
 
+    assert "never invent or continue an unrelated source" in prompt
+
     for rule in (
         "exactly one visible control", "do not relabel a nearby or generic control",
         "record identities and visible states across frames",

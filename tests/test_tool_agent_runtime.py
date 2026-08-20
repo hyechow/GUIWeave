@@ -469,8 +469,14 @@ def test_private_access_context_reaches_worker_but_is_redacted_from_trace() -> N
     assert "Session access context" in prompt
     assert "runtime-user-73" in prompt
     assert "runtime-secret-73" in prompt
-    assert "Application knowledge" in prompt
-    assert "profile menu" in prompt
+    assert "Application knowledge" not in prompt
+    projection = project_worker_context(
+        memory=build_worker_memory_view(WorkerJournal(worker_id="access")),
+        frame=MaterializedFrame(frame_id="frame:1", screenshot_path="frame.png"),
+        application_knowledge=runtime._master_knowledge,
+    )
+    assert "profile menu" in projection.text
+    assert "session-scoped execution facts" in projection.text
 
     runtime._trace(
         "worker_decision",
@@ -505,7 +511,7 @@ def test_worker_attempt_contract_is_dynamic_and_approach_first() -> None:
     system_prompt = runtime._worker_system_prompt()
     first_contract = worker_attempt_contract(first)
 
-    assert "Application knowledge" in system_prompt
+    assert "Application knowledge" not in system_prompt
     assert "Session access context" in system_prompt
     assert "Current Worker attempt" not in system_prompt
     assert first_contract.index('"approach"') < first_contract.index('"goal"')
@@ -515,6 +521,13 @@ def test_worker_attempt_contract_is_dynamic_and_approach_first() -> None:
     assert '"goal": "Find the requested record"' in first_contract
     assert "Search the visible record grid using the requested literal." not in first_contract
     assert '"exposed_args"' not in first_contract
+    projection = project_worker_context(
+        memory=build_worker_memory_view(WorkerJournal(worker_id="attempt")),
+        frame=MaterializedFrame(frame_id="frame:1", screenshot_path="frame.png"),
+        application_knowledge=runtime._master_knowledge,
+        attempt_contract=first_contract,
+    )
+    assert "settings page is reached from the profile menu" in projection.text
 
 
 def test_runtime_materializes_result_ref_into_fixed_action_argument() -> None:
