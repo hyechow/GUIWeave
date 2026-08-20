@@ -95,7 +95,7 @@ outcome = ctx.gui_worker(
     ],
     data_requirements=[{
         "id": "weather",
-        "description": "Tomorrow's weather",
+        "description": "Weather for 2026-08-18",
         "row_schema": {"value": "string"},
     }],
     approach="Type the query and press Enter in Bing search",
@@ -165,16 +165,16 @@ def test_master_review_accepts_exact_inclusive_date_range_filter() -> None:
 outcome = ctx.gui_worker(
     worker_id="collect_events",
     profile="collector",
-    goal="Collect events from 2025-10-20 to 2025-10-26",
-    success_criteria=["All events from 2025-10-20 to 2025-10-26 are collected"],
+    goal="Collect events from October 20 to October 26",
+    success_criteria=["All events from October 20 to October 26 are collected"],
     data_requirements=[{
         "id": "events",
-        "description": "Events from 2025-10-20 to 2025-10-26",
+        "description": "Events from October 20 to October 26",
         "cardinality": "many",
         "row_schema": {"start_ts": "string"},
         "field_sources": {"start_ts": "Start time"},
         "field_types": {"start_ts": "datetime"},
-        "filters": {"start_ts": "2025-10-20 - 2025-10-26"},
+        "filters": {"start_ts": {"from": "Oct 20", "to": "Oct 26"}},
         "coverage": "complete",
     }],
     approach="Calendar event collection",
@@ -187,6 +187,84 @@ ctx.finish(outcome["collection_ref"]["ref"], effect="data")
         source,
         user_goal="How many events are there from October 20 to October 26?",
     )
+
+    assert not [item for item in diagnostics if item.code == "DATA_FILTER_BOUNDARY"]
+
+
+def test_master_review_rejects_year_added_to_yearless_month_day() -> None:
+    source = _program(
+        '''
+outcome = ctx.gui_worker(
+    worker_id="collect_records",
+    profile="collector",
+    goal="Collect records from October 3rd onward",
+    success_criteria=["All records from October 3rd onward are collected"],
+    data_requirements=[{
+        "id": "records",
+        "description": "Records from October 3rd onward",
+        "cardinality": "many",
+        "row_schema": {
+            "type": "object",
+            "properties": {"date": {"type": "string"}},
+            "required": ["date"],
+        },
+        "field_sources": {"date": "Date"},
+        "field_types": {"date": "datetime"},
+        "filters": {"date": {"from": "2025-10-03"}},
+        "coverage": "complete",
+    }],
+    approach="Source record workflow",
+)
+ctx.finish(outcome["collection_ref"]["ref"], effect="data")
+'''.strip()
+    )
+
+    diagnostics = validate_master_source(
+        source, user_goal="Collect records from October 3rd onward",
+    )
+
+    assert any(item.code == "DATA_FILTER_DATE_COMPONENTS" for item in diagnostics)
+    preserved = source.replace('"2025-10-03"', '"October 3"')
+    assert not [
+        item for item in validate_master_source(
+            preserved, user_goal="Collect records from October 3rd onward",
+        )
+        if item.code == "DATA_FILTER_DATE_COMPONENTS"
+    ]
+
+
+def test_master_review_does_not_treat_hybrid_mutation_values_as_row_filters() -> None:
+    source = _program(
+        '''
+outcome = ctx.gui_worker(
+    worker_id="collect_and_send_records",
+    profile="collector",
+    goal="Collect records since Oct 3 and send them with subject 'Monthly Digest'",
+    success_criteria=[
+        "All source records since Oct 3 are collected",
+        "The records are sent with subject 'Monthly Digest'",
+    ],
+    data_requirements=[{
+        "id": "records",
+        "description": "Source records since Oct 3",
+        "cardinality": "many",
+        "row_schema": {
+            "type": "object",
+            "properties": {"date": {"type": "string"}},
+            "required": ["date"],
+        },
+        "field_sources": {"date": "Date"},
+        "field_types": {"date": "datetime"},
+        "filters": {"date": {"from": "Oct 3"}},
+        "coverage": "complete",
+    }],
+    approach="Source record workflow",
+)
+ctx.finish(outcome["collection_ref"]["ref"], effect="data")
+'''.strip()
+    )
+
+    diagnostics = validate_master_source(source)
 
     assert not [item for item in diagnostics if item.code == "DATA_FILTER_BOUNDARY"]
 

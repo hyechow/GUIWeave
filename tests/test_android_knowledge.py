@@ -146,6 +146,8 @@ def test_files_mail_use_physical_folder_and_single_file_picker() -> None:
     assert "do not invoke the same control again" in worker_context
     assert "open the exact `Downloads` row through `Files`" in worker_context
     assert "destination file already exists" in worker_context
+    assert "Activating an exact file row attaches that file" in worker_context
+    assert "Android Back leaves the visible file unattached" in worker_context
 
 
 def test_files_archive_content_exposes_only_application_facts() -> None:

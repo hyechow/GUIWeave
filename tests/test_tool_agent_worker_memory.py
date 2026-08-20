@@ -149,14 +149,10 @@ def test_worker_context_projects_session_knowledge_after_temporal_memory() -> No
         memory=build_worker_memory_view(journal, current_frame_id="frame:2"),
         frame=MaterializedFrame(frame_id="frame:2", screenshot_path="frame.png"),
         application_knowledge="The invoked control has a non-visual postcondition.",
-        task_contract="## Original task source\n{}",
     )
 
     assert projection.text.index("### Latest GUI transition") < projection.text.index(
         "## Application knowledge"
-    )
-    assert projection.text.index("## Application knowledge") < projection.text.index(
-        "## Original task source"
     )
     block = next(
         item for item in projection.report["blocks"]
@@ -319,10 +315,6 @@ def test_worker_context_always_uses_compact_semantic_frame() -> None:
             "## Current Worker attempt\n"
             '{"approach": "Inspect the requested records"}'
         ),
-        task_contract=(
-            "## Original task source (runtime-preserved)\n"
-            '{"goal": "Inspect records in my usual destination"}'
-        ),
         max_chars=4_000,
     )
 
@@ -342,9 +334,7 @@ def test_worker_context_always_uses_compact_semantic_frame() -> None:
     assert '"rect": {"x": 100, "y": 200, "w": 80, "h": 30}' in projection.text
     assert projection.text.index("## Current Worker attempt") < projection.text.index(
         "## Current MaterializedFrame"
-    ) < projection.text.index("## WorkerMemory") < projection.text.index(
-        "## Original task source"
-    )
+    ) < projection.text.index("## WorkerMemory")
     assert next(
         item for item in projection.report["blocks"]
         if item["id"] == "tool_agent.worker.current_attempt"
@@ -727,7 +717,9 @@ def test_latest_gui_transition_is_separated_from_earlier_receipts() -> None:
     assert '"text": "requested value"' in rendered
     assert "invocation=confirmed; screen_transition=none_observed" in rendered
     assert rendered.count("[t=4; step:2.2]") == 1
-    assert "do not restart merely because the application shows no success banner" in rendered
+    assert "mark that same Commitment key completed" in rendered
+    assert "do not create a verification Commitment" in rendered
+    assert "even without a success banner" in rendered
 
     journal.record_action_result(
         step=3, frame_id="frame:3", tool="ask_user", args={},

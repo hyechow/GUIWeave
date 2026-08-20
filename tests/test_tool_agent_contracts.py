@@ -29,7 +29,6 @@ from gui_agent.core.tool_agent.protocol import (
     image_message,
     json_worker_decision_instruction,
     normalize_action_arguments,
-    original_task_contract,
     response_usage,
     generic_action_spec,
     worker_attempt_contract,
@@ -876,12 +875,19 @@ def test_worker_attempt_contract_keeps_input_binding_in_immutable_contract() -> 
     assert '"approach": "Search for the Runtime-bound target."' in contract
 
 
-def test_original_task_contract_preserves_descriptive_value_provenance() -> None:
-    contract = original_task_contract("Send it to my usual review destination")
+def test_worker_attempt_contract_keeps_descriptive_roles_unresolved() -> None:
+    spec = WorkerSpec.model_validate({
+        "profile": "operator",
+        "goal": "Copy the records into my dedicated archive folder",
+        "success_criteria": ["The records are copied into that folder"],
+        "strategy": {"approach": "File collection workflow"},
+    })
 
-    assert "runtime-preserved" in contract
-    assert "paraphrase never creates" in contract
-    assert '"goal": "Send it to my usual review destination"' in contract
+    contract = worker_attempt_contract(spec)
+
+    assert "Only literal identifiers in this attempt" in contract
+    assert "usual, dedicated, preferred" in contract
+    assert "ask_user before mutation" in contract
 
 
 def test_worker_rejects_missing_input_binding_description() -> None:

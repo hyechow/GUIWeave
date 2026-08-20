@@ -77,14 +77,21 @@ def test_master_exposes_only_tool_agent_runtime_api() -> None:
     assert "Application knowledge explains interface mechanics" in prompt
     assert "unless the user's task requires it" in prompt
     assert "Keep independent state dimensions independent" in prompt
+    assert "Preserve each user-owned value as exact or descriptive" in prompt
     assert "merely useful supplemental metrics" in prompt
-    assert "A collector only acquires raw source records" in prompt
-    assert "A collector may perform prerequisite navigation or mutation" in prompt
+    assert "A collector only returns raw source records" in prompt
+    assert "one hybrid collector" in prompt
+    assert "the dependent mutation, and raw row output" in prompt
     assert "Do not enumerate atomic GUI actions" in prompt
     assert "Runtime supplies the active adapter's generic capabilities" in prompt
     assert "Never guess enum/status labels" in prompt
-    assert "Preserve every user-supplied string predicate verbatim" in prompt
-    assert "inclusive range on one field" in prompt
+    assert "repeat every record-selection literal there" in prompt
+    assert "authoritative semantic scope of the source rows" in prompt
+    assert "An absolute month/day with no year is not relative" in prompt
+    assert "never the derived count, aggregate, or result row" in prompt
+    assert "inclusive closed range" in prompt
+    assert 'a lower-only bound as `{"from": lower}`' in prompt
+    assert "Never invent the missing opposite bound" in prompt
     assert "uniquely anchored by `task_reference_time`" in prompt
     assert "never require perception to invent a missing year" in prompt
     assert "When success criteria guarantee exactly one target record" in prompt
