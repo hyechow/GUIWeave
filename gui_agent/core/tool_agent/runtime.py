@@ -78,6 +78,7 @@ from gui_agent.core.tool_agent.protocol import (
     response_usage,
     validate_dynamic_action_spec,
     validate_worker_tool_state,
+    value_provenance_contract,
     worker_attempt_contract,
 )
 from gui_agent.core.tool_agent.replay import write_replay_artifact
@@ -476,7 +477,10 @@ class ToolAgentRuntime:
                     cache_system_prompt=getattr(self, "_master_explicit_cache", False),
                     on_event=lambda event, payload: self._trace(event, **payload),
                 )
-                if semantic_contract.conditional_predicates:
+                if (
+                    semantic_contract.conditional_predicates
+                    or semantic_contract.counted_entity
+                ):
                     task_context["semantic_contract"] = semantic_contract.model_dump(mode="json")
             self._raise_if_cancelled()
             program = compile_master_program(
@@ -1414,6 +1418,9 @@ class ToolAgentRuntime:
                 current_element=self._current_each_element(
                     spec, journal.worker_id
                 ),
+            ),
+            value_provenance=value_provenance_contract(
+                getattr(self, "_task_goal", ""), spec,
             ),
             same_frame_feedback=same_frame_feedback,
         )

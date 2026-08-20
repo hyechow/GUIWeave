@@ -821,6 +821,10 @@ def _static_flow_diagnostics(tree: ast.AST) -> list[MasterDiagnostic]:
         transform = _ctx_call(assignment.value, "transform")
         if transform is not None:
             transforms.add(name)
+            try:
+                transform_source = _literal_keyword(transform, "source")
+            except ValueError:
+                transform_source = None
             inputs = next(
                 (item.value for item in transform.keywords if item.arg == "inputs"), None,
             )
@@ -845,11 +849,23 @@ def _static_flow_diagnostics(tree: ast.AST) -> list[MasterDiagnostic]:
                 }
                 try:
                     validate_transform_row_fields(
-                        _literal_keyword(transform, "source"), combined,
+                        transform_source, combined,
                     )
                 except Exception as exc:
                     diagnostics.append(_diagnostic(
                         "TRANSFORM_INPUT_SCHEMA", str(exc), transform,
+                    ))
+                if (
+                    isinstance(inputs, (ast.List, ast.Tuple))
+                    and len(inputs.elts) == 1
+                    and len(schemas) == 1
+                    and _returns_input_slot_count(transform_source)
+                ):
+                    diagnostics.append(_diagnostic(
+                        "TRANSFORM_INPUT_CONTAINER",
+                        "the transform has one collection input, so inputs[0] is the "
+                        "record collection; len(inputs) counts input slots and is always 1",
+                        transform,
                     ))
             try:
                 schema = _literal_keyword(transform, "result_schema")
@@ -939,6 +955,33 @@ def _static_flow_diagnostics(tree: ast.AST) -> list[MasterDiagnostic]:
         if name not in consumed_collectors
     )
     return diagnostics
+
+
+def _returns_input_slot_count(source: Any) -> bool:
+    """Recognize a direct ``len`` of the transform's outer runtime-input list."""
+
+    if not isinstance(source, str):
+        return False
+    try:
+        tree = ast.parse(source.strip(), mode="exec")
+    except SyntaxError:
+        return False
+    function = next(
+        (node for node in tree.body if isinstance(node, ast.FunctionDef)), None,
+    )
+    if function is None or len(function.args.args) != 1:
+        return False
+    input_name = function.args.args[0].arg
+    return any(
+        isinstance(node, ast.Return)
+        and isinstance(node.value, ast.Call)
+        and isinstance(node.value.func, ast.Name)
+        and node.value.func.id == "len"
+        and len(node.value.args) == 1
+        and isinstance(node.value.args[0], ast.Name)
+        and node.value.args[0].id == input_name
+        for node in ast.walk(function)
+    )
 
 
 def _schema_contains_array(value: Any) -> bool:

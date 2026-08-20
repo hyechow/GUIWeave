@@ -34,6 +34,7 @@ from gui_agent.core.tool_agent.protocol import (
     generic_action_spec,
     image_message,
     validate_worker_tool_state,
+    value_provenance_contract,
     worker_attempt_contract,
 )
 from gui_agent.core.tool_agent.runtime import ToolAgentRuntime
@@ -159,6 +160,7 @@ def _worker_messages(
     *,
     attempt_contract: str,
     application_knowledge: str = "",
+    value_provenance: str = "",
     image_scale: float = 1.0,
 ) -> list[Any]:
     messages: list[Any] = []
@@ -198,6 +200,8 @@ def _worker_messages(
             if application_knowledge:
                 knowledge = render_application_knowledge_context(application_knowledge)
                 text = text.rstrip() + "\n\n" + knowledge
+            if value_provenance:
+                text = text.rstrip() + "\n\n" + value_provenance
             messages.append(
                 image_message(text, screenshot, scale=image_scale)
                 if any(part.get("type") == "image" for part in parts)
@@ -387,7 +391,7 @@ def replay_master_decision(
             system_prompt=load_prompt_text("task.tool_agent.semantic_contract"),
             goal=str(task.get("goal") or ""),
         )
-        if semantic_contract.conditional_predicates:
+        if semantic_contract.conditional_predicates or semantic_contract.counted_entity:
             task["semantic_contract"] = semantic_contract.model_dump(mode="json")
     results = []
     for number in range(1, samples + 1):
@@ -664,6 +668,9 @@ def replay_worker_decision(
         application_knowledge="\n\n".join(
             value.worker_context()
             for value in _current_app_knowledge(context)
+        ),
+        value_provenance=value_provenance_contract(
+            str(context.get("goal") or ""), spec,
         ),
         image_scale=float(getattr(model_config, "image_scale", 1.0)),
     )

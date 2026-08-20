@@ -648,9 +648,14 @@ def build_worker_memory_view(
     claims = tuple(event for event in valid if event.fact_type == "claim")
     commitments = tuple(event for event in valid if event.fact_type == "commitment")
     integrated: set[str] = set()
+    event_by_ref = {event.event_ref: event for event in memory_events}
+    completed_commitments = tuple(
+        event for event in memory_events
+        if event.fact_type == "commitment" and event.status == "completed"
+    )
     pending_dependencies = [
         dependency
-        for commitment in commitments
+        for commitment in (*commitments, *completed_commitments)
         for dependency in commitment.depends_on
     ]
     while pending_dependencies:
@@ -658,7 +663,7 @@ def build_worker_memory_view(
         if dependency in integrated:
             continue
         integrated.add(dependency)
-        parent = valid_by_ref.get(dependency)
+        parent = event_by_ref.get(dependency)
         if parent is not None:
             pending_dependencies.extend(parent.depends_on)
     pending_runtime = tuple(
@@ -815,6 +820,7 @@ def project_worker_context(
     frame: MaterializedFrame,
     application_knowledge: str = "",
     attempt_contract: str = "",
+    value_provenance: str = "",
     same_frame_feedback: dict[str, Any] | None = None,
     max_chars: int = DEFAULT_WORKER_CONTEXT_MAX_CHARS,
 ) -> WorkerContextProjection:
@@ -905,6 +911,23 @@ def project_worker_context(
                 content=render_application_knowledge_context(application_knowledge),
             )
             if application_knowledge.strip()
+            else None
+        ),
+        (
+            ContextBlock(
+                id="tool_agent.worker.value_provenance",
+                source_type="runtime_value_provenance",
+                source="immutable_user_task",
+                ttl="task",
+                budget="required",
+                priority=12,
+                authoritative_for=("user_value_provenance",),
+                not_authoritative_for=("goal", "approach", "application_mechanics"),
+                freshness="task_static",
+                coverage="complete",
+                content=value_provenance,
+            )
+            if value_provenance.strip()
             else None
         ),
     ]

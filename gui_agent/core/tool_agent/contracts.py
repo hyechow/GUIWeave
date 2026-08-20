@@ -344,7 +344,7 @@ class WorkerStrategy(StrictModel):
 
 
 class TaskSemanticContract(StrictModel):
-    """Typed expansions of task predicates that must survive orchestration."""
+    """Typed task semantics that must survive orchestration."""
 
     conditional_predicates: list[str] = Field(
         default_factory=list,
@@ -352,6 +352,14 @@ class TaskSemanticContract(StrictModel):
         description=(
             "Affirmative propositions whose truth selects a conditional task branch. "
             "They refine task semantics without replacing original user values."
+        ),
+    )
+    counted_entity: str = Field(
+        default="",
+        max_length=160,
+        description=(
+            "Exact user-language entity whose cardinality is requested as a scalar; "
+            "empty when the task does not ask for a count."
         ),
     )
 
