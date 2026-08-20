@@ -10,7 +10,7 @@ source: manual_distilled
 confidence: high
 sensitivity: internal
 ttl: session
-version: 2
+version: 4
 ---
 # One Stop Market product reviews
 
@@ -30,14 +30,26 @@ do not fabricate a summary from the product's aggregate rating.
 
 For "recently purchased" review tasks, acquisition and submission use separate sources. Collect the
 exact Product Name from the newest matching Items Ordered line in My Orders with one linked-detail
-collector. At line-item grain retain Order # as the stable parent identity and Date for chronology,
-plus `primary_product` sourced from Product Name. Apply the user's purchased-item phrase verbatim as
-`primary_product_contains`, with `cardinality="one"` and `coverage="first_match"`. Select the single
-`primary_product` identity and bind it into one review-submission operator. Product Name is the
-portable identity; do not choose an arbitrary catalog result with a similar name. Once the identity
-is known, use the matching catalog product detail as the review source; do not return to My Orders
-or activate Reorder. On Add Your Review, map the requested values to Your Rating, Nickname, Summary,
-and Review. The rating is a one-to-five star choice, separate from the catalog's percentage rating.
+collector. At line-item grain require `order_number` sourced from Order # as the stable parent
+identity, `date` sourced from Date for chronology, and `primary_product` sourced from Product Name.
+Apply the user's purchased-item phrase verbatim as `primary_product_contains`, with
+`cardinality="one"` and `coverage="first_match"`. Select the single
+`primary_product` identity, normalize any appended order-option text to a catalog search identity,
+and bind that derived identity into one review-submission operator. Do not bind the raw joined order
+cell as an Advanced Search query or choose an arbitrary catalog result with a similar name. Once the
+identity is known, use the matching catalog product detail as the review source; do not return to My
+Orders or activate Reorder. On Add Your Review, map the requested values to Your Rating, Nickname,
+Summary, and Review. The rating is a one-to-five star choice, separate from the catalog's percentage
+rating.
+
+`Jiffy Mix` is this storefront's shorthand for a Product Name beginning `Jiffy Corn Muffin
+Cornbread Mix`. The collector filters must include both
+`primary_product_contains="Jiffy Mix"` and
+`primary_product="Jiffy Corn Muffin Cornbread Mix"`, with the equivalence stated in the requirement
+description. Its Advanced Search identity is `Jiffy Corn Muffin Cornbread Mix`; the joined order
+text appends a Size option that is not part of the searchable catalog name. After the collector
+proves this purchase, the transform must return that Advanced Search identity; returning the raw
+`primary_product` unchanged is invalid.
 
 Submitting is required when the user says rate, review, or leave a review. Fill all four fields,
 select the exact requested star value, activate Submit Review once, and verify the submitted-review
