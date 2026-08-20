@@ -828,6 +828,30 @@ class ToolAgentRuntime:
                 attempted_action=bool(journal.executed_tools),
             )
             frame_actions = frame_assessment.allowed_actions
+            if frame_assessment.collector_completion_required:
+                result_payload, _ = self._execute_worker_tool(
+                    spec,
+                    frame_actions,
+                    {"name": "complete", "args": {
+                        "evidence": ["Runtime-authoritative collection boundary complete"],
+                    }},
+                    png,
+                    frame,
+                )
+                descriptor = CollectionRef.model_validate(result_payload)
+                self._trace(
+                    "worker_complete",
+                    step=step,
+                    profile=spec.profile,
+                    deterministic=True,
+                    collection_ref=descriptor.model_dump(mode="json"),
+                )
+                return WorkerOutcome(
+                    phase="completed",
+                    summary="Runtime-authoritative collection boundary complete.",
+                    collection_ref=descriptor,
+                    steps=step,
+                )
             deterministic_action = next((
                 action for action in frame_actions
                 if len(frame_actions) == 1
@@ -1502,7 +1526,10 @@ class ToolAgentRuntime:
             completion_mode=assessment.completion_mode,
             action_envelope=bool(getattr(self, "allow_multi_action", False)),
             max_ordered_actions=self._worker_action_limit(),
-            allow_failure=allow_failure,
+            allow_failure=(
+                allow_failure
+                and not assessment.collector_completion_required
+            ),
         )
 
     def _worker_action_limit(self) -> int:

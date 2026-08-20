@@ -71,6 +71,14 @@ class FrameAssessment:
     ready_collection: CollectionRef | None = None
     completion_mode: Literal["unavailable", "operator", "collector"] = "unavailable"
 
+    @property
+    def collector_completion_required(self) -> bool:
+        return (
+            self.completion_mode == "collector"
+            and self.ready_collection is not None
+            and not self.allowed_actions
+        )
+
 
 def _http_origin(value: str, *, require_public: bool = False) -> tuple[str, str, int | None] | None:
     try:
@@ -349,7 +357,11 @@ def assess_frame(
         and requirement.coverage == "first_match"
         and requirement.cardinality == "one"
         and collection is not None
-        and collection.coverage.get("scope_status") == "met"
+        and (
+            collection.coverage.get("scope_status") == "met"
+            or collection.coverage.get("coverage_evidence")
+            == "linked_detail_assembly"
+        )
         and collection.coverage.get("status") == "complete"
         and collection.row_count == 1
     )
