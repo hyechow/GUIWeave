@@ -1311,6 +1311,21 @@ class PlaywrightDevice:
                         return {ok: false, reason: `radio option has no visible hit point: ${target}`};
                     }
 
+                    const mouseTarget = (option) => {
+                        const leaf = option.querySelector('button, a, [data-bind*="click"]')
+                            || (option.matches('button, a, [data-bind*="click"]') ? option : null);
+                        const hit = leaf || option;
+                        const r = hit.getBoundingClientRect();
+                        return {ok: true, mode: 'mouse', x: r.x + r.width/2, y: r.y + r.height/2, label: labelOf(option)};
+                    };
+                    const pointedOption = byPoint?.closest?.(
+                        '[role=option], [role=menuitem], [role=menuitemcheckbox], [role=menuitemradio]'
+                    );
+                    if (pointedOption && !pointedOption.closest('select')) {
+                        const r = pointedOption.getBoundingClientRect();
+                        if (r.width > 0 && r.height > 0) return mouseTarget(pointedOption);
+                    }
+
                     const candidates = Array.from(document.querySelectorAll(
                         '[role=option], [role=menuitem], [role=menuitemcheckbox], '
                         + '[role=menuitemradio], option, li, '
@@ -1335,11 +1350,7 @@ class PlaywrightDevice:
                         // page.mouse.click 物理点击(鼠标优先:触发完整 mousedown→mouseup→click 事件链,
                         // 不挑 click/checked 绑定,是最通用自然的交互;只有 native <select> 的 option 不
                         // 在渲染树才用 JS)。优先叶子 button/a(挂 handler 的元素)的坐标,避免点到外层容器。
-                        const leaf = option.querySelector('button, a, [data-bind*="click"]')
-                            || (option.matches('button, a, [data-bind*="click"]') ? option : null);
-                        const hit = leaf || option;
-                        const r = hit.getBoundingClientRect();
-                        return {ok: true, mode: 'mouse', x: r.x + r.width/2, y: r.y + r.height/2, label: labelOf(option)};
+                        return mouseTarget(option);
                     }
 
                     return {
