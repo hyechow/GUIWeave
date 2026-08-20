@@ -33,7 +33,6 @@ from gui_agent.core.tool_agent.protocol import (
     dynamic_worker_tools,
     generic_action_spec,
     image_message,
-    original_task_contract,
     validate_worker_tool_state,
     worker_attempt_contract,
 )
@@ -159,7 +158,6 @@ def _worker_messages(
     screenshot: bytes,
     *,
     attempt_contract: str,
-    task_contract: str = "",
     application_knowledge: str = "",
     image_scale: float = 1.0,
 ) -> list[Any]:
@@ -184,6 +182,8 @@ def _worker_messages(
                 current + ("\n\n" + suffix if suffix else "")
             )))
         elif name == "human":
+            text = _without_section(text, "## Original task source")
+            text = _without_section(text, "## Value provenance archive")
             text = text.replace(
                 "runtime reported no_effect",
                 "invocation=confirmed; screen_transition=none_observed; reconcile "
@@ -195,17 +195,9 @@ def _worker_messages(
                 "## Current Worker attempt",
                 attempt_contract,
             )
-            if task_contract:
-                text = _without_section(text, "## Original task source")
-                text = text.rstrip() + "\n\n" + task_contract.strip()
             if application_knowledge:
                 knowledge = render_application_knowledge_context(application_knowledge)
-                marker = text.find("## Original task source")
-                text = (
-                    text[:marker].rstrip() + "\n\n" + knowledge + "\n\n" + text[marker:]
-                    if marker >= 0
-                    else text.rstrip() + "\n\n" + knowledge
-                )
+                text = text.rstrip() + "\n\n" + knowledge
             messages.append(
                 image_message(text, screenshot, scale=image_scale)
                 if any(part.get("type") == "image" for part in parts)
@@ -669,9 +661,6 @@ def replay_worker_decision(
         _worker_report(selected),
         _screenshot(run_dir, frame_no, observation),
         attempt_contract=attempt_contract,
-        task_contract=original_task_contract(
-            str(context.get("goal") or spec.goal)
-        ),
         application_knowledge="\n\n".join(
             value.worker_context()
             for value in _current_app_knowledge(context)

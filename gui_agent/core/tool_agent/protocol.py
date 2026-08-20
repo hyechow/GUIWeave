@@ -283,23 +283,14 @@ def worker_attempt_contract(
         "When `phase` is `start`, the first action's visible target or destination must "
         "identify the approach; the residue surface's usefulness for the goal is irrelevant. "
         "The goal and output contract are immutable. Runtime actions are generic "
-        "capabilities, and named input bindings inject private Master-routed values.\n"
+        "capabilities, and named input bindings inject private Master-routed values. "
+        "Only literal identifiers in this attempt, its bindings, active Evidence, or the "
+        "bound application are exact. Role descriptions such as usual, dedicated, preferred, "
+        "or appropriate are unresolved values; resolve them from Evidence/application state "
+        "or ask_user before mutation.\n"
         + json.dumps(payload, ensure_ascii=False)
         + "\n"
         + profile_rules
-    )
-
-
-def original_task_contract(goal: str) -> str:
-    """Project the user's wording with authority limited to value provenance."""
-
-    return (
-        "## Original task source (runtime-preserved)\n"
-        "This verbatim goal is authoritative for whether a user-owned value is exact or "
-        "merely descriptive. The Worker attempt may narrow work, but its paraphrase never "
-        "creates a name, path, recipient, account, or other identifier absent here. Resolve "
-        "descriptive roles from active Evidence or the bound application; otherwise ask_user.\n"
-        + json.dumps({"goal": goal}, ensure_ascii=False)
     )
 
 

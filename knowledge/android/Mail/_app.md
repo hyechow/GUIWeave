@@ -12,7 +12,7 @@ source: manual_verified
 confidence: medium
 sensitivity: internal
 ttl: session
-version: 4
+version: 5
 ---
 # Mail on Android
 
@@ -21,8 +21,9 @@ version: 4
 - The compose form carries a recipient (`To`) field, a subject field, a message body,
   and an attach action; the send action submits the message. The `To` recipient is
   typed as an email address.
-- Attaching files opens a file picker rooted in the file directories; the files moved
-  into the destination folder are selectable there and are attached by name.
+- Attaching files opens a file picker rooted in the file directories. Activating an exact file
+  row attaches that file and returns to Compose; Android Back leaves the visible file unattached.
+  Reopen the picker for each additional file and verify each returned attachment by name.
 - One invocation of an incoming attachment's blue download control copies the file into Android
   `Downloads`. This control has no visual completion state: the open email and blue control remain
   unchanged after the copy. A matching Runtime invocation receipt therefore completes the download

@@ -75,7 +75,6 @@ from gui_agent.core.tool_agent.protocol import (
     generic_action_spec,
     image_message,
     input_binding_action,
-    original_task_contract,
     response_usage,
     validate_dynamic_action_spec,
     validate_worker_tool_state,
@@ -1415,9 +1414,6 @@ class ToolAgentRuntime:
                 current_element=self._current_each_element(
                     spec, journal.worker_id
                 ),
-            ),
-            task_contract=original_task_contract(
-                str(getattr(self, "_task_goal", "") or spec.goal)
             ),
             same_frame_feedback=same_frame_feedback,
         )

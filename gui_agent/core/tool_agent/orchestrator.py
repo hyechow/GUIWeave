@@ -417,7 +417,7 @@ def _validate_gui_worker_call(
     for requirement in values.get("data_requirements") or []:
         if not isinstance(requirement, dict):
             continue
-        contract_text = "\n".join([
+        scope_text = "\n".join([
             str(values["goal"]),
             *(
                 criterion for criterion in contract_criteria
@@ -425,13 +425,14 @@ def _validate_gui_worker_call(
             ),
             str(requirement.get("description") or ""),
         ])
+        selection_text = str(requirement.get("description") or "")
         filter_text = json.dumps(
             requirement.get("filters") or {},
             ensure_ascii=False,
         ).casefold()
         exact_literals = {
             (match.group("quoted") or match.group(0)).strip()
-            for match in _EXACT_SCOPE_LITERAL.finditer(contract_text)
+            for match in _EXACT_SCOPE_LITERAL.finditer(selection_text)
         }
         unbound_literals = {
             item for item in exact_literals
@@ -444,16 +445,32 @@ def _validate_gui_worker_call(
                 f"filters, not only prose or a later transform: {sorted(unbound_literals)}",
                 call,
             ))
-        contract_lower = contract_text.casefold()
+        contract_lower = scope_text.casefold()
         has_date_scope = (
             any(month in contract_lower for month in _MONTH_NAMES)
-            or bool(re.search(r"\b20\d{2}\b", contract_text))
+            or bool(re.search(r"\b20\d{2}\b", scope_text))
         )
         if has_date_scope:
             filter_values = json.dumps(
                 requirement.get("filters") or {}, ensure_ascii=False
             )
             filter_lower = filter_values.casefold()
+            if (
+                re.search(
+                    r"\b(?:january|february|march|april|may|june|july|august|"
+                    r"september|october|november|december)\s+\d{1,2}(?:st|nd|rd|th)?\b",
+                    user_goal,
+                    re.IGNORECASE,
+                )
+                and not re.search(r"\b\d{4}\b", user_goal)
+                and re.search(r"\b\d{4}[-/]\d{1,2}[-/]\d{1,2}\b", filter_values)
+            ):
+                diagnostics.append(_diagnostic(
+                    "DATA_FILTER_DATE_COMPONENTS",
+                    "the task supplies a month/day without a year; preserve those stated "
+                    "components in filters instead of adding a year from the runtime clock",
+                    call,
+                ))
             filter_has_date = bool(
                 re.search(
                     r"20\d{2}|\b\d{1,2}[-/]\d{1,2}\b|\b\d{4}-\d{2}\b",

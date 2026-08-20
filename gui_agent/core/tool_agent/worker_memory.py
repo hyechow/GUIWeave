@@ -565,10 +565,12 @@ class WorkerMemoryView:
             )
         elif self.latest_gui_transition:
             lines.append(
-                "- Reconcile the latest GUI transition with the current frame first. If a "
-                "requested terminal commit exited its editor or form to the expected stable "
-                "surface without an error or pending state, complete; do not restart merely "
-                "because the application shows no success banner."
+                "- Reconcile the latest GUI transition with the current frame first. When "
+                "its receipt and application mechanics satisfy an active Commitment, mark "
+                "that same Commitment key completed. If this closes the contract, select "
+                "complete directly; do not create a verification Commitment or interact "
+                "with an unrelated control. A requested terminal commit that exited its "
+                "editor or form without error is complete even without a success banner."
             )
         elif self.active_commitments:
             lines.append(
@@ -813,7 +815,6 @@ def project_worker_context(
     frame: MaterializedFrame,
     application_knowledge: str = "",
     attempt_contract: str = "",
-    task_contract: str = "",
     same_frame_feedback: dict[str, Any] | None = None,
     max_chars: int = DEFAULT_WORKER_CONTEXT_MAX_CHARS,
 ) -> WorkerContextProjection:
@@ -904,22 +905,6 @@ def project_worker_context(
                 content=render_application_knowledge_context(application_knowledge),
             )
             if application_knowledge.strip()
-            else None
-        ),
-        (
-            ContextBlock(
-                id="tool_agent.worker.original_task",
-                source_type="runtime_task",
-                source="original_task_goal",
-                ttl="task",
-                budget="required",
-                priority=5,
-                authoritative_for=("user_value_provenance",),
-                freshness="task",
-                coverage="complete",
-                content=task_contract,
-            )
-            if task_contract.strip()
             else None
         ),
     ]
