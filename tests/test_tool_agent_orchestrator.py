@@ -224,6 +224,13 @@ ctx.finish(outcome["collection_ref"]["ref"], effect="data")
     )
 
     assert any(item.code == "DATA_FILTER_DATE_COMPONENTS" for item in diagnostics)
+    timestamp = source.replace('"2025-10-03"', '"2025-10-03T00:00:00+00:00"')
+    assert any(
+        item.code == "DATA_FILTER_DATE_COMPONENTS"
+        for item in validate_master_source(
+            timestamp, user_goal="Collect records from October 3rd onward",
+        )
+    )
     preserved = source.replace('"2025-10-03"', '"October 3"')
     assert not [
         item for item in validate_master_source(
@@ -231,6 +238,24 @@ ctx.finish(outcome["collection_ref"]["ref"], effect="data")
         )
         if item.code == "DATA_FILTER_DATE_COMPONENTS"
     ]
+
+
+def test_master_review_rejects_alternative_field_sources() -> None:
+    combined = GUI_CALL.replace(
+        f'"row_schema": {ROW_SCHEMA!r},',
+        f'"row_schema": {ROW_SCHEMA!r},\n        '
+        '"field_sources": {"amount": "Total or Subtotal"},',
+    )
+    source = _program(
+        f'''\
+outcome = {combined}
+ctx.finish(outcome["collection_ref"]["ref"], effect="data")
+'''.strip()
+    )
+
+    diagnostics = validate_master_source(source)
+
+    assert any(item.code == "DATA_FIELD_SOURCE" for item in diagnostics)
 
 
 def test_master_review_does_not_treat_hybrid_mutation_values_as_row_filters() -> None:
@@ -1198,6 +1223,41 @@ def test_master_compiler_regenerates_only_during_static_review() -> None:
     assert events[1][1]["diagnostics"] == []
 
 
+def test_master_compiler_preserves_typed_counted_entity_as_record_grain() -> None:
+    wrong_gui = GUI_CALL.replace(
+        '"description": "Requested records",',
+        '"description": "Requested records",\n        "record_grain": "messages",',
+    )
+    wrong = _program(
+        f'''\
+records = {wrong_gui}
+ctx.finish(records["collection_ref"]["ref"], effect="data")
+'''.strip()
+    )
+    correct = wrong.replace(
+        '"record_grain": "messages",',
+        '"record_grain": "forms",\n        '
+        '"semantic_predicates": ["the item is a form"],',
+    )
+    llm = _SequenceLLM(wrong, correct)
+
+    program = compile_master_program(
+        llm=llm,
+        system_prompt="Compile a program.",
+        task_context={
+            "goal": "Tell me how many forms were received.",
+            "semantic_contract": {
+                "conditional_predicates": [],
+                "semantic_predicates": ["the item is a form"],
+                "counted_entity": "forms",
+            },
+        },
+    )
+
+    assert program.source == correct
+    assert program.attempts == 2
+
+
 def test_master_review_rejects_worker_program_without_success_path() -> None:
     source = _program(
         f'''\
@@ -1233,6 +1293,7 @@ def test_task_semantic_contract_extracts_conditional_world_state() -> None:
     assert contract.conditional_predicates == [
         "a source affirmatively states that approval has been granted",
     ]
+    assert contract.semantic_predicates == []
     assert contract.counted_entity == ""
     assert events[0][0] == "master_semantic_contract"
     assert events[0][1]["error"] == ""
@@ -1250,6 +1311,21 @@ def test_task_semantic_contract_extracts_counted_entity_grain() -> None:
     )
 
     assert contract.counted_entity == "signed attachments"
+
+
+def test_task_semantic_contract_extracts_non_field_record_predicate() -> None:
+    llm = _SequenceLLM(
+        '{"conditional_predicates":[],"semantic_predicates":'
+        '["the attachment is a signed form"],"counted_entity":"signed forms"}'
+    )
+
+    contract = normalize_task_semantics(
+        llm=llm,
+        system_prompt="Normalize typed task semantics.",
+        goal="Count the signed forms.",
+    )
+
+    assert contract.semantic_predicates == ["the attachment is a signed form"]
 
 
 def test_master_review_rejects_data_collection_for_destination_only_goal() -> None:

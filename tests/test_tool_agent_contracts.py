@@ -751,6 +751,19 @@ def test_data_requirement_accepts_nullable_runtime_type() -> None:
     ]
 
 
+def test_data_requirement_preserves_record_grain_and_semantic_predicates() -> None:
+    requirement = DataRequirement(
+        id="attachments",
+        description="Requested attachments",
+        record_grain="signed attachments",
+        semantic_predicates=["the attachment is signed"],
+        row_schema={"name": "string"},
+    )
+
+    assert requirement.record_grain == "signed attachments"
+    assert requirement.semantic_predicates == ["the attachment is signed"]
+
+
 def test_worker_profile_inference_selects_relevant_attempt_rules() -> None:
     common = {
         "goal": "Reach the requested outcome",

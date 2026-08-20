@@ -947,6 +947,11 @@ def test_latest_gui_transition_precedes_active_commitment_execution() -> None:
     ).render_prompt_section()
 
     assert "Reconcile the latest GUI transition" in rendered
+    assert "If the receipt does not satisfy it" in rendered
+    assert "copying its exact key from Active commitments" in rendered
+    assert "never rename it" in rendered
+    assert "select the next visible action that advances it" in rendered
+    assert "never implies Back" in rendered
     assert "Execute the active Commitment" not in rendered
 
 

@@ -103,6 +103,10 @@ def test_master_exposes_only_tool_agent_runtime_api() -> None:
     assert "one row represents exactly one entity being counted" in prompt
     assert "a parent record is not the row grain" in prompt
     assert "never synthesize one combined predicate field" in prompt
+    assert "`record_grain` names what one row represents" in prompt
+    assert "`semantic_predicates`" in prompt
+    assert "Every row field maps to one actual source value" in prompt
+    assert "never combine alternative sources" in prompt
     assert "`len(inputs)` counts input slots rather than records" in prompt
     assert 'Set `cardinality="one"` only' in prompt
     assert "the first visible candidate is not" in prompt
@@ -145,6 +149,8 @@ def test_worker_keeps_data_private_and_coordinates_normalized() -> None:
     assert "Use only Runtime-supplied actions" in prompt
     assert "request_action_patch" not in prompt
     assert "`state.status = completed | failed` is terminal" in prompt
+    assert "after applying this decision's memory updates" in prompt
+    assert "a completed Commitment cannot support `executing`" in prompt
 
 
 def test_worker_prompt_stays_a_compact_role_contract() -> None:
@@ -177,7 +183,16 @@ def test_master_preserves_typed_conditional_predicates() -> None:
     assert "task.semantic_contract.conditional_predicates" in prompt
     assert "copy every relevant predicate verbatim" in prompt
     assert "task.semantic_contract.counted_entity" in prompt
+    assert "task.semantic_contract.semantic_predicates" in prompt
     assert "never substitute its source container or parent record" in prompt
+
+
+def test_semantic_contract_separates_conditional_and_selection_predicates() -> None:
+    prompt = load_prompt_text("task.tool_agent.semantic_contract")
+
+    assert "applies only to `conditional_predicates`" in prompt
+    assert "do not rewrite an ordinary" in prompt
+    assert "require a textual assertion" in prompt
 
 
 def test_worker_keeps_action_grounding_and_memory_boundaries() -> None:
