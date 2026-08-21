@@ -1018,6 +1018,11 @@ class ToolAgentRuntime:
                             for action in frame_actions
                         ],
                         "executed_tools": sorted(journal.executed_tools),
+                        "active_commitment_refs": [
+                            event.fact_ref for event in build_worker_memory_view(
+                                journal, current_frame_id=frame.frame_id,
+                            ).active_commitments
+                        ],
                         "enhanced": getattr(self, "perception_mode", "vision-only")
                         == "enhanced",
                         "multi_action": bool(getattr(self, "allow_multi_action", False)),

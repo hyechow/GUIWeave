@@ -26,6 +26,10 @@ version: 5
 - After `Pin on profile` is activated for the verified target post and its action menu
   closes without error, that invocation is the durable pin commit. Do not reopen another
   post's menu merely because the Timeline itself has no separate pin badge.
+- `Bookmark` and `Remove bookmark` in a post's overflow menu are write-through mutations.
+  When the selected option closes the menu without error, complete that post's bookmark
+  Commitment. For a multi-post task, return to the verified source collection and continue
+  with an unhandled post; do not reopen the handled post's menu to confirm or repeat it.
 
 - `SavedFavorites`: navigate through the signed-in user's bottom-navigation
   `Profile → Saved → Favorites`; membership in this collection proves that a
