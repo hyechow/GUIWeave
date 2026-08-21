@@ -26,6 +26,7 @@ from __future__ import annotations
 import ipaddress
 import json
 import os
+import signal
 import threading
 import time
 from contextlib import contextmanager
@@ -41,6 +42,7 @@ _DEFAULT_VIEWPORT_H = 800
 _NAVIGATION_COMMIT_TIMEOUT_MS = 5_000
 TEXT_RETARGET_RADIUS_PX = 220
 _CDP_PROXY_ENV_LOCK = threading.Lock()
+_PLAYWRIGHT_SPAWN_LOCK = threading.Lock()
 
 # Wheel anchors must not land on native selects or custom choice-widget
 # triggers. A closed focusable combobox looks like empty surface to tag-only
@@ -228,6 +230,32 @@ def _cdp_proxy_bypass(cdp_url: str) -> Iterator[None]:
                     os.environ.pop(name, None)
                 else:
                     os.environ[name] = value
+
+
+@contextmanager
+def _playwright_driver_interrupt_isolation() -> Iterator[None]:
+    """Keep terminal SIGINT from killing the driver before Python can detach it."""
+
+    if threading.current_thread() is not threading.main_thread():
+        yield
+        return
+    with _PLAYWRIGHT_SPAWN_LOCK:
+        previous = signal.signal(signal.SIGINT, signal.SIG_IGN)
+        try:
+            yield
+        finally:
+            signal.signal(signal.SIGINT, previous)
+
+
+def _playwright_driver_alive(playwright: object) -> bool:
+    """Return false when Playwright's private local driver already exited."""
+
+    try:
+        transport = playwright._impl_obj._connection._transport  # type: ignore[attr-defined]
+        process = transport._proc
+    except AttributeError:
+        return True
+    return process is None or process.returncode is None
 
 # CDP settle (wait_settled): the page is "settled" once it is at least interactive AND both
 # the DOM and the network have been quiet for _SETTLE_QUIET_MS. This reads the page's real
@@ -419,7 +447,10 @@ class PlaywrightDevice:
         # The Playwright Node driver inherits proxy variables when spawned. CDP is
         # a direct control channel, so ensure that driver bypasses the proxy for
         # its configured endpoint without changing the parent process permanently.
-        with _cdp_proxy_bypass(self.cdp_url if not self.headless else ""):
+        with (
+            _cdp_proxy_bypass(self.cdp_url if not self.headless else ""),
+            _playwright_driver_interrupt_isolation(),
+        ):
             self._pw = sync_playwright().start()
         if self.headless:
             viewport = {"width": _DEFAULT_VIEWPORT_W, "height": _DEFAULT_VIEWPORT_H}
@@ -476,30 +507,31 @@ class PlaywrightDevice:
         CDP mode only stops the Playwright driver (which closes the CDP
         transport); the attached Chrome and its tabs keep running.
         """
-        if self.headless and self._context is not None:
+        driver_alive = self._pw is None or _playwright_driver_alive(self._pw)
+        if driver_alive and self.headless and self._context is not None:
             try:
                 self._context.close()
             except Exception:
                 pass
-        if self.headless and self._browser is not None:
+        if driver_alive and self.headless and self._browser is not None:
             try:
                 self._browser.close()
             except Exception:
                 pass
-        if self._pw is not None:
-            try:
+        try:
+            if driver_alive and self._pw is not None:
                 self._pw.stop()
-            finally:
-                self._pw = None
-                self._browser = None
-                self._context = None
-                self.page = None
-                self._cdp = None
-                self._browser_cdp = None
-                self._prev_pages = None
-                self._tab_switched = False
-                self._last_viewport = None
-                self._dpr = None
+        finally:
+            self._pw = None
+            self._browser = None
+            self._context = None
+            self.page = None
+            self._cdp = None
+            self._browser_cdp = None
+            self._prev_pages = None
+            self._tab_switched = False
+            self._last_viewport = None
+            self._dpr = None
 
     # ----- viewport (for the executor's denormalization) -------------------
     @property
