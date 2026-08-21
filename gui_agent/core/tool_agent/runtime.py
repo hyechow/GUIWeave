@@ -828,74 +828,6 @@ class ToolAgentRuntime:
                 attempted_action=bool(journal.executed_tools),
             )
             frame_actions = frame_assessment.allowed_actions
-            if frame_assessment.collector_completion_required:
-                result_payload, _ = self._execute_worker_tool(
-                    spec,
-                    frame_actions,
-                    {"name": "complete", "args": {
-                        "evidence": ["Runtime-authoritative collection boundary complete"],
-                    }},
-                    png,
-                    frame,
-                )
-                descriptor = CollectionRef.model_validate(result_payload)
-                self._trace(
-                    "worker_complete",
-                    step=step,
-                    profile=spec.profile,
-                    deterministic=True,
-                    collection_ref=descriptor.model_dump(mode="json"),
-                )
-                return WorkerOutcome(
-                    phase="completed",
-                    summary="Runtime-authoritative collection boundary complete.",
-                    collection_ref=descriptor,
-                    steps=step,
-                )
-            deterministic_action = next((
-                action for action in frame_actions
-                if len(frame_actions) == 1
-                and initial_same_frame_feedback is None
-                and bool(action.fixed_args)
-                and not action.input_args
-                and not action.exposed_args
-            ), None)
-            if deterministic_action is not None:
-                self._trace(
-                    "deterministic_frame_action",
-                    worker_id=worker_id,
-                    step=step,
-                    frame_id=frame.frame_id,
-                    capability=deterministic_action.capability,
-                    fixed_args=deterministic_action.fixed_args,
-                )
-                deterministic_result, _deterministic_terminal = (
-                    self._execute_multi_action_calls(
-                        worker_id=worker_id,
-                        spec=spec,
-                        actions=frame_actions,
-                        calls=[{"name": deterministic_action.name, "args": {}}],
-                        state=WorkerState(
-                            status=(
-                                "collecting"
-                                if spec.profile == "collector" else "exploring"
-                            ),
-                            summary=deterministic_action.description,
-                        ),
-                        step=step,
-                        frame=frame,
-                        png=png,
-                        journal=journal,
-                        circuit_breaker=circuit_breaker,
-                        observed_auth_codes=observed_auth_codes,
-                    )
-                )
-                if deterministic_result.get("status") != "executed":
-                    initial_same_frame_feedback = deterministic_result
-                    reusable_observation = (frame, png, initial_same_frame_feedback)
-                # Runtime-bound transitions are not policy decisions.
-                step -= 1
-                continue
             walk_step = (
                 record_walk_step(frame, walk_state)
                 if (
@@ -1502,6 +1434,7 @@ class ToolAgentRuntime:
             same_frame_feedback=same_frame_feedback,
             collection_stability=journal.collection_stability_note(frame),
             traversal_progress=journal.traversal_progress_note(frame),
+            traversal_phase=journal.traversal_phase(frame),
         )
         system_prompt = self._worker_system_prompt()
         messages = [

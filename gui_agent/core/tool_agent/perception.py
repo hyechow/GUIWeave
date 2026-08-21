@@ -1341,6 +1341,7 @@ class PerceptionMaterializer:
         controls: list[dict[str, Any]] = []
         applied_filters: dict[str, Any] = {}
         applied_filter_state = None
+        page_viewport: dict[str, Any] = {}
         visible_collection_regions: list[dict[str, Any]] = []
         readiness: Literal["ready", "loading", "blank"] = "ready"
         readiness_reason = ""
@@ -1363,6 +1364,7 @@ class PerceptionMaterializer:
             ]
             applied_filters = dict(getattr(observation, "applied_filters", None) or {})
             applied_filter_state = getattr(observation, "applied_filter_state", None)
+            page_viewport = dict(getattr(observation, "viewport", None) or {})
             if not requirements:
                 visible_collection_regions = _visible_collection_regions(
                     getattr(observation, "collection_regions", None)
@@ -1926,6 +1928,7 @@ class PerceptionMaterializer:
             ).model_dump(mode="json"),
             url=url or "",
             title=title or "",
+            page_viewport=page_viewport,
             controls=controls,
             visible_collection_regions=visible_collection_regions,
             structured_surfaces=[

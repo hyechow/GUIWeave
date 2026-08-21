@@ -523,6 +523,7 @@ class MaterializedFrame(StrictModel):
     platform_time: dict[str, Any] = Field(default_factory=dict)
     url: str = ""
     title: str = ""
+    page_viewport: dict[str, Any] = Field(default_factory=dict)
     controls: list[dict[str, Any]] = Field(default_factory=list)
     visible_collection_regions: list[dict[str, Any]] = Field(default_factory=list)
     structured_surfaces: list[dict[str, Any]] = Field(default_factory=list)

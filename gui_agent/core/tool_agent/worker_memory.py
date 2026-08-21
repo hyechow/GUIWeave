@@ -7,7 +7,7 @@ import json
 import os
 import re
 from dataclasses import dataclass, field
-from typing import Any
+from typing import Any, Literal
 
 from gui_agent.context.blocks import (
     ContextBlock,
@@ -277,9 +277,17 @@ class WorkerJournal:
     _current_surface_key: str = field(default="", repr=False)
     _surface_view_counts: dict[str, dict[str, int]] = field(default_factory=dict, repr=False)
     _surface_scroll_directions: dict[str, list[str]] = field(default_factory=dict, repr=False)
+    _surface_boundaries: dict[str, set[str]] = field(default_factory=dict, repr=False)
     _completed_traversal_surfaces: set[str] = field(default_factory=set, repr=False)
 
     def _surface_traversal_complete(self, key: str) -> bool:
+        directions = self._surface_scroll_directions.get(key, [])
+        return (
+            bool(directions)
+            and self._surface_boundaries.get(key, set()) >= {"start", "end"}
+        )
+
+    def _surface_cycle_detected(self, key: str) -> bool:
         directions = self._surface_scroll_directions.get(key, [])
         return (
             any(count >= 2 for count in self._surface_view_counts.get(key, {}).values())
@@ -306,6 +314,11 @@ class WorkerJournal:
         ).encode("utf-8")).hexdigest()
         counts = self._surface_view_counts.setdefault(self._current_surface_key, {})
         counts[signature] = counts.get(signature, 0) + 1
+        boundaries = self._surface_boundaries.setdefault(self._current_surface_key, set())
+        if frame.page_viewport.get("at_scroll_start") is True:
+            boundaries.add("start")
+        if frame.page_viewport.get("at_scroll_end") is True:
+            boundaries.add("end")
         if self._surface_traversal_complete(self._current_surface_key):
             self._completed_traversal_surfaces.add(self._current_surface_key)
         for collection in frame.collections:
@@ -364,10 +377,15 @@ class WorkerJournal:
             self._completed_traversal_surfaces.add(key)
         if key in self._completed_traversal_surfaces:
             return (
-                "Inspection traversal is complete: this document revisited prior semantic "
-                "viewports after scrolling both directions; further scroll is repetition, "
-                "not progress. A control absent throughout those covered viewports is absent "
-                "from the inspected document."
+                "Inspection traversal is complete: this document's start and end boundaries "
+                "were both observed after scrolling. Further scroll is repetition, not progress. "
+                "A control absent throughout that coverage is absent from the inspected document."
+            )
+        if self._surface_cycle_detected(key):
+            return (
+                "Inspection traversal revisited a prior semantic viewport after scrolling both "
+                "directions, but document boundaries were not both observed. This is repetition, "
+                "not proof of complete coverage or absence."
             )
         if self._completed_traversal_surfaces:
             surfaces = "; ".join(
@@ -379,6 +397,20 @@ class WorkerJournal:
                 f"{surfaces}. Do not reopen them; continue with remaining contract requirements."
             )
         return ""
+
+    def traversal_phase(
+        self, frame: MaterializedFrame,
+    ) -> Literal["open", "cycle", "complete", "completed_elsewhere"]:
+        """Return structured inspection state independently of prompt wording."""
+
+        key = "|".join((frame.url, frame.title))
+        if self._surface_traversal_complete(key) or key in self._completed_traversal_surfaces:
+            return "complete"
+        if self._completed_traversal_surfaces:
+            return "completed_elsewhere"
+        if self._surface_cycle_detected(key):
+            return "cycle"
+        return "open"
 
     def observe_collection(self, frame: MaterializedFrame) -> str:
         """Return the collection ref carrying downward-scroll end evidence, if any."""
@@ -689,6 +721,7 @@ def _frame_payload(
         "task_reference_time": frame.platform_time,
         "url": frame.url,
         "title": frame.title,
+        "page_viewport": frame.page_viewport,
         "applied_filters": frame.applied_filters,
         "requirement_scopes": frame.requirement_scopes,
         "scope_blockers": scope_blockers,
@@ -761,15 +794,11 @@ def project_worker_context(
     max_chars: int = DEFAULT_WORKER_CONTEXT_MAX_CHARS,
     collection_stability: str = "",
     traversal_progress: str = "",
+    traversal_phase: Literal[
+        "open", "cycle", "complete", "completed_elsewhere"
+    ] = "open",
 ) -> WorkerContextProjection:
     """Build one capacity-managed context; the screenshot is supplied separately."""
-    traversal_phase = (
-        "complete"
-        if traversal_progress.startswith("Inspection traversal is complete:")
-        else "completed_elsewhere"
-        if traversal_progress.startswith("Inspection traversal already completed")
-        else "open"
-    )
     memory_text = memory.render_prompt_section()
     if traversal_progress:
         memory_text = memory_text.replace(
@@ -856,7 +885,8 @@ def project_worker_context(
                 "A terminal decision's required UI state must match this frame; historical "
                 "or planned navigation cannot substitute. When inspection_traversal is "
                 "complete, scrolling this document is no longer valid progress; when it is "
-                "completed_elsewhere, do not reopen that completed surface.\n"
+                "completed_elsewhere, do not reopen that completed surface. A cycle does not "
+                "prove boundary coverage or absence.\n"
                 + json.dumps({
                     "frame_id": frame.frame_id,
                     "url": frame.url,

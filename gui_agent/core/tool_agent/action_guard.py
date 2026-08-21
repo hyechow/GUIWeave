@@ -73,12 +73,13 @@ class FrameAssessment:
 
     @property
     def collector_completion_required(self) -> bool:
+        """Whether the Worker must explicitly complete a ready collection."""
+
         return (
             self.completion_mode == "collector"
             and self.ready_collection is not None
             and not self.allowed_actions
         )
-
 
 def _http_origin(value: str, *, require_public: bool = False) -> tuple[str, str, int | None] | None:
     try:
@@ -198,28 +199,7 @@ def _requested_sort_direction_is_pending(
     )
 
 
-def _larger_page_size_control(frame: MaterializedFrame) -> tuple[dict[str, Any], str] | None:
-    """Return a structural numeric page-window selector that can grow."""
-
-    for control in frame.controls:
-        if control.get("kind") != "native_select" or control.get("is_filter") is not True:
-            continue
-        options = [str(value).strip() for value in control.get("options") or ()]
-        selected = str(
-            control.get("selected_text_primary")
-            or control.get("selected_text")
-            or control.get("value")
-            or ""
-        ).strip()
-        if not options or not selected.isdigit() or not all(value.isdigit() for value in options):
-            continue
-        largest = max(options, key=int)
-        if int(largest) > int(selected) and isinstance(control.get("rect"), dict):
-            return control, largest
-    return None
-
-
-def _bind_action(
+def _bind_authoritative_candidate(
     actions: list[DynamicActionSpec],
     *,
     capability: str,
@@ -238,8 +218,8 @@ def _bind_action(
             },
             "exposed_args": [key for key in action.exposed_args if key not in fixed],
         })
+        if action.capability == capability else action
         for action in actions
-        if action.capability == capability
     ]
 
 
@@ -304,35 +284,14 @@ def assess_frame(
     if next_page_url and (
         collection is None or collection.coverage.get("status") != "complete"
     ):
-        # The structured reader has already materialized every row in this
-        # page. Expose its authoritative transition as one semantic action;
-        # viewport scrolling cannot discover additional current-page records.
-        page_size = _larger_page_size_control(frame)
-        if page_size is not None:
-            control, largest = page_size
-            rect = control["rect"]
-            fixed = {
-                # Enhanced rect x/y are already normalized control centers.
-                "x": int(rect.get("x", 0)),
-                "y": int(rect.get("y", 0)),
-                "text": largest,
-            }
-            actions = _bind_action(
-                actions,
-                capability="select_option",
-                fixed=fixed,
-                description=(
-                    "Increase the authoritative structured source window to its "
-                    f"largest available page size ({largest}) before advancing."
-                ),
-            )
-        else:
-            actions = _bind_action(
-                actions,
-                capability="open_url",
-                fixed={"url": next_page_url},
-                description="Open the authoritative next window of this structured source.",
-            )
+        # Preserve policy choice while grounding the structured source's exact
+        # next-window transition; this candidate still consumes a Worker turn.
+        actions = _bind_authoritative_candidate(
+            actions,
+            capability="open_url",
+            fixed={"url": next_page_url},
+            description="Open the authoritative next window of this structured source.",
+        )
     boundary = requirement if requirement and (
         requirement.coverage == "first_match" and requirement.cardinality == "many"
     ) else None
