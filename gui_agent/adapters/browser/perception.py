@@ -201,7 +201,7 @@ class BrowserPerception:
             applied_filters,
             applied_filter_meta,
         )
-        return Observation(
+        observation = Observation(
             png_bytes=png_bytes, source="browser", loading=loading,
             url=url or None, title=title or None, dom_state=dom_state,
             tables=tables or None,
@@ -215,3 +215,8 @@ class BrowserPerception:
             applied_filter_state=applied_filter_state,
             applied_filter_meta=applied_filter_meta or None,
         )
+        from gui_agent.adapters.browser.target_binding import active_surface_id
+
+        return observation.model_copy(update={
+            "surface_id": active_surface_id(observation) or None,
+        })

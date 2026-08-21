@@ -417,6 +417,13 @@ class Observation(BaseModel):
         default=None,
         description="平台感知层提供的当前页面/标签标题（如浏览器 document.title）。同样不在截图里。None=不提供。",
     )
+    surface_id: Optional[str] = Field(
+        default=None,
+        description=(
+            "平台 adapter 产生的稳定活动交互表面身份；同一文档的滚动、查询参数或动态标题变化"
+            "不得改变该身份，切换文档或模态交互表面必须改变。None=平台不提供。"
+        ),
+    )
     dom_state: Optional[str] = Field(
         default=None,
         description=(

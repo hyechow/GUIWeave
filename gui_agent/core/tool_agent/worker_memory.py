@@ -289,12 +289,16 @@ class WorkerJournal:
         default_factory=dict, repr=False,
     )
 
+    @staticmethod
+    def _surface_key(frame: MaterializedFrame) -> tuple[str, str]:
+        return (frame.surface_id, "") if frame.surface_id else (frame.url, frame.title)
+
     def _surface_traversal_complete(self, key: tuple[str, str]) -> bool:
         return self._surface_coverage.get(key, set()) >= {"scrolled", "start", "end"}
 
     def record_collection_stability(self, frame: MaterializedFrame) -> None:
         """Track consecutive frames that add no new rows to an accumulated collection."""
-        self._current_surface_key = (frame.url, frame.title)
+        self._current_surface_key = self._surface_key(frame)
         coverage = self._surface_coverage.setdefault(self._current_surface_key, set())
         if frame.page_viewport.get("at_scroll_start") is True:
             coverage.add("start")
@@ -351,7 +355,7 @@ class WorkerJournal:
     def traversal_progress(self, frame: MaterializedFrame) -> InspectionTraversalProgress:
         """Return boundary-backed page-inspection state and its compact explanation."""
 
-        key = (frame.url, frame.title)
+        key = self._surface_key(frame)
         if self._surface_traversal_complete(key):
             return InspectionTraversalProgress(
                 phase="complete",
@@ -368,7 +372,7 @@ class WorkerJournal:
         ]
         if completed_surfaces:
             surfaces = "; ".join(
-                surface_key[1]
+                surface_key[1] or surface_key[0].rsplit(":", 1)[-1]
                 for surface_key in completed_surfaces[-3:]
             )
             return InspectionTraversalProgress(
@@ -689,6 +693,7 @@ def _frame_payload(
         "task_reference_time": frame.platform_time,
         "url": frame.url,
         "title": frame.title,
+        "surface_id": frame.surface_id,
         "page_viewport": frame.page_viewport,
         "applied_filters": frame.applied_filters,
         "requirement_scopes": frame.requirement_scopes,
@@ -768,6 +773,7 @@ def render_current_frame_anchor(
             "frame_id": frame.frame_id,
             "url": frame.url,
             "title": frame.title,
+            "surface_id": frame.surface_id,
             "inspection_traversal": phase,
         }, ensure_ascii=False)
     )
