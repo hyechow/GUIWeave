@@ -39,7 +39,10 @@ from gui_agent.core.tool_agent.protocol import (
     validate_worker_tool_state,
     worker_attempt_contract,
 )
-from gui_agent.core.tool_agent.worker_memory import render_worker_frame_context
+from gui_agent.core.tool_agent.worker_memory import (
+    render_current_frame_anchor,
+    render_worker_frame_context,
+)
 from gui_agent.prompts import load_prompt_text
 from llm.provider_config import chat_request_kwargs
 
@@ -215,19 +218,9 @@ def _worker_messages(
                 + attempt_contract
                 + ("\n\n" + memory_text if memory_text else "")
                 + (
-                    "\n\n## Current frame anchor (authoritative now)\n"
-                    "A terminal decision's required UI state must match this frame; historical "
-                    "or planned navigation cannot substitute. When inspection_traversal is "
-                    "complete, scrolling this document is no longer valid progress; when it is "
-                    "completed_elsewhere, do not reopen that completed surface.\n"
-                    + json.dumps({
-                        "frame_id": materialized_frame.frame_id,
-                        "url": materialized_frame.url,
-                        "title": materialized_frame.title,
-                        "inspection_traversal": (
-                            inspection_traversal
-                        ),
-                    }, ensure_ascii=False)
+                    "\n\n" + render_current_frame_anchor(
+                        materialized_frame, inspection_traversal,
+                    )
                     if materialized_frame is not None else ""
                 )
             ).strip()
