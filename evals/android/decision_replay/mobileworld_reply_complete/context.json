@@ -1,0 +1,23 @@
+{
+  "platform": "android",
+  "goal": "Reply to the toot of gourmet user about Greek food Moussaka, and the reply content should be 'Nice sharing, i love it'.",
+  "knowledge": {
+    "app_name": "Mastodon",
+    "apps": [
+      {
+        "app_name": "Mastodon",
+        "profile": "functional-only",
+        "nav_chars": 3973,
+        "deployment_chars": 0,
+        "elements_chars": 0,
+        "check_chars": 0,
+        "section_count": 1,
+        "overlays": {},
+        "metadata_keys": [
+          "Mastodon_interface",
+          "_app"
+        ]
+      }
+    ]
+  }
+}

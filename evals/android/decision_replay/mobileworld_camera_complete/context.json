@@ -1,0 +1,12 @@
+{
+  "platform": "android",
+  "goal": "Take a photo.",
+  "knowledge": {
+    "app_name": "Camera",
+    "apps": [
+      {
+        "app_name": "Camera"
+      }
+    ]
+  }
+}

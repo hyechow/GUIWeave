@@ -120,8 +120,14 @@ def promote_decisions(
             json.dumps(observation, ensure_ascii=False, indent=2), encoding="utf-8",
         )
     context = json.loads((source / "context.json").read_text(encoding="utf-8"))
+    promoted_context = {
+        key: deepcopy(context[key])
+        for key in ("platform", "goal", "knowledge")
+        if context.get(key) not in (None, "", [], {})
+    }
+    promoted_context.setdefault("platform", "android")
     (destination / "context.json").write_text(
-        json.dumps({"platform": context.get("platform", "android")}, indent=2),
+        json.dumps(promoted_context, ensure_ascii=False, indent=2),
         encoding="utf-8",
     )
     (destination / "tool_agent_trace.json").write_text(

@@ -48,7 +48,21 @@ def _public_args(args: Any) -> dict[str, Any]:
 def recorded_decision_response(run_dir: Path, frame: int) -> AIMessage:
     event = _decision_event(run_dir, frame)
     tool = str(event.get("tool") or "")
-    state = event.get("state") or {}
+    state = dict(event.get("state") or {})
+    # Older promoted fixtures predate typed WorkerMemory. Recorded-mode replay
+    # normalizes that retired presentation field without changing the decision.
+    established_facts = state.pop("established_facts", None) or []
+    state.setdefault("memory_updates", [
+        {
+            "fact_type": "evidence",
+            "key": f"recorded_fact_{index}",
+            "status": "active",
+            "lifetime": "attempt",
+            "statement": str(statement),
+            "depends_on": [],
+        }
+        for index, statement in enumerate(established_facts, start=1)
+    ])
     if tool == "continue_with_actions":
         args = {
             "state": state,
@@ -188,7 +202,13 @@ def score_decision_sample(sample: dict[str, Any], expected: dict[str, Any]) -> l
             break
         errors.extend(_match_action(wanted, semantics[index], calls[index], f"actions[{index}]"))
 
-    facts = sample.get("args", {}).get("state", {}).get("established_facts") or []
+    state = sample.get("args", {}).get("state", {})
+    facts = list(state.get("established_facts") or [])
+    facts.extend(
+        str(item.get("statement") or "")
+        for item in (state.get("memory_updates") or [])
+        if isinstance(item, dict)
+    )
     fact_text = "\n".join(str(item) for item in facts)
     for needle in expected.get("established_facts_contain") or []:
         if str(needle) not in fact_text:

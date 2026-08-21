@@ -190,6 +190,14 @@ def _worker_messages(
                 "application mechanics and current evidence; an unchanged screen alone "
                 "does not justify repeating the action",
             )
+            text = text.replace(
+                "Complete an exact bound key when satisfied; otherwise keep it active. "
+                "Never rename or repeat it.",
+                "Complete an exact bound key when satisfied. If application knowledge "
+                "identifies the invocation as write-through and this is its normal "
+                "error-free post-commit frame, complete instead of repeating it. "
+                "Otherwise keep it active; never rename it.",
+            )
             text = _replace_section(
                 text,
                 "## Current Worker attempt",

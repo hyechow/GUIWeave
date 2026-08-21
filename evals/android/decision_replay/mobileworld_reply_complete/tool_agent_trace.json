@@ -1,0 +1,249 @@
+{
+  "trace": [
+    {
+      "index": 160,
+      "event": "worker_decision",
+      "worker_id": "reply_to_gourmet_moussaka_toot_strategy_1",
+      "frame_id": "frame:24",
+      "step": 5,
+      "tool": "continue_with_actions",
+      "args": {
+        "actions": [
+          {
+            "name": "tap",
+            "args": {
+              "x": 499,
+              "y": 935,
+              "description": "Reply input field labeled 'Reply to gourmet' at bottom of TootDetail screen"
+            },
+            "_control_ref": ""
+          },
+          {
+            "name": "type",
+            "args": {
+              "x": 499,
+              "y": 935,
+              "text": "Nice sharing, i love it",
+              "description": "Reply text input field showing 'Reply to gourmet' placeholder at bottom of screen"
+            },
+            "_control_ref": ""
+          }
+        ]
+      },
+      "state": {
+        "status": "executing",
+        "summary": "Tap the reply input field to focus it, then type the exact reply content.",
+        "memory_updates": [
+          {
+            "fact_type": "observation",
+            "key": "reply_input_visible",
+            "status": "active",
+            "lifetime": "frame",
+            "statement": "Reply input field 'Reply to gourmet' is visible at bottom of screen in TootDetail view for gourmet's Moussaka post.",
+            "depends_on": []
+          }
+        ]
+      },
+      "replay_context": {
+        "version": 2,
+        "worker_spec": {
+          "profile": "operator",
+          "goal": "Reply to the toot of gourmet user about Greek food Moussaka with the exact content 'Nice sharing, i love it'.",
+          "success_criteria": [
+            "The reply 'Nice sharing, i love it' is successfully posted as a response to gourmet's toot about Greek food Moussaka."
+          ],
+          "input_refs": {},
+          "input_bindings": [],
+          "unresolved_inputs": {
+            "target_user": "gourmet",
+            "target_topic": "Greek food Moussaka",
+            "reply_content": "Nice sharing, i love it"
+          },
+          "data_requirements": [],
+          "strategy": {
+            "approach": "mastodon_reply_via_explicit_field_tap_and_type"
+          }
+        },
+        "actions": [
+          {
+            "name": "app_switch",
+            "capability": "app_switch",
+            "description": "Open the platform application switcher.",
+            "fixed_args": {},
+            "input_args": {},
+            "exposed_args": []
+          },
+          {
+            "name": "ask_user",
+            "capability": "ask_user",
+            "description": "Ask the authoritative user for one missing value that materially determines the next task action. Do not ask for UI instructions, strategy, or already established facts. A descriptive role such as the user's usual, dedicated, preferred, or appropriate destination is not an exact identifier. If task context, active memory, and the bound application do not resolve that role to one exact value, ask before creating, typing, or selecting a guessed value. Authorization to mutate does not authorize inventing an identifier. Runtime returns the answer as task-lifetime Evidence on the next decision.",
+            "fixed_args": {},
+            "input_args": {},
+            "exposed_args": [
+              "question"
+            ]
+          },
+          {
+            "name": "back",
+            "capability": "back",
+            "description": "Navigate back once within the current execution path.",
+            "fixed_args": {},
+            "input_args": {},
+            "exposed_args": []
+          },
+          {
+            "name": "clear_text",
+            "capability": "clear_text",
+            "description": "Clear the currently focused text control.",
+            "fixed_args": {},
+            "input_args": {},
+            "exposed_args": []
+          },
+          {
+            "name": "drag",
+            "capability": "drag",
+            "description": "Drag one visible object to one visible destination.",
+            "fixed_args": {},
+            "input_args": {},
+            "exposed_args": [
+              "x",
+              "y",
+              "to_x",
+              "to_y",
+              "duration_ms",
+              "description"
+            ]
+          },
+          {
+            "name": "home",
+            "capability": "home",
+            "description": "Return to the platform home surface.",
+            "fixed_args": {},
+            "input_args": {},
+            "exposed_args": []
+          },
+          {
+            "name": "launch_app",
+            "capability": "launch_app",
+            "description": "Launch one exact Runtime-provided installed application.",
+            "fixed_args": {},
+            "input_args": {},
+            "exposed_args": [
+              "app"
+            ]
+          },
+          {
+            "name": "long_press",
+            "capability": "long_press",
+            "description": "Long-press one visible control or item.",
+            "fixed_args": {},
+            "input_args": {},
+            "exposed_args": [
+              "x",
+              "y",
+              "duration_ms",
+              "description"
+            ]
+          },
+          {
+            "name": "press_enter",
+            "capability": "press_enter",
+            "description": "Press Enter for the currently focused control.",
+            "fixed_args": {},
+            "input_args": {},
+            "exposed_args": []
+          },
+          {
+            "name": "scroll",
+            "capability": "scroll",
+            "description": "Traverse an ordinary visible collection or reveal a target outside the viewport. Never use this on a relevance-ordered web/search result page to hunt for later results; leading results decide query quality, so reformulate or report instead.",
+            "fixed_args": {},
+            "input_args": {},
+            "exposed_args": [
+              "direction",
+              "amount",
+              "target_area",
+              "x",
+              "y",
+              "description"
+            ]
+          },
+          {
+            "name": "tap",
+            "capability": "tap",
+            "description": "Tap one visible control that advances the current approach.",
+            "fixed_args": {},
+            "input_args": {},
+            "exposed_args": [
+              "x",
+              "y",
+              "description"
+            ]
+          },
+          {
+            "name": "type",
+            "capability": "type",
+            "description": "Replace the value of one visible input control. Use it directly to reformulate a visible query; no prior tap or clear action is required.",
+            "fixed_args": {},
+            "input_args": {},
+            "exposed_args": [
+              "x",
+              "y",
+              "text",
+              "description"
+            ]
+          }
+        ],
+        "executed_tools": [
+          "clear_text",
+          "tap",
+          "type"
+        ],
+        "enhanced": false,
+        "multi_action": true
+      },
+      "context_reports": [
+        {
+          "kind": "prompt_snapshot",
+          "label": "tool_agent.worker",
+          "roles": [
+            {
+              "role": "system",
+              "parts": [
+                {
+                  "label": "part_1",
+                  "source_type": "runtime_message",
+                  "source": "tool_agent.worker",
+                  "type": "text",
+                  "text": "You are one autonomous GUI Worker. Execute the binding `approach` while preserving its immutable goal, success criteria, inputs, and output contract. Strategy alone replaces an approach. Choose GUI actions only inside it; never invent or continue an unrelated source, application, or mechanism.\n\nContext authority:\n- The current Worker attempt owns the complete authorized work scope, approach, and contract. Never act on or create a Claim or Commitment for a requirement absent from its goal and success criteria. Each `unresolved_inputs` entry is a required dependency, not an exact value: resolve it from active Evidence, the bound application, or `ask_user` before establishing any Commitment that consumes it.\n- The current screenshot owns present visibility and actionability. Metadata may help but cannot create an invisible target.\n- WorkerMemory is a typed, time-ordered Runtime projection of Worker observations and recent steps. Always record identities and visible states across frames as Evidence, not narrative. Frame Observations expire with their window; Evidence remains true only at its recorded source and time; Claims and Commitments remain active only while their dependencies do. Do not re-query still-valid Evidence.\n- Runtime-owned ResultRef and collection values are private. Never transcribe, calculate, rank, compare, or replace them; execute named Runtime bindings. If `current_element` exists, it is the target identity, never visible order.\n\nAlign before acting. Compare the binding approach with the current source, application, URL, title, and screenshot. A mismatch is residue from another attempt, including its dialogs, errors, and loading state. Do not interact with residue; begin the binding approach.\n\nDecision protocol:\n- Emit exactly one Runtime decision with compact `state`. Use only Runtime-supplied actions.\n- `state.status` is the workflow phase of the selected action after applying this decision's memory updates: `exploring` locates the source, `collecting` resolves evidence, and `executing` consumes an active Commitment after acquisition closes. Enter `executing` only with a boundary Claim and dependent Commitment. If a receipt completes that Commitment and the selected action resumes acquisition or navigation, use `collecting` or `exploring`; a completed Commitment cannot support `executing`. `state.summary` explains the selected action; it is not memory.\n- Memory updates are deltas to stable keys. `observation/frame` records only the current location/control state; `evidence/attempt` records verified semantics that survive navigation, never predicted action effects; both use `depends_on=[]`. `claim/attempt` states a conclusion with dependencies; `commitment/attempt` states the justified execution target. Update or retract a contradicted key instead of adding aliases.\n- Reconcile the ordered action receipts, current frame, and active memory before acting. Newer facts replace conflicting older versions. When a receipt satisfies an active Commitment, complete that same key; never create another Commitment merely to verify completion. When Evidence closes the required boundary, establish its Claim and Commitment once, then execute it; never restart closed acquisition because earlier evidence is off-screen.\n- Every action is atomic. A batch is one immediate transaction: all intended targets are already visible and every action advances one local intent. Runtime re-grounds each next target on a fresh screenshot. Never batch discovery or recovery with mutation. `scroll`, `drag`, `home`, `back`, `app_switch`, `launch_app`, and navigation must be final; an exact visible query may batch `type` then `press_enter`.\n- At `phase=start`, act only on a target/destination identifying the approach. Direct navigation needs an exact destination established by the attempt, application knowledge, or current page. `launch_app` works directly; never prepend `home` or `app_switch`.\n- A `loading` or `blank` frame is not a spatial target. If an acted-for surface does not materialize, or a required capability is absent, call `report_blocked` with evidence; do not reload, wait arbitrarily, switch approach, or substitute an unrelated action.\n- Use `ask_user` only for one missing user-owned value that materially determines the next action and is absent from the task, active Evidence, and bound application. Never ask for UI instructions or an already known fact. Integrate its task-lifetime answer as Evidence, then a dependent Claim and Commitment, before execution.\n- Preserve hierarchical paths: if the verified parent is `p0/.../pk`, a single-name creation field receives only `p(k+1)`. Otherwise cancel or navigate to a verified prefix.\n- Never guess credentials, authentication codes, hidden identifiers, selectors, or geometry. Read a transient code from its delivery surface, record it as active `evidence/attempt`, then enter it. Never interact with a human-presence challenge.\n- Spatial targets must be visible and unoccluded. Coordinates are normalized 0..999 centers. Describe exactly one visible control; do not relabel a nearby or generic control as the intended target.\n- For a multi-column picker, `drag` inside the exact column and verify its visible value; never use page `scroll` to change a wheel.\n\nOutcome rules:\n- A present Observation never overwrites Evidence with another key. Promote verified identity/classification before leaving its window. Establish a Claim only when its Evidence dependencies prove the boundary; model prose and collection/chunk counts never establish a collection boundary.\n- Current control state and Runtime feedback outrank visual-effect heuristics. An `off_target` signal requires a corrected point. A `no_effect` result requires inspecting the next frame before retrying. Never repeat an equivalent action without task-relevant progress.\n- For exhaustive mutation, traverse one direction. A no-effect traversal establishes the boundary even after an in-place mutation; when no encountered record is known unsatisfied, call `complete` without rechecking handled records.\n- Stable page identity and commit controls outweigh text. Completion must never claim an unrecorded activation. Activate a visible final commit, observe the next frame, then call `complete` after it exits its editor/form without error and no durable fact remains unsatisfied. Scope/container commits are preparatory; do not re-query, reselect, or navigate afterward.\n- Before a scope-dependent commit, current chrome/title/breadcrumb/selection must show the exact target. A visible ancestor never establishes an unshown descendant; after bounded absence, create and enter an authorized missing child.\n- A successful mutation does not prove navigation to an unrelated surface. Persistent or unrelated warnings are context only.\n\nCompletion rules:\n- `state.status = completed | failed` is terminal and must pair with `complete | report_blocked`; cite concrete execution evidence, not a replacement plan.\n- A collector narrows with an exact filter/search, reads exact rows, and traverses until nothing new appears. An exact bounded scope is exhaustive when every in-scope position is visible; call `complete` without traversing outside that bound and summarize the boundary evidence. Otherwise continue or `report_blocked`.\n- Whenever exact records are read, emit `rows` matching the declared schema. Perception collections are advisory, never proof of emptiness. Do not invent values, derive answers, or put reasoning in `rows`.\n- An operator that consumes a plan array element-wise calls `complete` after EACH element's target UI state is confirmed; Runtime then advances the cursor. Complete a single-element operator only after the requested state or terminal-commit transition is confirmed.\n\n\n## Installed applications\nUse only these exact Runtime-provided names with launch_app: [\"Calendar\", \"Camera\", \"Chrome\", \"Clock\", \"Contacts\", \"Docreader\", \"Files\", \"Gallery\", \"Mail\", \"Maps\", \"Mastodon\", \"Mattermost\", \"Messages\", \"Settings\", \"Taodian\"]",
+                  "chars": 8037
+                }
+              ]
+            },
+            {
+              "role": "human",
+              "parts": [
+                {
+                  "label": "part_1",
+                  "source_type": "runtime_message",
+                  "source": "tool_agent.worker",
+                  "type": "text",
+                  "text": "## Current Worker attempt\n`approach` is binding for this attempt. Choose actions that execute it; do not continue an unrelated source, application, or mechanism visible in the frame. When `phase` is `start`, the first action's visible target or destination must identify the approach; the residue surface's usefulness for the goal is irrelevant. The goal and output contract are immutable. Runtime actions are generic capabilities, and named input bindings inject private Master-routed values.\n{\"approach\": \"mastodon_reply_via_explicit_field_tap_and_type\", \"phase\": \"continue\", \"profile\": \"operator\", \"goal\": \"Reply to the toot of gourmet user about Greek food Moussaka with the exact content 'Nice sharing, i love it'.\", \"success_criteria\": [\"The reply 'Nice sharing, i love it' is successfully posted as a response to gourmet's toot about Greek food Moussaka.\"], \"input_bindings\": [], \"unresolved_inputs\": {\"target_user\": \"gourmet\", \"target_topic\": \"Greek food Moussaka\", \"reply_content\": \"Nice sharing, i love it\"}, \"data_requirements\": [], \"input_names\": []}\nOperator rules for this attempt:\n- Treat multi-select and configuration goals as exact sets; validate any review surface before committing.\n- `candidate_set_state.status = exhausted` is guarded Runtime evidence; an initially empty or filtered selector is not exhausted.\n- Finish comparison evidence before mutation, skip excluded or already processed identities, and advance only through explicitly remaining candidates.\n- Durable facts resolve candidates across frames: a recorded no-match query or classified candidate stays resolved unless later evidence disproves it; never rerun that branch.\n- Never call `complete` while a visible final commit control for the requested mutation remains unactivated. Activate it and observe the next frame; readiness is not completion.\n- Observe the post-action frame. If the requested terminal mutation's commit just returned to a stable parent/source surface without error and durable facts name no unsatisfied identity, call `complete`; do not restart the mutation or rerun a resolved query. A preparatory scope/container commit is not terminal.\n\n## Current MaterializedFrame (compact semantic projection)\nRuntime-owned collection/data values remain private. Visible collection cell text is exact current-frame evidence, but cells do not declare record boundaries; clipped cells may be incomplete. For every control rect, x/y are its normalized center coordinates; never add half of w/h to derive the action point.\n{\"frame_id\": \"frame:24\", \"readiness\": \"ready\", \"readiness_reason\": \"\", \"task_reference_time\": {\"platform\": \"android\", \"local_datetime\": \"2025-10-16T12:01:38+00:00\", \"timezone\": \"GMT\", \"utc_offset\": \"+00:00\", \"source\": \"android_adb\", \"confidence\": \"authoritative\", \"captured_at\": \"2026-08-21T04:21:26.568+00:00\", \"fallback_reason\": \"\"}, \"url\": \"\", \"title\": \"\", \"applied_filters\": {}, \"requirement_scopes\": {}, \"scope_blockers\": {}, \"observed_choice_state\": [], \"candidate_set_state\": {}, \"visible_collection_regions\": [], \"structured_surfaces\": [], \"chunks\": [], \"collections\": [], \"missing_requirements\": []}\n\n## WorkerMemory (runtime-projected; not conversation history)\nThis is a deterministic projection of an append-only event journal. A newer frame does not overwrite evidence with a different key; only an explicit update, expiry, or invalid dependency changes active memory. Evidence records what held at its source time; only the current frame proves present visibility or actionability.\n### Current-frame observations\n- None.\n### Accumulated evidence\n- [t=2; evidence:target_toot_confirmed; lifetime=attempt; status=active; source=frame:20] The reply composer is correctly bound to gourmet's toot about Greek food Moussaka, matching target_user='gourmet' and target_topic='Greek food Moussaka'.\n### Established claims\n- [t=3; claim:ready_to_type_reply; lifetime=attempt; status=active; source=frame:20] The reply composer is ready for the exact reply content 'Nice sharing, i love it' after clearing the existing '@gourmet' text.; depends_on=[\"evidence:target_toot_confirmed\"]\n### Active commitments\n- [t=4; commitment:type_and_post_reply; lifetime=attempt; status=active; source=frame:20] Clear the text field, type 'Nice sharing, i love it', then tap the send button to post the reply.; depends_on=[\"claim:ready_to_type_reply\"]\n### Commitments bound to latest invocation\n- [t=4; commitment:type_and_post_reply; source=frame:20] Clear the text field, type 'Nice sharing, i love it', then tap the send button to post the reply.\n### Latest GUI transition (immediately before the current frame)\n- Reconcile these ordered invocation receipts as one transaction with the current frame before retrying. Each receipt proves its action was invoked; the current frame shows the transaction's effect. 'Visual effect unconfirmed' is not an execution failure.\n- [t=14; step:4.1] tool=tap; action=tap; target='button'; intent='Send button (paper plane icon) at top-right of New post screen to submit the reply'; status=executed\n### Earlier execution receipts\n- [t=10; step:2.2] tool=type; failure={\"error\": \"_WorkerActionRejected: predispatch visual grounding could not confirm the proposed target: 当前局部图仅显示了键盘工具栏（包含表情、贴纸等图标）和底部的状态提示条，未包含指令要求的可编辑回复输入框。\", \"status\": \"error\"}\n- [t=12; step:3.1] tool=clear_text; action=clear_text; invocation=confirmed; screen_transition=none_observed; verify the current control value before any retry\n- [t=13; step:3.2] tool=type; action=type; target=\"or paste what's on your mind\"; intent=\"Reply text input field showing '@gourmet' cursor in New post reply composer\"; status=executed\n### Permitted next phase\n- Reconcile only the Commitments bound to the latest invocation. Complete an exact bound key when satisfied; otherwise keep it active. Never rename or repeat it.\n### Memory update history (event-time status; current validity is above)\n- t=1: observation:reply_composer_visible; event_status=active; now=superseded; lifetime=frame\n- t=2: evidence:target_toot_confirmed; event_status=active; now=active; lifetime=attempt\n- t=3: claim:ready_to_type_reply; event_status=active; now=active; lifetime=attempt\n- t=4: commitment:type_and_post_reply; event_status=active; now=active; lifetime=attempt\n- t=8: observation:reply_input_visible; event_status=active; now=expired; lifetime=frame\n- t=11: observation:reply_composer_visible; event_status=active; now=expired; lifetime=frame\n\n## Application knowledge (session-scoped execution facts)\nThese facts define application mechanics and non-visual postconditions, not task requirements. Reconcile them with ordered receipts; a current frame cannot negate a matching non-visual postcondition.\n# Mastodon on Android\n\n- `SavedFavorites`: navigate through the signed-in user's bottom-navigation\n  `Profile → Saved → Favorites`; membership in this collection proves that a\n  Toot is already favorited.\n- `SavedBookmarks`: navigate through the signed-in user's bottom-navigation\n  `Profile → Saved → Bookmarks`; membership in this collection proves that a\n  Toot is bookmarked.\n- An author's avatar, handle, or post profile opens that author's public profile;\n  it is not the signed-in user's `Profile` route and cannot expose the signed-in\n  user's saved collections. From a nested tag or post view without bottom\n  navigation, do not target `Profile` yet: activate the visible Back control one\n  frame at a time until the global bottom navigation is actually visible. Only\n  then activate the signed-in user's `Profile` tab.\n- `TaggedToots`: navigate through `Explore`, search the exact tag, and open its\n  posts view.\n- All three collections expose `author_handle` and `content`, but no stable\n  status ID or permalink. `author_handle` is the `@`-prefixed account handle,\n  not the display name.\n- Match a Toot across these collections by the exact pair\n  (`author_handle`, `content`). A tag-result Toot can only be relocated through\n  its `TaggedToots` collection.\n- A filled blue star with a count on a Toot action row means it is favorited; an\n  outline star means it is not. The corresponding Saved collection is an alternate\n  membership view, not a prerequisite for reading this visible control state.\n- Favorite and bookmark are independent state dimensions. Membership in one neither\n  implies nor excludes membership in the other; only a task-stated predicate makes a\n  saved collection relevant to the target set.\n- Favorite mutation uses the boolean field `favorited`; this is not a field\n  displayed by `TaggedToots` and is neither a query field nor a query filter.\n- Tapping the visible text body of a Toot opens its single-post detail view,\n  titled `Post from <author>`. Do not tap the author/avatar or a media thumbnail:\n  those open the author profile or media viewer instead. The detail view exposes\n  the same author and content together with that Toot's own Favorite control.\n\n## Interface contract\n\n- The exact query entity identifiers are `TaggedToots`, `SavedFavorites`, and\n  `SavedBookmarks`. `Favorites` and `Bookmarks` are `active_view` values, not\n  abbreviated entity names.\n- `TaggedToots` is an exact tag-scoped view, not an unfiltered collection. Opening\n  it requires a concrete `tag`, including its leading `#`. Its source filter field is\n  `tag`, and its query fields are exactly `author_handle` and `content`.\n- `SavedFavorites` is established only while the `Favorites` saved view is active;\n  its required observable state is `active_view` equal to `Favorites`. Its query\n  fields are exactly `author_handle` and `content`.\n- `SavedBookmarks` is established only while the `Bookmarks` saved view is active;\n  its required observable state is `active_view` equal to `Bookmarks`. Its query\n  fields are exactly `author_handle` and `content`.\n- Favoriting updates an existing `TaggedToots` record. `author_handle` and `content`\n  identify that record; `favorited` is the only mutation field and is not a\n  `TaggedToots` query field.\n- `TootDetail` interface:\n  - required observable route state: `tag`, retaining its exact leading `#`\n  - row identity fields: `author_handle`, `content`\n  - mutation fields: `favorited`\n- A `TaggedToots` row reaches `TootDetail` only through its exact source tag view and\n  exact (`author_handle`, `content`) pair. A shared-list match is insufficient because\n  another Toot's action bar may be visible. The tag is route state, not a row field,\n  and full Toot content is not a global search term.\n- Entering either saved collection replaces the active tag route. After inspecting\n  saved views, the exact `TaggedToots` tag route must be active again before any of its\n  rows can expose `TootDetail`.",
+                  "chars": 10666
+                },
+                {
+                  "label": "screenshot",
+                  "source_type": "runtime_image",
+                  "source": "tool_agent.worker",
+                  "type": "image",
+                  "text": "[image_url omitted from diagnostic log]",
+                  "chars": 39
+                }
+              ]
+            }
+          ]
+        }
+      ]
+    }
+  ]
+}

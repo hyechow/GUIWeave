@@ -107,6 +107,34 @@ def test_promoter_keeps_only_selected_replay_material(tmp_path: Path) -> None:
     ).read_bytes()
 
 
+def test_promoter_preserves_goal_and_knowledge_binding_context(tmp_path: Path) -> None:
+    source = tmp_path / "source"
+    source.mkdir()
+    for name in (
+        "tool_agent_trace.json", "observation_tool_agent_14.json",
+        "screenshot_tool_agent_14.png",
+    ):
+        (source / name).write_bytes((_FIXTURE / name).read_bytes())
+    (source / "context.json").write_text(json.dumps({
+        "platform": "android",
+        "goal": "Recorded fixture goal",
+        "knowledge": {"apps": [{"app_name": "Mastodon"}]},
+        "mobileworld": {"score": 1.0},
+    }), encoding="utf-8")
+
+    destination = tmp_path / "promoted"
+    promote_decisions(source, destination, [14])
+
+    context = json.loads(
+        (destination / "context.json").read_text(encoding="utf-8")
+    )
+    assert context == {
+        "platform": "android",
+        "goal": "Recorded fixture goal",
+        "knowledge": {"apps": [{"app_name": "Mastodon"}]},
+    }
+
+
 def test_decision_matcher_accepts_an_explicit_action_alternative() -> None:
     sample = {
         "tool": "continue_with_actions",

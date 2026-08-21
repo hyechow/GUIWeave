@@ -1133,6 +1133,47 @@ class _MultiActionWorker:
         }])
 
 
+class _RepairingMemoryWorker(_MultiActionWorker):
+    def invoke(self, messages):
+        if self.calls < 2:
+            self.memory_updates = [{
+                "fact_type": "commitment",
+                "key": "missing_commitment",
+                "status": "retracted",
+                "lifetime": "attempt",
+                "statement": "Discard an unknown commitment.",
+                "depends_on": [],
+            }]
+        else:
+            self.memory_updates = [
+                {
+                    "fact_type": "observation",
+                    "key": "visible_form",
+                    "status": "active",
+                    "lifetime": "frame",
+                    "statement": "The form and submit control are visible.",
+                    "depends_on": [],
+                },
+                {
+                    "fact_type": "claim",
+                    "key": "visible_form_ready",
+                    "status": "active",
+                    "lifetime": "attempt",
+                    "statement": "The visible form is ready for submission.",
+                    "depends_on": ["observation:visible_form"],
+                },
+                {
+                    "fact_type": "commitment",
+                    "key": "submit_visible_form",
+                    "status": "active",
+                    "lifetime": "attempt",
+                    "statement": "Submit the visible form once.",
+                    "depends_on": ["claim:visible_form_ready"],
+                },
+            ]
+        return super().invoke(messages)
+
+
 def _run_fused_worker(
     monkeypatch,
     *,
@@ -1421,6 +1462,28 @@ def test_worker_repairs_rejected_launch_app_without_reobserving(monkeypatch) -> 
         event["event"] == "worker_same_frame_action_repair"
         for event in runtime.trace
     )
+
+
+def test_worker_repairs_typed_memory_independently_without_dispatch(monkeypatch) -> None:
+    worker = _RepairingMemoryWorker(state_status="executing")
+
+    runtime = _run_fused_worker(
+        monkeypatch,
+        current_url="https://example.test/login",
+        worker=worker,
+    )
+
+    assert runtime.outcome.failure_kind == "budget_exhausted"
+    assert runtime.observe_calls == 1
+    assert worker.calls == 3
+    assert len(runtime._executor.actions) == 3
+    rejected = [
+        event for event in runtime.trace
+        if event["event"] == "worker_memory_update_rejected"
+    ]
+    assert [event["repair_turn"] for event in rejected] == [1, 2]
+    assert all("unknown memory" in event["reason"] for event in rejected)
+    assert "memory_update_invalid" in str(worker.messages[-1].content)
 
 
 def test_worker_repairs_home_then_launch_app_before_dispatch(monkeypatch) -> None:

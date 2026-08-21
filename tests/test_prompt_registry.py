@@ -140,6 +140,8 @@ def test_worker_keeps_data_private_and_coordinates_normalized() -> None:
     assert "`state.status = completed | failed` is terminal" in prompt
     assert "after applying this decision's memory updates" in prompt
     assert "a completed Commitment cannot support `executing`" in prompt
+    assert "write-through" in prompt
+    assert "proves completion" in prompt
 
 
 def test_worker_prompt_stays_a_compact_role_contract() -> None:

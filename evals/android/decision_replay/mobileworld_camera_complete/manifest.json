@@ -1,0 +1,24 @@
+{
+  "version": 1,
+  "name": "mobileworld_camera_complete",
+  "source_run": "20260821_114427",
+  "cases": [
+    {
+      "id": "complete_after_camera_shutter",
+      "frame": 5,
+      "min_pass_rate": 1.0,
+      "expected": {
+        "tool": "complete",
+        "protocol_repairs_max": 0,
+        "required_prefix": [
+          {
+            "capability": "complete"
+          }
+        ],
+        "forbidden_capabilities": [
+          "tap"
+        ]
+      }
+    }
+  ]
+}
