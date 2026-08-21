@@ -2,7 +2,6 @@
 
 from __future__ import annotations
 
-import hashlib
 import json
 import os
 import re
@@ -256,6 +255,17 @@ class WorkerJournalEvent:
     belief_text: str = ""
 
 
+TraversalPhase = Literal["open", "complete", "completed_elsewhere"]
+
+
+@dataclass(frozen=True)
+class InspectionTraversalProgress:
+    """One structured page-inspection state and its model-facing explanation."""
+
+    phase: TraversalPhase = "open"
+    note: str = ""
+
+
 @dataclass
 class WorkerJournal:
     """Fact stream owned by one GUI Worker invocation."""
@@ -274,53 +284,31 @@ class WorkerJournal:
     # ReAct stop cue: consecutive observed frames that added no new collection rows.
     _collection_row_counts: dict[str, int] = field(default_factory=dict, repr=False)
     _collection_stable_frames: dict[str, int] = field(default_factory=dict, repr=False)
-    _current_surface_key: str = field(default="", repr=False)
-    _surface_view_counts: dict[str, dict[str, int]] = field(default_factory=dict, repr=False)
-    _surface_scroll_directions: dict[str, list[str]] = field(default_factory=dict, repr=False)
-    _surface_boundaries: dict[str, set[str]] = field(default_factory=dict, repr=False)
-    _completed_traversal_surfaces: set[str] = field(default_factory=set, repr=False)
+    _current_surface_key: tuple[str, str] | None = field(default=None, repr=False)
+    _scrolled_surfaces: set[tuple[str, str]] = field(default_factory=set, repr=False)
+    _surface_boundaries: dict[tuple[str, str], set[str]] = field(
+        default_factory=dict, repr=False,
+    )
+    _completed_traversal_surfaces: dict[tuple[str, str], None] = field(
+        default_factory=dict, repr=False,
+    )
 
-    def _surface_traversal_complete(self, key: str) -> bool:
-        directions = self._surface_scroll_directions.get(key, [])
+    def _surface_traversal_complete(self, key: tuple[str, str]) -> bool:
         return (
-            bool(directions)
+            key in self._scrolled_surfaces
             and self._surface_boundaries.get(key, set()) >= {"start", "end"}
-        )
-
-    def _surface_cycle_detected(self, key: str) -> bool:
-        directions = self._surface_scroll_directions.get(key, [])
-        return (
-            any(count >= 2 for count in self._surface_view_counts.get(key, {}).values())
-            and "up" in directions
-            and "down" in directions
         )
 
     def record_collection_stability(self, frame: MaterializedFrame) -> None:
         """Track consecutive frames that add no new rows to an accumulated collection."""
-        self._current_surface_key = "|".join((frame.url, frame.title))
-        visible_semantics = [
-            (
-                str(control.get("kind") or ""),
-                str(control.get("label") or ""),
-                str(control.get("value") or ""),
-            )
-            for control in frame.controls
-            if isinstance(control, dict) and control.get("in_viewport") is not False
-        ]
-        signature = hashlib.sha256(json.dumps(
-            visible_semantics,
-            ensure_ascii=False,
-            separators=(",", ":"),
-        ).encode("utf-8")).hexdigest()
-        counts = self._surface_view_counts.setdefault(self._current_surface_key, {})
-        counts[signature] = counts.get(signature, 0) + 1
+        self._current_surface_key = (frame.url, frame.title)
         boundaries = self._surface_boundaries.setdefault(self._current_surface_key, set())
         if frame.page_viewport.get("at_scroll_start") is True:
             boundaries.add("start")
         if frame.page_viewport.get("at_scroll_end") is True:
             boundaries.add("end")
         if self._surface_traversal_complete(self._current_surface_key):
-            self._completed_traversal_surfaces.add(self._current_surface_key)
+            self._completed_traversal_surfaces[self._current_surface_key] = None
         for collection in frame.collections:
             rid = collection.requirement_id
             row_count = collection.row_count
@@ -369,48 +357,35 @@ class WorkerJournal:
                 )
         return "; ".join(notes)
 
-    def traversal_progress_note(self, frame: MaterializedFrame) -> str:
-        """Summarize a repeated bidirectional viewport cycle on one document."""
+    def traversal_progress(self, frame: MaterializedFrame) -> InspectionTraversalProgress:
+        """Return boundary-backed page-inspection state and its compact explanation."""
 
-        key = "|".join((frame.url, frame.title))
+        key = (frame.url, frame.title)
         if self._surface_traversal_complete(key):
-            self._completed_traversal_surfaces.add(key)
+            self._completed_traversal_surfaces[key] = None
         if key in self._completed_traversal_surfaces:
-            return (
-                "Inspection traversal is complete: this document's start and end boundaries "
-                "were both observed after scrolling. Further scroll is repetition, not progress. "
-                "A control absent throughout that coverage is absent from the inspected document."
-            )
-        if self._surface_cycle_detected(key):
-            return (
-                "Inspection traversal revisited a prior semantic viewport after scrolling both "
-                "directions, but document boundaries were not both observed. This is repetition, "
-                "not proof of complete coverage or absence."
+            return InspectionTraversalProgress(
+                phase="complete",
+                note=(
+                    "Inspection traversal is complete: this document's start and end boundaries "
+                    "were both observed after scrolling. Further scroll is repetition, not "
+                    "progress. A control absent throughout that coverage is absent from the "
+                    "inspected document."
+                ),
             )
         if self._completed_traversal_surfaces:
             surfaces = "; ".join(
-                key.rsplit("|", 1)[-1]
-                for key in sorted(self._completed_traversal_surfaces)[-3:]
+                surface_key[1]
+                for surface_key in list(self._completed_traversal_surfaces)[-3:]
             )
-            return (
-                "Inspection traversal already completed for previously visited surface(s): "
-                f"{surfaces}. Do not reopen them; continue with remaining contract requirements."
+            return InspectionTraversalProgress(
+                phase="completed_elsewhere",
+                note=(
+                    "Inspection traversal already completed for previously visited surface(s): "
+                    f"{surfaces}. Do not reopen them; continue with remaining contract requirements."
+                ),
             )
-        return ""
-
-    def traversal_phase(
-        self, frame: MaterializedFrame,
-    ) -> Literal["open", "cycle", "complete", "completed_elsewhere"]:
-        """Return structured inspection state independently of prompt wording."""
-
-        key = "|".join((frame.url, frame.title))
-        if self._surface_traversal_complete(key) or key in self._completed_traversal_surfaces:
-            return "complete"
-        if self._completed_traversal_surfaces:
-            return "completed_elsewhere"
-        if self._surface_cycle_detected(key):
-            return "cycle"
-        return "open"
+        return InspectionTraversalProgress()
 
     def observe_collection(self, frame: MaterializedFrame) -> str:
         """Return the collection ref carrying downward-scroll end evidence, if any."""
@@ -515,9 +490,7 @@ class WorkerJournal:
                     result.get("direction") or args.get("direction") or ""
                 )
                 if self._current_surface_key and self.last_scroll_direction in {"up", "down"}:
-                    self._surface_scroll_directions.setdefault(
-                        self._current_surface_key, []
-                    ).append(self.last_scroll_direction)
+                    self._scrolled_surfaces.add(self._current_surface_key)
                 self.last_scroll_collection_ref = self.collection_ref
                 x = args.get("x")
                 y = args.get("y")
@@ -793,20 +766,18 @@ def project_worker_context(
     same_frame_feedback: dict[str, Any] | None = None,
     max_chars: int = DEFAULT_WORKER_CONTEXT_MAX_CHARS,
     collection_stability: str = "",
-    traversal_progress: str = "",
-    traversal_phase: Literal[
-        "open", "cycle", "complete", "completed_elsewhere"
-    ] = "open",
+    traversal: InspectionTraversalProgress | None = None,
 ) -> WorkerContextProjection:
     """Build one capacity-managed context; the screenshot is supplied separately."""
+    traversal = traversal or InspectionTraversalProgress()
     memory_text = memory.render_prompt_section()
-    if traversal_progress:
+    if traversal.note:
         memory_text = memory_text.replace(
             "### Stable semantic observations (historical prerequisite evidence only)",
             "### Completed historical prerequisites (not final completion)",
         )
         memory_text += (
-            "\n### Traversal coverage\n- " + traversal_progress
+            "\n### Traversal coverage\n- " + traversal.note
             + "\n### Pending terminal requirements\n"
             "- Any failure destination required by the immutable contract that does not "
             "match the current frame remains pending; terminal reporting is not permitted "
@@ -885,26 +856,28 @@ def project_worker_context(
                 "A terminal decision's required UI state must match this frame; historical "
                 "or planned navigation cannot substitute. When inspection_traversal is "
                 "complete, scrolling this document is no longer valid progress; when it is "
-                "completed_elsewhere, do not reopen that completed surface. A cycle does not "
-                "prove boundary coverage or absence.\n"
+                "completed_elsewhere, do not reopen that completed surface.\n"
                 + json.dumps({
                     "frame_id": frame.frame_id,
                     "url": frame.url,
                     "title": frame.title,
-                    "inspection_traversal": traversal_phase,
+                    "inspection_traversal": traversal.phase,
                 }, ensure_ascii=False)
             ),
         ),
     ]
     result = ContextCompressor(max_chars).apply(blocks)
+    report = result.to_report(label="tool_agent.worker.context")
+    report["inspection_traversal"] = traversal.phase
     return WorkerContextProjection(
         text=render_context_blocks(result.kept, include_headers=False),
-        report=result.to_report(label="tool_agent.worker.context"),
+        report=report,
     )
 
 
 __all__ = [
     "DEFAULT_WORKER_CONTEXT_MAX_CHARS",
+    "InspectionTraversalProgress",
     "WorkerContextProjection",
     "WorkerJournal",
     "WorkerJournalEvent",

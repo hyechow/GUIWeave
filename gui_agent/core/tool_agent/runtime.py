@@ -1072,6 +1072,9 @@ class ToolAgentRuntime:
                             for action in frame_actions
                         ],
                         "executed_tools": sorted(journal.executed_tools),
+                        "inspection_traversal": str(
+                            context_reports[0].get("inspection_traversal") or "open"
+                        ),
                         "enhanced": getattr(self, "perception_mode", "vision-only")
                         == "enhanced",
                         "multi_action": bool(getattr(self, "allow_multi_action", False)),
@@ -1433,8 +1436,7 @@ class ToolAgentRuntime:
             ),
             same_frame_feedback=same_frame_feedback,
             collection_stability=journal.collection_stability_note(frame),
-            traversal_progress=journal.traversal_progress_note(frame),
-            traversal_phase=journal.traversal_phase(frame),
+            traversal=journal.traversal_progress(frame),
         )
         system_prompt = self._worker_system_prompt()
         messages = [
