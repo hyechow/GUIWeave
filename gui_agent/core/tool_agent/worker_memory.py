@@ -285,30 +285,21 @@ class WorkerJournal:
     _collection_row_counts: dict[str, int] = field(default_factory=dict, repr=False)
     _collection_stable_frames: dict[str, int] = field(default_factory=dict, repr=False)
     _current_surface_key: tuple[str, str] | None = field(default=None, repr=False)
-    _scrolled_surfaces: set[tuple[str, str]] = field(default_factory=set, repr=False)
-    _surface_boundaries: dict[tuple[str, str], set[str]] = field(
-        default_factory=dict, repr=False,
-    )
-    _completed_traversal_surfaces: dict[tuple[str, str], None] = field(
+    _surface_coverage: dict[tuple[str, str], set[str]] = field(
         default_factory=dict, repr=False,
     )
 
     def _surface_traversal_complete(self, key: tuple[str, str]) -> bool:
-        return (
-            key in self._scrolled_surfaces
-            and self._surface_boundaries.get(key, set()) >= {"start", "end"}
-        )
+        return self._surface_coverage.get(key, set()) >= {"scrolled", "start", "end"}
 
     def record_collection_stability(self, frame: MaterializedFrame) -> None:
         """Track consecutive frames that add no new rows to an accumulated collection."""
         self._current_surface_key = (frame.url, frame.title)
-        boundaries = self._surface_boundaries.setdefault(self._current_surface_key, set())
+        coverage = self._surface_coverage.setdefault(self._current_surface_key, set())
         if frame.page_viewport.get("at_scroll_start") is True:
-            boundaries.add("start")
+            coverage.add("start")
         if frame.page_viewport.get("at_scroll_end") is True:
-            boundaries.add("end")
-        if self._surface_traversal_complete(self._current_surface_key):
-            self._completed_traversal_surfaces[self._current_surface_key] = None
+            coverage.add("end")
         for collection in frame.collections:
             rid = collection.requirement_id
             row_count = collection.row_count
@@ -362,8 +353,6 @@ class WorkerJournal:
 
         key = (frame.url, frame.title)
         if self._surface_traversal_complete(key):
-            self._completed_traversal_surfaces[key] = None
-        if key in self._completed_traversal_surfaces:
             return InspectionTraversalProgress(
                 phase="complete",
                 note=(
@@ -373,10 +362,14 @@ class WorkerJournal:
                     "inspected document."
                 ),
             )
-        if self._completed_traversal_surfaces:
+        completed_surfaces = [
+            surface_key for surface_key in self._surface_coverage
+            if self._surface_traversal_complete(surface_key)
+        ]
+        if completed_surfaces:
             surfaces = "; ".join(
                 surface_key[1]
-                for surface_key in list(self._completed_traversal_surfaces)[-3:]
+                for surface_key in completed_surfaces[-3:]
             )
             return InspectionTraversalProgress(
                 phase="completed_elsewhere",
@@ -490,7 +483,9 @@ class WorkerJournal:
                     result.get("direction") or args.get("direction") or ""
                 )
                 if self._current_surface_key and self.last_scroll_direction in {"up", "down"}:
-                    self._scrolled_surfaces.add(self._current_surface_key)
+                    self._surface_coverage.setdefault(
+                        self._current_surface_key, set(),
+                    ).add("scrolled")
                 self.last_scroll_collection_ref = self.collection_ref
                 x = args.get("x")
                 y = args.get("y")
@@ -758,6 +753,26 @@ class WorkerContextProjection:
     report: dict[str, Any]
 
 
+def render_current_frame_anchor(
+    frame: MaterializedFrame,
+    phase: TraversalPhase = "open",
+) -> str:
+    """Render the shared runtime/replay authority marker for one frame."""
+    return (
+        "## Current frame anchor (authoritative now)\n"
+        "A terminal decision's required UI state must match this frame; historical "
+        "or planned navigation cannot substitute. When inspection_traversal is "
+        "complete, scrolling this document is no longer valid progress; when it is "
+        "completed_elsewhere, do not reopen that completed surface.\n"
+        + json.dumps({
+            "frame_id": frame.frame_id,
+            "url": frame.url,
+            "title": frame.title,
+            "inspection_traversal": phase,
+        }, ensure_ascii=False)
+    )
+
+
 def project_worker_context(
     *,
     memory: WorkerMemoryView,
@@ -851,24 +866,11 @@ def project_worker_context(
             priority=25,
             freshness="turn",
             authoritative_for=("current_surface",),
-            content=(
-                "## Current frame anchor (authoritative now)\n"
-                "A terminal decision's required UI state must match this frame; historical "
-                "or planned navigation cannot substitute. When inspection_traversal is "
-                "complete, scrolling this document is no longer valid progress; when it is "
-                "completed_elsewhere, do not reopen that completed surface.\n"
-                + json.dumps({
-                    "frame_id": frame.frame_id,
-                    "url": frame.url,
-                    "title": frame.title,
-                    "inspection_traversal": traversal.phase,
-                }, ensure_ascii=False)
-            ),
+            content=render_current_frame_anchor(frame, traversal.phase),
         ),
     ]
     result = ContextCompressor(max_chars).apply(blocks)
     report = result.to_report(label="tool_agent.worker.context")
-    report["inspection_traversal"] = traversal.phase
     return WorkerContextProjection(
         text=render_context_blocks(result.kept, include_headers=False),
         report=report,
@@ -884,5 +886,6 @@ __all__ = [
     "WorkerMemoryView",
     "build_worker_memory_view",
     "project_worker_context",
+    "render_current_frame_anchor",
     "render_worker_frame_context",
 ]

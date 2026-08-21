@@ -89,6 +89,7 @@ from gui_agent.core.tool_agent.protocol import (
 from gui_agent.core.tool_agent.replay import write_replay_artifact
 from gui_agent.core.tool_agent.strategy import Strategy
 from gui_agent.core.tool_agent.worker_memory import (
+    InspectionTraversalProgress,
     WorkerJournal,
     build_worker_memory_view,
     project_worker_context,
@@ -958,12 +959,14 @@ class ToolAgentRuntime:
             circuit_decision = None
             same_frame_feedback = initial_same_frame_feedback
             while True:
+                traversal = journal.traversal_progress(frame)
                 messages, context_reports = self._worker_messages(
                     spec=spec,
                     journal=journal,
                     frame=frame,
                     png=png,
                     same_frame_feedback=same_frame_feedback,
+                    traversal=traversal,
                 )
                 response = None
                 state = None
@@ -1072,9 +1075,7 @@ class ToolAgentRuntime:
                             for action in frame_actions
                         ],
                         "executed_tools": sorted(journal.executed_tools),
-                        "inspection_traversal": str(
-                            context_reports[0].get("inspection_traversal") or "open"
-                        ),
+                        "inspection_traversal": traversal.phase,
                         "enhanced": getattr(self, "perception_mode", "vision-only")
                         == "enhanced",
                         "multi_action": bool(getattr(self, "allow_multi_action", False)),
@@ -1421,6 +1422,7 @@ class ToolAgentRuntime:
         frame: MaterializedFrame,
         png: bytes,
         same_frame_feedback: dict[str, Any] | None,
+        traversal: InspectionTraversalProgress,
     ) -> tuple[list[Any], list[dict[str, Any]]]:
         """Rebuild one frame from bounded Journal memory; never replay chat history."""
         memory = build_worker_memory_view(journal)
@@ -1436,7 +1438,7 @@ class ToolAgentRuntime:
             ),
             same_frame_feedback=same_frame_feedback,
             collection_stability=journal.collection_stability_note(frame),
-            traversal=journal.traversal_progress(frame),
+            traversal=traversal,
         )
         system_prompt = self._worker_system_prompt()
         messages = [
