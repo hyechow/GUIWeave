@@ -85,6 +85,50 @@ def test_close_skips_sync_calls_after_playwright_driver_exit() -> None:
     assert dev.page is None
 
 
+def test_production_reads_use_reused_isolated_world() -> None:
+    dev = PlaywrightDevice.__new__(PlaywrightDevice)
+    dev.browser_profile = "production"
+    dev._isolated_context_id = None
+    calls: list[tuple[str, dict]] = []
+
+    def send(method: str, params: dict) -> dict:
+        calls.append((method, params))
+        if method == "Page.getFrameTree":
+            return {"frameTree": {"frame": {"id": "main-frame"}}}
+        if method == "Page.createIsolatedWorld":
+            return {"executionContextId": 73}
+        return {"result": {"value": True}}
+
+    dev._cdp_send = send
+
+    assert dev._read_evaluate("document.readyState")["result"]["value"] is True
+    dev._read_evaluate("document.title")
+
+    assert [method for method, _ in calls] == [
+        "Page.getFrameTree",
+        "Page.createIsolatedWorld",
+        "Runtime.evaluate",
+        "Runtime.evaluate",
+    ]
+    assert calls[-1][1]["contextId"] == 73
+
+
+def test_production_action_feedback_does_not_patch_page_runtime() -> None:
+    dev = PlaywrightDevice.__new__(PlaywrightDevice)
+    dev.browser_profile = "production"
+    dev._native_action_feedback = []
+    tracking: list[bool] = []
+    dev._ensure_net_tracking = lambda: tracking.append(True)
+    dev._cdp_send = lambda *_args, **_kwargs: (_ for _ in ()).throw(
+        AssertionError("production feedback must not evaluate page hooks")
+    )
+
+    dev.begin_action_feedback()
+
+    assert tracking == [True]
+    assert dev.consume_action_feedback() == []
+
+
 def test_cdp_proxy_bypass_is_limited_to_local_and_private_hosts():
     assert _direct_cdp_host("http://localhost:9222") == "localhost"
     assert _direct_cdp_host("http://192.168.1.103:9222") == "192.168.1.103"

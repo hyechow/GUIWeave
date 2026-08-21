@@ -20,5 +20,9 @@ def test_browser_start_url_is_consistent_across_cli_and_mcp() -> None:
     assert _platform_options(custom)["start_url"] == "https://example.com/start"
     args = _build_parser().parse_args(["check", "browser", "--headless"])
     assert _platform_options(args) == {"cdp_url": None, "headless": True}
+    production = _build_parser().parse_args([
+        "run", "browser", "inspect", "--browser-profile", "production",
+    ])
+    assert _platform_options(production)["browser_profile"] == "production"
     parameter = inspect.signature(run_browser_task).parameters["start_url"]
     assert parameter.default == DEFAULT_BROWSER_START_URL

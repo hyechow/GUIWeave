@@ -340,6 +340,19 @@ def test_console_submit_enforces_background_only_options(monkeypatch) -> None:
     assert console.tasks()[0]["mode"] == "chat"
 
 
+def test_console_production_browser_preserves_headed_cdp(monkeypatch) -> None:
+    monkeypatch.setattr(threading.Thread, "start", lambda _thread: None)
+    console = RunConsole(_NeverRunService())  # type: ignore[arg-type]
+    task = console.submit(RunRequest(
+        goal="inspect",
+        platform="browser",
+        browser_profile="production",
+    ))
+
+    assert task.request.headless is False
+    assert task.request.show_hud is False
+
+
 def test_console_run_request_normalizes_android_address() -> None:
     request = RunRequest(
         goal="打开设置",

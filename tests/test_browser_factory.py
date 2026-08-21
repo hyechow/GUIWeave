@@ -4,6 +4,8 @@ import asyncio
 import threading
 from types import SimpleNamespace
 
+import pytest
+
 from gui_agent.adapters.browser import factory, perception
 
 
@@ -69,3 +71,25 @@ def test_browser_bundle_defaults_start_url_to_bing(monkeypatch) -> None:
     assert factory.build_browser_bundle(start_url="https://example.com/").open_session() is session
     assert captured[-1]["start_url"] == "https://example.com/"
     assert "select_tab" in factory.build_browser_bundle().tool_agent_capabilities
+
+
+def test_production_browser_requires_headed_cdp() -> None:
+    with pytest.raises(ValueError, match="requires headed Chrome"):
+        factory.build_browser_bundle(browser_profile="production", headless=True)
+
+
+def test_production_browser_profile_reaches_session(monkeypatch) -> None:
+    captured: dict[str, object] = {}
+    monkeypatch.setattr(
+        perception,
+        "BrowserSession",
+        lambda **options: captured.update(options) or object(),
+    )
+
+    factory.build_browser_bundle(
+        browser_profile="production",
+        headless=False,
+    ).open_session()
+
+    assert captured["browser_profile"] == "production"
+    assert captured["headless"] is False
