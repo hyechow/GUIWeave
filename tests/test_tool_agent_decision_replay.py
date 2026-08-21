@@ -305,6 +305,53 @@ def test_worker_replay_applies_one_same_frame_protocol_repair(tmp_path) -> None:
     assert "Protocol repair" in model.calls[1][-1].content
 
 
+def test_worker_replay_applies_typed_memory_repair_before_action(tmp_path) -> None:
+    run_dir = _worker_run(
+        tmp_path,
+        recorded_tool="continue_with_actions",
+        recorded_actions=[{"name": "scroll", "args": {}}],
+    )
+    trace_path = run_dir / "tool_agent_trace.json"
+    trace = json.loads(trace_path.read_text(encoding="utf-8"))
+    trace["trace"][-1]["replay_context"]["active_commitment_refs"] = [
+        "commitment:handle_item"
+    ]
+    trace_path.write_text(json.dumps(trace), encoding="utf-8")
+    invalid = _state("executing")
+    invalid["memory_updates"] = [{
+        "fact_type": "commitment",
+        "key": "handle_item",
+        "status": "completed",
+        "lifetime": "attempt",
+        "statement": "The item was handled.",
+        "depends_on": ["claim:item_is_target"],
+    }]
+    model = _RecordedModel(
+        _tool_call("continue_with_actions", {
+            "state": invalid,
+            "actions": [{"name": "scroll", "args": {
+                "direction": "down",
+                "description": "Continue after handling the item",
+            }}],
+        }),
+        _tool_call("continue_with_actions", {
+            "state": _state("collecting"),
+            "actions": [{"name": "scroll", "args": {
+                "direction": "down",
+                "description": "Continue after handling the item",
+            }}],
+        }),
+    )
+
+    result = replay_worker_decision(run_dir, frame=1, llm=model)
+
+    sample = result["samples"][0]
+    assert result["status"] == "passed"
+    assert sample["memory_repairs"] == 1
+    assert sample["state_status"] == "collecting"
+    assert "Typed memory repair" in model.calls[1][-1].content
+
+
 def test_worker_replay_supports_protocol_failed_frame_with_expectation(tmp_path) -> None:
     run_dir = _worker_run(
         tmp_path,

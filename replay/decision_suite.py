@@ -175,6 +175,12 @@ def score_decision_sample(sample: dict[str, Any], expected: dict[str, Any]) -> l
             "protocol_repairs: expected <= "
             f"{expected.get('protocol_repairs_max', 0)}, got {repairs}"
         )
+    memory_repairs = int(sample.get("memory_repairs") or 0)
+    if memory_repairs > int(expected.get("memory_repairs_max", 0)):
+        errors.append(
+            "memory_repairs: expected <= "
+            f"{expected.get('memory_repairs_max', 0)}, got {memory_repairs}"
+        )
 
     semantics = sample.get("action_semantics") or []
     calls = _sample_calls(sample)
@@ -203,6 +209,12 @@ def score_decision_sample(sample: dict[str, Any], expected: dict[str, Any]) -> l
         errors.extend(_match_action(wanted, semantics[index], calls[index], f"actions[{index}]"))
 
     state = sample.get("args", {}).get("state", {})
+    if expected_status := expected.get("state_status"):
+        if state.get("status") != expected_status:
+            errors.append(
+                f"state.status: expected {expected_status!r}, "
+                f"got {state.get('status')!r}"
+            )
     facts = list(state.get("established_facts") or [])
     facts.extend(
         str(item.get("statement") or "")

@@ -160,3 +160,24 @@ def test_decision_matcher_accepts_an_explicit_action_alternative() -> None:
     assert score_decision_sample(sample, expected) == []
     sample["args"]["actions"][0]["args"]["y"] = 700
     assert any("outside" in error for error in score_decision_sample(sample, expected))
+
+
+def test_decision_matcher_checks_workflow_phase() -> None:
+    sample = {
+        "tool": "continue_with_actions",
+        "protocol_repairs": 0,
+        "action_semantics": [{"capability": "back"}],
+        "args": {
+            "actions": [{"name": "back", "args": {}}],
+            "state": {"status": "executing", "memory_updates": []},
+        },
+    }
+    expected = {
+        "tool": "continue_with_actions",
+        "state_status": "collecting",
+        "required_prefix": [{"capability": "back"}],
+    }
+
+    assert score_decision_sample(sample, expected) == [
+        "state.status: expected 'collecting', got 'executing'",
+    ]

@@ -5,6 +5,7 @@ from __future__ import annotations
 import argparse
 import ast
 import json
+import re
 from pathlib import Path
 from typing import Any
 
@@ -689,16 +690,54 @@ def replay_worker_decision(
     results = []
     for number in range(1, samples + 1):
         replay_messages, repairs, repair_errors = list(messages), 0, []
-        for protocol_attempt in range(2):
+        memory_repairs, memory_repair_errors = 0, []
+        active_commitments = set(
+            replay_context.get("active_commitment_refs") or
+            re.findall(
+                r"commitment:[a-z][a-z0-9_]{0,63}",
+                "\n".join(
+                    str(message.content) for message in messages
+                    if isinstance(getattr(message, "content", None), str)
+                ),
+            )
+        )
+        for decision_attempt in range(3):
             response = bound.invoke(replay_messages)
             try:
                 decision = _worker_decision(
                     response, actions, tools_by_name,
                     action_protocol=action_protocol,
                 )
+                state = decision.get("args", {}).get("state", {})
+                remaining = set(active_commitments)
+                for update in state.get("memory_updates") or []:
+                    if not isinstance(update, dict) or update.get("fact_type") != "commitment":
+                        continue
+                    fact_ref = f"commitment:{update.get('key', '')}"
+                    if update.get("status") == "active":
+                        remaining.add(fact_ref)
+                    else:
+                        remaining.discard(fact_ref)
+                if state.get("status") == "executing" and not remaining:
+                    raise ValueError(
+                        "executing phase requires an active Commitment with valid dependencies"
+                    )
                 break
             except Exception as exc:  # noqa: BLE001 - mirrors one production repair
-                if protocol_attempt:
+                is_memory_error = isinstance(exc, ValueError) and str(exc).startswith(
+                    "executing phase requires an active Commitment"
+                )
+                if is_memory_error and memory_repairs < 2:
+                    memory_repairs += 1
+                    memory_repair_errors.append(f"{type(exc).__name__}: {exc}")
+                    replay_messages.extend([response, HumanMessage(content=(
+                        "Typed memory repair: the Runtime atomically rejected this memory "
+                        f"delta on the SAME frame: {exc}. No memory was recorded and no "
+                        "action was executed. Correct state.status and the memory delta "
+                        "before choosing the next action."
+                    ))])
+                    continue
+                if repairs:
                     raise
                 repairs += 1
                 repair_errors.append(f"{type(exc).__name__}: {exc}")
@@ -713,6 +752,8 @@ def replay_worker_decision(
             **decision,
             "protocol_repairs": repairs,
             "protocol_repair_errors": repair_errors,
+            "memory_repairs": memory_repairs,
+            "memory_repair_errors": memory_repair_errors,
             "passed": not errors,
             "errors": errors,
         })
