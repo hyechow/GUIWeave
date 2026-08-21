@@ -5,6 +5,7 @@ from __future__ import annotations
 import argparse
 import ast
 import json
+import re
 from pathlib import Path
 from typing import Any
 
@@ -59,6 +60,10 @@ _WORKER_TURN_SECTIONS = (
     "## Current Worker attempt",
     "## Current frame anchor",
     "## Same-frame runtime feedback",
+)
+
+_TRAVERSAL_PHASE_RE = re.compile(
+    r'"inspection_traversal"\s*:\s*"(open|cycle|complete|completed_elsewhere)"'
 )
 
 
@@ -180,6 +185,8 @@ def _worker_messages(
             )))
         elif name == "human":
             original_text = text
+            phase_match = _TRAVERSAL_PHASE_RE.search(original_text)
+            recorded_traversal_phase = phase_match.group(1) if phase_match else "open"
             memory_start = original_text.find("## WorkerMemory")
             memory_boundaries = [
                 offset for marker in _WORKER_TURN_SECTIONS
@@ -219,17 +226,14 @@ def _worker_messages(
                     "A terminal decision's required UI state must match this frame; historical "
                     "or planned navigation cannot substitute. When inspection_traversal is "
                     "complete, scrolling this document is no longer valid progress; when it is "
-                    "completed_elsewhere, do not reopen that completed surface.\n"
+                    "completed_elsewhere, do not reopen that completed surface. A cycle does not "
+                    "prove boundary coverage or absence.\n"
                     + json.dumps({
                         "frame_id": materialized_frame.frame_id,
                         "url": materialized_frame.url,
                         "title": materialized_frame.title,
                         "inspection_traversal": (
-                            "complete"
-                            if "Inspection traversal is complete:" in memory_text
-                            else "completed_elsewhere"
-                            if "Inspection traversal already completed" in memory_text
-                            else "open"
+                            recorded_traversal_phase
                         ),
                     }, ensure_ascii=False)
                     if materialized_frame is not None else ""
@@ -608,32 +612,6 @@ def replay_worker_decision(
         "tool": str(selected.get("tool") or ""),
         "action_capabilities": recorded_capabilities,
     }
-    if assessment.collector_completion_required:
-        decision = {
-            "tool": "complete",
-            "actions": ["complete"],
-            "action_capabilities": ["complete"],
-            "action_targets": ["complete"],
-            "action_texts": [],
-            "state_status": "completed",
-            "state_summary": "Runtime-authoritative collection boundary complete.",
-            "args": {"evidence": ["Runtime-authoritative collection boundary complete"]},
-            "first_action_capability": "complete",
-            "first_action_target": "complete",
-            "protocol_repairs": 0,
-        }
-        errors = _mismatches(expected, decision)
-        return _result(
-            "worker",
-            str(getattr(model_config, "model", "runtime")),
-            expected,
-            [{"sample": number, **decision, "passed": not errors, "errors": errors}
-             for number in range(1, samples + 1)],
-            frame_id=f"frame:{frame_no}",
-            worker_id=selected.get("worker_id"),
-            step=selected.get("step"),
-            uses_llm=False,
-        )
     worker_report = _report(selected, "tool_agent.worker")
     recorded_memory = _text(next(
         role.get("parts", []) for role in worker_report.get("roles", [])

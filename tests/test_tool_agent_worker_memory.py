@@ -47,19 +47,20 @@ def test_worker_memory_is_a_bounded_projection_of_append_only_runtime_facts() ->
     assert "Recent narrative steps" not in rendered
 
 
-def test_worker_memory_compacts_repeated_bidirectional_viewports_into_progress() -> None:
+def test_worker_memory_completes_traversal_only_after_both_document_boundaries() -> None:
     journal = WorkerJournal(worker_id="detail_traversal")
     frames = []
-    for step, (label, direction) in enumerate((
-        ("Order header", "down"),
-        ("Order footer", "up"),
-        ("Order header", "down"),
+    for step, (label, direction, page_viewport) in enumerate((
+        ("Order header", "down", {"at_scroll_start": True, "at_scroll_end": False}),
+        ("Order middle", "down", {"at_scroll_start": False, "at_scroll_end": False}),
+        ("Order footer", "up", {"at_scroll_start": False, "at_scroll_end": True}),
     ), start=1):
         frame = MaterializedFrame(
             frame_id=f"frame:{step}",
             screenshot_path=f"frame-{step}.png",
             url="https://example.test/orders/169",
             title="Order 169",
+            page_viewport=page_viewport,
             controls=[{"kind": "text", "label": label, "in_viewport": True}],
         )
         frames.append(frame)
@@ -88,9 +89,10 @@ def test_worker_memory_compacts_repeated_bidirectional_viewports_into_progress()
         frame=frames[-1],
         attempt_contract="## Current Worker attempt\nFailure destination: Orders",
         traversal_progress=progress,
+        traversal_phase=journal.traversal_phase(frames[-1]),
     )
 
-    assert "revisited prior semantic viewports" in progress
+    assert "start and end boundaries" in progress
     assert "### Completed historical prerequisites" in projection.text
     assert "### Pending terminal requirements" in projection.text
     assert projection.text.index("### Pending terminal requirements") < projection.text.index(
@@ -114,8 +116,54 @@ def test_worker_memory_compacts_repeated_bidirectional_viewports_into_progress()
         memory=build_worker_memory_view(journal),
         frame=destination,
         traversal_progress=historical,
+        traversal_phase=journal.traversal_phase(destination),
     )
     assert '"inspection_traversal": "completed_elsewhere"' in historical_projection.text
+
+
+def test_worker_memory_cycle_without_boundaries_does_not_claim_complete() -> None:
+    journal = WorkerJournal(worker_id="partial_cycle")
+    frames = []
+    for step, (label, direction) in enumerate((
+        ("Middle A", "down"),
+        ("Middle B", "up"),
+        ("Middle A", "down"),
+    ), start=1):
+        frame = MaterializedFrame(
+            frame_id=f"frame:{step}",
+            screenshot_path=f"frame-{step}.png",
+            url="https://example.test/long-form",
+            title="Long Form",
+            controls=[{"kind": "text", "label": label, "in_viewport": True}],
+        )
+        frames.append(frame)
+        journal.record_collection_stability(frame)
+        journal.record_turn(
+            step=step,
+            frame_id=frame.frame_id,
+            state=_state(step),
+            tool="scroll",
+            args={"direction": direction},
+            result={
+                "status": "executed",
+                "action_type": "scroll",
+                "direction": direction,
+                "no_effect": False,
+            },
+        )
+
+    progress = journal.traversal_progress_note(frames[-1])
+    projection = project_worker_context(
+        memory=build_worker_memory_view(journal),
+        frame=frames[-1],
+        traversal_progress=progress,
+        traversal_phase=journal.traversal_phase(frames[-1]),
+    )
+
+    assert "boundaries were not both observed" in progress
+    assert "not proof of complete coverage or absence" in progress
+    assert '"inspection_traversal": "cycle"' in projection.text
+    assert "Inspection traversal is complete" not in projection.text
 
 
 def test_worker_memory_omits_spatial_and_execution_metadata() -> None:

@@ -179,11 +179,16 @@ def test_complete_structured_page_exposes_authoritative_next_window_action() -> 
         frame,
     )
 
-    assert [action.capability for action in assessment.allowed_actions] == ["open_url"]
-    assert assessment.allowed_actions[0].fixed_args["url"] == (
+    assert [action.capability for action in assessment.allowed_actions] == [
+        "scroll", "reveal_control", "open_url",
+    ]
+    open_action = next(
+        action for action in assessment.allowed_actions if action.capability == "open_url"
+    )
+    assert open_action.fixed_args["url"] == (
         "https://example.test/records?p=2"
     )
-    assert "url" not in assessment.allowed_actions[0].exposed_args
+    assert "url" not in open_action.exposed_args
 
 
 def test_no_match_on_complete_structured_page_advances_without_collection() -> None:
@@ -212,8 +217,13 @@ def test_no_match_on_complete_structured_page_advances_without_collection() -> N
         frame,
     )
 
-    assert [action.capability for action in assessment.allowed_actions] == ["open_url"]
-    assert assessment.allowed_actions[0].fixed_args["url"].endswith("p=2")
+    assert [action.capability for action in assessment.allowed_actions] == [
+        "scroll", "tap", "open_url",
+    ]
+    open_action = next(
+        action for action in assessment.allowed_actions if action.capability == "open_url"
+    )
+    assert open_action.fixed_args["url"].endswith("p=2")
 
 
 def test_singleton_first_match_does_not_follow_unaligned_surface_pagination() -> None:
@@ -276,18 +286,21 @@ def test_singleton_first_match_follows_next_page_after_ordered_no_match() -> Non
         frame,
     )
 
-    assert [action.capability for action in assessment.allowed_actions] == ["open_url"]
-    assert assessment.allowed_actions[0].fixed_args["url"].endswith("p=2")
+    assert [action.capability for action in assessment.allowed_actions] == ["tap", "open_url"]
+    open_action = next(
+        action for action in assessment.allowed_actions if action.capability == "open_url"
+    )
+    assert open_action.fixed_args["url"].endswith("p=2")
 
 
-def test_structured_pagination_maximizes_page_size_before_advancing() -> None:
+def test_structured_pagination_does_not_guess_numeric_select_is_page_size() -> None:
     spec = _collector()
     frame = MaterializedFrame(
         frame_id="frame:small-window",
         screenshot_path="frame.png",
         controls=[{
             "kind": "native_select",
-            "label": "Show",
+                "label": "Year",
             "value": "12",
             "selected_text_primary": "12",
             "options": ["12", "24", "36"],
@@ -316,12 +329,13 @@ def test_structured_pagination_maximizes_page_size_before_advancing() -> None:
         frame,
     )
 
-    assert [action.capability for action in assessment.allowed_actions] == ["select_option"]
-    assert assessment.allowed_actions[0].fixed_args == {
-        "x": 900,
-        "y": 2698,
-        "text": "36",
-    }
+    assert [action.capability for action in assessment.allowed_actions] == [
+        "select_option", "open_url",
+    ]
+    select_action = assessment.allowed_actions[0]
+    open_action = assessment.allowed_actions[1]
+    assert select_action.fixed_args == {}
+    assert open_action.fixed_args == {"url": "https://example.test/records?p=2"}
 
 
 @pytest.mark.parametrize(

@@ -251,6 +251,25 @@ def _materializer(tmp_path: Path, mode: str) -> PerceptionMaterializer:
     return materializer
 
 
+def test_materialized_frame_preserves_page_viewport_boundaries(tmp_path: Path) -> None:
+    materializer = _materializer(tmp_path, "enhanced")
+    viewport = {
+        "type": "scroll",
+        "at_scroll_start": True,
+        "at_scroll_end": False,
+        "can_scroll_more": True,
+    }
+
+    frame, _ = materializer.observe(
+        bundle=FakeBundle([], observation={"viewport": viewport}),
+        platform=FakePlatform(),
+        requirements=[],
+        frame_no=1,
+    )
+
+    assert frame.page_viewport == viewport
+
+
 def test_sparse_window_retains_same_source_field_capability(tmp_path: Path) -> None:
     requirement = DataRequirement(
         id="products",

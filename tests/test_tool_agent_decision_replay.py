@@ -509,6 +509,7 @@ def test_worker_replay_preserves_recorded_singleton_contract(tmp_path) -> None:
     assert "complete" in {
         tool["function"]["name"] for tool in model.bound_tools
     }
+    assert result["uses_llm"] is True
 
 
 def test_worker_replay_marks_redacted_value_action_unavailable(tmp_path) -> None:
