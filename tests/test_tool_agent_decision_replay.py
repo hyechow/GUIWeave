@@ -425,6 +425,7 @@ def test_worker_replay_uses_current_application_knowledge(
     )
     report["roles"][1]["parts"][0]["text"] += (
         "\n\n- tool=tap; runtime reported no_effect"
+        "\n\n## Application knowledge\nstale human fact"
     )
     trace_path.write_text(json.dumps(trace), encoding="utf-8")
     knowledge = SimpleNamespace(worker_context=lambda: "current fact")
@@ -447,6 +448,7 @@ def test_worker_replay_uses_current_application_knowledge(
     assert "old fact" not in model.calls[0][0].content
     human_text = model.calls[0][1].content[0]["text"]
     assert "current fact" in human_text
+    assert "stale human fact" not in human_text
     assert "session-scoped execution facts" in human_text
     assert "runtime reported no_effect" not in human_text
     assert "invocation=confirmed" in human_text
@@ -637,6 +639,7 @@ def test_master_replay_uses_current_prompt_knowledge_and_structural_expectation(
             "compile_attempts": 1,
             "worker_count": 1,
             "worker_profiles": ["operator"],
+            "unresolved_input_counts": [0],
             "data_cardinalities": [],
             "finish_effect": "mutation",
         },

@@ -24,7 +24,6 @@ from gui_agent.core.tool_agent.contracts import (
 )
 from gui_agent.core.tool_agent.orchestrator import (
     compile_master_program,
-    normalize_task_semantics,
 )
 from gui_agent.core.tool_agent.protocol import (
     MAX_ORDERED_ACTIONS,
@@ -34,7 +33,6 @@ from gui_agent.core.tool_agent.protocol import (
     generic_action_spec,
     image_message,
     validate_worker_tool_state,
-    value_provenance_contract,
     worker_attempt_contract,
 )
 from gui_agent.core.tool_agent.runtime import ToolAgentRuntime
@@ -160,7 +158,6 @@ def _worker_messages(
     *,
     attempt_contract: str,
     application_knowledge: str = "",
-    value_provenance: str = "",
     image_scale: float = 1.0,
 ) -> list[Any]:
     messages: list[Any] = []
@@ -186,6 +183,7 @@ def _worker_messages(
         elif name == "human":
             text = _without_section(text, "## Original task source")
             text = _without_section(text, "## Value provenance archive")
+            text = _without_section(text, "## Application knowledge")
             text = text.replace(
                 "runtime reported no_effect",
                 "invocation=confirmed; screen_transition=none_observed; reconcile "
@@ -200,8 +198,6 @@ def _worker_messages(
             if application_knowledge:
                 knowledge = render_application_knowledge_context(application_knowledge)
                 text = text.rstrip() + "\n\n" + knowledge
-            if value_provenance:
-                text = text.rstrip() + "\n\n" + value_provenance
             messages.append(
                 image_message(text, screenshot, scale=image_scale)
                 if any(part.get("type") == "image" for part in parts)
@@ -278,13 +274,18 @@ def _master_shape(source: str, *, reviewed: bool = True) -> dict[str, Any]:
     required_field_counts = []
     procedural_approaches = []
     approach_action_counts = []
+    unresolved_input_counts = []
     for call in workers:
         profile = _literal(call, "profile")
         requirements = _literal(call, "data_requirements", [])
         approach = str(_literal(call, "approach", "") or "")
+        unresolved_inputs = _literal(call, "unresolved_inputs", {})
         profiles.append(profile or ("collector" if requirements else "operator"))
         procedural_approaches.append(approach_is_procedural(approach))
         approach_action_counts.append(approach_atomic_action_count(approach))
+        unresolved_input_counts.append(
+            len(unresolved_inputs) if isinstance(unresolved_inputs, dict) else -1
+        )
         cardinalities.extend(
             str(item.get("cardinality") or "many")
             for item in requirements
@@ -306,6 +307,7 @@ def _master_shape(source: str, *, reviewed: bool = True) -> dict[str, Any]:
         "required_data_field_counts": required_field_counts,
         "procedural_approaches": procedural_approaches,
         "approach_action_counts": approach_action_counts,
+        "unresolved_input_counts": unresolved_input_counts,
         "api_calls": [call.func.attr for call in calls],
         "finish_effect": _literal(finish, "effect", ""),
     }
@@ -385,18 +387,6 @@ def replay_master_decision(
     expected = expectation or _master_shape(str(selected.get("source") or ""))
     model, _, model_name = _selected_model("tool_agent.master", llm)
     task = _current_master_task(_master_task(selected), context)
-    if llm is None:
-        semantic_contract = normalize_task_semantics(
-            llm=model,
-            system_prompt=load_prompt_text("task.tool_agent.semantic_contract"),
-            goal=str(task.get("goal") or ""),
-        )
-        if (
-            semantic_contract.conditional_predicates
-            or semantic_contract.semantic_predicates
-            or semantic_contract.counted_entity
-        ):
-            task["semantic_contract"] = semantic_contract.model_dump(mode="json")
     results = []
     for number in range(1, samples + 1):
         compile_history = []
@@ -583,7 +573,7 @@ def replay_worker_decision(
     observation = json.loads(
         (run_dir / f"observation_tool_agent_{frame_no}.json").read_text(encoding="utf-8")
     )
-    spec = WorkerSpec.model_validate(replay_context["worker_spec"])
+    spec = WorkerSpec.model_validate(replay_context["worker_spec"], extra="ignore")
     materialized = MaterializedFrame.model_validate(observation)
     actions = []
     for raw_action in replay_context.get("actions") or []:
@@ -672,9 +662,6 @@ def replay_worker_decision(
         application_knowledge="\n\n".join(
             value.worker_context()
             for value in _current_app_knowledge(context)
-        ),
-        value_provenance=value_provenance_contract(
-            str(context.get("goal") or ""), spec,
         ),
         image_scale=float(getattr(model_config, "image_scale", 1.0)),
     )

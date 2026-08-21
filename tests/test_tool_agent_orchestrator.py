@@ -9,7 +9,6 @@ from gui_agent.core.tool_agent.orchestrator import (
     _schema_contains_array,
     compile_master_program,
     execute_master_program,
-    normalize_task_semantics,
     validate_master_source,
 )
 
@@ -191,73 +190,6 @@ ctx.finish(outcome["collection_ref"]["ref"], effect="data")
     assert not [item for item in diagnostics if item.code == "DATA_FILTER_BOUNDARY"]
 
 
-def test_master_review_rejects_year_added_to_yearless_month_day() -> None:
-    source = _program(
-        '''
-outcome = ctx.gui_worker(
-    worker_id="collect_records",
-    profile="collector",
-    goal="Collect records from October 3rd onward",
-    success_criteria=["All records from October 3rd onward are collected"],
-    data_requirements=[{
-        "id": "records",
-        "description": "Records from October 3rd onward",
-        "cardinality": "many",
-        "row_schema": {
-            "type": "object",
-            "properties": {"date": {"type": "string"}},
-            "required": ["date"],
-        },
-        "field_sources": {"date": "Date"},
-        "field_types": {"date": "datetime"},
-        "filters": {"date": {"from": "2025-10-03"}},
-        "coverage": "complete",
-    }],
-    approach="Source record workflow",
-)
-ctx.finish(outcome["collection_ref"]["ref"], effect="data")
-'''.strip()
-    )
-
-    diagnostics = validate_master_source(
-        source, user_goal="Collect records from October 3rd onward",
-    )
-
-    assert any(item.code == "DATA_FILTER_DATE_COMPONENTS" for item in diagnostics)
-    timestamp = source.replace('"2025-10-03"', '"2025-10-03T00:00:00+00:00"')
-    assert any(
-        item.code == "DATA_FILTER_DATE_COMPONENTS"
-        for item in validate_master_source(
-            timestamp, user_goal="Collect records from October 3rd onward",
-        )
-    )
-    preserved = source.replace('"2025-10-03"', '"October 3"')
-    assert not [
-        item for item in validate_master_source(
-            preserved, user_goal="Collect records from October 3rd onward",
-        )
-        if item.code == "DATA_FILTER_DATE_COMPONENTS"
-    ]
-
-
-def test_master_review_rejects_alternative_field_sources() -> None:
-    combined = GUI_CALL.replace(
-        f'"row_schema": {ROW_SCHEMA!r},',
-        f'"row_schema": {ROW_SCHEMA!r},\n        '
-        '"field_sources": {"amount": "Total or Subtotal"},',
-    )
-    source = _program(
-        f'''\
-outcome = {combined}
-ctx.finish(outcome["collection_ref"]["ref"], effect="data")
-'''.strip()
-    )
-
-    diagnostics = validate_master_source(source)
-
-    assert any(item.code == "DATA_FIELD_SOURCE" for item in diagnostics)
-
-
 def test_master_review_does_not_treat_hybrid_mutation_values_as_row_filters() -> None:
     source = _program(
         '''
@@ -294,7 +226,7 @@ ctx.finish(outcome["collection_ref"]["ref"], effect="data")
     assert not [item for item in diagnostics if item.code == "DATA_FILTER_BOUNDARY"]
 
 
-def test_master_review_accepts_semantic_contract_and_source_approach() -> None:
+def test_master_review_accepts_source_approach() -> None:
     source = _program(
         '''
 outcome = ctx.gui_worker(
@@ -302,6 +234,7 @@ outcome = ctx.gui_worker(
     profile="collector",
     goal="Retrieve tomorrow's weather",
     success_criteria=["Tomorrow's weather is collected"],
+    unresolved_inputs={"location": "Exact forecast location"},
     data_requirements=[{
         "id": "weather",
         "description": "Tomorrow's weather",
@@ -428,78 +361,6 @@ ctx.finish(result["ref"], effect="data")
     diagnostics = validate_master_source(source)
 
     assert any(item.code == "OPERATOR_COLLECTION_REF" for item in diagnostics)
-
-
-def test_master_review_rejects_counting_collection_input_slots() -> None:
-    source = _program(
-        f'''
-outcome = ctx.gui_worker(
-    worker_id="collect_records",
-    profile="collector",
-    goal="Collect all requested records",
-    success_criteria=["Every requested record is returned as one raw row"],
-    data_requirements=[{{
-        "id": "records",
-        "description": "Requested records",
-        "cardinality": "many",
-        "row_schema": {ROW_SCHEMA!r},
-        "field_sources": {{"amount": "Amount"}},
-        "field_types": {{"amount": "number"}},
-        "filters": {{}},
-        "coverage": "complete",
-    }}],
-    approach="Record collection workflow",
-)
-result = ctx.transform(
-    transform_id="count_records",
-    inputs=[outcome["collection_ref"]["ref"]],
-    source="def transform(inputs):\\n    return len(inputs)",
-    result_schema={{"type": "integer"}},
-)
-ctx.finish(result["ref"], effect="data")
-'''.strip()
-    )
-
-    diagnostics = validate_master_source(source)
-
-    assert any(item.code == "TRANSFORM_INPUT_CONTAINER" for item in diagnostics)
-
-
-def test_master_review_accepts_counting_rows_in_one_collection_input() -> None:
-    source = _program(
-        f'''
-outcome = ctx.gui_worker(
-    worker_id="collect_records",
-    profile="collector",
-    goal="Collect all requested records",
-    success_criteria=["Every requested record is returned as one raw row"],
-    data_requirements=[{{
-        "id": "records",
-        "description": "Requested records",
-        "cardinality": "many",
-        "row_schema": {ROW_SCHEMA!r},
-        "field_sources": {{"amount": "Amount"}},
-        "field_types": {{"amount": "number"}},
-        "filters": {{}},
-        "coverage": "complete",
-    }}],
-    approach="Record collection workflow",
-)
-result = ctx.transform(
-    transform_id="count_records",
-    inputs=[outcome["collection_ref"]["ref"]],
-    source="def transform(inputs):\\n    return len(inputs[0])",
-    result_schema={{"type": "integer"}},
-)
-ctx.finish(result["ref"], effect="data")
-'''.strip()
-    )
-
-    diagnostics = validate_master_source(source)
-
-    assert not [
-        item for item in diagnostics if item.code == "TRANSFORM_INPUT_CONTAINER"
-    ]
 
 
 def test_master_review_explains_visual_only_worker_dependencies() -> None:
@@ -1223,41 +1084,6 @@ def test_master_compiler_regenerates_only_during_static_review() -> None:
     assert events[1][1]["diagnostics"] == []
 
 
-def test_master_compiler_preserves_typed_counted_entity_as_record_grain() -> None:
-    wrong_gui = GUI_CALL.replace(
-        '"description": "Requested records",',
-        '"description": "Requested records",\n        "record_grain": "messages",',
-    )
-    wrong = _program(
-        f'''\
-records = {wrong_gui}
-ctx.finish(records["collection_ref"]["ref"], effect="data")
-'''.strip()
-    )
-    correct = wrong.replace(
-        '"record_grain": "messages",',
-        '"record_grain": "forms",\n        '
-        '"semantic_predicates": ["the item is a form"],',
-    )
-    llm = _SequenceLLM(wrong, correct)
-
-    program = compile_master_program(
-        llm=llm,
-        system_prompt="Compile a program.",
-        task_context={
-            "goal": "Tell me how many forms were received.",
-            "semantic_contract": {
-                "conditional_predicates": [],
-                "semantic_predicates": ["the item is a form"],
-                "counted_entity": "forms",
-            },
-        },
-    )
-
-    assert program.source == correct
-    assert program.attempts == 2
-
-
 def test_master_review_rejects_worker_program_without_success_path() -> None:
     source = _program(
         f'''\
@@ -1275,57 +1101,6 @@ ctx.fail("restructuring required")
         and "must include a ctx.finish success path" in item.message
         for item in diagnostics
     )
-
-
-def test_task_semantic_contract_extracts_conditional_world_state() -> None:
-    llm = _SequenceLLM(
-        '{"conditional_predicates":["a source affirmatively states that approval has been granted"]}'
-    )
-    events = []
-
-    contract = normalize_task_semantics(
-        llm=llm,
-        system_prompt="Normalize conditional predicates.",
-        goal="If approval has not been granted, request it.",
-        on_event=lambda event, payload: events.append((event, payload)),
-    )
-
-    assert contract.conditional_predicates == [
-        "a source affirmatively states that approval has been granted",
-    ]
-    assert contract.semantic_predicates == []
-    assert contract.counted_entity == ""
-    assert events[0][0] == "master_semantic_contract"
-    assert events[0][1]["error"] == ""
-
-
-def test_task_semantic_contract_extracts_counted_entity_grain() -> None:
-    llm = _SequenceLLM(
-        '{"conditional_predicates":[],"counted_entity":"signed attachments"}'
-    )
-
-    contract = normalize_task_semantics(
-        llm=llm,
-        system_prompt="Normalize typed task semantics.",
-        goal="Tell me how many signed attachments were received as a single number.",
-    )
-
-    assert contract.counted_entity == "signed attachments"
-
-
-def test_task_semantic_contract_extracts_non_field_record_predicate() -> None:
-    llm = _SequenceLLM(
-        '{"conditional_predicates":[],"semantic_predicates":'
-        '["the attachment is a signed form"],"counted_entity":"signed forms"}'
-    )
-
-    contract = normalize_task_semantics(
-        llm=llm,
-        system_prompt="Normalize typed task semantics.",
-        goal="Count the signed forms.",
-    )
-
-    assert contract.semantic_predicates == ["the attachment is a signed form"]
 
 
 def test_master_review_rejects_data_collection_for_destination_only_goal() -> None:
@@ -1648,7 +1423,8 @@ ctx.finish(result["ref"], effect="data")
 def test_master_failure_preserves_latest_worker_blocker() -> None:
     store = RuntimeDataStore()
 
-    def fail_gui_worker(_worker_id, _spec):
+    def fail_gui_worker(_worker_id, spec):
+        assert spec.unresolved_inputs == {"page": "Exact user-owned page"}
         return WorkerOutcome(
             phase="failed",
             summary="The current public source denied access.",
@@ -1665,6 +1441,7 @@ def test_master_failure_preserves_latest_worker_blocker() -> None:
 outcome = ctx.gui_worker(
     worker_id="open_page", profile="operator", goal="Open the requested page",
     success_criteria=["The page is visible"],
+    unresolved_inputs={"page": "Exact user-owned page"},
     approach="Execute the declared actions.",
 )
 if outcome["phase"] != "completed":

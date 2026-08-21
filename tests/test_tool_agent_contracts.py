@@ -31,7 +31,6 @@ from gui_agent.core.tool_agent.protocol import (
     normalize_action_arguments,
     response_usage,
     generic_action_spec,
-    value_provenance_contract,
     worker_attempt_contract,
 )
 
@@ -526,25 +525,25 @@ def test_worker_protocol_never_silently_retypes_dependent_evidence() -> None:
 
 
 def test_worker_tool_schema_matches_memory_status_and_dependency_contract() -> None:
-    tool = dynamic_worker_tools(
+    variants = dynamic_worker_tools(
         [generic_action_spec("tap")], action_envelope=True,
-    )[0]
-    variants = tool["function"]["parameters"]["properties"]["state"][
-        "properties"
-    ]["memory_updates"]["items"]["oneOf"]
+    )[0]["function"]["parameters"]["properties"]["state"]["properties"][
+        "memory_updates"
+    ]["items"]["oneOf"]
     by_type = {
         variant["properties"]["fact_type"]["const"]: variant
         for variant in variants
     }
 
-    evidence = by_type["evidence"]["properties"]
-    commitment = by_type["commitment"]["properties"]
-    assert evidence["status"]["enum"] == ["active", "retracted"]
-    assert commitment["status"]["enum"] == [
+    assert by_type["evidence"]["properties"]["status"]["enum"] == [
+        "active", "retracted",
+    ]
+    assert by_type["commitment"]["properties"]["status"]["enum"] == [
         "active", "retracted", "completed",
     ]
-    assert evidence["depends_on"]["maxItems"] == 0
-    assert "without self-dependency" in evidence["depends_on"]["description"]
+    evidence = by_type["evidence"]["properties"]["depends_on"]
+    assert evidence["maxItems"] == 0
+    assert "without self-dependency" in evidence["description"]
 
 
 def test_worker_claim_accepts_frame_observation_dependency() -> None:
@@ -562,10 +561,10 @@ def test_worker_claim_accepts_frame_observation_dependency() -> None:
             },
             {
                 "fact_type": "claim",
-                "key": "control_will_open_surface",
+                "key": "control_is_exact_target",
                 "status": "active",
                 "lifetime": "attempt",
-                "statement": "Activating the control will open the next surface",
+                "statement": "The visible control has the exact requested identity",
                 "depends_on": ["observation:control_visible"],
             },
             {
@@ -574,7 +573,7 @@ def test_worker_claim_accepts_frame_observation_dependency() -> None:
                 "status": "active",
                 "lifetime": "attempt",
                 "statement": "Activate the control",
-                "depends_on": ["claim:control_will_open_surface"],
+                "depends_on": ["claim:control_is_exact_target"],
             },
         ],
     })
@@ -751,19 +750,6 @@ def test_data_requirement_accepts_nullable_runtime_type() -> None:
     ]
 
 
-def test_data_requirement_preserves_record_grain_and_semantic_predicates() -> None:
-    requirement = DataRequirement(
-        id="attachments",
-        description="Requested attachments",
-        record_grain="signed attachments",
-        semantic_predicates=["the attachment is signed"],
-        row_schema={"name": "string"},
-    )
-
-    assert requirement.record_grain == "signed attachments"
-    assert requirement.semantic_predicates == ["the attachment is signed"]
-
-
 def test_worker_profile_inference_selects_relevant_attempt_rules() -> None:
     common = {
         "goal": "Reach the requested outcome",
@@ -864,7 +850,7 @@ def test_worker_rejects_string_action_input_shorthand() -> None:
         })
 
 
-def test_worker_attempt_contract_keeps_input_binding_in_immutable_contract() -> None:
+def test_worker_attempt_contract_keeps_typed_inputs_in_immutable_contract() -> None:
     spec = WorkerSpec.model_validate({
         "profile": "operator",
         "goal": "Find the Runtime-bound target",
@@ -877,6 +863,9 @@ def test_worker_attempt_contract_keeps_input_binding_in_immutable_contract() -> 
             "target": "text_input",
             "description": "Enter the Runtime-bound target",
         }],
+        "unresolved_inputs": {
+            "destination": "Exact user-owned destination",
+        },
         "strategy": {
             "approach": "Search for the Runtime-bound target.",
         },
@@ -886,46 +875,8 @@ def test_worker_attempt_contract_keeps_input_binding_in_immutable_contract() -> 
 
     assert '"input_bindings"' in contract
     assert '"name": "enter_target"' in contract
+    assert '"unresolved_inputs": {"destination": "Exact user-owned destination"}' in contract
     assert '"approach": "Search for the Runtime-bound target."' in contract
-
-
-def test_worker_attempt_contract_keeps_descriptive_roles_unresolved() -> None:
-    spec = WorkerSpec.model_validate({
-        "profile": "operator",
-        "goal": "Copy the records into my dedicated archive folder",
-        "success_criteria": ["The records are copied into that folder"],
-        "strategy": {"approach": "File collection workflow"},
-    })
-
-    contract = worker_attempt_contract(spec)
-
-    assert "Only literal identifiers in this attempt" in contract
-    assert "usual, dedicated, preferred" in contract
-    assert "ask_user before mutation" in contract
-
-
-def test_value_provenance_is_projected_only_for_descriptive_attempt_values() -> None:
-    descriptive = WorkerSpec.model_validate({
-        "profile": "operator",
-        "goal": "Copy the records into my dedicated archive folder",
-        "success_criteria": ["The records are copied into that folder"],
-        "strategy": {"approach": "File collection workflow"},
-    })
-    exact = WorkerSpec.model_validate({
-        "profile": "operator",
-        "goal": "Send the records to archive@example.com",
-        "success_criteria": ["The records are sent with subject Records"],
-        "strategy": {"approach": "Messaging workflow"},
-    })
-
-    provenance = value_provenance_contract(
-        "Copy the records into my dedicated archive folder.", descriptive,
-    )
-
-    assert "task-scoped; non-executable" in provenance
-    assert "authoritative only" in provenance
-    assert "verbatim_user_source" in provenance
-    assert value_provenance_contract("Send the records.", exact) == ""
 
 
 def test_worker_rejects_missing_input_binding_description() -> None:

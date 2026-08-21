@@ -35,7 +35,6 @@ from gui_agent.core.tool_agent.strategy import Strategy
 from gui_agent.core.schemas import TargetGrounding, TargetVerify
 from gui_agent.core.tool_agent.worker_memory import (
     WorkerJournal,
-    WorkerJournalEvent,
     build_worker_memory_view,
     project_worker_context,
 )
@@ -49,6 +48,15 @@ def _state() -> str:
             "summary": "A separate apply control is visible.",
             "memory_updates": [],
         }
+    )
+
+
+def _record_executed(
+    journal: WorkerJournal, tool: str, *, frame_id: str = "frame:1", **result,
+) -> None:
+    journal.record_action_result(
+        step=1, frame_id=frame_id, tool=tool, args={},
+        result={"status": "executed", **result},
     )
 
 
@@ -615,7 +623,7 @@ def test_worker_reports_blocker_without_deciding_strategy_failure() -> None:
     pending = runtime._worker_tools_for_frame(
         spec, spec._test_actions, frame, allow_failure=False,
     )
-    journal.executed_tools.add("open_replacement")
+    _record_executed(journal, "open_replacement", frame_id=frame.frame_id)
     attempted = runtime._worker_tools_for_frame(spec, spec._test_actions, frame)
 
     assert "report_blocked" not in {tool["function"]["name"] for tool in pending}
@@ -1579,9 +1587,8 @@ def _candidate_frame(
 def test_confirmed_candidate_commit_marks_matching_unfiltered_reopen_exhausted() -> None:
     selected = _candidate_frame("selected", selected=True)
     committed = is_candidate_commit({"x": 500, "y": 900}, selected)
-    journal = WorkerJournal(worker_id="select-all", events=[WorkerJournalEvent(
-        event_ref="commit", kind="candidate_commit", receipt_text="confirmed",
-    )])
+    journal = WorkerJournal(worker_id="select-all")
+    _record_executed(journal, "tap", frame_id="selected", candidate_commit=True)
 
     def context(frame: MaterializedFrame) -> str:
         return project_worker_context(
@@ -2994,7 +3001,7 @@ def test_runtime_defers_detail_candidates_until_bound_action_runs(tmp_path) -> N
     )
 
     runtime._observe(spec)
-    journal.executed_tools.add("search_target")
+    _record_executed(journal, "search_target")
     runtime._observe(spec)
 
     assert observed == [False, True]
