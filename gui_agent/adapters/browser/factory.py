@@ -180,12 +180,15 @@ def build_browser_bundle(
     start_url: Optional[str] = DEFAULT_BROWSER_START_URL,
     headless: bool | None = None,
     user_data_dir: Optional[str] = None,
+    browser_profile: str | None = None,
     **_ignored: object,
 ) -> PlatformBundle:
     """Construct the browser PlatformBundle.
 
     ``backend`` is reserved for future adapter backends. ``cdp_url`` / ``start_url`` / ``headless`` /
-    ``user_data_dir`` flow through to the session. New browser tasks start at
+    ``user_data_dir`` / ``browser_profile`` flow through to the session. The
+    ``production`` profile requires headed CDP and keeps read probes outside the page's
+    JavaScript world. New browser tasks start at
     Bing unless ``start_url`` is overridden. CDP defaults to
     http://localhost:9222, overridable via env CHROME_CDP_URL; headless mode
     launches Chromium directly and can keep login state in ``user_data_dir``.
@@ -193,6 +196,11 @@ def build_browser_bundle(
     from gui_agent.adapters.browser.actions import BrowserAction
     from gui_agent.adapters.browser.executor import BrowserExecutor
     from gui_agent.adapters.browser.perception import BrowserPerception, BrowserSession
+    from gui_agent.adapters.browser.runtime_profile import resolve_browser_profile
+
+    runtime_profile = resolve_browser_profile(browser_profile)
+    if runtime_profile == "production" and _resolve_headless(headless):
+        raise ValueError("production browser profile requires headed Chrome over CDP")
 
     return PlatformBundle(
         platform="browser",
@@ -201,6 +209,7 @@ def build_browser_bundle(
             start_url=start_url,
             headless=headless,
             user_data_dir=user_data_dir,
+            browser_profile=runtime_profile,
         ),
         setup_check=lambda: _setup_check(cdp_url, headless=headless),
         make_executor=lambda session: BrowserExecutor(session),

@@ -22,6 +22,10 @@ def _build_parser() -> argparse.ArgumentParser:
     check.add_argument("--cdp-url")
     check.add_argument("--adb-serial")
     check.add_argument("--headless", action="store_true")
+    check.add_argument(
+        "--browser-profile", choices=("evaluation", "production"),
+        help="production requires headed Chrome and uses low-intrusion browser sensing",
+    )
 
     run = subparsers.add_parser("run", help="run a Tool Agent task")
     run.add_argument("platform", choices=PLATFORMS)
@@ -36,6 +40,10 @@ def _build_parser() -> argparse.ArgumentParser:
     )
     run.add_argument("--adb-serial")
     run.add_argument("--headless", action="store_true")
+    run.add_argument(
+        "--browser-profile", choices=("evaluation", "production"),
+        help="production requires headed Chrome and uses low-intrusion browser sensing",
+    )
     run.add_argument("--no-hud", action="store_true")
     run.add_argument(
         "--multi-action",
@@ -56,6 +64,8 @@ def _platform_options(args: argparse.Namespace) -> dict[str, object]:
             "cdp_url": args.cdp_url,
             "headless": args.headless,
         }
+        if profile := getattr(args, "browser_profile", None):
+            options["browser_profile"] = profile
         if hasattr(args, "start_url"):
             options["start_url"] = args.start_url
         return options

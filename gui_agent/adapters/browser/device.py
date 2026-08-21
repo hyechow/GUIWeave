@@ -23,6 +23,7 @@ closing the user's browser.
 
 from __future__ import annotations
 
+import hashlib
 import ipaddress
 import json
 import os
@@ -400,6 +401,7 @@ class PlaywrightDevice:
         start_url: Optional[str] = None,
         headless: bool | None = None,
         user_data_dir: Optional[str] = None,
+        browser_profile: str | None = None,
     ):
         from gui_agent.adapters.browser.factory import _resolve_headless
 
@@ -408,6 +410,11 @@ class PlaywrightDevice:
         self.start_url = start_url
         self.headless = _resolve_headless(headless)
         self.user_data_dir = user_data_dir or os.environ.get("BROWSER_USER_DATA_DIR")
+        from gui_agent.adapters.browser.runtime_profile import resolve_browser_profile
+
+        self.browser_profile = resolve_browser_profile(browser_profile)
+        if self.browser_profile == "production" and self.headless:
+            raise ValueError("production browser profile requires headed Chrome over CDP")
         self._pw = None  # sync_playwright() handle (stop() on close)
         self._browser = None
         self._context = None
@@ -433,6 +440,7 @@ class PlaywrightDevice:
         self._net_session = None
         self._xhr_ids: dict = {}    # requestId -> monotonic start time (in-flight XHR/Fetch)
         self._xhr_last = 0.0        # last XHR/Fetch start-or-finish (for the quiet window)
+        self._isolated_context_id: int | None = None
 
     # ----- lifecycle -------------------------------------------------------
     def connect(self):
@@ -532,6 +540,7 @@ class PlaywrightDevice:
             self._tab_switched = False
             self._last_viewport = None
             self._dpr = None
+            self._isolated_context_id = None
 
     # ----- viewport (for the executor's denormalization) -------------------
     @property
@@ -567,10 +576,7 @@ class PlaywrightDevice:
         if self._dpr is not None:
             return self._dpr
         try:
-            res = self._cdp_send(
-                "Runtime.evaluate",
-                {"expression": "window.devicePixelRatio", "returnByValue": True},
-            )
+            res = self._read_evaluate("window.devicePixelRatio")
             dpr = float((res.get("result") or {}).get("value") or 0)
             if dpr > 0:
                 self._dpr = dpr
@@ -637,11 +643,58 @@ class PlaywrightDevice:
         page = self._require_page()
         if self._cdp is None:
             self._cdp = page.context.new_cdp_session(page)
+            self._isolated_context_id = None
         try:
             return self._timed_send(method, params)
         except Exception:
             self._cdp = page.context.new_cdp_session(page)
+            self._isolated_context_id = None
             return self._timed_send(method, params)
+
+    def _isolated_world_context(self) -> int:
+        if self._isolated_context_id is not None:
+            return self._isolated_context_id
+        tree = self._cdp_send("Page.getFrameTree", {})
+        frame_id = str(((tree.get("frameTree") or {}).get("frame") or {}).get("id") or "")
+        if not frame_id:
+            raise RuntimeError("active browser frame has no CDP frame id")
+        result = self._cdp_send("Page.createIsolatedWorld", {
+            "frameId": frame_id,
+            "worldName": "guiweave_readonly",
+            "grantUniveralAccess": False,
+        })
+        self._isolated_context_id = int(result["executionContextId"])
+        return self._isolated_context_id
+
+    def _read_evaluate(self, expression: str, *, await_promise: bool = False) -> dict:
+        """Evaluate a read probe outside the page's JavaScript world in production."""
+
+        params: dict[str, object] = {
+            "expression": expression,
+            "returnByValue": True,
+        }
+        if await_promise:
+            params["awaitPromise"] = True
+        if getattr(self, "browser_profile", "evaluation") != "production":
+            return self._cdp_send("Runtime.evaluate", params)
+        for attempt in range(2):
+            try:
+                params["contextId"] = self._isolated_world_context()
+                return self._cdp_send("Runtime.evaluate", params)
+            except Exception:
+                self._isolated_context_id = None
+                if attempt:
+                    raise
+        raise AssertionError("unreachable")
+
+    def _dom_snapshot_signature(self) -> str:
+        snapshot = self._cdp_send("DOMSnapshot.captureSnapshot", {
+            "computedStyles": [],
+            "includePaintOrder": False,
+            "includeDOMRects": False,
+        })
+        payload = json.dumps(snapshot, sort_keys=True, separators=(",", ":"), default=str)
+        return hashlib.sha256(payload.encode("utf-8")).hexdigest()
 
     def _timed_send(self, method: str, params: dict) -> dict:
         return self._timed_cdp_send(self._cdp, method, params)
@@ -669,10 +722,7 @@ class PlaywrightDevice:
     def is_loading(self) -> bool:
         """Whether the document or its semantic main surface is still loading."""
         try:
-            res = self._cdp_send(
-                "Runtime.evaluate",
-                {"expression": _DOCUMENT_READINESS, "returnByValue": True},
-            )
+            res = self._read_evaluate(_DOCUMENT_READINESS)
             value = (res.get("result", {}) or {}).get("value")
             if isinstance(value, list) and len(value) >= 2:
                 return value[0] == "loading" or not bool(value[1])
@@ -690,7 +740,7 @@ class PlaywrightDevice:
         DOM/readyState."""
         if self._cdp is None:
             try:
-                self._cdp_send("Runtime.evaluate", {"expression": "0", "returnByValue": True})
+                self._read_evaluate("0")
             except Exception:
                 return
         if self._cdp is None or self._net_session is self._cdp:
@@ -737,6 +787,8 @@ class PlaywrightDevice:
         with its url + dom-fingerprint signals. Raises on CDP failure so the caller falls back
         to the vision settle."""
         self._ensure_net_tracking()
+        if getattr(self, "browser_profile", "evaluation") == "production":
+            return self._wait_settled_without_page_hooks(action_type)
         self._cdp_send("Runtime.evaluate", {"expression": _SETTLE_RESET, "returnByValue": True})
         t0 = time.perf_counter()
         while True:
@@ -773,6 +825,43 @@ class PlaywrightDevice:
             self._ensure_net_tracking()  # re-arm if a poll rebuilt the session
             time.sleep(_SETTLE_POLL_S)
 
+    def _wait_settled_without_page_hooks(
+        self,
+        action_type: Optional[str] = None,
+    ) -> tuple[float, bool]:
+        """Settle from CDP snapshots/network events without mutating the page world."""
+
+        started = time.perf_counter()
+        stable_since = time.monotonic()
+        baseline = previous = self._dom_snapshot_signature()
+        cap = _SETTLE_NAV_CAP_S if action_type == "navigate" else _SETTLE_CAP_S
+        while True:
+            readiness = self._read_evaluate(_DOCUMENT_READINESS)
+            value = (readiness.get("result") or {}).get("value")
+            ready, content_ready = (
+                (value[0] != "loading", bool(value[1]))
+                if isinstance(value, list) and len(value) >= 2
+                else (True, True)
+            )
+            current = self._dom_snapshot_signature()
+            now = time.monotonic()
+            if current != previous:
+                previous = current
+                stable_since = now
+            net_quiet = (
+                not self._xhr_ids
+                and (now - self._xhr_last) * 1000.0 >= _SETTLE_QUIET_MS
+            )
+            elapsed = time.perf_counter() - started
+            if (
+                ready
+                and content_ready
+                and net_quiet
+                and (now - stable_since) * 1000.0 >= _SETTLE_QUIET_MS
+            ) or elapsed >= cap:
+                return elapsed, current == baseline
+            time.sleep(_SETTLE_POLL_S)
+
     def page_info(self) -> tuple[str, str]:
         """(url, title) of the active page — the browser chrome the vision-only screenshot
         omits, so the checker can judge page identity from ground truth instead of fabricating.
@@ -786,10 +875,7 @@ class PlaywrightDevice:
             info = self._cdp_send("Target.getTargetInfo", {}).get("targetInfo", {})
             url, title = info.get("url", "") or "", info.get("title", "") or ""
             if not url or not title:  # 任一缺就回退 JS，分别只补缺失的字段
-                res = self._cdp_send(
-                    "Runtime.evaluate",
-                    {"expression": "[location.href, document.title]", "returnByValue": True},
-                )
+                res = self._read_evaluate("[location.href, document.title]")
                 pair = ((res.get("result", {}) or {}).get("value") or ["", ""]) + ["", ""]
                 url = url or (pair[0] or "")
                 title = title or (pair[1] or "")
@@ -822,10 +908,7 @@ class PlaywrightDevice:
           };
         })()"""
         try:
-            result = self._cdp_send(
-                "Runtime.evaluate",
-                {"expression": expression, "returnByValue": True},
-            )
+            result = self._read_evaluate(expression)
             value = (result.get("result") or {}).get("value") or {}
             if not all(value.get(key) for key in ("local_datetime", "utc_offset")):
                 raise ValueError("CDP clock response is incomplete")
@@ -850,10 +933,7 @@ class PlaywrightDevice:
         changed. Including focus allowed repeated no-op writes to masquerade as progress.
         """
         try:
-            res = self._cdp_send(
-                "Runtime.evaluate",
-                {"expression": _FORM_VALUE_FINGERPRINT_JS, "returnByValue": True},
-            )
+            res = self._read_evaluate(_FORM_VALUE_FINGERPRINT_JS)
             val = (res.get("result", {}) or {}).get("value")
         except Exception:
             return None
@@ -876,10 +956,7 @@ class PlaywrightDevice:
         )
 
         try:
-            res = self._cdp_send(
-                "Runtime.evaluate",
-                {"expression": applied_filters_js(), "returnByValue": True},
-            )
+            res = self._read_evaluate(applied_filters_js())
             val = (res.get("result", {}) or {}).get("value")
         except Exception:
             return None, {
@@ -908,14 +985,7 @@ class PlaywrightDevice:
 
         try:
             self._follow_active_tab()
-            res = self._cdp_send(
-                "Runtime.evaluate",
-                {
-                    "expression": table_snapshot_js(),
-                    "returnByValue": True,
-                    "awaitPromise": True,
-                },
-            )
+            res = self._read_evaluate(table_snapshot_js(), await_promise=True)
             val = (res.get("result", {}) or {}).get("value")
             raw = json.loads(val) if isinstance(val, str) else val
             self._last_traversal_viewport = normalize_viewport(raw)
@@ -941,10 +1011,7 @@ class PlaywrightDevice:
 
         try:
             self._follow_active_tab()
-            res = self._cdp_send(
-                "Runtime.evaluate",
-                {"expression": form_controls_js(), "returnByValue": True},
-            )
+            res = self._read_evaluate(form_controls_js())
             val = (res.get("result", {}) or {}).get("value")
             raw = json.loads(val) if isinstance(val, str) else val
             controls, metadata = normalize_form_control_snapshot(raw)
@@ -1114,6 +1181,9 @@ class PlaywrightDevice:
     def begin_action_feedback(self) -> None:
         """Start a bounded same-origin response monitor for the next GUI action."""
         self._native_action_feedback = []
+        if getattr(self, "browser_profile", "evaluation") == "production":
+            self._ensure_net_tracking()
+            return
         try:
             self._follow_active_tab()
             self._cdp_send(
@@ -1129,6 +1199,8 @@ class PlaywrightDevice:
         self._native_action_feedback = []
         if native:
             return native
+        if getattr(self, "browser_profile", "evaluation") == "production":
+            return []
         try:
             self._follow_active_tab()
             result = self._cdp_send(
@@ -1146,17 +1218,15 @@ class PlaywrightDevice:
 
     def _eval_bool(self, expression: str) -> bool:
         """Best-effort boolean page probe. page.evaluate can be bound-broken over CDP."""
+        if getattr(self, "browser_profile", "evaluation") != "production":
+            try:
+                page = self._require_page()
+                result = page.evaluate(expression)
+                return bool(result)
+            except Exception:
+                pass
         try:
-            page = self._require_page()
-            result = page.evaluate(expression)
-            return bool(result)
-        except Exception:
-            pass
-        try:
-            res = self._cdp_send(
-                "Runtime.evaluate",
-                {"expression": expression, "returnByValue": True},
-            )
+            res = self._read_evaluate(expression)
             return bool((res.get("result") or {}).get("value"))
         except Exception:
             return False
@@ -1541,7 +1611,7 @@ class PlaywrightDevice:
             % (int(round(x)), int(round(y)), target_js, TEXT_RETARGET_RADIUS_PX)
         )
         try:
-            res = self._cdp_send("Runtime.evaluate", {"expression": js, "returnByValue": True})
+            res = self._read_evaluate(js)
             val = (res.get("result", {}) or {}).get("value")
         except Exception:  # noqa: BLE001
             return x, y, None
@@ -1696,16 +1766,14 @@ class PlaywrightDevice:
             "})()"
         )
         result = None
-        try:
-            result = self._require_page().evaluate(expression)
-        except Exception:
-            result = None
+        if getattr(self, "browser_profile", "evaluation") != "production":
+            try:
+                result = self._require_page().evaluate(expression)
+            except Exception:
+                result = None
         if not isinstance(result, dict):
             try:
-                res = self._cdp_send(
-                    "Runtime.evaluate",
-                    {"expression": expression, "returnByValue": True},
-                )
+                res = self._read_evaluate(expression)
                 result = (res.get("result") or {}).get("value")
             except Exception:
                 return None
@@ -2239,6 +2307,7 @@ class PlaywrightDevice:
         if page is not self.page:
             self.page = page
             self._cdp = None
+            self._isolated_context_id = None
             self._tab_switched = True
             self._arm_file_chooser(page)
 

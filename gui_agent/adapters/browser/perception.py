@@ -65,6 +65,7 @@ class BrowserSession:
         start_url: Optional[str] = None,
         headless: bool | None = None,
         user_data_dir: Optional[str] = None,
+        browser_profile: str | None = None,
     ):
         from gui_agent.adapters.browser.factory import _resolve_headless
 
@@ -73,6 +74,7 @@ class BrowserSession:
         self._start_url = start_url
         self._headless = _resolve_headless(headless)
         self._user_data_dir = user_data_dir or os.environ.get("BROWSER_USER_DATA_DIR")
+        self._browser_profile = browser_profile
 
     def __enter__(self) -> "BrowserSession":
         # Lazy import keeps the package import-light and core.runtime.factory adapter-free.
@@ -87,6 +89,7 @@ class BrowserSession:
             start_url=self._start_url,
             headless=self._headless,
             user_data_dir=self._user_data_dir,
+            browser_profile=self._browser_profile,
         )
         self.client.connect()
         print("浏览器连接成功")

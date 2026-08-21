@@ -98,6 +98,7 @@ def run_browser_task(
     max_turns: int = 50,
     multi_action: bool = True,
     show_hud: bool = True,
+    browser_profile: Literal["evaluation", "production"] = "evaluation",
 ) -> dict[str, Any]:
     """Run an exact user-authorized goal in local Chrome.
 
@@ -117,6 +118,7 @@ def run_browser_task(
         cdp_url=cdp_url,
         start_url=start_url,
         headless=headless,
+        browser_profile=browser_profile,
     ).to_dict()
 
 

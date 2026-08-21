@@ -52,6 +52,7 @@ class _ExecutionOptions(BaseModel):
     start_url: str = Field(default=DEFAULT_BROWSER_START_URL, max_length=2048)
     adb_serial: str | None = Field(default=None, max_length=200)
     multi_action: bool = True
+    browser_profile: Literal["evaluation", "production"] = "evaluation"
 
     @field_validator("adb_serial", mode="before")
     @classmethod
@@ -137,8 +138,12 @@ class RunConsole:
         *,
         chat_turn: ChatTurn | None = None,
     ) -> ActiveTask:
-        # Reject stale page options at the server boundary: Console is background-only.
-        request = request.model_copy(update={"headless": True, "show_hud": False})
+        # Ordinary Console runs are background-only. Production browser runs attach to the
+        # user's headed Chrome because their low-intrusion contract forbids headless launch.
+        request = request.model_copy(update={
+            "headless": False if request.browser_profile == "production" else True,
+            "show_hud": False,
+        })
         task = ActiveTask(
             task_id=f"task_{secrets.token_hex(6)}",
             request=request,
@@ -190,6 +195,7 @@ class RunConsole:
                 "cdp_url": request.cdp_url,
                 "start_url": request.start_url,
                 "headless": request.headless,
+                "browser_profile": request.browser_profile,
             }
         elif request.platform == "android":
             options = {"serial": request.adb_serial}
