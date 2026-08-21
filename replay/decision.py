@@ -5,7 +5,6 @@ from __future__ import annotations
 import argparse
 import ast
 import json
-import re
 from pathlib import Path
 from typing import Any
 
@@ -61,11 +60,6 @@ _WORKER_TURN_SECTIONS = (
     "## Current frame anchor",
     "## Same-frame runtime feedback",
 )
-
-_TRAVERSAL_PHASE_RE = re.compile(
-    r'"inspection_traversal"\s*:\s*"(open|cycle|complete|completed_elsewhere)"'
-)
-
 
 def _selected_model(name: str, llm: Any) -> tuple[Any, Any, str]:
     if llm is not None:
@@ -159,6 +153,7 @@ def _worker_messages(
     same_frame_feedback: dict[str, Any] | None = None,
     materialized_frame: MaterializedFrame | None = None,
     worker_memory_override: str | None = None,
+    inspection_traversal: str = "open",
 ) -> list[Any]:
     messages: list[Any] = []
     for role in report.get("roles", []):
@@ -185,8 +180,6 @@ def _worker_messages(
             )))
         elif name == "human":
             original_text = text
-            phase_match = _TRAVERSAL_PHASE_RE.search(original_text)
-            recorded_traversal_phase = phase_match.group(1) if phase_match else "open"
             memory_start = original_text.find("## WorkerMemory")
             memory_boundaries = [
                 offset for marker in _WORKER_TURN_SECTIONS
@@ -226,14 +219,13 @@ def _worker_messages(
                     "A terminal decision's required UI state must match this frame; historical "
                     "or planned navigation cannot substitute. When inspection_traversal is "
                     "complete, scrolling this document is no longer valid progress; when it is "
-                    "completed_elsewhere, do not reopen that completed surface. A cycle does not "
-                    "prove boundary coverage or absence.\n"
+                    "completed_elsewhere, do not reopen that completed surface.\n"
                     + json.dumps({
                         "frame_id": materialized_frame.frame_id,
                         "url": materialized_frame.url,
                         "title": materialized_frame.title,
                         "inspection_traversal": (
-                            recorded_traversal_phase
+                            inspection_traversal
                         ),
                     }, ensure_ascii=False)
                     if materialized_frame is not None else ""
@@ -632,6 +624,9 @@ def replay_worker_decision(
         ),
         materialized_frame=materialized,
         worker_memory_override=worker_memory_override,
+        inspection_traversal=str(
+            replay_context.get("inspection_traversal") or "open"
+        ),
     )
     request_model = getattr(model_config, "model", None)
     if request_model is None:

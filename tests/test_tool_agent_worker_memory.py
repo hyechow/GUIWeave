@@ -83,16 +83,16 @@ def test_worker_memory_completes_traversal_only_after_both_document_boundaries()
             },
         )
 
-    progress = journal.traversal_progress_note(frames[-1])
+    progress = journal.traversal_progress(frames[-1])
     projection = project_worker_context(
         memory=build_worker_memory_view(journal),
         frame=frames[-1],
         attempt_contract="## Current Worker attempt\nFailure destination: Orders",
-        traversal_progress=progress,
-        traversal_phase=journal.traversal_phase(frames[-1]),
+        traversal=progress,
     )
 
-    assert "start and end boundaries" in progress
+    assert "start and end boundaries" in progress.note
+    assert progress.phase == "complete"
     assert "### Completed historical prerequisites" in projection.text
     assert "### Pending terminal requirements" in projection.text
     assert projection.text.index("### Pending terminal requirements") < projection.text.index(
@@ -108,21 +108,20 @@ def test_worker_memory_completes_traversal_only_after_both_document_boundaries()
         controls=[],
     )
     journal.record_collection_stability(destination)
-    historical = journal.traversal_progress_note(destination)
-    assert "already completed for previously visited surface" in historical
-    assert "Order 169" in historical
-    assert "https://example.test/orders/169" not in historical
+    historical = journal.traversal_progress(destination)
+    assert "already completed for previously visited surface" in historical.note
+    assert "Order 169" in historical.note
+    assert "https://example.test/orders/169" not in historical.note
     historical_projection = project_worker_context(
         memory=build_worker_memory_view(journal),
         frame=destination,
-        traversal_progress=historical,
-        traversal_phase=journal.traversal_phase(destination),
+        traversal=historical,
     )
     assert '"inspection_traversal": "completed_elsewhere"' in historical_projection.text
 
 
-def test_worker_memory_cycle_without_boundaries_does_not_claim_complete() -> None:
-    journal = WorkerJournal(worker_id="partial_cycle")
+def test_worker_memory_scroll_without_boundaries_stays_open() -> None:
+    journal = WorkerJournal(worker_id="partial_traversal")
     frames = []
     for step, (label, direction) in enumerate((
         ("Middle A", "down"),
@@ -152,17 +151,17 @@ def test_worker_memory_cycle_without_boundaries_does_not_claim_complete() -> Non
             },
         )
 
-    progress = journal.traversal_progress_note(frames[-1])
+    progress = journal.traversal_progress(frames[-1])
     projection = project_worker_context(
         memory=build_worker_memory_view(journal),
         frame=frames[-1],
-        traversal_progress=progress,
-        traversal_phase=journal.traversal_phase(frames[-1]),
+        traversal=progress,
     )
 
-    assert "boundaries were not both observed" in progress
-    assert "not proof of complete coverage or absence" in progress
-    assert '"inspection_traversal": "cycle"' in projection.text
+    assert progress.phase == "open"
+    assert progress.note == ""
+    assert '"inspection_traversal": "open"' in projection.text
+    assert "### Traversal coverage" not in projection.text
     assert "Inspection traversal is complete" not in projection.text
 
 

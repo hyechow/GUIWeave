@@ -277,6 +277,9 @@ def test_worker_replay_preserves_memory_from_current_production_order(
         "## WorkerMemory (runtime-compacted current belief)\nretained traversal\n\n"
         "## Current frame anchor (authoritative now)\nold anchor"
     )
+    trace["trace"][-1]["replay_context"]["inspection_traversal"] = (
+        "completed_elsewhere"
+    )
     trace_path.write_text(json.dumps(trace), encoding="utf-8")
     model = _RecordedModel(_tool_call("continue_with_actions", {
         "state": _state(),
@@ -294,7 +297,7 @@ def test_worker_replay_preserves_memory_from_current_production_order(
     assert "stale" not in turn_context
     assert "old contract" not in turn_context
     assert turn_context.count("## Current frame anchor") == 1
-    assert '"inspection_traversal": "open"' in turn_context
+    assert '"inspection_traversal": "completed_elsewhere"' in turn_context
     assert '"frame_id": "frame:1"' in turn_context
     assert turn_context.index("Current MaterializedFrame") < turn_context.index(
         "Current Worker attempt"
