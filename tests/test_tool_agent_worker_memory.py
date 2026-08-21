@@ -58,8 +58,9 @@ def test_worker_memory_completes_traversal_only_after_both_document_boundaries()
         frame = MaterializedFrame(
             frame_id=f"frame:{step}",
             screenshot_path=f"frame-{step}.png",
-            url="https://example.test/orders/169",
-            title="Order 169",
+            url=f"https://example.test/orders/169?frame={step}",
+            title=f"Order 169 · viewport {step}",
+            surface_id="document:/orders/169:Order 169",
             page_viewport=page_viewport,
             controls=[{"kind": "text", "label": label, "in_viewport": True}],
         )
@@ -105,6 +106,7 @@ def test_worker_memory_completes_traversal_only_after_both_document_boundaries()
         screenshot_path="frame-5.png",
         url="https://example.test/orders",
         title="Orders",
+        surface_id="document:/orders:Orders",
         controls=[],
     )
     journal.record_collection_stability(destination)

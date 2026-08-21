@@ -382,6 +382,9 @@ def test_browser_perception_reads_form_controls(tmp_path):
                 "raw_limit_hit": False,
             }
 
+        def read_semantic_tree(self):
+            return [{"role": "heading", "key": "Orders", "ref": 10, "depth": 0}]
+
         def read_applied_filter_state(self):
             return {
                 "Product": "Olivia",
@@ -409,6 +412,7 @@ def test_browser_perception_reads_form_controls(tmp_path):
         "fallback_channel": "present",
     }
     assert obs.title == "Orders / Operations / Sales / Commerce Admin"
+    assert obs.surface_id == "document:/admin/orders:Orders"
     assert obs.tables == [{
         "caption": "Browser tab inventory",
         "headers": ["Tab", "Title", "URL", "Active"],
