@@ -1,5 +1,6 @@
 import json
 import os
+import signal
 from types import SimpleNamespace
 
 import pytest
@@ -8,6 +9,7 @@ from gui_agent.adapters.browser.device import (
     PlaywrightDevice,
     _cdp_proxy_bypass,
     _direct_cdp_host,
+    _playwright_driver_interrupt_isolation,
 )
 
 
@@ -43,6 +45,44 @@ def test_cdp_proxy_bypass_is_scoped_to_driver_startup(monkeypatch):
 
     assert os.environ["NO_PROXY"] == "example.test"
     assert "no_proxy" not in os.environ
+
+
+def test_playwright_driver_ignores_sigint_only_during_spawn() -> None:
+    previous = signal.getsignal(signal.SIGINT)
+
+    with _playwright_driver_interrupt_isolation():
+        assert signal.getsignal(signal.SIGINT) == signal.SIG_IGN
+
+    assert signal.getsignal(signal.SIGINT) == previous
+
+
+def test_close_skips_sync_calls_after_playwright_driver_exit() -> None:
+    calls: list[str] = []
+    process = SimpleNamespace(returncode=-signal.SIGINT)
+    transport = SimpleNamespace(_proc=process)
+    connection = SimpleNamespace(_transport=transport)
+    playwright = SimpleNamespace(
+        _impl_obj=SimpleNamespace(_connection=connection),
+        stop=lambda: calls.append("stop"),
+    )
+    dev = PlaywrightDevice.__new__(PlaywrightDevice)
+    dev.headless = True
+    dev._pw = playwright
+    dev._context = SimpleNamespace(close=lambda: calls.append("context"))
+    dev._browser = SimpleNamespace(close=lambda: calls.append("browser"))
+    dev.page = object()
+    dev._cdp = object()
+    dev._browser_cdp = object()
+    dev._prev_pages = []
+    dev._tab_switched = True
+    dev._last_viewport = (1280, 800)
+    dev._dpr = 1.0
+
+    dev.close()
+
+    assert calls == []
+    assert dev._pw is None
+    assert dev.page is None
 
 
 def test_cdp_proxy_bypass_is_limited_to_local_and_private_hosts():
