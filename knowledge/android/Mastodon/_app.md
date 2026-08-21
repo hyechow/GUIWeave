@@ -7,6 +7,7 @@ scope:
   - decompose
   - planner
   - replanner
+  - worker
 source: manual_verified
 confidence: high
 sensitivity: internal
@@ -14,6 +15,17 @@ ttl: session
 version: 5
 ---
 # Mastodon on Android
+
+- Reply Send and `Pin on profile` are write-through mutations. After Reply Send, returning
+  from the composer to the post detail with the new signed-in-user reply visible proves the
+  reply commit. The post detail keeps a persistent `Reply to <author>` input below replies;
+  a new signed-in-user name/handle row immediately above that input is the posted reply,
+  not an open composer, even when its body is below the fold. Bind that row to the exact
+  typed payload in the preceding Send transaction. Do not reopen the composer or send the
+  same content again.
+- After `Pin on profile` is activated for the verified target post and its action menu
+  closes without error, that invocation is the durable pin commit. Do not reopen another
+  post's menu merely because the Timeline itself has no separate pin badge.
 
 - `SavedFavorites`: navigate through the signed-in user's bottom-navigation
   `Profile → Saved → Favorites`; membership in this collection proves that a

@@ -105,7 +105,10 @@ def _phase_guidance(memory: WorkerMemoryView) -> str:
     if memory.latest_gui_transition and memory.transition_commitments:
         return (
             "Reconcile only the Commitments bound to the latest invocation. Complete an "
-            "exact bound key when satisfied; otherwise keep it active. Never rename or repeat it."
+            "exact bound key when satisfied; otherwise keep it active. If application "
+            "knowledge identifies the invocation as write-through and this is its normal "
+            "error-free post-commit frame, complete instead of repeating the mutation. "
+            "Never rename or repeat it."
         )
     if memory.latest_gui_transition:
         return (

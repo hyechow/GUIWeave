@@ -100,6 +100,7 @@ from llm.provider_config import (
 _MASTER_SYSTEM = load_prompt_text("task.tool_agent.master")
 _WORKER_SYSTEM = load_prompt_text("task.tool_agent.worker")
 _MAX_ACTION_GUARD_REPAIRS_PER_FRAME = 1
+_MAX_MEMORY_UPDATE_REPAIRS_PER_FRAME = 2
 _MAX_PREDISPATCH_REPAIRS_PER_FRAME = 1
 _SPATIAL_CAPABILITIES = {
     "tap", "type", "scroll", "drag", "long_press", "select_option",
@@ -887,6 +888,7 @@ class ToolAgentRuntime:
                 getattr(getattr(self, "worker_cfg", None), "action_protocol", "tool_call")
             )
             guard_repair_turn = 0
+            memory_repair_turn = 0
             completion_recheck_turn = 0
             commit_pending = False
             same_frame_feedback = initial_same_frame_feedback
@@ -1121,14 +1123,14 @@ class ToolAgentRuntime:
                         state=state,
                     )
                 except ValueError as exc:
-                    if guard_repair_turn >= _MAX_ACTION_GUARD_REPAIRS_PER_FRAME:
+                    if memory_repair_turn >= _MAX_MEMORY_UPDATE_REPAIRS_PER_FRAME:
                         return WorkerOutcome(
                             phase="failed",
                             summary=f"invalid memory update: {exc}",
                             failure_kind="protocol_invalid",
                             steps=step - 1,
                         )
-                    guard_repair_turn += 1
+                    memory_repair_turn += 1
                     same_frame_feedback = {
                         "status": "memory_update_invalid",
                         "reason": str(exc),
@@ -1141,6 +1143,7 @@ class ToolAgentRuntime:
                         "worker_memory_update_rejected",
                         step=step,
                         frame_id=frame.frame_id,
+                        repair_turn=memory_repair_turn,
                         reason=str(exc),
                     )
                     continue
