@@ -22,7 +22,6 @@ from langchain_core.messages import HumanMessage
 from gui_agent.core.tool_agent.contracts import (
     DataRequirement,
     ResultRef,
-    TaskSemanticContract,
     WorkerOutcome,
     WorkerSpec,
     approach_is_procedural,
@@ -41,7 +40,6 @@ from gui_agent.core.tool_agent.sandbox import (
     validate_transform_source,
 )
 from llm.provider_config import chat_request_kwargs
-from llm.structured import invoke_structured
 
 
 _MASTER_FILENAME = "<tool-agent-master>"
@@ -407,6 +405,13 @@ def _validate_gui_worker_call(
             values["input_bindings"] = []
     else:
         values["input_bindings"] = []
+    try:
+        values["unresolved_inputs"] = _literal_keyword(
+            call, "unresolved_inputs",
+        ) if any(item.arg == "unresolved_inputs" for item in call.keywords) else {}
+    except ValueError as exc:
+        diagnostics.append(_diagnostic("GUI_WORKER_LITERAL", str(exc), call))
+        values["unresolved_inputs"] = {}
     contract_criteria = (
         [str(values["success_criteria"])]
         if isinstance(values["success_criteria"], str)
@@ -417,18 +422,6 @@ def _validate_gui_worker_call(
     for requirement in values.get("data_requirements") or []:
         if not isinstance(requirement, dict):
             continue
-        alternative_sources = {
-            field: source
-            for field, source in (requirement.get("field_sources") or {}).items()
-            if re.search(r"(?:\s+(?:and/)?or\s+|_or_)", source, re.IGNORECASE)
-        }
-        if alternative_sources:
-            diagnostics.append(_diagnostic(
-                "DATA_FIELD_SOURCE",
-                "each field_sources value must name one actual source, not alternatives: "
-                f"{alternative_sources}",
-                call,
-            ))
         scope_text = "\n".join([
             str(values["goal"]),
             *(
@@ -467,22 +460,6 @@ def _validate_gui_worker_call(
                 requirement.get("filters") or {}, ensure_ascii=False
             )
             filter_lower = filter_values.casefold()
-            if (
-                re.search(
-                    r"\b(?:january|february|march|april|may|june|july|august|"
-                    r"september|october|november|december)\s+\d{1,2}(?:st|nd|rd|th)?\b",
-                    user_goal,
-                    re.IGNORECASE,
-                )
-                and not re.search(r"\b\d{4}\b", user_goal)
-                and re.search(r"\b\d{4}[-/]\d{1,2}[-/]\d{1,2}(?!\d)", filter_values)
-            ):
-                diagnostics.append(_diagnostic(
-                    "DATA_FILTER_DATE_COMPONENTS",
-                    "the task supplies a month/day without a year; preserve those stated "
-                    "components in filters instead of adding a year from the runtime clock",
-                    call,
-                ))
             filter_has_date = bool(
                 re.search(
                     r"20\d{2}|\b\d{1,2}[-/]\d{1,2}\b|\b\d{4}-\d{2}\b",
@@ -523,6 +500,7 @@ def _validate_gui_worker_call(
                     if name
                 },
                 "input_bindings": values["input_bindings"],
+                "unresolved_inputs": values["unresolved_inputs"],
                 "data_requirements": values.get("data_requirements") or [],
                 "strategy": {
                     "approach": values["approach"],
@@ -833,10 +811,6 @@ def _static_flow_diagnostics(tree: ast.AST) -> list[MasterDiagnostic]:
         transform = _ctx_call(assignment.value, "transform")
         if transform is not None:
             transforms.add(name)
-            try:
-                transform_source = _literal_keyword(transform, "source")
-            except ValueError:
-                transform_source = None
             inputs = next(
                 (item.value for item in transform.keywords if item.arg == "inputs"), None,
             )
@@ -861,23 +835,11 @@ def _static_flow_diagnostics(tree: ast.AST) -> list[MasterDiagnostic]:
                 }
                 try:
                     validate_transform_row_fields(
-                        transform_source, combined,
+                        _literal_keyword(transform, "source"), combined,
                     )
                 except Exception as exc:
                     diagnostics.append(_diagnostic(
                         "TRANSFORM_INPUT_SCHEMA", str(exc), transform,
-                    ))
-                if (
-                    isinstance(inputs, (ast.List, ast.Tuple))
-                    and len(inputs.elts) == 1
-                    and len(schemas) == 1
-                    and _returns_input_slot_count(transform_source)
-                ):
-                    diagnostics.append(_diagnostic(
-                        "TRANSFORM_INPUT_CONTAINER",
-                        "the transform has one collection input, so inputs[0] is the "
-                        "record collection; len(inputs) counts input slots and is always 1",
-                        transform,
                     ))
             try:
                 schema = _literal_keyword(transform, "result_schema")
@@ -969,33 +931,6 @@ def _static_flow_diagnostics(tree: ast.AST) -> list[MasterDiagnostic]:
     return diagnostics
 
 
-def _returns_input_slot_count(source: Any) -> bool:
-    """Recognize a direct ``len`` of the transform's outer runtime-input list."""
-
-    if not isinstance(source, str):
-        return False
-    try:
-        tree = ast.parse(source.strip(), mode="exec")
-    except SyntaxError:
-        return False
-    function = next(
-        (node for node in tree.body if isinstance(node, ast.FunctionDef)), None,
-    )
-    if function is None or len(function.args.args) != 1:
-        return False
-    input_name = function.args.args[0].arg
-    return any(
-        isinstance(node, ast.Return)
-        and isinstance(node.value, ast.Call)
-        and isinstance(node.value.func, ast.Name)
-        and node.value.func.id == "len"
-        and len(node.value.args) == 1
-        and isinstance(node.value.args[0], ast.Name)
-        and node.value.args[0].id == input_name
-        for node in ast.walk(function)
-    )
-
-
 def _schema_contains_array(value: Any) -> bool:
     if isinstance(value, dict):
         return value.get("type") == "array" or any(
@@ -1062,8 +997,6 @@ def validate_master_source(
     *,
     platform_context: dict[str, Any] | None = None,
     user_goal: str = "",
-    counted_entity: str = "",
-    semantic_predicates: tuple[str, ...] = (),
     require_success_path: bool = True,
 ) -> list[MasterDiagnostic]:
     """Validate one restricted Worker-orchestration program."""
@@ -1184,53 +1117,6 @@ def validate_master_source(
             "SUCCESS_TERMINAL_REQUIRED",
             "a program that dispatches a Worker must include a ctx.finish success path",
         ))
-    typed_predicates = tuple(value for value in semantic_predicates if value.strip())
-    requirements: list[dict[str, Any]] = []
-    if counted_entity.strip() or typed_predicates:
-        for node in ast.walk(tree):
-            if not (
-                isinstance(node, ast.Call)
-                and isinstance(node.func, ast.Attribute)
-                and isinstance(node.func.value, ast.Name)
-                and node.func.value.id == "ctx"
-                and node.func.attr == "gui_worker"
-            ):
-                continue
-            try:
-                declared = _literal_keyword(node, "data_requirements")
-            except ValueError:
-                continue
-            requirements.extend(
-                item for item in declared if isinstance(item, dict)
-            )
-    if counted_entity.strip():
-        grains = [str(item.get("record_grain") or "") for item in requirements]
-        normalized_counted_entity = " ".join(counted_entity.casefold().split())
-        normalized_grains = {
-            " ".join(value.casefold().split()) for value in grains
-        }
-        if normalized_counted_entity not in normalized_grains:
-            diagnostics.append(_diagnostic(
-                "DATA_RECORD_GRAIN",
-                "a counted result requires one data requirement whose record_grain "
-                f"exactly preserves task.semantic_contract.counted_entity={counted_entity!r}",
-            ))
-    if typed_predicates:
-        declared_predicates = {
-            " ".join(str(value).casefold().split())
-            for requirement in requirements
-            for value in requirement.get("semantic_predicates") or []
-        }
-        missing = [
-            value for value in typed_predicates
-            if " ".join(value.casefold().split()) not in declared_predicates
-        ]
-        if missing:
-            diagnostics.append(_diagnostic(
-                "DATA_SEMANTIC_PREDICATE",
-                "data requirements must preserve every typed non-field predicate in "
-                f"semantic_predicates: {missing!r}",
-            ))
     diagnostics.extend(_static_flow_diagnostics(tree))
     unique: list[MasterDiagnostic] = []
     seen: set[tuple[str, str, int]] = set()
@@ -1246,44 +1132,6 @@ def _extract_source(content: Any) -> str:
     text = message_text(content).strip()
     fenced = re.search(r"```(?:python)?\s*(.*?)```", text, re.DOTALL | re.IGNORECASE)
     return (fenced.group(1) if fenced else text).strip()
-
-
-def normalize_task_semantics(
-    *,
-    llm: Any,
-    system_prompt: str,
-    goal: str,
-    cache_system_prompt: bool = False,
-    on_event: Callable[[str, dict[str, Any]], None] | None = None,
-) -> TaskSemanticContract:
-    """Project conditional predicates without replacing the original task."""
-
-    messages = [
-        cacheable_system_message(system_prompt, enabled=cache_system_prompt),
-        HumanMessage(content=goal),
-    ]
-    trace: list[dict[str, Any]] = []
-    started_at = time.perf_counter()
-    error = ""
-    try:
-        contract = invoke_structured(
-            llm.bind(max_tokens=320),
-            messages,
-            TaskSemanticContract,
-            trace_sink=trace,
-            trace_label="tool_agent.semantic_contract",
-        )
-    except Exception as exc:  # noqa: BLE001 - optional context enrichment fails open
-        contract = TaskSemanticContract()
-        error = f"{type(exc).__name__}: {exc}"
-    if on_event is not None:
-        on_event("master_semantic_contract", {
-            "semantic_contract": contract.model_dump(mode="json"),
-            "error": error,
-            "llm_elapsed_s": round(time.perf_counter() - started_at, 3),
-            "structured_trace": trace,
-        })
-    return contract
 
 
 def compile_master_program(
@@ -1304,9 +1152,6 @@ def compile_master_program(
         if callable(getattr(llm, "bind", None))
         else llm
     )
-    semantic_contract = task_context.get("semantic_contract")
-    if not isinstance(semantic_contract, dict):
-        semantic_contract = {}
     rejected = ""
     last_diagnostics: list[MasterDiagnostic] = []
     for attempt in range(1, max_attempts + 1):
@@ -1332,8 +1177,6 @@ def compile_master_program(
                 platform_context if isinstance(platform_context, dict) else None
             ),
             user_goal=str(task_context.get("goal") or ""),
-            counted_entity=str(semantic_contract.get("counted_entity") or ""),
-            semantic_predicates=tuple(semantic_contract.get("semantic_predicates") or ()),
         )
         if on_event is not None:
             on_event(
@@ -1416,6 +1259,7 @@ class WorkerOrchestrationContext:
         approach: str,
         input_refs: dict[str, str] | None = None,
         input_bindings: list[dict[str, Any]] | None = None,
+        unresolved_inputs: dict[str, str] | None = None,
         data_requirements: list[dict[str, Any]] | None = None,
     ) -> dict[str, Any]:
         if _WORKER_ID_PATTERN.fullmatch(worker_id) is None:
@@ -1434,6 +1278,7 @@ class WorkerOrchestrationContext:
                 ),
                 "input_refs": routed_inputs,
                 "input_bindings": input_bindings or [],
+                "unresolved_inputs": unresolved_inputs or {},
                 "data_requirements": data_requirements or [],
                 "strategy": {
                     "approach": approach,
@@ -1663,6 +1508,5 @@ __all__ = [
     "WorkerOrchestrationContext",
     "compile_master_program",
     "execute_master_program",
-    "normalize_task_semantics",
     "validate_master_source",
 ]

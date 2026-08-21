@@ -58,7 +58,6 @@ from gui_agent.core.tool_agent.orchestrator import (
     WorkerOrchestrationContext,
     compile_master_program,
     execute_master_program,
-    normalize_task_semantics,
 )
 from gui_agent.core.tool_agent.perception import PerceptionMaterializer, PerceptionMode
 from gui_agent.core.tool_agent.protocol import (
@@ -78,7 +77,6 @@ from gui_agent.core.tool_agent.protocol import (
     response_usage,
     validate_dynamic_action_spec,
     validate_worker_tool_state,
-    value_provenance_contract,
     worker_attempt_contract,
 )
 from gui_agent.core.tool_agent.replay import write_replay_artifact
@@ -100,7 +98,6 @@ from llm.provider_config import (
 )
 
 _MASTER_SYSTEM = load_prompt_text("task.tool_agent.master")
-_SEMANTIC_CONTRACT_SYSTEM = load_prompt_text("task.tool_agent.semantic_contract")
 _WORKER_SYSTEM = load_prompt_text("task.tool_agent.worker")
 _MAX_ACTION_GUARD_REPAIRS_PER_FRAME = 1
 _MAX_PREDISPATCH_REPAIRS_PER_FRAME = 1
@@ -330,7 +327,6 @@ class ToolAgentRuntime:
         )
         self.data_store = RuntimeDataStore()
         self.master, self.master_cfg = _llm("tool_agent.master")
-        self._semantic_model = self.master
         self.worker, self.worker_cfg = _llm("tool_agent.worker")
         self._master_explicit_cache = _supports_explicit_prompt_cache(self.master_cfg)
         self.strategy = Strategy(
@@ -467,22 +463,6 @@ class ToolAgentRuntime:
             trace=self._trace,
         )
         try:
-            self._raise_if_cancelled()
-            semantic_model = getattr(self, "_semantic_model", None)
-            if semantic_model is not None:
-                semantic_contract = normalize_task_semantics(
-                    llm=semantic_model,
-                    system_prompt=_SEMANTIC_CONTRACT_SYSTEM,
-                    goal=goal,
-                    cache_system_prompt=getattr(self, "_master_explicit_cache", False),
-                    on_event=lambda event, payload: self._trace(event, **payload),
-                )
-                if (
-                    semantic_contract.conditional_predicates
-                    or semantic_contract.semantic_predicates
-                    or semantic_contract.counted_entity
-                ):
-                    task_context["semantic_contract"] = semantic_contract.model_dump(mode="json")
             self._raise_if_cancelled()
             program = compile_master_program(
                 llm=self.master,
@@ -870,9 +850,13 @@ class ToolAgentRuntime:
                 step += 1
                 observed_auth_codes.update(auth_codes_from_frame(frame))
                 # Screenshot-only delivery surfaces preserve codes through journal facts.
-                observed_auth_codes.update(auth_codes_from_text(
-                    " ".join(journal.active_memory_statements(frame_id=frame.frame_id))
-                ))
+                memory = build_worker_memory_view(journal, current_frame_id=frame.frame_id)
+                observed_auth_codes.update(auth_codes_from_text(" ".join(
+                    event.statement for event in (
+                        *memory.current_observations, *memory.accumulated_evidence,
+                        *memory.established_claims, *memory.active_commitments,
+                    )
+                )))
                 initial_same_frame_feedback = None
                 predispatch_repair_turn = 0
             else:
@@ -1161,6 +1145,11 @@ class ToolAgentRuntime:
                     )
                     continue
                 break
+            dispatch_commitment_refs = tuple(
+                event.event_ref for event in build_worker_memory_view(
+                    journal, current_frame_id=frame.frame_id,
+                ).active_commitments
+            )
             try:
                 if call["name"] == "continue_with_actions":
                     result_payload, terminal = self._execute_multi_action_calls(
@@ -1173,6 +1162,7 @@ class ToolAgentRuntime:
                         frame=frame,
                         png=png,
                         journal=journal,
+                        commitment_refs=dispatch_commitment_refs,
                         observed_auth_codes=observed_auth_codes,
                     )
                 else:
@@ -1195,6 +1185,7 @@ class ToolAgentRuntime:
                     tool=call["name"],
                     args=call["args"],
                     result=result_payload,
+                    commitment_refs=dispatch_commitment_refs,
                 )
                 journal.record_runtime_result(
                     step=step,
@@ -1420,9 +1411,6 @@ class ToolAgentRuntime:
                     spec, journal.worker_id
                 ),
             ),
-            value_provenance=value_provenance_contract(
-                getattr(self, "_task_goal", ""), spec,
-            ),
             same_frame_feedback=same_frame_feedback,
         )
         system_prompt = self._worker_system_prompt()
@@ -1607,6 +1595,7 @@ class ToolAgentRuntime:
         frame: MaterializedFrame,
         png: bytes,
         journal: WorkerJournal,
+        commitment_refs: tuple[str, ...] = (),
         observed_auth_codes: set[str] | None = None,
     ) -> tuple[dict[str, Any], str | None]:
         """Execute one fused Worker decision as interruptible atomic actions."""
@@ -1697,6 +1686,7 @@ class ToolAgentRuntime:
                 tool=action_call["name"],
                 args=action_call["args"],
                 result=result,
+                commitment_refs=commitment_refs,
             )
             journal.record_runtime_result(
                 step=step,

@@ -36,12 +36,6 @@ _ENCODED_COORD_PAIR = re.compile(
     rf'(?P<head>"(?P<prefix>to_)?x"\s*:\s*{_NUMBER}),\s*'
     rf'(?P<y>{_NUMBER})(?=\s*[,}}])'
 )
-_DESCRIPTIVE_VALUE_ROLE = re.compile(
-    r"\b(?:usual|dedicated|preferred|appropriate)\b|常用|专用|专门|惯用|首选|合适",
-    re.IGNORECASE,
-)
-
-
 class ProtocolError(RuntimeError):
     pass
 
@@ -287,30 +281,10 @@ def worker_attempt_contract(
         "When `phase` is `start`, the first action's visible target or destination must "
         "identify the approach; the residue surface's usefulness for the goal is irrelevant. "
         "The goal and output contract are immutable. Runtime actions are generic "
-        "capabilities, and named input bindings inject private Master-routed values. "
-        "Only literal identifiers in this attempt, its bindings, active Evidence, or the "
-        "bound application are exact. Role descriptions such as usual, dedicated, preferred, "
-        "or appropriate are unresolved values; resolve them from Evidence/application state "
-        "or ask_user before mutation.\n"
+        "capabilities, and named input bindings inject private Master-routed values.\n"
         + json.dumps(payload, ensure_ascii=False)
         + "\n"
         + profile_rules
-    )
-
-
-def value_provenance_contract(original_goal: str, spec: WorkerSpec) -> str:
-    """Expose user wording only when this attempt contains a descriptive value role."""
-
-    attempt_values = "\n".join([spec.goal, *spec.success_criteria])
-    if not original_goal.strip() or not _DESCRIPTIVE_VALUE_ROLE.search(attempt_values):
-        return ""
-    return (
-        "## Value provenance archive (task-scoped; non-executable)\n"
-        "This source is authoritative only for deciding whether a value already named "
-        "in the Current Worker attempt was supplied literally or described only by role. "
-        "It adds no work, does not change the current goal or approach, and cannot authorize "
-        "actions outside the current attempt.\n"
-        + json.dumps({"verbatim_user_source": original_goal}, ensure_ascii=False)
     )
 
 

@@ -75,18 +75,6 @@ class DataRequirement(StrictModel):
 
     id: str = Field(pattern=r"^[a-z][a-z0-9_]{0,63}$")
     description: str
-    record_grain: str = Field(
-        default="",
-        max_length=160,
-        description="Exact semantic entity represented by one collected row.",
-    )
-    semantic_predicates: list[str] = Field(
-        default_factory=list,
-        description=(
-            "Externally verifiable scope predicates that are not safely attributable "
-            "to one known source field."
-        ),
-    )
     target_label: str = Field(
         default="",
         description="Visible label/caption that identifies the data surface, when known.",
@@ -355,35 +343,6 @@ class WorkerStrategy(StrictModel):
     approach: str = Field(min_length=1)
 
 
-class TaskSemanticContract(StrictModel):
-    """Typed task semantics that must survive orchestration."""
-
-    conditional_predicates: list[str] = Field(
-        default_factory=list,
-        max_length=8,
-        description=(
-            "Affirmative propositions whose truth selects a conditional task branch. "
-            "They refine task semantics without replacing original user values."
-        ),
-    )
-    semantic_predicates: list[str] = Field(
-        default_factory=list,
-        max_length=16,
-        description=(
-            "Record-scope propositions that require whole-source Evidence because "
-            "the task names no single field that contains them."
-        ),
-    )
-    counted_entity: str = Field(
-        default="",
-        max_length=160,
-        description=(
-            "Exact user-language entity whose cardinality is requested as a scalar; "
-            "empty when the task does not ask for a count."
-        ),
-    )
-
-
 class WorkerSpec(StrictModel):
     """An immutable logical goal paired with one replaceable execution strategy."""
 
@@ -404,6 +363,13 @@ class WorkerSpec(StrictModel):
         ),
     )
     input_bindings: list[WorkerInputBinding] = Field(default_factory=list)
+    unresolved_inputs: dict[str, str] = Field(
+        default_factory=dict,
+        description=(
+            "User-owned values described by role but lacking an exact identifier. "
+            "Each must be resolved before a dependent Commitment is established."
+        ),
+    )
     data_requirements: list[DataRequirement] = Field(default_factory=list)
     strategy: WorkerStrategy
 
@@ -416,11 +382,20 @@ class WorkerSpec(StrictModel):
             raise ValueError("data requirement ids must be unique")
         invalid_input_names = [
             name
-            for name in self.input_refs
+            for name in (*self.input_refs, *self.unresolved_inputs)
             if re.fullmatch(r"[a-z][a-z0-9_]{0,63}", name) is None
         ]
         if invalid_input_names:
-            raise ValueError(f"invalid input_refs names: {sorted(invalid_input_names)}")
+            raise ValueError(f"invalid input names: {sorted(invalid_input_names)}")
+        duplicate_inputs = set(self.input_refs).intersection(self.unresolved_inputs)
+        if duplicate_inputs:
+            raise ValueError(f"inputs cannot be both resolved and unresolved: {sorted(duplicate_inputs)}")
+        empty_descriptions = [
+            name for name, description in self.unresolved_inputs.items()
+            if not description.strip()
+        ]
+        if empty_descriptions:
+            raise ValueError(f"unresolved inputs need descriptions: {sorted(empty_descriptions)}")
         invalid_refs = [
             ref for ref in self.input_refs.values() if not ref.startswith("result:")
         ]
