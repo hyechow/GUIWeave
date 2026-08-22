@@ -22,10 +22,10 @@ from this machine (a tiny adb relay + portproxy for 5556, a portproxy for 6800).
 Usage:
   AGENT_PLATFORM is forced to "android" here; ANDROID_SERIAL is set from --adb-serial.
   uv run python -m gui_agent.adapters.android.mobileworld <task_name> \
-      --base-url http://192.168.1.103:6800 --adb-serial 192.168.1.103:5556
+      --base-url http://localhost:6800 --adb-serial localhost:5556
   # discover task names:
   uv run python -m gui_agent.adapters.android.mobileworld --list \
-      --base-url http://192.168.1.103:6800
+      --base-url http://localhost:6800
 
 Each turn observes the current frame; ordinary semantic Interact scrolling remains
 available.
@@ -416,10 +416,10 @@ def _build_parser() -> argparse.ArgumentParser:
         "--command", choices=("run", "prepare"), default="run",
         help="run an already-prepared task, or reset and prepare it (default run)",
     )
-    parser.add_argument("--base-url", default=os.environ.get("MW_BASE_URL", "http://192.168.1.103:6800"),
+    parser.add_argument("--base-url", default=os.environ.get("MW_BASE_URL", "http://localhost:6800"),
                         help="MobileWorld backend URL (env MW_BASE_URL; default :6800)")
     parser.add_argument("--adb-serial", default=os.environ.get("MW_ADB_SERIAL")
-                        or os.environ.get("ANDROID_SERIAL", "192.168.1.103:5556"),
+                        or os.environ.get("ANDROID_SERIAL", "localhost:5556"),
                         help="adb serial for the emulator (env MW_ADB_SERIAL/ANDROID_SERIAL; default :5556)")
     parser.add_argument("--device", default="emulator-5554",
                         help="in-container emulator serial the backend controls (default emulator-5554)")

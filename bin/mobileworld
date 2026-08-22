@@ -12,11 +12,11 @@
 #   2) backend HTTP: 容器 6800 经 portproxy 暴露 → MW_BASE_URL=http://<host>:6800
 # 覆盖: MW_BASE_URL=<url> MW_ADB_SERIAL=<host:port> bin/mobileworld <task-name>
 #       MW_RESET_COMMAND='<external reset command>' 配置 prepare 的容器重置步骤
-#   默认 MW_BASE_URL=http://192.168.1.103:6800  MW_ADB_SERIAL=192.168.1.103:5556
+#   默认 MW_BASE_URL=http://localhost:6800  MW_ADB_SERIAL=localhost:5556
 set -e
 cd "$(dirname "$0")/.."
 
-: "${MW_RESET_COMMAND:=ssh -o BatchMode=yes -o ConnectTimeout=8 -p 2222 root@192.168.1.103 docker restart mobile_world_env_0}"
+: "${MW_RESET_COMMAND:=docker restart mobile_world_env_0}"
 export MW_RESET_COMMAND
 
 headless=0
