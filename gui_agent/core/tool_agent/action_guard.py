@@ -9,12 +9,8 @@ from dataclasses import dataclass
 from typing import Any, Literal
 from urllib.parse import urlsplit
 
-from gui_agent.core.tool_agent.contracts import (
-    DynamicActionSpec,
-    MaterializedFrame,
-    WorkerSpec,
-)
-from gui_agent.core.tool_agent.filter_state import compile_filter_predicates
+from gui_agent.core.tool_agent.contracts import MaterializedFrame
+from gui_agent.core.tool_agent.action_geometry import control_at_point
 
 
 _AUTH_CODE_MARKER = r"(?:verification code|one-time code|otp|验证码|校验码|动态码)"
@@ -37,12 +33,6 @@ _TEMPLATE_PLACEHOLDER_RE = re.compile(
 class NavigationAdmission:
     decision: Literal["allow", "abort"]
     reason: str = ""
-
-
-@dataclass(frozen=True)
-class FrameAssessment:
-    allowed_actions: list[DynamicActionSpec]
-    completion_mode: Literal["unavailable", "operator", "collector"] = "unavailable"
 
 
 def _http_origin(value: str, *, require_public: bool = False) -> tuple[str, str, int | None] | None:
@@ -88,31 +78,6 @@ def assess_navigation_url(
     return NavigationAdmission("allow")
 
 
-def assess_frame(
-    spec: WorkerSpec,
-    actions: list[DynamicActionSpec],
-    frame: MaterializedFrame,
-    *,
-    attempted_action: bool = False,
-) -> FrameAssessment:
-    if frame.readiness != "ready":
-        allowed = [] if attempted_action else [
-            action for action in actions
-            if action.capability in {"open_url", "back", "home", "app_switch", "launch_app"}
-        ]
-        return FrameAssessment(
-            allowed,
-            completion_mode="unavailable",
-        )
-    # Collection completeness is a Worker-judged claim: the collector decides from
-    # its own evidence when the scope is fully acquired. Runtime never certifies it,
-    # so `complete` is offered unconditionally for either profile on a ready frame.
-    mode: Literal["unavailable", "operator", "collector"] = (
-        "operator" if spec.profile == "operator" else "collector"
-    )
-    return FrameAssessment(actions, completion_mode=mode)
-
-
 def auth_codes_from_text(text: str) -> set[str]:
     """Extract digits close to an authentication marker, not unrelated numbers."""
 
@@ -133,71 +98,6 @@ def auth_codes_from_frame(frame: MaterializedFrame) -> set[str]:
     return codes
 
 
-def control_at_point(
-    args: dict[str, Any], frame: MaterializedFrame,
-) -> dict[str, Any] | None:
-    """Return the smallest visible enhanced control containing the action point."""
-
-    x, y = args.get("x"), args.get("y")
-    if not all(isinstance(value, (int, float)) for value in (x, y)):
-        return None
-    matches: list[tuple[float, dict[str, Any]]] = []
-    for control in frame.controls:
-        rect = control.get("rect")
-        if (
-            control.get("in_viewport") is False
-            or not isinstance(rect, dict)
-            or not all(isinstance(rect.get(key), (int, float)) for key in ("x", "y"))
-        ):
-            continue
-        cx, cy = float(rect["x"]), float(rect["y"])
-        width, height = float(rect.get("w") or 0), float(rect.get("h") or 0)
-        if abs(float(x) - cx) <= width / 2 and abs(float(y) - cy) <= height / 2:
-            matches.append((max(1.0, width * height), control))
-    return min(matches, key=lambda item: item[0])[1] if matches else None
-
-
-def is_candidate_commit(
-    args: dict[str, Any], frame: MaterializedFrame,
-) -> bool:
-    """Identify a confirmed selection commit from its pre-action frame."""
-    target = control_at_point(args, frame)
-    candidates = [
-        item for item in frame.controls
-        if item.get("in_viewport") is not False
-        and item.get("selection_mode") == "multiple"
-    ]
-    return bool(
-        target
-        and target.get("form_action") == "commit"
-        and any(item.get("is_filter") is True for item in frame.controls)
-        and candidates
-        and all(bool(item.get("selected")) for item in candidates)
-    )
-
-
-def _fully_visible_bounded_scope(frame: MaterializedFrame) -> bool:
-    if frame.missing_requirements or {
-        scope.get("status") for scope in frame.requirement_scopes.values()
-    } != {"met"}:
-        return False
-    for chunk in frame.chunks:
-        scope = frame.requirement_scopes.get(chunk.requirement_id) or {}
-        predicates = compile_filter_predicates(scope.get("requested_filters"))
-        if (
-            chunk.provider != "vision"
-            or chunk.row_count == 0
-            or not all(
-                chunk.coverage.get(edge) is True
-                for edge in ("start_visible", "end_visible")
-            )
-        ):
-            continue
-        if any(predicate.operator == "range" for predicate in predicates.values()):
-            return True
-    return False
-
-
 def action_boundary_error(
     capability: str,
     args: dict[str, Any],
@@ -206,11 +106,6 @@ def action_boundary_error(
 ) -> str:
     """Reject actions contradicted by authoritative enhanced observation."""
 
-    if capability == "scroll" and _fully_visible_bounded_scope(frame):
-        return (
-            "blocked scroll: the exact bounded scope is fully visible; complete "
-            "from the current rows"
-        )
     control = control_at_point(args, frame)
     if control is not None:
         kind = str(control.get("kind") or "").casefold()
@@ -277,19 +172,4 @@ def action_boundary_error(
             "blocked unobserved authentication code: open its delivery surface, "
             "read the exact current code, then return and enter it"
         )
-    for scope in frame.requirement_scopes.values():
-        detail = scope.get("detail_resolution")
-        detail = detail if isinstance(detail, dict) else {}
-        if scope.get("status") != "unmet" or (
-            detail.get("status") == "active"
-            and detail.get("pending_candidate_ordinal") is not None
-        ):
-            continue
-        if control is not None and control.get("group_index") is not None:
-            return (
-                "blocked row action because acquisition scope remains unmet; do not "
-                f"claim it is met (requested={scope.get('requested_filters') or {}}, "
-                f"applied={scope.get('applied_filters') or {}}). Resolve the filter "
-                "blockers before opening a record"
-            )
     return ""

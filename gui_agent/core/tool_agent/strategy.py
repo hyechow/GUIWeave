@@ -5,6 +5,7 @@ from __future__ import annotations
 import json
 import time
 from collections.abc import Callable
+from dataclasses import dataclass
 from typing import Any, Literal
 
 from langchain_core.messages import HumanMessage
@@ -33,8 +34,21 @@ _FAILURE_ROUTES = {
 }
 
 
-class Strategy:
-    """Decide replacement policy using the Worker model as an inference backend."""
+ReflectionRoute = Literal[
+    "resume", "reconcile_state", "revise_approach", "escalate_to_master", "stop"
+]
+
+
+@dataclass(frozen=True)
+class ReflectionResult:
+    decision: ReflectionRoute
+    reason: str
+    strategy: WorkerStrategy | None = None
+    preserve_progress: bool = True
+    invalidate: tuple[str, ...] = ()
+
+class Reflector:
+    """Diagnose a disproved execution path without making GUI decisions."""
 
     def __init__(self, generation_model: Any, *, generation_model_name: str = "",
                  explicit_cache: bool = False) -> None:
@@ -57,7 +71,11 @@ class Strategy:
         context: dict[str, Any],
     ) -> list[str]:
         issues = []
-        attempted = context.get("attempted_strategies") or []
+        attempted = (
+            context.get("attempted_approaches")
+            or context.get("attempted_strategies")
+            or []
+        )
         if replacement == original or replacement.model_dump(mode="json") in attempted:
             issues.append("replacement strategy has already been attempted")
         if approach_is_procedural(replacement.approach):
@@ -68,28 +86,56 @@ class Strategy:
         return issues
 
     @classmethod
-    def _replacement(
+    def _reflection(
         cls,
         decision: dict[str, Any],
         original: WorkerStrategy,
         context: dict[str, Any],
-    ) -> tuple[WorkerStrategy | None, list[str]]:
-        choice, reason = decision.get("decision"), decision.get("reason")
-        candidate = decision.get("strategy")
-        if choice not in {"replace", "stop"} or not isinstance(reason, str) or not reason:
-            raise ValueError("decision and non-empty reason are required")
-        if choice == "stop":
-            if candidate is not None:
-                raise ValueError("stop forbids a strategy")
-            return None, []
-        if not isinstance(candidate, dict):
-            raise ValueError("replace requires one complete strategy")
-        replacement = WorkerStrategy.model_validate(candidate)
-        return replacement, cls._issues(original, replacement, context)
+    ) -> tuple[ReflectionResult, list[str]]:
+        recommendation = decision.get("recommendation")
+        diagnosis = decision.get("diagnosis")
+        if isinstance(recommendation, dict):
+            choice = recommendation.get("decision")
+            reason = (diagnosis or {}).get("reason") if isinstance(diagnosis, dict) else ""
+            approach = recommendation.get("approach")
+            preserve = recommendation.get("preserve_progress", True)
+            invalidate = recommendation.get("invalidate") or []
+        else:  # historical replay compatibility
+            legacy = decision.get("decision")
+            choice = "revise_approach" if legacy == "replace" else legacy
+            reason = decision.get("reason")
+            candidate = decision.get("strategy")
+            legacy_strategy = (
+                WorkerStrategy.model_validate(candidate)
+                if isinstance(candidate, dict) else None
+            )
+            approach = legacy_strategy.approach if legacy_strategy is not None else None
+            preserve = True
+            invalidate = []
+        if choice not in {
+            "resume", "reconcile_state", "revise_approach", "escalate_to_master", "stop",
+        } or not isinstance(reason, str) or not reason:
+            raise ValueError("typed recommendation and non-empty diagnosis reason are required")
+        if preserve is not True:
+            raise ValueError("Reflector must preserve reduced progress")
+        if not isinstance(invalidate, list) or any(not isinstance(ref, str) for ref in invalidate):
+            raise ValueError("invalidate must contain audit reference strings")
+        replacement = None
+        issues: list[str] = []
+        if choice == "revise_approach":
+            if not isinstance(approach, str) or not approach.strip():
+                raise ValueError("revise_approach requires one complete approach")
+            replacement = WorkerStrategy(approach=approach)
+            issues = cls._issues(original, replacement, context)
+        elif approach not in (None, ""):
+            raise ValueError(f"{choice} forbids an approach")
+        return ReflectionResult(
+            decision=choice, reason=reason, strategy=replacement,
+            preserve_progress=True, invalidate=tuple(invalidate),
+        ), issues
 
-    def decide(self, *, context: dict[str, Any], original_strategy: WorkerStrategy,
-               on_event: Callable[..., None]
-               ) -> tuple[WorkerStrategy | None, str]:
+    def reflect(self, *, context: dict[str, Any], original_strategy: WorkerStrategy,
+                on_event: Callable[..., None]) -> ReflectionResult:
         messages: list[Any] = [
             cacheable_system_message(_STRATEGY_SYSTEM, enabled=self.explicit_cache),
             HumanMessage(content=json.dumps(context, ensure_ascii=False)),
@@ -100,7 +146,7 @@ class Strategy:
             **chat_request_kwargs(self.generation_model_name),
         )
         decision: dict[str, Any] = {}
-        replacement: WorkerStrategy | None = None
+        reflection: ReflectionResult | None = None
         diagnostics = []
         elapsed_s = 0.0
         response = None
@@ -110,7 +156,7 @@ class Strategy:
             elapsed_s += time.perf_counter() - started_at
             try:
                 decision = parse_json_object(response.content)
-                replacement, diagnostics = self._replacement(
+                reflection, diagnostics = self._reflection(
                     decision,
                     original_strategy,
                     context,
@@ -118,36 +164,37 @@ class Strategy:
                 if not diagnostics:
                     break
             except Exception as exc:  # one bounded repair
-                replacement = None
+                reflection = None
                 diagnostics = [f"{type(exc).__name__}: {exc}"]
             if attempt == 0:
                 messages.extend([
                     response,
                     HumanMessage(content=(
                         "Strategy decision repair: " + "; ".join(diagnostics)
-                        + ". Return exactly one valid replace or stop decision."
+                        + ". Return exactly one valid typed reflection recommendation."
                     )),
                 ])
 
         assert response is not None
-        selected = bool(decision.get("decision") == "replace" and replacement and not diagnostics)
-        valid_stop = decision.get("decision") == "stop" and not diagnostics
-        invalid_reason = "Strategy did not produce a valid replacement strategy."
-        reason = str(decision.get("reason") or invalid_reason) if (
-            selected or valid_stop
-        ) else invalid_reason
+        valid = reflection is not None and not diagnostics
+        invalid_reason = "Reflector did not produce a valid recommendation."
+        if not valid:
+            reflection = ReflectionResult(decision="stop", reason=invalid_reason)
         reports = diagnostic_prompt_reports("tool_agent.strategy_decide", messages, response,
             parsed=decision or {"diagnostics": diagnostics},
             schema="StrategyDecision",
         )
         on_event(
-            "strategy_decision",
-            decision="replace" if selected else "stop",
-            reason=reason,
-            strategy=replacement.model_dump(mode="json") if selected else None,
+            "reflection_decision",
+            decision=reflection.decision,
+            reason=reflection.reason,
+            strategy=(reflection.strategy.model_dump(mode="json")
+                      if reflection.strategy is not None else None),
+            preserve_progress=reflection.preserve_progress,
+            invalidate=list(reflection.invalidate),
             diagnostics=diagnostics,
             llm_elapsed_s=round(elapsed_s, 3),
             token_usage=response_usage(response),
             context_reports=reports,
         )
-        return (replacement if selected else None), reason
+        return reflection

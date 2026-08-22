@@ -43,15 +43,13 @@ from gui_agent.core.tool_agent.contracts import (
     WorkerStrategy,
 )
 from gui_agent.core.tool_agent.action_guard import (
-    FrameAssessment,
     action_boundary_error,
-    assess_frame,
     assess_navigation_url,
     auth_codes_from_frame,
     auth_codes_from_text,
-    control_at_point,
-    is_candidate_commit,
 )
+from gui_agent.core.tool_agent.action_geometry import control_at_point
+from gui_agent.core.tool_agent.action_receipt import is_confirmed_selection_commit
 from gui_agent.core.tool_agent.data_store import RuntimeDataStore
 from gui_agent.core.tool_agent.orchestrator import (
     MasterCompileError,
@@ -65,6 +63,7 @@ from gui_agent.core.tool_agent.protocol import (
     FailWorkerArgs,
     MAX_ORDERED_ACTIONS,
     ProtocolError,
+    WorkerFrameTools,
     bind_worker_decision_transport,
     cacheable_system_message,
     diagnostic_prompt_reports,
@@ -77,13 +76,16 @@ from gui_agent.core.tool_agent.protocol import (
     response_usage,
     validate_dynamic_action_spec,
     validate_worker_tool_state,
+    worker_frame_tools,
     worker_attempt_contract,
 )
 from gui_agent.core.tool_agent.replay import write_replay_artifact
-from gui_agent.core.tool_agent.strategy import Strategy
+from gui_agent.core.tool_agent.strategy import ReflectionResult, Reflector
 from gui_agent.core.tool_agent.worker_memory import (
     WorkerJournal,
+    build_progress_snapshot,
     build_worker_memory_view,
+    memory_repair_instruction,
     project_worker_context,
 )
 from gui_agent.core.vision.frame_analysis import visual_surface_fingerprint
@@ -115,6 +117,86 @@ _EXECUTABLE_CAPABILITIES = {
     "app_switch",
     "launch_app",
 }
+_TRANSIENT_MODEL_ERROR_NAMES = {
+    "APIConnectionError", "APITimeoutError", "InternalServerError", "RateLimitError",
+}
+
+
+def _is_transient_model_error(error: BaseException) -> bool:
+    """Recognize provider transport failures without coupling Runtime to one SDK."""
+    current: BaseException | None = error
+    seen: set[int] = set()
+    while current is not None and id(current) not in seen:
+        seen.add(id(current))
+        if type(current).__name__ in _TRANSIENT_MODEL_ERROR_NAMES:
+            return True
+        current = current.__cause__ or current.__context__
+    return False
+
+
+def _scroll_boundary_feedback(directions: set[str]) -> dict[str, Any]:
+    """Describe a mechanically observed traversal boundary without deciding completion."""
+    return {
+        "status": "collection_traversal_boundary",
+        "boundary_directions": sorted(directions),
+        "action_effect": "no_visual_change",
+        "surface_transition": "none",
+        "surface_continuity": "preserved",
+        "decision_mode": "boundary_reconciliation",
+        "decision_rule": (
+            "Treat this as the boundary of only the current scroll container. Choose the "
+            "next transition from goal-source alignment and accumulated coverage."
+        ),
+        "instruction": (
+            "The collection cannot advance in the recorded boundary directions. Do not "
+            "reverse merely to recheck handled records. "
+            "The unchanged frame proves only that the same local surface remained active. "
+            "It does not prove that this surface is the Goal Contract's required source, "
+            "that another navigation path is invalid, or that task coverage is exhaustive. "
+            "Navigate elsewhere when the current surface is not the required source. Reverse "
+            "only when active progress names a specific unresolved target behind this boundary. "
+            "Complete only when the current surface visibly establishes the required source "
+            "and accumulated coverage is exhaustive."
+        ),
+    }
+
+
+def _constrain_boundary_scroll_actions(
+    actions: list[DynamicActionSpec], directions: set[str],
+) -> list[DynamicActionSpec]:
+    """Exclude only directions disproved within the current traversal episode."""
+    axis = (
+        ("up", "down") if directions.intersection({"up", "down"}) else
+        ("left", "right") if directions.intersection({"left", "right"}) else ()
+    )
+    remaining = tuple(direction for direction in axis if direction not in directions)
+    constrained: list[DynamicActionSpec] = []
+    for action in actions:
+        if action.capability != "scroll":
+            constrained.append(action)
+        elif len(remaining) == 1:
+            payload = action.model_dump(mode="json")
+            payload["fixed_args"] = {**payload.get("fixed_args", {}), "direction": remaining[0]}
+            payload["exposed_args"] = [
+                name for name in payload.get("exposed_args", []) if name != "direction"
+            ]
+            constrained.append(DynamicActionSpec.model_validate(payload))
+        elif remaining:
+            constrained.append(action)
+    return constrained
+
+
+def _update_traversal_boundaries(boundaries: set[str], receipt: Any) -> None:
+    """Persist boundary directions across scrolls; another capability ends the episode."""
+    if receipt is None:
+        return
+    if receipt.tool == "scroll":
+        if receipt.outcome.kind == "no_effect":
+            direction = str(receipt.args.get("direction") or "")
+            if direction:
+                boundaries.add(direction)
+    elif receipt.executed:
+        boundaries.clear()
 
 
 class _RuntimeCancelled(Exception):
@@ -330,7 +412,7 @@ class ToolAgentRuntime:
         self.master, self.master_cfg = _llm("tool_agent.master")
         self.worker, self.worker_cfg = _llm("tool_agent.worker")
         self._master_explicit_cache = _supports_explicit_prompt_cache(self.master_cfg)
-        self.strategy = Strategy(
+        self.strategy = Reflector(
             self.worker,
             generation_model_name=self.worker_cfg.model,
             explicit_cache=_supports_explicit_prompt_cache(self.worker_cfg),
@@ -601,6 +683,20 @@ class ToolAgentRuntime:
             ):
                 journal._append(replace(event, attempt_id=worker_id))
 
+    def _preserve_progress_for_reflected_attempt(
+        self,
+        *,
+        current_worker_id: str,
+        next_worker_id: str,
+    ) -> None:
+        """Alias one logical Worker's Journal across approach revisions."""
+        journals = getattr(self, "_worker_journals", None)
+        if journals is not None and current_worker_id in journals:
+            journals[next_worker_id] = journals[current_worker_id]
+        last_frames = getattr(self, "_worker_last_frames", {})
+        if current_worker_id in last_frames:
+            last_frames[next_worker_id] = last_frames[current_worker_id]
+
     def _worker_recovery_experience(
         self,
         worker_id: str,
@@ -622,15 +718,17 @@ class ToolAgentRuntime:
                 ],
                 "missing_requirements": frame.missing_requirements,
             }
+        memory = (
+            build_worker_memory_view(
+                journal, current_frame_id=frame.frame_id if frame is not None else "",
+            )
+            if journal is not None else None
+        )
         return {
-            "worker_memory": (
-                build_worker_memory_view(
-                    journal,
-                    current_frame_id=frame.frame_id if frame is not None else "",
-                ).render_prompt_section()
-                if journal is not None else "No retained Worker memory."
+            "historical_progress": (
+                build_progress_snapshot(memory).to_dict() if memory is not None else {}
             ),
-            "current_observation": current,
+            "current_state": current,
         }
 
     def _request_strategy_decision(
@@ -643,7 +741,7 @@ class ToolAgentRuntime:
         failure_reason: str,
         attempt_no: int,
         attempted_strategies: list[WorkerStrategy],
-    ) -> tuple[WorkerStrategy | None, str]:
+    ) -> ReflectionResult:
         context = {
             "logical_worker_id": logical_worker_id,
             "prior_worker_id": prior_worker_id,
@@ -656,10 +754,9 @@ class ToolAgentRuntime:
             "prior_outcome": prior_outcome.model_dump(mode="json"),
             "application_knowledge": getattr(self, "_master_knowledge", "") or "(none)",
             "platform": self._platform_prompt_context(),
-            "execution_experience": self._worker_recovery_experience(
-                prior_worker_id,
-            ),
-            "attempted_strategies": [
+            **self._worker_recovery_experience(prior_worker_id),
+            "failure": prior_outcome.model_dump(mode="json"),
+            "attempted_approaches": [
                 item.model_dump(mode="json") for item in attempted_strategies
             ],
             "supported_capabilities": sorted(self._platform_capabilities),
@@ -674,7 +771,7 @@ class ToolAgentRuntime:
                 **payload,
             )
 
-        return self.strategy.decide(
+        return self.strategy.reflect(
             context=context,
             original_strategy=original_spec.strategy,
             on_event=trace,
@@ -706,7 +803,7 @@ class ToolAgentRuntime:
                         steps=consumed_steps,
                     )
                 return outcome.model_copy(update={"steps": consumed_steps})
-            route = Strategy.route(outcome)
+            route = Reflector.route(outcome)
             if route in {"complete", "master", "abort"}:
                 return outcome.model_copy(update={"steps": consumed_steps})
             if route != "replace":
@@ -726,7 +823,7 @@ class ToolAgentRuntime:
                 outcome=outcome.model_dump(mode="json"),
             )
             try:
-                revised, selection_reason = self._request_strategy_decision(
+                reflected = self._request_strategy_decision(
                     logical_worker_id=worker_id,
                     prior_worker_id=current_id,
                     original_spec=current_spec,
@@ -742,23 +839,47 @@ class ToolAgentRuntime:
                     failure_kind="generator_invalid",
                     steps=consumed_steps,
                 )
-            if revised is None:
+            revised = reflected.strategy
+            selection_reason = reflected.reason
+            strategy_attempt += 1
+            if reflected.decision in {"resume", "reconcile_state"}:
                 self._trace(
-                    "strategy_stopped",
+                    "reflection_resumed",
                     logical_worker_id=worker_id,
                     worker_id=current_id,
-                    strategy_attempt=strategy_attempt + 1,
+                    strategy_attempt=strategy_attempt,
+                    decision=reflected.decision,
+                    reason=selection_reason,
+                )
+                continue
+            if reflected.decision == "escalate_to_master":
+                self._trace(
+                    "reflection_escalated",
+                    logical_worker_id=worker_id,
+                    worker_id=current_id,
+                    strategy_attempt=strategy_attempt,
+                    reason=selection_reason,
+                )
+                return outcome.model_copy(update={
+                    "summary": f"{outcome.summary.rstrip('.')} - escalation: {selection_reason}",
+                    "steps": consumed_steps,
+                })
+            if reflected.decision == "stop" or revised is None:
+                self._trace(
+                    "reflection_stopped",
+                    logical_worker_id=worker_id,
+                    worker_id=current_id,
+                    strategy_attempt=strategy_attempt,
                     reason=selection_reason,
                 )
                 return outcome.model_copy(update={
                     "summary": (
-                        f"{outcome.summary.rstrip('.')} - Strategy stopped: "
+                        f"{outcome.summary.rstrip('.')} - Reflector stopped: "
                         f"{selection_reason}"
                     ),
                     "steps": consumed_steps,
                 })
             attempted_strategies.append(revised)
-            strategy_attempt += 1
             next_id = self._strategy_worker_id(worker_id, strategy_attempt)
             self._trace(
                 "strategy_worker_dispatched",
@@ -769,6 +890,9 @@ class ToolAgentRuntime:
                 prior_outcome=outcome.model_dump(mode="json"),
                 selection_reason=selection_reason,
                 strategy=revised.model_dump(mode="json"),
+            )
+            self._preserve_progress_for_reflected_attempt(
+                current_worker_id=current_id, next_worker_id=next_id,
             )
             current_id = next_id
             current_spec = current_spec.model_copy(update={"strategy": revised})
@@ -839,6 +963,7 @@ class ToolAgentRuntime:
             dict[str, Any],
         ] | None = None
         predispatch_repair_turn = 0
+        traversal_boundaries: set[str] = set()
         while True:
             self._raise_if_cancelled()
             if reusable_observation is None:
@@ -855,7 +980,7 @@ class ToolAgentRuntime:
                 observed_auth_codes.update(auth_codes_from_text(" ".join(
                     event.statement for event in (
                         *memory.current_observations, *memory.accumulated_evidence,
-                        *memory.established_claims, *memory.active_commitments,
+                        *memory.active_commitments,
                     )
                 )))
                 initial_same_frame_feedback = None
@@ -869,13 +994,30 @@ class ToolAgentRuntime:
                 last_frames = self._worker_last_frames
             last_frames[worker_id] = frame
             active_actions = self._refresh_each_actions(spec, active_actions)
-            frame_assessment = assess_frame(
+            frame_assessment = worker_frame_tools(
                 spec,
                 active_actions,
                 frame,
                 attempted_action=bool(journal.executed_tools),
             )
+            prior_receipt = journal.latest_action_receipt
+            _update_traversal_boundaries(traversal_boundaries, prior_receipt)
+            if initial_same_frame_feedback is None and traversal_boundaries:
+                initial_same_frame_feedback = _scroll_boundary_feedback(
+                    traversal_boundaries
+                )
             frame_actions = frame_assessment.allowed_actions
+            if (
+                initial_same_frame_feedback is not None
+                and initial_same_frame_feedback.get("status")
+                == "collection_traversal_boundary"
+            ):
+                frame_actions = _constrain_boundary_scroll_actions(
+                    frame_actions, traversal_boundaries,
+                )
+                frame_assessment = WorkerFrameTools(
+                    frame_actions, frame_assessment.completion_mode,
+                )
             worker_tools = self._worker_tools_for_frame(
                 spec,
                 frame_actions,
@@ -935,7 +1077,19 @@ class ToolAgentRuntime:
                     messages.append(HumanMessage(content=decision_instruction))
                 for attempt in range(2):
                     started_at = time.perf_counter()
-                    response = bound_worker.invoke(messages)
+                    for transport_attempt in range(2):
+                        try:
+                            response = bound_worker.invoke(messages)
+                            break
+                        except Exception as exc:  # noqa: BLE001 - provider-neutral retry
+                            if transport_attempt or not _is_transient_model_error(exc):
+                                raise
+                            self._trace(
+                                "worker_model_retry",
+                                step=step,
+                                frame_id=frame.frame_id,
+                                error=f"{type(exc).__name__}: {exc}",
+                            )
                     llm_elapsed_s += time.perf_counter() - started_at
                     token_usage = response_usage(response)
                     try:
@@ -1122,11 +1276,12 @@ class ToolAgentRuntime:
                         same_frame_feedback = feedback
                         continue
                 try:
-                    journal.record_memory_updates(
-                        step=step,
-                        frame_id=frame.frame_id,
+                    staged_memory_updates = journal.stage_memory_updates(
+                        step=step, frame_id=frame.frame_id,
                         state=state,
                     )
+                    if call["name"] != "continue_with_actions":
+                        journal.commit_memory_updates(staged_memory_updates)
                 except ValueError as exc:
                     if memory_repair_turn >= _MAX_MEMORY_UPDATE_REPAIRS_PER_FRAME:
                         return WorkerOutcome(
@@ -1140,7 +1295,7 @@ class ToolAgentRuntime:
                         "status": "memory_update_invalid",
                         "reason": str(exc),
                         "instruction": (
-                            "Correct the typed memory delta on this same frame. "
+                            f"{memory_repair_instruction(exc)} "
                             "No action was executed and no partial memory was recorded."
                         ),
                     }
@@ -1153,11 +1308,6 @@ class ToolAgentRuntime:
                     )
                     continue
                 break
-            dispatch_commitment_refs = tuple(
-                event.event_ref for event in build_worker_memory_view(
-                    journal, current_frame_id=frame.frame_id,
-                ).active_commitments
-            )
             try:
                 if call["name"] == "continue_with_actions":
                     result_payload, terminal = self._execute_multi_action_calls(
@@ -1170,7 +1320,7 @@ class ToolAgentRuntime:
                         frame=frame,
                         png=png,
                         journal=journal,
-                        commitment_refs=dispatch_commitment_refs,
+                        commitment_refs=(),
                         observed_auth_codes=observed_auth_codes,
                     )
                 else:
@@ -1193,11 +1343,20 @@ class ToolAgentRuntime:
                     tool=call["name"],
                     args=call["args"],
                     result=result_payload,
-                    commitment_refs=dispatch_commitment_refs,
+                    commitment_refs=(),
                 )
                 journal.record_runtime_result(
                     step=step,
                     result=result_payload,
+                )
+            elif (
+                result_payload.get("status") == "executed"
+                and result_payload.get("_memory_commit_safe") is True
+            ):
+                latest_receipt = journal.latest_action_receipt
+                journal.commit_memory_updates(
+                    staged_memory_updates,
+                    target_ref=(latest_receipt.target_ref if latest_receipt else ""),
                 )
             if result_payload.get("reuse_current_frame") is True:
                 predispatch_repair_turn += 1
@@ -1396,19 +1555,22 @@ class ToolAgentRuntime:
         frame: MaterializedFrame,
         png: bytes,
         same_frame_feedback: dict[str, Any] | None,
-        assessment: FrameAssessment | None = None,
+        assessment: WorkerFrameTools | None = None,
     ) -> tuple[list[Any], list[dict[str, Any]]]:
         """Rebuild one frame from bounded Journal memory; never replay chat history."""
         memory = build_worker_memory_view(
             journal,
             current_frame_id=frame.frame_id,
+            current_surface_fingerprint=frame.visual_fingerprint,
         )
-        assessment = assessment or assess_frame(
+        assessment = assessment or worker_frame_tools(
             spec, active_actions, frame,
         )
         projection = project_worker_context(
             memory=memory,
             frame=frame,
+            spec=spec,
+            completion_mode=assessment.completion_mode,
             application_knowledge=getattr(
                 self, "_worker_knowledge", getattr(self, "_master_knowledge", ""),
             ).strip(),
@@ -1443,10 +1605,10 @@ class ToolAgentRuntime:
         actions: list[DynamicActionSpec],
         frame: MaterializedFrame,
         *,
-        assessment: FrameAssessment | None = None,
+        assessment: WorkerFrameTools | None = None,
         allow_failure: bool = True,
     ) -> list[dict[str, Any]]:
-        assessment = assessment or assess_frame(
+        assessment = assessment or worker_frame_tools(
             spec, actions, frame,
         )
         return dynamic_worker_tools(
@@ -1624,6 +1786,7 @@ class ToolAgentRuntime:
             frame.title or live_identity[1],
         )
         executed = 0
+        memory_commit_safe = True
         reason = ""
         terminal: str | None = None
         rejected_before_dispatch = False
@@ -1656,6 +1819,14 @@ class ToolAgentRuntime:
                     reason=reason,
                 )
                 break
+            commitment_statement = str(
+                action_call["args"].get("description") or action_spec.description
+            )
+            dispatched_commitment = journal.record_runtime_commitment(
+                step=step, substep=index, frame_id=frame.frame_id,
+                tool=action_call["name"], statement=commitment_statement,
+                status="dispatched",
+            )
             self._trace(
                 "runtime_action_started",
                 worker_id=worker_id,
@@ -1694,13 +1865,25 @@ class ToolAgentRuntime:
                 tool=action_call["name"],
                 args=action_call["args"],
                 result=result,
-                commitment_refs=commitment_refs,
+                commitment_refs=(*commitment_refs, dispatched_commitment.event_ref),
+                surface_fingerprint=frame.visual_fingerprint,
+            )
+            journal.settle_runtime_commitment(
+                step=step, substep=index, frame_id=frame.frame_id,
+                tool=action_call["name"], statement=commitment_statement,
+                result=result,
             )
             journal.record_runtime_result(
                 step=step,
                 substep=index,
                 result=result,
             )
+            if (
+                result.get("status") != "executed"
+                or result.get("no_effect") is True
+                or (result.get("target_signal") or {}).get("status") == "off_target"
+            ):
+                memory_commit_safe = False
             if rejected_before_dispatch:
                 reason = str(result["error"])
                 break
@@ -1746,6 +1929,9 @@ class ToolAgentRuntime:
             "status": "executed" if executed == len(calls) and not reason else "aborted",
             "planned_actions": len(calls),
             "executed_actions": executed,
+            "_memory_commit_safe": (
+                memory_commit_safe and executed == len(calls) and not reason
+            ),
         }
         event = (
             "worker_multi_action_completed"
@@ -1943,6 +2129,7 @@ class ToolAgentRuntime:
                         ),
                         control_type=grounding.control_type,
                         label=grounding.label,
+                        container_context=grounding.container_context,
                         confidence=grounding.confidence,
                         proposed_inside=proposed_inside,
                         reason=grounding.reason,
@@ -2082,7 +2269,7 @@ class ToolAgentRuntime:
                 )
             if frame is not None and payload["status"] == "executed" and (
                 payload["no_effect"] is False
-                and is_candidate_commit(
+                and is_confirmed_selection_commit(
                     executed_action.model_dump(mode="python", exclude_none=True),
                     frame,
                 )

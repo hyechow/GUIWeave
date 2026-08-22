@@ -797,6 +797,10 @@ class TargetGrounding(BaseModel):
     )
     control_type: str = Field(default="", description="目标控件通用类型")
     label: str = Field(default="", description="目标控件或紧邻关联的可见标签")
+    container_context: str = Field(
+        default="",
+        description="目标所属行、卡片或列表项中可见的稳定身份文字；无明确容器时留空",
+    )
     confidence: Literal["high", "medium", "low"] = Field(
         default="low", description="目标身份与边界的视觉置信度",
     )

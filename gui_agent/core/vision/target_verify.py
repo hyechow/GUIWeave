@@ -215,6 +215,8 @@ def resolve_target_grounding(
             "actual_element": actual,
             "reason": "the proposed point lies inside the visually grounded target",
         }
+    if signal is not None and grounding.container_context.strip():
+        signal["container_context"] = grounding.container_context.strip()
     reject = signal is None and (
         action.action_type == "type"
         or grounding.target_found and grounding.confidence in {"high", "medium"}

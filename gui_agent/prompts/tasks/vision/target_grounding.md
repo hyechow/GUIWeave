@@ -23,3 +23,5 @@ version: 1
 
 `control_type` 使用简短通用类型，例如 `text_input`、`button`、`checkbox`、`switch`、`tab`、`menu_item`。
 `label` 记录目标自身或紧邻且明确关联的可见文字；`reason` 用一句话说明视觉定位依据。
+若目标明确属于一条可见的行、卡片或列表记录，`container_context` 原样记录裁剪中可见的稳定身份文字
+（例如名称、作者、标题或正文片段），不要写序号、位置或推断；没有明确容器时留空。

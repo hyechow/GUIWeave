@@ -6,6 +6,7 @@ import base64
 from io import BytesIO
 import json
 import re
+from dataclasses import dataclass
 from copy import deepcopy
 from typing import Any, Literal
 
@@ -16,6 +17,7 @@ from pydantic import BaseModel, ConfigDict, Field
 
 from gui_agent.core.tool_agent.contracts import (
     DynamicActionSpec,
+    MaterializedFrame,
     RuntimeInputBinding,
     WorkerSpec,
     WorkerState,
@@ -24,6 +26,31 @@ from gui_agent.core.tool_agent.contracts import (
 
 
 MAX_ORDERED_ACTIONS = 5
+
+
+@dataclass(frozen=True)
+class WorkerFrameTools:
+    allowed_actions: list[DynamicActionSpec]
+    completion_mode: Literal["unavailable", "operator", "collector"]
+
+
+def worker_frame_tools(
+    spec: WorkerSpec,
+    actions: list[DynamicActionSpec],
+    frame: MaterializedFrame,
+    *,
+    attempted_action: bool = False,
+) -> WorkerFrameTools:
+    """Expose tools from mechanical frame readiness; make no task judgment."""
+    if frame.readiness != "ready":
+        available = [] if attempted_action else [
+            action for action in actions
+            if action.capability in {"open_url", "back", "home", "app_switch", "launch_app"}
+        ]
+        return WorkerFrameTools(available, "unavailable")
+    return WorkerFrameTools(actions, spec.profile)
+
+
 _TERMINAL_TOOL_BY_STATE = {"completed": "complete", "failed": "report_blocked"}
 _INPUT_TARGETS = {
     "text_input": ("type", "text"),
@@ -297,8 +324,8 @@ _WORKER_STATE_SCHEMA: dict[str, Any] = {
             "enum": ["exploring", "collecting", "executing", "completed", "failed"],
             "description": (
                 "Current workflow phase: exploring locates the binding source; collecting "
-                "acquires unresolved evidence; executing consumes an active Commitment after "
-                "its acquisition boundary is closed; completed and failed are terminal."
+                "acquires unresolved evidence; executing requests the next authorized effect; "
+                "completed and failed are terminal."
             ),
         },
         "summary": {
@@ -320,12 +347,8 @@ _WORKER_STATE_SCHEMA: dict[str, Any] = {
                         },
                         "status": {
                             "type": "string",
-                            "enum": (
-                                ["active"] if fact_type == "observation"
-                                else ["active", "retracted", "completed"]
-                                if fact_type == "commitment"
-                                else ["active", "retracted"]
-                            ),
+                            "enum": (["active"] if fact_type == "observation"
+                                     else ["active", "retracted"]),
                         },
                         "lifetime": {
                             "type": "string",
@@ -339,35 +362,14 @@ _WORKER_STATE_SCHEMA: dict[str, Any] = {
                         "depends_on": {
                             "type": "array",
                             "description": (
-                                "Always []; source facts do not depend on memory. To refine "
+                                "Always []; source facts do not depend on progress. To refine "
                                 "Evidence, update the same key directly without self-dependency."
-                                if fact_type in {"observation", "evidence"}
-                                else "Non-empty typed validity dependencies."
                             ),
                             "items": {
                                 "type": "string", "minLength": 3, "maxLength": 76,
-                                **(
-                                    {"pattern": "^(observation|evidence|claim):[a-z][a-z0-9_]{0,63}$"}
-                                    if fact_type == "claim"
-                                    else {"pattern": "^(evidence|claim):[a-z][a-z0-9_]{0,63}$"}
-                                    if fact_type == "commitment"
-                                    else {}
-                                ),
                             },
-                            "minItems": 1 if fact_type in {"claim", "commitment"} else 0,
-                            "maxItems": (
-                                0 if fact_type in {"observation", "evidence"} else 16
-                            ),
-                            **(
-                                {
-                                    "contains": {
-                                        "type": "string",
-                                        "pattern": "^claim:[a-z][a-z0-9_]{0,63}$",
-                                    },
-                                    "minContains": 1,
-                                }
-                                if fact_type == "commitment" else {}
-                            ),
+                            "minItems": 0,
+                            "maxItems": 0,
                         },
                     },
                     "required": [
@@ -376,7 +378,7 @@ _WORKER_STATE_SCHEMA: dict[str, Any] = {
                     ],
                     "additionalProperties": False,
                 }
-                for fact_type in ("observation", "evidence", "claim", "commitment")
+                for fact_type in ("observation", "evidence")
             ]},
         },
     },
@@ -438,12 +440,14 @@ def dynamic_worker_tools(
     if completion_mode != "unavailable":
         description = (
             "Complete only when the target UI state is visibly confirmed. For a requested "
-            "commit, WorkerMemory must record the actual final activation and the current frame "
+            "commit, Historical Progress must record the actual final activation and Current State "
             "must show its post-commit state; never infer activation from a ready screen or a "
             "visible commit control. A preparatory scope/container commit is not terminal. Once "
             "the terminal commit returns to a stable parent/source without error and no durable "
             "fact names an unsatisfied candidate, complete without re-querying or restarting. "
-            "Also complete at an exhaustive no-effect boundary with no known unsatisfied record. "
+            "A no-effect boundary is exhaustive only for its current scroll container; complete "
+            "there only when that container is the Goal Contract's required source and no known "
+            "record remains unsatisfied. "
             "With element-wise array bindings, call complete after EACH element so "
             "Runtime advances the cursor until the plan is exhausted."
             if completion_mode == "operator"
@@ -505,7 +509,10 @@ def dynamic_action_envelope_tool(
         (
             f"Continue with {action_range}; this tool never represents completion and its "
             "action list cannot be empty. If the goal is complete, call complete directly; "
-            "never set state.status=completed here. Spatial actions require current-frame visible "
+            "never set state.status=completed here. State and memory_updates describe only source facts "
+            "true before these actions execute. Runtime owns Claim and Commitment transitions; "
+            "Runtime records durable verified-action Evidence after exact target verification. "
+            "Spatial actions require current-frame visible "
             "targets; non-spatial actions follow their own capability contracts. "
             "Apply task conditions first: excluded or already-processed candidates permit traversal, "
             "never their mutation path. If no eligible work remains, call complete directly; do not "

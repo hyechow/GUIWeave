@@ -8,8 +8,11 @@ from typing import Any, Literal
 from gui_agent.core.tool_agent.contracts import WorkerState
 
 
-FactType = Literal["observation", "evidence", "claim", "commitment"]
-FactStatus = Literal["active", "retracted", "completed"]
+FactType = Literal["observation", "evidence", "commitment"]
+FactStatus = Literal[
+    "active", "retracted", "completed",
+    "dispatched", "satisfied", "uncertain", "failed",
+]
 FactLifetime = Literal["frame", "attempt", "task"]
 OutcomeKind = Literal["invoked", "effect", "no_effect", "off_target", "failed"]
 
@@ -25,6 +28,18 @@ class ActionOutcome:
 
 
 @dataclass(frozen=True)
+class TargetRef:
+    """Runtime-owned identity for one local GUI target interaction."""
+
+    ref: str
+    anchor_frame_id: str
+    anchor_surface_fingerprint: str
+    label: str
+    container_context: str
+    point: tuple[float, float] | None = None
+
+
+@dataclass(frozen=True)
 class ActionReceipt:
     """One invocation result bound to the commitments active before dispatch."""
 
@@ -34,6 +49,9 @@ class ActionReceipt:
     commitment_refs: tuple[str, ...] = ()
     preserves_window: bool = False
     executed: bool = False
+    target_ref: str = ""
+    target: TargetRef | None = None
+    clears_target: bool = False
 
 
 @dataclass(frozen=True)
@@ -51,11 +69,11 @@ class WorkerJournalEvent:
     frame_id: str = ""
     attempt_id: str = ""
     origin: Literal["worker", "runtime"] = "runtime"
-    requires_integration: bool = False
     depends_on: tuple[str, ...] = ()
     supersedes: str = ""
     receipt: ActionReceipt | None = None
     feedback: str = ""
+    target_ref: str = ""
 
     @property
     def fact_ref(self) -> str:
@@ -87,6 +105,23 @@ class WorkerJournal:
             if event.receipt is not None and event.receipt.executed
         }
 
+    @property
+    def latest_action_receipt(self) -> ActionReceipt | None:
+        return next((event.receipt for event in reversed(self.events) if event.receipt), None)
+
+    @property
+    def active_target(self) -> TargetRef | None:
+        active: TargetRef | None = None
+        for event in self.events:
+            receipt = event.receipt
+            if receipt is None:
+                continue
+            if receipt.target is not None:
+                active = receipt.target
+            if receipt.clears_target:
+                active = None
+        return active
+
     def record_memory_updates(
         self,
         *,
@@ -96,11 +131,43 @@ class WorkerJournal:
     ) -> tuple[WorkerJournalEvent, ...]:
         from .policy import memory_update_events
 
-        pending = memory_update_events(
+        pending = self.stage_memory_updates(
+            step=step, frame_id=frame_id, state=state,
+        )
+        return self.commit_memory_updates(pending)
+
+    def stage_memory_updates(
+        self,
+        *,
+        step: int,
+        frame_id: str,
+        state: WorkerState,
+    ) -> tuple[WorkerJournalEvent, ...]:
+        """Validate one delta without exposing it before action dispatch."""
+        from .policy import memory_update_events
+
+        return memory_update_events(
             tuple(self.events), worker_id=self.worker_id,
             step=step, frame_id=frame_id, state=state,
         )
-        return tuple(self._append(event) for event in pending)
+
+    def commit_memory_updates(
+        self,
+        pending: tuple[WorkerJournalEvent, ...],
+        *,
+        target_ref: str = "",
+    ) -> tuple[WorkerJournalEvent, ...]:
+        return tuple(
+            self._append(replace(
+                event,
+                target_ref=(
+                    target_ref
+                    if target_ref and event.fact_type == "evidence"
+                    else event.target_ref
+                ),
+            ))
+            for event in pending
+        )
 
     def record_runtime_input(
         self,
@@ -108,7 +175,6 @@ class WorkerJournal:
         key: str,
         statement: str,
         event_ref: str = "runtime-input:1",
-        requires_integration: bool = False,
     ) -> WorkerJournalEvent:
         prior = self._latest_fact(f"evidence:{key}")
         return self._append(WorkerJournalEvent(
@@ -121,9 +187,60 @@ class WorkerJournal:
             statement=" ".join(statement.split()),
             attempt_id=self.worker_id,
             origin="runtime",
-            requires_integration=requires_integration,
             supersedes=prior.event_ref if prior is not None else "",
         ))
+
+    def record_runtime_commitment(
+        self,
+        *,
+        step: int,
+        substep: int,
+        frame_id: str,
+        tool: str,
+        statement: str,
+        status: FactStatus = "dispatched",
+    ) -> WorkerJournalEvent:
+        """Record a Runtime-owned action-intent transition."""
+        key = f"action_{step}_{substep}"
+        prior = self._latest_fact(f"commitment:{key}")
+        return self._append(WorkerJournalEvent(
+            event_ref=f"step:{step}.{substep}:commitment:{status}",
+            kind="memory_update",
+            fact_type="commitment",
+            key=key,
+            status=status,
+            lifetime="attempt",
+            statement=" ".join((statement or tool).split()),
+            frame_id=frame_id,
+            attempt_id=self.worker_id,
+            origin="runtime",
+            supersedes=prior.event_ref if prior is not None else "",
+        ))
+
+    def settle_runtime_commitment(
+        self,
+        *,
+        step: int,
+        substep: int,
+        frame_id: str,
+        tool: str,
+        statement: str,
+        result: Any,
+    ) -> WorkerJournalEvent:
+        signal = result.get("target_signal") if isinstance(result, dict) else None
+        signal = signal if isinstance(signal, dict) else {}
+        if not isinstance(result, dict) or result.get("status") != "executed":
+            status: FactStatus = "failed"
+        elif signal.get("status") == "off_target":
+            status = "failed"
+        elif result.get("no_effect") is True:
+            status = "uncertain"
+        else:
+            status = "satisfied"
+        return self.record_runtime_commitment(
+            step=step, substep=substep, frame_id=frame_id, tool=tool,
+            statement=statement, status=status,
+        )
 
     def record_runtime_result(
         self,
@@ -143,7 +260,6 @@ class WorkerJournal:
             key=f"user_response_{step}{suffix}",
             statement=statement,
             event_ref=f"step:{step_ref}:runtime-input",
-            requires_integration=True,
         )
 
     def record_action_result(
@@ -156,10 +272,56 @@ class WorkerJournal:
         result: Any,
         substep: int | None = None,
         commitment_refs: tuple[str, ...] = (),
+        surface_fingerprint: str = "",
     ) -> WorkerJournalEvent:
         from .policy import action_receipt_event
 
-        return self._append(action_receipt_event(
+        active_target = self.active_target
+        signal = result.get("target_signal") if isinstance(result, dict) else None
+        signal = signal if isinstance(signal, dict) else {}
+        context = str(signal.get("container_context") or "").strip()
+        point = (
+            (float(args["x"]), float(args["y"]))
+            if all(isinstance(args.get(key), (int, float)) for key in ("x", "y"))
+            else None
+        )
+        target: TargetRef | None = None
+        same_active_target = bool(
+            active_target is not None
+            and active_target.anchor_surface_fingerprint == surface_fingerprint
+            and active_target.container_context == context
+            and (
+                active_target.point == point
+                or active_target.point is not None
+                and point is not None
+                and abs(active_target.point[0] - point[0]) <= 40
+                and abs(active_target.point[1] - point[1]) <= 40
+            )
+        )
+        if (
+            isinstance(result, dict)
+            and result.get("status") == "executed"
+            and signal.get("status") == "on_target"
+            and (context or point is not None)
+            and (
+                active_target is None
+                or active_target.anchor_surface_fingerprint != surface_fingerprint
+                or not same_active_target
+            )
+        ):
+            suffix = f".{substep}" if substep is not None else ""
+            target = TargetRef(
+                ref=f"target:{step}{suffix}",
+                anchor_frame_id=frame_id,
+                anchor_surface_fingerprint=surface_fingerprint,
+                label=str(signal.get("actual_element") or "").strip(),
+                container_context=context,
+                point=point,
+            )
+        inherited_target_ref = (
+            target.ref if target is not None else active_target.ref if active_target else ""
+        )
+        recorded = self._append(action_receipt_event(
             worker_id=self.worker_id,
             step=step,
             substep=substep,
@@ -168,7 +330,45 @@ class WorkerJournal:
             args=args,
             result=result,
             commitment_refs=commitment_refs,
+            target_ref=inherited_target_ref,
+            target=target,
         ))
+        receipt = recorded.receipt
+        if (
+            receipt is not None
+            and receipt.executed
+            and (
+                (receipt.outcome.kind == "effect" and receipt.outcome.target)
+                or (
+                    tool == "back"
+                    and receipt.outcome.kind == "invoked"
+                    and isinstance(result, dict)
+                    and result.get("no_effect") is False
+                )
+            )
+        ):
+            suffix = f"_{substep}" if substep is not None else ""
+            intent = str(args.get("description") or tool).strip()
+            statement = (
+                f"Target verification accepted executed action: intent={intent!r}; "
+                f"actual_target={receipt.outcome.target!r}."
+                if receipt.outcome.target else
+                f"Runtime confirmed executed action effect: intent={intent!r}; tool={tool!r}."
+            )
+            self._append(WorkerJournalEvent(
+                event_ref=f"step:{step}{suffix}:verified-action",
+                kind="memory_update",
+                fact_type="evidence",
+                key=f"verified_action_{step}{suffix}",
+                status="active",
+                lifetime="attempt",
+                statement=statement,
+                frame_id=frame_id,
+                attempt_id=self.worker_id,
+                origin="runtime",
+                target_ref=receipt.target_ref,
+            ))
+        return recorded
 
     def record_guard(
         self,

@@ -2,13 +2,11 @@
 
 from __future__ import annotations
 
-from dataclasses import replace
 from typing import Any
 
 from gui_agent.core.tool_agent.contracts import WorkerState
 
-from .journal import ActionOutcome, ActionReceipt, WorkerJournalEvent
-from .reducer import reduce_worker_events
+from .journal import ActionOutcome, ActionReceipt, TargetRef, WorkerJournalEvent
 
 
 _SPATIAL_ARGS = {"x", "y", "to_x", "to_y", "target_ref"}
@@ -17,6 +15,12 @@ _RESULT_FIELDS = (
     "row_count", "coverage", "summary", "reason", "error", "recovery",
     "platform_feedback", "target_signal",
 )
+
+
+def memory_repair_instruction(error: Exception) -> str:
+    """Give the model the smallest correction implied by a typed-memory error."""
+    del error
+    return "Correct the typed memory delta on this same frame."
 
 
 def _semantic_args(args: dict[str, Any]) -> dict[str, Any]:
@@ -64,14 +68,26 @@ def action_receipt_event(
     args: dict[str, Any],
     result: Any,
     commitment_refs: tuple[str, ...],
+    target_ref: str = "",
+    target: TargetRef | None = None,
     substep: int | None = None,
 ) -> WorkerJournalEvent:
     candidate_commit = isinstance(result, dict) and bool(result.get("candidate_commit"))
     event_ref = f"step:{step}.{substep}" if substep is not None else f"step:{step}"
+    outcome = _action_outcome(result)
+    clears_target = bool(
+        isinstance(result, dict)
+        and result.get("status") == "executed"
+        and result.get("no_effect") is False
+        and outcome.action_type in {
+            "scroll", "drag", "navigate", "open_url", "home", "app_switch", "launch_app",
+        }
+    )
     receipt = ActionReceipt(
-        tool=tool, args=_semantic_args(args), outcome=_action_outcome(result),
+        tool=tool, args=_semantic_args(args), outcome=outcome,
         commitment_refs=commitment_refs, preserves_window=tool == "ask_user",
         executed=isinstance(result, dict) and result.get("status") == "executed",
+        target_ref=target_ref, target=target, clears_target=clears_target,
     )
     return WorkerJournalEvent(
         event_ref=event_ref,
@@ -143,18 +159,4 @@ def memory_update_events(
             supersedes=prior.event_ref if prior is not None else "",
         ))
 
-    staged = tuple(events) + tuple(
-        replace(event, sequence=len(events) + offset)
-        for offset, event in enumerate(pending, start=1)
-    )
-    view = reduce_worker_events(staged, worker_id=worker_id, current_frame_id=frame_id)
-    if state.status == "executing" and not view.active_commitments:
-        raise ValueError(
-            "executing phase requires an active Commitment with valid dependencies"
-        )
-    if state.status == "executing" and view.pending_runtime_evidence:
-        raise ValueError(
-            "executing phase requires authoritative runtime Evidence to be "
-            "integrated through Claim and Commitment dependencies"
-        )
     return tuple(pending)

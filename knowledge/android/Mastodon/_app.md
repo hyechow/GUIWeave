@@ -12,7 +12,7 @@ source: manual_verified
 confidence: high
 sensitivity: internal
 ttl: session
-version: 5
+version: 6
 ---
 # Mastodon on Android
 
@@ -27,9 +27,13 @@ version: 5
   closes without error, that invocation is the durable pin commit. Do not reopen another
   post's menu merely because the Timeline itself has no separate pin badge.
 - `Bookmark` and `Remove bookmark` in a post's overflow menu are write-through mutations.
-  When the selected option closes the menu without error, complete that post's bookmark
-  Commitment. For a multi-post task, return to the verified source collection and continue
-  with an unhandled post; do not reopen the handled post's menu to confirm or repeat it.
+  The label is the action that tapping performs, never the current state:
+  - `Remove bookmark`: currently bookmarked; tap this to remove it.
+  - `Bookmark`: currently not bookmarked; tapping this would add it.
+  With that menu open, Android Back only dismisses it and leaves the Saved surface visible.
+  Dismiss it as one action and observe the closed-menu frame before choosing any navigation.
+  Only selecting a mutation item proves a write. Saved membership can remain visually stale
+  afterward, so identify its resolved row by (`author_handle`, `content`).
 
 - `SavedFavorites`: navigate through the signed-in user's bottom-navigation
   `Profile → Saved → Favorites`; membership in this collection proves that a
@@ -45,12 +49,22 @@ version: 5
   then activate the signed-in user's `Profile` tab.
 - `TaggedToots`: navigate through `Explore`, search the exact tag, and open its
   posts view.
+- The signed-in user's followed hashtags are not under `Profile`. From the global
+  `Home` surface, open the dropdown beside the `Home` title and choose `Followed
+  hashtags`; this opens the followed-hashtag navigation panel.
+  Selecting a hashtag opens its tag view. A `Following` button means the hashtag is
+  currently followed; tapping it unfollows the hashtag and changes the button to
+  `Follow`. Return to the followed-hashtag list to continue with other matching tags.
 - All three collections expose `author_handle` and `content`, but no stable
   status ID or permalink. `author_handle` is the `@`-prefixed account handle,
   not the display name.
-- Match a Toot across these collections by the exact pair
-  (`author_handle`, `content`). A tag-result Toot can only be relocated through
-  its `TaggedToots` collection.
+- Match a Toot across these collections by the exact pair (`author_handle`, `content`),
+  never by ordinal. A tag-result Toot can only be relocated through its `TaggedToots`
+  collection.
+- Hashtags shown in a saved post's visible body are the post's classification evidence;
+  the overflow menu contains actions, not classification data. Open it only for a matching
+  post. If that post's header is clipped above its visible body, use a small upward scroll to
+  reveal the aligned overflow control without crossing into the preceding post.
 - A filled blue star with a count on a Toot action row means it is favorited; an
   outline star means it is not. The corresponding Saved collection is an alternate
   membership view, not a prerequisite for reading this visible control state.

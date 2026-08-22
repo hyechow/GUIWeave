@@ -436,11 +436,11 @@ class WorkerSpec(StrictModel):
 
 
 class WorkerMemoryUpdate(StrictModel):
-    """One explicit semantic-memory delta emitted with a Worker decision."""
+    """One Worker-owned source-fact delta emitted with a decision."""
 
-    fact_type: Literal["observation", "evidence", "claim", "commitment"]
+    fact_type: Literal["observation", "evidence"]
     key: str = Field(pattern=r"^[a-z][a-z0-9_]{0,63}$")
-    status: Literal["active", "retracted", "completed"] = "active"
+    status: Literal["active", "retracted"] = "active"
     lifetime: Literal["frame", "attempt"]
     statement: str = Field(min_length=1, max_length=1_200)
     depends_on: list[str] = Field(default_factory=list, max_length=16)
@@ -456,26 +456,11 @@ class WorkerMemoryUpdate(StrictModel):
                 raise ValueError("observations cannot have validity dependencies")
             return self
         if self.lifetime != "attempt":
-            raise ValueError(
-                "evidence, claims, and commitments require lifetime='attempt'"
-            )
-        if self.status == "completed" and self.fact_type != "commitment":
-            raise ValueError("only commitments may use status='completed'")
+            raise ValueError("evidence requires lifetime='attempt'")
         if self.status != "active":
             return self
-        if self.fact_type == "evidence" and self.depends_on:
+        if self.depends_on:
             raise ValueError("evidence facts cannot have validity dependencies")
-        if self.fact_type == "claim" and not self.depends_on:
-            raise ValueError("active claims require evidence dependencies")
-        if self.fact_type == "claim" and any(
-            not ref.startswith(("observation:", "evidence:", "claim:"))
-            for ref in self.depends_on
-        ):
-            raise ValueError("claims may depend only on observations, evidence, or claims")
-        if self.fact_type == "commitment" and not any(
-            ref.startswith("claim:") for ref in self.depends_on
-        ):
-            raise ValueError("active commitments require a claim dependency")
         return self
 
 
@@ -488,24 +473,17 @@ class WorkerState(StrictModel):
         default_factory=list,
         max_length=8,
         description=(
-            "Only facts in this typed delta list enter WorkerMemory; summary is not memory. "
+            "Only Worker-owned source facts in this delta enter progress; summary is not memory. "
             "Current screenshot/MaterializedFrame is the Observation layer. Use "
             "observation/frame only for present-surface facts, which expire on the next "
             "frame; use evidence/attempt for verified facts that remain true after the frame "
-            "changes; use claim/attempt for conclusions backed by typed dependencies, and "
-            "commitment/attempt for the execution target justified by a claim. A Claim that "
-            "depends on an Observation is valid only while that frame remains current; use "
-            "Evidence dependencies for conclusions that must survive navigation. Evidence is "
+            "changes. Evidence is "
             "never a prediction about what a visible control will do. A key is a stable fact "
             "slot, not an event or planned action; update or "
             "retract that key when the fact changes. Evidence records what was verified at "
-            "its source frame and does not establish current visibility. When active Evidence "
-            "plus the current update closes every unresolved "
-            "branch of a required boundary, the same delta must establish its Claim and "
-            "execution Commitment; do not leave a closed boundary as bare Evidence or "
-            "restart its acquisition. Refer to dependencies as '<fact_type>:<key>'. Emit "
-            "only new, corrected, retracted, or completed versions; Runtime retains earlier "
-            "active versions."
+            "its source frame and does not establish current visibility. Emit only new, "
+            "corrected, or retracted versions; Runtime retains earlier active versions and "
+            "alone owns Claims, Commitments, Receipts, and progress transitions."
         ),
     )
 
