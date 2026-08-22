@@ -667,7 +667,7 @@ def test_runtime_materializes_result_ref_into_fixed_action_argument() -> None:
     assert '"task_goal"' not in attempt_contract
 
 
-def test_worker_reports_blocker_without_deciding_strategy_failure() -> None:
+def test_worker_reports_blocker_without_deciding_reflection_failure() -> None:
     runtime = object.__new__(ToolAgentRuntime)
     runtime.perception_mode = "enhanced"
     runtime.allow_multi_action = False
@@ -791,7 +791,7 @@ def test_global_turn_budget_is_shared_across_logical_workers() -> None:
     }]
 
 
-def test_strategy_does_not_receive_or_control_runtime_turn_budget() -> None:
+def test_reflection_does_not_receive_or_control_runtime_turn_budget() -> None:
     runtime = object.__new__(ToolAgentRuntime)
     runtime.max_turns = 10
     runtime._frame_no = 8
@@ -803,7 +803,7 @@ def test_strategy_does_not_receive_or_control_runtime_turn_budget() -> None:
 
     requests = []
     runtime._run_worker = fail_worker
-    runtime._request_strategy_decision = lambda **kwargs: ReflectionResult(
+    runtime._request_reflection = lambda **kwargs: ReflectionResult(
         decision="stop",
         reason="No feasible attempt remains",
         strategy=requests.append(kwargs),
@@ -850,7 +850,7 @@ def test_redelegation_failure_reports_all_consumed_worker_steps() -> None:
             )
         raise ValueError("replacement is invalid")
 
-    runtime._request_strategy_decision = revise
+    runtime._request_reflection = revise
     spec = _validated_worker_spec({
         "profile": "operator",
         "goal": "Complete one UI subgoal",
@@ -866,7 +866,7 @@ def test_redelegation_failure_reports_all_consumed_worker_steps() -> None:
 
     assert outcome.phase == "failed"
     assert outcome.steps == 7
-    assert "Strategy decision failed" in outcome.summary
+    assert "Reflection failed" in outcome.summary
 
 
 def test_worker_blocked_requires_a_replacement_strategy() -> None:
@@ -892,7 +892,7 @@ def test_worker_blocked_requires_a_replacement_strategy() -> None:
         return next(outcomes)
 
     runtime._run_worker = run_worker
-    runtime._request_strategy_decision = lambda **_kwargs: ReflectionResult(
+    runtime._request_reflection = lambda **_kwargs: ReflectionResult(
         decision="revise_approach",
         strategy=spec.strategy.model_copy(update={
             "approach": "Use an evidenced alternative traversal.",
@@ -915,12 +915,12 @@ def test_worker_blocked_requires_a_replacement_strategy() -> None:
 
     assert outcome.phase == "completed"
     assert outcome.steps == 3
-    assert worker_ids == ["logical_worker", "logical_worker_strategy_1"]
+    assert worker_ids == ["logical_worker", "logical_worker_reflection_1"]
     assert attempt_requirements == [False, True]
-    assert any(event["event"] == "strategy_worker_dispatched" for event in events)
+    assert any(event["event"] == "reflected_worker_dispatched" for event in events)
 
 
-def test_strategy_replacements_use_only_the_global_turn_budget() -> None:
+def test_reflection_replacements_use_only_the_global_turn_budget() -> None:
     runtime = object.__new__(ToolAgentRuntime)
     runtime.max_turns = 4
     runtime._frame_no = 0
@@ -948,7 +948,7 @@ def test_strategy_replacements_use_only_the_global_turn_budget() -> None:
         )
 
     runtime._run_worker = run_worker
-    runtime._request_strategy_decision = replace
+    runtime._request_reflection = replace
     spec = _worker_spec(
         profile="operator",
         goal="Complete one cohesive UI traversal",
@@ -961,9 +961,9 @@ def test_strategy_replacements_use_only_the_global_turn_budget() -> None:
     assert (outcome.phase, outcome.steps) == ("completed", 4)
     assert calls == [
         ("worker", "logical_worker"),
-        ("strategy", 1), ("worker", "logical_worker_strategy_1"),
-        ("strategy", 2), ("worker", "logical_worker_strategy_2"),
-        ("strategy", 3), ("worker", "logical_worker_strategy_3"),
+        ("strategy", 1), ("worker", "logical_worker_reflection_1"),
+        ("strategy", 2), ("worker", "logical_worker_reflection_2"),
+        ("strategy", 3), ("worker", "logical_worker_reflection_3"),
     ]
 
 
@@ -1818,7 +1818,7 @@ def test_worker_rejects_missing_tool_state_without_executing(monkeypatch) -> Non
     ]) == 2
 
 
-def test_replacement_strategy_starts_with_fresh_journal(monkeypatch) -> None:
+def test_replacement_reflection_starts_with_fresh_journal(monkeypatch) -> None:
     runtime = object.__new__(ToolAgentRuntime)
     runtime.trace = []
     runtime.worker = _EmptyContentWorker()
@@ -1846,7 +1846,7 @@ def test_replacement_strategy_starts_with_fresh_journal(monkeypatch) -> None:
     _install_test_worker_contract(runtime, spec)
     first = runtime._run_worker("advance_subgoal", spec)
     runtime._frame_no = 0
-    second = runtime._run_worker("advance_subgoal_strategy_1", spec)
+    second = runtime._run_worker("advance_subgoal_reflection_1", spec)
 
     assert first.phase == second.phase == "failed"
     starts = [event for event in runtime.trace if event["event"] == "worker_started"]
@@ -1855,14 +1855,14 @@ def test_replacement_strategy_starts_with_fresh_journal(monkeypatch) -> None:
     assert [event["memory_event_count"] for event in decisions] == [0, 0]
     assert set(runtime._worker_journals) == {
         "advance_subgoal",
-        "advance_subgoal_strategy_1",
+        "advance_subgoal_reflection_1",
     }
     assert runtime._active_worker_journal() is runtime._worker_journals[
-        "advance_subgoal_strategy_1"
+        "advance_subgoal_reflection_1"
     ]
 
 
-def test_replacement_strategy_inherits_only_runtime_task_memory() -> None:
+def test_replacement_reflection_inherits_only_runtime_task_memory() -> None:
     base = WorkerJournal(worker_id="worker")
     base.record_runtime_input(
         key="authorized_destination",
@@ -1882,10 +1882,10 @@ def test_replacement_strategy_inherits_only_runtime_task_memory() -> None:
             }],
         }),
     )
-    retry = WorkerJournal(worker_id="worker_strategy_1")
+    retry = WorkerJournal(worker_id="worker_reflection_1")
 
     ToolAgentRuntime._inherit_task_memory(
-        {"worker": base, "worker_strategy_1": retry},
+        {"worker": base, "worker_reflection_1": retry},
         retry,
         retry.worker_id,
     )
@@ -1908,11 +1908,11 @@ def test_reflected_attempt_preserves_same_progress_journal() -> None:
 
     runtime._preserve_progress_for_reflected_attempt(
         current_worker_id="logical_worker",
-        next_worker_id="logical_worker_strategy_1",
+        next_worker_id="logical_worker_reflection_1",
     )
 
-    assert runtime._worker_journals["logical_worker_strategy_1"] is journal
-    assert runtime._worker_last_frames["logical_worker_strategy_1"] is frame
+    assert runtime._worker_journals["logical_worker_reflection_1"] is journal
+    assert runtime._worker_last_frames["logical_worker_reflection_1"] is frame
 
 
 def test_worker_normalizes_provider_point_schema_and_executes_type(monkeypatch) -> None:
@@ -3243,7 +3243,7 @@ def _coding_program() -> str:
 '''
 
 
-def test_runtime_replaces_strategy_inside_worker_call_without_replaying_program(tmp_path) -> None:
+def test_runtime_replaces_reflection_inside_worker_call_without_replaying_program(tmp_path) -> None:
     runtime = object.__new__(ToolAgentRuntime)
     runtime.max_compile_attempts = 1
     runtime.data_store = RuntimeDataStore()
@@ -3257,7 +3257,7 @@ def test_runtime_replaces_strategy_inside_worker_call_without_replaying_program(
     runtime.materializer = SimpleNamespace(model="perception")
     runtime.perception_mode = "enhanced"
     runtime.log_dir = tmp_path
-    runtime._request_strategy_decision = lambda **_kwargs: ReflectionResult(
+    runtime._request_reflection = lambda **_kwargs: ReflectionResult(
         decision="revise_approach", reason="selected", strategy=replacement,
     )
     worker_calls = []
@@ -3300,14 +3300,14 @@ def test_runtime_replaces_strategy_inside_worker_call_without_replaying_program(
     assert len(worker_calls) == 2
     assert [worker_id for worker_id, _ in worker_calls] == [
         "collect_records",
-        "collect_records_strategy_1",
+        "collect_records_reflection_1",
     ]
     assert [spec.strategy.approach for _, spec in worker_calls] == [
         "Traverse the requested collection from the current UI.",
         "Use a different visible collection traversal path.",
     ]
     assert runtime.master.sources == []
-    assert any(event["event"] == "strategy_worker_dispatched" for event in run.trace)
+    assert any(event["event"] == "reflected_worker_dispatched" for event in run.trace)
     assert (tmp_path / "tool_agent_trace.json").is_file()
     replay = json.loads(
         (tmp_path / "tool_agent_replay.json").read_text(encoding="utf-8")

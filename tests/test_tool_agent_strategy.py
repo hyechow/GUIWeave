@@ -40,8 +40,20 @@ def _candidate(approach: str = "Use an alternative visible path.") -> dict:
     return {"approach": approach}
 
 
-def _replace(candidate: dict, reason: str = "Executable alternative") -> dict:
-    return {"decision": "replace", "reason": reason, "strategy": candidate}
+def _reflection(
+    decision: str = "revise_approach",
+    *,
+    approach: str | None = "Use an alternative visible path.",
+    reason: str = "Executable alternative",
+) -> dict:
+    return {
+        "diagnosis": {
+            "kind": "approach_disproved",
+            "evidence_refs": [],
+            "reason": reason,
+        },
+        "recommendation": {"decision": decision, "approach": approach},
+    }
 
 
 def _decide(model: _JsonModel, **context):
@@ -49,7 +61,7 @@ def _decide(model: _JsonModel, **context):
     original = _original_spec()
     result = Reflector(model).reflect(
         context={
-            "attempted_strategies": [],
+            "attempted_approaches": [],
             **context,
         },
         original_strategy=original.strategy,
@@ -58,8 +70,8 @@ def _decide(model: _JsonModel, **context):
     return original, result.strategy, result.reason, events
 
 
-def test_strategy_returns_only_a_replacement_strategy() -> None:
-    model = _JsonModel(_replace(_candidate()))
+def test_reflector_returns_only_a_replacement_approach() -> None:
+    model = _JsonModel(_reflection())
 
     original, selected, reason, events = _decide(model)
 
@@ -75,10 +87,10 @@ def test_strategy_returns_only_a_replacement_strategy() -> None:
     assert events[0][1]["decision"] == "revise_approach"
 
 
-def test_strategy_repairs_one_invalid_candidate() -> None:
+def test_reflector_repairs_one_invalid_candidate() -> None:
     model = _JsonModel(
-        _replace({"actions": []}),
-        _replace(_candidate(), "Repaired executable candidate"),
+        _reflection(approach=None),
+        _reflection(reason="Repaired executable candidate"),
     )
 
     _original, selected, reason, _events = _decide(model)
@@ -93,10 +105,10 @@ def test_strategy_repairs_one_invalid_candidate() -> None:
     "Use one source, then inspect its result list.",
     "open_url https://weather.example/forecast/location-id",
 ])
-def test_strategy_repairs_procedural_approaches(invalid: str) -> None:
+def test_reflector_repairs_procedural_approaches(invalid: str) -> None:
     model = _JsonModel(
-        _replace(_candidate(invalid)),
-        _replace(_candidate("Different public forecast source")),
+        _reflection(approach=invalid),
+        _reflection(approach="Different public forecast source"),
     )
 
     _original, selected, _reason, _events = _decide(model)
@@ -106,10 +118,10 @@ def test_strategy_repairs_procedural_approaches(invalid: str) -> None:
     assert model.calls == 2
 
 
-def test_strategy_stops_after_repeated_approach_repair() -> None:
+def test_reflector_stops_after_repeated_approach_repair() -> None:
     model = _JsonModel(
-        _replace(_candidate("Search for the exact requested forecast.")),
-        _replace(_candidate("Search for the exact requested forecast.")),
+        _reflection(approach="Search for the exact requested forecast."),
+        _reflection(approach="Search for the exact requested forecast."),
     )
 
     _original, selected, reason, events = _decide(model)
@@ -120,26 +132,33 @@ def test_strategy_stops_after_repeated_approach_repair() -> None:
     assert events[0][1]["decision"] == "stop"
 
 
-def test_strategy_replacement_contains_only_an_approach() -> None:
-    candidate = {
-        "approach": "Use a different public discovery surface.",
-        "actions": [],
-    }
-
+def test_reflector_rejects_legacy_replacement_shape() -> None:
     _original, selected, _reason, events = _decide(
-        _JsonModel(_replace(candidate), _replace(candidate)),
+        _JsonModel(
+            {"decision": "replace", "reason": "legacy", "strategy": _candidate()},
+            {"decision": "replace", "reason": "legacy", "strategy": _candidate()},
+        ),
     )
 
     assert selected is None
-    assert any("Extra inputs" in item for item in events[0][1]["diagnostics"])
+    assert any("diagnosis and recommendation" in item for item in events[0][1]["diagnostics"])
 
 
-def test_strategy_can_stop_without_a_candidate() -> None:
-    model = _JsonModel({
-        "decision": "stop",
-        "reason": "Every evidenced path has been disproved.",
-        "strategy": None,
-    })
+def test_reflector_rejects_memory_mutation_fields() -> None:
+    invalid = _reflection()
+    invalid["recommendation"]["invalidate"] = ["evidence:old"]
+
+    _original, selected, _reason, events = _decide(_JsonModel(invalid, invalid))
+
+    assert selected is None
+    assert any("exactly decision and approach" in item
+               for item in events[0][1]["diagnostics"])
+
+
+def test_reflector_can_stop_without_an_approach() -> None:
+    model = _JsonModel(_reflection(
+        "stop", approach=None, reason="Every evidenced path has been disproved.",
+    ))
 
     _original, selected, reason, events = _decide(model)
 
@@ -159,8 +178,6 @@ def test_reflector_returns_typed_reconcile_without_an_approach() -> None:
         "recommendation": {
             "decision": "reconcile_state",
             "approach": None,
-            "preserve_progress": True,
-            "invalidate": [],
         },
     })
     events = []
@@ -173,5 +190,4 @@ def test_reflector_returns_typed_reconcile_without_an_approach() -> None:
 
     assert result.decision == "reconcile_state"
     assert result.strategy is None
-    assert result.preserve_progress is True
     assert events[0][0] == "reflection_decision"

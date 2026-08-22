@@ -45,8 +45,26 @@ def _case() -> dict:
     return json.loads(_FIXTURE.read_text(encoding="utf-8"))
 
 
-def _candidate(replacement: dict) -> dict:
-    return dict(replacement["strategy"])
+def _reflection(
+    replacement: dict,
+    *,
+    decision: str = "revise_approach",
+    reason: str = "The candidate is executable and materially different.",
+) -> dict:
+    return {
+        "diagnosis": {
+            "kind": "approach_disproved",
+            "evidence_refs": [],
+            "reason": reason,
+        },
+        "recommendation": {
+            "decision": decision,
+            "approach": (
+                replacement["strategy"]["approach"]
+                if decision == "revise_approach" else None
+            ),
+        },
+    }
 
 
 def _revision_runtime(
@@ -56,19 +74,16 @@ def _revision_runtime(
     **context,
 ) -> ToolAgentRuntime:
     runtime = object.__new__(ToolAgentRuntime)
-    model = _RecordedStrategyModel(selection or {
-        "decision": "replace",
-        "reason": "The candidate is executable and materially different.",
-        "strategy": _candidate(replacement),
-    })
+    model = _RecordedStrategyModel(selection or _reflection(replacement))
     runtime.__dict__.update({
-        "strategy": Reflector(model),
+        "reflector": Reflector(model),
         "worker": model,
         "_platform_capabilities": frozenset({
             "tap", "type", "select_option", "open_url", "scroll",
         }),
         "trace": [],
         "_worker_last_frames": {},
+        "_worker_last_contexts": {},
         "_master_knowledge": "",
         "_worker_knowledge": "",
         "_worker_access_context": "",
@@ -83,14 +98,14 @@ def _revise(
     original: WorkerSpec,
     summary: str,
 ) -> WorkerStrategy:
-    result = runtime._request_strategy_decision(
+    result = runtime._request_reflection(
         logical_worker_id=worker_id,
         prior_worker_id=worker_id,
         original_spec=original,
         prior_outcome=WorkerOutcome(phase="failed", summary=summary, steps=1),
         failure_reason="Use a different execution path",
         attempt_no=1,
-        attempted_strategies=[original.strategy],
+        attempted_approaches=[original.strategy],
     )
     assert result.strategy is not None
     return result.strategy
@@ -107,7 +122,7 @@ def test_task214_strategy_replaces_only_the_failed_approach() -> None:
     )
     runtime._status_cb = None
 
-    result = runtime._request_strategy_decision(
+    result = runtime._request_reflection(
         logical_worker_id=case["logical_worker_id"],
         prior_worker_id=case["logical_worker_id"],
         original_spec=original,
@@ -119,7 +134,7 @@ def test_task214_strategy_replaces_only_the_failed_approach() -> None:
         ),
         failure_reason="The current review search surface is blocked.",
         attempt_no=1,
-        attempted_strategies=[original.strategy],
+        attempted_approaches=[original.strategy],
     )
     revised, reason = result.strategy, result.reason
     assert revised is not None
@@ -138,19 +153,47 @@ def test_task214_strategy_replaces_only_the_failed_approach() -> None:
     assert "alternate visible navigation path" in prompt
 
 
+def test_reflector_consumes_the_exact_last_worker_state_projection() -> None:
+    case = _case()
+    original = WorkerSpec.model_validate(case["original_spec"])
+    runtime = _revision_runtime(case["replacement_spec"])
+    projected = {
+        "goal_contract": {"goal": "projected goal"},
+        "historical_progress": {"latest_transition_ref": "receipt:9"},
+        "current_state": {"surface": {"continuity": "returned_to_anchor"}},
+    }
+    runtime._worker_last_contexts = {"collect_records": projected}
+
+    runtime._request_reflection(
+        logical_worker_id="collect_records",
+        prior_worker_id="collect_records",
+        original_spec=original,
+        prior_outcome=WorkerOutcome(
+            phase="failed", summary="Current path is disproved", steps=2,
+        ),
+        failure_reason="Current path is disproved",
+        attempt_no=1,
+        attempted_approaches=[original.strategy],
+    )
+
+    context = json.loads(runtime.worker.messages[1].content)
+    assert context["goal_contract"] == projected["goal_contract"]
+    assert context["historical_progress"] == projected["historical_progress"]
+    assert context["current_state"] == projected["current_state"]
+
+
 def test_strategy_policy_can_stop_without_dispatching_a_candidate() -> None:
     case = _case()
     original = WorkerSpec.model_validate(case["original_spec"])
     runtime = _revision_runtime(
         case["replacement_spec"],
-        selection={
-            "decision": "stop",
-            "reason": "The only candidate repeats the disproven entry path.",
-            "strategy": None,
-        },
+        selection=_reflection(
+            case["replacement_spec"], decision="stop",
+            reason="The only candidate repeats the disproven entry path.",
+        ),
     )
 
-    result = runtime._request_strategy_decision(
+    result = runtime._request_reflection(
         logical_worker_id="collect_records",
         prior_worker_id="collect_records",
         original_spec=original,
@@ -159,7 +202,7 @@ def test_strategy_policy_can_stop_without_dispatching_a_candidate() -> None:
         ),
         failure_reason="The entry path is blocked",
         attempt_no=1,
-        attempted_strategies=[original.strategy],
+        attempted_approaches=[original.strategy],
     )
 
     assert result.strategy is None
@@ -174,15 +217,17 @@ def test_strategy_rejects_entrypoint_as_an_out_of_boundary_field() -> None:
     runtime = _revision_runtime(
         case["replacement_spec"],
         selection={
-            "decision": "replace",
-            "reason": "Use a different path.",
-            "strategy": {
-                "approach": "Use the alternate visible navigation path.",
-                "entrypoint": "https://alternate.example.test/",
+            "diagnosis": {
+                "kind": "approach_disproved", "evidence_refs": [],
+                "reason": "Use a different path.",
+            },
+            "recommendation": {
+                "decision": "revise_approach",
+                "approach": "open_url https://alternate.example.test/",
             },
         },
     )
-    result = runtime._request_strategy_decision(
+    result = runtime._request_reflection(
         logical_worker_id="retrieve_reference",
         prior_worker_id="retrieve_reference",
         original_spec=original,
@@ -191,7 +236,7 @@ def test_strategy_rejects_entrypoint_as_an_out_of_boundary_field() -> None:
         ),
         failure_reason="Current path blocked",
         attempt_no=1,
-        attempted_strategies=[original.strategy],
+        attempted_approaches=[original.strategy],
     )
 
     assert result.strategy is None
@@ -199,7 +244,7 @@ def test_strategy_rejects_entrypoint_as_an_out_of_boundary_field() -> None:
     decision = next(
         event for event in runtime.trace if event["event"] == "reflection_decision"
     )
-    assert "entrypoint" in " ".join(decision["diagnostics"])
+    assert "without an action" in " ".join(decision["diagnostics"])
 
 
 def test_failed_execution_revision_preserves_the_master_contract() -> None:
@@ -257,7 +302,7 @@ def test_task214_authoritative_empty_does_not_dispatch_strategy() -> None:
         return empty
 
     runtime._run_worker = run_worker
-    runtime._request_strategy_decision = lambda **_kwargs: (_ for _ in ()).throw(
+    runtime._request_reflection = lambda **_kwargs: (_ for _ in ()).throw(
         AssertionError("completed empty result must not request Strategy")
     )
 
@@ -269,7 +314,7 @@ def test_task214_authoritative_empty_does_not_dispatch_strategy() -> None:
     assert outcome == empty
     assert [worker_id for worker_id, _ in calls] == [case["logical_worker_id"]]
     assert not any(
-        event["event"] == "strategy_worker_dispatched" for event in runtime.trace
+        event["event"] == "reflected_worker_dispatched" for event in runtime.trace
     )
 
 
@@ -290,7 +335,7 @@ def test_strategy_stop_does_not_dispatch_another_worker() -> None:
         return WorkerOutcome(phase="failed", summary="Path disproven", steps=2)
 
     runtime._run_worker = fail
-    runtime._request_strategy_decision = lambda **_kwargs: ReflectionResult(
+    runtime._request_reflection = lambda **_kwargs: ReflectionResult(
         decision="stop",
         reason="No materially different strategy remains.",
     )
