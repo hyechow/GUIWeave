@@ -1,0 +1,22 @@
+{
+  "version": 1,
+  "name": "mobileworld_remove_bookmark_resolved_identity",
+  "source_run": "20260821_185120",
+  "cases": [
+    {
+      "id": "skip_resolved_post_after_dismissing_status_menu",
+      "frame": 19,
+      "min_pass_rate": 1.0,
+      "expected": {
+        "tool": "continue_with_actions",
+        "protocol_repairs_max": 0,
+        "memory_repairs_max": 0,
+        "state_status": "collecting",
+        "required_prefix": [
+          {"capability": "scroll"}
+        ],
+        "forbidden_capabilities": ["tap", "type", "clear_text"]
+      }
+    }
+  ]
+}

@@ -305,7 +305,7 @@ def test_worker_replay_applies_one_same_frame_protocol_repair(tmp_path) -> None:
     assert "Protocol repair" in model.calls[1][-1].content
 
 
-def test_worker_replay_applies_typed_memory_repair_before_action(tmp_path) -> None:
+def test_worker_replay_repairs_reducer_owned_commitment_annotations(tmp_path) -> None:
     run_dir = _worker_run(
         tmp_path,
         recorded_tool="continue_with_actions",
@@ -347,9 +347,10 @@ def test_worker_replay_applies_typed_memory_repair_before_action(tmp_path) -> No
 
     sample = result["samples"][0]
     assert result["status"] == "passed"
-    assert sample["memory_repairs"] == 1
+    assert sample["memory_repairs"] == 0
     assert sample["state_status"] == "collecting"
-    assert "Typed memory repair" in model.calls[1][-1].content
+    assert sample["protocol_repairs"] == 1
+    assert len(model.calls) == 2
 
 
 def test_worker_replay_supports_protocol_failed_frame_with_expectation(tmp_path) -> None:

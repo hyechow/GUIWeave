@@ -12,7 +12,7 @@ from gui_agent.core.tool_agent.contracts import (
     WorkerStrategy,
 )
 from gui_agent.core.tool_agent.runtime import ToolAgentRuntime
-from gui_agent.core.tool_agent.strategy import Strategy
+from gui_agent.core.tool_agent.strategy import ReflectionResult, Reflector
 
 
 _FIXTURE = (
@@ -62,7 +62,7 @@ def _revision_runtime(
         "strategy": _candidate(replacement),
     })
     runtime.__dict__.update({
-        "strategy": Strategy(model),
+        "strategy": Reflector(model),
         "worker": model,
         "_platform_capabilities": frozenset({
             "tap", "type", "select_option", "open_url", "scroll",
@@ -83,7 +83,7 @@ def _revise(
     original: WorkerSpec,
     summary: str,
 ) -> WorkerStrategy:
-    revised, _reason = runtime._request_strategy_decision(
+    result = runtime._request_strategy_decision(
         logical_worker_id=worker_id,
         prior_worker_id=worker_id,
         original_spec=original,
@@ -92,8 +92,8 @@ def _revise(
         attempt_no=1,
         attempted_strategies=[original.strategy],
     )
-    assert revised is not None
-    return revised
+    assert result.strategy is not None
+    return result.strategy
 
 
 def test_task214_strategy_replaces_only_the_failed_approach() -> None:
@@ -107,7 +107,7 @@ def test_task214_strategy_replaces_only_the_failed_approach() -> None:
     )
     runtime._status_cb = None
 
-    revised, reason = runtime._request_strategy_decision(
+    result = runtime._request_strategy_decision(
         logical_worker_id=case["logical_worker_id"],
         prior_worker_id=case["logical_worker_id"],
         original_spec=original,
@@ -121,6 +121,7 @@ def test_task214_strategy_replaces_only_the_failed_approach() -> None:
         attempt_no=1,
         attempted_strategies=[original.strategy],
     )
+    revised, reason = result.strategy, result.reason
     assert revised is not None
 
     expected = case["expected"]
@@ -149,7 +150,7 @@ def test_strategy_policy_can_stop_without_dispatching_a_candidate() -> None:
         },
     )
 
-    revised, reason = runtime._request_strategy_decision(
+    result = runtime._request_strategy_decision(
         logical_worker_id="collect_records",
         prior_worker_id="collect_records",
         original_spec=original,
@@ -161,9 +162,9 @@ def test_strategy_policy_can_stop_without_dispatching_a_candidate() -> None:
         attempted_strategies=[original.strategy],
     )
 
-    assert revised is None
-    assert "repeats" in reason
-    selected = [event for event in runtime.trace if event["event"] == "strategy_decision"]
+    assert result.strategy is None
+    assert "repeats" in result.reason
+    selected = [event for event in runtime.trace if event["event"] == "reflection_decision"]
     assert selected[0]["decision"] == "stop"
 
 
@@ -181,7 +182,7 @@ def test_strategy_rejects_entrypoint_as_an_out_of_boundary_field() -> None:
             },
         },
     )
-    revised, reason = runtime._request_strategy_decision(
+    result = runtime._request_strategy_decision(
         logical_worker_id="retrieve_reference",
         prior_worker_id="retrieve_reference",
         original_spec=original,
@@ -193,10 +194,10 @@ def test_strategy_rejects_entrypoint_as_an_out_of_boundary_field() -> None:
         attempted_strategies=[original.strategy],
     )
 
-    assert revised is None
-    assert reason == "Strategy did not produce a valid replacement strategy."
+    assert result.strategy is None
+    assert result.reason == "Reflector did not produce a valid recommendation."
     decision = next(
-        event for event in runtime.trace if event["event"] == "strategy_decision"
+        event for event in runtime.trace if event["event"] == "reflection_decision"
     )
     assert "entrypoint" in " ".join(decision["diagnostics"])
 
@@ -232,8 +233,8 @@ def test_authoritative_empty_result_is_terminal_success_for_every_scope() -> Non
     })
     unfiltered = filtered.model_copy(update={"collection_ref": unfiltered_collection})
 
-    assert Strategy.route(filtered) == "complete"
-    assert Strategy.route(unfiltered) == "complete"
+    assert Reflector.route(filtered) == "complete"
+    assert Reflector.route(unfiltered) == "complete"
 
 
 def test_task214_authoritative_empty_does_not_dispatch_strategy() -> None:
@@ -289,17 +290,17 @@ def test_strategy_stop_does_not_dispatch_another_worker() -> None:
         return WorkerOutcome(phase="failed", summary="Path disproven", steps=2)
 
     runtime._run_worker = fail
-    runtime._request_strategy_decision = lambda **_kwargs: (
-        None,
-        "No materially different strategy remains.",
+    runtime._request_strategy_decision = lambda **_kwargs: ReflectionResult(
+        decision="stop",
+        reason="No materially different strategy remains.",
     )
 
     outcome = runtime._run_logical_worker("collect_records", original)
 
     assert calls == ["collect_records"]
     assert outcome.steps == 2
-    assert "Strategy stopped" in outcome.summary
-    assert runtime.trace[-1]["event"] == "strategy_stopped"
+    assert "Reflector stopped" in outcome.summary
+    assert runtime.trace[-1]["event"] == "reflection_stopped"
 
 
 class _CompletingWorker:

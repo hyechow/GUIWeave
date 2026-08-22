@@ -1,0 +1,27 @@
+{
+  "frame_id": "frame:19",
+  "screenshot_path": "/root/code/iphone-use/logs/gui_agent/mobileworld/android/20260821_185120/screenshot_tool_agent_19.png",
+  "visual_fingerprint": "ffffffff8007800380038007800700038203fffffffffffffffffffdffffffff",
+  "readiness": "ready",
+  "readiness_reason": "",
+  "platform_time": {
+    "platform": "android",
+    "local_datetime": "2025-10-16T12:01:41+00:00",
+    "timezone": "GMT",
+    "utc_offset": "+00:00",
+    "source": "android_adb",
+    "confidence": "authoritative",
+    "captured_at": "2026-08-21T10:51:24.305+00:00",
+    "fallback_reason": ""
+  },
+  "url": "",
+  "title": "",
+  "controls": [],
+  "visible_collection_regions": [],
+  "structured_surfaces": [],
+  "applied_filters": {},
+  "requirement_scopes": {},
+  "chunks": [],
+  "collections": [],
+  "missing_requirements": []
+}

@@ -6,7 +6,7 @@ from types import SimpleNamespace
 import pytest
 
 from gui_agent.core.tool_agent.contracts import WorkerOutcome, WorkerSpec, WorkerStrategy
-from gui_agent.core.tool_agent.strategy import Strategy
+from gui_agent.core.tool_agent.strategy import Reflector
 
 
 class _JsonModel:
@@ -47,7 +47,7 @@ def _replace(candidate: dict, reason: str = "Executable alternative") -> dict:
 def _decide(model: _JsonModel, **context):
     events = []
     original = _original_spec()
-    selected, reason = Strategy(model).decide(
+    result = Reflector(model).reflect(
         context={
             "attempted_strategies": [],
             **context,
@@ -55,7 +55,7 @@ def _decide(model: _JsonModel, **context):
         original_strategy=original.strategy,
         on_event=lambda event, **payload: events.append((event, payload)),
     )
-    return original, selected, reason, events
+    return original, result.strategy, result.reason, events
 
 
 def test_strategy_returns_only_a_replacement_strategy() -> None:
@@ -71,8 +71,8 @@ def test_strategy_returns_only_a_replacement_strategy() -> None:
     assert selected.approach == "Use an alternative visible path."
     assert model.calls == 1
     assert model.bind_kwargs["max_tokens"] == 600
-    assert events[0][0] == "strategy_decision"
-    assert events[0][1]["decision"] == "replace"
+    assert events[0][0] == "reflection_decision"
+    assert events[0][1]["decision"] == "revise_approach"
 
 
 def test_strategy_repairs_one_invalid_candidate() -> None:
@@ -115,7 +115,7 @@ def test_strategy_stops_after_repeated_approach_repair() -> None:
     _original, selected, reason, events = _decide(model)
 
     assert selected is None
-    assert "valid replacement" in reason
+    assert "valid recommendation" in reason
     assert model.calls == 2
     assert events[0][1]["decision"] == "stop"
 
@@ -147,3 +147,31 @@ def test_strategy_can_stop_without_a_candidate() -> None:
     assert "disproved" in reason
     assert model.calls == 1
     assert events[0][1]["decision"] == "stop"
+
+
+def test_reflector_returns_typed_reconcile_without_an_approach() -> None:
+    model = _JsonModel({
+        "diagnosis": {
+            "kind": "state_conflict",
+            "evidence_refs": ["step:2"],
+            "reason": "The receipt and current state need reduction.",
+        },
+        "recommendation": {
+            "decision": "reconcile_state",
+            "approach": None,
+            "preserve_progress": True,
+            "invalidate": [],
+        },
+    })
+    events = []
+
+    result = Reflector(model).reflect(
+        context={"attempted_approaches": []},
+        original_strategy=_original_spec().strategy,
+        on_event=lambda event, **payload: events.append((event, payload)),
+    )
+
+    assert result.decision == "reconcile_state"
+    assert result.strategy is None
+    assert result.preserve_progress is True
+    assert events[0][0] == "reflection_decision"

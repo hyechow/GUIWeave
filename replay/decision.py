@@ -5,7 +5,6 @@ from __future__ import annotations
 import argparse
 import ast
 import json
-import re
 from pathlib import Path
 from typing import Any
 
@@ -13,7 +12,6 @@ from langchain_core.messages import AIMessage, HumanMessage, SystemMessage
 
 from gui_agent.core.config import resolve_llm_config
 from gui_agent.core.runtime.clock import PlatformTimeSnapshot
-from gui_agent.core.tool_agent.action_guard import assess_frame
 from gui_agent.core.self_learning.app_summary import load_knowledge_for_app
 from gui_agent.core.tool_agent.contracts import (
     DynamicActionSpec,
@@ -35,6 +33,7 @@ from gui_agent.core.tool_agent.protocol import (
     image_message,
     validate_worker_tool_state,
     worker_attempt_contract,
+    worker_frame_tools,
 )
 from gui_agent.core.tool_agent.runtime import ToolAgentRuntime
 from gui_agent.core.tool_agent.worker_memory import render_application_knowledge_context
@@ -100,6 +99,18 @@ def _text(parts: list[dict[str, Any]], *, omit_calls: bool = False) -> str:
         if part.get("type") == "text"
         and (not omit_calls or part.get("label") != "tool_calls")
     )
+
+
+def _message_text(message: Any) -> str:
+    content = getattr(message, "content", "")
+    if isinstance(content, str):
+        return content
+    if isinstance(content, list):
+        return "\n".join(
+            str(item.get("text") or "") for item in content
+            if isinstance(item, dict) and item.get("type") == "text"
+        )
+    return ""
 
 
 def _master_task(event: dict[str, Any]) -> dict[str, Any]:
@@ -194,10 +205,9 @@ def _worker_messages(
             text = text.replace(
                 "Complete an exact bound key when satisfied; otherwise keep it active. "
                 "Never rename or repeat it.",
-                "Complete an exact bound key when satisfied. If application knowledge "
-                "identifies the invocation as write-through and this is its normal "
-                "error-free post-commit frame, complete instead of repeating it. "
-                "Otherwise keep it active; never rename it.",
+                "Runtime completes an exact bound Commitment after its successful effect "
+                "receipt and target verification. Record resulting Evidence and never "
+                "repeat the action merely to verify it.",
             )
             text = _replace_section(
                 text,
@@ -571,6 +581,16 @@ def replay_worker_decision(
         return _unavailable(
             selected, frame_no, "Worker decision replay requires trace schema v2."
         )
+    prior_action = next((
+        event for event in reversed(events)
+        if int(event.get("index") or 0) < int(selected.get("index") or 0)
+        and event.get("event") == "runtime_action"
+    ), None)
+    prior_no_effect_scroll = bool(
+        prior_action
+        and prior_action.get("tool") == "scroll"
+        and prior_action.get("no_effect") is True
+    )
     if _REDACTED_ACCESS_VALUE in json.dumps(
         selected.get("args") or {},
         ensure_ascii=False,
@@ -594,7 +614,7 @@ def replay_worker_decision(
             and not action.input_args
             else action
         )
-    assessment = assess_frame(
+    assessment = worker_frame_tools(
         spec, actions, materialized,
     )
     model, model_config, model_name = _selected_model("tool_agent.worker", llm)
@@ -647,6 +667,36 @@ def replay_worker_decision(
         spec,
         attempted_action=bool(replay_context.get("executed_tools")),
     )
+    if prior_no_effect_scroll:
+        attempt_contract += (
+            "\n\n## Same-frame runtime feedback\n"
+            + json.dumps({
+                "status": "collection_traversal_boundary",
+                "boundary_direction": str(
+                    (prior_action.get("args") or {}).get("direction") or
+                    prior_action.get("direction") or "attempted_direction"
+                ),
+                "same_direction_exhausted": True,
+                "action_effect": "no_visual_change",
+                "surface_transition": "none",
+                "surface_continuity": "preserved",
+                "decision_mode": "boundary_reconciliation",
+                "decision_rule": (
+                    "Reconcile existing memory without another GUI verification action. If "
+                    "active memory explicitly names an unresolved target, act only toward "
+                    "that target; otherwise the next decision must be terminal."
+                ),
+                "instruction": (
+                    "Do not continue in that direction or reverse merely to recheck handled "
+                    "records. The unchanged frame proves the same surface remained active; "
+                    "do not tap navigation or chrome to reconfirm it because that adds no "
+                    "boundary or coverage evidence. Reverse only for a specific unresolved "
+                    "target named by active "
+                    "memory. Otherwise reconcile coverage and complete when no encountered "
+                    "target remains unsatisfied. Runtime does not assert completion."
+                ),
+            }, ensure_ascii=False)
+        )
     if visible_commit_control:
         attempt_contract += (
             "\n\n## Same-frame runtime feedback\n"
@@ -669,8 +719,7 @@ def replay_worker_decision(
         _screenshot(run_dir, frame_no, observation),
         attempt_contract=attempt_contract,
         application_knowledge="\n\n".join(
-            value.worker_context()
-            for value in _current_app_knowledge(context)
+            value.worker_context() for value in _current_app_knowledge(context)
         ),
         image_scale=float(getattr(model_config, "image_scale", 1.0)),
     )
@@ -691,16 +740,6 @@ def replay_worker_decision(
     for number in range(1, samples + 1):
         replay_messages, repairs, repair_errors = list(messages), 0, []
         memory_repairs, memory_repair_errors = 0, []
-        active_commitments = set(
-            replay_context.get("active_commitment_refs") or
-            re.findall(
-                r"commitment:[a-z][a-z0-9_]{0,63}",
-                "\n".join(
-                    str(message.content) for message in messages
-                    if isinstance(getattr(message, "content", None), str)
-                ),
-            )
-        )
         for decision_attempt in range(3):
             response = bound.invoke(replay_messages)
             try:
@@ -709,34 +748,9 @@ def replay_worker_decision(
                     action_protocol=action_protocol,
                 )
                 state = decision.get("args", {}).get("state", {})
-                remaining = set(active_commitments)
-                for update in state.get("memory_updates") or []:
-                    if not isinstance(update, dict) or update.get("fact_type") != "commitment":
-                        continue
-                    fact_ref = f"commitment:{update.get('key', '')}"
-                    if update.get("status") == "active":
-                        remaining.add(fact_ref)
-                    else:
-                        remaining.discard(fact_ref)
-                if state.get("status") == "executing" and not remaining:
-                    raise ValueError(
-                        "executing phase requires an active Commitment with valid dependencies"
-                    )
+                WorkerState.model_validate(state)
                 break
             except Exception as exc:  # noqa: BLE001 - mirrors one production repair
-                is_memory_error = isinstance(exc, ValueError) and str(exc).startswith(
-                    "executing phase requires an active Commitment"
-                )
-                if is_memory_error and memory_repairs < 2:
-                    memory_repairs += 1
-                    memory_repair_errors.append(f"{type(exc).__name__}: {exc}")
-                    replay_messages.extend([response, HumanMessage(content=(
-                        "Typed memory repair: the Runtime atomically rejected this memory "
-                        f"delta on the SAME frame: {exc}. No memory was recorded and no "
-                        "action was executed. Correct state.status and the memory delta "
-                        "before choosing the next action."
-                    ))])
-                    continue
                 if repairs:
                     raise
                 repairs += 1

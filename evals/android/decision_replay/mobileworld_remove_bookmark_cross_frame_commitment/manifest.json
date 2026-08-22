@@ -1,0 +1,24 @@
+{
+  "version": 1,
+  "name": "mobileworld_remove_bookmark_cross_frame_commitment",
+  "source_run": "20260821_182744",
+  "cases": [
+    {
+      "id": "rebuild_durable_commitment_before_second_remove",
+      "frame": 22,
+      "min_pass_rate": 1.0,
+      "expected": {
+        "tool": "continue_with_actions",
+        "protocol_repairs_max": 0,
+        "memory_repairs_max": 1,
+        "state_status": "executing",
+        "required_prefix": [
+          {
+            "capability": "tap",
+            "description_contains": "Remove bookmark"
+          }
+        ]
+      }
+    }
+  ]
+}

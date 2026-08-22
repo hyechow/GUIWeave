@@ -2,18 +2,15 @@ from __future__ import annotations
 
 import pytest
 
-from gui_agent.core.tool_agent.action_guard import (
-    assess_frame,
-    assess_navigation_url,
-)
+from gui_agent.core.tool_agent.action_guard import assess_navigation_url
 from gui_agent.core.tool_agent.contracts import (
     CollectionRef,
     MaterializedFrame,
     WorkerOutcome,
     WorkerSpec,
 )
-from gui_agent.core.tool_agent.strategy import Strategy
-from gui_agent.core.tool_agent.protocol import generic_action_spec
+from gui_agent.core.tool_agent.strategy import Reflector
+from gui_agent.core.tool_agent.protocol import generic_action_spec, worker_frame_tools
 
 
 def _collector() -> WorkerSpec:
@@ -57,14 +54,14 @@ def test_collector_completion_is_offered_regardless_of_coverage_status() -> None
         collections=[_collection()],
     )
 
-    assessment = assess_frame(spec, [generic_action_spec("scroll")], frame)
+    assessment = worker_frame_tools(spec, [generic_action_spec("scroll")], frame)
 
     # ReAct collection: the Worker certifies exhaustiveness; Runtime never gates the
     # complete tool on the mechanical coverage verdict.
     assert assessment.completion_mode == "collector"
 
     bare_frame = MaterializedFrame(frame_id="frame:2", screenshot_path="frame.png")
-    bare = assess_frame(spec, [generic_action_spec("scroll")], bare_frame)
+    bare = worker_frame_tools(spec, [generic_action_spec("scroll")], bare_frame)
     assert bare.completion_mode == "collector"
 
 
@@ -73,13 +70,13 @@ def test_frame_guard_preserves_capabilities_until_an_unready_attempt() -> None:
     frame = MaterializedFrame(frame_id="frame:1", screenshot_path="frame.png")
     actions = [generic_action_spec("scroll"), generic_action_spec("open_url")]
 
-    ready = assess_frame(spec, actions, frame)
+    ready = worker_frame_tools(spec, actions, frame)
     unready_frame = frame.model_copy(update={
         "readiness": "loading",
         "readiness_reason": "main content has not materialized",
     })
-    initial = assess_frame(spec, actions, unready_frame)
-    attempted = assess_frame(spec, actions, unready_frame, attempted_action=True)
+    initial = worker_frame_tools(spec, actions, unready_frame)
+    attempted = worker_frame_tools(spec, actions, unready_frame, attempted_action=True)
 
     assert ready.allowed_actions == actions
     assert [action.capability for action in initial.allowed_actions] == ["open_url"]
@@ -97,7 +94,7 @@ def test_frame_guard_preserves_capabilities_until_an_unready_attempt() -> None:
     ],
 )
 def test_strategy_routes_worker_outcomes(outcome: WorkerOutcome, route: str) -> None:
-    assert Strategy.route(outcome) == route
+    assert Reflector.route(outcome) == route
 
 
 def test_authoritative_empty_is_a_completed_immutable_data_contract() -> None:
@@ -111,8 +108,8 @@ def test_authoritative_empty_is_a_completed_immutable_data_contract() -> None:
         "collection_ref": _collection(rows=0),
     })
 
-    assert Strategy.route(filtered) == "complete"
-    assert Strategy.route(unfiltered) == "complete"
+    assert Reflector.route(filtered) == "complete"
+    assert Reflector.route(unfiltered) == "complete"
 
 
 def test_navigation_guard_allows_any_public_http_destination() -> None:

@@ -12,9 +12,56 @@ from gui_agent.core.tool_agent.contracts import (
 from gui_agent.core.tool_agent.runtime import ToolAgentRuntime
 from gui_agent.core.tool_agent.worker_memory import (
     WorkerJournal,
+    build_current_state,
     build_worker_memory_view,
+    build_progress_snapshot,
+    memory_repair_instruction,
     project_worker_context,
 )
+
+
+def test_runtime_owned_commitment_lifecycle_reduces_without_worker_updates() -> None:
+    journal = WorkerJournal(worker_id="runtime_commitment")
+    dispatched = journal.record_runtime_commitment(
+        step=1, substep=1, frame_id="frame:1", tool="tap",
+        statement="Activate the verified control", status="dispatched",
+    )
+    journal.record_action_result(
+        step=1, substep=1, frame_id="frame:1", tool="tap",
+        args={"description": "Activate the verified control"},
+        result={"status": "executed", "action_type": "tap", "no_effect": False},
+        commitment_refs=(dispatched.event_ref,),
+    )
+    settled = journal.settle_runtime_commitment(
+        step=1, substep=1, frame_id="frame:1", tool="tap",
+        statement="Activate the verified control",
+        result={"status": "executed", "action_type": "tap", "no_effect": False},
+    )
+
+    assert dispatched.origin == settled.origin == "runtime"
+    assert settled.status == "satisfied"
+    progress = build_progress_snapshot(build_worker_memory_view(journal))
+    assert progress.commitments["active"] == ()
+    assert progress.commitments["satisfied"] == ("commitment:action_1_1",)
+    assert dispatched.event_ref in progress.audit_refs
+
+
+def test_progress_snapshot_is_bounded_independently_of_journal_length() -> None:
+    journal = WorkerJournal(worker_id="bounded_progress")
+    for step in range(1, 40):
+        journal.record_memory_updates(
+            step=step, frame_id=f"frame:{step}",
+            state=_memory_state({
+                "fact_type": "evidence", "key": f"fact_{step}",
+                "status": "active", "lifetime": "attempt",
+                "statement": f"Verified fact {step}", "depends_on": [],
+            }),
+        )
+    progress = build_progress_snapshot(build_worker_memory_view(journal))
+
+    assert len(progress.effects) == 16
+    assert len(progress.audit_refs) == 16
+    assert progress.effects[-1]["statement"] == "Verified fact 39"
 
 
 def _state(step: int) -> WorkerState:
@@ -23,6 +70,219 @@ def _state(step: int) -> WorkerState:
         summary=f"Observed state {step}",
         memory_updates=[],
     )
+
+
+def test_staged_memory_is_not_visible_before_runtime_commit() -> None:
+    journal = WorkerJournal(worker_id="staged_action_memory")
+    state = _memory_state({
+        "fact_type": "evidence", "key": "action_intent",
+        "status": "active", "lifetime": "attempt",
+        "statement": "The action is ready", "depends_on": [],
+    })
+
+    pending = journal.stage_memory_updates(
+        step=1, frame_id="frame:1", state=state,
+    )
+
+    assert journal.events == []
+    journal.commit_memory_updates(pending)
+    assert journal.events[-1].fact_ref == "evidence:action_intent"
+
+
+def test_target_verified_action_records_durable_runtime_evidence() -> None:
+    journal = WorkerJournal(worker_id="receipt_order")
+    journal.record_action_result(
+        step=1, frame_id="frame:1", tool="tap",
+        args={"description": "Activate the requested setting"},
+        result={
+            "status": "executed", "action_type": "tap", "no_effect": False,
+            "target_signal": {
+                "status": "on_target", "actual_element": "Requested setting",
+                "container_context": "Account row: Ada Lovelace",
+            },
+        },
+    )
+
+    evidence = build_worker_memory_view(
+        journal, current_frame_id="frame:2",
+    ).accumulated_evidence
+    assert [event.fact_ref for event in evidence] == ["evidence:verified_action_1"]
+    assert evidence[0].origin == "runtime"
+    assert "actual_target='Requested setting'" in evidence[0].statement
+    transaction = build_worker_memory_view(journal).target_transaction
+    assert transaction is not None
+    assert transaction.target.container_context == "Account row: Ada Lovelace"
+    assert evidence[0].target_ref == transaction.target.ref
+
+
+def test_target_transaction_binds_overlay_evidence_and_exact_return() -> None:
+    journal = WorkerJournal(worker_id="target_transaction")
+    journal.record_action_result(
+        step=1, frame_id="frame:1", surface_fingerprint="anchor",
+        tool="tap", args={"x": 900, "y": 300, "description": "Open row actions"},
+        result={
+            "status": "executed", "action_type": "tap", "no_effect": False,
+            "target_signal": {
+                "status": "on_target", "actual_element": "More options",
+                "container_context": "Ada — quarterly report",
+            },
+        },
+    )
+    target_ref = journal.active_target.ref  # type: ignore[union-attr]
+    pending = journal.stage_memory_updates(
+        step=2, frame_id="frame:2", state=_memory_state({
+            "fact_type": "evidence", "key": "row_state",
+            "status": "active", "lifetime": "attempt",
+            "statement": "The row menu shows the inverse action", "depends_on": [],
+        }),
+    )
+    journal.record_action_result(
+        step=2, frame_id="frame:2", surface_fingerprint="overlay",
+        tool="back", args={"description": "Dismiss the row menu"},
+        result={"status": "executed", "action_type": "back", "no_effect": False},
+    )
+    journal.commit_memory_updates(pending, target_ref=target_ref)
+
+    active = build_worker_memory_view(
+        journal, current_frame_id="frame:2", current_surface_fingerprint="overlay",
+    ).target_transaction
+    returned = build_worker_memory_view(
+        journal, current_frame_id="frame:3", current_surface_fingerprint="anchor",
+    ).target_transaction
+
+    assert active is not None and active.status == "active"
+    assert returned is not None and returned.status == "returned_to_anchor"
+    assert [event.key for event in returned.evidence] == [
+        "verified_action_1", "verified_action_2", "row_state",
+    ]
+    projection = project_worker_context(
+        memory=build_worker_memory_view(
+            journal, current_frame_id="frame:3", current_surface_fingerprint="anchor",
+        ),
+        frame=MaterializedFrame(
+            frame_id="frame:3", screenshot_path="frame.png",
+            visual_fingerprint="anchor",
+        ),
+    ).text
+    assert '"phase": "returned_to_anchor"' in projection
+    assert "The row menu shows the inverse action" in projection
+    assert '"phase": "worker_decision_required"' in projection
+    assert projection.rindex("## Current State") > projection.index(
+        "## Historical Progress"
+    )
+
+
+def test_changed_surface_never_claims_target_return() -> None:
+    journal = WorkerJournal(worker_id="target_changed_surface")
+    journal.record_action_result(
+        step=1, frame_id="frame:1", surface_fingerprint="anchor",
+        tool="tap", args={"x": 100, "y": 200},
+        result={
+            "status": "executed", "action_type": "tap", "no_effect": False,
+            "target_signal": {
+                "status": "on_target", "actual_element": "Actions",
+                "container_context": "Record alpha",
+            },
+        },
+    )
+
+    transaction = build_worker_memory_view(
+        journal, current_frame_id="frame:2", current_surface_fingerprint="different",
+    ).target_transaction
+
+    assert transaction is not None
+    assert transaction.status == "active"
+
+
+def test_verified_spatial_target_does_not_require_semantic_container_context() -> None:
+    journal = WorkerJournal(worker_id="coordinate_target")
+    journal.record_action_result(
+        step=1, frame_id="frame:1", surface_fingerprint="anchor",
+        tool="tap", args={"x": 420, "y": 240},
+        result={
+            "status": "executed", "action_type": "tap", "no_effect": False,
+            "target_signal": {
+                "status": "on_target", "actual_element": "More options",
+            },
+        },
+    )
+
+    assert journal.active_target is not None
+    assert journal.active_target.container_context == ""
+    assert journal.active_target.point == (420.0, 240.0)
+
+
+def test_verified_target_on_new_surface_starts_new_transaction() -> None:
+    journal = WorkerJournal(worker_id="new_surface_target")
+    journal.record_action_result(
+        step=1, frame_id="frame:1", surface_fingerprint="first",
+        tool="tap", args={"x": 100, "y": 200},
+        result={
+            "status": "executed", "action_type": "tap", "no_effect": False,
+            "target_signal": {"status": "on_target", "actual_element": "Profile"},
+        },
+    )
+    first_ref = journal.active_target.ref  # type: ignore[union-attr]
+
+    journal.record_action_result(
+        step=2, frame_id="frame:2", surface_fingerprint="second",
+        tool="tap", args={"x": 900, "y": 300},
+        result={
+            "status": "executed", "action_type": "tap", "no_effect": False,
+            "target_signal": {"status": "on_target", "actual_element": "More options"},
+        },
+    )
+
+    assert journal.active_target is not None
+    assert journal.active_target.ref != first_ref
+    assert journal.active_target.anchor_surface_fingerprint == "second"
+    assert journal.latest_action_receipt is not None
+    assert journal.latest_action_receipt.target_ref == journal.active_target.ref
+
+
+def test_effectful_traversal_clears_target_but_no_effect_does_not() -> None:
+    journal = WorkerJournal(worker_id="target_traversal")
+    journal.record_action_result(
+        step=1, frame_id="frame:1", surface_fingerprint="anchor",
+        tool="tap", args={"x": 100, "y": 200},
+        result={
+            "status": "executed", "action_type": "tap", "no_effect": False,
+            "target_signal": {
+                "status": "on_target", "actual_element": "Actions",
+                "container_context": "Record alpha",
+            },
+        },
+    )
+    journal.record_action_result(
+        step=2, frame_id="frame:2", surface_fingerprint="anchor",
+        tool="scroll", args={"direction": "down"},
+        result={"status": "executed", "action_type": "scroll", "no_effect": True},
+    )
+    assert journal.active_target is not None
+
+    journal.record_action_result(
+        step=3, frame_id="frame:3", surface_fingerprint="anchor",
+        tool="scroll", args={"direction": "down"},
+        result={"status": "executed", "action_type": "scroll", "no_effect": False},
+    )
+    assert journal.active_target is None
+
+
+def test_executed_back_records_runtime_effect_without_claiming_a_target() -> None:
+    journal = WorkerJournal(worker_id="back_receipt")
+    journal.record_action_result(
+        step=2, frame_id="frame:2", tool="back",
+        args={"description": "Dismiss the open menu"},
+        result={"status": "executed", "action_type": "back", "no_effect": False},
+    )
+
+    evidence = build_worker_memory_view(
+        journal, current_frame_id="frame:3",
+    ).accumulated_evidence
+    assert [event.fact_ref for event in evidence] == ["evidence:verified_action_2"]
+    assert "intent='Dismiss the open menu'" in evidence[0].statement
+    assert "tool='back'" in evidence[0].statement
+    assert "actual_target" not in evidence[0].statement
 
 
 def _record_turn(
@@ -45,75 +305,6 @@ def _record_turn(
     )
 
 
-def test_worker_memory_is_a_bounded_projection_of_append_only_runtime_facts() -> None:
-    journal = WorkerJournal(worker_id="bounded_worker")
-    for step in range(1, 13):
-        _record_turn(
-            journal,
-            step=step,
-            frame_id=f"frame:{step}",
-            state=_state(step),
-            tool="runtime_tap_visible",
-            args={"x": step, "y": step},
-            result={"status": "executed", "no_effect": step % 2 == 0},
-        )
-
-    memory = build_worker_memory_view(journal)
-
-    assert [item.event_ref for item in memory.recent_receipts] == [
-        "step:9",
-        "step:10",
-        "step:11",
-        "step:12",
-    ]
-    rendered = memory.render_prompt_section()
-    assert "Pending subgoal" not in rendered
-    assert "invocation=confirmed" in rendered
-    assert "screen_transition=none_observed" in rendered
-    assert "unchanged screen alone does not justify repeating" in rendered
-    assert "[step:1]" not in rendered
-    assert "append-only event journal" in rendered
-
-
-def test_worker_memory_omits_spatial_and_execution_metadata() -> None:
-    journal = WorkerJournal(worker_id="compact_worker")
-    _record_turn(
-        journal,
-        step=1,
-        frame_id="volatile-frame:17",
-        state=_state(1),
-        tool="choose_status",
-        args={
-            "x": 410,
-            "y": 520,
-            "text": "Complete",
-            "description": "Choose the Complete status in the upper filter area",
-        },
-        result={
-            "status": "executed",
-            "action_type": "select_option",
-            "settle_seconds": 1.2,
-            "no_effect": False,
-            "grounding": {"x": 421, "y": 532, "source": "dom"},
-            "target_signal": {
-                "status": "off_target",
-                "actual_element": "Status label",
-            },
-        },
-    )
-
-    rendered = build_worker_memory_view(journal).render_prompt_section()
-
-    assert "volatile-frame:17" not in rendered
-    assert '"x"' not in rendered
-    assert '"y"' not in rendered
-    assert "settle_seconds" not in rendered
-    assert "grounding" not in rendered
-    assert "Complete" in rendered
-    assert "select_option" in rendered
-    assert "flash verifier reported off_target" in rendered
-    assert "Status label" in rendered
-    assert "do not repeat the same point" in rendered
 
 
 def test_worker_context_omits_unavailable_structured_controls() -> None:
@@ -133,116 +324,7 @@ def test_worker_context_omits_unavailable_structured_controls() -> None:
     assert "runtime-private-surface" not in projection.text
 
 
-def test_worker_memory_preserves_flash_off_target_signal() -> None:
-    journal = WorkerJournal(worker_id="target_feedback")
-    _record_turn(
-        journal,
-        step=1,
-        frame_id="frame:1",
-        state=_state(1),
-        tool="runtime_tap_visible",
-        args={
-            "x": 500,
-            "y": 870,
-            "description": "Tap Create New Channel",
-        },
-        result={
-            "status": "executed",
-            "action_type": "tap",
-            "no_effect": False,
-            "target_signal": {
-                "status": "off_target",
-                "actual_element": "Browse Channels",
-                "reason": "The marker is on the adjacent row.",
-            },
-        },
-    )
 
-    rendered = build_worker_memory_view(journal).render_prompt_section()
-
-    assert "flash verifier reported off_target" in rendered
-    assert "Browse Channels" in rendered
-    assert "do not repeat the same point" in rendered
-
-
-def test_worker_memory_accumulates_explicit_visual_facts() -> None:
-    journal = WorkerJournal(worker_id="identity_memory")
-    for step, key, fact in (
-        (1, "pupper_record", "Bookmarks identity: author=pupper; content=Border Collie"),
-        (2, "demo_record", "Bookmarks identity: author=demo; content=Golden Retriever"),
-        (3, "pupper_record", "Bookmarks identity: author=pupper; content=Border Collie; verified"),
-    ):
-        _record_turn(
-            journal,
-            step=step,
-            frame_id=f"frame:{step}",
-            state=WorkerState.model_validate({
-                "status": "collecting",
-                "summary": f"Observed state {step}",
-                "memory_updates": [{
-                    "fact_type": "evidence",
-                    "key": key,
-                    "status": "active",
-                    "lifetime": "attempt",
-                    "statement": fact,
-                    "depends_on": [],
-                }],
-            }),
-            tool="scroll_records",
-            args={},
-            result={"status": "executed", "action_type": "scroll", "no_effect": False},
-        )
-
-    rendered = build_worker_memory_view(journal).render_prompt_section()
-
-    assert "author=pupper; content=Border Collie" in rendered
-    assert "author=demo; content=Golden Retriever" in rendered
-    assert len(build_worker_memory_view(journal).accumulated_evidence) == 2
-    latest = next(
-        event for event in build_worker_memory_view(journal).accumulated_evidence
-        if event.key == "pupper_record"
-    )
-    assert latest.supersedes == "step:1:memory:1"
-    assert latest.sequence == 5
-
-
-def test_worker_memory_keeps_collection_cells_out_of_durable_memory() -> None:
-    journal = WorkerJournal("collection_memory")
-    frame = MaterializedFrame(
-        frame_id="frame:7",
-        screenshot_path="frame.png",
-        controls=[{
-            "label": "Bookmarks",
-            "selected": True,
-            "rect": {"x": 400, "y": 290, "w": 200, "h": 40},
-        }, {
-            "label": "Selected row",
-            "selected": True,
-            "selection_mode": "multiple",
-            "rect": {"x": 400, "y": 400, "w": 200, "h": 40},
-        }, {
-            "label": "Profile",
-            "selected": True,
-            "rect": {"x": 875, "y": 930, "w": 250, "h": 80},
-        }],
-        visible_collection_regions=[{
-            "bounds": (0, 330, 1000, 886),
-            "cells": [
-                {"ref": "body", "texts": ["Exact content 💛🐾"]},
-                {"ref": "media", "texts": ["Media without description"]},
-                {"ref": "actions", "texts": ["Reply", "Favorite"], "clipped_bottom": True},
-            ],
-        }],
-    )
-
-    rendered = build_worker_memory_view(journal).render_prompt_section()
-
-    assert "Exact content 💛🐾" not in rendered
-    assert journal.events == []
-    projection = project_worker_context(
-        memory=build_worker_memory_view(journal), frame=frame,
-    )
-    assert "Exact content 💛🐾" in projection.text
 
 
 def test_worker_context_always_uses_compact_semantic_frame() -> None:
@@ -297,7 +379,7 @@ def test_worker_context_always_uses_compact_semantic_frame() -> None:
 
     frame_decision = next(
         item for item in projection.report["blocks"]
-        if item["id"] == "tool_agent.worker.current_frame"
+        if item["id"] == "tool_agent.worker.04_current_state"
     )
     assert frame_decision["action"] == "kept"
     assert "collection:records" in projection.text
@@ -309,21 +391,21 @@ def test_worker_context_always_uses_compact_semantic_frame() -> None:
     assert "private-group-id" not in projection.text
     assert '"form_action": "commit"' in projection.text
     assert '"rect": {"x": 100, "y": 200, "w": 80, "h": 30}' in projection.text
-    assert projection.text.index("## Current Worker attempt") < projection.text.index(
-        "## Current MaterializedFrame"
-    ) < projection.text.index("## WorkerMemory") < projection.text.index(
-        "## Application knowledge"
+    assert projection.text.index("## Static Rules") < projection.text.index(
+        "## Goal Contract"
+    ) < projection.text.index("## Historical Progress") < projection.text.index(
+        "## Current State"
     )
     assert next(
         item for item in projection.report["blocks"]
-        if item["id"] == "tool_agent.worker.current_attempt"
+        if item["id"] == "tool_agent.worker.02_goal_contract"
     )["action"] == "kept"
     knowledge = next(
         item for item in projection.report["blocks"]
-        if item["id"] == "tool_agent.worker.application_knowledge"
+        if item["id"] == "tool_agent.worker.01_static_rules"
     )
     assert (knowledge["source_type"], knowledge["ttl"]) == (
-        "application_knowledge", "session",
+        "runtime_contract", "session",
     )
 
 
@@ -542,7 +624,7 @@ def test_worker_rebuilds_fresh_messages_each_frame_instead_of_replaying_chat_his
         [getattr(message, "type", "") for message in messages]
         for messages in runtime.worker.calls
     ] == [["system", "human"]] * 3
-    assert "No prior Worker actions" in _human_text(runtime.worker.calls[0])
+    assert '"latest_transition_ref": ""' in _human_text(runtime.worker.calls[0])
     assert "step:1" in _human_text(runtime.worker.calls[1])
     assert "step:2" in _human_text(runtime.worker.calls[2])
     assert all(
@@ -583,43 +665,6 @@ def _memory_state(*updates: dict) -> WorkerState:
     })
 
 
-def _record_dependency_chain(
-    journal: WorkerJournal,
-    *,
-    source_type: str,
-    source_key: str,
-    claim_key: str,
-    commitment_key: str,
-) -> None:
-    journal.record_memory_updates(
-        step=1,
-        frame_id="frame:1",
-        state=WorkerState.model_validate({
-            "status": "executing",
-            "summary": "Establish the execution dependency chain",
-            "memory_updates": [
-                {
-                    "fact_type": source_type, "key": source_key,
-                    "status": "active",
-                    "lifetime": "frame" if source_type == "observation" else "attempt",
-                    "statement": "The source fact is established", "depends_on": [],
-                },
-                {
-                    "fact_type": "claim", "key": claim_key,
-                    "status": "active", "lifetime": "attempt",
-                    "statement": "The execution claim is established",
-                    "depends_on": [f"{source_type}:{source_key}"],
-                },
-                {
-                    "fact_type": "commitment", "key": commitment_key,
-                    "status": "active", "lifetime": "attempt",
-                    "statement": "Execute the established claim",
-                    "depends_on": [f"claim:{claim_key}"],
-                },
-            ],
-        }),
-    )
-
 
 def test_observation_expires_with_frame_and_evidence_is_attempt_scoped() -> None:
     journal = WorkerJournal(worker_id="scope_memory")
@@ -650,83 +695,8 @@ def test_observation_expires_with_frame_and_evidence_is_attempt_scoped() -> None
     assert [event.key for event in later.accumulated_evidence] == [
         "rename_path_unavailable"
     ]
-    rendered = later.render_prompt_section()
-    assert "source=frame:1" in rendered
-    assert "only the current frame proves present visibility or actionability" in rendered
 
 
-def test_observation_dependency_invalidates_claim_and_commitment_next_frame() -> None:
-    journal = WorkerJournal(worker_id="frame_local_claim")
-    _record_dependency_chain(
-        journal, source_type="observation", source_key="control_visible",
-        claim_key="control_actionable", commitment_key="activate_control",
-    )
-
-    current = build_worker_memory_view(journal, current_frame_id="frame:1")
-    later = build_worker_memory_view(journal, current_frame_id="frame:2")
-
-    assert [event.key for event in current.established_claims] == ["control_actionable"]
-    assert [event.key for event in current.active_commitments] == ["activate_control"]
-    assert later.established_claims == ()
-    assert later.active_commitments == ()
-    rendered = later.render_prompt_section()
-    assert "event_status=active; now=expired" in rendered
-    assert "event_status=active; now=invalidated" in rendered
-
-
-def test_latest_gui_transition_is_separated_from_earlier_receipts() -> None:
-    journal = WorkerJournal(worker_id="post_commit_transition")
-    journal.record_action_result(
-        step=1, frame_id="frame:1", tool="tap",
-        args={"description": "Focus the editor"},
-        result={"status": "executed", "action_type": "tap"},
-    )
-    journal.record_action_result(
-        step=2, substep=1, frame_id="frame:2", tool="type",
-        args={"description": "Enter the requested value", "text": "requested value"},
-        result={"status": "error", "error": "predispatch target rejected"},
-    )
-    journal.record_action_result(
-        step=2, substep=1, frame_id="frame:2", tool="type",
-        args={"description": "Enter the requested value", "text": "requested value"},
-        result={"status": "executed", "action_type": "type", "no_effect": True},
-    )
-    journal.record_action_result(
-        step=2, substep=2, frame_id="frame:2", tool="tap",
-        args={"description": "Activate the final commit"},
-        result={
-            "status": "executed", "action_type": "tap",
-            "target_signal": {
-                "status": "on_target", "actual_element": "Activate the final commit",
-            },
-        },
-    )
-
-    memory = build_worker_memory_view(journal, current_frame_id="frame:3")
-    rendered = memory.render_prompt_section()
-
-    assert [event.event_ref for event in memory.latest_gui_transition] == [
-        "step:2.1", "step:2.2",
-    ]
-    assert [event.event_ref for event in memory.recent_receipts] == [
-        "step:1", "step:2.1", "step:2.2",
-    ]
-    assert "Latest GUI transition (immediately before the current frame)" in rendered
-    assert "Activate the final commit" in rendered
-    assert "Earlier execution receipts" in rendered
-    assert "predispatch target rejected" not in rendered
-    assert '"text": "requested value"' in rendered
-    assert "invocation=confirmed; screen_transition=none_observed" in rendered
-    assert rendered.count("[t=4; step:2.2]") == 1
-    assert "No Commitment was bound to the latest invocation" in rendered
-    assert "do not complete or invent a Commitment" in rendered
-
-    journal.record_action_result(
-        step=3, frame_id="frame:3", tool="ask_user", args={},
-        result={"status": "executed"},
-    )
-    after_user_input = build_worker_memory_view(journal, current_frame_id="frame:4")
-    assert after_user_input.latest_gui_transition == ()
 
 
 def test_observation_lifetime_is_structurally_enforced() -> None:
@@ -771,7 +741,39 @@ def test_ask_user_preserves_observation_window_but_gui_action_expires_it() -> No
     )
     changed_window = build_worker_memory_view(journal, current_frame_id="frame:3")
     assert changed_window.current_observations == ()
-    with pytest.raises(ValueError, match="require lifetime='attempt'"):
+
+
+def test_current_state_exposes_answered_user_input_without_semantic_guard() -> None:
+    journal = WorkerJournal(worker_id="answered_input")
+    question = "Which exact destination should be used?"
+    journal.record_action_result(
+        step=1,
+        frame_id="frame:1",
+        tool="ask_user",
+        args={"question": question},
+        result={"status": "executed", "action_type": "ask_user"},
+    )
+    memory = build_worker_memory_view(journal, current_frame_id="frame:2")
+    state = build_current_state(
+        frame=MaterializedFrame(frame_id="frame:2", screenshot_path="frame.png"),
+        observation={},
+        memory=memory,
+        spec=None,
+        completion_mode="operator",
+        same_frame_feedback=None,
+    )
+
+    assert state.user_input == {
+        "status": "answered",
+        "requested_questions": (question,),
+        "request_count_in_recent_window": 1,
+        "instruction": (
+            "Consume the recorded authoritative response. Do not ask any listed "
+            "question again; a refusal or unavailable value is still a resolved "
+            "request and requires another UI action or report_blocked."
+        ),
+    }
+    with pytest.raises(ValueError, match="requires lifetime='attempt'"):
         _memory_state({
             "fact_type": "evidence", "key": "verified_identity",
             "status": "active", "lifetime": "frame",
@@ -779,56 +781,8 @@ def test_ask_user_preserves_observation_window_but_gui_action_expires_it() -> No
         })
 
 
-def test_memory_dependency_versions_invalidate_claim_and_commitment() -> None:
-    journal = WorkerJournal(worker_id="dependency_memory")
-    journal.record_memory_updates(
-        step=1,
-        frame_id="frame:1",
-        state=_memory_state(
-            {
-                "fact_type": "evidence", "key": "bounded_results",
-                "status": "active", "lifetime": "attempt",
-                "statement": "The bounded result set has one qualifying record",
-                "depends_on": [],
-            },
-            {
-                "fact_type": "claim", "key": "candidate_set_complete",
-                "status": "active", "lifetime": "attempt",
-                "statement": "The qualifying candidate set is complete",
-                "depends_on": ["evidence:bounded_results"],
-            },
-            {
-                "fact_type": "commitment", "key": "process_candidate",
-                "status": "active", "lifetime": "attempt",
-                "statement": "Process the established qualifying record",
-                "depends_on": ["claim:candidate_set_complete"],
-            },
-        ),
-    )
-    established = build_worker_memory_view(journal, current_frame_id="frame:2")
-    assert len(established.established_claims) == 1
-    assert len(established.active_commitments) == 1
-    rendered = established.render_prompt_section()
-    assert 'depends_on=["evidence:bounded_results"]' in rendered
-    assert 'depends_on=["claim:candidate_set_complete"]' in rendered
-    assert "step:1:memory" not in rendered
 
-    journal.record_memory_updates(
-        step=2,
-        frame_id="frame:2",
-        state=_memory_state({
-            "fact_type": "evidence", "key": "bounded_results",
-            "status": "active", "lifetime": "attempt",
-            "statement": "The result set was corrected and needs reevaluation",
-            "depends_on": [],
-        }),
-    )
-    invalidated = build_worker_memory_view(journal, current_frame_id="frame:2")
-    assert invalidated.established_claims == ()
-    assert invalidated.active_commitments == ()
-
-
-def test_executing_phase_requires_a_valid_active_commitment_atomically() -> None:
+def test_phase_label_does_not_gate_memory_updates() -> None:
     journal = WorkerJournal(worker_id="execution_phase")
     invalid = WorkerState.model_validate({
         "status": "executing",
@@ -840,163 +794,11 @@ def test_executing_phase_requires_a_valid_active_commitment_atomically() -> None
         }],
     })
 
-    with pytest.raises(ValueError, match="requires an active Commitment"):
-        journal.record_memory_updates(step=1, frame_id="frame:1", state=invalid)
-
-    assert journal.events == []
+    journal.record_memory_updates(step=1, frame_id="frame:1", state=invalid)
+    assert journal.events[-1].fact_ref == "evidence:candidate_observed"
 
 
-def test_existing_valid_commitment_permits_later_executing_decisions() -> None:
-    journal = WorkerJournal(worker_id="execution_phase")
-    _record_dependency_chain(
-        journal, source_type="evidence", source_key="bounded_results",
-        claim_key="selection_established", commitment_key="execute_selection",
-    )
 
-    journal.record_memory_updates(
-        step=2,
-        frame_id="frame:2",
-        state=WorkerState(
-            status="executing",
-            summary="Continue the active commitment",
-            memory_updates=[],
-        ),
-    )
-
-    rendered = build_worker_memory_view(
-        journal, current_frame_id="frame:2",
-    ).render_prompt_section()
-    assert "Execute the active Commitment" in rendered
-    assert "from exact dependencies" in rendered
-    assert "commitment:execute_selection" in rendered
-
-
-def test_receipt_keeps_invocation_commitment_refs_after_frame_expiry() -> None:
-    journal = WorkerJournal(worker_id="invocation_time")
-    _record_dependency_chain(
-        journal, source_type="observation", source_key="control_visible",
-        claim_key="control_actionable", commitment_key="activate_control",
-    )
-    commitment = journal.events[-1]
-    receipt = journal.record_action_result(
-        step=1,
-        frame_id="frame:1",
-        tool="tap",
-        args={"description": "Activate the exact control"},
-        result={"status": "executed", "action_type": "tap", "no_effect": True},
-        commitment_refs=(commitment.event_ref,),
-    )
-
-    assert receipt.receipt is not None
-    assert receipt.receipt.commitment_refs == (commitment.event_ref,)
-    memory = build_worker_memory_view(journal, current_frame_id="frame:2")
-    assert memory.active_commitments == ()
-    assert [event.key for event in memory.transition_commitments] == [
-        "activate_control"
-    ]
-    rendered = memory.render_prompt_section()
-    assert "Reconcile only the Commitments bound to the latest invocation" in rendered
-    assert "Commitments bound to latest invocation" in rendered
-    assert "commitment:activate_control" in rendered
-    assert "Never rename or repeat it" in rendered
-    assert "Execute the active Commitment" not in rendered
-
-    journal.record_memory_updates(
-        step=2,
-        frame_id="frame:2",
-        state=_memory_state({
-            "fact_type": "commitment", "key": "activate_control",
-            "status": "completed", "lifetime": "attempt",
-            "statement": "The exact control was activated",
-            "depends_on": [],
-        }),
-    )
-    assert journal.events[-1].depends_on == commitment.depends_on
-
-
-def test_runtime_answer_must_be_integrated_before_execution() -> None:
-    journal = WorkerJournal(worker_id="runtime_answer")
-    journal.record_memory_updates(
-        step=1,
-        frame_id="frame:1",
-        state=_memory_state(
-            {
-                "fact_type": "evidence", "key": "candidate",
-                "status": "active", "lifetime": "attempt",
-                "statement": "Candidate A is established", "depends_on": [],
-            },
-            {
-                "fact_type": "claim", "key": "candidate_set",
-                "status": "active", "lifetime": "attempt",
-                "statement": "The candidate set is established",
-                "depends_on": ["evidence:candidate"],
-            },
-            {
-                "fact_type": "commitment", "key": "apply_candidate",
-                "status": "active", "lifetime": "attempt",
-                "statement": "Apply Candidate A to the user-owned destination",
-                "depends_on": ["claim:candidate_set"],
-            },
-        ),
-    )
-    journal.record_runtime_result(
-        step=2,
-        result={"_runtime_memory_statement": "The exact destination is Root/team/archive"},
-    )
-
-    pending = build_worker_memory_view(journal, current_frame_id="frame:3")
-    assert [event.key for event in pending.pending_runtime_evidence] == [
-        "user_response_2"
-    ]
-    assert "Authoritative evidence awaiting integration" in pending.render_prompt_section()
-    with pytest.raises(ValueError, match="integrated through Claim"):
-        journal.record_memory_updates(
-            step=3,
-            frame_id="frame:3",
-            state=WorkerState(
-                status="executing",
-                summary="Execute without consuming the answer",
-                memory_updates=[],
-            ),
-        )
-
-    journal.record_memory_updates(
-        step=3,
-        frame_id="frame:3",
-        state=WorkerState.model_validate({
-            "status": "executing",
-            "summary": "Integrate the authoritative destination before execution",
-            "memory_updates": [
-                {
-                    "fact_type": "claim", "key": "destination",
-                    "status": "active", "lifetime": "attempt",
-                    "statement": "The exact destination is Root/team/archive",
-                    "depends_on": ["evidence:user_response_2"],
-                },
-                {
-                    "fact_type": "commitment", "key": "apply_candidate",
-                    "status": "active", "lifetime": "attempt",
-                    "statement": "Apply Candidate A to Root/team/archive",
-                    "depends_on": ["claim:candidate_set", "claim:destination"],
-                },
-            ],
-        }),
-    )
-    integrated = build_worker_memory_view(journal, current_frame_id="frame:3")
-    assert integrated.pending_runtime_evidence == ()
-
-    journal.record_memory_updates(
-        step=4,
-        frame_id="frame:4",
-        state=_memory_state({
-            "fact_type": "commitment", "key": "apply_candidate",
-            "status": "completed", "lifetime": "attempt",
-            "statement": "Candidate A was applied to Root/team/archive",
-            "depends_on": ["claim:candidate_set", "claim:destination"],
-        }),
-    )
-    after_completion = build_worker_memory_view(journal, current_frame_id="frame:4")
-    assert after_completion.pending_runtime_evidence == ()
 
 
 def test_worker_cannot_modify_runtime_owned_memory() -> None:
@@ -1053,7 +855,7 @@ def test_memory_retraction_is_versioned_and_atomic() -> None:
             ),
         )
     except ValueError as exc:
-        assert "no active dependency" in str(exc)
+        assert "observation" in str(exc) and "evidence" in str(exc)
     else:
         raise AssertionError("invalid dependency must reject the whole delta")
     assert tuple(journal.events) == before
@@ -1069,27 +871,3 @@ def test_memory_retraction_is_versioned_and_atomic() -> None:
     )
     assert build_worker_memory_view(journal).accumulated_evidence == ()
     assert journal.events[-1].supersedes == "step:1:memory:1"
-
-
-def test_memory_projection_compacts_versions_but_keeps_ordered_journal() -> None:
-    journal = WorkerJournal(worker_id="temporal_memory")
-    for step in range(1, 13):
-        journal.record_memory_updates(
-            step=step,
-            frame_id=f"frame:{step}",
-            state=_memory_state({
-                "fact_type": "evidence", "key": "progress",
-                "status": "active", "lifetime": "attempt",
-                "statement": f"Progress version {step}", "depends_on": [],
-            }),
-        )
-
-    view = build_worker_memory_view(journal)
-
-    assert len(journal.events) == 12
-    assert [event.sequence for event in journal.events] == list(range(1, 13))
-    assert [event.statement for event in view.accumulated_evidence] == [
-        "Progress version 12"
-    ]
-    assert len(view.state_timeline) == 8
-    assert view.state_timeline[-1].startswith("t=12:")

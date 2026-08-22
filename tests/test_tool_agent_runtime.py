@@ -17,8 +17,8 @@ from gui_agent.core.tool_agent.contracts import (
 )
 from gui_agent.core.tool_agent.action_guard import (
     action_boundary_error,
-    is_candidate_commit,
 )
+from gui_agent.core.tool_agent.action_receipt import is_confirmed_selection_commit
 from gui_agent.core.tool_agent.data_store import RuntimeDataStore
 from gui_agent.core.tool_agent.protocol import (
     MAX_ORDERED_ACTIONS,
@@ -29,9 +29,13 @@ from gui_agent.core.tool_agent.protocol import (
 from gui_agent.core.tool_agent.runtime import (
     ToolAgentRuntime,
     _action_feedback,
+    _constrain_boundary_scroll_actions,
+    _is_transient_model_error,
+    _scroll_boundary_feedback,
+    _update_traversal_boundaries,
     _target_verification_result,
 )
-from gui_agent.core.tool_agent.strategy import Strategy
+from gui_agent.core.tool_agent.strategy import ReflectionResult, Reflector
 from gui_agent.core.schemas import TargetGrounding, TargetVerify
 from gui_agent.core.tool_agent.worker_memory import (
     WorkerJournal,
@@ -49,6 +53,73 @@ def _state() -> str:
             "memory_updates": [],
         }
     )
+
+
+def test_transient_model_error_detection_is_provider_neutral_and_narrow() -> None:
+    transient = type("InternalServerError", (Exception,), {})("temporary")
+    wrapped = RuntimeError("wrapper")
+    wrapped.__cause__ = transient
+
+    assert _is_transient_model_error(wrapped)
+    assert not _is_transient_model_error(ValueError("bad decision"))
+
+
+def test_scroll_boundary_feedback_is_mechanical_and_non_terminal() -> None:
+    feedback = _scroll_boundary_feedback({"down"})
+
+    assert feedback["status"] == "collection_traversal_boundary"
+    assert feedback["boundary_directions"] == ["down"]
+    assert feedback["surface_continuity"] == "preserved"
+    assert feedback["decision_mode"] == "boundary_reconciliation"
+    assert "current scroll container" in feedback["decision_rule"]
+    assert "specific unresolved target" in feedback["instruction"]
+    assert "does not prove" in feedback["instruction"]
+
+
+def test_scroll_boundary_schema_excludes_only_recorded_directions() -> None:
+    actions = [
+        DynamicActionSpec(
+            name="scroll",
+            capability="scroll",
+            description="Traverse the visible collection",
+            exposed_args=["direction", "amount"],
+        ),
+        DynamicActionSpec(name="tap", capability="tap", description="Tap a control"),
+    ]
+
+    constrained = _constrain_boundary_scroll_actions(actions, {"down"})
+    scroll = next(action for action in constrained if action.capability == "scroll")
+    assert scroll.fixed_args["direction"] == "up"
+    assert "direction" not in scroll.exposed_args
+    assert any(action.capability == "tap" for action in constrained)
+
+    exhausted = _constrain_boundary_scroll_actions(actions, {"up", "down", "left", "right"})
+    assert all(action.capability != "scroll" for action in exhausted)
+
+
+def test_traversal_episode_remembers_boundary_until_non_scroll_action() -> None:
+    journal = WorkerJournal(worker_id="traversal")
+    boundaries: set[str] = set()
+    journal.record_action_result(
+        step=1, frame_id="frame:1", tool="scroll", args={"direction": "down"},
+        result={"status": "executed", "action_type": "scroll", "no_effect": True},
+    )
+    _update_traversal_boundaries(boundaries, journal.latest_action_receipt)
+    assert boundaries == {"down"}
+
+    journal.record_action_result(
+        step=2, frame_id="frame:2", tool="scroll", args={"direction": "up"},
+        result={"status": "executed", "action_type": "scroll", "no_effect": False},
+    )
+    _update_traversal_boundaries(boundaries, journal.latest_action_receipt)
+    assert boundaries == {"down"}
+
+    journal.record_action_result(
+        step=3, frame_id="frame:3", tool="tap", args={},
+        result={"status": "executed", "action_type": "tap", "no_effect": False},
+    )
+    _update_traversal_boundaries(boundaries, journal.latest_action_receipt)
+    assert boundaries == set()
 
 
 def _record_executed(
@@ -732,9 +803,10 @@ def test_strategy_does_not_receive_or_control_runtime_turn_budget() -> None:
 
     requests = []
     runtime._run_worker = fail_worker
-    runtime._request_strategy_decision = lambda **kwargs: (
-        requests.append(kwargs) or None,
-        "No feasible attempt remains",
+    runtime._request_strategy_decision = lambda **kwargs: ReflectionResult(
+        decision="stop",
+        reason="No feasible attempt remains",
+        strategy=requests.append(kwargs),
     )
     spec = _validated_worker_spec({
         "profile": "operator",
@@ -770,9 +842,12 @@ def test_redelegation_failure_reports_all_consumed_worker_steps() -> None:
         nonlocal revisions
         revisions += 1
         if revisions == 1:
-            return spec.strategy.model_copy(
-                update={"approach": "Use the alternate visible path."}
-            ), "selected"
+            return ReflectionResult(
+                decision="revise_approach", reason="selected",
+                strategy=spec.strategy.model_copy(
+                    update={"approach": "Use the alternate visible path."}
+                ),
+            )
         raise ValueError("replacement is invalid")
 
     runtime._request_strategy_decision = revise
@@ -817,11 +892,12 @@ def test_worker_blocked_requires_a_replacement_strategy() -> None:
         return next(outcomes)
 
     runtime._run_worker = run_worker
-    runtime._request_strategy_decision = lambda **_kwargs: (
-        spec.strategy.model_copy(update={
+    runtime._request_strategy_decision = lambda **_kwargs: ReflectionResult(
+        decision="revise_approach",
+        strategy=spec.strategy.model_copy(update={
             "approach": "Use an evidenced alternative traversal.",
         }),
-        "The original source is blocked.",
+        reason="The original source is blocked.",
     )
     spec = _validated_worker_spec({
         "profile": "operator",
@@ -866,7 +942,10 @@ def test_strategy_replacements_use_only_the_global_turn_budget() -> None:
     def replace(**kwargs):
         attempt = kwargs["attempt_no"]
         calls.append(("strategy", attempt))
-        return WorkerStrategy(approach=f"alternative source {attempt}"), "selected"
+        return ReflectionResult(
+            decision="revise_approach", reason="selected",
+            strategy=WorkerStrategy(approach=f"alternative source {attempt}"),
+        )
 
     runtime._run_worker = run_worker
     runtime._request_strategy_decision = replace
@@ -1136,21 +1215,39 @@ class _MultiActionWorker:
 class _RepairingMemoryWorker(_MultiActionWorker):
     def invoke(self, messages):
         if self.calls < 2:
-            self.memory_updates = [{
-                "fact_type": "commitment",
-                "key": "missing_commitment",
-                "status": "retracted",
-                "lifetime": "attempt",
-                "statement": "Discard an unknown commitment.",
-                "depends_on": [],
-            }]
+            self.memory_updates = [
+                {
+                    "fact_type": "evidence",
+                    "key": "pre_action_evidence",
+                    "status": "active",
+                    "lifetime": "attempt",
+                    "statement": "The target is visible before the action.",
+                    "depends_on": [],
+                },
+                {
+                    "fact_type": "claim",
+                    "key": "pre_action_requirement",
+                    "status": "active",
+                    "lifetime": "attempt",
+                    "statement": "This action is still required.",
+                    "depends_on": ["evidence:pre_action_evidence"],
+                },
+                {
+                    "fact_type": "commitment",
+                    "key": "missing_commitment",
+                    "status": "retracted",
+                    "lifetime": "attempt",
+                    "statement": "Discard an unknown commitment.",
+                    "depends_on": [],
+                },
+            ]
         else:
             self.memory_updates = [
                 {
-                    "fact_type": "observation",
+                    "fact_type": "evidence",
                     "key": "visible_form",
                     "status": "active",
-                    "lifetime": "frame",
+                    "lifetime": "attempt",
                     "statement": "The form and submit control are visible.",
                     "depends_on": [],
                 },
@@ -1160,7 +1257,7 @@ class _RepairingMemoryWorker(_MultiActionWorker):
                     "status": "active",
                     "lifetime": "attempt",
                     "statement": "The visible form is ready for submission.",
-                    "depends_on": ["observation:visible_form"],
+                    "depends_on": ["evidence:visible_form"],
                 },
                 {
                     "fact_type": "commitment",
@@ -1464,7 +1561,7 @@ def test_worker_repairs_rejected_launch_app_without_reobserving(monkeypatch) -> 
     )
 
 
-def test_worker_repairs_typed_memory_independently_without_dispatch(monkeypatch) -> None:
+def test_worker_protocol_rejects_action_claim_and_commitment_annotations(monkeypatch) -> None:
     worker = _RepairingMemoryWorker(state_status="executing")
 
     runtime = _run_fused_worker(
@@ -1473,17 +1570,19 @@ def test_worker_repairs_typed_memory_independently_without_dispatch(monkeypatch)
         worker=worker,
     )
 
-    assert runtime.outcome.failure_kind == "budget_exhausted"
+    assert runtime.outcome.failure_kind == "protocol_invalid"
     assert runtime.observe_calls == 1
-    assert worker.calls == 3
-    assert len(runtime._executor.actions) == 3
+    assert worker.calls == 2
+    assert len(runtime._executor.actions) == 0
     rejected = [
         event for event in runtime.trace
         if event["event"] == "worker_memory_update_rejected"
     ]
-    assert [event["repair_turn"] for event in rejected] == [1, 2]
-    assert all("unknown memory" in event["reason"] for event in rejected)
-    assert "memory_update_invalid" in str(worker.messages[-1].content)
+    assert rejected == []
+    memory = build_worker_memory_view(
+        runtime._worker_journals["fused-worker"], current_frame_id="frame:1",
+    )
+    assert memory.active_commitments == ()
 
 
 def test_worker_repairs_home_then_launch_app_before_dispatch(monkeypatch) -> None:
@@ -1649,7 +1748,7 @@ def _candidate_frame(
 
 def test_confirmed_candidate_commit_marks_matching_unfiltered_reopen_exhausted() -> None:
     selected = _candidate_frame("selected", selected=True)
-    committed = is_candidate_commit({"x": 500, "y": 900}, selected)
+    committed = is_confirmed_selection_commit({"x": 500, "y": 900}, selected)
     journal = WorkerJournal(worker_id="select-all")
     _record_executed(journal, "tap", frame_id="selected", candidate_commit=True)
 
@@ -1795,6 +1894,25 @@ def test_replacement_strategy_inherits_only_runtime_task_memory() -> None:
     assert retry.events[0].origin == "runtime"
     assert retry.events[0].lifetime == "task"
     assert retry.events[0].key == "authorized_destination"
+
+
+def test_reflected_attempt_preserves_same_progress_journal() -> None:
+    runtime = object.__new__(ToolAgentRuntime)
+    journal = WorkerJournal(worker_id="logical_worker")
+    journal.record_runtime_input(
+        key="verified_target", statement="The target identity is verified",
+    )
+    runtime._worker_journals = {"logical_worker": journal}
+    frame = MaterializedFrame(frame_id="frame:7", screenshot_path="frame.png")
+    runtime._worker_last_frames = {"logical_worker": frame}
+
+    runtime._preserve_progress_for_reflected_attempt(
+        current_worker_id="logical_worker",
+        next_worker_id="logical_worker_strategy_1",
+    )
+
+    assert runtime._worker_journals["logical_worker_strategy_1"] is journal
+    assert runtime._worker_last_frames["logical_worker_strategy_1"] is frame
 
 
 def test_worker_normalizes_provider_point_schema_and_executes_type(monkeypatch) -> None:
@@ -2228,6 +2346,7 @@ def test_type_is_rejected_before_dispatch_when_target_is_off_target(monkeypatch)
     assert payload["status"] == "aborted"
     assert payload["executed_actions"] == 0
     assert payload["reuse_current_frame"] is True
+    assert payload["_memory_commit_safe"] is False
     assert "predispatch visual grounding" in payload["reason"]
     assert len(runtime._executor.actions) == 0
 
@@ -2659,7 +2778,7 @@ def test_failed_transport_action_skips_settle_and_returns_control(monkeypatch) -
         failure_kind="navigation_blocked",
         steps=1,
     )
-    assert Strategy.route(outcome) == "replace"
+    assert Reflector.route(outcome) == "replace"
 
 
 def test_timed_out_target_verification_is_cancelled() -> None:
@@ -3138,7 +3257,9 @@ def test_runtime_replaces_strategy_inside_worker_call_without_replaying_program(
     runtime.materializer = SimpleNamespace(model="perception")
     runtime.perception_mode = "enhanced"
     runtime.log_dir = tmp_path
-    runtime._request_strategy_decision = lambda **_kwargs: (replacement, "selected")
+    runtime._request_strategy_decision = lambda **_kwargs: ReflectionResult(
+        decision="revise_approach", reason="selected", strategy=replacement,
+    )
     worker_calls = []
 
     def run_worker(worker_id, spec, *, require_attempt=False):

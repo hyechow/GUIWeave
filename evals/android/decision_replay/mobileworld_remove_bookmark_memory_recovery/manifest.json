@@ -1,0 +1,28 @@
+{
+  "version": 1,
+  "name": "mobileworld_remove_bookmark_memory_recovery",
+  "source_run": "20260821_121126",
+  "cases": [
+    {
+      "id": "continue_after_remove_bookmark_commit",
+      "frame": 28,
+      "min_pass_rate": 1.0,
+      "expected": {
+        "tool": "continue_with_actions",
+        "protocol_repairs_max": 0,
+        "memory_repairs_max": 2,
+        "state_status": "collecting",
+        "required_prefix": [
+          {
+            "capability": "scroll",
+            "args": {
+              "direction": "down",
+              "amount": "medium"
+            }
+          }
+        ],
+        "forbidden_capabilities": ["tap", "type", "clear_text"]
+      }
+    }
+  ]
+}

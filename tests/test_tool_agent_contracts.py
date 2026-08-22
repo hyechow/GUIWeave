@@ -538,16 +538,15 @@ def test_worker_tool_schema_matches_memory_status_and_dependency_contract() -> N
     assert by_type["evidence"]["properties"]["status"]["enum"] == [
         "active", "retracted",
     ]
-    assert by_type["commitment"]["properties"]["status"]["enum"] == [
-        "active", "retracted", "completed",
-    ]
+    assert set(by_type) == {"observation", "evidence"}
     evidence = by_type["evidence"]["properties"]["depends_on"]
     assert evidence["maxItems"] == 0
     assert "without self-dependency" in evidence["description"]
 
 
-def test_worker_claim_accepts_frame_observation_dependency() -> None:
-    state = WorkerState.model_validate({
+def test_worker_rejects_reducer_owned_claim_and_commitment() -> None:
+    with pytest.raises(PydanticValidationError, match="observation.*evidence"):
+        WorkerState.model_validate({
         "status": "executing",
         "summary": "Open the next surface",
         "memory_updates": [
@@ -576,9 +575,7 @@ def test_worker_claim_accepts_frame_observation_dependency() -> None:
                 "depends_on": ["claim:control_is_exact_target"],
             },
         ],
-    })
-
-    assert state.memory_updates[1].depends_on == ["observation:control_visible"]
+        })
 
 
 def test_worker_memory_accepts_bounded_window_evidence_over_500_chars() -> None:
@@ -775,7 +772,11 @@ def test_worker_profile_inference_selects_relevant_attempt_rules() -> None:
         "empty_authoritative = false",
     ):
         assert rule in collector_contract and rule not in operator_contract
-    for rule in ("candidate_set_state.status = exhausted", "Finish comparison evidence"):
+    for rule in (
+        "candidate_set_state.status = exhausted",
+        "Finish comparison evidence",
+        "Durable facts resolve candidates across frames",
+    ):
         assert rule in operator_contract and rule not in collector_contract
 
 

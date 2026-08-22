@@ -1,0 +1,47 @@
+{
+  "version": 1,
+  "name": "mobileworld_remove_bookmark_traversal",
+  "source_run": "20260821_165654",
+  "cases": [
+    {
+      "id": "return_to_matching_post_overflow",
+      "frame": 19,
+      "min_pass_rate": 1.0,
+      "expected": {
+        "tool": "continue_with_actions",
+        "protocol_repairs_max": 0,
+        "state_status": "collecting",
+        "required_prefix": [
+          {
+            "capability": "scroll",
+            "args": {
+              "direction": "up",
+              "amount": "medium",
+              "target_area": "main_content"
+            }
+          }
+        ],
+        "forbidden_capabilities": ["tap", "type", "clear_text"]
+      }
+    },
+    {
+      "id": "skip_visible_nonmatching_post",
+      "frame": 38,
+      "min_pass_rate": 1.0,
+      "expected": {
+        "tool": "continue_with_actions",
+        "protocol_repairs_max": 0,
+        "state_status": "collecting",
+        "required_prefix": [
+          {
+            "capability": "scroll",
+            "args": {
+              "direction": "down"
+            }
+          }
+        ],
+        "forbidden_capabilities": ["tap", "type", "clear_text"]
+      }
+    }
+  ]
+}

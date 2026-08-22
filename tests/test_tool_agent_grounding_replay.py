@@ -446,7 +446,7 @@ def test_type_template_placeholder_text_is_blocked() -> None:
     assert bound == ""
 
 
-def test_action_guard_blocks_only_fully_visible_bounded_scope_scroll() -> None:
+def test_action_guard_does_not_decide_scope_completion() -> None:
     chunk = DataChunkRef(
         ref="chunk:events:1",
         requirement_id="events",
@@ -465,10 +465,9 @@ def test_action_guard_blocks_only_fully_visible_bounded_scope_scroll() -> None:
         }},
         chunks=[chunk],
     )
-    error = action_boundary_error(
+    assert not action_boundary_error(
         "scroll", {"direction": "down"}, frame, set()
     )
-    assert "exact bounded scope is fully visible" in error
 
     incomplete = chunk.model_copy(update={
         "coverage": {"start_visible": True, "end_visible": False},
@@ -542,7 +541,7 @@ def test_action_guard_requires_observed_transient_authentication_code() -> None:
     assert not action_boundary_error("type", args, message, codes)
 
 
-def test_action_guard_blocks_unscoped_row() -> None:
+def test_action_guard_does_not_interpret_acquisition_scope() -> None:
     detail = MaterializedFrame(
         frame_id="detail",
         screenshot_path="detail.png",
@@ -563,4 +562,4 @@ def test_action_guard_blocks_unscoped_row() -> None:
             "rect": {"x": 800, "y": 500, "w": 80, "h": 30},
         }],
     })
-    assert action_boundary_error("tap", {"x": 800, "y": 500}, row, set())
+    assert not action_boundary_error("tap", {"x": 800, "y": 500}, row, set())

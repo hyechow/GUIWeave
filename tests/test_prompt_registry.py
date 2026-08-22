@@ -125,7 +125,7 @@ def test_worker_keeps_data_private_and_coordinates_normalized() -> None:
 
     assert "A successful mutation does not prove navigation" in prompt
     assert "Runtime-owned ResultRef and collection values are private" in prompt
-    assert "visible states across frames" in prompt
+    assert "Historical Progress is Runtime's bounded reduction" in prompt
     assert "Never guess credentials" in prompt
     assert "transient code from its delivery surface" in prompt
     assert "immutable goal, success criteria" in prompt
@@ -138,8 +138,10 @@ def test_worker_keeps_data_private_and_coordinates_normalized() -> None:
     assert "Use only Runtime-supplied actions" in prompt
     assert "request_action_patch" not in prompt
     assert "`state.status = completed | failed` is terminal" in prompt
-    assert "after applying this decision's memory updates" in prompt
-    assert "a completed Commitment cannot support `executing`" in prompt
+    assert "Runtime alone owns Claims, Commitments, Receipts" in prompt
+    assert "Current State is newer" in prompt
+    assert "`phase=returned_to_anchor` identifies the same visual anchor" in prompt
+    assert "does not by itself prove the target resolved" in prompt
     assert "write-through" in prompt
     assert "proves completion" in prompt
 
@@ -175,12 +177,12 @@ def test_worker_keeps_action_grounding_and_memory_boundaries() -> None:
 
     for rule in (
         "exactly one visible control", "do not relabel a nearby or generic control",
-        "record identities and visible states across frames",
+            "Record identities and visible states as source facts",
         "Stable page identity",
         "A `no_effect` result requires inspecting the next frame",
         "A no-effect traversal establishes the boundary", "call `complete`",
         "never claim an unrecorded activation", "do not re-query, reselect, or navigate",
-        "no encountered record is known unsatisfied", "without rechecking handled records",
+        "required source", "without rechecking handled records",
         "never establish a collection boundary",
     ):
         assert rule in prompt
@@ -211,7 +213,7 @@ def test_worker_keeps_action_grounding_and_memory_boundaries() -> None:
             "ResultRef and collection values are private", "Never guess credentials",
                 "human-presence challenge", "Runtime-supplied actions", "`report_blocked`",
             "Coordinates are normalized 0..999", "binding approach",
-                "Worker observations and recent steps", "Do not interact with residue",
+                "Historical Progress", "Do not interact with residue",
                 "never establish a collection boundary",
         )),
         ("task.tool_agent.strategy_decide", (

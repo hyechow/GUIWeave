@@ -1,0 +1,23 @@
+{
+  "version": 1,
+  "name": "mobileworld_remove_bookmark_premature_completion",
+  "source_run": "20260821_171612",
+  "cases": [
+    {
+      "id": "keep_commitment_active_until_remove_executes",
+      "frame": 7,
+      "min_pass_rate": 1.0,
+      "expected": {
+        "tool": "continue_with_actions",
+        "protocol_repairs_max": 0,
+        "memory_repairs_max": 2,
+        "required_prefix": [
+          {
+            "capability": "tap",
+            "description_contains": ["Remove bookmark"]
+          }
+        ]
+      }
+    }
+  ]
+}
