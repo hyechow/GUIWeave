@@ -152,6 +152,9 @@ def _frame_payload(frame: MaterializedFrame, *, candidate_committed: bool) -> di
 class WorkerContextProjection:
     text: str
     report: dict[str, Any]
+    goal_contract: dict[str, Any]
+    historical_progress: dict[str, Any]
+    current_state: dict[str, Any]
 
 
 def project_worker_context(
@@ -199,9 +202,10 @@ def project_worker_context(
             if application_knowledge.strip() else ""
         )
     )
+    goal = build_goal_contract(spec).to_dict() if spec is not None else {}
     goal_content = (
         "## Goal Contract\n"
-        + json.dumps(build_goal_contract(spec).to_dict(), ensure_ascii=False)
+        + json.dumps(goal, ensure_ascii=False)
         if spec is not None else
         "## Goal Contract\n" + attempt_contract
     )
@@ -234,4 +238,7 @@ def project_worker_context(
     return WorkerContextProjection(
         text=render_context_blocks(result.kept, include_headers=False),
         report=result.to_report(label="tool_agent.worker.context"),
+        goal_contract=goal,
+        historical_progress=progress.to_dict(),
+        current_state=current.to_dict(),
     )

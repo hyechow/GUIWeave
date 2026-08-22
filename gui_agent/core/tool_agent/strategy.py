@@ -37,6 +37,9 @@ _FAILURE_ROUTES = {
 ReflectionRoute = Literal[
     "resume", "reconcile_state", "revise_approach", "escalate_to_master", "stop"
 ]
+_DIAGNOSIS_KINDS = {
+    "approach_disproved", "transient_failure", "state_conflict", "blocked", "exhausted",
+}
 
 
 @dataclass(frozen=True)
@@ -44,8 +47,7 @@ class ReflectionResult:
     decision: ReflectionRoute
     reason: str
     strategy: WorkerStrategy | None = None
-    preserve_progress: bool = True
-    invalidate: tuple[str, ...] = ()
+
 
 class Reflector:
     """Diagnose a disproved execution path without making GUI decisions."""
@@ -71,13 +73,9 @@ class Reflector:
         context: dict[str, Any],
     ) -> list[str]:
         issues = []
-        attempted = (
-            context.get("attempted_approaches")
-            or context.get("attempted_strategies")
-            or []
-        )
+        attempted = context.get("attempted_approaches") or []
         if replacement == original or replacement.model_dump(mode="json") in attempted:
-            issues.append("replacement strategy has already been attempted")
+            issues.append("replacement approach has already been attempted")
         if approach_is_procedural(replacement.approach):
             issues.append(
                 "replacement approach must be one source or implementation method, "
@@ -94,32 +92,28 @@ class Reflector:
     ) -> tuple[ReflectionResult, list[str]]:
         recommendation = decision.get("recommendation")
         diagnosis = decision.get("diagnosis")
-        if isinstance(recommendation, dict):
-            choice = recommendation.get("decision")
-            reason = (diagnosis or {}).get("reason") if isinstance(diagnosis, dict) else ""
-            approach = recommendation.get("approach")
-            preserve = recommendation.get("preserve_progress", True)
-            invalidate = recommendation.get("invalidate") or []
-        else:  # historical replay compatibility
-            legacy = decision.get("decision")
-            choice = "revise_approach" if legacy == "replace" else legacy
-            reason = decision.get("reason")
-            candidate = decision.get("strategy")
-            legacy_strategy = (
-                WorkerStrategy.model_validate(candidate)
-                if isinstance(candidate, dict) else None
-            )
-            approach = legacy_strategy.approach if legacy_strategy is not None else None
-            preserve = True
-            invalidate = []
+        if not isinstance(recommendation, dict) or not isinstance(diagnosis, dict):
+            raise ValueError("diagnosis and recommendation objects are required")
+        if set(decision) != {"diagnosis", "recommendation"}:
+            raise ValueError("reflection permits only diagnosis and recommendation")
+        if set(diagnosis) != {"kind", "evidence_refs", "reason"}:
+            raise ValueError("diagnosis requires exactly kind, evidence_refs, and reason")
+        if set(recommendation) != {"decision", "approach"}:
+            raise ValueError("recommendation requires exactly decision and approach")
+        if diagnosis.get("kind") not in _DIAGNOSIS_KINDS:
+            raise ValueError("diagnosis kind is invalid")
+        evidence_refs = diagnosis.get("evidence_refs")
+        if not isinstance(evidence_refs, list) or any(
+            not isinstance(ref, str) for ref in evidence_refs
+        ):
+            raise ValueError("diagnosis evidence_refs must be strings")
+        choice = recommendation.get("decision")
+        reason = diagnosis.get("reason")
+        approach = recommendation.get("approach")
         if choice not in {
             "resume", "reconcile_state", "revise_approach", "escalate_to_master", "stop",
         } or not isinstance(reason, str) or not reason:
             raise ValueError("typed recommendation and non-empty diagnosis reason are required")
-        if preserve is not True:
-            raise ValueError("Reflector must preserve reduced progress")
-        if not isinstance(invalidate, list) or any(not isinstance(ref, str) for ref in invalidate):
-            raise ValueError("invalidate must contain audit reference strings")
         replacement = None
         issues: list[str] = []
         if choice == "revise_approach":
@@ -131,7 +125,6 @@ class Reflector:
             raise ValueError(f"{choice} forbids an approach")
         return ReflectionResult(
             decision=choice, reason=reason, strategy=replacement,
-            preserve_progress=True, invalidate=tuple(invalidate),
         ), issues
 
     def reflect(self, *, context: dict[str, Any], original_strategy: WorkerStrategy,
@@ -170,7 +163,7 @@ class Reflector:
                 messages.extend([
                     response,
                     HumanMessage(content=(
-                        "Strategy decision repair: " + "; ".join(diagnostics)
+                        "Reflection repair: " + "; ".join(diagnostics)
                         + ". Return exactly one valid typed reflection recommendation."
                     )),
                 ])
@@ -190,8 +183,6 @@ class Reflector:
             reason=reflection.reason,
             strategy=(reflection.strategy.model_dump(mode="json")
                       if reflection.strategy is not None else None),
-            preserve_progress=reflection.preserve_progress,
-            invalidate=list(reflection.invalidate),
             diagnostics=diagnostics,
             llm_elapsed_s=round(elapsed_s, 3),
             token_usage=response_usage(response),

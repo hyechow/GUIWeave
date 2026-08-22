@@ -83,7 +83,6 @@ from gui_agent.core.tool_agent.replay import write_replay_artifact
 from gui_agent.core.tool_agent.strategy import ReflectionResult, Reflector
 from gui_agent.core.tool_agent.worker_memory import (
     WorkerJournal,
-    build_progress_snapshot,
     build_worker_memory_view,
     memory_repair_instruction,
     project_worker_context,
@@ -412,7 +411,7 @@ class ToolAgentRuntime:
         self.master, self.master_cfg = _llm("tool_agent.master")
         self.worker, self.worker_cfg = _llm("tool_agent.worker")
         self._master_explicit_cache = _supports_explicit_prompt_cache(self.master_cfg)
-        self.strategy = Reflector(
+        self.reflector = Reflector(
             self.worker,
             generation_model_name=self.worker_cfg.model,
             explicit_cache=_supports_explicit_prompt_cache(self.worker_cfg),
@@ -438,6 +437,7 @@ class ToolAgentRuntime:
         self._access_log_redactions: tuple[str, ...] = ()
         self._worker_journals: dict[str, WorkerJournal] = {}
         self._worker_last_frames: dict[str, MaterializedFrame] = {}
+        self._worker_last_contexts: dict[str, dict[str, Any]] = {}
         # Per-worker, per-array-ref cursors for consume="each" input bindings:
         # (worker_id, ref_name) -> next array index to consume.
         self._each_cursors: dict[tuple[str, str], int] = {}
@@ -501,7 +501,7 @@ class ToolAgentRuntime:
             last_frames = getattr(self, "_worker_last_frames", None)
             if last_frames is not None:
                 last_frames.clear()
-            for name in ("_each_cursors",):
+            for name in ("_each_cursors", "_worker_last_contexts"):
                 state = getattr(self, name, None)
                 if isinstance(state, dict):
                     state.clear()
@@ -652,8 +652,8 @@ class ToolAgentRuntime:
             raise _RuntimeCancelled
 
     @staticmethod
-    def _strategy_worker_id(worker_id: str, attempt_no: int) -> str:
-        suffix = f"_strategy_{attempt_no}"
+    def _reflected_worker_id(worker_id: str, attempt_no: int) -> str:
+        suffix = f"_reflection_{attempt_no}"
         if len(worker_id) + len(suffix) <= 64:
             return worker_id + suffix
         digest = hashlib.sha256(worker_id.encode()).hexdigest()[:8]
@@ -666,11 +666,11 @@ class ToolAgentRuntime:
         journal: WorkerJournal,
         worker_id: str,
     ) -> None:
-        """Carry only Runtime-authored task facts into a strategy attempt."""
+        """Carry only Runtime-authored task facts into a reflected attempt."""
 
-        if "_strategy_" not in worker_id:
+        if "_reflection_" not in worker_id:
             return
-        base_id = worker_id.split("_strategy_", 1)[0]
+        base_id = worker_id.split("_reflection_", 1)[0]
         base = journals.get(base_id)
         if base is None or journal.events:
             return
@@ -696,42 +696,19 @@ class ToolAgentRuntime:
         last_frames = getattr(self, "_worker_last_frames", {})
         if current_worker_id in last_frames:
             last_frames[next_worker_id] = last_frames[current_worker_id]
+        contexts = getattr(self, "_worker_last_contexts", {})
+        if current_worker_id in contexts:
+            contexts[next_worker_id] = contexts[current_worker_id]
 
     def _worker_recovery_experience(
         self,
         worker_id: str,
     ) -> dict[str, Any]:
-        """Reuse the Worker's bounded semantic memory for Strategy evidence."""
+        """Reuse the exact bounded context last projected to the Worker."""
 
-        journal = (getattr(self, "_worker_journals", None) or {}).get(worker_id)
-        frame = getattr(self, "_worker_last_frames", {}).get(worker_id)
-        current = {}
-        if frame is not None:
-            current = {
-                "frame_id": frame.frame_id,
-                "url": frame.url,
-                "title": frame.title,
-                "applied_filters": frame.applied_filters,
-                "requirement_scopes": frame.requirement_scopes,
-                "collections": [
-                    item.model_dump(mode="json") for item in frame.collections
-                ],
-                "missing_requirements": frame.missing_requirements,
-            }
-        memory = (
-            build_worker_memory_view(
-                journal, current_frame_id=frame.frame_id if frame is not None else "",
-            )
-            if journal is not None else None
-        )
-        return {
-            "historical_progress": (
-                build_progress_snapshot(memory).to_dict() if memory is not None else {}
-            ),
-            "current_state": current,
-        }
+        return dict(getattr(self, "_worker_last_contexts", {}).get(worker_id) or {})
 
-    def _request_strategy_decision(
+    def _request_reflection(
         self,
         *,
         logical_worker_id: str,
@@ -740,24 +717,22 @@ class ToolAgentRuntime:
         prior_outcome: WorkerOutcome,
         failure_reason: str,
         attempt_no: int,
-        attempted_strategies: list[WorkerStrategy],
+        attempted_approaches: list[WorkerStrategy],
     ) -> ReflectionResult:
         context = {
             "logical_worker_id": logical_worker_id,
             "prior_worker_id": prior_worker_id,
-            "strategy_attempt": attempt_no,
+            "reflection_attempt": attempt_no,
             "failure_reason": failure_reason,
-            "goal_contract": original_spec.model_dump(
-                mode="json", exclude={"strategy"}
-            ),
-            "prior_strategy": original_spec.strategy.model_dump(mode="json"),
+            "goal_contract": original_spec.model_dump(mode="json"),
+            "prior_approach": original_spec.strategy.approach,
             "prior_outcome": prior_outcome.model_dump(mode="json"),
             "application_knowledge": getattr(self, "_master_knowledge", "") or "(none)",
             "platform": self._platform_prompt_context(),
             **self._worker_recovery_experience(prior_worker_id),
             "failure": prior_outcome.model_dump(mode="json"),
             "attempted_approaches": [
-                item.model_dump(mode="json") for item in attempted_strategies
+                item.model_dump(mode="json") for item in attempted_approaches
             ],
             "supported_capabilities": sorted(self._platform_capabilities),
             "installed_applications": list(self._installed_applications()),
@@ -767,11 +742,11 @@ class ToolAgentRuntime:
                 event,
                 logical_worker_id=logical_worker_id,
                 prior_worker_id=prior_worker_id,
-                strategy_attempt=attempt_no,
+                reflection_attempt=attempt_no,
                 **payload,
             )
 
-        return self.strategy.reflect(
+        return self.reflector.reflect(
             context=context,
             original_strategy=original_spec.strategy,
             on_event=trace,
@@ -786,14 +761,14 @@ class ToolAgentRuntime:
             return self._turn_budget_failure(worker_id=worker_id, steps=0)
         current_id = worker_id
         current_spec = spec
-        attempted_strategies = [spec.strategy]
+        attempted_approaches = [spec.strategy]
         consumed_steps = 0
-        strategy_attempt = 0
+        reflection_attempt = 0
         while True:
             outcome = self._run_worker(
                 current_id,
                 current_spec,
-                require_attempt=strategy_attempt > 0,
+                require_attempt=reflection_attempt > 0,
             )
             consumed_steps += outcome.steps
             if self._turn_budget_exhausted() and outcome.phase == "failed":
@@ -814,40 +789,40 @@ class ToolAgentRuntime:
                 else f"The Worker failed to satisfy the subgoal: {outcome.summary}"
             )
             self._trace(
-                "strategy_decision_requested",
+                "reflection_requested",
                 logical_worker_id=worker_id,
                 worker_id=current_id,
-                strategy_attempt=strategy_attempt,
+                reflection_attempt=reflection_attempt,
                 reason=failure_reason,
                 strategy=current_spec.strategy.model_dump(mode="json"),
                 outcome=outcome.model_dump(mode="json"),
             )
             try:
-                reflected = self._request_strategy_decision(
+                reflected = self._request_reflection(
                     logical_worker_id=worker_id,
                     prior_worker_id=current_id,
                     original_spec=current_spec,
                     prior_outcome=outcome,
                     failure_reason=failure_reason,
-                    attempt_no=strategy_attempt + 1,
-                    attempted_strategies=attempted_strategies,
+                    attempt_no=reflection_attempt + 1,
+                    attempted_approaches=attempted_approaches,
                 )
             except Exception as exc:  # noqa: BLE001 - becomes typed Worker failure
                 return WorkerOutcome(
                     phase="failed",
-                    summary=f"Strategy decision failed: {type(exc).__name__}: {exc}",
+                    summary=f"Reflection failed: {type(exc).__name__}: {exc}",
                     failure_kind="generator_invalid",
                     steps=consumed_steps,
                 )
             revised = reflected.strategy
             selection_reason = reflected.reason
-            strategy_attempt += 1
+            reflection_attempt += 1
             if reflected.decision in {"resume", "reconcile_state"}:
                 self._trace(
                     "reflection_resumed",
                     logical_worker_id=worker_id,
                     worker_id=current_id,
-                    strategy_attempt=strategy_attempt,
+                    reflection_attempt=reflection_attempt,
                     decision=reflected.decision,
                     reason=selection_reason,
                 )
@@ -857,7 +832,7 @@ class ToolAgentRuntime:
                     "reflection_escalated",
                     logical_worker_id=worker_id,
                     worker_id=current_id,
-                    strategy_attempt=strategy_attempt,
+                    reflection_attempt=reflection_attempt,
                     reason=selection_reason,
                 )
                 return outcome.model_copy(update={
@@ -869,7 +844,7 @@ class ToolAgentRuntime:
                     "reflection_stopped",
                     logical_worker_id=worker_id,
                     worker_id=current_id,
-                    strategy_attempt=strategy_attempt,
+                    reflection_attempt=reflection_attempt,
                     reason=selection_reason,
                 )
                 return outcome.model_copy(update={
@@ -879,14 +854,14 @@ class ToolAgentRuntime:
                     ),
                     "steps": consumed_steps,
                 })
-            attempted_strategies.append(revised)
-            next_id = self._strategy_worker_id(worker_id, strategy_attempt)
+            attempted_approaches.append(revised)
+            next_id = self._reflected_worker_id(worker_id, reflection_attempt)
             self._trace(
-                "strategy_worker_dispatched",
+                "reflected_worker_dispatched",
                 logical_worker_id=worker_id,
                 prior_worker_id=current_id,
                 worker_id=next_id,
-                strategy_attempt=strategy_attempt,
+                reflection_attempt=reflection_attempt,
                 prior_outcome=outcome.model_dump(mode="json"),
                 selection_reason=selection_reason,
                 strategy=revised.model_dump(mode="json"),
@@ -1583,6 +1558,15 @@ class ToolAgentRuntime:
             ),
             same_frame_feedback=same_frame_feedback,
         )
+        contexts = getattr(self, "_worker_last_contexts", None)
+        if contexts is None:
+            self._worker_last_contexts = {}
+            contexts = self._worker_last_contexts
+        contexts[journal.worker_id] = {
+            "goal_contract": projection.goal_contract,
+            "historical_progress": projection.historical_progress,
+            "current_state": projection.current_state,
+        }
         system_prompt = self._worker_system_prompt()
         messages = [
             cacheable_system_message(
