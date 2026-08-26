@@ -186,9 +186,9 @@ def test_mastodon_saved_views_require_global_profile_navigation() -> None:
         "independent state dimensions", "task-stated predicate",
         "filled blue star with a count", "outline star means it is not",
         "exact hashtag row", "0 people are talking", "never proof",
-        "open its text body", "exact tag title identifies",
-        "Never favorite from timeline action bars", "fixed `reply`",
-        "separate structured `Favorite` control",
+        "directly exposes its own Favorite control", "action row are visibly",
+        "alternate mutation", "exact tag title identifies", "show only fixed",
+        "separate structured",
     ):
         assert fact in context
 
