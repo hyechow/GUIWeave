@@ -34,10 +34,13 @@ ttl: session
   timeline is empty; confirm its tag header and toot cards.
 - Visiting a saved collection replaces the active tag route. If the task requires a saved
   membership check, restore TaggedToots with the exact tag before mutating its rows.
-- Each selected tag row reaches **TootDetail** inside the mutation loop. Favorite is one targeted durable mutation with
-  **favorited** = boolean `true`, never the text string `"true"`; favorited is not a query or read
-  field. A long detail may show only fixed `reply` while its action row is offscreen; scroll until a
-  separate structured `Favorite` control is visible—`reply` is never Favorite.
-- For a target tag row, open its text body, confirm identity, use TootDetail's Favorite control,
-  then Back once. `Post from <author>` identifies TootDetail; the exact tag title identifies
-  TaggedToots even if the processed toot fills the screen. Never favorite from timeline action bars.
+- Each **TaggedToots** card directly exposes its own Favorite control in the action row
+  below that card. When the card's (`author_handle`, `content`) and action row are visibly
+  aligned, that control mutates the same row with **favorited** = boolean `true`, never the
+  text string `"true"`; `favorited` is not a query field.
+- If a target card's action row is clipped or its ownership is visually ambiguous, reveal
+  that row or use the card's text body to open **TootDetail** as an alternate mutation
+  surface. `Post from <author>` identifies TootDetail; a long detail may show only fixed
+  `reply` while its action row is offscreen, so reveal the separate structured `Favorite`
+  control—`reply` is never Favorite. The exact tag title identifies TaggedToots even if a
+  processed Toot fills the screen.

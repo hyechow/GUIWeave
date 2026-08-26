@@ -12,7 +12,7 @@ source: manual_verified
 confidence: high
 sensitivity: internal
 ttl: session
-version: 6
+version: 7
 ---
 # Mastodon on Android
 
@@ -65,18 +65,22 @@ version: 6
   the overflow menu contains actions, not classification data. Open it only for a matching
   post. If that post's header is clipped above its visible body, use a small upward scroll to
   reveal the aligned overflow control without crossing into the preceding post.
-- A filled blue star with a count on a Toot action row means it is favorited; an
-  outline star means it is not. The corresponding Saved collection is an alternate
-  membership view, not a prerequisite for reading this visible control state.
+- A Toot's action row belongs to the card directly above it. Its Favorite control is
+  directly mutable in `TaggedToots` when that card's (`author_handle`, `content`) and
+  action row are visibly aligned. A filled blue star with a count means the Toot is
+  favorited; an outline star means it is not. The corresponding Saved collection is
+  an alternate membership view, not a prerequisite for reading or changing this state.
 - Favorite and bookmark are independent state dimensions. Membership in one neither
   implies nor excludes membership in the other; only a task-stated predicate makes a
   saved collection relevant to the target set.
-- Favorite mutation uses the boolean field `favorited`; this is not a field
-  displayed by `TaggedToots` and is neither a query field nor a query filter.
+- Favorite mutation uses the boolean field `favorited`. It is a visible control state
+  and mutation field on a `TaggedToots` row, but is neither a query field nor a query
+  filter.
 - Tapping the visible text body of a Toot opens its single-post detail view,
   titled `Post from <author>`. Do not tap the author/avatar or a media thumbnail:
   those open the author profile or media viewer instead. The detail view exposes
-  the same author and content together with that Toot's own Favorite control.
+  the same author and content together with that Toot's own Favorite control, so it
+  is an alternate mutation surface when the list action row is clipped or ambiguous.
 
 ## Interface contract
 
@@ -95,14 +99,17 @@ version: 6
 - Favoriting updates an existing `TaggedToots` record. `author_handle` and `content`
   identify that record; `favorited` is the only mutation field and is not a
   `TaggedToots` query field.
+- `TaggedToots` row mutation interface:
+  - required observable route state: `tag`, retaining its exact leading `#`
+  - row identity fields: `author_handle`, `content`
+  - mutation fields: `favorited`, through that row's aligned Favorite control
 - `TootDetail` interface:
   - required observable route state: `tag`, retaining its exact leading `#`
   - row identity fields: `author_handle`, `content`
   - mutation fields: `favorited`
 - A `TaggedToots` row reaches `TootDetail` only through its exact source tag view and
-  exact (`author_handle`, `content`) pair. A shared-list match is insufficient because
-  another Toot's action bar may be visible. The tag is route state, not a row field,
-  and full Toot content is not a global search term.
+  exact (`author_handle`, `content`) pair. The tag is route state, not a row field, and
+  full Toot content is not a global search term.
 - Entering either saved collection replaces the active tag route. After inspecting
   saved views, the exact `TaggedToots` tag route must be active again before any of its
   rows can expose `TootDetail`.
