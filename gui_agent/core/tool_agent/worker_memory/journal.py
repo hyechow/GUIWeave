@@ -5,8 +5,6 @@ from __future__ import annotations
 from dataclasses import dataclass, field, replace
 from typing import Any, Literal
 
-from gui_agent.core.tool_agent.contracts import WorkerState
-
 
 FactType = Literal["observation", "evidence", "commitment"]
 FactStatus = Literal[
@@ -122,51 +120,29 @@ class WorkerJournal:
                 active = None
         return active
 
-    def record_memory_updates(
-        self,
-        *,
-        step: int,
-        frame_id: str,
-        state: WorkerState,
-    ) -> tuple[WorkerJournalEvent, ...]:
-        from .policy import memory_update_events
+    def active_fact_statements(self, *, frame_id: str = "") -> tuple[str, ...]:
+        """Return current Runtime-authored facts needed by small safety checks."""
 
-        pending = self.stage_memory_updates(
-            step=step, frame_id=frame_id, state=state,
-        )
-        return self.commit_memory_updates(pending)
-
-    def stage_memory_updates(
-        self,
-        *,
-        step: int,
-        frame_id: str,
-        state: WorkerState,
-    ) -> tuple[WorkerJournalEvent, ...]:
-        """Validate one delta without exposing it before action dispatch."""
-        from .policy import memory_update_events
-
-        return memory_update_events(
-            tuple(self.events), worker_id=self.worker_id,
-            step=step, frame_id=frame_id, state=state,
-        )
-
-    def commit_memory_updates(
-        self,
-        pending: tuple[WorkerJournalEvent, ...],
-        *,
-        target_ref: str = "",
-    ) -> tuple[WorkerJournalEvent, ...]:
+        latest = {
+            event.fact_ref: event for event in self.events
+            if event.kind == "memory_update" and event.fact_ref
+        }
         return tuple(
-            self._append(replace(
-                event,
-                target_ref=(
-                    target_ref
-                    if target_ref and event.fact_type == "evidence"
-                    else event.target_ref
-                ),
-            ))
-            for event in pending
+            event.statement for event in sorted(latest.values(), key=lambda item: item.sequence)
+            if event.statement
+            and event.status in {"active", "dispatched"}
+            and (event.lifetime != "frame" or event.frame_id == frame_id)
+        )
+
+    @property
+    def active_commitment_refs(self) -> tuple[str, ...]:
+        latest = {
+            event.fact_ref: event for event in self.events
+            if event.fact_type == "commitment" and event.origin == "runtime"
+        }
+        return tuple(
+            event.fact_ref for event in sorted(latest.values(), key=lambda item: item.sequence)
+            if event.status == "dispatched"
         )
 
     def record_runtime_input(

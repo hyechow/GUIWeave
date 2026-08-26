@@ -4,8 +4,6 @@ from __future__ import annotations
 
 from typing import Any
 
-from gui_agent.core.tool_agent.contracts import WorkerState
-
 from .journal import ActionOutcome, ActionReceipt, TargetRef, WorkerJournalEvent
 
 
@@ -15,12 +13,6 @@ _RESULT_FIELDS = (
     "row_count", "coverage", "summary", "reason", "error", "recovery",
     "platform_feedback", "target_signal",
 )
-
-
-def memory_repair_instruction(error: Exception) -> str:
-    """Give the model the smallest correction implied by a typed-memory error."""
-    del error
-    return "Correct the typed memory delta on this same frame."
 
 
 def _semantic_args(args: dict[str, Any]) -> dict[str, Any]:
@@ -94,69 +86,3 @@ def action_receipt_event(
         kind="candidate_commit" if candidate_commit else "action_receipt",
         frame_id=frame_id, attempt_id=worker_id, receipt=receipt,
     )
-
-
-def memory_update_events(
-    events: tuple[WorkerJournalEvent, ...],
-    *,
-    worker_id: str,
-    step: int,
-    frame_id: str,
-    state: WorkerState,
-) -> tuple[WorkerJournalEvent, ...]:
-    """Return one atomic, validated memory delta without mutating the Journal."""
-
-    pending: list[WorkerJournalEvent] = []
-
-    def latest(fact_ref: str) -> WorkerJournalEvent | None:
-        return next(
-            (event for event in reversed(pending) if event.fact_ref == fact_ref),
-            next(
-                (
-                    event for event in reversed(events)
-                    if event.kind == "memory_update" and event.fact_ref == fact_ref
-                ),
-                None,
-            ),
-        )
-
-    for index, update in enumerate(state.memory_updates, start=1):
-        fact_ref = f"{update.fact_type}:{update.key}"
-        prior = latest(fact_ref)
-        if prior is not None and prior.origin == "runtime":
-            raise ValueError(f"cannot modify Runtime-owned memory {fact_ref!r}")
-        if update.status != "active" and prior is None:
-            raise ValueError(f"cannot {update.status} unknown memory {fact_ref!r}")
-
-        dependencies: list[str] = []
-        if update.status == "active":
-            for dependency in update.depends_on:
-                event = latest(dependency)
-                if event is None or event.status != "active":
-                    raise ValueError(
-                        f"memory {fact_ref!r} has no active dependency {dependency!r}"
-                    )
-                if event.lifetime == "frame" and event.frame_id != frame_id:
-                    raise ValueError(
-                        f"memory {fact_ref!r} depends on expired {dependency!r}"
-                    )
-                dependencies.append(event.event_ref)
-        elif prior is not None:
-            dependencies.extend(prior.depends_on)
-
-        pending.append(WorkerJournalEvent(
-            event_ref=f"step:{step}:memory:{index}",
-            kind="memory_update",
-            fact_type=update.fact_type,
-            key=update.key,
-            status=update.status,
-            lifetime=update.lifetime,
-            statement=" ".join(update.statement.split()),
-            frame_id=frame_id,
-            attempt_id=worker_id,
-            origin="worker",
-            depends_on=tuple(dependencies),
-            supersedes=prior.event_ref if prior is not None else "",
-        ))
-
-    return tuple(pending)

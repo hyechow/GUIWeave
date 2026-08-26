@@ -4,7 +4,7 @@ from __future__ import annotations
 
 import re
 from copy import deepcopy
-from typing import Any, Literal, TypeAlias, get_args
+from typing import Annotated, Any, Literal, TypeAlias, get_args
 
 from pydantic import BaseModel, ConfigDict, Field, model_validator
 
@@ -435,64 +435,136 @@ class WorkerSpec(StrictModel):
         return self
 
 
-class WorkerMemoryUpdate(StrictModel):
-    """One Worker-owned source-fact delta emitted with a decision."""
-
-    fact_type: Literal["observation", "evidence"]
-    key: str = Field(pattern=r"^[a-z][a-z0-9_]{0,63}$")
-    status: Literal["active", "retracted"] = "active"
-    lifetime: Literal["frame", "attempt"]
-    statement: str = Field(min_length=1, max_length=1_200)
-    depends_on: list[str] = Field(default_factory=list, max_length=16)
-
-    @model_validator(mode="after")
-    def _validate_memory_semantics(self) -> "WorkerMemoryUpdate":
-        if self.fact_type == "observation":
-            if self.lifetime != "frame":
-                raise ValueError("observations require lifetime='frame'")
-            if self.status != "active":
-                raise ValueError("frame observations expire automatically")
-            if self.depends_on:
-                raise ValueError("observations cannot have validity dependencies")
-            return self
-        if self.lifetime != "attempt":
-            raise ValueError("evidence requires lifetime='attempt'")
-        if self.status != "active":
-            return self
-        if self.depends_on:
-            raise ValueError("evidence facts cannot have validity dependencies")
-        return self
+StateEvidenceAuthority: TypeAlias = Literal[
+    "ambiguous_visual", "bound_visual", "explicit_visual",
+]
+StateJsonScalar: TypeAlias = str | bool | int | float | None
 
 
-class WorkerState(StrictModel):
-    """Compact state and typed memory deltas paired with one Worker decision."""
+class WorkerSourceObserved(StrictModel):
+    kind: Literal["source_observed"] = "source_observed"
+    source_ref: str = Field(pattern=r"^[a-z][a-z0-9_]{0,79}$")
+    evidence: str = Field(min_length=1, max_length=240)
+
+
+class WorkerSurfaceObserved(StrictModel):
+    kind: Literal["surface_observed"] = "surface_observed"
+    surface: str = Field(min_length=1, max_length=120)
+    evidence: str = Field(min_length=1, max_length=240)
+
+
+class WorkerTargetObserved(StrictModel):
+    kind: Literal["target_observed"] = "target_observed"
+    target_ref: str = Field(pattern=r"^[a-z][a-z0-9_]{0,79}$")
+    identity: str = Field(min_length=1, max_length=300)
+    visibility: Literal["partial", "full"]
+    owned_region_visibility: Literal["edge_fragment", "unobscured"]
+    evidence: str = Field(min_length=1, max_length=240)
+
+
+class WorkerPropertyObserved(StrictModel):
+    kind: Literal["property_observed"] = "property_observed"
+    target_ref: str = Field(pattern=r"^[a-z][a-z0-9_]{0,79}$")
+    property_ref: str = Field(pattern=r"^[a-z][a-z0-9_.]{0,99}$")
+    value: StateJsonScalar
+    goal_relation: Literal["unresolved", "resolved"]
+    authority: StateEvidenceAuthority
+    evidence: str = Field(min_length=1, max_length=240)
+
+
+class WorkerCoverageObserved(StrictModel):
+    kind: Literal["coverage_observed"] = "coverage_observed"
+    source_ref: str = Field(pattern=r"^[a-z][a-z0-9_]{0,79}$")
+    status: Literal["unresolved", "exhausted"]
+    evidence: str = Field(min_length=1, max_length=240)
+
+
+class WorkerGoalConditionObserved(StrictModel):
+    kind: Literal["goal_condition_observed"] = "goal_condition_observed"
+    condition_ref: str = Field(pattern=r"^criterion_[1-9][0-9]*$")
+    status: Literal["unresolved", "satisfied", "blocked"]
+    evidence: str = Field(min_length=1, max_length=240)
+
+
+WorkerStateTraceEvent: TypeAlias = Annotated[
+    WorkerSourceObserved
+    | WorkerSurfaceObserved
+    | WorkerTargetObserved
+    | WorkerPropertyObserved
+    | WorkerCoverageObserved
+    | WorkerGoalConditionObserved,
+    Field(discriminator="kind"),
+]
+
+
+class WorkerStateTraceBatch(StrictModel):
+    """Goal-oriented observations emitted for one frame."""
+
+    mode: Literal["init", "append"]
+    frame_id: str = Field(min_length=1, max_length=120)
+    events: list[WorkerStateTraceEvent] = Field(default_factory=list, max_length=12)
+
+
+class WorkerStateProperty(StrictModel):
+    value: StateJsonScalar
+    goal_relation: Literal["unresolved", "resolved"]
+    authority: StateEvidenceAuthority
+    frame_id: str
+    evidence: str
+
+
+class WorkerStateTarget(StrictModel):
+    identity: str
+    source_ref: str | None = None
+    visibility: Literal["not_visible", "partial", "full"] = "not_visible"
+    owned_region_visibility: Literal[
+        "not_visible", "edge_fragment", "unobscured",
+    ] = "not_visible"
+    properties: dict[str, WorkerStateProperty] = Field(
+        default_factory=dict, max_length=16,
+    )
+
+
+class WorkerStateCoverage(StrictModel):
+    status: Literal["unresolved", "exhausted"]
+    frame_id: str
+    evidence: str
+
+
+class WorkerStateGoalCondition(StrictModel):
+    statement: str
+    status: Literal["unresolved", "satisfied", "blocked"] = "unresolved"
+    frame_id: str = ""
+    evidence: str = ""
+
+
+class WorkerStateSnapshot(StrictModel):
+    """Runtime-materialized continuous goal memory supplied to Actor."""
 
     status: Literal["exploring", "collecting", "executing", "completed", "failed"]
-    summary: str
-    memory_updates: list[WorkerMemoryUpdate] = Field(
-        default_factory=list,
-        max_length=8,
-        description=(
-            "Only Worker-owned source facts in this delta enter progress; summary is not memory. "
-            "Current screenshot/MaterializedFrame is the Observation layer. Use "
-            "observation/frame only for present-surface facts, which expire on the next "
-            "frame; use evidence/attempt for verified facts that remain true after the frame "
-            "changes. Evidence is "
-            "never a prediction about what a visible control will do. A key is a stable fact "
-            "slot, not an event or planned action; update or "
-            "retract that key when the fact changes. Evidence records what was verified at "
-            "its source frame and does not establish current visibility. Emit only new, "
-            "corrected, or retracted versions; Runtime retains earlier active versions and "
-            "alone owns Claims, Commitments, Receipts, and progress transitions."
-        ),
+    summary: str = Field(min_length=1, max_length=600)
+    frame_id: str = ""
+    source_ref: str | None = None
+    surface: str | None = None
+    targets: dict[str, WorkerStateTarget] = Field(default_factory=dict, max_length=32)
+    coverage: dict[str, WorkerStateCoverage] = Field(default_factory=dict, max_length=8)
+    goal_conditions: dict[str, WorkerStateGoalCondition] = Field(
+        default_factory=dict, max_length=16,
     )
 
     @property
-    def memory_statements(self) -> tuple[str, ...]:
-        return tuple(
-            item.statement for item in self.memory_updates
-            if item.status == "active"
+    def fact_statements(self) -> tuple[str, ...]:
+        statements = [self.summary]
+        for target in self.targets.values():
+            statements.append(target.identity)
+            statements.extend(
+                f"{name}={item.value!r}; {item.evidence}"
+                for name, item in target.properties.items()
+            )
+        statements.extend(
+            item.evidence for item in self.goal_conditions.values() if item.evidence
         )
+        return tuple(statements)
 
 
 class DataChunkRef(StrictModel):

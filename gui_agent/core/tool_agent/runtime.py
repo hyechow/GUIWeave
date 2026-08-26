@@ -39,7 +39,8 @@ from gui_agent.core.tool_agent.contracts import (
     ToolAgentRun,
     WorkerOutcome,
     WorkerSpec,
-    WorkerState,
+    WorkerStateSnapshot,
+    WorkerStateTraceBatch,
     WorkerStrategy,
 )
 from gui_agent.core.tool_agent.action_guard import (
@@ -64,28 +65,35 @@ from gui_agent.core.tool_agent.protocol import (
     MAX_ORDERED_ACTIONS,
     ProtocolError,
     WorkerFrameTools,
-    bind_worker_decision_transport,
+    bind_actor_decision_transport,
     cacheable_system_message,
     diagnostic_prompt_reports,
-    decode_worker_action,
-    dynamic_worker_tools,
+    decode_actor_action,
+    dynamic_actor_tools,
     dynamic_action_tool,
     generic_action_spec,
+    frame_transition_message,
     image_message,
     input_binding_action,
+    parse_json_object,
     response_usage,
     validate_dynamic_action_spec,
-    validate_worker_tool_state,
+    validate_actor_tool_state,
     worker_frame_tools,
     worker_attempt_contract,
 )
 from gui_agent.core.tool_agent.replay import write_replay_artifact
+from gui_agent.core.tool_agent.state_trace import (
+    STATE_TRACE_OUTPUT_CONTRACT,
+    latest_runtime_receipt,
+    normalize_state_trace_payload,
+    reduce_worker_state,
+    state_actor_payload,
+    state_continuation_payload,
+)
 from gui_agent.core.tool_agent.strategy import ReflectionResult, Reflector
 from gui_agent.core.tool_agent.worker_memory import (
     WorkerJournal,
-    build_worker_memory_view,
-    memory_repair_instruction,
-    project_worker_context,
 )
 from gui_agent.core.vision.frame_analysis import visual_surface_fingerprint
 from gui_agent.core.vision.target_verify import (
@@ -99,9 +107,9 @@ from llm.provider_config import (
 )
 
 _MASTER_SYSTEM = load_prompt_text("task.tool_agent.master")
-_WORKER_SYSTEM = load_prompt_text("task.tool_agent.worker")
+_STATE_SYSTEM = load_prompt_text("task.tool_agent.state")
+_ACTOR_SYSTEM = load_prompt_text("task.tool_agent.actor")
 _MAX_ACTION_GUARD_REPAIRS_PER_FRAME = 1
-_MAX_MEMORY_UPDATE_REPAIRS_PER_FRAME = 2
 _MAX_PREDISPATCH_REPAIRS_PER_FRAME = 1
 _SPATIAL_CAPABILITIES = {
     "tap", "type", "scroll", "drag", "long_press", "select_option",
@@ -119,6 +127,25 @@ _EXECUTABLE_CAPABILITIES = {
 _TRANSIENT_MODEL_ERROR_NAMES = {
     "APIConnectionError", "APITimeoutError", "InternalServerError", "RateLimitError",
 }
+
+
+def _context_size_report(
+    label: str,
+    strategy: str,
+    text: str,
+    **extra: Any,
+) -> dict[str, Any]:
+    chars = len(text)
+    return {
+        "kind": "context_compression",
+        "label": label,
+        "strategy": strategy,
+        "before_chars": chars,
+        "after_chars": chars,
+        "estimated_tokens": (chars + 3) // 4,
+        "kept_tokens": (chars + 3) // 4,
+        **extra,
+    }
 
 
 def _is_transient_model_error(error: BaseException) -> bool:
@@ -228,11 +255,60 @@ _TARGET_VERIFIED_ACTION_TYPES = {
 _BATCH_FINAL_CAPABILITIES = {
     "ask_user", "back", "home", "app_switch", "launch_app", "open_url", "scroll", "drag",
 }
+_STATE_TARGET_CAPABILITIES = {
+    "tap", "click", "type", "drag", "long_press", "select_option",
+}
+
+
 def _worker_action_error(exc: Exception) -> dict[str, Any]:
     payload = {"status": "error", "error": f"{type(exc).__name__}: {exc}"}
     if isinstance(exc, _WorkerActionRejected):
         payload["reuse_current_frame"] = True
     return payload
+
+
+def _state_target_binding_error(
+    state: WorkerStateSnapshot,
+    capability: str,
+    state_target_ref: str | None,
+) -> str:
+    """Validate Actor's semantic target without moving geometry into State."""
+
+    if capability not in _STATE_TARGET_CAPABILITIES:
+        return ""
+    payload = state_actor_payload(state)
+    frontier = payload["visible_targets"]["unresolved_frontier"]
+    if state_target_ref == "":
+        if frontier:
+            return (
+                "this spatial action must copy the exact state_target_ref from the "
+                "current unresolved_frontier, or explicitly use null for an interface "
+                "control; x/y still come from the screenshot"
+            )
+        return ""
+    if state_target_ref is None:
+        return ""
+    target = next(
+        (item for item in frontier if item["target_ref"] == state_target_ref),
+        None,
+    )
+    if target is None:
+        resolved = payload["visible_targets"]["resolved_refs_do_not_repeat"]
+        if state_target_ref in resolved or state_target_ref in payload["resolved_target_refs"]:
+            return (
+                f"state_target_ref {state_target_ref!r} is already resolved and must not "
+                "be activated again"
+            )
+        return (
+            f"state_target_ref {state_target_ref!r} is not in the current visible "
+            "unresolved_frontier"
+        )
+    if target["owned_region_visibility"] != "unobscured":
+        return (
+            f"state_target_ref {state_target_ref!r} is only an edge fragment; reposition "
+            "it before spatial activation"
+        )
+    return ""
 
 
 def _action_feedback(items: object, action_type: str) -> list[dict[str, Any]]:
@@ -437,7 +513,8 @@ class ToolAgentRuntime:
         self._access_log_redactions: tuple[str, ...] = ()
         self._worker_journals: dict[str, WorkerJournal] = {}
         self._worker_last_frames: dict[str, MaterializedFrame] = {}
-        self._worker_last_contexts: dict[str, dict[str, Any]] = {}
+        self._worker_state_snapshots: dict[str, WorkerStateSnapshot] = {}
+        self._worker_state_frames: dict[str, tuple[str, bytes]] = {}
         # Per-worker, per-array-ref cursors for consume="each" input bindings:
         # (worker_id, ref_name) -> next array index to consume.
         self._each_cursors: dict[tuple[str, str], int] = {}
@@ -501,7 +578,9 @@ class ToolAgentRuntime:
             last_frames = getattr(self, "_worker_last_frames", None)
             if last_frames is not None:
                 last_frames.clear()
-            for name in ("_each_cursors", "_worker_last_contexts"):
+            for name in (
+                "_each_cursors", "_worker_state_snapshots", "_worker_state_frames",
+            ):
                 state = getattr(self, name, None)
                 if isinstance(state, dict):
                     state.clear()
@@ -908,6 +987,14 @@ class ToolAgentRuntime:
         if journals is None:
             self._worker_journals = {}
             journals = self._worker_journals
+        snapshots = getattr(self, "_worker_state_snapshots", None)
+        if snapshots is None:
+            self._worker_state_snapshots = {}
+            snapshots = self._worker_state_snapshots
+        state_frames = getattr(self, "_worker_state_frames", None)
+        if state_frames is None:
+            self._worker_state_frames = {}
+            state_frames = self._worker_state_frames
         journal = journals.setdefault(worker_id, WorkerJournal(worker_id=worker_id))
         self._inherit_task_memory(journals, journal, worker_id)
         retained_events = len(journal.events)
@@ -951,12 +1038,8 @@ class ToolAgentRuntime:
                 step += 1
                 observed_auth_codes.update(auth_codes_from_frame(frame))
                 # Screenshot-only delivery surfaces preserve codes through journal facts.
-                memory = build_worker_memory_view(journal, current_frame_id=frame.frame_id)
                 observed_auth_codes.update(auth_codes_from_text(" ".join(
-                    event.statement for event in (
-                        *memory.current_observations, *memory.accumulated_evidence,
-                        *memory.active_commitments,
-                    )
+                    journal.active_fact_statements(frame_id=frame.frame_id)
                 )))
                 initial_same_frame_feedback = None
                 predispatch_repair_turn = 0
@@ -1005,45 +1088,72 @@ class ToolAgentRuntime:
                 getattr(getattr(self, "worker_cfg", None), "action_protocol", "tool_call")
             )
             guard_repair_turn = 0
-            memory_repair_turn = 0
-            completion_recheck_turn = 0
-            commit_pending = False
             same_frame_feedback = initial_same_frame_feedback
-            while True:
-                messages, context_reports = self._worker_messages(
+            prior_state = snapshots.get(worker_id)
+            if prior_state is not None and prior_state.frame_id == frame.frame_id:
+                state = prior_state
+                self._trace(
+                    "worker_state_reused",
+                    step=step,
+                    frame_id=frame.frame_id,
+                    reason="same_frame_action_repair",
+                )
+            else:
+                state_messages, state_context_reports = self._state_messages(
                     spec=spec,
-                    active_actions=frame_actions,
                     journal=journal,
                     frame=frame,
                     png=png,
                     same_frame_feedback=same_frame_feedback,
-                    assessment=frame_assessment,
+                )
+                try:
+                    state = self._invoke_state_role(
+                        step=step,
+                        spec=spec,
+                        journal=journal,
+                        frame=frame,
+                        messages=state_messages,
+                        context_reports=state_context_reports,
+                    )
+                except Exception as exc:  # noqa: BLE001 - typed State is required
+                    return WorkerOutcome(
+                        phase="failed",
+                        summary=f"State role failed on the current frame: {exc}",
+                        failure_kind="protocol_invalid",
+                        steps=step - 1,
+                    )
+                snapshots[worker_id] = state
+                state_frames[worker_id] = (frame.frame_id, png)
+            observed_auth_codes.update(
+                code
+                for text in state.fact_statements
+                for code in auth_codes_from_text(text)
+            )
+            while True:
+                messages, context_reports = self._actor_messages(
+                    spec=spec,
+                    journal=journal,
+                    state=state,
+                    frame=frame,
+                    png=png,
+                    same_frame_feedback=same_frame_feedback,
                 )
                 response = None
-                state = None
                 call = None
                 calls: list[dict[str, Any]] = []
                 protocol_schema = (
-                    f"{action_protocol}: WorkerState + ordered actions"
+                    f"{action_protocol}: Actor ordered actions"
                     if getattr(self, "allow_multi_action", False)
-                    else f"{action_protocol}: WorkerState + exactly one action"
+                    else f"{action_protocol}: Actor exactly one action"
                 )
                 llm_elapsed_s = 0.0
                 token_usage: dict[str, int] = {}
                 request_kwargs = chat_request_kwargs(
                     getattr(getattr(self, "worker_cfg", None), "model", None)
                 )
-                decision_tools = (
-                    [
-                        tool for tool in worker_tools
-                        if tool.get("function", {}).get("name") != "complete"
-                    ]
-                    if commit_pending
-                    else worker_tools
-                )
-                transport = bind_worker_decision_transport(
+                transport = bind_actor_decision_transport(
                     self.worker,
-                    decision_tools,
+                    worker_tools,
                     protocol=action_protocol,
                     bind_kwargs=request_kwargs,
                 )
@@ -1068,7 +1178,7 @@ class ToolAgentRuntime:
                     llm_elapsed_s += time.perf_counter() - started_at
                     token_usage = response_usage(response)
                     try:
-                        call, raw_state, calls = decode_worker_action(
+                        call, raw_state, calls = decode_actor_action(
                             response,
                             protocol=action_protocol,
                         )
@@ -1078,10 +1188,11 @@ class ToolAgentRuntime:
                                 frame_actions,
                                 max_actions=action_limit,
                             )
-                        if not isinstance(raw_state, dict):
-                            raise ProtocolError("Worker decision state must be an object")
-                        state = WorkerState.model_validate(raw_state)
-                        validate_worker_tool_state(call["name"], state)
+                        if raw_state is not None:
+                            raise ProtocolError(
+                                "Actor must not emit state; State already ran on this frame"
+                            )
+                        validate_actor_tool_state(call["name"], state.status)
                         self._accumulate_observed_rows(spec, worker_id, call, step)
                         break
                     except Exception as exc:  # noqa: BLE001 - one same-frame protocol repair
@@ -1108,15 +1219,21 @@ class ToolAgentRuntime:
                                 failure_kind="protocol_invalid",
                                 steps=step - 1,
                             )
-                        messages = [*messages, response, HumanMessage(content=(
+                        repair_message = HumanMessage(content=(
                             "Protocol repair: the previous response was invalid. On this SAME frame, "
                             f"the Runtime reported: {exc}. {transport_repair.capitalize()} "
-                            "including its state field. If continue_with_actions is used, include "
+                            "Do not emit a state field. "
+                            + "If continue_with_actions is used, include "
                             f"between 1 and {action_limit} executable actions. Only use a "
                             "terminal tool when Runtime exposed that tool on this frame. "
                             "No action was executed."
-                        ))]
-                assert response is not None and state is not None and call is not None
+                        ))
+                        messages.extend([response, repair_message])
+                assert response is not None and call is not None
+                for action_call in calls:
+                    action_call["_state_target_ref"] = action_call["args"].pop(
+                        "state_target_ref", "",
+                    )
                 self._trace(
                     "worker_decision",
                     step=step,
@@ -1125,10 +1242,13 @@ class ToolAgentRuntime:
                     state=state.model_dump(mode="json"),
                     tool=call["name"],
                     args=call["args"],
+                    state_target_ref=(
+                        calls[0].get("_state_target_ref") if calls else None
+                    ),
                     llm_elapsed_s=round(llm_elapsed_s, 3),
                     token_usage=token_usage,
                     context_reports=[*context_reports, *diagnostic_prompt_reports(
-                        "tool_agent.worker",
+                        "tool_agent.actor",
                         messages,
                         response,
                         parsed={
@@ -1147,11 +1267,7 @@ class ToolAgentRuntime:
                             for action in frame_actions
                         ],
                         "executed_tools": sorted(journal.executed_tools),
-                        "active_commitment_refs": [
-                            event.fact_ref for event in build_worker_memory_view(
-                                journal, current_frame_id=frame.frame_id,
-                            ).active_commitments
-                        ],
+                        "active_commitment_refs": list(journal.active_commitment_refs),
                         "enhanced": getattr(self, "perception_mode", "vision-only")
                         == "enhanced",
                         "multi_action": bool(getattr(self, "allow_multi_action", False)),
@@ -1160,15 +1276,12 @@ class ToolAgentRuntime:
                 if (
                     call["name"] == "complete"
                     and spec.profile == "operator"
-                    and completion_recheck_turn == 0
                 ):
                     commit_controls = self._visible_commit_controls(frame, state)
                     if commit_controls:
-                        completion_recheck_turn += 1
-                        commit_pending = True
                         reason = (
-                            "visible enabled commit controls require one same-frame "
-                            "completion recheck"
+                            "State claimed completion while a cited enabled commit "
+                            "control remains visible"
                         )
                         self._trace(
                             "worker_completion_recheck",
@@ -1178,23 +1291,16 @@ class ToolAgentRuntime:
                         )
                         journal.record_guard(
                             step=step,
-                            repair_turn=completion_recheck_turn,
+                            repair_turn=1,
                             tool="complete",
                             reason=reason,
                         )
-                        same_frame_feedback = {
-                            "status": "completion_requires_recheck",
-                            "reason": reason,
-                            "visible_commit_controls": commit_controls,
-                            "instruction": (
-                                "Re-evaluate completion against the current frame and the "
-                                "last actually recorded action. If one of these controls is "
-                                "the requested commit, activate it now. Complete is withheld "
-                                "on this frame; never claim an activation absent from "
-                                "WorkerMemory."
-                            ),
-                        }
-                        continue
+                        return WorkerOutcome(
+                            phase="failed",
+                            summary=reason,
+                            failure_kind="protocol_invalid",
+                            steps=step - 1,
+                        )
                 guarded_call = calls[0] if call["name"] == "continue_with_actions" else call
                 action_spec = next(
                     (item for item in frame_actions if item.name == guarded_call["name"]),
@@ -1203,7 +1309,7 @@ class ToolAgentRuntime:
                 if action_spec is not None:
                     observed_auth_codes.update(
                         code
-                        for text in state.memory_statements
+                        for text in state.fact_statements
                         for code in auth_codes_from_text(text)
                     )
                     resolved_guard_args = {
@@ -1211,12 +1317,18 @@ class ToolAgentRuntime:
                         **action_spec.fixed_args,
                         **guarded_call["args"],
                     }
-                    blocked_reason = action_boundary_error(
+                    blocked_reason = _state_target_binding_error(
+                        state,
                         action_spec.capability,
-                        resolved_guard_args,
-                        frame,
-                        observed_auth_codes,
+                        guarded_call.get("_state_target_ref", ""),
                     )
+                    if not blocked_reason:
+                        blocked_reason = action_boundary_error(
+                            action_spec.capability,
+                            resolved_guard_args,
+                            frame,
+                            observed_auth_codes,
+                        )
                     if blocked_reason:
                         if guard_repair_turn >= _MAX_ACTION_GUARD_REPAIRS_PER_FRAME:
                             return WorkerOutcome(
@@ -1250,38 +1362,6 @@ class ToolAgentRuntime:
                         )
                         same_frame_feedback = feedback
                         continue
-                try:
-                    staged_memory_updates = journal.stage_memory_updates(
-                        step=step, frame_id=frame.frame_id,
-                        state=state,
-                    )
-                    if call["name"] != "continue_with_actions":
-                        journal.commit_memory_updates(staged_memory_updates)
-                except ValueError as exc:
-                    if memory_repair_turn >= _MAX_MEMORY_UPDATE_REPAIRS_PER_FRAME:
-                        return WorkerOutcome(
-                            phase="failed",
-                            summary=f"invalid memory update: {exc}",
-                            failure_kind="protocol_invalid",
-                            steps=step - 1,
-                        )
-                    memory_repair_turn += 1
-                    same_frame_feedback = {
-                        "status": "memory_update_invalid",
-                        "reason": str(exc),
-                        "instruction": (
-                            f"{memory_repair_instruction(exc)} "
-                            "No action was executed and no partial memory was recorded."
-                        ),
-                    }
-                    self._trace(
-                        "worker_memory_update_rejected",
-                        step=step,
-                        frame_id=frame.frame_id,
-                        repair_turn=memory_repair_turn,
-                        reason=str(exc),
-                    )
-                    continue
                 break
             try:
                 if call["name"] == "continue_with_actions":
@@ -1323,15 +1403,6 @@ class ToolAgentRuntime:
                 journal.record_runtime_result(
                     step=step,
                     result=result_payload,
-                )
-            elif (
-                result_payload.get("status") == "executed"
-                and result_payload.get("_memory_commit_safe") is True
-            ):
-                latest_receipt = journal.latest_action_receipt
-                journal.commit_memory_updates(
-                    staged_memory_updates,
-                    target_ref=(latest_receipt.target_ref if latest_receipt else ""),
                 )
             if result_payload.get("reuse_current_frame") is True:
                 predispatch_repair_turn += 1
@@ -1388,8 +1459,14 @@ class ToolAgentRuntime:
                 )
             if terminal == "each_next":
                 # A consume="each" operator finished one plan element; the cursor
-                # was advanced inside _execute_worker_tool. Continue the loop so
-                # the next frame sees the next element's bound value.
+                # was advanced inside _execute_worker_tool. State is scoped to that
+                # element, so the next frame must initialize a fresh snapshot.
+                snapshots = getattr(self, "_worker_state_snapshots", None)
+                if isinstance(snapshots, dict):
+                    snapshots.pop(worker_id, None)
+                state_frames = getattr(self, "_worker_state_frames", None)
+                if isinstance(state_frames, dict):
+                    state_frames.pop(worker_id, None)
                 self._trace(
                     "worker_each_advanced",
                     step=step,
@@ -1500,88 +1577,324 @@ class ToolAgentRuntime:
         )
         return frame, png
 
-    def _worker_system_prompt(self) -> str:
+    def _state_system_prompt(self) -> str:
+        return self._role_system_prompt(
+            _STATE_SYSTEM,
+            include_access=False,
+            include_apps=False,
+            include_knowledge=True,
+        )
+
+    def _actor_system_prompt(self) -> str:
+        return self._role_system_prompt(
+            _ACTOR_SYSTEM,
+            include_access=True,
+            include_apps=True,
+            include_knowledge=True,
+        )
+
+    def _role_system_prompt(
+        self,
+        base: str,
+        *,
+        include_access: bool,
+        include_apps: bool,
+        include_knowledge: bool = False,
+    ) -> str:
         # Keep reusable role instructions and deployment context cacheable.
-        prompt = _WORKER_SYSTEM
-        installed_apps = self._installed_applications()
+        prompt = base
+        installed_apps = self._installed_applications() if include_apps else ()
         if installed_apps:
             prompt += (
                 "\n\n## Installed applications\n"
                 "Use only these exact Runtime-provided names with launch_app: "
                 + json.dumps(installed_apps, ensure_ascii=False)
             )
+        knowledge = getattr(
+            self, "_worker_knowledge", getattr(self, "_master_knowledge", ""),
+        ).strip()
+        if include_knowledge and knowledge:
+            prompt += (
+                "\n\n## Application knowledge (interface mechanics only)\n"
+                + knowledge
+            )
         access_context = getattr(self, "_worker_access_context", "")
-        if access_context:
+        if include_access and access_context:
             prompt += (
                 "\n\n## Session access context (private runtime input)\n"
-                "Use these deployment/access facts only when the current screenshot requires "
-                "authentication. Never repeat credentials in state summaries, evidence, final "
-                "results, or user-facing text.\n"
+                "Use these deployment/access facts only when the authoritative State and current "
+                "screenshot require authentication. Never repeat credentials in tool descriptions, "
+                "final results, or user-facing text.\n"
                 + access_context
             )
         return prompt
 
-    def _worker_messages(
+    def _state_messages(
         self,
         *,
         spec: WorkerSpec,
-        active_actions: list[DynamicActionSpec],
         journal: WorkerJournal,
         frame: MaterializedFrame,
         png: bytes,
         same_frame_feedback: dict[str, Any] | None,
-        assessment: WorkerFrameTools | None = None,
     ) -> tuple[list[Any], list[dict[str, Any]]]:
-        """Rebuild one frame from bounded Journal memory; never replay chat history."""
-        memory = build_worker_memory_view(
-            journal,
-            current_frame_id=frame.frame_id,
-            current_surface_fingerprint=frame.visual_fingerprint,
+        """Build one small init/append observation call for the current frame."""
+        snapshots = getattr(self, "_worker_state_snapshots", {})
+        previous = snapshots.get(journal.worker_id)
+        mode = "append" if isinstance(previous, WorkerStateSnapshot) else "init"
+        previous_view = (
+            state_continuation_payload(previous)
+            if isinstance(previous, WorkerStateSnapshot)
+            else None
         )
-        assessment = assessment or worker_frame_tools(
-            spec, active_actions, frame,
+        current_element = self._current_each_element(spec, journal.worker_id)
+        state_frames = getattr(self, "_worker_state_frames", {})
+        previous_frame = state_frames.get(journal.worker_id)
+        has_previous_frame = bool(
+            isinstance(previous, WorkerStateSnapshot)
+            and isinstance(previous_frame, tuple)
+            and len(previous_frame) == 2
+            and previous_frame[0] == previous.frame_id
+            and previous.frame_id != frame.frame_id
         )
-        projection = project_worker_context(
-            memory=memory,
-            frame=frame,
-            spec=spec,
-            completion_mode=assessment.completion_mode,
-            application_knowledge=getattr(
-                self, "_worker_knowledge", getattr(self, "_master_knowledge", ""),
-            ).strip(),
-            attempt_contract=worker_attempt_contract(
-                spec,
-                attempted_action=bool(journal.executed_tools),
-                current_element=self._current_each_element(
-                    spec, journal.worker_id
-                ),
-            ),
-            same_frame_feedback=same_frame_feedback,
-        )
-        contexts = getattr(self, "_worker_last_contexts", None)
-        if contexts is None:
-            self._worker_last_contexts = {}
-            contexts = self._worker_last_contexts
-        contexts[journal.worker_id] = {
-            "goal_contract": projection.goal_contract,
-            "historical_progress": projection.historical_progress,
-            "current_state": projection.current_state,
+        state_payload = {
+            "goal_contract": {
+                "goal": spec.goal,
+                "success_criteria": {
+                    f"criterion_{index}": statement
+                    for index, statement in enumerate(spec.success_criteria, start=1)
+                },
+            },
+            "mode": mode,
+            "frame_id": frame.frame_id,
+            "output_contract": STATE_TRACE_OUTPUT_CONTRACT,
         }
-        system_prompt = self._worker_system_prompt()
+        if isinstance(previous, WorkerStateSnapshot):
+            state_payload["visual_transition"] = {
+                "previous_frame_id": previous.frame_id,
+                "current_frame_id": frame.frame_id,
+                "previous_frame_available": has_previous_frame,
+            }
+            state_payload["previous_state"] = previous_view
+        if current_element is not None:
+            state_payload["current_element"] = current_element
+        receipt = latest_runtime_receipt(journal)
+        if receipt is not None:
+            state_payload["latest_runtime_receipt"] = receipt
+        if same_frame_feedback:
+            state_payload["same_frame_runtime_feedback"] = same_frame_feedback
+        state_input = json.dumps(state_payload, ensure_ascii=False)
+        current_scale = float(
+            getattr(getattr(self, "worker_cfg", None), "image_scale", 1.0)
+        )
+        if has_previous_frame:
+            assert previous_frame is not None
+            state_message = frame_transition_message(
+                state_input,
+                previous_frame[1],
+                png,
+                previous_frame_id=previous_frame[0],
+                current_frame_id=frame.frame_id,
+                previous_scale=min(0.75, current_scale),
+                current_scale=current_scale,
+            )
+        else:
+            state_message = image_message(state_input, png, scale=current_scale)
         messages = [
             cacheable_system_message(
-                system_prompt,
+                self._state_system_prompt(),
+                enabled=getattr(self, "_worker_explicit_cache", False),
+            ),
+            state_message,
+        ]
+        report = _context_size_report(
+            "tool_agent.state.context",
+            "typed_state_frame_delta",
+            state_input,
+            mode=mode,
+            previous_frame=has_previous_frame,
+            previous_frame_scale=(min(0.75, current_scale) if has_previous_frame else None),
+            current_frame_scale=current_scale,
+            included_count=len(state_payload),
+        )
+        return messages, [report]
+
+    def _actor_messages(
+        self,
+        *,
+        spec: WorkerSpec,
+        journal: WorkerJournal,
+        state: WorkerStateSnapshot,
+        frame: MaterializedFrame,
+        png: bytes,
+        same_frame_feedback: dict[str, Any] | None,
+    ) -> tuple[list[Any], list[dict[str, Any]]]:
+        """Build the action-only Actor call without exposing Runtime history directly."""
+
+        parts = [
+            worker_attempt_contract(
+                spec,
+                attempted_action=bool(journal.executed_tools),
+                current_element=self._current_each_element(spec, journal.worker_id),
+            ),
+        ]
+        parts.extend([
+            "## Authoritative materialized State view",
+            json.dumps(state_actor_payload(state), ensure_ascii=False),
+        ])
+        receipt = latest_runtime_receipt(journal)
+        if receipt is not None:
+            parts.extend([
+                "## Latest Runtime action receipt",
+                json.dumps(receipt, ensure_ascii=False),
+            ])
+        if same_frame_feedback:
+            parts.extend([
+                "## Runtime correction for this same frame",
+                json.dumps(same_frame_feedback, ensure_ascii=False),
+            ])
+        actor_input = "\n\n".join(parts)
+        messages = [
+            cacheable_system_message(
+                self._actor_system_prompt(),
                 enabled=getattr(self, "_worker_explicit_cache", False),
             ),
             image_message(
-                projection.text,
+                actor_input,
                 png,
                 scale=float(
                     getattr(getattr(self, "worker_cfg", None), "image_scale", 1.0)
                 ),
             ),
         ]
-        return messages, [projection.report]
+        report = _context_size_report(
+            "tool_agent.actor.context",
+            "state_actor_split",
+            actor_input,
+            included_count=(
+                3 + int(receipt is not None) + int(bool(same_frame_feedback))
+            ),
+        )
+        return messages, [report]
+
+    def _invoke_state_role(
+        self,
+        *,
+        step: int,
+        spec: WorkerSpec,
+        journal: WorkerJournal,
+        frame: MaterializedFrame,
+        messages: list[Any],
+        context_reports: list[dict[str, Any]],
+    ) -> WorkerStateSnapshot:
+        """Run and validate one fact-only State stage before Actor policy."""
+
+        request_kwargs = chat_request_kwargs(
+            getattr(getattr(self, "worker_cfg", None), "model", None)
+        )
+        bound_state = (
+            self.worker.bind(
+                response_format={"type": "json_object"},
+                max_tokens=700,
+                **request_kwargs,
+            )
+            if callable(getattr(self.worker, "bind", None))
+            else self.worker
+        )
+        active_messages = list(messages)
+        llm_elapsed_s = 0.0
+        response = None
+        token_usage: dict[str, int] = {}
+        for attempt in range(2):
+            started_at = time.perf_counter()
+            for transport_attempt in range(2):
+                try:
+                    response = bound_state.invoke(active_messages)
+                    break
+                except Exception as exc:  # noqa: BLE001 - provider-neutral retry
+                    if transport_attempt or not _is_transient_model_error(exc):
+                        raise
+                    self._trace(
+                        "worker_state_model_retry",
+                        step=step,
+                        frame_id=frame.frame_id,
+                        error=f"{type(exc).__name__}: {exc}",
+                    )
+            llm_elapsed_s += time.perf_counter() - started_at
+            token_usage = response_usage(response)
+            try:
+                batch = WorkerStateTraceBatch.model_validate(
+                    normalize_state_trace_payload(
+                        parse_json_object(getattr(response, "content", ""))
+                    )
+                )
+                if batch.frame_id != frame.frame_id:
+                    raise ValueError(
+                        f"expected frame_id {frame.frame_id!r}, got {batch.frame_id!r}"
+                    )
+                snapshots = getattr(self, "_worker_state_snapshots", {})
+                previous = snapshots.get(journal.worker_id)
+                state = reduce_worker_state(
+                    previous if isinstance(previous, WorkerStateSnapshot) else None,
+                    batch,
+                    spec=spec,
+                )
+                break
+            except Exception as exc:  # noqa: BLE001 - one same-frame JSON repair
+                self._trace(
+                    "worker_state_protocol_error",
+                    step=step,
+                    frame_id=frame.frame_id,
+                    attempt=attempt + 1,
+                    error=str(exc),
+                    llm_elapsed_s=round(llm_elapsed_s, 3),
+                    token_usage=token_usage,
+                    context_reports=diagnostic_prompt_reports(
+                        "tool_agent.state.protocol_repair",
+                        active_messages,
+                        response,
+                        schema="WorkerStateTraceBatch JSON",
+                    ) + context_reports,
+                )
+                if attempt:
+                    raise ProtocolError(
+                        f"State repeated an invalid JSON protocol: {exc}"
+                    ) from exc
+                active_messages = [
+                    *active_messages,
+                    response,
+                    HumanMessage(content=(
+                        "State protocol repair on this SAME frame. No action was executed. "
+                        f"The prior response was invalid: {exc}. Return only one JSON object "
+                        "matching this compact output contract:\n"
+                        + json.dumps(
+                            STATE_TRACE_OUTPUT_CONTRACT,
+                            ensure_ascii=False,
+                        )
+                    )),
+                ]
+        assert response is not None
+        self._trace(
+            "worker_state",
+            step=step,
+            frame_id=frame.frame_id,
+            mode=batch.mode,
+            trace_events=[item.model_dump(mode="json") for item in batch.events],
+            state=state.model_dump(mode="json"),
+            llm_elapsed_s=round(llm_elapsed_s, 3),
+            token_usage=token_usage,
+            context_reports=[
+                *context_reports,
+                *diagnostic_prompt_reports(
+                    "tool_agent.state",
+                    active_messages,
+                    response,
+                    parsed=state.model_dump(mode="json"),
+                    schema="WorkerStateTraceBatch JSON",
+                ),
+            ],
+        )
+        return state
 
     def _worker_tools_for_frame(
         self,
@@ -1595,7 +1908,7 @@ class ToolAgentRuntime:
         assessment = assessment or worker_frame_tools(
             spec, actions, frame,
         )
-        return dynamic_worker_tools(
+        return dynamic_actor_tools(
             assessment.allowed_actions,
             completion_mode=assessment.completion_mode,
             action_envelope=bool(getattr(self, "allow_multi_action", False)),
@@ -1613,7 +1926,7 @@ class ToolAgentRuntime:
     def _visible_commit_controls(
         self,
         frame: MaterializedFrame,
-        state: WorkerState,
+        state: WorkerStateSnapshot,
     ) -> list[dict[str, str]]:
         """Expose enabled commit controls cited by the completion claim itself."""
 
@@ -1627,7 +1940,7 @@ class ToolAgentRuntime:
             if isinstance(refreshed, list):
                 controls = refreshed
                 frame.controls = refreshed
-        claim = " ".join([state.summary, *state.memory_statements]).casefold()
+        claim = " ".join(state.fact_statements).casefold()
 
         def cited(control: dict[str, Any]) -> bool:
             label = str(control.get("label") or "").strip().casefold()
@@ -1713,7 +2026,10 @@ class ToolAgentRuntime:
     ) -> dict[str, Any]:
         """Normalize provider quirks and validate before platform dispatch."""
 
-        parameters = dynamic_action_tool(action)["function"]["parameters"]
+        parameters = dynamic_action_tool(
+            action,
+            include_state_target_ref="state_target_ref" in args,
+        )["function"]["parameters"]
         call_args = dict(args)
         for name in action.fixed_args:
             # Fixed Runtime-owned values are authoritative. Some providers echo
@@ -1744,7 +2060,7 @@ class ToolAgentRuntime:
         spec: WorkerSpec,
         actions: list[DynamicActionSpec],
         calls: list[dict[str, Any]],
-        state: WorkerState,
+        state: WorkerStateSnapshot,
         step: int,
         frame: MaterializedFrame,
         png: bytes,
@@ -1787,12 +2103,22 @@ class ToolAgentRuntime:
                 **action_call["args"],
             }
             remaining = calls[index:]
-            boundary_error = action_boundary_error(
-                action_spec.capability,
-                resolved_args,
-                frame,
-                observed_auth_codes or set(),
+            boundary_error = (
+                _state_target_binding_error(
+                    state,
+                    action_spec.capability,
+                    action_call.get("_state_target_ref", ""),
+                )
+                if isinstance(state, WorkerStateSnapshot)
+                else ""
             )
+            if not boundary_error:
+                boundary_error = action_boundary_error(
+                    action_spec.capability,
+                    resolved_args,
+                    frame,
+                    observed_auth_codes or set(),
+                )
             if boundary_error:
                 reason = boundary_error
                 rejected_before_dispatch = executed == 0
@@ -2596,6 +2922,12 @@ class ToolAgentRuntime:
                 f"{payload.get('row_count', 0)} row(s), "
                 f"end_visible={payload.get('end_visible', False)}"
             )
+        if event == "worker_state":
+            state = payload.get("state") if isinstance(payload.get("state"), dict) else {}
+            return (
+                f"State step {payload.get('step', '?')} "
+                f"[{state.get('status', '?')}]: {state.get('summary', '')}"
+            )
         if event == "worker_decision":
             state = payload.get("state") if isinstance(payload.get("state"), dict) else {}
             summary = str(state.get("summary") or "").strip()
@@ -2787,6 +3119,7 @@ class ToolAgentRuntime:
                 name = str(item.get("event") or "")
                 label = {
                     "perception_extract": "perception",
+                    "worker_state": "state",
                     "worker_state_recovered": "state",
                     "worker_decision": "policy",
                 }.get(name)

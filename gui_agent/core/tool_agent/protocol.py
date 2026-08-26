@@ -20,7 +20,6 @@ from gui_agent.core.tool_agent.contracts import (
     MaterializedFrame,
     RuntimeInputBinding,
     WorkerSpec,
-    WorkerState,
     WorkerInputBinding,
 )
 
@@ -63,19 +62,21 @@ _ENCODED_COORD_PAIR = re.compile(
     rf'(?P<head>"(?P<prefix>to_)?x"\s*:\s*{_NUMBER}),\s*'
     rf'(?P<y>{_NUMBER})(?=\s*[,}}])'
 )
+
+
 class ProtocolError(RuntimeError):
     pass
 
 
-def validate_worker_tool_state(tool: str, state: WorkerState) -> None:
+def validate_actor_tool_state(tool: str, state_status: str) -> None:
     """Keep terminal state claims aligned with the selected protocol tool."""
 
     if (
-        state.status in _TERMINAL_TOOL_BY_STATE
+        state_status in _TERMINAL_TOOL_BY_STATE
         or tool in _TERMINAL_TOOL_BY_STATE.values()
-    ) and _TERMINAL_TOOL_BY_STATE.get(state.status) != tool:
+    ) and _TERMINAL_TOOL_BY_STATE.get(state_status) != tool:
         raise ProtocolError(
-            f"terminal state/tool mismatch: state.status={state.status!r}, tool={tool!r}"
+            f"terminal state/tool mismatch: state.status={state_status!r}, tool={tool!r}"
         )
 
 
@@ -122,7 +123,9 @@ _CAPABILITY_SCHEMAS: dict[str, dict[str, Any]] = {
         "x": _COORD, "y": _COORD,
         "description": _description(
             "One atomic visible target: include its visible name, control type, and "
-            "screen region; do not include later actions."
+            "screen region; use a point safely inside its tappable interior rather "
+            "than on its outline or an overlapping viewport edge; do not include "
+            "later actions."
         ),
     }, ("x", "y")),
     "type": _args({
@@ -137,7 +140,14 @@ _CAPABILITY_SCHEMAS: dict[str, dict[str, Any]] = {
     "clear_text": _EMPTY_ARGS,
     "press_enter": _EMPTY_ARGS,
     "scroll": _args({
-        "direction": {"type": "string", "enum": ["up", "down", "left", "right"]},
+        "direction": {
+            "type": "string",
+            "enum": ["up", "down", "left", "right"],
+            "description": (
+                "Content-traversal direction, not finger motion: down reveals content "
+                "below and moves it upward; up reveals content above and moves it downward."
+            ),
+        },
         "amount": {"type": "string", "enum": ["small", "medium", "large"],
                    "default": "medium"},
         "target_area": {"type": "string", "enum": [
@@ -315,104 +325,7 @@ def worker_attempt_contract(
     )
 
 
-_WORKER_STATE_SCHEMA: dict[str, Any] = {
-    "type": "object",
-    "description": "Compact semantic state paired with this atomic action.",
-    "properties": {
-        "status": {
-            "type": "string",
-            "enum": ["exploring", "collecting", "executing", "completed", "failed"],
-            "description": (
-                "Current workflow phase: exploring locates the binding source; collecting "
-                "acquires unresolved evidence; executing requests the next authorized effect; "
-                "completed and failed are terminal."
-            ),
-        },
-        "summary": {
-            "type": "string",
-            "maxLength": 320,
-            "description": "One concise evidence summary under 240 characters.",
-        },
-        "memory_updates": {
-            "type": "array",
-            "maxItems": 8,
-            "description": WorkerState.model_fields["memory_updates"].description,
-            "items": {"oneOf": [
-                {
-                    "type": "object",
-                    "properties": {
-                        "fact_type": {"type": "string", "const": fact_type},
-                        "key": {
-                            "type": "string", "pattern": "^[a-z][a-z0-9_]{0,63}$",
-                        },
-                        "status": {
-                            "type": "string",
-                            "enum": (["active"] if fact_type == "observation"
-                                     else ["active", "retracted"]),
-                        },
-                        "lifetime": {
-                            "type": "string",
-                            "enum": [
-                                "frame" if fact_type == "observation" else "attempt"
-                            ],
-                        },
-                        "statement": {
-                            "type": "string", "minLength": 1, "maxLength": 1_200,
-                        },
-                        "depends_on": {
-                            "type": "array",
-                            "description": (
-                                "Always []; source facts do not depend on progress. To refine "
-                                "Evidence, update the same key directly without self-dependency."
-                            ),
-                            "items": {
-                                "type": "string", "minLength": 3, "maxLength": 76,
-                            },
-                            "minItems": 0,
-                            "maxItems": 0,
-                        },
-                    },
-                    "required": [
-                        "fact_type", "key", "status", "lifetime", "statement",
-                        "depends_on",
-                    ],
-                    "additionalProperties": False,
-                }
-                for fact_type in ("observation", "evidence")
-            ]},
-        },
-    },
-    "required": [
-        "status", "summary", "memory_updates",
-    ],
-    "additionalProperties": False,
-}
-
-
-def _with_worker_state(tool: dict[str, Any]) -> dict[str, Any]:
-    """Add one compact common state carrier to a provider-facing tool schema."""
-    wrapped = deepcopy(tool)
-    parameters = wrapped["function"]["parameters"]
-    state_schema = deepcopy(_WORKER_STATE_SCHEMA)
-    terminal_state = next((
-        state for state, name in _TERMINAL_TOOL_BY_STATE.items()
-        if name == wrapped["function"]["name"]
-    ), None)
-    state_schema["properties"]["status"]["enum"] = (
-        [terminal_state] if terminal_state else ["exploring", "collecting", "executing"]
-    )
-    parameters["properties"] = {
-        "state": state_schema,
-        **dict(parameters.get("properties") or {}),
-    }
-    parameters["required"] = [
-        "state",
-        *[name for name in parameters.get("required") or [] if name != "state"],
-    ]
-    return wrapped
-
-
-def dynamic_worker_tools(
+def dynamic_actor_tools(
     actions: list[DynamicActionSpec],
     *,
     completion_mode: Literal[
@@ -426,50 +339,53 @@ def dynamic_worker_tools(
         interactions = [item for item in actions if item.capability == "ask_user"]
         batchable = [item for item in actions if item.capability != "ask_user"]
         tools = [
-            *(_with_worker_state(dynamic_action_tool(item)) for item in interactions),
             *(
-                [_with_worker_state(dynamic_action_envelope_tool(
+                dynamic_action_tool(
+                    item,
+                    include_state_target_ref=True,
+                )
+                for item in interactions
+            ),
+            *(
+                [dynamic_action_envelope_tool(
                     batchable,
                     max_ordered_actions=max_ordered_actions,
-                ))]
+                )]
                 if batchable else []
             ),
         ]
     else:
-        tools = [_with_worker_state(dynamic_action_tool(item)) for item in actions]
-    if completion_mode != "unavailable":
-        description = (
-            "Complete only when the target UI state is visibly confirmed. For a requested "
-            "commit, Historical Progress must record the actual final activation and Current State "
-            "must show its post-commit state; never infer activation from a ready screen or a "
-            "visible commit control. A preparatory scope/container commit is not terminal. Once "
-            "the terminal commit returns to a stable parent/source without error and no durable "
-            "fact names an unsatisfied candidate, complete without re-querying or restarting. "
-            "A no-effect boundary is exhaustive only for its current scroll container; complete "
-            "there only when that container is the Goal Contract's required source and no known "
-            "record remains unsatisfied. "
-            "With element-wise array bindings, call complete after EACH element so "
-            "Runtime advances the cursor until the plan is exhausted."
-            if completion_mode == "operator"
-            else (
-                "Complete this collector when your own evidence shows the requested "
-                "scope is fully acquired; state in your summary what established "
-                "exhaustiveness (exact filter applied, list traversed to its end). "
-                "Runtime does not certify completeness."
+        tools = [
+            dynamic_action_tool(
+                item,
+                include_state_target_ref=True,
             )
-        )
-        tools.append(_with_worker_state(model_tool(
+            for item in actions
+        ]
+    if completion_mode != "unavailable":
+        if completion_mode == "operator":
+            description = (
+                "Complete only when the authoritative State status is completed. With "
+                "element-wise bindings, complete the current element so Runtime can advance "
+                "its cursor; State is reinitialized for the next element."
+            )
+        else:
+            description = (
+                "Complete this collector only when authoritative State is completed and the "
+                "Runtime-exposed collection output matches the requested scope."
+            )
+        tools.append(model_tool(
             "complete",
             description,
             CompleteReadyWorkerArgs,
-        )))
+        ))
     if allow_failure:
-        tools.append(_with_worker_state(model_tool(
+        tools.append(model_tool(
             "report_blocked",
             "Report concrete execution evidence that the current approach cannot "
             "continue. Strategy, not Worker, decides whether to replace the approach.",
             FailWorkerArgs,
-        )))
+        ))
     return tools
 
 
@@ -488,7 +404,10 @@ def dynamic_action_envelope_tool(
         raise ValueError(f"max_ordered_actions must be in [1, {MAX_ORDERED_ACTIONS}]")
     variants = []
     for action in actions:
-        tool = dynamic_action_tool(action)["function"]
+        tool = dynamic_action_tool(
+            action,
+            include_state_target_ref=True,
+        )["function"]
         variants.append({
             "type": "object",
             "description": tool["description"],
@@ -504,26 +423,23 @@ def dynamic_action_envelope_tool(
         if max_ordered_actions == 1
         else f"one to {max_ordered_actions} ordered actions"
     )
+    shared_description = (
+        f"Continue with {action_range}; this tool never represents completion and its "
+        "action list cannot be empty. If the goal is complete, call complete directly. "
+        "All actions must form one immediate UI transaction; never mix discovery, reveal, "
+        "or recovery with mutation. Later actions must not depend on newly revealed UI. "
+        "Runtime settles each action and visually re-grounds the next target on a fresh "
+        "screenshot. Scroll, drag, home, back, app switching, app launch, and direct "
+        "navigation must be final. launch_app works directly from any current application; "
+        "never prepend home or app_switch to it."
+    )
+    role_description = (
+        " Choose only current-frame actions that advance State's unresolved difference. "
+        "For a goal target, copy its unresolved frontier ref; never use a resolved ref."
+    )
     return function_tool(
         "continue_with_actions",
-        (
-            f"Continue with {action_range}; this tool never represents completion and its "
-            "action list cannot be empty. If the goal is complete, call complete directly; "
-            "never set state.status=completed here. State and memory_updates describe only source facts "
-            "true before these actions execute. Runtime owns Claim and Commitment transitions; "
-            "Runtime records durable verified-action Evidence after exact target verification. "
-            "Spatial actions require current-frame visible "
-            "targets; non-spatial actions follow their own capability contracts. "
-            "Apply task conditions first: excluded or already-processed candidates permit traversal, "
-            "never their mutation path. If no eligible work remains, call complete directly; do not "
-            "put terminal tools in this action list or re-run a query already resolved by durable facts. "
-            "All actions must form one immediate UI transaction; never mix discovery, reveal, "
-            "or recovery with mutation. Later actions must not depend on newly revealed UI. "
-            "Runtime settles each action and visually re-grounds the next target on a fresh "
-            "screenshot. Scroll, drag, home, back, app switching, app launch, and direct "
-            "navigation must be final. launch_app works directly from any current application; "
-            "never prepend home or app_switch to it."
-        ),
+        shared_description + role_description,
         {
             "type": "object",
             "properties": {
@@ -540,7 +456,11 @@ def dynamic_action_envelope_tool(
     )
 
 
-def dynamic_action_tool(action: DynamicActionSpec) -> dict[str, Any]:
+def dynamic_action_tool(
+    action: DynamicActionSpec,
+    *,
+    include_state_target_ref: bool = False,
+) -> dict[str, Any]:
     schema = deepcopy(_CAPABILITY_SCHEMAS[action.capability])
     properties = schema["properties"]
     exposed = set(action.exposed_args)
@@ -548,6 +468,19 @@ def dynamic_action_tool(action: DynamicActionSpec) -> dict[str, Any]:
     if unknown:
         raise ValueError(f"{action.name}: unknown exposed args {sorted(unknown)}")
     properties = {name: value for name, value in properties.items() if name in exposed}
+    if include_state_target_ref and action.capability in {
+        "tap", "click", "type", "drag", "long_press", "select_option",
+    }:
+        properties["state_target_ref"] = {
+            "type": ["string", "null"],
+            "pattern": r"^[a-z][a-z0-9_]{0,79}$",
+            "description": (
+                "Copy the exact target_ref when this action spatially operates on a "
+                "target in State.visible_targets.unresolved_frontier. Use null only "
+                "for a navigation or interface control that State does not track as "
+                "a goal target. This semantic binding never replaces x/y geometry."
+            ),
+        }
     schema["properties"] = properties
     schema["required"] = [name for name in schema.get("required", []) if name in exposed]
     if "description" in exposed and "description" not in schema["required"]:
@@ -634,7 +567,7 @@ def validate_dynamic_action_spec(action: DynamicActionSpec) -> None:
     dynamic_action_tool(action)
 
 
-def image_message(text: str, png: bytes, *, scale: float = 1.0) -> HumanMessage:
+def _image_content(png: bytes, *, scale: float) -> dict[str, Any]:
     if not 0 < scale <= 1:
         raise ValueError("image scale must be in (0, 1]")
     if scale < 1:
@@ -645,12 +578,37 @@ def image_message(text: str, png: bytes, *, scale: float = 1.0) -> HumanMessage:
             resized.save(buffer, format="PNG", optimize=True)
             png = buffer.getvalue()
     encoded = base64.b64encode(png).decode("ascii")
+    return {"type": "image_url", "image_url": {"url": f"data:image/png;base64,{encoded}"}}
+
+
+def image_message(text: str, png: bytes, *, scale: float = 1.0) -> HumanMessage:
     return HumanMessage(
         content=[
             {"type": "text", "text": text},
-            {"type": "image_url", "image_url": {"url": f"data:image/png;base64,{encoded}"}},
+            _image_content(png, scale=scale),
         ]
     )
+
+
+def frame_transition_message(
+    text: str,
+    previous_png: bytes,
+    current_png: bytes,
+    *,
+    previous_frame_id: str,
+    current_frame_id: str,
+    previous_scale: float = 0.75,
+    current_scale: float = 1.0,
+) -> HumanMessage:
+    """Carry the labeled image pair for one append-only State transition."""
+
+    return HumanMessage(content=[
+        {"type": "text", "text": text},
+        {"type": "text", "text": f"previous_frame ({previous_frame_id})"},
+        _image_content(previous_png, scale=previous_scale),
+        {"type": "text", "text": f"current_frame ({current_frame_id})"},
+        _image_content(current_png, scale=current_scale),
+    ])
 
 
 def cacheable_system_message(
@@ -870,7 +828,7 @@ def exactly_one_tool_call(response: Any) -> dict[str, Any]:
     }
 
 
-def json_worker_decision_instruction(tools: list[dict[str, Any]]) -> str:
+def json_actor_decision_instruction(tools: list[dict[str, Any]]) -> str:
     """Describe the same dynamic action contract without provider tool calling."""
 
     catalog = {
@@ -885,15 +843,15 @@ def json_worker_decision_instruction(tools: list[dict[str, Any]]) -> str:
         "Decision transport: return only one JSON object with exactly two keys: "
         '`{"tool": "<exact action name>", "args": {<arguments>}}`. '
         "Do not emit a function/tool call, Markdown, commentary, or a JSON Schema. "
-        "Choose exactly one listed action. `state` must occur exactly once as a direct "
-        "member of the outer `args`, never inside `args.actions[*]`. The outer args "
+        "Choose exactly one listed action. The State role already ran; do not emit a "
+        "`state` field. The outer args "
         "must satisfy the selected action's schema. "
         "Available contract:\n"
         + json.dumps(catalog, ensure_ascii=False, separators=(",", ":"))
     )
 
 
-def bind_worker_decision_transport(
+def bind_actor_decision_transport(
     llm: Any,
     tools: list[dict[str, Any]],
     *,
@@ -906,7 +864,7 @@ def bind_worker_decision_transport(
     if protocol == "json":
         return (
             llm.bind(**kwargs),
-            json_worker_decision_instruction(tools),
+            json_actor_decision_instruction(tools),
             "return exactly one JSON object with only tool and args",
         )
     if protocol == "tool_call":
@@ -924,10 +882,10 @@ def bind_worker_decision_transport(
             f"emit exactly one required tool call named one of: {names}; "
             "batched GUI actions belong inside continue_with_actions.args.actions"
         )
-    raise ValueError(f"unsupported Worker action protocol {protocol!r}")
+    raise ValueError(f"unsupported Actor action protocol {protocol!r}")
 
 
-def decode_worker_action(
+def decode_actor_action(
     response: Any,
     *,
     protocol: str = "tool_call",
@@ -940,14 +898,14 @@ def decode_worker_action(
     elif protocol == "json":
         value = parse_json_object(getattr(response, "content", ""))
         if not isinstance(value, dict) or not isinstance(value.get("args"), dict):
-            raise ProtocolError("Worker decision JSON requires tool, object args, and optional rows")
+            raise ProtocolError("Actor decision JSON requires tool, object args, and optional rows")
         unknown = set(value) - {"tool", "args", "rows"}
         if unknown:
             raise ProtocolError(
-                f"Worker decision JSON has unknown fields: {sorted(unknown)}"
+                f"Actor decision JSON has unknown fields: {sorted(unknown)}"
             )
         if not isinstance(value.get("tool"), str) or not value["tool"].strip():
-            raise ProtocolError("Worker decision JSON tool must be a non-empty string")
+            raise ProtocolError("Actor decision JSON tool must be a non-empty string")
         rows = value.get("rows")
         if rows is not None and not isinstance(rows, list):
             raise ProtocolError("Worker decision JSON rows must be an array of records")
@@ -958,7 +916,7 @@ def decode_worker_action(
             "rows": rows,
         }
     else:
-        raise ValueError(f"unsupported Worker action protocol {protocol!r}")
+        raise ValueError(f"unsupported Actor action protocol {protocol!r}")
     if call["name"] == "continue_with_actions":
         raw = call["args"].get("actions") or []
         raw = decode_ordered_actions(raw)
@@ -984,7 +942,7 @@ def decode_worker_action(
     if tools is not None:
         tool = tools.get(call["name"])
         if tool is None:
-            raise ProtocolError(f"unknown Worker tool {call['name']!r}")
+            raise ProtocolError(f"unknown Actor tool {call['name']!r}")
         validate(instance=call["args"], schema=tool["function"]["parameters"])
     raw_state = call["args"].pop("state", None)
     if call["name"] == "continue_with_actions":

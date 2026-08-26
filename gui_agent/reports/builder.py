@@ -75,7 +75,7 @@ def _reduce_tool_agent_events(events: list[dict]) -> list[dict]:
             # once a prior Turn is pending it already belongs to the next frame.
             pre_observe_details.append(event)
             continue
-        if name == "worker_state_recovered":
+        if name in {"worker_state", "worker_state_recovered"}:
             if pending is not None:
                 pending.setdefault("details", []).append(event)
             else:
