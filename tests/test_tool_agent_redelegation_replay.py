@@ -353,13 +353,38 @@ class _CompletingWorker:
 
     def __init__(self) -> None:
         self.calls = 0
+        self.mode = ""
+
+    def bind(self, **kwargs):
+        del kwargs
+        self.mode = "state"
+        return self
 
     def bind_tools(self, tools, **kwargs):
         del tools, kwargs
+        self.mode = "actor"
         return self
 
     def invoke(self, messages):
-        del messages
+        if self.mode == "state":
+            payload = json.loads(messages[-1].content[0]["text"])
+            return SimpleNamespace(content=json.dumps({
+                "mode": payload["mode"],
+                "frame_id": payload["frame_id"],
+                "delta": {
+                    "source": [
+                        "requested_collection",
+                        "The requested filtered collection is visible.",
+                    ],
+                    "conditions": [
+                        [
+                            ref, "satisfied",
+                            "The requested collection scope is fully acquired.",
+                        ]
+                        for ref in payload["goal_contract"]["success_criteria"]
+                    ],
+                },
+            }), tool_calls=[])
         self.calls += 1
         return SimpleNamespace(
             content="",
@@ -367,10 +392,6 @@ class _CompletingWorker:
                 "id": "complete-1",
                 "name": "complete",
                 "args": {
-                    "state": {
-                        "status": "completed",
-                        "summary": "Requested scope fully collected per visible evidence.",
-                    },
                     "evidence": ["Filtered list fits the viewport with no clipped tail."],
                 },
             }],

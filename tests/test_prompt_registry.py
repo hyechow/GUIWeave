@@ -23,8 +23,9 @@ def test_prompt_registry_loads_all_assets() -> None:
         "task.tool_agent.master",
         "task.tool_agent.presentation",
         "task.tool_agent.strategy_decide",
+        "task.tool_agent.state",
+        "task.tool_agent.actor",
         "task.tool_agent.visual_transcription",
-        "task.tool_agent.worker",
         "task.knowledge.document_ingest",
         "task.vision.loading",
         "task.vision.target_grounding",
@@ -120,37 +121,38 @@ def test_presentation_requires_user_facing_prose() -> None:
     assert "Keep every row and column" in prompt
 
 
-def test_worker_keeps_data_private_and_coordinates_normalized() -> None:
-    prompt = load_prompt_text("task.tool_agent.worker")
+def test_state_and_actor_prompts_have_disjoint_responsibilities() -> None:
+    state = load_prompt_text("task.tool_agent.state")
+    actor = load_prompt_text("task.tool_agent.actor")
 
-    assert "A successful mutation does not prove navigation" in prompt
-    assert "Runtime-owned ResultRef and collection values are private" in prompt
-    assert "Historical Progress is Runtime's bounded reduction" in prompt
-    assert "Never guess credentials" in prompt
-    assert "transient code from its delivery surface" in prompt
-    assert "immutable goal, success criteria" in prompt
-    assert "Complete a single-element operator only" in prompt
-    assert "consumes a plan array element-wise" in prompt
-    assert "after EACH element's target UI state" in prompt
-    assert "exact bounded scope is exhaustive" in prompt
-    assert "without traversing outside that bound" in prompt
-    assert "Coordinates are normalized 0..999" in prompt
-    assert "Use only Runtime-supplied actions" in prompt
-    assert "request_action_patch" not in prompt
-    assert "`state.status = completed | failed` is terminal" in prompt
-    assert "Runtime alone owns Claims, Commitments, Receipts" in prompt
-    assert "Current State is newer" in prompt
-    assert "`phase=returned_to_anchor` identifies the same visual anchor" in prompt
-    assert "does not by itself prove the target resolved" in prompt
-    assert "write-through" in prompt
-    assert "proves completion" in prompt
-
-
-def test_worker_prompt_stays_a_compact_role_contract() -> None:
-    prompt = load_prompt_text("task.tool_agent.worker")
-
-    assert len(prompt) < 8_000
-    assert sum(line.startswith("-") for line in prompt.splitlines()) <= 30
+    assert "Determine what is true now" in state
+    assert "never choose, recommend, or encode an action" in state
+    assert "mode=init" in state
+    assert "mode=append" in state
+    assert "Never return a full state snapshot" in state
+    assert "`previous_frame`, then `current_frame`" in state
+    assert "current visibility and facts always come from `current_frame`" in state
+    assert "Reuse exact refs from `previous_state`" in state
+    assert "only goal facts newly visible or changed" in state
+    assert "each currently visible unresolved target" in state
+    assert "Do not repeat an unchanged resolved target" in state
+    assert "never repeat an unchanged source" in state
+    assert "coverage=unresolved` once" in state
+    assert "do not restate that default" in state
+    assert "type-grouped `delta`" in state
+    assert "source ref is never an application" in state
+    assert "A resolved target never regresses" in state
+    assert "Do not mirror the receipt as another State object" in state
+    assert "Runtime derives terminal status" in state
+    assert "Choose what to do next" in actor
+    assert "Never produce, revise, or reinterpret State" in actor
+    assert "never emit `state`, memory, progress" in actor
+    assert "Do not repeat a predicate State already marks resolved" in actor
+    assert "different unresolved predicate" in actor
+    assert "`owned_region_visibility=edge_fragment` is not safely actionable" in actor
+    assert "safely inside the control's tappable interior" in actor
+    assert "Scroll directions describe content traversal" in actor
+    assert "describes visibility, not coordinates or an action" in state
 
 
 def test_master_keeps_visual_conditional_dependencies_in_one_worker() -> None:
@@ -166,24 +168,6 @@ def test_master_keeps_visual_conditional_dependencies_in_one_worker() -> None:
         "UI transitions/mutations", "clean environment", "Do not enumerate atomic GUI actions",
         "never an action string like `type.text`", "finishing with `effect=\"data\"`",
         "neither typed data nor a transferable scope",
-    ):
-        assert rule in prompt
-
-
-def test_worker_keeps_action_grounding_and_memory_boundaries() -> None:
-    prompt = load_prompt_text("task.tool_agent.worker")
-
-    assert "never invent or continue an unrelated source" in prompt
-
-    for rule in (
-        "exactly one visible control", "do not relabel a nearby or generic control",
-            "Record identities and visible states as source facts",
-        "Stable page identity",
-        "A `no_effect` result requires inspecting the next frame",
-        "A no-effect traversal establishes the boundary", "call `complete`",
-        "never claim an unrecorded activation", "do not re-query, reselect, or navigate",
-        "required source", "without rechecking handled records",
-        "never establish a collection boundary",
     ):
         assert rule in prompt
 
@@ -208,13 +192,6 @@ def test_worker_keeps_action_grounding_and_memory_boundaries() -> None:
         ("task.tool_agent.presentation", (
             "user-facing prose", "not serialized JSON", "compact Markdown table",
             "Keep every row and column", "keep result values unchanged",
-        )),
-        ("task.tool_agent.worker", (
-            "ResultRef and collection values are private", "Never guess credentials",
-                "human-presence challenge", "Runtime-supplied actions", "`report_blocked`",
-            "Coordinates are normalized 0..999", "binding approach",
-                "Historical Progress", "Do not interact with residue",
-                "never establish a collection boundary",
         )),
         ("task.tool_agent.strategy_decide", (
             "materially different, falsifiable implementation approach",

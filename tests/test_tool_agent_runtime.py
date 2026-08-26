@@ -1,24 +1,26 @@
 from __future__ import annotations
 
 import json
+from io import BytesIO
 from types import SimpleNamespace
 
 import pytest
+from PIL import Image
 
 from gui_agent.adapters.browser.actions import BrowserAction
 from gui_agent.adapters.android.actions import AndroidAction
 from gui_agent.core.tool_agent.contracts import (
     DynamicActionSpec,
     MaterializedFrame,
+    RuntimeInputBinding,
     WorkerOutcome,
     WorkerSpec,
-    WorkerState,
+    WorkerStateSnapshot,
     WorkerStrategy,
 )
 from gui_agent.core.tool_agent.action_guard import (
     action_boundary_error,
 )
-from gui_agent.core.tool_agent.action_receipt import is_confirmed_selection_commit
 from gui_agent.core.tool_agent.data_store import RuntimeDataStore
 from gui_agent.core.tool_agent.protocol import (
     MAX_ORDERED_ACTIONS,
@@ -32,17 +34,19 @@ from gui_agent.core.tool_agent.runtime import (
     _constrain_boundary_scroll_actions,
     _is_transient_model_error,
     _scroll_boundary_feedback,
+    _state_target_binding_error,
     _update_traversal_boundaries,
     _target_verification_result,
 )
 from gui_agent.core.tool_agent.strategy import ReflectionResult, Reflector
 from gui_agent.core.schemas import TargetGrounding, TargetVerify
-from gui_agent.core.tool_agent.worker_memory import (
-    WorkerJournal,
-    build_worker_memory_view,
-    project_worker_context,
-)
+from gui_agent.core.tool_agent.worker_memory import WorkerJournal
 from gui_agent.adapters.browser.control_grounding import ground_action_to_nearest_control
+
+
+_TEST_IMAGE = BytesIO()
+Image.new("RGB", (4, 4), "white").save(_TEST_IMAGE, format="PNG")
+_TEST_PNG = _TEST_IMAGE.getvalue()
 
 
 def _state() -> str:
@@ -120,6 +124,50 @@ def test_traversal_episode_remembers_boundary_until_non_scroll_action() -> None:
     )
     _update_traversal_boundaries(boundaries, journal.latest_action_receipt)
     assert boundaries == set()
+
+
+def test_state_target_binding_requires_current_unobscured_frontier_ref() -> None:
+    state = WorkerStateSnapshot.model_validate({
+        "status": "collecting",
+        "summary": "One target remains unresolved.",
+        "targets": {
+            "done_target": {
+                "identity": "A completed target",
+                "visibility": "full",
+                "owned_region_visibility": "unobscured",
+                "properties": {
+                    "requested_state": {
+                        "value": True,
+                        "goal_relation": "resolved",
+                        "authority": "explicit_visual",
+                        "frame_id": "frame:1",
+                        "evidence": "frame:1",
+                    },
+                },
+            },
+            "edge_target": {
+                "identity": "A clipped unresolved target",
+                "visibility": "partial",
+                "owned_region_visibility": "edge_fragment",
+            },
+            "ready_target": {
+                "identity": "An actionable unresolved target",
+                "visibility": "partial",
+                "owned_region_visibility": "unobscured",
+            },
+        },
+    })
+
+    assert "must copy" in _state_target_binding_error(state, "tap", "")
+    assert not _state_target_binding_error(state, "tap", None)
+    assert "already resolved" in _state_target_binding_error(
+        state, "tap", "done_target",
+    )
+    assert "edge fragment" in _state_target_binding_error(
+        state, "tap", "edge_target",
+    )
+    assert not _state_target_binding_error(state, "tap", "ready_target")
+    assert not _state_target_binding_error(state, "scroll", None)
 
 
 def _record_executed(
@@ -454,13 +502,13 @@ def test_android_runtime_discovers_installed_apps_for_worker_prompt() -> None:
         )],
     )
 
-    prompt = runtime._worker_system_prompt()
+    prompt = runtime._actor_system_prompt()
 
     assert '"Calendar"' in prompt
     assert '"Settings"' in prompt
 
 
-def test_worker_prompt_defines_safe_batching_once() -> None:
+def test_actor_prompt_defines_safe_batching_once() -> None:
     runtime = object.__new__(ToolAgentRuntime)
     runtime.allow_multi_action = True
     runtime._platform_capabilities = frozenset({"tap"})
@@ -468,10 +516,10 @@ def test_worker_prompt_defines_safe_batching_once() -> None:
     runtime._master_knowledge = ""
     runtime._worker_access_context = ""
 
-    prompt = runtime._worker_system_prompt()
+    prompt = runtime._actor_system_prompt()
 
-    assert "all intended targets are already visible" in prompt
-    assert "fresh screenshot" in prompt
+    assert "targets are already visible" in prompt
+    assert "newly revealed by earlier actions" in prompt
     assert "batch `type` then `press_enter`" in prompt
     assert "## Ordered multi-action mode" not in prompt
 
@@ -543,19 +591,12 @@ def test_private_access_context_reaches_worker_but_is_redacted_from_trace() -> N
         )],
     )
 
-    prompt = runtime._worker_system_prompt()
+    prompt = runtime._actor_system_prompt()
 
     assert "Session access context" in prompt
     assert "runtime-user-73" in prompt
     assert "runtime-secret-73" in prompt
-    assert "Application knowledge" not in prompt
-    projection = project_worker_context(
-        memory=build_worker_memory_view(WorkerJournal(worker_id="access")),
-        frame=MaterializedFrame(frame_id="frame:1", screenshot_path="frame.png"),
-        application_knowledge=runtime._master_knowledge,
-    )
-    assert "profile menu" in projection.text
-    assert "session-scoped execution facts" in projection.text
+    assert "Application knowledge" in prompt
 
     runtime._trace(
         "worker_decision",
@@ -587,10 +628,10 @@ def test_worker_attempt_contract_is_dynamic_and_approach_first() -> None:
         approach="Search the visible record grid for record-17.",
     )
 
-    system_prompt = runtime._worker_system_prompt()
+    system_prompt = runtime._actor_system_prompt()
     first_contract = worker_attempt_contract(first)
 
-    assert "Application knowledge" not in system_prompt
+    assert "Application knowledge" in system_prompt
     assert "Session access context" in system_prompt
     assert "Current Worker attempt" not in system_prompt
     assert first_contract.index('"approach"') < first_contract.index('"goal"')
@@ -600,13 +641,6 @@ def test_worker_attempt_contract_is_dynamic_and_approach_first() -> None:
     assert '"goal": "Find the requested record"' in first_contract
     assert "Search the visible record grid using the requested literal." not in first_contract
     assert '"exposed_args"' not in first_contract
-    projection = project_worker_context(
-        memory=build_worker_memory_view(WorkerJournal(worker_id="attempt")),
-        frame=MaterializedFrame(frame_id="frame:1", screenshot_path="frame.png"),
-        application_knowledge=runtime._master_knowledge,
-        attempt_contract=first_contract,
-    )
-    assert "settings page is reached from the profile menu" in projection.text
 
 
 def test_runtime_materializes_result_ref_into_fixed_action_argument() -> None:
@@ -659,7 +693,7 @@ def test_runtime_materializes_result_ref_into_fixed_action_argument() -> None:
     assert "enter_computed_description" in {
         tool["function"]["name"] for tool in tools
     }
-    system_prompt = runtime._worker_system_prompt()
+    system_prompt = runtime._actor_system_prompt()
     attempt_contract = worker_attempt_contract(spec)
     assert "3 customer(s) love it!" not in system_prompt
     assert '"input": "computed"' in attempt_contract
@@ -1019,13 +1053,14 @@ class _Visualizer:
         self.clear_calls += 1
 
 
-class _EmptyContentWorker:
+class _SplitWorkerFixture:
     def __init__(self) -> None:
         self.mode = ""
+        self.state_calls = 0
 
     def bind_tools(self, tools, **kwargs):
         del tools, kwargs
-        self.mode = "action"
+        self.mode = "actor"
         return self
 
     def bind(self, **kwargs):
@@ -1034,36 +1069,46 @@ class _EmptyContentWorker:
         return self
 
     def invoke(self, messages):
-        del messages
-        if self.mode == "action":
-            return SimpleNamespace(
-                content="",
-                tool_calls=[{
-                    "id": "tap-1",
-                    "name": "activate_visible_control",
-                    "args": {
-                        "state": json.loads(_state()),
-                        "x": 400, "y": 300, "description": "Advance",
-                    },
-                }],
+        if self.mode == "state":
+            self.state_calls += 1
+            state_input = json.loads(messages[-1].content[0]["text"])
+            delta = (
+                {"source": ["test_surface", "The requested test surface is visible."]}
+                if state_input["mode"] == "init" else {}
             )
-        return SimpleNamespace(content=_state(), tool_calls=[])
+            return SimpleNamespace(content=json.dumps({
+                "mode": state_input["mode"],
+                "frame_id": state_input["frame_id"],
+                "delta": delta,
+            }), tool_calls=[])
+        return self.actor_response(messages)
+
+    def actor_response(self, messages):
+        raise NotImplementedError
+
+
+class _EmptyContentWorker(_SplitWorkerFixture):
+    def actor_response(self, messages):
+        del messages
+        return SimpleNamespace(
+            content="",
+            tool_calls=[{
+                "id": "tap-1",
+                "name": "activate_visible_control",
+                "args": {"x": 400, "y": 300, "description": "Advance"},
+            }],
+        )
 
 
 class _MissingStateWorker(_EmptyContentWorker):
     def invoke(self, messages):
-        response = super().invoke(messages)
-        for call in response.tool_calls:
-            call["args"].pop("state", None)
-        return response
+        if self.mode == "state":
+            return SimpleNamespace(content=_state(), tool_calls=[])
+        return super().invoke(messages)
 
 
-class _ArrayCoordinateWorker:
-    def bind_tools(self, tools, **kwargs):
-        del tools, kwargs
-        return self
-
-    def invoke(self, messages):
+class _ArrayCoordinateWorker(_SplitWorkerFixture):
+    def actor_response(self, messages):
         del messages
         return SimpleNamespace(
             content="",
@@ -1071,10 +1116,6 @@ class _ArrayCoordinateWorker:
                 "id": "type-1",
                 "name": "enter_value",
                 "args": {
-                    "state": {
-                        "status": "exploring",
-                        "summary": "The date input is visible.",
-                    },
                     "x": [200, 380],
                     "y": [200, 380],
                     "text": "01/01/2023",
@@ -1084,22 +1125,15 @@ class _ArrayCoordinateWorker:
         )
 
 
-class _RepeatedThenGroundedWorker:
+class _RepeatedThenGroundedWorker(_SplitWorkerFixture):
     def __init__(self) -> None:
+        super().__init__()
         self.calls = 0
 
-    def bind_tools(self, tools, **kwargs):
-        del tools, kwargs
-        return self
-
-    def invoke(self, messages):
+    def actor_response(self, messages):
         del messages
         self.calls += 1
         args = {
-            "state": {
-                "status": "exploring",
-                "summary": "The Purchase Date to field is empty.",
-            },
             "x": 207,
             "y": 550,
             "text": "05/31/2023",
@@ -1118,15 +1152,12 @@ class _RepeatedThenGroundedWorker:
         )
 
 
-class _RepeatedEffectiveScrollWorker:
+class _RepeatedEffectiveScrollWorker(_SplitWorkerFixture):
     def __init__(self) -> None:
+        super().__init__()
         self.calls = 0
 
-    def bind_tools(self, tools, **kwargs):
-        del tools, kwargs
-        return self
-
-    def invoke(self, messages):
+    def actor_response(self, messages):
         del messages
         self.calls += 1
         return SimpleNamespace(
@@ -1134,13 +1165,7 @@ class _RepeatedEffectiveScrollWorker:
             tool_calls=[{
                 "id": f"scroll-{self.calls}",
                 "name": "reveal_more",
-                "args": {
-                    "state": {
-                        "status": "collecting",
-                        "summary": "More visual content remains below.",
-                    },
-                    "amount": "medium",
-                },
+                "args": {"amount": "medium"},
             }],
         )
 
@@ -1169,12 +1194,13 @@ def _code_spec() -> DynamicActionSpec:
     )
 
 
-class _MultiActionWorker:
+class _MultiActionWorker(_SplitWorkerFixture):
     def __init__(
         self,
         action_batches: list[list[dict]] | None = None,
         state_status: str = "exploring",
     ) -> None:
+        super().__init__()
         self.calls = 0
         self.bound_names: set[str] = set()
         self.bound_schemas: list[str] = []
@@ -1182,15 +1208,41 @@ class _MultiActionWorker:
         self.state_status = state_status
         self.messages = []
         self.state_summary = "The complete login form is visible."
-        self.memory_updates = []
+        self.state_target_identity = ""
+        self.actor_state = None
 
     def bind_tools(self, tools, **kwargs):
         assert kwargs.get("parallel_tool_calls") is False
+        self.mode = "actor"
         self.bound_names = {tool["function"]["name"] for tool in tools}
         self.bound_schemas.append(json.dumps(tools))
         return self
 
     def invoke(self, messages):
+        if self.mode == "state":
+            state_input = json.loads(messages[-1].content[0]["text"])
+            if state_input["mode"] == "init":
+                delta = {
+                    "source": ["test_surface", "The requested test surface is visible."],
+                }
+                if self.state_target_identity:
+                    delta["targets"] = [[
+                        "test_target", self.state_target_identity,
+                        "full", "unobscured", self.state_target_identity,
+                    ]]
+            else:
+                delta = {}
+            if self.state_status in {"completed", "failed"}:
+                delta["conditions"] = [[
+                    "criterion_1",
+                    "satisfied" if self.state_status == "completed" else "blocked",
+                    self.state_summary,
+                ]]
+            self.state_calls += 1
+            return SimpleNamespace(content=json.dumps({
+                "mode": state_input["mode"], "frame_id": state_input["frame_id"],
+                "delta": delta,
+            }), tool_calls=[])
         self.messages = messages
         self.calls += 1
         actions = (
@@ -1198,77 +1250,154 @@ class _MultiActionWorker:
             if self.action_batches is not None
             else _LOGIN_ACTIONS
         )
+        args = {"actions": actions}
+        if self.actor_state is not None:
+            args["state"] = self.actor_state
         return SimpleNamespace(content="", tool_calls=[{
             "id": f"decision-{self.calls}",
             "name": "continue_with_actions",
-            "args": {
-                "state": {
-                    "status": self.state_status,
-                    "summary": self.state_summary,
-                    "memory_updates": self.memory_updates,
-                },
-                "actions": actions,
-            },
+            "args": args,
         }])
 
 
-class _RepairingMemoryWorker(_MultiActionWorker):
+class _SplitRoleWorker:
+    def __init__(self) -> None:
+        self.mode = ""
+        self.state_calls = 0
+        self.actor_calls = 0
+        self.state_messages = []
+        self.actor_messages = []
+        self.actor_tools = []
+
+    def bind(self, **kwargs):
+        del kwargs
+        self.mode = "state"
+        return self
+
+    def bind_tools(self, tools, **kwargs):
+        assert kwargs.get("parallel_tool_calls") is False
+        self.mode = "actor"
+        self.actor_tools = tools
+        return self
+
     def invoke(self, messages):
-        if self.calls < 2:
-            self.memory_updates = [
-                {
-                    "fact_type": "evidence",
-                    "key": "pre_action_evidence",
-                    "status": "active",
-                    "lifetime": "attempt",
-                    "statement": "The target is visible before the action.",
-                    "depends_on": [],
+        if self.mode == "state":
+            self.state_calls += 1
+            self.state_messages = messages
+            return SimpleNamespace(content=json.dumps({
+                "mode": "init",
+                "frame_id": "frame:1",
+                "delta": {
+                    "source": [
+                        "login_form", "The requested login form is visible.",
+                    ],
+                    "surface": ["login_form", "The current surface is the login form."],
+                    "targets": [[
+                        "login_submit", "The visible enabled submit control",
+                        "full", "unobscured", "The submit control is fully visible.",
+                    ]],
                 },
-                {
-                    "fact_type": "claim",
-                    "key": "pre_action_requirement",
-                    "status": "active",
-                    "lifetime": "attempt",
-                    "statement": "This action is still required.",
-                    "depends_on": ["evidence:pre_action_evidence"],
+            }), tool_calls=[])
+        self.actor_calls += 1
+        self.actor_messages = messages
+        return SimpleNamespace(content="", tool_calls=[{
+            "id": "actor-decision",
+            "name": "continue_with_actions",
+            "args": {"actions": [{
+                "name": "submit_login",
+                "args": {
+                    "state_target_ref": "login_submit",
+                    "x": 500,
+                    "y": 500,
+                    "description": "Submit the visible login form",
                 },
-                {
-                    "fact_type": "commitment",
-                    "key": "missing_commitment",
-                    "status": "retracted",
-                    "lifetime": "attempt",
-                    "statement": "Discard an unknown commitment.",
-                    "depends_on": [],
-                },
-            ]
-        else:
-            self.memory_updates = [
-                {
-                    "fact_type": "evidence",
-                    "key": "visible_form",
-                    "status": "active",
-                    "lifetime": "attempt",
-                    "statement": "The form and submit control are visible.",
-                    "depends_on": [],
-                },
-                {
-                    "fact_type": "claim",
-                    "key": "visible_form_ready",
-                    "status": "active",
-                    "lifetime": "attempt",
-                    "statement": "The visible form is ready for submission.",
-                    "depends_on": ["evidence:visible_form"],
-                },
-                {
-                    "fact_type": "commitment",
-                    "key": "submit_visible_form",
-                    "status": "active",
-                    "lifetime": "attempt",
-                    "statement": "Submit the visible form once.",
-                    "depends_on": ["claim:visible_form_ready"],
-                },
-            ]
-        return super().invoke(messages)
+            }]},
+        }])
+
+
+class _SplitEachWorker:
+    def __init__(self) -> None:
+        self.mode = ""
+        self.state_calls = 0
+        self.actor_calls = 0
+        self.state_modes = []
+
+    def bind(self, **kwargs):
+        del kwargs
+        self.mode = "state"
+        return self
+
+    def bind_tools(self, tools, **kwargs):
+        del tools
+        assert kwargs.get("parallel_tool_calls") is False
+        self.mode = "actor"
+        return self
+
+    def invoke(self, messages):
+        if self.mode == "state":
+            self.state_calls += 1
+            init = self.state_calls in {1, 3}
+            self.state_modes.append("init" if init else "append")
+            state_input = json.loads(messages[-1].content[0]["text"])
+            delta = (
+                {"source": [
+                    "current_element", "The current element is visible.",
+                ]}
+                if init else
+                {"conditions": [[
+                    "criterion_1", "satisfied",
+                    "The current element is visibly processed.",
+                ]]}
+            )
+            return SimpleNamespace(content=json.dumps({
+                "mode": "init" if init else "append",
+                "frame_id": state_input["frame_id"],
+                "delta": delta,
+            }), tool_calls=[])
+        self.actor_calls += 1
+        if self.actor_calls in {1, 3}:
+            return SimpleNamespace(content="", tool_calls=[{
+                "id": f"action-{self.actor_calls}",
+                "name": "continue_with_actions",
+                "args": {"actions": [{
+                    "name": "apply_value",
+                    "args": {
+                        "x": 500,
+                        "y": 500,
+                        "description": "Apply the current bound value",
+                    },
+                }]},
+            }])
+        return SimpleNamespace(content="", tool_calls=[{
+            "id": f"complete-{self.actor_calls}",
+            "name": "complete",
+            "args": {"evidence": ["The current element is processed."]},
+        }])
+
+
+class _SplitRepairWorker(_SplitRoleWorker):
+    def invoke(self, messages):
+        if self.mode == "state":
+            return super().invoke(messages)
+        self.actor_calls += 1
+        self.actor_messages = messages
+        if self.actor_calls == 1:
+            return SimpleNamespace(content="", tool_calls=[{
+                "id": "invalid-launch",
+                "name": "continue_with_actions",
+                "args": {"actions": [{
+                    "name": "open_settings",
+                    "args": {"app": "Settings"},
+                }]},
+            }])
+        return SimpleNamespace(content="", tool_calls=[{
+            "id": "valid-launch",
+            "name": "continue_with_actions",
+            "args": {"actions": [{
+                "name": "open_settings",
+                "args": {"app": "com.android.settings/.HWSettings"},
+            }]},
+        }])
 
 
 def _run_fused_worker(
@@ -1285,13 +1414,21 @@ def _run_fused_worker(
     bundle=None,
     executor=None,
     max_steps: int = 1,
+    spec: WorkerSpec | None = None,
+    data_store=None,
 ) -> ToolAgentRuntime:
     runtime = object.__new__(ToolAgentRuntime)
     runtime.trace = []
     runtime.statuses = []
     runtime._status_cb = runtime.statuses.append
+    runtime._each_cursors = {}
+    runtime._worker_state_snapshots = {}
+    runtime._worker_state_frames = {}
+    runtime._worker_last_frames = {}
     runtime.worker = worker or _MultiActionWorker()
     runtime._executor = executor or _Executor()
+    if data_store is not None:
+        runtime.data_store = data_store
     if bundle is not None:
         runtime.bundle = bundle
     runtime._installed_app_names = installed_apps
@@ -1304,24 +1441,27 @@ def _run_fused_worker(
     if journal is not None:
         runtime._worker_journals = {"fused-worker": journal}
     runtime.observe_calls = 0
+    observation_image = BytesIO()
+    Image.new("RGB", (4, 4), "white").save(observation_image, format="PNG")
+    observation_png = observation_image.getvalue()
 
     def observe(_spec):
         runtime.observe_calls += 1
         return MaterializedFrame(
-            frame_id="frame:1",
+            frame_id=f"frame:{runtime.observe_calls}",
             screenshot_path="frame.png",
             url="https://example.test/login",
             controls=controls or [],
             visible_collection_regions=visible_collection_regions or [],
             requirement_scopes=requirement_scopes or {},
-        ), b"initial-png"
+        ), observation_png
 
     runtime._observe = observe
     monkeypatch.setattr(
         "gui_agent.core.tool_agent.runtime.settle_after_action",
         lambda platform, png, **_kwargs: (0.0, False),
     )
-    spec = _worker_spec(
+    worker_spec = spec or _worker_spec(
         goal="Complete the visible local interaction",
         success_criteria=["The requested interface state is reached"],
         actions=actions or [
@@ -1345,34 +1485,218 @@ def _run_fused_worker(
         ],
         max_steps=max_steps,
     )
-    _install_test_worker_contract(runtime, spec)
-    runtime.outcome = runtime._run_worker("fused-worker", spec)
+    _install_test_worker_contract(runtime, worker_spec)
+    runtime.outcome = runtime._run_worker("fused-worker", worker_spec)
     return runtime
 
 
-class _PrematureCompleteWorker(_MultiActionWorker):
+def test_runtime_runs_state_before_action_only_actor(monkeypatch) -> None:
+    worker = _SplitRoleWorker()
+    runtime = _run_fused_worker(
+        monkeypatch,
+        current_url="https://example.test/login",
+        worker=worker,
+        actions=[DynamicActionSpec(
+            name="submit_login",
+            capability="tap",
+            description="Submit the visible login form",
+            exposed_args=["x", "y", "description"],
+        )],
+        installed_apps=("Calendar",),
+    )
+
+    assert (worker.state_calls, worker.actor_calls) == (1, 1)
+    assert [event["event"] for event in runtime.trace if event["event"] in {
+        "worker_state", "worker_decision",
+    }] == ["worker_state", "worker_decision"]
+    assert len(runtime._executor.actions) == 1
+    for tool in worker.actor_tools:
+        parameters = tool["function"]["parameters"]
+        assert "state" not in parameters.get("properties", {})
+        assert "state" not in parameters.get("required", [])
+    actor_text = str(worker.actor_messages[-1].content)
+    state_text = str(worker.state_messages[-1].content)
+    assert "Authoritative materialized State view" in actor_text
+    assert "Historical Progress" not in actor_text
+    assert '"mode": "init"' in state_text
+    assert '"delta"' in state_text
+    assert '"properties"' in state_text
+    assert "Installed applications" not in str(worker.state_messages[0].content)
+    assert "Installed applications" in str(worker.actor_messages[0].content)
+
+
+def test_same_frame_action_repair_reuses_state_snapshot(monkeypatch) -> None:
+    exact_app = "com.android.settings/.HWSettings"
+    worker = _SplitRepairWorker()
+    runtime = _run_fused_worker(
+        monkeypatch,
+        current_url="",
+        worker=worker,
+        actions=[DynamicActionSpec(
+            name="open_settings",
+            capability="launch_app",
+            description="Open system settings",
+            exposed_args=["app"],
+        )],
+        installed_apps=(exact_app,),
+        bundle=SimpleNamespace(
+            make_action=lambda payload: AndroidAction.model_validate(payload),
+        ),
+    )
+
+    assert runtime.outcome.phase == "failed"
+    assert (worker.state_calls, worker.actor_calls, runtime.observe_calls) == (1, 2, 1)
+    assert any(
+        event["event"] == "worker_state_reused" for event in runtime.trace
+    )
+
+
+def test_append_state_context_uses_compact_previous_and_current_frame_pair() -> None:
+    runtime = object.__new__(ToolAgentRuntime)
+    runtime._worker_explicit_cache = False
+    runtime.worker_cfg = SimpleNamespace(image_scale=1.0)
+    runtime._state_system_prompt = lambda: "state policy"
+    runtime._current_each_element = lambda _spec, _worker_id: None
+    previous = WorkerStateSnapshot.model_validate({
+        "status": "executing",
+        "summary": "One tracked target remains unresolved.",
+        "frame_id": "frame:1",
+        "source_ref": "target_collection",
+        "surface": "collection",
+        "targets": {
+            "stable_target": {
+                "identity": "One stable visible target",
+                "source_ref": "target_collection",
+                "visibility": "full",
+                "owned_region_visibility": "unobscured",
+                "properties": {
+                    "requested_state": {
+                        "value": False,
+                        "goal_relation": "unresolved",
+                        "authority": "explicit_visual",
+                        "frame_id": "frame:1",
+                        "evidence": "The target-owned control is inactive.",
+                    },
+                },
+            },
+        },
+        "goal_conditions": {
+            "criterion_1": {
+                "statement": "The target has the requested state.",
+                "status": "unresolved",
+            },
+        },
+    })
+    previous_image = BytesIO()
+    current_image = BytesIO()
+    Image.new("RGB", (400, 200), "red").save(previous_image, format="PNG")
+    Image.new("RGB", (400, 200), "blue").save(current_image, format="PNG")
+    runtime._worker_state_snapshots = {"worker": previous}
+    runtime._worker_state_frames = {
+        "worker": ("frame:1", previous_image.getvalue()),
+    }
+    journal = WorkerJournal(worker_id="worker")
+    spec = _worker_spec(
+        goal="Set the target to the requested state.",
+        success_criteria=["The target has the requested state."],
+        actions=[],
+    )
+
+    messages, reports = runtime._state_messages(
+        spec=spec,
+        journal=journal,
+        frame=MaterializedFrame(frame_id="frame:2", screenshot_path="frame.png"),
+        png=current_image.getvalue(),
+        same_frame_feedback=None,
+    )
+
+    content = messages[1].content
+    assert [part["type"] for part in content] == [
+        "text", "text", "image_url", "text", "image_url",
+    ]
+    payload = json.loads(content[0]["text"])
+    assert payload["mode"] == "append"
+    assert payload["visual_transition"] == {
+        "previous_frame_id": "frame:1",
+        "current_frame_id": "frame:2",
+        "previous_frame_available": True,
+    }
+    assert payload["previous_state"]["targets"]["stable_target"] == {
+        "identity": "One stable visible target",
+        "relation": "unresolved",
+        "properties": {
+            "requested_state": {"value": False, "relation": "unresolved"},
+        },
+    }
+    assert "profile" not in payload["goal_contract"]
+    assert "execution_scope" not in payload
+    assert "latest_runtime_receipt" not in payload
+    assert "same_frame_runtime_feedback" not in payload
+    assert reports[0]["strategy"] == "typed_state_frame_delta"
+    assert reports[0]["previous_frame"] is True
+    assert reports[0]["previous_frame_scale"] == 0.75
+
+
+def test_split_state_reinitializes_after_each_element_advances(monkeypatch) -> None:
+    worker = _SplitEachWorker()
+    action = DynamicActionSpec(
+        name="apply_value",
+        capability="type",
+        description="Apply the current bound value",
+        input_args={
+            "text": RuntimeInputBinding(input="plan", path=["value"]),
+        },
+        exposed_args=["x", "y", "description"],
+    )
+    spec = _worker_spec(
+        goal="Process each planned value.",
+        success_criteria=["The current planned value is visibly processed."],
+        input_refs={"plan": "result:1"},
+        actions=[action],
+        max_steps=4,
+    )
+
+    runtime = _run_fused_worker(
+        monkeypatch,
+        current_url="https://example.test/form",
+        worker=worker,
+        spec=spec,
+        data_store=SimpleNamespace(
+            result_value=lambda _ref: [{"value": "first"}, {"value": "second"}],
+        ),
+    )
+
+    assert runtime.outcome.phase == "completed"
+    assert worker.state_modes == ["init", "append", "init", "append"]
+    assert (worker.state_calls, worker.actor_calls) == (4, 4)
+    assert len(runtime._executor.actions) == 2
+    assert runtime._each_cursors[("fused-worker", "plan")] == 2
+
+
+class _PrematureCompleteWorker(_SplitWorkerFixture):
     def __init__(self) -> None:
         super().__init__()
-        self.all_messages = []
+        self.calls = 0
 
     def invoke(self, messages):
+        if self.mode == "state":
+            self.state_calls += 1
+            state_input = json.loads(messages[-1].content[0]["text"])
+            return SimpleNamespace(content=json.dumps({
+                "mode": state_input["mode"],
+                "frame_id": state_input["frame_id"],
+                "delta": {
+                    "source": ["test_form", "The requested form is visible."],
+                    "conditions": [[
+                        "criterion_1", "satisfied",
+                        "The visible Apply control was activated.",
+                    ]],
+                },
+            }), tool_calls=[])
         self.calls += 1
-        self.all_messages.append(messages)
-        terminal = self.calls != 2
-        args = {"state": {
-            "status": "completed" if terminal else "exploring",
-            "summary": "The visible Apply control was activated.",
-            "memory_updates": [],
-        }}
-        if not terminal:
-            args["actions"] = [{"name": "submit_login", "args": {
-                "x": 500, "y": 500,
-                "description": "Activate the visible Apply control",
-            }}]
         return SimpleNamespace(content="", tool_calls=[{
-            "id": f"decision-{self.calls}",
-            "name": "complete" if terminal else "continue_with_actions",
-            "args": args,
+            "id": "complete-1", "name": "complete",
+            "args": {"evidence": ["The visible Apply control was activated."]},
         }])
 
 
@@ -1395,7 +1719,7 @@ class _CompletionAuditExecutor(_Executor):
         return result
 
 
-def test_operator_completion_rechecks_visible_commit_control_once(monkeypatch) -> None:
+def test_operator_completion_rejects_cited_visible_commit_control(monkeypatch) -> None:
     worker = _PrematureCompleteWorker()
     executor = _CompletionAuditExecutor()
 
@@ -1404,12 +1728,13 @@ def test_operator_completion_rechecks_visible_commit_control_once(monkeypatch) -
         current_url="https://example.test/login",
         worker=worker,
         executor=executor,
-        max_steps=2,
+        max_steps=1,
     )
 
     assert (runtime.outcome.phase, worker.calls, len(executor.actions)) == (
-        "completed", 3, 1,
+        "failed", 1, 0,
     )
+    assert runtime.outcome.failure_kind == "protocol_invalid"
     rechecks = [
         event for event in runtime.trace
         if event["event"] == "worker_completion_recheck"
@@ -1417,7 +1742,6 @@ def test_operator_completion_rechecks_visible_commit_control_once(monkeypatch) -
     assert [event["controls"] for event in rechecks] == [
         [{"label": "Apply", "kind": "button"}],
     ]
-    assert "completion_requires_recheck" in str(worker.all_messages[1][-1].content)
 
 
 def test_completion_audit_ignores_uncited_commit_control() -> None:
@@ -1426,7 +1750,9 @@ def test_completion_audit_ignores_uncited_commit_control() -> None:
 
     assert runtime._visible_commit_controls(
         MaterializedFrame(frame_id="frame:1", screenshot_path="frame.png"),
-        WorkerState(status="completed", summary="The requested state is visible."),
+        WorkerStateSnapshot(
+            status="completed", summary="The requested state is visible.",
+        ),
     ) == []
 
 
@@ -1561,8 +1887,11 @@ def test_worker_repairs_rejected_launch_app_without_reobserving(monkeypatch) -> 
     )
 
 
-def test_worker_protocol_rejects_action_claim_and_commitment_annotations(monkeypatch) -> None:
-    worker = _RepairingMemoryWorker(state_status="executing")
+def test_actor_protocol_rejects_state_annotations(monkeypatch) -> None:
+    worker = _MultiActionWorker()
+    worker.actor_state = {
+        "status": "executing", "summary": "Actor-authored state is invalid.",
+    }
 
     runtime = _run_fused_worker(
         monkeypatch,
@@ -1574,15 +1903,6 @@ def test_worker_protocol_rejects_action_claim_and_commitment_annotations(monkeyp
     assert runtime.observe_calls == 1
     assert worker.calls == 2
     assert len(runtime._executor.actions) == 0
-    rejected = [
-        event for event in runtime.trace
-        if event["event"] == "worker_memory_update_rejected"
-    ]
-    assert rejected == []
-    memory = build_worker_memory_view(
-        runtime._worker_journals["fused-worker"], current_frame_id="frame:1",
-    )
-    assert memory.active_commitments == ()
 
 
 def test_worker_repairs_home_then_launch_app_before_dispatch(monkeypatch) -> None:
@@ -1619,17 +1939,12 @@ def test_worker_repairs_home_then_launch_app_before_dispatch(monkeypatch) -> Non
 def test_explicit_auth_fact_allows_code_entry_across_frames(
     monkeypatch, code: str,
 ) -> None:
-    worker = _MultiActionWorker([[_code_action(code)]])
+    action = _code_action(code)
+    worker = _MultiActionWorker([[action]])
     journal = None
     if code == "757570":
-        worker.memory_updates = [{
-            "fact_type": "evidence",
-            "key": "verification_code",
-            "status": "active",
-            "lifetime": "attempt",
-            "statement": f"The visible verification code is {code}.",
-            "depends_on": [],
-        }]
+        worker.state_target_identity = f"The visible verification code is {code}."
+        action["args"]["state_target_ref"] = "test_target"
     else:
         journal = WorkerJournal(worker_id="fused-worker")
         journal.record_runtime_input(
@@ -1726,46 +2041,6 @@ def test_action_suffix_rebinds_after_layout_change() -> None:
     assert [call["args"]["y"] for call in remaining] == [350, 550]
 
 
-def _candidate_frame(
-    frame_id: str, *, selected: bool = False, value: str = "Search",
-) -> MaterializedFrame:
-    controls = [{
-        "kind": "text_input", "label": "Search", "is_filter": True, "value": value,
-    }]
-    if selected:
-        controls += [
-            {"kind": "checkbox", "selection_mode": "multiple", "selected": True,
-             "rect": {"x": 500, "y": 250, "w": 900, "h": 60}},
-            {"kind": "button", "form_action": "commit",
-             "rect": {"x": 500, "y": 900, "w": 800, "h": 60}},
-        ]
-    return MaterializedFrame(
-        frame_id=frame_id,
-        screenshot_path=f"{frame_id}.png",
-        controls=controls,
-    )
-
-
-def test_confirmed_candidate_commit_marks_matching_unfiltered_reopen_exhausted() -> None:
-    selected = _candidate_frame("selected", selected=True)
-    committed = is_confirmed_selection_commit({"x": 500, "y": 900}, selected)
-    journal = WorkerJournal(worker_id="select-all")
-    _record_executed(journal, "tap", frame_id="selected", candidate_commit=True)
-
-    def context(frame: MaterializedFrame) -> str:
-        return project_worker_context(
-            memory=build_worker_memory_view(journal), frame=frame,
-        ).text
-
-    assert committed is True
-    assert '"status": "exhausted"' in context(_candidate_frame("empty"))
-    assert '"status": "exhausted"' not in context(
-        _candidate_frame("filtered", value="query"))
-    initial = build_worker_memory_view(WorkerJournal(worker_id="select-all"))
-    assert '"status": "exhausted"' not in project_worker_context(
-        memory=initial, frame=_candidate_frame("initial-empty")).text
-
-
 def test_multi_action_runtime_accepts_five_and_rejects_six_calls() -> None:
     actions = [DynamicActionSpec(
         name="tap",
@@ -1782,7 +2057,7 @@ def test_multi_action_runtime_accepts_five_and_rejects_six_calls() -> None:
         ToolAgentRuntime._validate_multi_action_calls([*calls, calls[0]], actions)
 
 
-def test_worker_rejects_missing_tool_state_without_executing(monkeypatch) -> None:
+def test_worker_rejects_invalid_state_trace_without_executing(monkeypatch) -> None:
     runtime = object.__new__(ToolAgentRuntime)
     runtime.trace = []
     runtime.worker = _MissingStateWorker()
@@ -1814,7 +2089,8 @@ def test_worker_rejects_missing_tool_state_without_executing(monkeypatch) -> Non
     assert outcome.failure_kind == "protocol_invalid"
     assert runtime._executor.actions == []
     assert len([
-        event for event in runtime.trace if event["event"] == "worker_protocol_error"
+        event for event in runtime.trace
+        if event["event"] == "worker_state_protocol_error"
     ]) == 2
 
 
@@ -1868,19 +2144,12 @@ def test_replacement_reflection_inherits_only_runtime_task_memory() -> None:
         key="authorized_destination",
         statement="The authoritative destination is the requested collection",
     )
-    base.record_memory_updates(
+    base.record_action_result(
         step=1,
         frame_id="frame:1",
-        state=WorkerState.model_validate({
-            "status": "collecting",
-            "summary": "Attempt-local evidence",
-            "memory_updates": [{
-                "fact_type": "evidence", "key": "attempt_path",
-                "status": "active", "lifetime": "attempt",
-                "statement": "The current attempt path is unavailable",
-                "depends_on": [],
-            }],
-        }),
+        tool="scroll",
+        args={"direction": "down"},
+        result={"status": "executed", "action_type": "scroll", "no_effect": True},
     )
     retry = WorkerJournal(worker_id="worker_reflection_1")
 
@@ -1987,7 +2256,7 @@ def test_worker_allows_repeated_action_without_history_based_blocking(
                     "orders": {"status": "unmet", "applied_filters": {}},
                 },
             ),
-            b"png",
+            _TEST_PNG,
         )
 
     runtime._observe = observe
@@ -2046,7 +2315,7 @@ def test_worker_allows_effective_scrolls_until_bounded_step_limit(
                 frame_id=f"frame:{len(observe_calls)}",
                 screenshot_path="frame.png",
             ),
-            b"png",
+            _TEST_PNG,
         )
 
     runtime._observe = observe
@@ -2332,9 +2601,8 @@ def test_type_is_rejected_before_dispatch_when_target_is_off_target(monkeypatch)
         spec=spec,
         actions=[type_action, tap_action],
         calls=calls,
-        state=WorkerState(
-            status="exploring",
-            summary="The login form is visible.",
+        state=WorkerStateSnapshot(
+            status="exploring", summary="The login form is visible.",
         ),
         step=1,
         frame=MaterializedFrame(frame_id="frame:1", screenshot_path="frame.png"),
@@ -2349,6 +2617,97 @@ def test_type_is_rejected_before_dispatch_when_target_is_off_target(monkeypatch)
     assert payload["_memory_commit_safe"] is False
     assert "predispatch visual grounding" in payload["reason"]
     assert len(runtime._executor.actions) == 0
+
+
+def test_multi_action_validates_every_state_target_before_dispatch(monkeypatch) -> None:
+    runtime = object.__new__(ToolAgentRuntime)
+    runtime.bundle = SimpleNamespace(
+        make_action=lambda payload: BrowserAction.model_validate(payload)
+    )
+    runtime.perception_mode = "vision-only"
+    runtime._executor = _Executor()
+    runtime._visualizer = None
+    runtime.platform = SimpleNamespace(
+        screenshot=lambda: b"latest",
+        client=SimpleNamespace(page_info=lambda: ("", "")),
+    )
+    runtime.trace = []
+    runtime._target_ground_pool = None
+    runtime._target_verify_pool = None
+    monkeypatch.setattr(
+        "gui_agent.core.tool_agent.runtime.settle_after_action",
+        lambda platform, png, **_kwargs: (0.0, False),
+    )
+    first = DynamicActionSpec(
+        name="activate_open_target",
+        capability="tap",
+        description="Activate the unresolved visible target",
+    )
+    second = DynamicActionSpec(
+        name="activate_done_target",
+        capability="tap",
+        description="Activate the already resolved target",
+    )
+    spec = _worker_spec(
+        goal="Resolve all visible targets",
+        success_criteria=["Every target has the requested state"],
+        actions=[first, second],
+    )
+    state = WorkerStateSnapshot.model_validate({
+        "status": "executing",
+        "summary": "One target is unresolved and one is resolved.",
+        "targets": {
+            "open_target": {
+                "identity": "Open target",
+                "visibility": "full",
+                "owned_region_visibility": "unobscured",
+            },
+            "done_target": {
+                "identity": "Done target",
+                "visibility": "full",
+                "owned_region_visibility": "unobscured",
+                "properties": {
+                    "requested_state": {
+                        "value": True,
+                        "goal_relation": "resolved",
+                        "authority": "explicit_visual",
+                        "frame_id": "frame:1",
+                        "evidence": "The target is resolved.",
+                    },
+                },
+            },
+        },
+    })
+    calls = [
+        {
+            "name": first.name,
+            "args": {"x": 300, "y": 500, "description": first.description},
+            "_state_target_ref": "open_target",
+        },
+        {
+            "name": second.name,
+            "args": {"x": 700, "y": 500, "description": second.description},
+            "_state_target_ref": "done_target",
+        },
+    ]
+
+    payload, terminal = runtime._execute_multi_action_calls(
+        worker_id="targets",
+        spec=spec,
+        actions=[first, second],
+        calls=calls,
+        state=state,
+        step=1,
+        frame=MaterializedFrame(frame_id="frame:1", screenshot_path="frame.png"),
+        png=b"png",
+        journal=WorkerJournal(worker_id="targets"),
+    )
+
+    assert terminal is None
+    assert payload["status"] == "aborted"
+    assert payload["executed_actions"] == 1
+    assert "already resolved" in payload["reason"]
+    assert len(runtime._executor.actions) == 1
 
 
 def test_runtime_recovers_missing_exposed_action_description(monkeypatch) -> None:
@@ -2596,12 +2955,13 @@ def test_runtime_ask_user_records_authoritative_task_evidence() -> None:
     )
     journal.record_runtime_result(step=1, result=payload)
 
-    view = build_worker_memory_view(journal, current_frame_id="frame:2")
+    facts = journal.active_fact_statements(frame_id="frame:2")
+    task_events = [event for event in journal.events if event.lifetime == "task"]
     assert terminal is None
     assert payload["action_type"] == "ask_user"
     assert questions == ["Which destination folder should I use?"]
-    assert [event.lifetime for event in view.accumulated_evidence] == ["task"]
-    assert "Documents/expense/invoice" in view.accumulated_evidence[0].statement
+    assert len(task_events) == 1
+    assert "Documents/expense/invoice" in facts[0]
 
 
 def _browser_execution_runtime(
@@ -3540,25 +3900,37 @@ def test_each_binding_complete_advances_cursor_and_exhausts() -> None:
     assert result.get("each_advanced") is None
 
 
-class _QueueWorker:
+class _QueueWorker(_SplitWorkerFixture):
     """Worker policy that replays a fixed decision list."""
 
     def __init__(self, decisions: list[dict]) -> None:
+        super().__init__()
         self.decisions = list(decisions)
         self.calls = 0
 
-    def bind_tools(self, tools, **kwargs):
-        del tools, kwargs
-        return self
-
     def invoke(self, messages):
-        del messages
+        if self.mode == "state":
+            self.state_calls += 1
+            state_input = json.loads(messages[-1].content[0]["text"])
+            delta = {
+                "source": ["test_surface", "The requested test surface is visible."],
+            } if state_input["mode"] == "init" else {}
+            if self.decisions[0]["name"] == "complete":
+                delta["conditions"] = [[
+                    "criterion_1", "satisfied", "The current element is complete.",
+                ]]
+            return SimpleNamespace(content=json.dumps({
+                "mode": state_input["mode"], "frame_id": state_input["frame_id"],
+                "delta": delta,
+            }), tool_calls=[])
         decision = self.decisions.pop(0)
         self.calls += 1
+        args = dict(decision["args"])
+        args.pop("state", None)
         return SimpleNamespace(content="", tool_calls=[{
             "id": f"call-{self.calls}",
             "name": decision["name"],
-            "args": decision["args"],
+            "args": args,
         }])
 
 
@@ -3578,7 +3950,16 @@ def test_each_element_allows_same_structural_action() -> None:
     runtime._worker_journals = {}
     runtime._worker_last_frames = {}
     runtime._each_cursors = {}
-    runtime._observe = lambda _spec: (rename_frame, b"png")
+    observed_frames = 0
+
+    def observe_rename(_spec):
+        nonlocal observed_frames
+        observed_frames += 1
+        return rename_frame.model_copy(update={
+            "frame_id": f"frame:{observed_frames}",
+        }), _TEST_PNG
+
+    runtime._observe = observe_rename
     runtime.data_store = SimpleNamespace(
         result_value=lambda ref: [
             {"old_name": "a.txt", "new_name": "bid_1.txt"},

@@ -11,11 +11,6 @@ from gui_agent.core.tool_agent.contracts import (
 )
 from gui_agent.core.tool_agent.data_store import RuntimeDataStore
 from gui_agent.core.tool_agent.runtime import ToolAgentRuntime
-from gui_agent.core.tool_agent.worker_memory import (
-    WorkerJournal,
-    build_worker_memory_view,
-    project_worker_context,
-)
 
 
 _FIXTURE = (
@@ -67,10 +62,6 @@ def test_task193_turn3_does_not_gain_an_undeclared_recovery_action() -> None:
 
     tools = runtime._worker_tools_for_frame(spec, active_actions, frame)
     tool_names = {tool["function"]["name"] for tool in tools}
-    projection = project_worker_context(
-        memory=build_worker_memory_view(WorkerJournal(worker_id="collector")),
-        frame=frame,
-    )
 
     # ReAct collection: complete is always offered to a collector on a ready frame.
     # The old mechanical gate withheld it here (the recorded run shows
@@ -78,7 +69,10 @@ def test_task193_turn3_does_not_gain_an_undeclared_recovery_action() -> None:
     # accumulated rows is rejected by the runtime with guidance.
     assert tool_names == {"select_option", "report_blocked", "complete"}
     assert any(control.get("label") == "Clear all" for control in frame.controls)
-    assert '"extra_applied_filters": ["Purchase Date"]' in projection.text
+    assert frame.requirement_scopes["completed_orders"]["applied_filters"] == {
+        "Purchase Date": "1/01/2023 - 5/31/2023",
+        "Status": "Complete",
+    }
     assert frame.collections == []
 
     runtime.data_store = RuntimeDataStore()

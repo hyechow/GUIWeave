@@ -80,6 +80,7 @@ def _worker_run(
     recorded_tool: str,
     recorded_actions: list[dict],
     repair_history: bool = False,
+    state_status: str | None = None,
 ) -> Path:
     actions = [DynamicActionSpec(
         name="scroll",
@@ -106,7 +107,7 @@ def _worker_run(
         "frame_id": "frame:1",
         "screenshot_path": str(tmp_path / "screenshot_tool_agent_1.png"),
     }), encoding="utf-8")
-    report = _snapshot("tool_agent.worker", image=True)
+    report = _snapshot("tool_agent.actor", image=True)
     if repair_history:
         invalid_call = {
             "name": "continue_with_actions",
@@ -134,6 +135,9 @@ def _worker_run(
             "worker_id": "worker",
             "frame_id": "frame:1",
             "step": 1,
+            "state": _state(
+                state_status or ("completed" if recorded_tool == "complete" else "exploring")
+            ),
             "tool": recorded_tool,
             "args": {"actions": recorded_actions},
             "context_reports": [report],
@@ -160,7 +164,6 @@ def test_worker_replay_compares_equivalent_actions_by_capability(tmp_path) -> No
         recorded_actions=[{"name": "scroll", "args": {}}],
     )
     model = _RecordedModel(_tool_call("continue_with_actions", {
-        "state": _state(),
         "actions": [{
             "name": "scroll",
             "args": {
@@ -192,16 +195,11 @@ def test_worker_replay_compares_equivalent_actions_by_capability(tmp_path) -> No
         "report_blocked",
     }
     assert "recorded static prompt" not in model.calls[0][0].content
-    assert "Execute the binding `approach`" in model.calls[0][0].content
-    assert "A visible ancestor never establishes an unshown descendant" in (
-        model.calls[0][0].content
-    )
-    assert "## Worker attempt contract" not in model.calls[0][0].content
+    assert "Actor role" in model.calls[0][0].content
+    assert "Never produce, revise, or reinterpret State" in model.calls[0][0].content
     turn_context = model.calls[0][1].content[0]["text"]
-    assert "stale" in turn_context
-    assert turn_context.index("Current Worker attempt") < turn_context.index(
-        "Current MaterializedFrame"
-    )
+    assert "stale" not in turn_context
+    assert "Authoritative materialized State view" in turn_context
     assert turn_context.index('"approach"') < turn_context.index('"goal"')
     assert '"approach": "Traverse the visible collection."' in turn_context
     envelope = next(
@@ -226,7 +224,6 @@ def test_worker_replay_withholds_complete_for_visible_commit(tmp_path) -> None:
         recorded_actions=[{"name": "scroll", "args": {}}],
     )
     model = _RecordedModel(_tool_call("continue_with_actions", {
-        "state": _state(),
         "actions": [{"name": "scroll", "args": {
             "direction": "down",
             "description": "Activate the pending commit",
@@ -263,7 +260,6 @@ def test_worker_replay_detects_wrong_launch_app_argument(tmp_path) -> None:
     ]
     trace_path.write_text(json.dumps(trace), encoding="utf-8")
     model = _RecordedModel(_tool_call("continue_with_actions", {
-        "state": _state(),
         "actions": [{"name": "launch_app", "args": {"app": "Messages"}}],
     }))
 
@@ -289,10 +285,9 @@ def test_worker_replay_applies_one_same_frame_protocol_repair(tmp_path) -> None:
     )
     model = _RecordedModel(
         _tool_call("continue_with_actions", {
-            "state": _state("completed"),
             "actions": [{"name": "complete", "args": {}}],
         }),
-        _tool_call("complete", {"state": _state("completed"), "evidence": ["done"]}),
+        _tool_call("complete", {"evidence": ["done"]}),
     )
 
     result = replay_worker_decision(run_dir, frame="frame:1", llm=model)
@@ -305,37 +300,22 @@ def test_worker_replay_applies_one_same_frame_protocol_repair(tmp_path) -> None:
     assert "Protocol repair" in model.calls[1][-1].content
 
 
-def test_worker_replay_repairs_reducer_owned_commitment_annotations(tmp_path) -> None:
+def test_worker_replay_rejects_actor_owned_state(tmp_path) -> None:
     run_dir = _worker_run(
         tmp_path,
         recorded_tool="continue_with_actions",
         recorded_actions=[{"name": "scroll", "args": {}}],
+        state_status="collecting",
     )
-    trace_path = run_dir / "tool_agent_trace.json"
-    trace = json.loads(trace_path.read_text(encoding="utf-8"))
-    trace["trace"][-1]["replay_context"]["active_commitment_refs"] = [
-        "commitment:handle_item"
-    ]
-    trace_path.write_text(json.dumps(trace), encoding="utf-8")
-    invalid = _state("executing")
-    invalid["memory_updates"] = [{
-        "fact_type": "commitment",
-        "key": "handle_item",
-        "status": "completed",
-        "lifetime": "attempt",
-        "statement": "The item was handled.",
-        "depends_on": ["claim:item_is_target"],
-    }]
     model = _RecordedModel(
         _tool_call("continue_with_actions", {
-            "state": invalid,
+            "state": _state("executing"),
             "actions": [{"name": "scroll", "args": {
                 "direction": "down",
                 "description": "Continue after handling the item",
             }}],
         }),
         _tool_call("continue_with_actions", {
-            "state": _state("collecting"),
             "actions": [{"name": "scroll", "args": {
                 "direction": "down",
                 "description": "Continue after handling the item",
@@ -374,7 +354,6 @@ def test_worker_replay_supports_protocol_failed_frame_with_expectation(tmp_path)
     trace["trace"] = [*trace["trace"][:-1], prior, failure]
     trace_path.write_text(json.dumps(trace), encoding="utf-8")
     model = _RecordedModel(_tool_call("continue_with_actions", {
-        "state": _state(),
         "actions": [{"name": "scroll", "args": {
             "direction": "down",
             "description": "Scroll the visible collection downward",
@@ -414,14 +393,12 @@ def test_worker_replay_repairs_surface_change_before_batch_suffix(tmp_path) -> N
     (run_dir / "tool_agent_trace.json").write_text(json.dumps(trace))
     model = _RecordedModel(
         _tool_call("continue_with_actions", {
-            "state": _state(),
             "actions": [
                 {"name": "home", "args": {}},
                 {"name": "launch_app", "args": {"app": "Messages"}},
             ],
         }),
         _tool_call("continue_with_actions", {
-            "state": _state(),
             "actions": [{"name": "launch_app", "args": {"app": "Messages"}}],
         }),
     )
@@ -441,7 +418,7 @@ def test_worker_replay_preserves_recorded_protocol_repair_history(tmp_path) -> N
         repair_history=True,
     )
     model = _RecordedModel(
-        _tool_call("complete", {"state": _state("completed"), "evidence": ["done"]}),
+        _tool_call("complete", {"evidence": ["done"]}),
     )
 
     result = replay_worker_decision(run_dir, frame=1, llm=model)
@@ -482,7 +459,6 @@ def test_worker_replay_uses_current_application_knowledge(
         lambda _name, _platform: knowledge,
     )
     model = _RecordedModel(_tool_call("continue_with_actions", {
-        "state": _state(),
         "actions": [{"name": "scroll", "args": {
             "direction": "down",
             "description": "Scroll the visible collection downward",
@@ -492,15 +468,12 @@ def test_worker_replay_uses_current_application_knowledge(
     result = replay_worker_decision(run_dir, frame=1, llm=model)
 
     assert result["status"] == "passed"
-    assert "current fact" not in model.calls[0][0].content
+    assert "current fact" in model.calls[0][0].content
     assert "old fact" not in model.calls[0][0].content
     human_text = model.calls[0][1].content[0]["text"]
-    assert "current fact" in human_text
+    assert "current fact" not in human_text
     assert "stale human fact" not in human_text
-    assert "session-scoped execution facts" in human_text
-    assert "runtime reported no_effect" not in human_text
-    assert "invocation=confirmed" in human_text
-    assert "unchanged screen alone does not justify repeating" in human_text
+    assert "Authoritative materialized State view" in human_text
 
 
 def test_worker_replay_preserves_recorded_singleton_contract(tmp_path) -> None:
@@ -508,6 +481,7 @@ def test_worker_replay_preserves_recorded_singleton_contract(tmp_path) -> None:
         tmp_path,
         recorded_tool="continue_with_actions",
         recorded_actions=[{"name": "scroll", "args": {}}],
+        state_status="completed",
     )
     spec = WorkerSpec.model_validate({
         "profile": "collector",
@@ -543,7 +517,6 @@ def test_worker_replay_preserves_recorded_singleton_contract(tmp_path) -> None:
     trace_path.write_text(json.dumps(trace), encoding="utf-8")
     model = _RecordedModel(
         _tool_call("complete", {
-            "state": _state("completed"),
             "evidence": ["one scope-matched row"],
         }),
     )
@@ -593,7 +566,6 @@ def test_worker_replay_supports_plain_json_action_protocol(tmp_path, monkeypatch
         AIMessage(content=json.dumps({
             "tool": "continue_with_actions",
             "args": {
-                "state": _state(),
                 "actions": [{
                     "name": "scroll",
                     "args": {

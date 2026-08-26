@@ -16,7 +16,7 @@ from gui_agent.core.self_learning.app_summary import load_knowledge_for_app
 from gui_agent.core.tool_agent.contracts import (
     DynamicActionSpec,
     MaterializedFrame,
-    WorkerState,
+    WorkerStateSnapshot,
     WorkerSpec,
     approach_atomic_action_count,
     approach_is_procedural,
@@ -26,17 +26,17 @@ from gui_agent.core.tool_agent.orchestrator import (
 )
 from gui_agent.core.tool_agent.protocol import (
     MAX_ORDERED_ACTIONS,
-    bind_worker_decision_transport,
-    decode_worker_action,
-    dynamic_worker_tools,
+    bind_actor_decision_transport,
+    decode_actor_action,
+    dynamic_actor_tools,
     generic_action_spec,
     image_message,
-    validate_worker_tool_state,
+    validate_actor_tool_state,
     worker_attempt_contract,
     worker_frame_tools,
 )
 from gui_agent.core.tool_agent.runtime import ToolAgentRuntime
-from gui_agent.core.tool_agent.worker_memory import render_application_knowledge_context
+from gui_agent.core.tool_agent.state_trace import state_actor_payload
 from gui_agent.prompts import load_prompt_text
 from llm.provider_config import (
     build_chat_model,
@@ -45,14 +45,6 @@ from llm.provider_config import (
 
 
 _REDACTED_ACCESS_VALUE = "[session access value redacted]"
-_WORKER_DYNAMIC_SECTIONS = (
-    "## Application knowledge",
-    "## Installed applications",
-    "## Session access context",
-    "## Ordered multi-action mode",
-    "## Original task goal",
-    "## Worker attempt contract",
-)
 
 
 def _model(name: str) -> tuple[Any, Any]:
@@ -84,13 +76,17 @@ def _report(event: dict[str, Any], label: str) -> dict[str, Any]:
         raise ValueError(f"recording has no {label} prompt snapshot") from exc
 
 
-def _worker_report(event: dict[str, Any]) -> dict[str, Any]:
-    for label in ("tool_agent.worker", "tool_agent.worker.protocol_repair"):
+def _actor_report(event: dict[str, Any]) -> dict[str, Any]:
+    for label in (
+        "tool_agent.actor",
+        "tool_agent.worker.protocol_repair",
+        "tool_agent.worker",
+    ):
         try:
             return _report(event, label)
         except ValueError:
             pass
-    raise ValueError("recording has no Worker prompt snapshot")
+    raise ValueError("recording has no Actor prompt snapshot")
 
 
 def _text(parts: list[dict[str, Any]], *, omit_calls: bool = False) -> str:
@@ -99,18 +95,6 @@ def _text(parts: list[dict[str, Any]], *, omit_calls: bool = False) -> str:
         if part.get("type") == "text"
         and (not omit_calls or part.get("label") != "tool_calls")
     )
-
-
-def _message_text(message: Any) -> str:
-    content = getattr(message, "content", "")
-    if isinstance(content, str):
-        return content
-    if isinstance(content, list):
-        return "\n".join(
-            str(item.get("text") or "") for item in content
-            if isinstance(item, dict) and item.get("type") == "text"
-        )
-    return ""
 
 
 def _master_task(event: dict[str, Any]) -> dict[str, Any]:
@@ -164,64 +148,67 @@ def _current_master_task(task: dict[str, Any], context: dict[str, Any]) -> dict[
     return current
 
 
-def _worker_messages(
+def _validated_recorded_state(
+    value: Any,
+) -> dict[str, Any]:
+    raw = dict(value) if isinstance(value, dict) else {}
+    if "memory_updates" not in raw and "established_facts" not in raw:
+        return WorkerStateSnapshot.model_validate(raw).model_dump(mode="json")
+    if raw.get("status") not in {
+        "exploring", "collecting", "executing", "completed", "failed",
+    }:
+        raise ValueError("recorded State has no valid status")
+    if not str(raw.get("summary") or "").strip():
+        raise ValueError("recorded State has no summary")
+    return raw
+
+
+def _actor_state_view(state: dict[str, Any]) -> dict[str, Any]:
+    if "memory_updates" not in state and "established_facts" not in state:
+        return state_actor_payload(WorkerStateSnapshot.model_validate(state))
+    return {
+        "status": state["status"],
+        "goal_difference": state["summary"],
+        "legacy_evidence": [
+            str(item.get("statement") or "")
+            for item in state.get("memory_updates") or []
+            if isinstance(item, dict) and item.get("statement")
+        ] + [str(item) for item in state.get("established_facts") or []],
+    }
+
+
+def _actor_messages(
     report: dict[str, Any],
     screenshot: bytes,
     *,
     attempt_contract: str,
+    state: dict[str, Any],
     application_knowledge: str = "",
     image_scale: float = 1.0,
 ) -> list[Any]:
-    messages: list[Any] = []
-    for role in report.get("roles", []):
+    system = load_prompt_text("task.tool_agent.actor").rstrip()
+    if application_knowledge:
+        system += (
+            "\n\n## Application knowledge (interface mechanics only)\n"
+            + application_knowledge
+        )
+    actor_input = "\n\n".join((
+        attempt_contract,
+        "## Authoritative materialized State view",
+        json.dumps(_actor_state_view(state), ensure_ascii=False),
+    ))
+    messages: list[Any] = [
+        SystemMessage(content=system),
+        image_message(actor_input, screenshot, scale=image_scale),
+    ]
+    # Preserve only same-frame repair history from the recording. Base prompt
+    # content is rebuilt from the current Actor contract above.
+    for role in report.get("roles", [])[2:]:
         name = str(role.get("role") or "")
         parts = [part for part in role.get("parts", []) if isinstance(part, dict)]
         text = _text(parts, omit_calls=name == "assistant")
-        if name == "system":
-            dynamic_start = min(
-                (offset for marker in _WORKER_DYNAMIC_SECTIONS
-                 if (offset := text.find(marker)) >= 0),
-                default=len(text),
-            )
-            suffix = text[dynamic_start:].strip()
-            suffix = _without_section(suffix, "## Application knowledge")
-            suffix = _without_section(suffix, "## Ordered multi-action mode")
-            suffix = _without_section(suffix, "## Original task goal")
-            suffix = _without_section(suffix, "## Worker attempt contract")
-            current = load_prompt_text("task.tool_agent.worker").rstrip()
-            messages.append(SystemMessage(content=(
-                current + ("\n\n" + suffix if suffix else "")
-            )))
-        elif name == "human":
-            text = _without_section(text, "## Original task source")
-            text = _without_section(text, "## Value provenance archive")
-            text = _without_section(text, "## Application knowledge")
-            text = text.replace(
-                "runtime reported no_effect",
-                "invocation=confirmed; screen_transition=none_observed; reconcile "
-                "application mechanics and current evidence; an unchanged screen alone "
-                "does not justify repeating the action",
-            )
-            text = text.replace(
-                "Complete an exact bound key when satisfied; otherwise keep it active. "
-                "Never rename or repeat it.",
-                "Runtime completes an exact bound Commitment after its successful effect "
-                "receipt and target verification. Record resulting Evidence and never "
-                "repeat the action merely to verify it.",
-            )
-            text = _replace_section(
-                text,
-                "## Current Worker attempt",
-                attempt_contract,
-            )
-            if application_knowledge:
-                knowledge = render_application_knowledge_context(application_knowledge)
-                text = text.rstrip() + "\n\n" + knowledge
-            messages.append(
-                image_message(text, screenshot, scale=image_scale)
-                if any(part.get("type") == "image" for part in parts)
-                else HumanMessage(content=text)
-            )
+        if name == "human":
+            messages.append(HumanMessage(content=text))
         elif name == "assistant":
             calls = next(
                 (json.loads(part["text"]) for part in parts if part.get("label") == "tool_calls"),
@@ -236,33 +223,6 @@ def _worker_messages(
         else:
             raise ValueError(f"unsupported recorded prompt role {name!r}")
     return messages
-
-
-def _without_section(text: str, heading: str) -> str:
-    """Drop a retired dynamic prompt section from older recordings."""
-
-    start = text.find(heading)
-    if start < 0:
-        return text
-    end = text.find("\n\n## ", start + len(heading))
-    return (text[:start] + (text[end:] if end >= 0 else "")).strip()
-
-
-def _replace_section(text: str, heading: str, replacement: str) -> str:
-    """Refresh one dynamic section without changing its authority order."""
-
-    start = text.find(heading)
-    if start < 0:
-        return (replacement.strip() + "\n\n" + text.strip()).strip()
-    end = text.find("\n\n## ", start + len(heading))
-    suffix = text[end:] if end >= 0 else ""
-    prefix = text[:start].rstrip()
-    return (
-        prefix
-        + ("\n\n" if prefix else "")
-        + replacement.strip()
-        + suffix
-    ).strip()
 
 
 def _literal(call: ast.Call | None, name: str, default: Any = None) -> Any:
@@ -477,18 +437,20 @@ def _worker_decision(
     response: Any,
     actions: list[DynamicActionSpec],
     tools: dict[str, dict[str, Any]],
+    state: dict[str, Any],
     *,
     action_protocol: str = "tool_call",
 ) -> dict[str, Any]:
-    call, state, calls = decode_worker_action(
+    call, raw_state, calls = decode_actor_action(
         response,
         protocol=action_protocol,
         tools=tools,
     )
+    if raw_state is not None:
+        raise ValueError("Actor must not emit state; State is authoritative")
     if call["name"] == "continue_with_actions":
         ToolAgentRuntime._validate_multi_action_calls(calls, actions)
-    worker_state = WorkerState.model_validate(state)
-    validate_worker_tool_state(call["name"], worker_state)
+    validate_actor_tool_state(call["name"], state["status"])
     names = [call["name"]]
     if call["name"] == "continue_with_actions":
         names = [str(item.get("name") or "") for item in calls]
@@ -498,9 +460,10 @@ def _worker_decision(
         "actions": names,
         "action_capabilities": [capabilities.get(name, name) for name in names],
         "action_semantics": _action_semantics(calls, capabilities),
-        "state_status": worker_state.status,
-        "state_summary": worker_state.summary,
-        "args": {**call["args"], "state": state},
+        "state": state,
+        "state_status": state["status"],
+        "state_summary": state["summary"],
+        "args": call["args"],
     }
 
 
@@ -573,6 +536,11 @@ def replay_worker_decision(
             "event": "worker_decision",
             "frame_id": f"frame:{frame_no}",
             "replay_context": prior.get("replay_context"),
+            "state": next((
+                event.get("state") for event in reversed(events)
+                if event.get("event") == "worker_state"
+                and event.get("frame_id") == f"frame:{frame_no}"
+            ), prior.get("state")),
             "tool": str(expectation.get("tool") or ""),
             "args": {},
         }
@@ -617,12 +585,13 @@ def replay_worker_decision(
     assessment = worker_frame_tools(
         spec, actions, materialized,
     )
+    state = _validated_recorded_state(selected.get("state"))
     model, model_config, model_name = _selected_model("tool_agent.worker", llm)
     multi_action = bool(replay_context.get("multi_action"))
     max_ordered_actions = MAX_ORDERED_ACTIONS if multi_action else 1
     action_protocol = str(getattr(model_config, "action_protocol", "tool_call"))
     frame_actions = assessment.allowed_actions
-    tools = dynamic_worker_tools(
+    tools = dynamic_actor_tools(
         frame_actions,
         completion_mode=assessment.completion_mode,
         action_envelope=multi_action,
@@ -714,10 +683,11 @@ def replay_worker_decision(
                 ),
             }, ensure_ascii=False)
         )
-    messages = _worker_messages(
-        _worker_report(selected),
+    messages = _actor_messages(
+        _actor_report(selected),
         _screenshot(run_dir, frame_no, observation),
         attempt_contract=attempt_contract,
+        state=state,
         application_knowledge="\n\n".join(
             value.worker_context() for value in _current_app_knowledge(context)
         ),
@@ -727,7 +697,7 @@ def replay_worker_decision(
     if request_model is None:
         request_model = getattr(model, "model_name", None) or getattr(model, "model", None)
     bind_kwargs = chat_request_kwargs(request_model)
-    bound, decision_instruction, repair_instruction = bind_worker_decision_transport(
+    bound, decision_instruction, repair_instruction = bind_actor_decision_transport(
         model,
         tools,
         protocol=action_protocol,
@@ -744,11 +714,9 @@ def replay_worker_decision(
             response = bound.invoke(replay_messages)
             try:
                 decision = _worker_decision(
-                    response, actions, tools_by_name,
+                    response, actions, tools_by_name, state,
                     action_protocol=action_protocol,
                 )
-                state = decision.get("args", {}).get("state", {})
-                WorkerState.model_validate(state)
                 break
             except Exception as exc:  # noqa: BLE001 - mirrors one production repair
                 if repairs:
@@ -757,8 +725,8 @@ def replay_worker_decision(
                 repair_errors.append(f"{type(exc).__name__}: {exc}")
                 replay_messages.extend([response, HumanMessage(content=(
                     f"Protocol repair: {exc}. On this SAME frame, "
-                    f"{repair_instruction} including its "
-                    "state field. No action was executed."
+                    f"{repair_instruction} Do not emit a state field. "
+                    "No action was executed."
                 ))])
         errors = _mismatches(expected, decision)
         results.append({

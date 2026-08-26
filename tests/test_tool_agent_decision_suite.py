@@ -167,9 +167,9 @@ def test_decision_matcher_checks_workflow_phase() -> None:
         "tool": "continue_with_actions",
         "protocol_repairs": 0,
         "action_semantics": [{"capability": "back"}],
+        "state": {"status": "executing", "memory_updates": []},
         "args": {
             "actions": [{"name": "back", "args": {}}],
-            "state": {"status": "executing", "memory_updates": []},
         },
     }
     expected = {

@@ -15,19 +15,19 @@ from gui_agent.core.tool_agent.contracts import (
     DataRequirement,
     DynamicActionSpec,
     WorkerSpec,
-    WorkerState,
     approach_is_procedural,
 )
 from gui_agent.core.tool_agent.protocol import (
     MAX_ORDERED_ACTIONS,
     cacheable_system_message,
     diagnostic_prompt_reports,
-    decode_worker_action,
+    decode_actor_action,
     dynamic_action_tool,
-    dynamic_worker_tools,
+    dynamic_actor_tools,
     exactly_one_tool_call,
+    frame_transition_message,
     image_message,
-    json_worker_decision_instruction,
+    json_actor_decision_instruction,
     normalize_action_arguments,
     response_usage,
     generic_action_spec,
@@ -99,8 +99,37 @@ def test_image_message_rejects_invalid_scale() -> None:
         image_message("frame", b"png", scale=0)
 
 
+def test_frame_transition_message_labels_and_scales_both_frames() -> None:
+    previous = BytesIO()
+    current = BytesIO()
+    Image.new("RGB", (400, 200), "red").save(previous, format="PNG")
+    Image.new("RGB", (300, 180), "blue").save(current, format="PNG")
+
+    message = frame_transition_message(
+        "delta",
+        previous.getvalue(),
+        current.getvalue(),
+        previous_frame_id="frame:1",
+        current_frame_id="frame:2",
+        previous_scale=0.75,
+        current_scale=1.0,
+    )
+
+    assert [part["type"] for part in message.content] == [
+        "text", "text", "image_url", "text", "image_url",
+    ]
+    assert message.content[1]["text"] == "previous_frame (frame:1)"
+    assert message.content[3]["text"] == "current_frame (frame:2)"
+    sizes = []
+    for index in (2, 4):
+        encoded = message.content[index]["image_url"]["url"].split(",", 1)[1]
+        with Image.open(BytesIO(base64.b64decode(encoded))) as image:
+            sizes.append(image.size)
+    assert sizes == [(300, 150), (300, 180)]
+
+
 def test_action_envelope_preserves_dynamic_atomic_schemas() -> None:
-    tools = dynamic_worker_tools(
+    tools = dynamic_actor_tools(
         _declared_form_actions(),
         completion_mode="operator",
         action_envelope=True,
@@ -116,9 +145,8 @@ def test_action_envelope_preserves_dynamic_atomic_schemas() -> None:
     description = envelope["function"]["description"]
     assert "this tool never represents completion" in description
     assert "action list cannot be empty" in description
-    assert "excluded or already-processed candidates permit traversal" in description
     assert "call complete directly" in description
-    assert "do not put terminal tools" in description
+    assert "advance State's unresolved difference" in description
     assert "tap" not in description
     assert "clear_text" not in description
     assert "select_option" not in description
@@ -128,15 +156,7 @@ def test_action_envelope_preserves_dynamic_atomic_schemas() -> None:
         "Enter a value in the visible input",
         "Submit the visible form",
     ]
-    state_schema = parameters["properties"]["state"]
-    assert set(state_schema["properties"]) == {
-        "status", "summary", "memory_updates",
-    }
-    state = {
-        "status": "exploring",
-        "summary": "The complete form is visible.",
-        "memory_updates": [],
-    }
+    assert "state" not in parameters["properties"]
     actions = [
         {
             "name": "enter_visible_value",
@@ -156,25 +176,16 @@ def test_action_envelope_preserves_dynamic_atomic_schemas() -> None:
             },
         },
     ]
-    validate(instance={"state": state, "actions": actions}, schema=parameters)
-    with pytest.raises(ValidationError):
-        validate(
-            instance={
-                "state": {**state, "next_instruction": "Use a different source"},
-                "actions": actions,
-            },
-            schema=parameters,
-        )
+    validate(instance={"actions": actions}, schema=parameters)
     assert parameters["properties"]["actions"]["maxItems"] == MAX_ORDERED_ACTIONS
     with pytest.raises(ValidationError):
         validate(
             instance={
-                "state": state,
                 "actions": [actions[0]] * (MAX_ORDERED_ACTIONS + 1),
             },
             schema=parameters,
         )
-    limited = dynamic_worker_tools(
+    limited = dynamic_actor_tools(
         _declared_form_actions(),
         completion_mode="operator",
         action_envelope=True,
@@ -185,11 +196,45 @@ def test_action_envelope_preserves_dynamic_atomic_schemas() -> None:
     )
     assert envelope["function"]["parameters"]["properties"]["actions"]["maxItems"] == 1
     assert "exactly one action" in envelope["function"]["description"]
-    assert [tool["function"]["name"] for tool in dynamic_worker_tools(
+    assert [tool["function"]["name"] for tool in dynamic_actor_tools(
         [], completion_mode="unavailable", action_envelope=True,
     )] == [
         "report_blocked",
     ]
+
+
+def test_actor_tools_exclude_worker_state_channel() -> None:
+    tools = dynamic_actor_tools(
+        _declared_form_actions(),
+        completion_mode="operator",
+        action_envelope=True,
+    )
+
+    for tool in tools:
+        parameters = tool["function"]["parameters"]
+        assert "state" not in parameters.get("properties", {})
+        assert "state" not in parameters.get("required", [])
+    complete = next(
+        tool["function"] for tool in tools
+        if tool["function"]["name"] == "complete"
+    )
+    assert "authoritative State status" in complete["description"]
+    assert "Historical Progress" not in complete["description"]
+    envelope = next(
+        tool["function"] for tool in tools
+        if tool["function"]["name"] == "continue_with_actions"
+    )
+    variants = envelope["parameters"]["properties"]["actions"]["items"]["oneOf"]
+    spatial = next(
+        item for item in variants
+        if item["properties"]["name"]["const"] == "submit_visible_form"
+    )
+    assert spatial["properties"]["args"]["properties"]["state_target_ref"][
+        "type"
+    ] == ["string", "null"]
+    assert "unresolved frontier ref" in envelope["description"]
+    assert "memory_updates" not in envelope["description"]
+    assert "state.status" not in envelope["description"]
 
 
 def test_explicit_cache_marker_wraps_only_the_stable_system_prefix() -> None:
@@ -374,14 +419,14 @@ def test_select_option_exposes_value_when_master_does_not_bind_it() -> None:
 def test_collector_completion_tool_is_frame_gated_and_runtime_bound() -> None:
     actions = _declared_form_actions()
 
-    waiting = dynamic_worker_tools(actions, completion_mode="unavailable")
+    waiting = dynamic_actor_tools(actions, completion_mode="unavailable")
     assert "complete" not in {tool["function"]["name"] for tool in waiting}
-    action_state = waiting[0]["function"]["parameters"]["properties"]["state"]
-    assert action_state["properties"]["status"]["enum"] == [
-        "exploring", "collecting", "executing",
-    ]
+    assert all(
+        "state" not in tool["function"]["parameters"]["properties"]
+        for tool in waiting
+    )
 
-    ready = dynamic_worker_tools(actions, completion_mode="collector")
+    ready = dynamic_actor_tools(actions, completion_mode="collector")
     assert [tool["function"]["name"] for tool in ready] == [
         "enter_visible_value", "submit_visible_form", "complete", "report_blocked",
     ]
@@ -390,13 +435,12 @@ def test_collector_completion_tool_is_frame_gated_and_runtime_bound() -> None:
     )
     properties = complete["function"]["parameters"]["properties"]
     assert "collection_ref" not in properties
-    assert set(properties) == {"state", "evidence", "rows"}
-    assert properties["state"]["properties"]["status"]["enum"] == ["completed"]
+    assert set(properties) == {"evidence", "rows"}
+    assert "authoritative State" in complete["function"]["description"]
     failure = next(
         tool for tool in ready if tool["function"]["name"] == "report_blocked"
     )
-    failure_state = failure["function"]["parameters"]["properties"]["state"]
-    assert failure_state["properties"]["status"]["enum"] == ["failed"]
+    assert set(failure["function"]["parameters"]["properties"]) == {"reason"}
 
 
 def test_provider_coordinate_variants_are_normalized_before_strict_validation() -> None:
@@ -429,8 +473,8 @@ def test_tool_call_accepts_json_encoded_argument_object() -> None:
     assert call["args"] == {"x": 125, "y": 750}
 
 
-def test_json_worker_protocol_preserves_dynamic_action_contract() -> None:
-    tools = dynamic_worker_tools(
+def test_json_actor_protocol_preserves_dynamic_action_contract() -> None:
+    tools = dynamic_actor_tools(
         [DynamicActionSpec(
             name="activate_visible_target",
             capability="tap",
@@ -440,34 +484,30 @@ def test_json_worker_protocol_preserves_dynamic_action_contract() -> None:
         action_envelope=True,
         max_ordered_actions=1,
     )
-    instruction = json_worker_decision_instruction(tools)
+    instruction = json_actor_decision_instruction(tools)
     response = SimpleNamespace(content=(
-        '{"tool":"complete","args":{"state":{"status":"completed",'
-        '"summary":"Done","memory_updates":[]},'
-        '"evidence":["Visible target state confirmed"]}}'
+        '{"tool":"complete","args":'
+        '{"evidence":["Visible target state confirmed"]}}'
     ))
 
-    call, state, _calls = decode_worker_action(response, protocol="json")
+    call, state, _calls = decode_actor_action(response, protocol="json")
 
     assert call["name"] == "complete"
-    assert state["status"] == "completed"
+    assert state is None
     assert "continue_with_actions" in instruction
     assert '"maxItems":1' in instruction
     contract = json.loads(instruction.split("Available contract:\n", 1)[1])
     assert all(
-        "state" in action["parameters"]["properties"]
-        and "strategy_status" not in action["parameters"]["properties"]["state"]["properties"]
+        "state" not in action["parameters"]["properties"]
         for action in contract.values()
     )
-    assert "never inside `args.actions[*]`" in instruction
-
-
+    assert "do not emit a `state` field" in instruction
 def test_worker_protocol_normalizes_flat_ordered_action_arguments() -> None:
     raw_action = {
         "name": "tap", "x": 500, "y": 76,
         "description": "Tap the visible city selector at the top",
     }
-    tools = dynamic_worker_tools(
+    tools = dynamic_actor_tools(
         [DynamicActionSpec(
             name="tap", capability="tap", description="Tap one visible control.",
         )],
@@ -477,136 +517,17 @@ def test_worker_protocol_normalizes_flat_ordered_action_arguments() -> None:
     response = SimpleNamespace(tool_calls=[{
         "name": "continue_with_actions",
         "args": {
-            "state": {
-                "status": "exploring",
-                "summary": "The city selector is visible.",
-                "memory_updates": [],
-            },
             "actions": [raw_action],
         },
     }])
-    call, state, calls = decode_worker_action(
+    call, state, calls = decode_actor_action(
         response,
         tools={tool["function"]["name"]: tool for tool in tools},
     )
 
     expected = {"name": "tap", "args": {k: v for k, v in raw_action.items() if k != "name"}}
-    assert state["status"] == "exploring"
+    assert state is None
     assert calls == call["args"]["actions"] == [expected]
-
-
-def test_worker_protocol_never_silently_retypes_dependent_evidence() -> None:
-    response = SimpleNamespace(tool_calls=[{
-        "name": "tap",
-        "args": {
-            "state": {
-                "status": "collecting",
-                "summary": "The bounded evidence establishes a conclusion.",
-                "memory_updates": [{
-                    "fact_type": "evidence",
-                    "key": "scope_complete",
-                    "status": "active",
-                    "lifetime": "attempt",
-                    "statement": "The bounded scope is complete",
-                    "depends_on": ["evidence:bounded_results"],
-                }],
-            },
-            "x": 500,
-            "y": 500,
-            "description": "Tap the visible next control",
-        },
-    }])
-
-    _call, state, _calls = decode_worker_action(response)
-
-    assert state["memory_updates"][0]["fact_type"] == "evidence"
-    with pytest.raises(PydanticValidationError, match="evidence facts cannot"):
-        WorkerState.model_validate(state)
-
-
-def test_worker_tool_schema_matches_memory_status_and_dependency_contract() -> None:
-    variants = dynamic_worker_tools(
-        [generic_action_spec("tap")], action_envelope=True,
-    )[0]["function"]["parameters"]["properties"]["state"]["properties"][
-        "memory_updates"
-    ]["items"]["oneOf"]
-    by_type = {
-        variant["properties"]["fact_type"]["const"]: variant
-        for variant in variants
-    }
-
-    assert by_type["evidence"]["properties"]["status"]["enum"] == [
-        "active", "retracted",
-    ]
-    assert set(by_type) == {"observation", "evidence"}
-    evidence = by_type["evidence"]["properties"]["depends_on"]
-    assert evidence["maxItems"] == 0
-    assert "without self-dependency" in evidence["description"]
-
-
-def test_worker_rejects_reducer_owned_claim_and_commitment() -> None:
-    with pytest.raises(PydanticValidationError, match="observation.*evidence"):
-        WorkerState.model_validate({
-        "status": "executing",
-        "summary": "Open the next surface",
-        "memory_updates": [
-            {
-                "fact_type": "observation",
-                "key": "control_visible",
-                "status": "active",
-                "lifetime": "frame",
-                "statement": "The next control is visible",
-                "depends_on": [],
-            },
-            {
-                "fact_type": "claim",
-                "key": "control_is_exact_target",
-                "status": "active",
-                "lifetime": "attempt",
-                "statement": "The visible control has the exact requested identity",
-                "depends_on": ["observation:control_visible"],
-            },
-            {
-                "fact_type": "commitment",
-                "key": "open_surface",
-                "status": "active",
-                "lifetime": "attempt",
-                "statement": "Activate the control",
-                "depends_on": ["claim:control_is_exact_target"],
-            },
-        ],
-        })
-
-
-def test_worker_memory_accepts_bounded_window_evidence_over_500_chars() -> None:
-    statement = "verified row; " * 50
-    state = WorkerState.model_validate({
-        "status": "collecting",
-        "summary": "Retain one bounded observation window.",
-        "memory_updates": [{
-            "fact_type": "evidence",
-            "key": "window_evidence",
-            "status": "active",
-            "lifetime": "attempt",
-            "statement": statement,
-            "depends_on": [],
-        }],
-    })
-    schema = next(
-        tool for tool in dynamic_worker_tools(
-            [generic_action_spec("tap")], action_envelope=True,
-        )
-        if tool["function"]["name"] == "continue_with_actions"
-    )["function"]["parameters"]
-
-    validate(instance={
-        "state": state.model_dump(),
-        "actions": [{
-            "name": "tap", "args": {
-                "x": 500, "y": 500, "description": _TARGET_DESCRIPTION,
-            },
-        }],
-    }, schema=schema)
 
 
 def test_ask_user_is_a_generic_nonspatial_capability() -> None:
@@ -626,7 +547,7 @@ def test_ask_user_is_a_generic_nonspatial_capability() -> None:
 
 
 def test_ask_user_is_a_top_level_interaction_outside_action_batches() -> None:
-    tools = dynamic_worker_tools(
+    tools = dynamic_actor_tools(
         [generic_action_spec("tap"), generic_action_spec("ask_user")],
         action_envelope=True,
     )

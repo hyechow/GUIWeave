@@ -48,24 +48,8 @@ def _public_args(args: Any) -> dict[str, Any]:
 def recorded_decision_response(run_dir: Path, frame: int) -> AIMessage:
     event = _decision_event(run_dir, frame)
     tool = str(event.get("tool") or "")
-    state = dict(event.get("state") or {})
-    # Older promoted fixtures predate typed WorkerMemory. Recorded-mode replay
-    # normalizes that retired presentation field without changing the decision.
-    established_facts = state.pop("established_facts", None) or []
-    state.setdefault("memory_updates", [
-        {
-            "fact_type": "evidence",
-            "key": f"recorded_fact_{index}",
-            "status": "active",
-            "lifetime": "attempt",
-            "statement": str(statement),
-            "depends_on": [],
-        }
-        for index, statement in enumerate(established_facts, start=1)
-    ])
     if tool == "continue_with_actions":
         args = {
-            "state": state,
             "actions": [
                 {"name": call["name"], "args": _public_args(call.get("args"))}
                 for call in (event.get("args", {}).get("actions") or [])
@@ -73,7 +57,7 @@ def recorded_decision_response(run_dir: Path, frame: int) -> AIMessage:
             ],
         }
     else:
-        args = {"state": state, **_public_args(event.get("args"))}
+        args = _public_args(event.get("args"))
     return AIMessage(content="", tool_calls=[{
         "id": f"recorded-frame-{frame}", "name": tool, "args": args,
     }])
@@ -208,7 +192,7 @@ def score_decision_sample(sample: dict[str, Any], expected: dict[str, Any]) -> l
             break
         errors.extend(_match_action(wanted, semantics[index], calls[index], f"actions[{index}]"))
 
-    state = sample.get("args", {}).get("state", {})
+    state = sample.get("state") or {}
     if expected_status := expected.get("state_status"):
         if state.get("status") != expected_status:
             errors.append(
