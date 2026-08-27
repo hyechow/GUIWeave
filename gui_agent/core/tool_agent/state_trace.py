@@ -60,11 +60,11 @@ def _apply_markdown_edits(memory: str, batch: WorkerStateEditBatch) -> str:
         if old_text == new_text:
             raise ValueError(f"State edit {index} does not change memory")
         if not old_text:
-            if updated:
-                raise ValueError(
-                    f"State edit {index} has empty old_lines for non-empty memory"
-                )
-            updated = new_text
+            # Empty old_lines is an append: a fresh memory sets the body, a non-empty
+            # memory gains the new observation at the end. The historical hard error
+            # ("empty old_lines for non-empty memory") aborted runs whenever the State
+            # appended rather than anchored-replaced; appending is the recoverable intent.
+            updated = (updated.rstrip() + "\n\n" + new_text) if updated else new_text
         else:
             occurrences = updated.count(old_text)
             if occurrences == 0:

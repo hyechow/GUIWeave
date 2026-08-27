@@ -104,12 +104,14 @@ def test_state_edit_requires_one_exact_old_lines_match() -> None:
             mode="edit", frame_id="frame:2",
             edits=[{"old_lines": ["- Value: one"], "new_lines": ["replacement"]}],
         ), spec=_spec())
-    # Empty old_lines against a non-empty memory stays a hard error (must anchor).
-    with pytest.raises(ValueError, match="empty old_lines"):
-        reduce_worker_state(initial, _batch(
-            mode="edit", frame_id="frame:2",
-            edits=[{"old_lines": [], "new_lines": ["append"]}],
-        ), spec=_spec())
+    # Empty old_lines against a non-empty memory appends the new observation
+    # (recoverable intent), it no longer aborts the run.
+    appended = reduce_worker_state(initial, _batch(
+        mode="edit", frame_id="frame:2",
+        edits=[{"old_lines": [], "new_lines": ["- Appended: two"]}],
+    ), spec=_spec())
+    assert "- Value: one" in appended.markdown
+    assert "- Appended: two" in appended.markdown
 
 
 def test_state_edit_with_drifted_anchor_appends_and_preserves_new_content() -> None:
