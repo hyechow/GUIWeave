@@ -252,8 +252,9 @@ _COLLECTOR_ATTEMPT_RULES = (
     "- You own the exhaustiveness judgment: narrow the scope with an exact filter or "
     "search first, then traverse; treat the collection as complete only when your own "
     "evidence says nothing remains (the filtered list fits the viewport, or further "
-    "scrolling yields no new rows). Call `complete` on that judgment and state the "
-    "evidence; Runtime never certifies completeness.\n"
+    "scrolling yields no new rows). When it is complete, stop acting and let the State "
+    "role declare the Goal Contract established; you never emit rows, evidence, or a "
+    "completion declaration.\n"
 )
 
 _OPERATOR_ATTEMPT_RULES = (
@@ -267,14 +268,14 @@ _OPERATOR_ATTEMPT_RULES = (
     "- Durable facts resolve candidates across frames: a recorded no-match query or "
     "classified candidate stays resolved unless later evidence disproves it; never "
     "rerun that branch.\n"
-    "- Never call `complete` while a visible final commit control for the requested "
-    "mutation remains unactivated. Activate it and observe the next frame; readiness "
-    "is not completion.\n"
+    "- Do not treat the goal as done while a visible final commit control for the "
+    "requested mutation remains unactivated. Activate it and observe the next frame; "
+    "readiness is not establishment.\n"
     "- Observe the post-action frame. If the requested terminal mutation's commit "
     "just returned to a stable parent/source surface without error and durable "
-    "facts name no unsatisfied identity, call `complete`; do not restart the "
-    "mutation or rerun a resolved query. A preparatory scope/container commit is "
-    "not terminal.\n"
+    "facts name no unsatisfied identity, stop acting; the State role declares the "
+    "Goal Contract established. Do not restart the mutation or rerun a resolved "
+    "query. A preparatory scope/container commit is not terminal.\n"
 )
 
 
@@ -442,7 +443,8 @@ def dynamic_action_envelope_tool(
     )
     shared_description = (
         f"Continue with {action_range}; this tool never represents completion and its "
-        "action list cannot be empty. If the goal is complete, call complete directly. "
+        "action list cannot be empty. If you believe the goal is complete, stop acting; "
+        "the State role declares completion. "
         "All actions must form one immediate UI transaction; never mix discovery, reveal, "
         "or recovery with mutation. Later actions must not depend on newly revealed UI. "
         "Runtime settles each action and visually re-grounds the next target on a fresh "

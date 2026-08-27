@@ -145,7 +145,7 @@ def test_action_envelope_preserves_dynamic_atomic_schemas() -> None:
     description = envelope["function"]["description"]
     assert "this tool never represents completion" in description
     assert "action list cannot be empty" in description
-    assert "call complete directly" in description
+    assert "the State role declares completion" in description
     assert "Goal Contract fact not yet established" in description
     assert "tap" not in description
     assert "clear_text" not in description

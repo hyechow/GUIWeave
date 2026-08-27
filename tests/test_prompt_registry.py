@@ -146,7 +146,7 @@ def test_state_and_actor_prompts_have_disjoint_responsibilities() -> None:
     assert "`outcome.kind=no_effect` means no visual change" in state
     assert "visual identity is not a reason to skip" in state
     assert "empty edits are incorrect" in state
-    assert "named file now exists in local storage" in state
+    assert "Write the object fact that is now true" in state
     assert "Never use status, progress, or completion as a field name" in state
     assert "including nested child lines under its heading" in actor
     assert "including under a nested child" in actor
@@ -179,7 +179,7 @@ def test_state_and_actor_prompts_have_disjoint_responsibilities() -> None:
     assert "Visibility comes only from current target-owned pixels" in state
     assert "spatial index, not a work queue" in actor
     assert "When `phase` is `start`" in actor
-    assert "nested under the owning object" in state
+    assert "Write the object fact that is now true" in state
 
 
 def test_master_keeps_visual_conditional_dependencies_in_one_worker() -> None:

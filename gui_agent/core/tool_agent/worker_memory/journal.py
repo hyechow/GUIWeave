@@ -8,8 +8,7 @@ from typing import Any, Literal
 
 FactType = Literal["observation", "evidence", "commitment"]
 FactStatus = Literal[
-    "active", "retracted", "completed",
-    "dispatched", "satisfied", "uncertain", "failed",
+    "active", "dispatched", "satisfied", "uncertain", "failed",
 ]
 FactLifetime = Literal["frame", "attempt", "task"]
 OutcomeKind = Literal["invoked", "effect", "no_effect", "off_target", "failed"]
@@ -45,7 +44,6 @@ class ActionReceipt:
     args: dict[str, Any]
     outcome: ActionOutcome
     commitment_refs: tuple[str, ...] = ()
-    preserves_window: bool = False
     executed: bool = False
     target_ref: str = ""
     state_target_ref: str = ""
@@ -68,8 +66,6 @@ class WorkerJournalEvent:
     frame_id: str = ""
     attempt_id: str = ""
     origin: Literal["worker", "runtime"] = "runtime"
-    depends_on: tuple[str, ...] = ()
-    supersedes: str = ""
     receipt: ActionReceipt | None = None
     feedback: str = ""
     target_ref: str = ""
@@ -90,12 +86,6 @@ class WorkerJournal:
         recorded = replace(event, sequence=len(self.events) + 1)
         self.events.append(recorded)
         return recorded
-
-    def _latest_fact(self, fact_ref: str) -> WorkerJournalEvent | None:
-        return next(
-            (event for event in reversed(self.events) if event.kind == "memory_update"
-             and event.fact_ref == fact_ref), None,
-        )
 
     @property
     def executed_tools(self) -> set[str]:
@@ -153,7 +143,6 @@ class WorkerJournal:
         statement: str,
         event_ref: str = "runtime-input:1",
     ) -> WorkerJournalEvent:
-        prior = self._latest_fact(f"evidence:{key}")
         return self._append(WorkerJournalEvent(
             event_ref=event_ref,
             kind="memory_update",
@@ -164,7 +153,6 @@ class WorkerJournal:
             statement=" ".join(statement.split()),
             attempt_id=self.worker_id,
             origin="runtime",
-            supersedes=prior.event_ref if prior is not None else "",
         ))
 
     def record_runtime_commitment(
@@ -179,7 +167,6 @@ class WorkerJournal:
     ) -> WorkerJournalEvent:
         """Record a Runtime-owned action-intent transition."""
         key = f"action_{step}_{substep}"
-        prior = self._latest_fact(f"commitment:{key}")
         return self._append(WorkerJournalEvent(
             event_ref=f"step:{step}.{substep}:commitment:{status}",
             kind="memory_update",
@@ -191,7 +178,6 @@ class WorkerJournal:
             frame_id=frame_id,
             attempt_id=self.worker_id,
             origin="runtime",
-            supersedes=prior.event_ref if prior is not None else "",
         ))
 
     def settle_runtime_commitment(

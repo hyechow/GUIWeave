@@ -1,4 +1,4 @@
-"""Deterministic event construction and memory transition validation."""
+"""Deterministic receipt construction and per-action outcome classification."""
 
 from __future__ import annotations
 
@@ -78,7 +78,7 @@ def action_receipt_event(
     )
     receipt = ActionReceipt(
         tool=tool, args=_semantic_args(args), outcome=outcome,
-        commitment_refs=commitment_refs, preserves_window=tool == "ask_user",
+        commitment_refs=commitment_refs,
         executed=isinstance(result, dict) and result.get("status") == "executed",
         target_ref=target_ref, state_target_ref=state_target_ref, target=target,
         clears_target=clears_target,

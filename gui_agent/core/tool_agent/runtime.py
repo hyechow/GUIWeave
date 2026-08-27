@@ -81,7 +81,6 @@ from gui_agent.core.tool_agent.protocol import (
     image_message,
     input_binding_action,
     model_tool,
-    parse_json_object,
     response_usage,
     validate_dynamic_action_spec,
     worker_frame_tools,
@@ -1190,7 +1189,11 @@ class ToolAgentRuntime:
                     )
                     return WorkerOutcome(
                         phase="completed",
-                        summary=state.summary,
+                        summary=(
+                            state.summary
+                            if state is not None
+                            else "The State role declared the Goal Contract established."
+                        ),
                         collection_ref=descriptor,
                         steps=step,
                     )
@@ -1211,7 +1214,6 @@ class ToolAgentRuntime:
                 spec,
                 frame_actions,
                 frame,
-                state=state,
                 assessment=frame_assessment,
                 allow_failure=not require_attempt or bool(journal.executed_tools),
             )
@@ -1509,43 +1511,9 @@ class ToolAgentRuntime:
                     error=error,
                 )
                 continue
-            if terminal == "complete":
-                descriptor = (
-                    CollectionRef.model_validate(result_payload)
-                    if spec.profile == "collector"
-                    else None
-                )
-                self._trace(
-                    "worker_complete",
-                    step=step,
-                    profile=spec.profile,
-                    collection_ref=(
-                        descriptor.model_dump(mode="json") if descriptor is not None else None
-                    ),
-                )
-                return WorkerOutcome(
-                    phase="completed",
-                    summary=state.summary,
-                    collection_ref=descriptor,
-                    steps=step,
-                )
-            if terminal == "each_next":
-                # A consume="each" operator finished one plan element; the cursor
-                # was advanced inside _execute_worker_tool. State is scoped to that
-                # element, so the next frame must initialize a fresh snapshot.
-                snapshots = getattr(self, "_worker_state_snapshots", None)
-                if isinstance(snapshots, dict):
-                    snapshots.pop(worker_id, None)
-                state_frames = getattr(self, "_worker_state_frames", None)
-                if isinstance(state_frames, dict):
-                    state_frames.pop(worker_id, None)
-                self._trace(
-                    "worker_each_advanced",
-                    step=step,
-                    worker_id=worker_id,
-                    profile=spec.profile,
-                )
-                continue
+            # Completion is State-owned and resolved earlier in the loop; the Actor
+            # loop never produces a "complete" / "each_next" terminal. report_blocked
+            # and platform rejections remain live here.
             if terminal == "report_blocked":
                 reason = FailWorkerArgs.model_validate(call["args"]).reason
                 return WorkerOutcome(
@@ -1977,10 +1945,6 @@ class ToolAgentRuntime:
                     break
                 if call["name"] == "complete":
                     CompleteReadyWorkerArgs.model_validate(call["args"])
-                    if prior_state is None:
-                        raise ValueError(
-                            "State called complete before any observed state"
-                        )
                     completion = call
                     state = prior_state
                     break
@@ -2069,11 +2033,9 @@ class ToolAgentRuntime:
         actions: list[DynamicActionSpec],
         frame: MaterializedFrame,
         *,
-        state: WorkerStateSnapshot | None = None,
         assessment: WorkerFrameTools | None = None,
         allow_failure: bool = True,
     ) -> list[dict[str, Any]]:
-        del state
         assessment = assessment or worker_frame_tools(
             spec, actions, frame,
         )
@@ -2393,19 +2355,17 @@ class ToolAgentRuntime:
         spec: WorkerSpec,
         call: dict[str, Any],
         worker_id: str,
-        frame: MaterializedFrame | None = None,
+        frame: MaterializedFrame,
     ) -> tuple[dict[str, Any], str | None]:
         """Resolve a `complete` call: bind a collector or advance an each cursor.
 
-        Completion authority is Actor-free; this runs only when State declares the
+        Completion authority is State-owned; this runs only when State declares the
         Goal Contract established. The logic stays mechanical (bind rows, advance a
         cursor), never a semantic audit of the contract.
         """
 
         parsed_complete = CompleteReadyWorkerArgs.model_validate(call["args"])
         if spec.profile == "collector":
-            if frame is None:
-                raise ValueError("collector complete requires a current frame")
             # The Worker may fold records read from un-extractable surfaces into
             # the completion; accumulate them before binding the collection.
             if parsed_complete.rows:
@@ -2457,8 +2417,8 @@ class ToolAgentRuntime:
         *,
         worker_id: str = "",
     ) -> tuple[dict[str, Any], str | None]:
-        if call["name"] == "complete":
-            return self._resolve_worker_complete(spec, call, worker_id, frame)
+        # Completion is resolved by the State stage (_resolve_worker_complete), never
+        # through the Actor loop; a stray "complete" is an unknown tool below.
         if call["name"] == "report_blocked":
             parsed = FailWorkerArgs.model_validate(call["args"])
             return {"status": "failed", "reason": parsed.reason}, "report_blocked"

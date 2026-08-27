@@ -622,11 +622,6 @@ def replay_worker_decision(
         action_envelope=multi_action,
         max_ordered_actions=max_ordered_actions,
     )
-    if visible_commit_control:
-        tools = [
-            tool for tool in tools
-            if tool.get("function", {}).get("name") != "complete"
-        ]
     capabilities = {action.name: action.capability for action in actions}
     action_names = (
         [
@@ -701,8 +696,8 @@ def replay_worker_decision(
                     "kind": "button",
                 }],
                 "instruction": (
-                    "Re-evaluate completion against the current frame and the last "
-                    "actually recorded action. Complete is withheld on this frame; "
+                    "Re-evaluate the current state against this frame and the last "
+                    "actually recorded action. Completion is the State role's judgment; "
                     "activate the pending requested commit and never claim an activation "
                     "absent from WorkerMemory."
                 ),

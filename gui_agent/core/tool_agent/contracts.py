@@ -375,7 +375,8 @@ class WorkerSpec(StrictModel):
         default_factory=dict,
         description=(
             "User-owned values described by role but lacking an exact identifier. "
-            "Each must be resolved before a dependent Commitment is established."
+            "Each must be resolved before the dependent mutation or binding that "
+            "consumes it.",
         ),
     )
     data_requirements: list[DataRequirement] = Field(default_factory=list)

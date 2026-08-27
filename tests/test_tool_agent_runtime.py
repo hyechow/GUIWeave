@@ -782,18 +782,13 @@ def test_actor_never_owns_completion_when_runtime_mode_allows_it() -> None:
             "expected_value": True,
         }],
     )
-    missing = WorkerStateSnapshot(summary="No saved fact yet.")
-    observed = WorkerStateSnapshot.model_validate({
-        "summary": "The saved fact is observed.",
-        "markdown": "### target\n- The target is saved.",
-    })
     frame = MaterializedFrame(frame_id="frame:2", screenshot_path="frame.png")
 
     waiting = runtime._worker_tools_for_frame(
-        spec, [action], frame, state=missing, allow_failure=False,
+        spec, [action], frame, allow_failure=False,
     )
     ready = runtime._worker_tools_for_frame(
-        spec, [action], frame, state=observed, allow_failure=False,
+        spec, [action], frame, allow_failure=False,
     )
 
     # Completion is State-owned; the Actor tool set never exposes it.
@@ -1446,7 +1441,15 @@ class _SplitEachWorker:
             self.state_calls += 1
             state_input = json.loads(messages[-1].content[0]["text"])
             init = state_input["mode"] == "init"
-            self.state_modes.append(state_input["mode"])
+            self.state_modes.append(state_input["mode"]) if init else None
+            # Each element: record it, then after the element's action the State
+            # advances the plan cursor with `complete`.
+            if self.state_calls in {2, 4}:
+                return SimpleNamespace(content="", tool_calls=[{
+                    "id": f"state-complete-{self.state_calls}",
+                    "name": "complete",
+                    "args": {"evidence": ["The current element is processed."]},
+                }])
             events = ([{
                 "kind": "source_observed",
                 "source_ref": "current_element",
@@ -1460,24 +1463,18 @@ class _SplitEachWorker:
                 ),
             }])
         self.actor_calls += 1
-        if self.actor_calls in {1, 3}:
-            return SimpleNamespace(content="", tool_calls=[{
-                "id": f"action-{self.actor_calls}",
-                "name": "continue_with_actions",
-                "args": {"actions": [{
-                    "name": "apply_value",
-                    "args": {
-                        "x": 500,
-                        "y": 500,
-                        "description": "Apply the current bound value",
-                        "state_target_ref": None,
-                    },
-                }]},
-            }])
         return SimpleNamespace(content="", tool_calls=[{
-            "id": f"complete-{self.actor_calls}",
-            "name": "complete",
-            "args": {"evidence": ["The current element is processed."]},
+            "id": f"action-{self.actor_calls}",
+            "name": "continue_with_actions",
+            "args": {"actions": [{
+                "name": "apply_value",
+                "args": {
+                    "x": 500,
+                    "y": 500,
+                    "description": "Apply the current bound value",
+                    "state_target_ref": None,
+                },
+            }]},
         }])
 
 
@@ -1763,8 +1760,8 @@ def test_split_state_reinitializes_after_each_element_advances(monkeypatch) -> N
     )
 
     assert runtime.outcome.phase == "completed"
-    assert worker.state_modes == ["init", "edit", "init", "edit"]
-    assert (worker.state_calls, worker.actor_calls) == (4, 4)
+    assert worker.state_modes == ["init", "init"]
+    assert (worker.state_calls, worker.actor_calls) == (4, 2)
     assert len(runtime._executor.actions) == 2
     assert runtime._each_cursors[("fused-worker", "plan")] == 2
 
@@ -1777,27 +1774,12 @@ class _PrematureCompleteWorker(_SplitWorkerFixture):
     def invoke(self, messages):
         if self.mode == "state":
             self.state_calls += 1
-            state_input = json.loads(messages[-1].content[0]["text"])
+            # The State role declares the operator established without doing work;
+            # Runtime resolves it without semantically auditing the contract.
             return SimpleNamespace(content="", tool_calls=[{
-                "id": "state-delta",
-                "name": "edit_state_memory",
-                "args": _state_delta_args(
-                    state_input["mode"], state_input["frame_id"], [
-                        {
-                            "kind": "source_observed",
-                            "source_ref": "test_form",
-                            "evidence": "The requested form is visible.",
-                        },
-                        {
-                            "kind": "target_observed",
-                            "target_ref": "apply_control",
-                            "identity": "The visible Apply control",
-                            "visibility": "full",
-                            "owned_region_visibility": "unobscured",
-                            "evidence": "The Apply control is visible.",
-                        },
-                    ],
-                ),
+                "id": "state-complete-1",
+                "name": "complete",
+                "args": {"evidence": ["The visible Apply control was activated."]},
             }])
         self.calls += 1
         return SimpleNamespace(content="", tool_calls=[{
@@ -1838,7 +1820,7 @@ def test_operator_completion_is_not_runtime_semantically_audited(monkeypatch) ->
     )
 
     assert (runtime.outcome.phase, worker.calls, len(executor.actions)) == (
-        "completed", 1, 0,
+        "completed", 0, 0,
     )
     assert not any(
         event["event"] == "worker_completion_recheck" for event in runtime.trace
@@ -3302,14 +3284,13 @@ def test_collector_complete_without_any_accumulated_rows_is_rejected() -> None:
     frame = MaterializedFrame(frame_id="frame:1", screenshot_path="frame.png")
 
     with pytest.raises(ValueError, match="no accumulated rows"):
-        runtime._execute_worker_tool(
+        runtime._resolve_worker_complete(
             spec,
-            spec._test_actions,
             {
                 "name": "complete",
                 "args": {"evidence": []},
             },
-            b"png",
+            "records_worker",
             frame,
         )
 
@@ -3956,32 +3937,40 @@ def test_each_binding_complete_advances_cursor_and_exhausts() -> None:
         }],
         strategy=WorkerStrategy(approach="a"),
     )
+    frame = MaterializedFrame(frame_id="frame:1", screenshot_path="frame.png")
     # complete #1 → advances to cursor 1, returns each_next (not terminal).
-    result, terminal = runtime._execute_worker_tool(
-        spec, [], {"name": "complete", "args": {}}, b"png", worker_id="w",
+    result, terminal = runtime._resolve_worker_complete(
+        spec, {"name": "complete", "args": {}}, "w", frame,
     )
     assert terminal == "each_next"
     assert result.get("each_advanced") is True
     assert runtime._each_cursors[("w", "plan")] == 1
     # complete #2 → cursor 2 == len, exhausted → real terminal.
-    result, terminal = runtime._execute_worker_tool(
-        spec, [], {"name": "complete", "args": {}}, b"png", worker_id="w",
+    result, terminal = runtime._resolve_worker_complete(
+        spec, {"name": "complete", "args": {}}, "w", frame,
     )
     assert terminal == "complete"
     assert result.get("each_advanced") is None
 
 
 class _QueueWorker(_SplitWorkerFixture):
-    """Worker policy that replays a fixed decision list."""
+    """One rename per plan element: State advances each element via `complete`."""
 
-    def __init__(self, decisions: list[dict]) -> None:
+    def __init__(self) -> None:
         super().__init__()
-        self.decisions = list(decisions)
-        self.calls = 0
+        self.state_calls = 0
+        self.actor_calls = 0
 
     def invoke(self, messages):
         if self.mode == "state":
             self.state_calls += 1
+            # Even State frames complete the current element and advance the plan.
+            if self.state_calls % 2 == 0:
+                return SimpleNamespace(content="", tool_calls=[{
+                    "id": f"state-complete-{self.state_calls}",
+                    "name": "complete",
+                    "args": {"evidence": ["renamed"]},
+                }])
             state_input = json.loads(messages[-1].content[0]["text"])
             events = ([{
                 "kind": "source_observed",
@@ -3989,22 +3978,24 @@ class _QueueWorker(_SplitWorkerFixture):
                 "evidence": "The requested test surface is visible.",
             }] if state_input["mode"] == "init" else [])
             return SimpleNamespace(content="", tool_calls=[{
-                "id": "state-delta",
+                "id": f"state-delta-{self.state_calls}",
                 "name": "edit_state_memory",
                 "args": _state_delta_args(
                     state_input["mode"], state_input["frame_id"], events,
                 ),
             }])
-        decision = self.decisions.pop(0)
-        self.calls += 1
-        args = dict(decision["args"])
-        args.pop("state", None)
-        if ("x" in args or "y" in args) and "state_target_ref" not in args:
-            args["state_target_ref"] = None
+        self.actor_calls += 1
         return SimpleNamespace(content="", tool_calls=[{
-            "id": f"call-{self.calls}",
-            "name": decision["name"],
-            "args": args,
+            "id": f"tap-{self.actor_calls}",
+            "name": "continue_with_actions",
+            "args": {"actions": [{
+                "name": "tap",
+                "args": {
+                    "x": 750, "y": 450,
+                    "description": "Tap Rename",
+                    "state_target_ref": None,
+                },
+            }]},
         }])
 
 
@@ -4045,24 +4036,7 @@ def test_each_element_allows_same_structural_action() -> None:
     runtime._initial_worker_actions = lambda spec: [
         DynamicActionSpec(name="tap", capability="tap", description="Tap target")
     ]
-    runtime.worker = _QueueWorker([
-        {"name": "tap", "args": {
-            "state": {"status": "exploring", "summary": "tap rename"},
-            "x": 750, "y": 450, "description": "Tap Rename",
-        }},
-        {"name": "complete", "args": {
-            "state": {"status": "completed", "summary": "element done"},
-            "evidence": ["renamed"],
-        }},
-        {"name": "tap", "args": {
-            "state": {"status": "exploring", "summary": "tap rename next"},
-            "x": 750, "y": 450, "description": "Tap Rename next",
-        }},
-        {"name": "complete", "args": {
-            "state": {"status": "completed", "summary": "element done"},
-            "evidence": ["renamed"],
-        }},
-    ])
+    runtime.worker = _QueueWorker()
     spec = WorkerSpec(
         profile="operator",
         goal="Rename each plan element",
@@ -4085,9 +4059,9 @@ def test_each_element_allows_same_structural_action() -> None:
 
     outcome = runtime._run_worker("rename_worker", spec)
 
-    # Both taps executed (the second, same-coordinate tap on a structurally
+    # Both taps dispatched (the second, same-coordinate tap on a structurally
     # identical menu was NOT blocked as a repeat) and both elements completed.
-    assert runtime.worker.calls == 4
+    assert (runtime.worker.state_calls, runtime.worker.actor_calls) == (4, 2)
     assert outcome.phase == "completed"
     assert outcome.steps >= 1
     each = [event for event in runtime.trace if event["event"] == "worker_each_advanced"]
