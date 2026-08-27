@@ -94,18 +94,26 @@ def test_state_edit_requires_one_exact_old_lines_match() -> None:
         edits=[{"old_lines": [], "new_lines": ["### record", "- Value: one"]}],
     ), spec=_spec())
 
-    # An anchor block that occurs more than once is ambiguous and stays a hard error.
+    # An exact single-occurrence anchor is replaced in place.
+    replaced = reduce_worker_state(initial, _batch(
+        mode="edit", frame_id="frame:2",
+        edits=[{"old_lines": ["- Value: one"], "new_lines": ["- Value: changed"]}],
+    ), spec=_spec())
+    assert "- Value: changed" in replaced.markdown
+    assert "- Value: one" not in replaced.markdown
+    # An anchor that occurs more than once is ambiguous: preserve the new content by
+    # appending instead of guessing which occurrence to replace.
     doubled = reduce_worker_state(None, _batch(
         mode="init", frame_id="frame:1",
         edits=[{"old_lines": [], "new_lines": ["### record", "- Value: one", "- Value: one"]}],
     ), spec=_spec())
-    with pytest.raises(ValueError, match="exactly once"):
-        reduce_worker_state(doubled, _batch(
-            mode="edit", frame_id="frame:2",
-            edits=[{"old_lines": ["- Value: one"], "new_lines": ["replacement"]}],
-        ), spec=_spec())
-    # Empty old_lines against a non-empty memory appends the new observation
-    # (recoverable intent), it no longer aborts the run.
+    ambiguous = reduce_worker_state(doubled, _batch(
+        mode="edit", frame_id="frame:2",
+        edits=[{"old_lines": ["- Value: one"], "new_lines": ["replacement"]}],
+    ), spec=_spec())
+    assert "- Value: one" in ambiguous.markdown
+    assert "replacement" in ambiguous.markdown
+    # Empty old_lines against a non-empty memory appends the new observation.
     appended = reduce_worker_state(initial, _batch(
         mode="edit", frame_id="frame:2",
         edits=[{"old_lines": [], "new_lines": ["- Appended: two"]}],

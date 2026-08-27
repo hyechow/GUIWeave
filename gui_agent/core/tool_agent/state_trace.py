@@ -67,18 +67,13 @@ def _apply_markdown_edits(memory: str, batch: WorkerStateEditBatch) -> str:
             updated = (updated.rstrip() + "\n\n" + new_text) if updated else new_text
         else:
             occurrences = updated.count(old_text)
-            if occurrences == 0:
-                # The State's anchor block is no longer present (memory drifted, or
-                # the model mis-reproduced the exact text). Preserve the State's new
-                # observation by appending it instead of aborting the whole run; the
-                # exact-match safety for genuine replacements and the ambiguity guard
-                # for blocks that occur more than once are both unchanged.
+            if occurrences != 1:
+                # The anchor block is missing (0, memory drifted / model mis-reproduced)
+                # or ambiguous (>1, the text appears more than once). In both cases the
+                # State's new observation is preserved by appending it instead of
+                # aborting the run; the exact-match replace applies only when the anchor
+                # occurs exactly once.
                 updated = updated.rstrip() + "\n\n" + new_text
-            elif occurrences != 1:
-                raise ValueError(
-                    f"State edit {index} old_lines must occur exactly once; "
-                    f"found {occurrences}"
-                )
             else:
                 updated = updated.replace(old_text, new_text, 1)
         if len(updated) > 48_000:
