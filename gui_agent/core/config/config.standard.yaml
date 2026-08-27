@@ -76,9 +76,12 @@ llm:
     state:
       # State observation role runs on the standard endpoint's DeepSeek vision model.
       # This model runs thinking always-on and rejects tool_choice="required", so the
-      # Runtime binds it with "auto" (see _invoke_state_role).
+      # Runtime binds it with "auto" (see _invoke_state_role). It is also slow on the
+      # two-image transition frames (measured ~85s on a large frame), so give it a
+      # generous timeout; 60s/120s both time out such frames.
       <<: *standard
       model: deepseek-v4-flash-vision-exp
+      timeout_s: 180
     perception:
       <<: *standard
       model: qwen3.7-plus

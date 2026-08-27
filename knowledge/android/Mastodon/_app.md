@@ -12,9 +12,25 @@ source: manual_verified
 confidence: high
 sensitivity: internal
 ttl: session
-version: 8
+version: 11
 ---
 # Mastodon on Android
+
+- Explore search matches an exact contiguous string, not AND-tokenized terms; a
+  multi-word query combining an account handle with a topic almost always returns
+  "Could not find anything for these search terms". When a search comes back empty,
+  do not stop or ask the user — simplify to one distinctive term and re-query: search
+  the account handle alone on the `People` tab, or the topic alone on `Posts`/`Hashtags`,
+  then open the matching profile or post.
+- A task phrase like "the gourmet user"/"the <name> user" names the account by handle:
+  search that bare identifier (no `@`) on the `People` tab to open the account's profile.
+  Do not ask what the handle is.
+
+- The Home timeline only shows recent posts from followed accounts; it cannot surface an
+  arbitrary account's older or unscoped toot. To find a toot by a specific account (or
+  about a specific topic), open the `Explore` tab, search the account handle or a
+  distinctive topic term, and open the matching `Posts` result or the account's `People`
+  profile — then scroll that profile's posts. Never try to locate it by scrolling Home.
 
 - Lists are managed only on the Home surface: navigate to the Home bottom-navigation
   tab, open the dropdown beside the `Home` title, and choose `Lists`, then `Create list`
