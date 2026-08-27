@@ -611,6 +611,7 @@ def test_vision_extract_preserves_schema_rejected_rows_for_empty_classification(
     assert "Task reference time (frozen platform clock):" in human_text
     assert 'Frozen relative calendar dates by day offset: {"-2":' in human_text
     assert 'Current page identity: {"url": "https://example.test/records"' in human_text
+    assert 'Declared visible field sources: {"condition": "Condition"' in human_text
 
 
 def test_optional_visual_null_is_omitted_instead_of_rejecting_row(

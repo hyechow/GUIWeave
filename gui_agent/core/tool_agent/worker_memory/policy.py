@@ -61,6 +61,7 @@ def action_receipt_event(
     result: Any,
     commitment_refs: tuple[str, ...],
     target_ref: str = "",
+    state_target_ref: str = "",
     target: TargetRef | None = None,
     substep: int | None = None,
 ) -> WorkerJournalEvent:
@@ -79,7 +80,8 @@ def action_receipt_event(
         tool=tool, args=_semantic_args(args), outcome=outcome,
         commitment_refs=commitment_refs, preserves_window=tool == "ask_user",
         executed=isinstance(result, dict) and result.get("status") == "executed",
-        target_ref=target_ref, target=target, clears_target=clears_target,
+        target_ref=target_ref, state_target_ref=state_target_ref, target=target,
+        clears_target=clears_target,
     )
     return WorkerJournalEvent(
         event_ref=event_ref,

@@ -144,8 +144,15 @@ def test_files_mail_use_physical_folder_and_single_file_picker() -> None:
     assert "copies the file into Android `Downloads`" in worker_context
     assert "matching Runtime invocation receipt" in worker_context
     assert "do not invoke the same control again" in worker_context
+    assert "Reopening the same message" in worker_context
+    assert "does not confirm or repeat that copy" in worker_context
     assert "open the exact `Downloads` row through `Files`" in worker_context
     assert "destination file already exists" in worker_context
+    assert "default download directory is `/sdcard/Download`" in worker_context
+    assert "shown as `Downloads` in the file picker" in worker_context
+    assert "the default `Recent` view" in worker_context
+    assert "open the top-left menu" in worker_context
+    assert "device storage → `Downloads`" in worker_context
     assert "only selection that attaches that file" in worker_context
     assert "Android Back cancels" in worker_context
     assert "never press Back before selecting" in worker_context

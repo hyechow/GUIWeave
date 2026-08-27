@@ -11,7 +11,6 @@
         "tool": "continue_with_actions",
         "protocol_repairs_max": 0,
         "memory_repairs_max": 2,
-        "state_status": "collecting",
         "required_prefix": [
           {
             "capability": "scroll",

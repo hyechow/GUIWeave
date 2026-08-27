@@ -12,7 +12,7 @@ source: manual_verified
 confidence: medium
 sensitivity: internal
 ttl: session
-version: 8
+version: 9
 ---
 # Mail on Android
 
@@ -34,10 +34,16 @@ version: 8
 - One invocation of an incoming attachment's blue download control copies the file into Android
   `Downloads`. This control has no visual completion state: the open email and blue control remain
   unchanged after the copy. A matching Runtime invocation receipt therefore completes the download
-  step; do not invoke the same control again on that unchanged screen. When the task needs content
+  step; do not invoke the same control again on that unchanged screen. Reopening the same message
+  later does not confirm or repeat that copy; the file is already in `Downloads`. When the task needs content
   inside the file, open the exact `Downloads` row through `Files` and a compatible viewer, record
   the visible content as Evidence, then return to Mail. Repeating the download can fail because the
   destination file already exists.
+- Android's default download directory is `/sdcard/Download`, shown as `Downloads` in the file
+  picker; an attachment downloaded with the blue control lands there. In the picker the attach
+  action opens, the default `Recent` view and the `Documents`/type filter chips do not reliably
+  list files just copied there. To attach a downloaded file, open the top-left menu
+  (`Show roots`) → device storage → `Downloads`, then select the exact file row.
 - For “all files in a folder”, include every direct file regardless of type. Use `Show roots` and
   device storage because the `Documents` category can omit types. The picker may return after one
   selection; verify the attachment in compose and reopen it for each remaining file.

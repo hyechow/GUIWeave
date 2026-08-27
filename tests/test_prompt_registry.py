@@ -79,6 +79,8 @@ def test_master_exposes_only_tool_agent_runtime_api() -> None:
     assert "Keep independent state dimensions independent" in prompt
     assert "Preserve each user-owned value as exact or descriptive" in prompt
     assert "unresolved_inputs" in prompt
+    assert "completion_facts" in prompt
+    assert "externally checkable factual propositions" in prompt
     assert "merely useful supplemental metrics" in prompt
     assert "A collector only returns raw source records" in prompt
     assert "one hybrid collector" in prompt
@@ -109,6 +111,8 @@ def test_visual_transcription_uses_runtime_time_without_inventing_dates() -> Non
     assert "provenance-bearing platform clock" in prompt
     assert "explicitly relative visible labels" in prompt
     assert "Omit invisible optional properties" in prompt
+    assert "Respect the requested record grain" in prompt
+    assert "child identity or name field" in prompt
 
 
 def test_presentation_requires_user_facing_prose() -> None:
@@ -125,34 +129,56 @@ def test_state_and_actor_prompts_have_disjoint_responsibilities() -> None:
     state = load_prompt_text("task.tool_agent.state")
     actor = load_prompt_text("task.tool_agent.actor")
 
-    assert "Determine what is true now" in state
-    assert "never choose, recommend, or encode an action" in state
-    assert "mode=init" in state
-    assert "mode=append" in state
-    assert "Never return a full state snapshot" in state
-    assert "`previous_frame`, then `current_frame`" in state
-    assert "current visibility and facts always come from `current_frame`" in state
-    assert "Reuse exact refs from `previous_state`" in state
-    assert "only goal facts newly visible or changed" in state
-    assert "each currently visible unresolved target" in state
-    assert "Do not repeat an unchanged resolved target" in state
-    assert "never repeat an unchanged source" in state
-    assert "coverage=unresolved` once" in state
-    assert "do not restate that default" in state
-    assert "type-grouped `delta`" in state
-    assert "source ref is never an application" in state
-    assert "A resolved target never regresses" in state
-    assert "Do not mirror the receipt as another State object" in state
-    assert "Runtime derives terminal status" in state
+    assert "Observe what is true now" in state
+    assert "never choose an action or classify goal progress" in state
+    assert "edit_state_memory" in state
+    assert "one open Markdown document" in state
+    assert "there is no predefined semantic schema" in state
+    assert "smallest exact consecutive `old_lines`" in state
+    assert "Never rewrite the full document" in state
+    assert "Reuse exact refs from `previous_state.target_registry`" in state
+    assert "same object keeps one ref across list/detail views" in state
+    assert "`fact_interests` describe which facts may matter" in state
+    assert "without deciding whether a target or the task satisfies" in state
+    assert "The envelope is not memory" in state
+    assert "Current visibility belongs only in `visible_targets`" in state
+    assert "`outcome.kind=no_effect` means no visual change" in state
+    assert "visual identity is not a reason to skip" in state
+    assert "empty edits are incorrect" in state
+    assert "named file now exists in local storage" in state
+    assert "Never use status, progress, or completion as a field name" in state
+    assert "including nested child lines under its heading" in actor
+    assert "including under a nested child" in actor
+    assert "Choose a different matching visible target" in actor
+    assert "Do not reopen a target to verify" in actor
+    assert "Markdown is the confirmation" in actor
+    assert "literal Markdown lines" in state
+    assert "later navigation or absence never confirms" in state
+    assert "Runtime records frame and receipt provenance outside" in state
     assert "Choose what to do next" in actor
-    assert "Never produce, revise, or reinterpret State" in actor
+    assert "Never produce or revise facts" in actor
     assert "never emit `state`, memory, progress" in actor
-    assert "Do not repeat a predicate State already marks resolved" in actor
-    assert "different unresolved predicate" in actor
+    assert "never invent a lifecycle for a target" in actor
+    assert "Recompute the current goal difference" in actor
+    assert "does not retract Markdown facts" in actor
+    assert "do not reopen that target" in actor
+    assert "later back or navigation receipt" in actor
+    assert "apply every applicable Goal Contract predicate" in actor
+    assert "An omitted field or child fact is unobserved" in actor
+    assert "A value stated in the Goal Contract or Markdown is not missing" in actor
+    assert "A `complete` evidence entry is a fact already established" in actor
+    assert "never by an intended or assumed mutation" in actor
+    assert "must never be written into State memory" in actor
     assert "`owned_region_visibility=edge_fragment` is not safely actionable" in actor
+    assert "target-oriented Markdown memory owns accumulated" in actor
+    assert "state_property_ref" not in actor
+    assert "copy its exact `target_ref`" in actor
     assert "safely inside the control's tappable interior" in actor
     assert "Scroll directions describe content traversal" in actor
-    assert "describes visibility, not coordinates or an action" in state
+    assert "Visibility comes only from current target-owned pixels" in state
+    assert "spatial index, not a work queue" in actor
+    assert "When `phase` is `start`" in actor
+    assert "nested under the owning object" in state
 
 
 def test_master_keeps_visual_conditional_dependencies_in_one_worker() -> None:

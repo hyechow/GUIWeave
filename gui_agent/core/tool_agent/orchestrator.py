@@ -412,6 +412,13 @@ def _validate_gui_worker_call(
     except ValueError as exc:
         diagnostics.append(_diagnostic("GUI_WORKER_LITERAL", str(exc), call))
         values["unresolved_inputs"] = {}
+    try:
+        values["completion_facts"] = _literal_keyword(
+            call, "completion_facts",
+        ) if any(item.arg == "completion_facts" for item in call.keywords) else []
+    except ValueError as exc:
+        diagnostics.append(_diagnostic("GUI_WORKER_LITERAL", str(exc), call))
+        values["completion_facts"] = []
     contract_criteria = (
         [str(values["success_criteria"])]
         if isinstance(values["success_criteria"], str)
@@ -502,6 +509,7 @@ def _validate_gui_worker_call(
                 "input_bindings": values["input_bindings"],
                 "unresolved_inputs": values["unresolved_inputs"],
                 "data_requirements": values.get("data_requirements") or [],
+                "completion_facts": values["completion_facts"],
                 "strategy": {
                     "approach": values["approach"],
                 },
@@ -1261,6 +1269,7 @@ class WorkerOrchestrationContext:
         input_bindings: list[dict[str, Any]] | None = None,
         unresolved_inputs: dict[str, str] | None = None,
         data_requirements: list[dict[str, Any]] | None = None,
+        completion_facts: list[dict[str, Any]] | None = None,
     ) -> dict[str, Any]:
         if _WORKER_ID_PATTERN.fullmatch(worker_id) is None:
             raise ValueError("worker_id must be a stable snake_case identifier")
@@ -1280,6 +1289,7 @@ class WorkerOrchestrationContext:
                 "input_bindings": input_bindings or [],
                 "unresolved_inputs": unresolved_inputs or {},
                 "data_requirements": data_requirements or [],
+                "completion_facts": completion_facts or [],
                 "strategy": {
                     "approach": approach,
                 },

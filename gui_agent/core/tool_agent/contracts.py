@@ -343,6 +343,14 @@ class WorkerStrategy(StrictModel):
     approach: str = Field(min_length=1)
 
 
+class WorkerCompletionFact(StrictModel):
+    """One static, externally checkable fact required before completion is offered."""
+
+    property_ref: str = Field(pattern=r"^[a-z][a-z0-9_.]{0,99}$")
+    description: str = Field(min_length=1, max_length=500)
+    expected_value: str | bool | int | float | None = True
+
+
 class WorkerSpec(StrictModel):
     """An immutable logical goal paired with one replaceable execution strategy."""
 
@@ -371,6 +379,15 @@ class WorkerSpec(StrictModel):
         ),
     )
     data_requirements: list[DataRequirement] = Field(default_factory=list)
+    completion_facts: list[WorkerCompletionFact] = Field(
+        default_factory=list,
+        max_length=8,
+        description=(
+            "Static factual propositions whose expected values must be observed before "
+            "Runtime offers completion. Empty preserves Actor-owned completion for pure "
+            "retrieval and legacy contracts."
+        ),
+    )
     strategy: WorkerStrategy
 
     @model_validator(mode="after")
@@ -380,6 +397,9 @@ class WorkerSpec(StrictModel):
         requirement_ids = [item.id for item in self.data_requirements]
         if len(set(requirement_ids)) != len(requirement_ids):
             raise ValueError("data requirement ids must be unique")
+        completion_refs = [item.property_ref for item in self.completion_facts]
+        if len(set(completion_refs)) != len(completion_refs):
+            raise ValueError("completion fact refs must be unique")
         invalid_input_names = [
             name
             for name in (*self.input_refs, *self.unresolved_inputs)
@@ -435,136 +455,61 @@ class WorkerSpec(StrictModel):
         return self
 
 
-StateEvidenceAuthority: TypeAlias = Literal[
-    "ambiguous_visual", "bound_visual", "explicit_visual",
+StateTargetRef: TypeAlias = Annotated[
+    str, Field(pattern=r"^[a-z][a-z0-9_]{0,79}$"),
 ]
-StateJsonScalar: TypeAlias = str | bool | int | float | None
+StateIdentity: TypeAlias = Annotated[str, Field(min_length=1, max_length=300)]
+StateSurface: TypeAlias = Annotated[str, Field(min_length=1, max_length=120)]
 
 
-class WorkerSourceObserved(StrictModel):
-    kind: Literal["source_observed"] = "source_observed"
-    source_ref: str = Field(pattern=r"^[a-z][a-z0-9_]{0,79}$")
-    evidence: str = Field(min_length=1, max_length=240)
+class WorkerStateVisibleTarget(StrictModel):
+    """One current-frame target retained only for Actor action binding."""
 
-
-class WorkerSurfaceObserved(StrictModel):
-    kind: Literal["surface_observed"] = "surface_observed"
-    surface: str = Field(min_length=1, max_length=120)
-    evidence: str = Field(min_length=1, max_length=240)
-
-
-class WorkerTargetObserved(StrictModel):
-    kind: Literal["target_observed"] = "target_observed"
-    target_ref: str = Field(pattern=r"^[a-z][a-z0-9_]{0,79}$")
-    identity: str = Field(min_length=1, max_length=300)
+    target_ref: StateTargetRef
+    identity: StateIdentity
     visibility: Literal["partial", "full"]
     owned_region_visibility: Literal["edge_fragment", "unobscured"]
-    evidence: str = Field(min_length=1, max_length=240)
 
 
-class WorkerPropertyObserved(StrictModel):
-    kind: Literal["property_observed"] = "property_observed"
-    target_ref: str = Field(pattern=r"^[a-z][a-z0-9_]{0,79}$")
-    property_ref: str = Field(pattern=r"^[a-z][a-z0-9_.]{0,99}$")
-    value: StateJsonScalar
-    goal_relation: Literal["unresolved", "resolved"]
-    authority: StateEvidenceAuthority
-    evidence: str = Field(min_length=1, max_length=240)
+class WorkerStateMarkdownEdit(StrictModel):
+    """One exact, semantic-opaque edit to the continuous Markdown memory."""
+
+    old_lines: list[Annotated[str, Field(max_length=1_000)]] = Field(max_length=128)
+    new_lines: list[Annotated[str, Field(max_length=1_000)]] = Field(max_length=128)
 
 
-class WorkerCoverageObserved(StrictModel):
-    kind: Literal["coverage_observed"] = "coverage_observed"
-    source_ref: str = Field(pattern=r"^[a-z][a-z0-9_]{0,79}$")
-    status: Literal["unresolved", "exhausted"]
-    evidence: str = Field(min_length=1, max_length=240)
+class WorkerStateEditBatch(StrictModel):
+    """One Markdown memory edit call plus a minimal current-frame envelope."""
 
-
-class WorkerGoalConditionObserved(StrictModel):
-    kind: Literal["goal_condition_observed"] = "goal_condition_observed"
-    condition_ref: str = Field(pattern=r"^criterion_[1-9][0-9]*$")
-    status: Literal["unresolved", "satisfied", "blocked"]
-    evidence: str = Field(min_length=1, max_length=240)
-
-
-WorkerStateTraceEvent: TypeAlias = Annotated[
-    WorkerSourceObserved
-    | WorkerSurfaceObserved
-    | WorkerTargetObserved
-    | WorkerPropertyObserved
-    | WorkerCoverageObserved
-    | WorkerGoalConditionObserved,
-    Field(discriminator="kind"),
-]
-
-
-class WorkerStateTraceBatch(StrictModel):
-    """Goal-oriented observations emitted for one frame."""
-
-    mode: Literal["init", "append"]
+    mode: Literal["init", "edit"]
     frame_id: str = Field(min_length=1, max_length=120)
-    events: list[WorkerStateTraceEvent] = Field(default_factory=list, max_length=12)
-
-
-class WorkerStateProperty(StrictModel):
-    value: StateJsonScalar
-    goal_relation: Literal["unresolved", "resolved"]
-    authority: StateEvidenceAuthority
-    frame_id: str
-    evidence: str
+    surface: StateSurface | None = None
+    visible_targets: list[WorkerStateVisibleTarget] = Field(
+        default_factory=list, max_length=32,
+    )
+    edits: list[WorkerStateMarkdownEdit] = Field(default_factory=list, max_length=12)
 
 
 class WorkerStateTarget(StrictModel):
-    identity: str
-    source_ref: str | None = None
+    identity: StateIdentity
     visibility: Literal["not_visible", "partial", "full"] = "not_visible"
     owned_region_visibility: Literal[
         "not_visible", "edge_fragment", "unobscured",
     ] = "not_visible"
-    properties: dict[str, WorkerStateProperty] = Field(
-        default_factory=dict, max_length=16,
-    )
-
-
-class WorkerStateCoverage(StrictModel):
-    status: Literal["unresolved", "exhausted"]
-    frame_id: str
-    evidence: str
-
-
-class WorkerStateGoalCondition(StrictModel):
-    statement: str
-    status: Literal["unresolved", "satisfied", "blocked"] = "unresolved"
-    frame_id: str = ""
-    evidence: str = ""
 
 
 class WorkerStateSnapshot(StrictModel):
-    """Runtime-materialized continuous goal memory supplied to Actor."""
+    """Runtime-materialized continuous fact memory supplied to Actor."""
 
-    status: Literal["exploring", "collecting", "executing", "completed", "failed"]
     summary: str = Field(min_length=1, max_length=600)
     frame_id: str = ""
-    source_ref: str | None = None
     surface: str | None = None
     targets: dict[str, WorkerStateTarget] = Field(default_factory=dict, max_length=32)
-    coverage: dict[str, WorkerStateCoverage] = Field(default_factory=dict, max_length=8)
-    goal_conditions: dict[str, WorkerStateGoalCondition] = Field(
-        default_factory=dict, max_length=16,
-    )
+    markdown: str = Field(default="", max_length=48_000)
 
     @property
     def fact_statements(self) -> tuple[str, ...]:
-        statements = [self.summary]
-        for target in self.targets.values():
-            statements.append(target.identity)
-            statements.extend(
-                f"{name}={item.value!r}; {item.evidence}"
-                for name, item in target.properties.items()
-            )
-        statements.extend(
-            item.evidence for item in self.goal_conditions.values() if item.evidence
-        )
-        return tuple(statements)
+        return (self.summary, self.markdown)
 
 
 class DataChunkRef(StrictModel):

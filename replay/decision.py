@@ -31,12 +31,14 @@ from gui_agent.core.tool_agent.protocol import (
     dynamic_actor_tools,
     generic_action_spec,
     image_message,
-    validate_actor_tool_state,
     worker_attempt_contract,
     worker_frame_tools,
+    worker_profile_rules,
 )
 from gui_agent.core.tool_agent.runtime import ToolAgentRuntime
-from gui_agent.core.tool_agent.state_trace import state_actor_payload
+from gui_agent.core.tool_agent.state_trace import (
+    state_actor_markdown,
+)
 from gui_agent.prompts import load_prompt_text
 from llm.provider_config import (
     build_chat_model,
@@ -152,29 +154,51 @@ def _validated_recorded_state(
     value: Any,
 ) -> dict[str, Any]:
     raw = dict(value) if isinstance(value, dict) else {}
-    if "memory_updates" not in raw and "established_facts" not in raw:
+    if "markdown" in raw:
         return WorkerStateSnapshot.model_validate(raw).model_dump(mode="json")
-    if raw.get("status") not in {
-        "exploring", "collecting", "executing", "completed", "failed",
-    }:
-        raise ValueError("recorded State has no valid status")
     if not str(raw.get("summary") or "").strip():
         raise ValueError("recorded State has no summary")
-    return raw
-
-
-def _actor_state_view(state: dict[str, Any]) -> dict[str, Any]:
-    if "memory_updates" not in state and "established_facts" not in state:
-        return state_actor_payload(WorkerStateSnapshot.model_validate(state))
-    return {
-        "status": state["status"],
-        "goal_difference": state["summary"],
-        "legacy_evidence": [
-            str(item.get("statement") or "")
-            for item in state.get("memory_updates") or []
-            if isinstance(item, dict) and item.get("statement")
-        ] + [str(item) for item in state.get("established_facts") or []],
+    targets: dict[str, Any] = {}
+    sections: list[str] = []
+    for ref, target in (raw.get("targets") or {}).items():
+        if not isinstance(target, dict):
+            continue
+        targets[str(ref)] = {
+            key: target[key]
+            for key in ("identity", "visibility", "owned_region_visibility")
+            if key in target
+        }
+        facts = [
+            f"- Identity: {target.get('identity') or ref}",
+            *[
+                f"- {name}: {item.get('value')!r}"
+                for name, item in (target.get("properties") or {}).items()
+                if isinstance(item, dict)
+            ],
+        ]
+        sections.append(f"### {ref}\n" + "\n".join(facts))
+    legacy_facts = [
+        str(item)
+        for item in (raw.get("established_facts") or [])
+        if str(item).strip()
+    ]
+    legacy_facts.extend(
+        str(item.get("statement") or "")
+        for item in (raw.get("memory_updates") or [])
+        if isinstance(item, dict) and str(item.get("statement") or "").strip()
+    )
+    if legacy_facts:
+        sections.append("### Recorded observations\n" + "\n".join(
+            f"- {statement}" for statement in legacy_facts
+        ))
+    factual = {
+        "summary": str(raw.get("summary") or "Recorded observed facts."),
+        "frame_id": str(raw.get("frame_id") or ""),
+        "surface": raw.get("surface"),
+        "targets": targets,
+        "markdown": "\n\n".join(sections),
     }
+    return WorkerStateSnapshot.model_validate(factual).model_dump(mode="json")
 
 
 def _actor_messages(
@@ -185,6 +209,7 @@ def _actor_messages(
     state: dict[str, Any],
     application_knowledge: str = "",
     image_scale: float = 1.0,
+    profile: str | None = None,
 ) -> list[Any]:
     system = load_prompt_text("task.tool_agent.actor").rstrip()
     if application_knowledge:
@@ -192,10 +217,13 @@ def _actor_messages(
             "\n\n## Application knowledge (interface mechanics only)\n"
             + application_knowledge
         )
+    profile_rules = worker_profile_rules(profile)
+    if profile_rules:
+        system += "\n\n" + profile_rules
     actor_input = "\n\n".join((
         attempt_contract,
-        "## Authoritative materialized State view",
-        json.dumps(_actor_state_view(state), ensure_ascii=False),
+        "## Continuous observed fact memory",
+        state_actor_markdown(WorkerStateSnapshot.model_validate(state)),
     ))
     messages: list[Any] = [
         SystemMessage(content=system),
@@ -450,7 +478,6 @@ def _worker_decision(
         raise ValueError("Actor must not emit state; State is authoritative")
     if call["name"] == "continue_with_actions":
         ToolAgentRuntime._validate_multi_action_calls(calls, actions)
-    validate_actor_tool_state(call["name"], state["status"])
     names = [call["name"]]
     if call["name"] == "continue_with_actions":
         names = [str(item.get("name") or "") for item in calls]
@@ -461,8 +488,7 @@ def _worker_decision(
         "action_capabilities": [capabilities.get(name, name) for name in names],
         "action_semantics": _action_semantics(calls, capabilities),
         "state": state,
-        "state_status": state["status"],
-        "state_summary": state["summary"],
+        "state_summary": state.get("summary", ""),
         "args": call["args"],
     }
 
@@ -692,6 +718,7 @@ def replay_worker_decision(
             value.worker_context() for value in _current_app_knowledge(context)
         ),
         image_scale=float(getattr(model_config, "image_scale", 1.0)),
+        profile=spec.profile,
     )
     request_model = getattr(model_config, "model", None)
     if request_model is None:

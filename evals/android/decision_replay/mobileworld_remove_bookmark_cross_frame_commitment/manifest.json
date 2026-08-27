@@ -11,7 +11,6 @@
         "tool": "continue_with_actions",
         "protocol_repairs_max": 0,
         "memory_repairs_max": 1,
-        "state_status": "executing",
         "required_prefix": [
           {
             "capability": "tap",

@@ -361,30 +361,31 @@ class _CompletingWorker:
         return self
 
     def bind_tools(self, tools, **kwargs):
-        del tools, kwargs
-        self.mode = "actor"
+        del kwargs
+        names = {tool["function"]["name"] for tool in tools}
+        self.mode = "state" if names == {"edit_state_memory"} else "actor"
         return self
 
     def invoke(self, messages):
         if self.mode == "state":
             payload = json.loads(messages[-1].content[0]["text"])
-            return SimpleNamespace(content=json.dumps({
-                "mode": payload["mode"],
-                "frame_id": payload["frame_id"],
-                "delta": {
-                    "source": [
-                        "requested_collection",
-                        "The requested filtered collection is visible.",
-                    ],
-                    "conditions": [
-                        [
-                            ref, "satisfied",
-                            "The requested collection scope is fully acquired.",
-                        ]
-                        for ref in payload["goal_contract"]["success_criteria"]
-                    ],
+            return SimpleNamespace(content="", tool_calls=[{
+                "id": "state-delta",
+                "name": "edit_state_memory",
+                "args": {
+                    "mode": payload["mode"],
+                    "frame_id": payload["frame_id"],
+                    "surface": None,
+                    "visible_targets": [],
+                    "edits": [{
+                        "old_lines": [],
+                        "new_lines": [
+                            "# Observed facts", "",
+                            "- The requested collection is visible.",
+                        ],
+                    }],
                 },
-            }), tool_calls=[])
+            }])
         self.calls += 1
         return SimpleNamespace(
             content="",

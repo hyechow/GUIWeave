@@ -39,10 +39,18 @@ def _decision_event(run_dir: Path, frame: int) -> dict[str, Any]:
 
 
 def _public_args(args: Any) -> dict[str, Any]:
-    return {
+    public = {
         key: value for key, value in (args.items() if isinstance(args, dict) else ())
         if not str(key).startswith("_")
     }
+    # Older recordings predate the explicit nullable binding field. Supplying
+    # null here migrates only the frozen response; live Actor output must still
+    # provide the field required by the current protocol.
+    if "state_target_ref" not in public and any(
+        key in public for key in ("x", "y", "to_x", "to_y", "option")
+    ):
+        public["state_target_ref"] = None
+    return public
 
 
 def recorded_decision_response(run_dir: Path, frame: int) -> AIMessage:
@@ -193,12 +201,6 @@ def score_decision_sample(sample: dict[str, Any], expected: dict[str, Any]) -> l
         errors.extend(_match_action(wanted, semantics[index], calls[index], f"actions[{index}]"))
 
     state = sample.get("state") or {}
-    if expected_status := expected.get("state_status"):
-        if state.get("status") != expected_status:
-            errors.append(
-                f"state.status: expected {expected_status!r}, "
-                f"got {state.get('status')!r}"
-            )
     facts = list(state.get("established_facts") or [])
     facts.extend(
         str(item.get("statement") or "")
@@ -206,6 +208,7 @@ def score_decision_sample(sample: dict[str, Any], expected: dict[str, Any]) -> l
         if isinstance(item, dict)
     )
     fact_text = "\n".join(str(item) for item in facts)
+    fact_text += "\n" + str(state.get("markdown") or "")
     for needle in expected.get("established_facts_contain") or []:
         if str(needle) not in fact_text:
             errors.append(f"established_facts: missing {needle!r}")

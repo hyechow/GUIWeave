@@ -32,6 +32,7 @@ from gui_agent.core.tool_agent.protocol import (
     response_usage,
     generic_action_spec,
     worker_attempt_contract,
+    worker_profile_rules,
 )
 
 
@@ -146,7 +147,7 @@ def test_action_envelope_preserves_dynamic_atomic_schemas() -> None:
     assert "this tool never represents completion" in description
     assert "action list cannot be empty" in description
     assert "call complete directly" in description
-    assert "advance State's unresolved difference" in description
+    assert "Goal Contract fact not yet established" in description
     assert "tap" not in description
     assert "clear_text" not in description
     assert "select_option" not in description
@@ -165,6 +166,7 @@ def test_action_envelope_preserves_dynamic_atomic_schemas() -> None:
                 "y": 400,
                 "text": "demo-user",
                 "description": "Enter the visible Username input",
+                "state_target_ref": None,
             },
         },
         {
@@ -173,6 +175,7 @@ def test_action_envelope_preserves_dynamic_atomic_schemas() -> None:
                 "x": 500,
                 "y": 600,
                 "description": "Tap the visible submit button",
+                "state_target_ref": None,
             },
         },
     ]
@@ -218,7 +221,7 @@ def test_actor_tools_exclude_worker_state_channel() -> None:
         tool["function"] for tool in tools
         if tool["function"]["name"] == "complete"
     )
-    assert "authoritative State status" in complete["description"]
+    assert "accumulated facts and current evidence" in complete["description"]
     assert "Historical Progress" not in complete["description"]
     envelope = next(
         tool["function"] for tool in tools
@@ -232,7 +235,9 @@ def test_actor_tools_exclude_worker_state_channel() -> None:
     assert spatial["properties"]["args"]["properties"]["state_target_ref"][
         "type"
     ] == ["string", "null"]
-    assert "unresolved frontier ref" in envelope["description"]
+    assert "state_target_ref" in spatial["properties"]["args"]["required"]
+    assert "state_property_ref" not in spatial["properties"]["args"]["properties"]
+    assert "copy its exact target ref" in envelope["description"]
     assert "memory_updates" not in envelope["description"]
     assert "state.status" not in envelope["description"]
 
@@ -436,7 +441,7 @@ def test_collector_completion_tool_is_frame_gated_and_runtime_bound() -> None:
     properties = complete["function"]["parameters"]["properties"]
     assert "collection_ref" not in properties
     assert set(properties) == {"evidence", "rows"}
-    assert "authoritative State" in complete["function"]["description"]
+    assert "factual collection evidence" in complete["function"]["description"]
     failure = next(
         tool for tool in ready if tool["function"]["name"] == "report_blocked"
     )
@@ -502,10 +507,12 @@ def test_json_actor_protocol_preserves_dynamic_action_contract() -> None:
         for action in contract.values()
     )
     assert "do not emit a `state` field" in instruction
+    assert '"x": 500, "y": 398' in instruction
 def test_worker_protocol_normalizes_flat_ordered_action_arguments() -> None:
     raw_action = {
         "name": "tap", "x": 500, "y": 76,
         "description": "Tap the visible city selector at the top",
+        "state_target_ref": None,
     }
     tools = dynamic_actor_tools(
         [DynamicActionSpec(
@@ -688,17 +695,24 @@ def test_worker_profile_inference_selects_relevant_attempt_rules() -> None:
     assert collector.profile == "collector"
     collector_contract = worker_attempt_contract(collector)
     operator_contract = worker_attempt_contract(operator)
+    collector_rules = worker_profile_rules("collector")
+    operator_rules = worker_profile_rules("operator")
+    assert "Collector rules for this attempt" not in collector_contract
+    assert "Operator rules for this attempt" not in operator_contract
+    assert "## Goal Contract" in collector_contract
+    assert "row_schema" not in collector_contract
+    assert "field_types" not in collector_contract
     for rule in (
         "natural relative-date term", "never scroll or paginate",
         "empty_authoritative = false",
     ):
-        assert rule in collector_contract and rule not in operator_contract
+        assert rule in collector_rules and rule not in operator_rules
     for rule in (
-        "candidate_set_state.status = exhausted",
+        "candidate set as exhausted only from guarded Runtime traversal",
         "Finish comparison evidence",
         "Durable facts resolve candidates across frames",
     ):
-        assert rule in operator_contract and rule not in collector_contract
+        assert rule in operator_rules and rule not in collector_rules
 
 
 def test_data_requirement_rejects_filter_missing_from_observable_row_schema() -> None:
@@ -736,6 +750,21 @@ def test_worker_rejects_string_success_criteria() -> None:
             "strategy": {
                 "approach": "Save through the visible editor.",
             },
+        })
+
+
+def test_worker_rejects_duplicate_completion_fact_refs() -> None:
+    common = {
+        "property_ref": "target_saved",
+        "description": "The target is saved.",
+        "expected_value": True,
+    }
+    with pytest.raises(PydanticValidationError, match="completion fact refs"):
+        WorkerSpec.model_validate({
+            "profile": "operator", "goal": "Save the target",
+            "success_criteria": ["The target is saved"],
+            "completion_facts": [common, common],
+            "strategy": {"approach": "Visible target editor"},
         })
 
 
@@ -795,10 +824,49 @@ def test_worker_attempt_contract_keeps_typed_inputs_in_immutable_contract() -> N
 
     contract = worker_attempt_contract(spec)
 
-    assert '"input_bindings"' in contract
-    assert '"name": "enter_target"' in contract
-    assert '"unresolved_inputs": {"destination": "Exact user-owned destination"}' in contract
-    assert '"approach": "Search for the Runtime-bound target."' in contract
+    assert "Input bindings:" in contract
+    assert '"name":"enter_target"' in contract
+    assert "Unresolved inputs:" in contract
+    assert '"destination":"Exact user-owned destination"' in contract
+    assert "Approach: Search for the Runtime-bound target." in contract
+
+
+def test_worker_attempt_contract_keeps_filters_without_row_schema() -> None:
+    spec = WorkerSpec.model_validate({
+        "profile": "collector",
+        "goal": "Collect matching attachments",
+        "success_criteria": ["Every matching attachment is collected"],
+        "data_requirements": [{
+            "id": "field_trip_forms",
+            "description": "Email attachments on or after the date bound",
+            "row_schema": {
+                "type": "object",
+                "properties": {
+                    "file_name": {"type": "string"},
+                    "received_date": {"type": "string"},
+                },
+                "required": ["file_name", "received_date"],
+            },
+            "field_sources": {
+                "file_name": "attachment name",
+                "received_date": "email received date",
+            },
+            "field_types": {"file_name": "text", "received_date": "text"},
+            "filters": {"received_date": {"from": "2025-10-03"}},
+            "coverage": "complete",
+        }],
+        "strategy": {"approach": "mail_search_and_compose"},
+    })
+
+    contract = worker_attempt_contract(spec)
+
+    assert "## Goal Contract" in contract
+    assert "row_schema" not in contract
+    assert "field_types" not in contract
+    assert "`file_name` from attachment name" in contract
+    assert "`received_date` from email received date" in contract
+    assert 'must satisfy `{"from":"2025-10-03"}`' in contract
+    assert "Approach: mail_search_and_compose" in contract
 
 
 def test_worker_rejects_missing_input_binding_description() -> None:

@@ -80,7 +80,7 @@ def _worker_run(
     recorded_tool: str,
     recorded_actions: list[dict],
     repair_history: bool = False,
-    state_status: str | None = None,
+    legacy_status: str | None = None,
 ) -> Path:
     actions = [DynamicActionSpec(
         name="scroll",
@@ -136,7 +136,7 @@ def _worker_run(
             "frame_id": "frame:1",
             "step": 1,
             "state": _state(
-                state_status or ("completed" if recorded_tool == "complete" else "exploring")
+                legacy_status or ("completed" if recorded_tool == "complete" else "exploring")
             ),
             "tool": recorded_tool,
             "args": {"actions": recorded_actions},
@@ -196,12 +196,13 @@ def test_worker_replay_compares_equivalent_actions_by_capability(tmp_path) -> No
     }
     assert "recorded static prompt" not in model.calls[0][0].content
     assert "Actor role" in model.calls[0][0].content
-    assert "Never produce, revise, or reinterpret State" in model.calls[0][0].content
+    assert "Never produce or revise facts" in model.calls[0][0].content
     turn_context = model.calls[0][1].content[0]["text"]
     assert "stale" not in turn_context
-    assert "Authoritative materialized State view" in turn_context
-    assert turn_context.index('"approach"') < turn_context.index('"goal"')
-    assert '"approach": "Traverse the visible collection."' in turn_context
+    assert "Continuous observed fact memory" in turn_context
+    assert "## Goal Contract" in turn_context
+    assert turn_context.index("Approach:") < turn_context.index("Goal:")
+    assert "Approach: Traverse the visible collection." in turn_context
     envelope = next(
         tool for tool in model.bound_tools
         if tool["function"]["name"] == "continue_with_actions"
@@ -305,7 +306,7 @@ def test_worker_replay_rejects_actor_owned_state(tmp_path) -> None:
         tmp_path,
         recorded_tool="continue_with_actions",
         recorded_actions=[{"name": "scroll", "args": {}}],
-        state_status="collecting",
+        legacy_status="collecting",
     )
     model = _RecordedModel(
         _tool_call("continue_with_actions", {
@@ -328,7 +329,8 @@ def test_worker_replay_rejects_actor_owned_state(tmp_path) -> None:
     sample = result["samples"][0]
     assert result["status"] == "passed"
     assert sample["memory_repairs"] == 0
-    assert sample["state_status"] == "collecting"
+    assert sample["state_summary"] == "Replay decision"
+    assert sample["state"]["markdown"] == ""
     assert sample["protocol_repairs"] == 1
     assert len(model.calls) == 2
 
@@ -473,7 +475,7 @@ def test_worker_replay_uses_current_application_knowledge(
     human_text = model.calls[0][1].content[0]["text"]
     assert "current fact" not in human_text
     assert "stale human fact" not in human_text
-    assert "Authoritative materialized State view" in human_text
+    assert "Continuous observed fact memory" in human_text
 
 
 def test_worker_replay_preserves_recorded_singleton_contract(tmp_path) -> None:
@@ -481,7 +483,7 @@ def test_worker_replay_preserves_recorded_singleton_contract(tmp_path) -> None:
         tmp_path,
         recorded_tool="continue_with_actions",
         recorded_actions=[{"name": "scroll", "args": {}}],
-        state_status="completed",
+        legacy_status="completed",
     )
     spec = WorkerSpec.model_validate({
         "profile": "collector",
@@ -524,7 +526,7 @@ def test_worker_replay_preserves_recorded_singleton_contract(tmp_path) -> None:
     result = replay_worker_decision(
         run_dir,
         frame=1,
-        expectation={"tool": "complete", "state_status": "completed"},
+        expectation={"tool": "complete"},
         llm=model,
     )
 

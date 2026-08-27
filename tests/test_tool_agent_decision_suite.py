@@ -162,22 +162,22 @@ def test_decision_matcher_accepts_an_explicit_action_alternative() -> None:
     assert any("outside" in error for error in score_decision_sample(sample, expected))
 
 
-def test_decision_matcher_checks_workflow_phase() -> None:
+def test_decision_matcher_checks_markdown_observed_facts() -> None:
     sample = {
         "tool": "continue_with_actions",
         "protocol_repairs": 0,
         "action_semantics": [{"capability": "back"}],
-        "state": {"status": "executing", "memory_updates": []},
+        "state": {"markdown": "### item:1\n- title: Example"},
         "args": {
             "actions": [{"name": "back", "args": {}}],
         },
     }
     expected = {
         "tool": "continue_with_actions",
-        "state_status": "collecting",
+        "established_facts_contain": ["title: Missing"],
         "required_prefix": [{"capability": "back"}],
     }
 
     assert score_decision_sample(sample, expected) == [
-        "state.status: expected 'collecting', got 'executing'",
+        "established_facts: missing 'title: Missing'",
     ]

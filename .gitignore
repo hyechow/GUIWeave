@@ -73,3 +73,6 @@ vendor/
 # (full run logs: raw screenshots + context.json + logs — local-only, regenerable from logs/).
 benchmark/*/runs/
 guiweave.egg-info/
+
+# nested repo, not part of this checkout
+injection/

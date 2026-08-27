@@ -10,7 +10,6 @@
       "expected": {
         "tool": "continue_with_actions",
         "protocol_repairs_max": 0,
-        "state_status": "collecting",
         "required_prefix": [
           {
             "capability": "scroll",
@@ -31,7 +30,6 @@
       "expected": {
         "tool": "continue_with_actions",
         "protocol_repairs_max": 0,
-        "state_status": "collecting",
         "required_prefix": [
           {
             "capability": "scroll",

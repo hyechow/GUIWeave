@@ -1012,6 +1012,7 @@ class PerceptionMaterializer:
         allow_linked_details: bool = True,
         state_scope: str = "",
         frame_no: int,
+        captured_png: bytes | None = None,
     ) -> tuple[MaterializedFrame, bytes]:
         frame_id = f"frame:{frame_no}"
         screenshot_path = self.log_dir / f"screenshot_tool_agent_{frame_no}.png"
@@ -1065,9 +1066,10 @@ class PerceptionMaterializer:
                         "rendered browser frame is visually blank and exposes no visible structure"
                     )
         else:
-            png = platform.screenshot()
-            screenshot_path.parent.mkdir(parents=True, exist_ok=True)
-            screenshot_path.write_bytes(png)
+            png = captured_png if captured_png is not None else platform.screenshot()
+            if captured_png is None:
+                screenshot_path.parent.mkdir(parents=True, exist_ok=True)
+                screenshot_path.write_bytes(png)
             client = getattr(platform, "client", None)
             url = title = ""
             if client is not None and hasattr(client, "page_info"):
@@ -1533,6 +1535,8 @@ class PerceptionMaterializer:
             f"{json.dumps(reference_time.relative_date_offsets(), ensure_ascii=False)}\n"
             "Immutable required predicates: "
             f"{json.dumps(requirement.filters, ensure_ascii=False)}\n"
+            "Declared visible field sources: "
+            f"{json.dumps(requirement.field_sources, ensure_ascii=False)}\n"
             f"Current UI query state: {json.dumps(query_filters, ensure_ascii=False)}\n"
             "A visible empty state proves only that the current query returned no candidates; "
             "do not infer that the immutable required result set is empty.\n"

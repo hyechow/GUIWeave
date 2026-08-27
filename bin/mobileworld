@@ -11,12 +11,15 @@
 #   1) emulator adb: 容器 5556 经 adb relay + portproxy 暴露 → `adb connect <host>:5556`
 #   2) backend HTTP: 容器 6800 经 portproxy 暴露 → MW_BASE_URL=http://<host>:6800
 # 覆盖: MW_BASE_URL=<url> MW_ADB_SERIAL=<host:port> bin/mobileworld <task-name>
-#       MW_RESET_COMMAND='<external reset command>' 配置 prepare 的容器重置步骤
+#       MW_RESET_COMMAND='<external reset command>' 仅在 backend/ADB 故障恢复时重启容器
 #   默认 MW_BASE_URL=http://localhost:6800  MW_ADB_SERIAL=localhost:5556
 set -e
 cd "$(dirname "$0")/.."
 
-: "${MW_RESET_COMMAND:=docker restart mobile_world_env_0}"
+# MobileWorld init_task already restores a fresh emulator snapshot. Keep ordinary
+# post-run prepare cheap; an explicit recovery command may still be supplied when
+# backend/ADB health checks prove the container itself is unhealthy.
+: "${MW_RESET_COMMAND:=}"
 export MW_RESET_COMMAND
 
 headless=0

@@ -10,6 +10,7 @@ from concurrent.futures import ThreadPoolExecutor
 from dataclasses import replace
 from datetime import datetime
 from pathlib import Path
+from threading import RLock
 from typing import Any, Callable, Literal
 
 from jsonschema import Draft202012Validator, validate
@@ -39,8 +40,8 @@ from gui_agent.core.tool_agent.contracts import (
     ToolAgentRun,
     WorkerOutcome,
     WorkerSpec,
+    WorkerStateEditBatch,
     WorkerStateSnapshot,
-    WorkerStateTraceBatch,
     WorkerStrategy,
 )
 from gui_agent.core.tool_agent.action_guard import (
@@ -58,7 +59,10 @@ from gui_agent.core.tool_agent.orchestrator import (
     compile_master_program,
     execute_master_program,
 )
-from gui_agent.core.tool_agent.perception import PerceptionMaterializer, PerceptionMode
+from gui_agent.core.tool_agent.perception import (
+    PerceptionMaterializer,
+    PerceptionMode,
+)
 from gui_agent.core.tool_agent.protocol import (
     CompleteReadyWorkerArgs,
     FailWorkerArgs,
@@ -71,25 +75,26 @@ from gui_agent.core.tool_agent.protocol import (
     decode_actor_action,
     dynamic_actor_tools,
     dynamic_action_tool,
+    exactly_one_tool_call,
     generic_action_spec,
     frame_transition_message,
     image_message,
     input_binding_action,
+    model_tool,
     parse_json_object,
     response_usage,
     validate_dynamic_action_spec,
-    validate_actor_tool_state,
     worker_frame_tools,
     worker_attempt_contract,
+    worker_profile_rules,
 )
 from gui_agent.core.tool_agent.replay import write_replay_artifact
 from gui_agent.core.tool_agent.state_trace import (
-    STATE_TRACE_OUTPUT_CONTRACT,
     latest_runtime_receipt,
-    normalize_state_trace_payload,
     reduce_worker_state,
-    state_actor_payload,
+    state_actor_markdown,
     state_continuation_payload,
+    state_observation_focus,
 )
 from gui_agent.core.tool_agent.strategy import ReflectionResult, Reflector
 from gui_agent.core.tool_agent.worker_memory import (
@@ -109,6 +114,11 @@ from llm.provider_config import (
 _MASTER_SYSTEM = load_prompt_text("task.tool_agent.master")
 _STATE_SYSTEM = load_prompt_text("task.tool_agent.state")
 _ACTOR_SYSTEM = load_prompt_text("task.tool_agent.actor")
+_STATE_MEMORY_TOOL = model_tool(
+    "edit_state_memory",
+    "Edit the continuous Markdown fact memory and refresh current target bindings.",
+    WorkerStateEditBatch,
+)
 _MAX_ACTION_GUARD_REPAIRS_PER_FRAME = 1
 _MAX_PREDISPATCH_REPAIRS_PER_FRAME = 1
 _SPATIAL_CAPABILITIES = {
@@ -272,38 +282,31 @@ def _state_target_binding_error(
     capability: str,
     state_target_ref: str | None,
 ) -> str:
-    """Validate Actor's semantic target without moving geometry into State."""
+    """Validate Actor's semantic target identity without owning geometry."""
 
     if capability not in _STATE_TARGET_CAPABILITIES:
         return ""
-    payload = state_actor_payload(state)
-    frontier = payload["visible_targets"]["unresolved_frontier"]
+    visible = {
+        ref: target
+        for ref, target in state.targets.items()
+        if target.visibility != "not_visible"
+    }
     if state_target_ref == "":
-        if frontier:
+        if visible:
             return (
                 "this spatial action must copy the exact state_target_ref from the "
-                "current unresolved_frontier, or explicitly use null for an interface "
-                "control; x/y still come from the screenshot"
+                "currently visible tracked object, or explicitly use null for an "
+                "untracked interface control"
             )
         return ""
     if state_target_ref is None:
         return ""
-    target = next(
-        (item for item in frontier if item["target_ref"] == state_target_ref),
-        None,
-    )
+    if state_target_ref not in state.targets:
+        return f"State has no observed target {state_target_ref!r}"
+    target = visible.get(state_target_ref)
     if target is None:
-        resolved = payload["visible_targets"]["resolved_refs_do_not_repeat"]
-        if state_target_ref in resolved or state_target_ref in payload["resolved_target_refs"]:
-            return (
-                f"state_target_ref {state_target_ref!r} is already resolved and must not "
-                "be activated again"
-            )
-        return (
-            f"state_target_ref {state_target_ref!r} is not in the current visible "
-            "unresolved_frontier"
-        )
-    if target["owned_region_visibility"] != "unobscured":
+        return f"state_target_ref {state_target_ref!r} is not visible on this frame"
+    if target.owned_region_visibility != "unobscured":
         return (
             f"state_target_ref {state_target_ref!r} is only an edge fragment; reposition "
             "it before spatial activation"
@@ -502,6 +505,7 @@ class ToolAgentRuntime:
         )
 
         self.trace: list[dict[str, Any]] = []
+        self._trace_lock = RLock()
         self._status_cb = status_cb
         self._stop_requested = stop_requested
         self._started_at = time.perf_counter()
@@ -1028,20 +1032,53 @@ class ToolAgentRuntime:
         traversal_boundaries: set[str] = set()
         while True:
             self._raise_if_cancelled()
+            prefetched_state: WorkerStateSnapshot | None = None
             if reusable_observation is None:
                 if self._turn_budget_exhausted():
                     return self._turn_budget_failure(
                         worker_id=worker_id,
                         steps=step,
                     )
-                frame, png = self._observe(spec)
+                initial_same_frame_feedback = None
+                _update_traversal_boundaries(
+                    traversal_boundaries, journal.latest_action_receipt,
+                )
+                if traversal_boundaries:
+                    initial_same_frame_feedback = _scroll_boundary_feedback(
+                        traversal_boundaries
+                    )
+                parallel_observation = (
+                    getattr(self, "perception_mode", "enhanced") == "vision-only"
+                    and isinstance(
+                        getattr(self, "materializer", None),
+                        PerceptionMaterializer,
+                    )
+                )
+                if parallel_observation:
+                    try:
+                        frame, png, prefetched_state = self._observe_and_state_parallel(
+                            spec=spec,
+                            journal=journal,
+                            step=step + 1,
+                            same_frame_feedback=initial_same_frame_feedback,
+                        )
+                    except Exception as exc:  # noqa: BLE001 - both stages are required
+                        return WorkerOutcome(
+                            phase="failed",
+                            summary=f"Concurrent State/Perception stage failed: {exc}",
+                            failure_kind="protocol_invalid",
+                            steps=step,
+                        )
+                    snapshots[worker_id] = prefetched_state
+                    state_frames[worker_id] = (frame.frame_id, png)
+                else:
+                    frame, png = self._observe(spec)
                 step += 1
                 observed_auth_codes.update(auth_codes_from_frame(frame))
                 # Screenshot-only delivery surfaces preserve codes through journal facts.
                 observed_auth_codes.update(auth_codes_from_text(" ".join(
                     journal.active_fact_statements(frame_id=frame.frame_id)
                 )))
-                initial_same_frame_feedback = None
                 predispatch_repair_turn = 0
             else:
                 frame, png, initial_same_frame_feedback = reusable_observation
@@ -1076,13 +1113,6 @@ class ToolAgentRuntime:
                 frame_assessment = WorkerFrameTools(
                     frame_actions, frame_assessment.completion_mode,
                 )
-            worker_tools = self._worker_tools_for_frame(
-                spec,
-                frame_actions,
-                frame,
-                assessment=frame_assessment,
-                allow_failure=not require_attempt or bool(journal.executed_tools),
-            )
             action_limit = self._worker_action_limit()
             action_protocol = str(
                 getattr(getattr(self, "worker_cfg", None), "action_protocol", "tool_call")
@@ -1090,7 +1120,9 @@ class ToolAgentRuntime:
             guard_repair_turn = 0
             same_frame_feedback = initial_same_frame_feedback
             prior_state = snapshots.get(worker_id)
-            if prior_state is not None and prior_state.frame_id == frame.frame_id:
+            if prefetched_state is not None:
+                state = prefetched_state
+            elif prior_state is not None and prior_state.frame_id == frame.frame_id:
                 state = prior_state
                 self._trace(
                     "worker_state_reused",
@@ -1128,6 +1160,14 @@ class ToolAgentRuntime:
                 code
                 for text in state.fact_statements
                 for code in auth_codes_from_text(text)
+            )
+            worker_tools = self._worker_tools_for_frame(
+                spec,
+                frame_actions,
+                frame,
+                state=state,
+                assessment=frame_assessment,
+                allow_failure=not require_attempt or bool(journal.executed_tools),
             )
             while True:
                 messages, context_reports = self._actor_messages(
@@ -1192,7 +1232,6 @@ class ToolAgentRuntime:
                             raise ProtocolError(
                                 "Actor must not emit state; State already ran on this frame"
                             )
-                        validate_actor_tool_state(call["name"], state.status)
                         self._accumulate_observed_rows(spec, worker_id, call, step)
                         break
                     except Exception as exc:  # noqa: BLE001 - one same-frame protocol repair
@@ -1273,34 +1312,6 @@ class ToolAgentRuntime:
                         "multi_action": bool(getattr(self, "allow_multi_action", False)),
                     },
                 )
-                if (
-                    call["name"] == "complete"
-                    and spec.profile == "operator"
-                ):
-                    commit_controls = self._visible_commit_controls(frame, state)
-                    if commit_controls:
-                        reason = (
-                            "State claimed completion while a cited enabled commit "
-                            "control remains visible"
-                        )
-                        self._trace(
-                            "worker_completion_recheck",
-                            step=step,
-                            frame_id=frame.frame_id,
-                            controls=commit_controls,
-                        )
-                        journal.record_guard(
-                            step=step,
-                            repair_turn=1,
-                            tool="complete",
-                            reason=reason,
-                        )
-                        return WorkerOutcome(
-                            phase="failed",
-                            summary=reason,
-                            failure_kind="protocol_invalid",
-                            steps=step - 1,
-                        )
                 guarded_call = calls[0] if call["name"] == "continue_with_actions" else call
                 action_spec = next(
                     (item for item in frame_actions if item.name == guarded_call["name"]),
@@ -1317,6 +1328,10 @@ class ToolAgentRuntime:
                         **action_spec.fixed_args,
                         **guarded_call["args"],
                     }
+                    missing_state_target_binding = bool(
+                        action_spec.capability in _STATE_TARGET_CAPABILITIES
+                        and guarded_call.get("_state_target_ref", "") == ""
+                    )
                     blocked_reason = _state_target_binding_error(
                         state,
                         action_spec.capability,
@@ -1341,8 +1356,19 @@ class ToolAgentRuntime:
                         feedback = {
                             "status": "action_boundary_invalid",
                             "reason": blocked_reason,
+                            "rejected_action": {
+                                "tool": guarded_call["name"],
+                                "args": guarded_call["args"],
+                                "state_target_ref": guarded_call.get(
+                                    "_state_target_ref", "",
+                                ),
+                            },
                             "instruction": (
-                                "Correct the action so it satisfies the current frame's "
+                                "Correct only the reported defect. Preserve every other "
+                                "valid field of the rejected same-frame action, including "
+                                "its intended control and coordinates."
+                                if missing_state_target_binding
+                                else "Correct the action so it satisfies the current frame's "
                                 "explicit action contract."
                             ),
                         }
@@ -1524,8 +1550,14 @@ class ToolAgentRuntime:
             steps=steps,
         )
 
-    def _observe(self, spec: WorkerSpec) -> tuple[MaterializedFrame, bytes]:
-        observe_started_at = time.perf_counter()
+    def _observe(
+        self,
+        spec: WorkerSpec,
+        *,
+        captured_png: bytes | None = None,
+        observe_started_at: float | None = None,
+    ) -> tuple[MaterializedFrame, bytes]:
+        observe_started_at = observe_started_at or time.perf_counter()
         journal = self._active_worker_journal()
         logical_worker_id = journal.worker_id if journal is not None else ""
         executed_tools = getattr(journal, "executed_tools", set())
@@ -1541,6 +1573,7 @@ class ToolAgentRuntime:
             ),
             state_scope=logical_worker_id,
             frame_no=frame_no,
+            captured_png=captured_png,
         )
         self._frame_no = frame_no
         self._trace(
@@ -1576,6 +1609,56 @@ class ToolAgentRuntime:
             json.dumps(durable_frame, ensure_ascii=False, indent=2), encoding="utf-8",
         )
         return frame, png
+
+    def _observe_and_state_parallel(
+        self,
+        *,
+        spec: WorkerSpec,
+        journal: WorkerJournal,
+        step: int,
+        same_frame_feedback: dict[str, Any] | None,
+    ) -> tuple[MaterializedFrame, bytes, WorkerStateSnapshot]:
+        """Capture once, then overlap independent Perception and State stages."""
+
+        observe_started_at = time.perf_counter()
+        frame_no = self._frame_no + 1
+        screenshot_path = self.log_dir / f"screenshot_tool_agent_{frame_no}.png"
+        png = self.platform.screenshot()
+        screenshot_path.parent.mkdir(parents=True, exist_ok=True)
+        screenshot_path.write_bytes(png)
+        state_frame = MaterializedFrame(
+            frame_id=f"frame:{frame_no}",
+            screenshot_path=str(screenshot_path),
+        )
+        state_messages, state_context_reports = self._state_messages(
+            spec=spec,
+            journal=journal,
+            frame=state_frame,
+            png=png,
+            same_frame_feedback=same_frame_feedback,
+        )
+        with ThreadPoolExecutor(
+            max_workers=1,
+            thread_name_prefix="tool-perception",
+        ) as perception_pool:
+            perception_future = perception_pool.submit(
+                self._observe,
+                spec,
+                captured_png=png,
+                observe_started_at=observe_started_at,
+            )
+            state = self._invoke_state_role(
+                step=step,
+                spec=spec,
+                journal=journal,
+                frame=state_frame,
+                messages=state_messages,
+                context_reports=state_context_reports,
+            )
+            frame, observed_png = perception_future.result()
+        if observed_png != png:
+            raise ProtocolError("Perception did not materialize the captured State frame")
+        return frame, png, state
 
     def _state_system_prompt(self) -> str:
         return self._role_system_prompt(
@@ -1638,10 +1721,11 @@ class ToolAgentRuntime:
         png: bytes,
         same_frame_feedback: dict[str, Any] | None,
     ) -> tuple[list[Any], list[dict[str, Any]]]:
-        """Build one small init/append observation call for the current frame."""
+        """Build one init/edit call for the continuous Markdown memory."""
+        del same_frame_feedback
         snapshots = getattr(self, "_worker_state_snapshots", {})
         previous = snapshots.get(journal.worker_id)
-        mode = "append" if isinstance(previous, WorkerStateSnapshot) else "init"
+        mode = "edit" if isinstance(previous, WorkerStateSnapshot) else "init"
         previous_view = (
             state_continuation_payload(previous)
             if isinstance(previous, WorkerStateSnapshot)
@@ -1657,17 +1741,10 @@ class ToolAgentRuntime:
             and previous_frame[0] == previous.frame_id
             and previous.frame_id != frame.frame_id
         )
-        state_payload = {
-            "goal_contract": {
-                "goal": spec.goal,
-                "success_criteria": {
-                    f"criterion_{index}": statement
-                    for index, statement in enumerate(spec.success_criteria, start=1)
-                },
-            },
+        state_payload: dict[str, Any] = {
             "mode": mode,
             "frame_id": frame.frame_id,
-            "output_contract": STATE_TRACE_OUTPUT_CONTRACT,
+            "observation_focus": state_observation_focus(spec),
         }
         if isinstance(previous, WorkerStateSnapshot):
             state_payload["visual_transition"] = {
@@ -1681,8 +1758,6 @@ class ToolAgentRuntime:
         receipt = latest_runtime_receipt(journal)
         if receipt is not None:
             state_payload["latest_runtime_receipt"] = receipt
-        if same_frame_feedback:
-            state_payload["same_frame_runtime_feedback"] = same_frame_feedback
         state_input = json.dumps(state_payload, ensure_ascii=False)
         current_scale = float(
             getattr(getattr(self, "worker_cfg", None), "image_scale", 1.0)
@@ -1709,7 +1784,7 @@ class ToolAgentRuntime:
         ]
         report = _context_size_report(
             "tool_agent.state.context",
-            "typed_state_frame_delta",
+            "markdown_state_edit",
             state_input,
             mode=mode,
             previous_frame=has_previous_frame,
@@ -1738,10 +1813,6 @@ class ToolAgentRuntime:
                 current_element=self._current_each_element(spec, journal.worker_id),
             ),
         ]
-        parts.extend([
-            "## Authoritative materialized State view",
-            json.dumps(state_actor_payload(state), ensure_ascii=False),
-        ])
         receipt = latest_runtime_receipt(journal)
         if receipt is not None:
             parts.extend([
@@ -1753,10 +1824,18 @@ class ToolAgentRuntime:
                 "## Runtime correction for this same frame",
                 json.dumps(same_frame_feedback, ensure_ascii=False),
             ])
+        parts.extend([
+            "## Continuous observed fact memory",
+            state_actor_markdown(state),
+        ])
         actor_input = "\n\n".join(parts)
+        profile_rules = worker_profile_rules(spec.profile)
+        system_prompt = self._actor_system_prompt()
+        if profile_rules:
+            system_prompt = f"{system_prompt}\n\n{profile_rules}"
         messages = [
             cacheable_system_message(
-                self._actor_system_prompt(),
+                system_prompt,
                 enabled=getattr(self, "_worker_explicit_cache", False),
             ),
             image_message(
@@ -1772,7 +1851,9 @@ class ToolAgentRuntime:
             "state_actor_split",
             actor_input,
             included_count=(
-                3 + int(receipt is not None) + int(bool(same_frame_feedback))
+                3
+                + int(receipt is not None)
+                + int(bool(same_frame_feedback))
             ),
         )
         return messages, [report]
@@ -1793,12 +1874,14 @@ class ToolAgentRuntime:
             getattr(getattr(self, "worker_cfg", None), "model", None)
         )
         bound_state = (
-            self.worker.bind(
-                response_format={"type": "json_object"},
-                max_tokens=700,
+            self.worker.bind_tools(
+                [_STATE_MEMORY_TOOL],
+                tool_choice="required",
+                parallel_tool_calls=False,
+                max_tokens=900,
                 **request_kwargs,
             )
-            if callable(getattr(self.worker, "bind", None))
+            if callable(getattr(self.worker, "bind_tools", None))
             else self.worker
         )
         active_messages = list(messages)
@@ -1823,11 +1906,13 @@ class ToolAgentRuntime:
             llm_elapsed_s += time.perf_counter() - started_at
             token_usage = response_usage(response)
             try:
-                batch = WorkerStateTraceBatch.model_validate(
-                    normalize_state_trace_payload(
-                        parse_json_object(getattr(response, "content", ""))
+                call = exactly_one_tool_call(response)
+                if call["name"] != "edit_state_memory":
+                    raise ProtocolError(
+                        "State must call edit_state_memory, got "
+                        f"{call['name']!r}"
                     )
-                )
+                batch = WorkerStateEditBatch.model_validate(call["args"])
                 if batch.frame_id != frame.frame_id:
                     raise ValueError(
                         f"expected frame_id {frame.frame_id!r}, got {batch.frame_id!r}"
@@ -1840,7 +1925,7 @@ class ToolAgentRuntime:
                     spec=spec,
                 )
                 break
-            except Exception as exc:  # noqa: BLE001 - one same-frame JSON repair
+            except Exception as exc:  # noqa: BLE001 - one same-frame tool repair
                 self._trace(
                     "worker_state_protocol_error",
                     step=step,
@@ -1853,24 +1938,20 @@ class ToolAgentRuntime:
                         "tool_agent.state.protocol_repair",
                         active_messages,
                         response,
-                        schema="WorkerStateTraceBatch JSON",
+                        schema="required tool call: edit_state_memory",
                     ) + context_reports,
                 )
                 if attempt:
                     raise ProtocolError(
-                        f"State repeated an invalid JSON protocol: {exc}"
+                        f"State repeated an invalid tool protocol: {exc}"
                     ) from exc
                 active_messages = [
                     *active_messages,
                     response,
                     HumanMessage(content=(
                         "State protocol repair on this SAME frame. No action was executed. "
-                        f"The prior response was invalid: {exc}. Return only one JSON object "
-                        "matching this compact output contract:\n"
-                        + json.dumps(
-                            STATE_TRACE_OUTPUT_CONTRACT,
-                            ensure_ascii=False,
-                        )
+                        f"The prior response was invalid: {exc}. Emit exactly one required "
+                        "edit_state_memory tool call matching its schema."
                     )),
                 ]
         assert response is not None
@@ -1879,7 +1960,8 @@ class ToolAgentRuntime:
             step=step,
             frame_id=frame.frame_id,
             mode=batch.mode,
-            trace_events=[item.model_dump(mode="json") for item in batch.events],
+            memory_edits=[item.model_dump(mode="json") for item in batch.edits],
+            receipt_ref=(latest_runtime_receipt(journal) or {}).get("receipt_ref"),
             state=state.model_dump(mode="json"),
             llm_elapsed_s=round(llm_elapsed_s, 3),
             token_usage=token_usage,
@@ -1890,7 +1972,7 @@ class ToolAgentRuntime:
                     active_messages,
                     response,
                     parsed=state.model_dump(mode="json"),
-                    schema="WorkerStateTraceBatch JSON",
+                    schema="required tool call: edit_state_memory",
                 ),
             ],
         )
@@ -1902,15 +1984,18 @@ class ToolAgentRuntime:
         actions: list[DynamicActionSpec],
         frame: MaterializedFrame,
         *,
+        state: WorkerStateSnapshot | None = None,
         assessment: WorkerFrameTools | None = None,
         allow_failure: bool = True,
     ) -> list[dict[str, Any]]:
+        del state
         assessment = assessment or worker_frame_tools(
             spec, actions, frame,
         )
+        completion_mode = assessment.completion_mode
         return dynamic_actor_tools(
             assessment.allowed_actions,
-            completion_mode=assessment.completion_mode,
+            completion_mode=completion_mode,
             action_envelope=bool(getattr(self, "allow_multi_action", False)),
             max_ordered_actions=self._worker_action_limit(),
             allow_failure=allow_failure,
@@ -1922,44 +2007,6 @@ class ToolAgentRuntime:
             if bool(getattr(self, "allow_multi_action", False))
             else 1
         )
-
-    def _visible_commit_controls(
-        self,
-        frame: MaterializedFrame,
-        state: WorkerStateSnapshot,
-    ) -> list[dict[str, str]]:
-        """Expose enabled commit controls cited by the completion claim itself."""
-
-        controls = frame.controls
-        refresh = getattr(getattr(self, "_executor", None), "refresh_controls", None)
-        if callable(refresh):
-            try:
-                refreshed = refresh()
-            except Exception:  # noqa: BLE001 - completion audit is best-effort
-                refreshed = None
-            if isinstance(refreshed, list):
-                controls = refreshed
-                frame.controls = refreshed
-        claim = " ".join(state.fact_statements).casefold()
-
-        def cited(control: dict[str, Any]) -> bool:
-            label = str(control.get("label") or "").strip().casefold()
-            return bool(label and re.search(
-                rf"(?<!\w){re.escape(label)}(?!\w)", claim,
-            ))
-
-        return [
-            {
-                "label": str(control.get("label") or ""),
-                "kind": str(control.get("kind") or ""),
-            }
-            for control in controls
-            if isinstance(control, dict)
-            and control.get("form_action") == "commit"
-            and control.get("in_viewport") is not False
-            and control.get("enabled") is not False
-            and cited(control)
-        ]
 
     def _refresh_next_action(
         self,
@@ -2028,7 +2075,9 @@ class ToolAgentRuntime:
 
         parameters = dynamic_action_tool(
             action,
-            include_state_target_ref="state_target_ref" in args,
+            include_state_target_ref=bool(
+                "state_target_ref" in args
+            ),
         )["function"]["parameters"]
         call_args = dict(args)
         for name in action.fixed_args:
@@ -2177,6 +2226,7 @@ class ToolAgentRuntime:
                 result=result,
                 commitment_refs=(*commitment_refs, dispatched_commitment.event_ref),
                 surface_fingerprint=frame.visual_fingerprint,
+                state_target_ref=str(action_call.get("_state_target_ref") or ""),
             )
             journal.settle_runtime_commitment(
                 step=step, substep=index, frame_id=frame.frame_id,
@@ -2925,14 +2975,14 @@ class ToolAgentRuntime:
         if event == "worker_state":
             state = payload.get("state") if isinstance(payload.get("state"), dict) else {}
             return (
-                f"State step {payload.get('step', '?')} "
-                f"[{state.get('status', '?')}]: {state.get('summary', '')}"
+                f"State facts step {payload.get('step', '?')}: "
+                f"{state.get('summary', '')}"
             )
         if event == "worker_decision":
             state = payload.get("state") if isinstance(payload.get("state"), dict) else {}
             summary = str(state.get("summary") or "").strip()
             return (
-                f"Worker step {payload.get('step', '?')} [{state.get('status', '?')}] "
+                f"Worker step {payload.get('step', '?')} "
                 f"→ {payload.get('tool', '?')}"
                 + (f": {summary}" if summary else "")
             )
@@ -3130,7 +3180,33 @@ class ToolAgentRuntime:
                     input_tokens += int(usage.get("input") or 0)
                     output_tokens += int(usage.get("output") or 0)
                     cached_input += int(usage.get("cached_input") or 0)
-            timing_text = " | ".join(f"{key}={value:.1f}s" for key, value in timings.items())
+            parallel_observation = (
+                "state" in timings
+                and "perception" in timings
+                and any(
+                    item.get("event") == "observe"
+                    and item.get("mode") == "vision-only"
+                    for item in recent
+                )
+            )
+            if parallel_observation:
+                policy_seconds = timings.get("policy", 0.0)
+                critical_seconds = max(
+                    timings["state"], timings["perception"],
+                ) + policy_seconds
+                timing_text = (
+                    f"parallel(state={timings['state']:.1f}s, "
+                    f"perception={timings['perception']:.1f}s)"
+                    + (
+                        f" | policy={policy_seconds:.1f}s"
+                        if policy_seconds else ""
+                    )
+                    + f" | llm_critical={critical_seconds:.1f}s"
+                )
+            else:
+                timing_text = " | ".join(
+                    f"{key}={value:.1f}s" for key, value in timings.items()
+                )
             metrics = ""
             if timing_text:
                 metrics += f"\nTiming     : {timing_text}"
@@ -3261,6 +3337,14 @@ class ToolAgentRuntime:
         return ""
 
     def _trace(self, event: str, **payload: Any) -> None:
+        lock = getattr(self, "_trace_lock", None)
+        if lock is None:
+            self._trace_unlocked(event, **payload)
+            return
+        with lock:
+            self._trace_unlocked(event, **payload)
+
+    def _trace_unlocked(self, event: str, **payload: Any) -> None:
         trace = getattr(self, "trace", None)
         if trace is None:
             self.trace = []

@@ -48,6 +48,7 @@ class ActionReceipt:
     preserves_window: bool = False
     executed: bool = False
     target_ref: str = ""
+    state_target_ref: str = ""
     target: TargetRef | None = None
     clears_target: bool = False
 
@@ -249,6 +250,7 @@ class WorkerJournal:
         substep: int | None = None,
         commitment_refs: tuple[str, ...] = (),
         surface_fingerprint: str = "",
+        state_target_ref: str = "",
     ) -> WorkerJournalEvent:
         from .policy import action_receipt_event
 
@@ -307,6 +309,7 @@ class WorkerJournal:
             result=result,
             commitment_refs=commitment_refs,
             target_ref=inherited_target_ref,
+            state_target_ref=state_target_ref,
             target=target,
         ))
         receipt = recorded.receipt

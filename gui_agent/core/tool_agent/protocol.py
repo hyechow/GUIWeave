@@ -16,6 +16,7 @@ from PIL import Image
 from pydantic import BaseModel, ConfigDict, Field
 
 from gui_agent.core.tool_agent.contracts import (
+    DataRequirement,
     DynamicActionSpec,
     MaterializedFrame,
     RuntimeInputBinding,
@@ -50,7 +51,6 @@ def worker_frame_tools(
     return WorkerFrameTools(actions, spec.profile)
 
 
-_TERMINAL_TOOL_BY_STATE = {"completed": "complete", "failed": "report_blocked"}
 _INPUT_TARGETS = {
     "text_input": ("type", "text"),
     "choice": ("select_option", "text"),
@@ -66,18 +66,6 @@ _ENCODED_COORD_PAIR = re.compile(
 
 class ProtocolError(RuntimeError):
     pass
-
-
-def validate_actor_tool_state(tool: str, state_status: str) -> None:
-    """Keep terminal state claims aligned with the selected protocol tool."""
-
-    if (
-        state_status in _TERMINAL_TOOL_BY_STATE
-        or tool in _TERMINAL_TOOL_BY_STATE.values()
-    ) and _TERMINAL_TOOL_BY_STATE.get(state_status) != tool:
-        raise ProtocolError(
-            f"terminal state/tool mismatch: state.status={state_status!r}, tool={tool!r}"
-        )
 
 
 class CompleteReadyWorkerArgs(BaseModel):
@@ -243,6 +231,89 @@ def model_tool(name: str, description: str, model: type[BaseModel]) -> dict[str,
     return function_tool(name, description, model.model_json_schema())
 
 
+_COLLECTOR_ATTEMPT_RULES = (
+    "Collector rules for this attempt:\n"
+    "- Form recall queries from natural equivalents and distinctive terms. Normalized "
+    "filter values remain validation predicates; they need not appear literally or "
+    "adjacent in query text.\n"
+    "- When a requested date is relative to the authoritative task clock, use its "
+    "natural relative-date term in the task language for recall rather than an ISO or "
+    "long-form calendar literal; keep the exact date only for validation.\n"
+    "- When a visible query needs no autocomplete selection, batch its `type` and "
+    "`press_enter` in the same decision; do not spend a separate turn submitting it.\n"
+    "- A relevance-ordered web/search page's leading visible titles assess one query. "
+    "If they mismatch the goal, never scroll or paginate for later results: directly "
+    "replace the visible query and submit, or report after materially different queries "
+    "already failed.\n"
+    "- Treat autocomplete as pending; commit a suggestion only when its identity "
+    "matches the requested scope. `empty_authoritative = false` is a recall miss, "
+    "not a completed empty result.\n"
+    "- Recall candidates without changing semantic predicates, let Runtime validate "
+    "requirement scope, then collect only scope-matched evidence.\n"
+    "- You own the exhaustiveness judgment: narrow the scope with an exact filter or "
+    "search first, then traverse; treat the collection as complete only when your own "
+    "evidence says nothing remains (the filtered list fits the viewport, or further "
+    "scrolling yields no new rows). Call `complete` on that judgment and state the "
+    "evidence; Runtime never certifies completeness.\n"
+)
+
+_OPERATOR_ATTEMPT_RULES = (
+    "Operator rules for this attempt:\n"
+    "- Treat multi-select and configuration goals as exact sets; validate any review "
+    "surface before committing.\n"
+    "- Treat a candidate set as exhausted only from guarded Runtime traversal "
+    "boundary evidence; an initially empty or filtered selector proves no such fact.\n"
+    "- Finish comparison evidence before mutation, skip excluded or already processed "
+    "identities, and advance only through explicitly remaining candidates.\n"
+    "- Durable facts resolve candidates across frames: a recorded no-match query or "
+    "classified candidate stays resolved unless later evidence disproves it; never "
+    "rerun that branch.\n"
+    "- Never call `complete` while a visible final commit control for the requested "
+    "mutation remains unactivated. Activate it and observe the next frame; readiness "
+    "is not completion.\n"
+    "- Observe the post-action frame. If the requested terminal mutation's commit "
+    "just returned to a stable parent/source surface without error and durable "
+    "facts name no unsatisfied identity, call `complete`; do not restart the "
+    "mutation or rerun a resolved query. A preparatory scope/container commit is "
+    "not terminal.\n"
+)
+
+
+def worker_profile_rules(profile: str | None) -> str:
+    """Return static per-profile Actor rules, kept off the per-frame Goal Contract."""
+
+    if profile == "collector":
+        return _COLLECTOR_ATTEMPT_RULES
+    return _OPERATOR_ATTEMPT_RULES
+
+
+def _compact_json(value: Any) -> str:
+    return json.dumps(value, ensure_ascii=False, separators=(",", ":"))
+
+
+def _actor_data_requirement_lines(item: DataRequirement) -> list[str]:
+    """Keep each collected field adjacent to its visible source and predicate."""
+
+    lines = [
+        f"### Required records `{item.id}`",
+        f"- Description: {item.description}",
+        f"- Cardinality: {item.cardinality}",
+        f"- Coverage: {item.coverage}",
+    ]
+    if item.target_label:
+        lines.append(f"- Target: {item.target_label}")
+    lines.append("- Required observed fields:")
+    for field in (item.row_schema.get("properties") or {}):
+        source = item.field_sources.get(field, field)
+        condition = item.filters.get(field)
+        suffix = (
+            f"; must satisfy `{_compact_json(condition)}`"
+            if condition is not None else ""
+        )
+        lines.append(f"  - `{field}` from {source}{suffix}")
+    return lines
+
+
 def worker_attempt_contract(
     spec: WorkerSpec,
     *,
@@ -257,72 +328,39 @@ def worker_attempt_contract(
     an array plan cannot know which record to locate on screen.
     """
 
-    payload = {
-        "approach": spec.strategy.approach,
-        "phase": "continue" if attempted_action else "start",
-        **spec.model_dump(mode="json", exclude={"input_refs", "strategy"}),
-        "input_names": sorted(spec.input_refs),
-    }
+    lines = [
+        "## Goal Contract",
+        f"Approach: {spec.strategy.approach}",
+        f"Phase: {'continue' if attempted_action else 'start'}",
+        f"Profile: {spec.profile}",
+        f"Goal: {spec.goal}",
+        "",
+        "### Required outcomes",
+        *[f"- {item}" for item in spec.success_criteria],
+    ]
+    if spec.input_bindings:
+        lines.append("Input bindings: " + _compact_json(
+            [item.model_dump(mode="json") for item in spec.input_bindings],
+        ))
+    if spec.unresolved_inputs:
+        lines.append("Unresolved inputs: " + _compact_json(spec.unresolved_inputs))
+    for requirement in spec.data_requirements:
+        lines.extend(["", *_actor_data_requirement_lines(requirement)])
+    if spec.completion_facts:
+        lines.extend([
+            "",
+            "### Required final facts",
+            *[
+                f"- `{item.property_ref}`: {item.description}; expected "
+                f"`{_compact_json(item.expected_value)}`"
+                for item in spec.completion_facts
+            ],
+        ])
+    if spec.input_refs:
+        lines.append("Input names: " + _compact_json(sorted(spec.input_refs)))
     if current_element:
-        payload["current_element"] = current_element
-    profile_rules = (
-        "Collector rules for this attempt:\n"
-        "- Form recall queries from natural equivalents and distinctive terms. Normalized "
-        "filter values remain validation predicates; they need not appear literally or "
-        "adjacent in query text.\n"
-        "- When a requested date is relative to the authoritative task clock, use its "
-        "natural relative-date term in the task language for recall rather than an ISO or "
-        "long-form calendar literal; keep the exact date only for validation.\n"
-        "- When a visible query needs no autocomplete selection, batch its `type` and "
-        "`press_enter` in the same decision; do not spend a separate turn submitting it.\n"
-        "- A relevance-ordered web/search page's leading visible titles assess one query. "
-        "If they mismatch the goal, never scroll or paginate for later results: directly "
-        "replace the visible query and submit, or report after materially different queries "
-        "already failed.\n"
-        "- Treat autocomplete as pending; commit a suggestion only when its identity "
-        "matches the requested scope. `empty_authoritative = false` is a recall miss, "
-        "not a completed empty result.\n"
-        "- Recall candidates without changing semantic predicates, let Runtime validate "
-        "requirement scope, then collect only scope-matched evidence.\n"
-        "- You own the exhaustiveness judgment: narrow the scope with an exact filter or "
-        "search first, then traverse; treat the collection as complete only when your own "
-        "evidence says nothing remains (the filtered list fits the viewport, or further "
-        "scrolling yields no new rows). Call `complete` on that judgment and state the "
-        "evidence; Runtime never certifies completeness.\n"
-        if spec.profile == "collector"
-        else (
-            "Operator rules for this attempt:\n"
-            "- Treat multi-select and configuration goals as exact sets; validate any review "
-            "surface before committing.\n"
-            "- `candidate_set_state.status = exhausted` is guarded Runtime evidence; an "
-            "initially empty or filtered selector is not exhausted.\n"
-            "- Finish comparison evidence before mutation, skip excluded or already processed "
-            "identities, and advance only through explicitly remaining candidates.\n"
-            "- Durable facts resolve candidates across frames: a recorded no-match query or "
-            "classified candidate stays resolved unless later evidence disproves it; never "
-            "rerun that branch.\n"
-            "- Never call `complete` while a visible final commit control for the requested "
-            "mutation remains unactivated. Activate it and observe the next frame; readiness "
-            "is not completion.\n"
-            "- Observe the post-action frame. If the requested terminal mutation's commit "
-            "just returned to a stable parent/source surface without error and durable "
-            "facts name no unsatisfied identity, call `complete`; do not restart the "
-            "mutation or rerun a resolved query. A preparatory scope/container commit is "
-            "not terminal.\n"
-        )
-    )
-    return (
-        "## Current Worker attempt\n"
-        "`approach` is binding for this attempt. Choose actions that execute it; do not "
-        "continue an unrelated source, application, or mechanism visible in the frame. "
-        "When `phase` is `start`, the first action's visible target or destination must "
-        "identify the approach; the residue surface's usefulness for the goal is irrelevant. "
-        "The goal and output contract are immutable. Runtime actions are generic "
-        "capabilities, and named input bindings inject private Master-routed values.\n"
-        + json.dumps(payload, ensure_ascii=False)
-        + "\n"
-        + profile_rules
-    )
+        lines.append(f"Current element: {current_element}")
+    return "\n".join(lines)
 
 
 def dynamic_actor_tools(
@@ -365,14 +403,17 @@ def dynamic_actor_tools(
     if completion_mode != "unavailable":
         if completion_mode == "operator":
             description = (
-                "Complete only when the authoritative State status is completed. With "
+                "Complete only when accumulated facts and current evidence establish the "
+                "Goal Contract. With "
                 "element-wise bindings, complete the current element so Runtime can advance "
-                "its cursor; State is reinitialized for the next element."
+                "its cursor; fact memory is reinitialized for the next element."
             )
         else:
             description = (
-                "Complete this collector only when authoritative State is completed and the "
-                "Runtime-exposed collection output matches the requested scope."
+                "Complete this collector only when factual collection evidence and the "
+                "Runtime-exposed output establish the requested scope, and every declared "
+                "completion fact's expected value is genuinely established by executed and "
+                "observed actions — never by an intended or assumed mutation."
             )
         tools.append(model_tool(
             "complete",
@@ -434,8 +475,9 @@ def dynamic_action_envelope_tool(
         "never prepend home or app_switch to it."
     )
     role_description = (
-        " Choose only current-frame actions that advance State's unresolved difference. "
-        "For a goal target, copy its unresolved frontier ref; never use a resolved ref."
+        " Choose only current-frame actions that advance a Goal Contract fact not yet "
+        "established by continuous fact memory. For a tracked visible object, copy its "
+        "exact target ref."
     )
     return function_tool(
         "continue_with_actions",
@@ -476,15 +518,18 @@ def dynamic_action_tool(
             "pattern": r"^[a-z][a-z0-9_]{0,79}$",
             "description": (
                 "Copy the exact target_ref when this action spatially operates on a "
-                "target in State.visible_targets.unresolved_frontier. Use null only "
-                "for a navigation or interface control that State does not track as "
-                "a goal target. This semantic binding never replaces x/y geometry."
+                "currently visible tracked object, including when the action only opens "
+                "its detail. Use null only for navigation or a control outside every "
+                "tracked object. "
+                "This semantic binding never replaces x/y geometry."
             ),
         }
     schema["properties"] = properties
     schema["required"] = [name for name in schema.get("required", []) if name in exposed]
     if "description" in exposed and "description" not in schema["required"]:
         schema["required"].append("description")
+    if "state_target_ref" in properties:
+        schema["required"].append("state_target_ref")
     description = action.description
     if action.fixed_args:
         description += (
@@ -846,6 +891,8 @@ def json_actor_decision_instruction(tools: list[dict[str, Any]]) -> str:
         "Choose exactly one listed action. The State role already ran; do not emit a "
         "`state` field. The outer args "
         "must satisfy the selected action's schema. "
+        'Numeric point fields are separate named keys, e.g. `"x": 500, "y": 398`, '
+        'never a bare pair such as `"x": 500, 398`. '
         "Available contract:\n"
         + json.dumps(catalog, ensure_ascii=False, separators=(",", ":"))
     )
