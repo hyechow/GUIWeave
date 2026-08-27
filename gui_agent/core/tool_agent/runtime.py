@@ -14,7 +14,7 @@ from threading import RLock
 from typing import Any, Callable, Literal
 
 from jsonschema import Draft202012Validator, validate
-from langchain_core.messages import HumanMessage
+from langchain_core.messages import HumanMessage, ToolMessage
 
 from gui_agent.core.config import resolve_llm_config
 from gui_agent.prompts import load_prompt_text
@@ -1988,14 +1988,24 @@ class ToolAgentRuntime:
                     raise ProtocolError(
                         f"State repeated an invalid tool protocol: {exc}"
                     ) from exc
+                repair_messages: list[Any] = [response]
+                tool_calls = list(getattr(response, "tool_calls", None) or [])
+                # An assistant message with tool_calls must be followed by a tool message
+                # per call id (strict OpenAI/DashScope-compatible validation); a bare
+                # HumanMessage after tool_calls is rejected by some serving endpoints.
+                for tool_call in tool_calls:
+                    repair_messages.append(ToolMessage(
+                        content=f"Invalid State tool call: {exc}",
+                        tool_call_id=str(tool_call.get("id") or "tool-call"),
+                    ))
+                repair_messages.append(HumanMessage(content=(
+                    "State protocol repair on this SAME frame. No action was executed. "
+                    f"The prior response was invalid: {exc}. Emit exactly one required "
+                    "edit_state_memory or complete tool call matching its schema."
+                )))
                 active_messages = [
                     *active_messages,
-                    response,
-                    HumanMessage(content=(
-                        "State protocol repair on this SAME frame. No action was executed. "
-                        f"The prior response was invalid: {exc}. Emit exactly one required "
-                        "edit_state_memory or complete tool call matching its schema."
-                    )),
+                    *repair_messages,
                 ]
         assert response is not None
         if completion is None:
