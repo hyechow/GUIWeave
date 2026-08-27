@@ -211,7 +211,12 @@ def state_actor_markdown(state: WorkerStateSnapshot) -> str:
 
 
 def state_observation_focus(spec: WorkerSpec) -> dict[str, Any]:
-    """Expose fact shapes to State while withholding Actor-owned predicates."""
+    """Expose fact shapes and the goal contract to State.
+
+    State owns the goal-establishment judgment, so it receives the success criteria
+    and the declared completion facts (with expected values). It still does not
+    recommend actions — that remains the Actor's decision.
+    """
 
     visible_fields = sorted({
         str(value)
@@ -228,4 +233,15 @@ def state_observation_focus(spec: WorkerSpec) -> dict[str, Any]:
             *spec.success_criteria,
             *(item.description for item in spec.completion_facts),
         ],
+        "goal_contract": {
+            "success_criteria": list(spec.success_criteria),
+            "completion_facts": [
+                {
+                    "property_ref": item.property_ref,
+                    "description": item.description,
+                    "expected_value": item.expected_value,
+                }
+                for item in spec.completion_facts
+            ],
+        },
     }

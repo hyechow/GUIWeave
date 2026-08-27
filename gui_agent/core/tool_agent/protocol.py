@@ -400,26 +400,6 @@ def dynamic_actor_tools(
             )
             for item in actions
         ]
-    if completion_mode != "unavailable":
-        if completion_mode == "operator":
-            description = (
-                "Complete only when accumulated facts and current evidence establish the "
-                "Goal Contract. With "
-                "element-wise bindings, complete the current element so Runtime can advance "
-                "its cursor; fact memory is reinitialized for the next element."
-            )
-        else:
-            description = (
-                "Complete this collector only when factual collection evidence and the "
-                "Runtime-exposed output establish the requested scope, and every declared "
-                "completion fact's expected value is genuinely established by executed and "
-                "observed actions — never by an intended or assumed mutation."
-            )
-        tools.append(model_tool(
-            "complete",
-            description,
-            CompleteReadyWorkerArgs,
-        ))
     if allow_failure:
         tools.append(model_tool(
             "report_blocked",

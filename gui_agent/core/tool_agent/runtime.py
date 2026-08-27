@@ -119,6 +119,13 @@ _STATE_MEMORY_TOOL = model_tool(
     "Edit the continuous Markdown fact memory and refresh current target bindings.",
     WorkerStateEditBatch,
 )
+_STATE_COMPLETE_TOOL = model_tool(
+    "complete",
+    "Declare the Goal Contract established now. Use only when the accumulated observed "
+    "facts genuinely establish every success criterion and every declared completion fact's "
+    "expected value — never an intended, assumed, or future mutation.",
+    CompleteReadyWorkerArgs,
+)
 _MAX_ACTION_GUARD_REPAIRS_PER_FRAME = 1
 _MAX_PREDISPATCH_REPAIRS_PER_FRAME = 1
 _SPATIAL_CAPABILITIES = {
@@ -1054,13 +1061,16 @@ class ToolAgentRuntime:
                         PerceptionMaterializer,
                     )
                 )
+                prefetched_completion: dict | None = None
                 if parallel_observation:
                     try:
-                        frame, png, prefetched_state = self._observe_and_state_parallel(
-                            spec=spec,
-                            journal=journal,
-                            step=step + 1,
-                            same_frame_feedback=initial_same_frame_feedback,
+                        frame, png, prefetched_state, prefetched_completion = (
+                            self._observe_and_state_parallel(
+                                spec=spec,
+                                journal=journal,
+                                step=step + 1,
+                                same_frame_feedback=initial_same_frame_feedback,
+                            )
                         )
                     except Exception as exc:  # noqa: BLE001 - both stages are required
                         return WorkerOutcome(
@@ -1120,8 +1130,10 @@ class ToolAgentRuntime:
             guard_repair_turn = 0
             same_frame_feedback = initial_same_frame_feedback
             prior_state = snapshots.get(worker_id)
+            completion: dict | None = None
             if prefetched_state is not None:
                 state = prefetched_state
+                completion = prefetched_completion
             elif prior_state is not None and prior_state.frame_id == frame.frame_id:
                 state = prior_state
                 self._trace(
@@ -1139,7 +1151,7 @@ class ToolAgentRuntime:
                     same_frame_feedback=same_frame_feedback,
                 )
                 try:
-                    state = self._invoke_state_role(
+                    state, completion = self._invoke_state_role(
                         step=step,
                         spec=spec,
                         journal=journal,
@@ -1156,6 +1168,40 @@ class ToolAgentRuntime:
                     )
                 snapshots[worker_id] = state
                 state_frames[worker_id] = (frame.frame_id, png)
+            if completion is not None:
+                # State owns the goal-establishment judgment; resolve it without
+                # consulting the Actor, which no longer holds completion authority.
+                result_payload, route = self._resolve_worker_complete(
+                    spec, completion, worker_id, frame,
+                )
+                if route == "complete":
+                    descriptor = (
+                        CollectionRef.model_validate(result_payload)
+                        if spec.profile == "collector"
+                        else None
+                    )
+                    self._trace(
+                        "worker_complete",
+                        step=step,
+                        profile=spec.profile,
+                        collection_ref=(
+                            descriptor.model_dump(mode="json") if descriptor else None
+                        ),
+                    )
+                    return WorkerOutcome(
+                        phase="completed",
+                        summary=state.summary,
+                        collection_ref=descriptor,
+                        steps=step,
+                    )
+                self._trace(
+                    "worker_each_advanced",
+                    step=step,
+                    worker_id=worker_id,
+                )
+                snapshots.pop(worker_id, None)
+                state_frames.pop(worker_id, None)
+                continue
             observed_auth_codes.update(
                 code
                 for text in state.fact_statements
@@ -1617,7 +1663,7 @@ class ToolAgentRuntime:
         journal: WorkerJournal,
         step: int,
         same_frame_feedback: dict[str, Any] | None,
-    ) -> tuple[MaterializedFrame, bytes, WorkerStateSnapshot]:
+    ) -> tuple[MaterializedFrame, bytes, WorkerStateSnapshot, dict | None]:
         """Capture once, then overlap independent Perception and State stages."""
 
         observe_started_at = time.perf_counter()
@@ -1647,7 +1693,7 @@ class ToolAgentRuntime:
                 captured_png=png,
                 observe_started_at=observe_started_at,
             )
-            state = self._invoke_state_role(
+            state, completion = self._invoke_state_role(
                 step=step,
                 spec=spec,
                 journal=journal,
@@ -1658,7 +1704,7 @@ class ToolAgentRuntime:
             frame, observed_png = perception_future.result()
         if observed_png != png:
             raise ProtocolError("Perception did not materialize the captured State frame")
-        return frame, png, state
+        return frame, png, state, completion
 
     def _state_system_prompt(self) -> str:
         return self._role_system_prompt(
@@ -1867,15 +1913,20 @@ class ToolAgentRuntime:
         frame: MaterializedFrame,
         messages: list[Any],
         context_reports: list[dict[str, Any]],
-    ) -> WorkerStateSnapshot:
-        """Run and validate one fact-only State stage before Actor policy."""
+    ) -> tuple[WorkerStateSnapshot, dict | None]:
+        """Run one State stage; State owns the goal-establishment judgment.
+
+        State edits the Markdown fact memory, or calls ``complete`` when it declares
+        the Goal Contract established. Returns ``(state, completion_call)`` where
+        ``completion_call`` is the validated complete call, else ``None``.
+        """
 
         request_kwargs = chat_request_kwargs(
             getattr(getattr(self, "worker_cfg", None), "model", None)
         )
         bound_state = (
             self.worker.bind_tools(
-                [_STATE_MEMORY_TOOL],
+                [_STATE_MEMORY_TOOL, _STATE_COMPLETE_TOOL],
                 tool_choice="required",
                 parallel_tool_calls=False,
                 max_tokens=900,
@@ -1888,6 +1939,12 @@ class ToolAgentRuntime:
         llm_elapsed_s = 0.0
         response = None
         token_usage: dict[str, int] = {}
+        snapshots = getattr(self, "_worker_state_snapshots", {})
+        previous = snapshots.get(journal.worker_id)
+        prior_state = previous if isinstance(previous, WorkerStateSnapshot) else None
+        completion: dict | None = None
+        batch: WorkerStateEditBatch | None = None
+        state = prior_state
         for attempt in range(2):
             started_at = time.perf_counter()
             for transport_attempt in range(2):
@@ -1907,24 +1964,30 @@ class ToolAgentRuntime:
             token_usage = response_usage(response)
             try:
                 call = exactly_one_tool_call(response)
-                if call["name"] != "edit_state_memory":
-                    raise ProtocolError(
-                        "State must call edit_state_memory, got "
-                        f"{call['name']!r}"
+                if call["name"] == "edit_state_memory":
+                    batch = WorkerStateEditBatch.model_validate(call["args"])
+                    if batch.frame_id != frame.frame_id:
+                        raise ValueError(
+                            f"expected frame_id {frame.frame_id!r}, got {batch.frame_id!r}"
+                        )
+                    state = reduce_worker_state(
+                        prior_state, batch, spec=spec,
                     )
-                batch = WorkerStateEditBatch.model_validate(call["args"])
-                if batch.frame_id != frame.frame_id:
-                    raise ValueError(
-                        f"expected frame_id {frame.frame_id!r}, got {batch.frame_id!r}"
-                    )
-                snapshots = getattr(self, "_worker_state_snapshots", {})
-                previous = snapshots.get(journal.worker_id)
-                state = reduce_worker_state(
-                    previous if isinstance(previous, WorkerStateSnapshot) else None,
-                    batch,
-                    spec=spec,
+                    completion = None
+                    break
+                if call["name"] == "complete":
+                    CompleteReadyWorkerArgs.model_validate(call["args"])
+                    if prior_state is None:
+                        raise ValueError(
+                            "State called complete before any observed state"
+                        )
+                    completion = call
+                    state = prior_state
+                    break
+                raise ProtocolError(
+                    "State must call edit_state_memory or complete, got "
+                    f"{call['name']!r}"
                 )
-                break
             except Exception as exc:  # noqa: BLE001 - one same-frame tool repair
                 self._trace(
                     "worker_state_protocol_error",
@@ -1938,7 +2001,7 @@ class ToolAgentRuntime:
                         "tool_agent.state.protocol_repair",
                         active_messages,
                         response,
-                        schema="required tool call: edit_state_memory",
+                        schema="required tool call: edit_state_memory or complete",
                     ) + context_reports,
                 )
                 if attempt:
@@ -1951,32 +2014,54 @@ class ToolAgentRuntime:
                     HumanMessage(content=(
                         "State protocol repair on this SAME frame. No action was executed. "
                         f"The prior response was invalid: {exc}. Emit exactly one required "
-                        "edit_state_memory tool call matching its schema."
+                        "edit_state_memory or complete tool call matching its schema."
                     )),
                 ]
         assert response is not None
-        self._trace(
-            "worker_state",
-            step=step,
-            frame_id=frame.frame_id,
-            mode=batch.mode,
-            memory_edits=[item.model_dump(mode="json") for item in batch.edits],
-            receipt_ref=(latest_runtime_receipt(journal) or {}).get("receipt_ref"),
-            state=state.model_dump(mode="json"),
-            llm_elapsed_s=round(llm_elapsed_s, 3),
-            token_usage=token_usage,
-            context_reports=[
-                *context_reports,
-                *diagnostic_prompt_reports(
-                    "tool_agent.state",
-                    active_messages,
-                    response,
-                    parsed=state.model_dump(mode="json"),
-                    schema="required tool call: edit_state_memory",
-                ),
-            ],
-        )
-        return state
+        if completion is None:
+            assert batch is not None
+            self._trace(
+                "worker_state",
+                step=step,
+                frame_id=frame.frame_id,
+                mode=batch.mode,
+                memory_edits=[item.model_dump(mode="json") for item in batch.edits],
+                receipt_ref=(latest_runtime_receipt(journal) or {}).get("receipt_ref"),
+                state=state.model_dump(mode="json"),
+                llm_elapsed_s=round(llm_elapsed_s, 3),
+                token_usage=token_usage,
+                context_reports=[
+                    *context_reports,
+                    *diagnostic_prompt_reports(
+                        "tool_agent.state",
+                        active_messages,
+                        response,
+                        parsed=state.model_dump(mode="json"),
+                        schema="required tool call: edit_state_memory",
+                    ),
+                ],
+            )
+        else:
+            self._trace(
+                "worker_state_requested_complete",
+                step=step,
+                frame_id=frame.frame_id,
+                profile=spec.profile,
+                receipt_ref=(latest_runtime_receipt(journal) or {}).get("receipt_ref"),
+                llm_elapsed_s=round(llm_elapsed_s, 3),
+                token_usage=token_usage,
+                context_reports=[
+                    *context_reports,
+                    *diagnostic_prompt_reports(
+                        "tool_agent.state",
+                        active_messages,
+                        response,
+                        parsed={"complete": completion["args"]},
+                        schema="required tool call: complete",
+                    ),
+                ],
+            )
+        return state, completion
 
     def _worker_tools_for_frame(
         self,
@@ -2305,6 +2390,65 @@ class ToolAgentRuntime:
         self._trace(event, worker_id=worker_id, step=step, **payload)
         return payload, terminal
 
+    def _resolve_worker_complete(
+        self,
+        spec: WorkerSpec,
+        call: dict[str, Any],
+        worker_id: str,
+        frame: MaterializedFrame | None = None,
+    ) -> tuple[dict[str, Any], str | None]:
+        """Resolve a `complete` call: bind a collector or advance an each cursor.
+
+        Completion authority is Actor-free; this runs only when State declares the
+        Goal Contract established. The logic stays mechanical (bind rows, advance a
+        cursor), never a semantic audit of the contract.
+        """
+
+        parsed_complete = CompleteReadyWorkerArgs.model_validate(call["args"])
+        if spec.profile == "collector":
+            if frame is None:
+                raise ValueError("collector complete requires a current frame")
+            # The Worker may fold records read from un-extractable surfaces into
+            # the completion; accumulate them before binding the collection.
+            if parsed_complete.rows:
+                self._accumulate_observed_rows(
+                    spec, worker_id, {"rows": parsed_complete.rows}, 0,
+                )
+            # State certifies the goal is established; Runtime binds whatever rows
+            # the perception loop has accumulated so far.
+            requirement = spec.data_requirements[0]
+            descriptor = self.data_store.collection_for_requirement(requirement.id)
+            if descriptor is None:
+                raise ValueError(
+                    f"collector complete has no accumulated rows for requirement "
+                    f"{requirement.id!r}; keep collecting or report_blocked"
+                )
+            return descriptor.model_dump(mode="json"), "complete"
+        # Operator with consume="each" (or an array ref) bindings: `complete`
+        # after finishing one plan element advances the shared cursor and
+        # continues the Worker unless the array is exhausted (then it is a
+        # real terminal). Uses the same predicate as materialization so an
+        # array ref bound without explicit consume still iterates.
+        each_refs = sorted({
+            binding.input
+            for binding in spec.input_bindings
+            if self._binding_is_each(spec, binding)
+        })
+        if each_refs:
+            for ref_name in each_refs:
+                values = self.data_store.result_value(spec.input_refs[ref_name])
+                cursor = self._each_cursors.get((worker_id, ref_name), 0)
+                if cursor < len(values):
+                    self._each_cursors[(worker_id, ref_name)] = cursor + 1
+            remaining = any(
+                self._each_cursors.get((worker_id, ref_name), 0)
+                < len(self.data_store.result_value(spec.input_refs[ref_name]))
+                for ref_name in each_refs
+            )
+            if remaining:
+                return {"status": "completed", "each_advanced": True}, "each_next"
+        return {"status": "completed"}, "complete"
+
     def _execute_worker_tool(
         self,
         spec: WorkerSpec,
@@ -2316,50 +2460,7 @@ class ToolAgentRuntime:
         worker_id: str = "",
     ) -> tuple[dict[str, Any], str | None]:
         if call["name"] == "complete":
-            parsed_complete = CompleteReadyWorkerArgs.model_validate(call["args"])
-            if spec.profile == "collector":
-                if frame is None:
-                    raise ValueError("collector complete requires a current frame")
-                # The Worker may fold records read from un-extractable surfaces into
-                # the completion; accumulate them before binding the collection.
-                if parsed_complete.rows:
-                    self._accumulate_observed_rows(
-                        spec, worker_id, {"rows": parsed_complete.rows}, 0,
-                    )
-                # The Worker certifies exhaustiveness from its own evidence; Runtime
-                # binds whatever rows the perception loop has accumulated so far.
-                requirement = spec.data_requirements[0]
-                descriptor = self.data_store.collection_for_requirement(requirement.id)
-                if descriptor is None:
-                    raise ValueError(
-                        f"collector complete has no accumulated rows for requirement "
-                        f"{requirement.id!r}; keep collecting or report_blocked"
-                    )
-                return descriptor.model_dump(mode="json"), "complete"
-            # Operator with consume="each" (or an array ref) bindings: `complete`
-            # after finishing one plan element advances the shared cursor and
-            # continues the Worker unless the array is exhausted (then it is a
-            # real terminal). Uses the same predicate as materialization so an
-            # array ref bound without explicit consume still iterates.
-            each_refs = sorted({
-                binding.input
-                for binding in spec.input_bindings
-                if self._binding_is_each(spec, binding)
-            })
-            if each_refs:
-                for ref_name in each_refs:
-                    values = self.data_store.result_value(spec.input_refs[ref_name])
-                    cursor = self._each_cursors.get((worker_id, ref_name), 0)
-                    if cursor < len(values):
-                        self._each_cursors[(worker_id, ref_name)] = cursor + 1
-                remaining = any(
-                    self._each_cursors.get((worker_id, ref_name), 0)
-                    < len(self.data_store.result_value(spec.input_refs[ref_name]))
-                    for ref_name in each_refs
-                )
-                if remaining:
-                    return {"status": "completed", "each_advanced": True}, "each_next"
-            return {"status": "completed"}, "complete"
+            return self._resolve_worker_complete(spec, call, worker_id, frame)
         if call["name"] == "report_blocked":
             parsed = FailWorkerArgs.model_validate(call["args"])
             return {"status": "failed", "reason": parsed.reason}, "report_blocked"

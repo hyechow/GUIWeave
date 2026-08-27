@@ -130,9 +130,10 @@ def test_state_and_actor_prompts_have_disjoint_responsibilities() -> None:
     actor = load_prompt_text("task.tool_agent.actor")
 
     assert "Observe what is true now" in state
-    assert "never choose an action or classify goal progress" in state
+    assert "judge whether the Goal Contract is established" in state
+    assert "`complete` is your declaration" in state
     assert "edit_state_memory" in state
-    assert "one open Markdown document" in state
+    assert "one open document" in state
     assert "there is no predefined semantic schema" in state
     assert "smallest exact consecutive `old_lines`" in state
     assert "Never rewrite the full document" in state
@@ -166,8 +167,8 @@ def test_state_and_actor_prompts_have_disjoint_responsibilities() -> None:
     assert "apply every applicable Goal Contract predicate" in actor
     assert "An omitted field or child fact is unobserved" in actor
     assert "A value stated in the Goal Contract or Markdown is not missing" in actor
-    assert "A `complete` evidence entry is a fact already established" in actor
-    assert "never by an intended or assumed mutation" in actor
+    assert "You never declare the Goal Contract complete" in actor
+    assert "You choose the next atomic action" in actor
     assert "must never be written into State memory" in actor
     assert "`owned_region_visibility=edge_fragment` is not safely actionable" in actor
     assert "target-oriented Markdown memory owns accumulated" in actor

@@ -767,7 +767,7 @@ def test_worker_reports_blocker_without_deciding_reflection_failure() -> None:
     assert "fail" not in {tool["function"]["name"] for tool in pending}
 
 
-def test_actor_always_owns_completion_when_runtime_mode_allows_it() -> None:
+def test_actor_never_owns_completion_when_runtime_mode_allows_it() -> None:
     runtime = object.__new__(ToolAgentRuntime)
     runtime.allow_multi_action = False
     action = DynamicActionSpec(
@@ -796,8 +796,9 @@ def test_actor_always_owns_completion_when_runtime_mode_allows_it() -> None:
         spec, [action], frame, state=observed, allow_failure=False,
     )
 
-    assert "complete" in {tool["function"]["name"] for tool in waiting}
-    assert "complete" in {tool["function"]["name"] for tool in ready}
+    # Completion is State-owned; the Actor tool set never exposes it.
+    assert "complete" not in {tool["function"]["name"] for tool in waiting}
+    assert "complete" not in {tool["function"]["name"] for tool in ready}
 
 
 def test_bound_type_remains_a_worker_choice_on_closed_query_surface() -> None:
@@ -839,7 +840,7 @@ def test_bound_type_remains_a_worker_choice_on_closed_query_surface() -> None:
         tool["function"]["name"]
         for tool in runtime._worker_tools_for_frame(spec, list(actions), opener)
     }
-    assert names == {"enter_query", "complete", "report_blocked"}
+    assert names == {"enter_query", "report_blocked"}
 
 
 def test_global_turn_budget_is_shared_across_logical_workers() -> None:
@@ -1125,7 +1126,7 @@ class _SplitWorkerFixture:
     def bind_tools(self, tools, **kwargs):
         del kwargs
         names = {tool["function"]["name"] for tool in tools}
-        self.mode = "state" if names == {"edit_state_memory"} else "actor"
+        self.mode = "state" if "edit_state_memory" in names else "actor"
         return self
 
     def bind(self, **kwargs):
@@ -1288,7 +1289,7 @@ class _MultiActionWorker(_SplitWorkerFixture):
         assert kwargs.get("parallel_tool_calls") is False
         self.bound_names = {tool["function"]["name"] for tool in tools}
         self.mode = (
-            "state" if self.bound_names == {"edit_state_memory"} else "actor"
+            "state" if "edit_state_memory" in self.bound_names else "actor"
         )
         self.bound_schemas.append(json.dumps(tools))
         return self
@@ -1372,7 +1373,7 @@ class _SplitRoleWorker:
     def bind_tools(self, tools, **kwargs):
         assert kwargs.get("parallel_tool_calls") is False
         names = {tool["function"]["name"] for tool in tools}
-        self.mode = "state" if names == {"edit_state_memory"} else "actor"
+        self.mode = "state" if "edit_state_memory" in names else "actor"
         if self.mode == "actor":
             self.actor_tools = tools
         return self
@@ -1437,7 +1438,7 @@ class _SplitEachWorker:
     def bind_tools(self, tools, **kwargs):
         assert kwargs.get("parallel_tool_calls") is False
         names = {tool["function"]["name"] for tool in tools}
-        self.mode = "state" if names == {"edit_state_memory"} else "actor"
+        self.mode = "state" if "edit_state_memory" in names else "actor"
         return self
 
     def invoke(self, messages):
@@ -1625,7 +1626,7 @@ def test_runtime_runs_state_before_action_only_actor(monkeypatch) -> None:
     assert "Historical Progress" not in actor_text
     assert '"mode": "init"' in state_text
     assert '"output_contract"' not in state_text
-    assert '"goal_contract"' not in state_text
+    assert '"goal_contract"' in state_text
     assert '"observation_focus"' in state_text
     assert "Installed applications" not in str(worker.state_messages[0].content)
     assert "Installed applications" in str(worker.actor_messages[0].content)
@@ -1715,10 +1716,14 @@ def test_append_state_context_uses_compact_previous_and_current_frame_pair() -> 
         "target_registry": {"stable_target": "One stable visible target"},
         "memory_markdown": "### stable_target\n- Requested state: false",
     }
-    assert "goal_contract" not in payload
+    assert "goal_contract" in payload["observation_focus"]
     assert payload["observation_focus"] == {
         "visible_fields": [],
         "fact_interests": ["The target has the requested state."],
+        "goal_contract": {
+            "success_criteria": ["The target has the requested state."],
+            "completion_facts": [],
+        },
     }
     assert "execution_scope" not in payload
     assert "latest_runtime_receipt" not in payload
@@ -3258,21 +3263,16 @@ def test_collector_completion_binds_accumulated_rows_regardless_of_coverage() ->
         collections=[collection],
         requirement_scopes={"records": {"status": "met"}},
     )
-    # ReAct collection: complete is offered on any ready frame; the Worker decides.
-    tools = runtime._worker_tools_for_frame(spec, spec._test_actions, frame)
-    assert "complete" in {tool["function"]["name"] for tool in tools}
-
-    # Calling it binds whatever rows the perception loop accumulated, even while the
-    # mechanical coverage verdict is still "incomplete" (partial page here).
+    # State owns completion; the completer binds whatever rows the perception loop
+    # accumulated, even while the mechanical coverage verdict is still "incomplete".
     assert collection.coverage.get("status") == "incomplete"
-    payload, terminal = runtime._execute_worker_tool(
+    payload, terminal = runtime._resolve_worker_complete(
         spec,
-        spec._test_actions,
         {
             "name": "complete",
             "args": {"evidence": []},
         },
-        b"png",
+        "records_worker",
         frame,
     )
     assert terminal == "complete"
@@ -3360,14 +3360,10 @@ def test_ready_collector_completion_uses_runtime_bound_collection_ref() -> None:
         requirement_scopes={"records": {"status": "met"}},
     )
 
-    tools = runtime._worker_tools_for_frame(spec, spec._test_actions, frame)
-    complete = next(tool for tool in tools if tool["function"]["name"] == "complete")
-    assert "collection_ref" not in complete["function"]["parameters"]["properties"]
-    payload, terminal = runtime._execute_worker_tool(
+    payload, terminal = runtime._resolve_worker_complete(
         spec,
-        spec._test_actions,
         {"name": "complete", "args": {"evidence": ["coverage complete"]}},
-        b"png",
+        "records_worker",
         frame,
     )
 

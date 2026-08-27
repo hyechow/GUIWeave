@@ -217,12 +217,9 @@ def test_actor_tools_exclude_worker_state_channel() -> None:
         parameters = tool["function"]["parameters"]
         assert "state" not in parameters.get("properties", {})
         assert "state" not in parameters.get("required", [])
-    complete = next(
-        tool["function"] for tool in tools
-        if tool["function"]["name"] == "complete"
-    )
-    assert "accumulated facts and current evidence" in complete["description"]
-    assert "Historical Progress" not in complete["description"]
+    # Completion is State-owned; the Actor tool set never exposes `complete`.
+    assert "complete" not in {tool["function"]["name"] for tool in tools}
+    assert "report_blocked" in {tool["function"]["name"] for tool in tools}
     envelope = next(
         tool["function"] for tool in tools
         if tool["function"]["name"] == "continue_with_actions"
@@ -421,7 +418,7 @@ def test_select_option_exposes_value_when_master_does_not_bind_it() -> None:
     )
 
 
-def test_collector_completion_tool_is_frame_gated_and_runtime_bound() -> None:
+def test_actor_tools_never_expose_completion_regardless_of_mode() -> None:
     actions = _declared_form_actions()
 
     waiting = dynamic_actor_tools(actions, completion_mode="unavailable")
@@ -433,15 +430,8 @@ def test_collector_completion_tool_is_frame_gated_and_runtime_bound() -> None:
 
     ready = dynamic_actor_tools(actions, completion_mode="collector")
     assert [tool["function"]["name"] for tool in ready] == [
-        "enter_visible_value", "submit_visible_form", "complete", "report_blocked",
+        "enter_visible_value", "submit_visible_form", "report_blocked",
     ]
-    complete = next(
-        tool for tool in ready if tool["function"]["name"] == "complete"
-    )
-    properties = complete["function"]["parameters"]["properties"]
-    assert "collection_ref" not in properties
-    assert set(properties) == {"evidence", "rows"}
-    assert "factual collection evidence" in complete["function"]["description"]
     failure = next(
         tool for tool in ready if tool["function"]["name"] == "report_blocked"
     )

@@ -192,7 +192,7 @@ def test_state_projection_keeps_current_observed_target_order() -> None:
     assert visible.index("`record_a`") < visible.index("`record_b`")
 
 
-def test_state_observation_focus_withholds_filters_and_property_refs() -> None:
+def test_state_observation_focus_withholds_filters_but_exposes_goal_contract() -> None:
     spec = WorkerSpec.model_validate({
         **_spec().model_dump(mode="json"),
         "profile": "collector",
@@ -220,9 +220,17 @@ def test_state_observation_focus_withholds_filters_and_property_refs() -> None:
         "Set every target property to the requested value.",
         "The requested commit is visibly established.",
     ]
+    # State owns the goal-establishment judgment, so it sees the contract facts.
+    assert focus["goal_contract"]["success_criteria"] == [
+        "Set every target property to the requested value.",
+    ]
+    assert focus["goal_contract"]["completion_facts"] == [{
+        "property_ref": "commit_observed",
+        "description": "The requested commit is visibly established.",
+        "expected_value": True,
+    }]
+    # But the filter predicate itself is not an observed fact shape.
     assert "2025-10-03" not in str(focus)
-    assert "commit_observed" not in str(focus)
-    assert "expected_value" not in str(focus)
 
 
 def test_state_receipt_is_small_observation_context() -> None:
