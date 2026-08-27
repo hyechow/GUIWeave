@@ -8,7 +8,7 @@ import json
 import re
 from dataclasses import dataclass
 from copy import deepcopy
-from typing import Any, Literal
+from typing import Any
 
 from jsonschema import validate
 from langchain_core.messages import HumanMessage, SystemMessage
@@ -31,7 +31,6 @@ MAX_ORDERED_ACTIONS = 5
 @dataclass(frozen=True)
 class WorkerFrameTools:
     allowed_actions: list[DynamicActionSpec]
-    completion_mode: Literal["unavailable", "operator", "collector"]
 
 
 def worker_frame_tools(
@@ -47,8 +46,8 @@ def worker_frame_tools(
             action for action in actions
             if action.capability in {"open_url", "back", "home", "app_switch", "launch_app"}
         ]
-        return WorkerFrameTools(available, "unavailable")
-    return WorkerFrameTools(actions, spec.profile)
+        return WorkerFrameTools(available)
+    return WorkerFrameTools(actions)
 
 
 _INPUT_TARGETS = {
@@ -366,9 +365,6 @@ def worker_attempt_contract(
 def dynamic_actor_tools(
     actions: list[DynamicActionSpec],
     *,
-    completion_mode: Literal[
-        "unavailable", "operator", "collector"
-    ] = "operator",
     action_envelope: bool = False,
     max_ordered_actions: int = MAX_ORDERED_ACTIONS,
     allow_failure: bool = True,

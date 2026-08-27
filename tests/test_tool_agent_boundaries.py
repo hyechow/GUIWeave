@@ -46,7 +46,7 @@ def _collection(*, rows: int = 1, filtered: bool = False) -> CollectionRef:
     )
 
 
-def test_collector_completion_is_offered_regardless_of_coverage_status() -> None:
+def test_ready_frame_exposes_actions_regardless_of_coverage_status() -> None:
     spec = _collector()
     frame = MaterializedFrame(
         frame_id="frame:1",
@@ -56,13 +56,13 @@ def test_collector_completion_is_offered_regardless_of_coverage_status() -> None
 
     assessment = worker_frame_tools(spec, [generic_action_spec("scroll")], frame)
 
-    # ReAct collection: the Worker certifies exhaustiveness; Runtime never gates the
-    # complete tool on the mechanical coverage verdict.
-    assert assessment.completion_mode == "collector"
+    # Frame readiness exposes the actions; WorkerFrameTools no longer gates a
+    # completion tool (that judgment now belongs to the State role).
+    assert assessment.allowed_actions == [generic_action_spec("scroll")]
 
     bare_frame = MaterializedFrame(frame_id="frame:2", screenshot_path="frame.png")
     bare = worker_frame_tools(spec, [generic_action_spec("scroll")], bare_frame)
-    assert bare.completion_mode == "collector"
+    assert bare.allowed_actions == [generic_action_spec("scroll")]
 
 
 def test_frame_guard_preserves_capabilities_until_an_unready_attempt() -> None:
@@ -81,7 +81,6 @@ def test_frame_guard_preserves_capabilities_until_an_unready_attempt() -> None:
     assert ready.allowed_actions == actions
     assert [action.capability for action in initial.allowed_actions] == ["open_url"]
     assert attempted.allowed_actions == []
-    assert attempted.completion_mode == "unavailable"
 
 
 @pytest.mark.parametrize(

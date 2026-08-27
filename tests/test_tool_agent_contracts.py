@@ -132,7 +132,6 @@ def test_frame_transition_message_labels_and_scales_both_frames() -> None:
 def test_action_envelope_preserves_dynamic_atomic_schemas() -> None:
     tools = dynamic_actor_tools(
         _declared_form_actions(),
-        completion_mode="operator",
         action_envelope=True,
     )
     names = {tool["function"]["name"] for tool in tools}
@@ -190,7 +189,6 @@ def test_action_envelope_preserves_dynamic_atomic_schemas() -> None:
         )
     limited = dynamic_actor_tools(
         _declared_form_actions(),
-        completion_mode="operator",
         action_envelope=True,
         max_ordered_actions=1,
     )
@@ -200,7 +198,7 @@ def test_action_envelope_preserves_dynamic_atomic_schemas() -> None:
     assert envelope["function"]["parameters"]["properties"]["actions"]["maxItems"] == 1
     assert "exactly one action" in envelope["function"]["description"]
     assert [tool["function"]["name"] for tool in dynamic_actor_tools(
-        [], completion_mode="unavailable", action_envelope=True,
+        [], action_envelope=True,
     )] == [
         "report_blocked",
     ]
@@ -209,7 +207,6 @@ def test_action_envelope_preserves_dynamic_atomic_schemas() -> None:
 def test_actor_tools_exclude_worker_state_channel() -> None:
     tools = dynamic_actor_tools(
         _declared_form_actions(),
-        completion_mode="operator",
         action_envelope=True,
     )
 
@@ -421,14 +418,14 @@ def test_select_option_exposes_value_when_master_does_not_bind_it() -> None:
 def test_actor_tools_never_expose_completion_regardless_of_mode() -> None:
     actions = _declared_form_actions()
 
-    waiting = dynamic_actor_tools(actions, completion_mode="unavailable")
+    waiting = dynamic_actor_tools(actions)
     assert "complete" not in {tool["function"]["name"] for tool in waiting}
     assert all(
         "state" not in tool["function"]["parameters"]["properties"]
         for tool in waiting
     )
 
-    ready = dynamic_actor_tools(actions, completion_mode="collector")
+    ready = dynamic_actor_tools(actions)
     assert [tool["function"]["name"] for tool in ready] == [
         "enter_visible_value", "submit_visible_form", "report_blocked",
     ]
@@ -475,7 +472,6 @@ def test_json_actor_protocol_preserves_dynamic_action_contract() -> None:
             capability="tap",
             description="Activate the visible target",
         )],
-        completion_mode="operator",
         action_envelope=True,
         max_ordered_actions=1,
     )
@@ -508,7 +504,6 @@ def test_worker_protocol_normalizes_flat_ordered_action_arguments() -> None:
         [DynamicActionSpec(
             name="tap", capability="tap", description="Tap one visible control.",
         )],
-        completion_mode="unavailable",
         action_envelope=True,
     )
     response = SimpleNamespace(tool_calls=[{

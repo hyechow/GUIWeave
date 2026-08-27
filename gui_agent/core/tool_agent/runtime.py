@@ -1121,7 +1121,7 @@ class ToolAgentRuntime:
                     frame_actions, traversal_boundaries,
                 )
                 frame_assessment = WorkerFrameTools(
-                    frame_actions, frame_assessment.completion_mode,
+                    frame_actions,
                 )
             action_limit = self._worker_action_limit()
             action_protocol = str(
@@ -2077,10 +2077,8 @@ class ToolAgentRuntime:
         assessment = assessment or worker_frame_tools(
             spec, actions, frame,
         )
-        completion_mode = assessment.completion_mode
         return dynamic_actor_tools(
             assessment.allowed_actions,
-            completion_mode=completion_mode,
             action_envelope=bool(getattr(self, "allow_multi_action", False)),
             max_ordered_actions=self._worker_action_limit(),
             allow_failure=allow_failure,

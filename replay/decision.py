@@ -619,7 +619,6 @@ def replay_worker_decision(
     frame_actions = assessment.allowed_actions
     tools = dynamic_actor_tools(
         frame_actions,
-        completion_mode=assessment.completion_mode,
         action_envelope=multi_action,
         max_ordered_actions=max_ordered_actions,
     )
