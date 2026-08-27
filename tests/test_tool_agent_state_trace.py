@@ -216,10 +216,6 @@ def test_state_observation_focus_withholds_filters_but_exposes_goal_contract() -
     focus = state_observation_focus(spec)
 
     assert focus["visible_fields"] == ["received_date", "visible received date"]
-    assert focus["fact_interests"] == [
-        "Set every target property to the requested value.",
-        "The requested commit is visibly established.",
-    ]
     # State owns the goal-establishment judgment, so it sees the contract facts.
     assert focus["goal_contract"]["success_criteria"] == [
         "Set every target property to the requested value.",

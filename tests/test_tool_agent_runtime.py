@@ -1716,7 +1716,6 @@ def test_append_state_context_uses_compact_previous_and_current_frame_pair() -> 
     assert "goal_contract" in payload["observation_focus"]
     assert payload["observation_focus"] == {
         "visible_fields": [],
-        "fact_interests": ["The target has the requested state."],
         "goal_contract": {
             "success_criteria": ["The target has the requested state."],
             "completion_facts": [],

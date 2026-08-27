@@ -139,7 +139,7 @@ def test_state_and_actor_prompts_have_disjoint_responsibilities() -> None:
     assert "Never rewrite the full document" in state
     assert "Reuse exact refs from `previous_state.target_registry`" in state
     assert "same object keeps one ref across list/detail views" in state
-    assert "`fact_interests` describe which facts may matter" in state
+    assert "`observation_focus.goal_contract` names the success criteria" in state
     assert "without deciding whether a target or the task satisfies" in state
     assert "The envelope is not memory" in state
     assert "Current visibility belongs only in `visible_targets`" in state

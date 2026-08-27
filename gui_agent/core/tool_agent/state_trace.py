@@ -229,10 +229,6 @@ def state_observation_focus(spec: WorkerSpec) -> dict[str, Any]:
     })
     return {
         "visible_fields": visible_fields,
-        "fact_interests": [
-            *spec.success_criteria,
-            *(item.description for item in spec.completion_facts),
-        ],
         "goal_contract": {
             "success_criteria": list(spec.success_criteria),
             "completion_facts": [
