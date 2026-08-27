@@ -1929,7 +1929,7 @@ class ToolAgentRuntime:
         completion: dict | None = None
         batch: WorkerStateEditBatch | None = None
         state = prior_state
-        for attempt in range(2):
+        for attempt in range(3):
             started_at = time.perf_counter()
             for transport_attempt in range(2):
                 try:
