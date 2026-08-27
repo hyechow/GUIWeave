@@ -26,11 +26,13 @@ from gui_agent.core.tool_agent.orchestrator import (
 )
 from gui_agent.core.tool_agent.protocol import (
     MAX_ORDERED_ACTIONS,
+    CompleteReadyWorkerArgs,
     bind_actor_decision_transport,
     decode_actor_action,
     dynamic_actor_tools,
     generic_action_spec,
     image_message,
+    model_tool,
     worker_attempt_contract,
     worker_frame_tools,
     worker_profile_rules,
@@ -469,10 +471,19 @@ def _worker_decision(
     *,
     action_protocol: str = "tool_call",
 ) -> dict[str, Any]:
+    # Completion is a State decision, not an Actor tool, but a recorded frame may
+    # replay a terminal `complete`; accept it as a valid decode-side tool so the
+    # re-sampler can reproduce a recorded completion decision.
+    decode_tools = dict(tools)
+    decode_tools["complete"] = model_tool(
+        "complete",
+        "Declare the Goal Contract established now.",
+        CompleteReadyWorkerArgs,
+    )
     call, raw_state, calls = decode_actor_action(
         response,
         protocol=action_protocol,
-        tools=tools,
+        tools=decode_tools,
     )
     if raw_state is not None:
         raise ValueError("Actor must not emit state; State is authoritative")

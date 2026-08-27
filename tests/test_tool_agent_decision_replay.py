@@ -191,9 +191,9 @@ def test_worker_replay_compares_equivalent_actions_by_capability(tmp_path) -> No
     }]
     assert {tool["function"]["name"] for tool in model.bound_tools} >= {
         "continue_with_actions",
-        "complete",
         "report_blocked",
     }
+    assert "complete" not in {tool["function"]["name"] for tool in model.bound_tools}
     assert "recorded static prompt" not in model.calls[0][0].content
     assert "Actor role" in model.calls[0][0].content
     assert "Never produce or revise facts" in model.calls[0][0].content
@@ -532,7 +532,7 @@ def test_worker_replay_preserves_recorded_singleton_contract(tmp_path) -> None:
 
     assert result["status"] == "passed"
     assert result["samples"][0]["tool"] == "complete"
-    assert "complete" in {
+    assert "complete" not in {
         tool["function"]["name"] for tool in model.bound_tools
     }
 
