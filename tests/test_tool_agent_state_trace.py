@@ -94,16 +94,39 @@ def test_state_edit_requires_one_exact_old_lines_match() -> None:
         edits=[{"old_lines": [], "new_lines": ["### record", "- Value: one"]}],
     ), spec=_spec())
 
+    # An anchor block that occurs more than once is ambiguous and stays a hard error.
+    doubled = reduce_worker_state(None, _batch(
+        mode="init", frame_id="frame:1",
+        edits=[{"old_lines": [], "new_lines": ["### record", "- Value: one", "- Value: one"]}],
+    ), spec=_spec())
     with pytest.raises(ValueError, match="exactly once"):
-        reduce_worker_state(initial, _batch(
+        reduce_worker_state(doubled, _batch(
             mode="edit", frame_id="frame:2",
-            edits=[{"old_lines": ["missing"], "new_lines": ["replacement"]}],
+            edits=[{"old_lines": ["- Value: one"], "new_lines": ["replacement"]}],
         ), spec=_spec())
+    # Empty old_lines against a non-empty memory stays a hard error (must anchor).
     with pytest.raises(ValueError, match="empty old_lines"):
         reduce_worker_state(initial, _batch(
             mode="edit", frame_id="frame:2",
             edits=[{"old_lines": [], "new_lines": ["append"]}],
         ), spec=_spec())
+
+
+def test_state_edit_with_drifted_anchor_appends_and_preserves_new_content() -> None:
+    initial = reduce_worker_state(None, _batch(
+        mode="init", frame_id="frame:1",
+        edits=[{"old_lines": [], "new_lines": ["### record", "- Value: one"]}],
+    ), spec=_spec())
+
+    # When the anchor block is no longer present (memory drifted, model mis-reproduced
+    # the exact text), the State observation is appended instead of aborting the run.
+    state = reduce_worker_state(initial, _batch(
+        mode="edit", frame_id="frame:2",
+        edits=[{"old_lines": ["- Value: old"], "new_lines": ["- Value: two"]}],
+    ), spec=_spec())
+    markdown = state.markdown
+    assert "- Value: one" in markdown
+    assert "- Value: two" in markdown
 
 
 def test_actor_projection_is_markdown_plus_current_binding_envelope() -> None:
