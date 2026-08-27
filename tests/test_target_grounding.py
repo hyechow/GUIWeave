@@ -74,6 +74,27 @@ def test_target_grounding_resolution(
         assert grounded.action.snap["method"] == "visual_target_grounding"
 
 
+def test_type_into_undetected_region_is_admitted_for_red_marker_verifier() -> None:
+    """A `type` over an undetected region (no control found) is not hard-rejected.
+
+    A blank composer body has no detected element to conflict with; the point is
+    admitted and left to the downstream red-marker verifier. A detected non-text
+    control must still block the type.
+    """
+    grounding = TargetGrounding(
+        target_found=False,
+        control_type="",
+        label="",
+        confidence="low",
+    )
+    grounded, signal, _, error = resolve_target_grounding(
+        _decision(action_type="type", x=500, y=160), grounding
+    )
+    assert signal is None
+    assert error == ""
+    assert (grounded.action.x, grounded.action.y) == (500, 160)
+
+
 def test_candidate_crop_preserves_expected_local_region() -> None:
     image = Image.new("RGB", (360, 800), "white")
     output = io.BytesIO()

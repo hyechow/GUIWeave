@@ -217,9 +217,14 @@ def resolve_target_grounding(
         }
     if signal is not None and grounding.container_context.strip():
         signal["container_context"] = grounding.container_context.strip()
-    reject = signal is None and (
+    # Reject only when a control is actually detected at the point and it is not a
+    # compatible text target (so a `type` aimed at a detected button/icon is blocked).
+    # A point over an undetected region (`target_found=False`, e.g. a blank composer
+    # body) carries no detected control to conflict with, so it is admitted and left to
+    # the downstream red-marker verifier to confirm rather than being hard-rejected.
+    reject = signal is None and grounding.target_found and (
         action.action_type == "type"
-        or grounding.target_found and grounding.confidence in {"high", "medium"}
+        or grounding.confidence in {"high", "medium"}
     )
     detail = f" for {actual!r}" if actual else ""
     reason = f": {grounding.reason}" if grounding.reason else ""
