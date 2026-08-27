@@ -53,13 +53,20 @@ llm:
     <<: *token_plan
     model: qwen3.6-flash
   tool_agent:
-    # Master is text-only. Worker and perception use multimodal Qwen.
+    # Master is text-only. The acting Agent uses multimodal Qwen; State has its own slot.
     master:
       <<: *token_plan
       model: qwen3.7-max
-    worker:
+    actor:
       <<: *token_plan
       model: qwen3.7-plus
+    state:
+      # State observation role runs on the standard endpoint's DeepSeek vision model.
+      # This model runs thinking always-on and rejects tool_choice="required", so the
+      # Runtime binds it with "auto" (see _invoke_state_role). enable_thinking has no
+      # effect on this endpoint and is intentionally not set.
+      provider: standard
+      model: deepseek-v4-flash-vision-exp
     perception:
       <<: *token_plan
       model: qwen3.7-plus

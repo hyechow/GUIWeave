@@ -12,9 +12,15 @@ source: manual_verified
 confidence: high
 sensitivity: internal
 ttl: session
-version: 7
+version: 8
 ---
 # Mastodon on Android
+
+- Lists are managed only on the Home surface: navigate to the Home bottom-navigation
+  tab, open the dropdown beside the `Home` title, and choose `Lists`, then `Create list`
+  to create a list or `Manage lists` to edit one. From any other surface, reach the Home
+  tab first. Do not look for Lists in the Profile page, its tabs, or its top-right
+  share/QR control — none of those open the Lists management panel.
 
 - Reply Send and `Pin on profile` are write-through mutations. After Reply Send, returning
   from the composer to the post detail with the new signed-in-user reply visible proves the

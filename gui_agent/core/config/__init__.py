@@ -21,6 +21,7 @@ _active_profile: str = os.environ.get("AGENT_MODEL", _DEFAULT_PROFILE)
 _LLM_CONFIG_ALIASES = {
     "recon.navigator": ("back_nav",),
     "back_nav": ("recon.navigator",),
+    "tool_agent.worker": ("tool_agent.actor",),
 }
 
 

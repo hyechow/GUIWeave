@@ -441,6 +441,15 @@ def _llm(config_name: str) -> tuple[Any, Any]:
     return build_chat_model(cfg), cfg
 
 
+def _state_model(runtime: "ToolAgentRuntime") -> Any:
+    """State role model: the dedicated ``tool_agent.state``, else the worker (stubs)."""
+    return getattr(runtime, "state", None) or getattr(runtime, "worker", None)
+
+
+def _state_cfg(runtime: "ToolAgentRuntime") -> Any:
+    return getattr(runtime, "state_cfg", None) or getattr(runtime, "worker_cfg", None)
+
+
 class ToolAgentRuntime:
     """Run one reviewed Master program over autonomous visual Workers."""
 
@@ -494,7 +503,8 @@ class ToolAgentRuntime:
         )
         self.data_store = RuntimeDataStore()
         self.master, self.master_cfg = _llm("tool_agent.master")
-        self.worker, self.worker_cfg = _llm("tool_agent.worker")
+        self.worker, self.worker_cfg = _llm("tool_agent.actor")
+        self.state, self.state_cfg = _llm("tool_agent.state")
         self._master_explicit_cache = _supports_explicit_prompt_cache(self.master_cfg)
         self.reflector = Reflector(
             self.worker,
@@ -1774,7 +1784,7 @@ class ToolAgentRuntime:
             state_payload["latest_runtime_receipt"] = receipt
         state_input = json.dumps(state_payload, ensure_ascii=False)
         current_scale = float(
-            getattr(getattr(self, "worker_cfg", None), "image_scale", 1.0)
+            getattr(_state_cfg(self), "image_scale", 1.0)
         )
         if has_previous_frame:
             assert previous_frame is not None
@@ -1890,18 +1900,24 @@ class ToolAgentRuntime:
         """
 
         request_kwargs = chat_request_kwargs(
-            getattr(getattr(self, "worker_cfg", None), "model", None)
+            getattr(_state_cfg(self), "model", None)
         )
+        state_model = _state_model(self)
+        # The State role must call a tool, but the standard endpoint's DeepSeek
+        # vision model runs thinking always-on and rejects tool_choice="required"
+        # with "Thinking mode does not support this tool_choice". Bind with "auto"
+        # and rely on the one-tool-call repair loop below to converge if it does
+        # not emit a call.
         bound_state = (
-            self.worker.bind_tools(
+            state_model.bind_tools(
                 [_STATE_MEMORY_TOOL, _STATE_COMPLETE_TOOL],
-                tool_choice="required",
+                tool_choice="auto",
                 parallel_tool_calls=False,
                 max_tokens=900,
                 **request_kwargs,
             )
-            if callable(getattr(self.worker, "bind_tools", None))
-            else self.worker
+            if callable(getattr(state_model, "bind_tools", None))
+            else state_model
         )
         active_messages = list(messages)
         llm_elapsed_s = 0.0

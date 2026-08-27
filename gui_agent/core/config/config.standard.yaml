@@ -65,14 +65,20 @@ llm:
     <<: *standard
     model: qwen3.6-flash
   tool_agent:
-    # Master is text-only. Worker and perception receive screenshots.
+    # Master is text-only. The acting Agent uses multimodal Qwen; State has its own slot.
     master:
       <<: *standard
       model: qwen3.7-max
-    worker:
+    actor:
       <<: *standard
       model: qwen3.7-plus
       action_protocol: json
+    state:
+      # State observation role runs on the standard endpoint's DeepSeek vision model.
+      # This model runs thinking always-on and rejects tool_choice="required", so the
+      # Runtime binds it with "auto" (see _invoke_state_role).
+      <<: *standard
+      model: deepseek-v4-flash-vision-exp
     perception:
       <<: *standard
       model: qwen3.7-plus
