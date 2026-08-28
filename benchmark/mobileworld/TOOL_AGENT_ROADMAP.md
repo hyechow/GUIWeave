@@ -109,7 +109,7 @@ MobileWorld 当前提供 117 个 GUI-only 任务。严格按以下条件从本�
 34. `MastodonFilterLanguageTask` — ✅ 通过：`20260829_045355`，official eval 1.0
 35. `MastodonChangeLanguageTask` — ⛔ benchmark 定义阻塞：原生设置只改变发帖默认语言；
     Chrome Web 可改变 evaluator 字段，但任务未声明 Chrome，暂不计正式通过
-36. `MastodonGetServerInfoTask`
+36. `MastodonGetServerInfoTask` — ✅ 通过：`20260829_072056`，official eval 1.0
 37. `MastodonOpenAutomatedDeletionTask`
 38. `MastodonImportMutedUsersTask`
 39. `MastodonExportFollowsTask` — ✅ 通过：`20260829_005757`，official eval 1.0
@@ -239,6 +239,7 @@ Worker 能在 50 turns 总预算内完成，失败恢复不会重复产生外部
 | 33 | `MastodonAddFeaturedHashtagsTask` | 20260821_133216 | benchmark 定义：仅声明 Mastodon，但原生 Android 2.11.1 只有 featured hashtags 的只读展示，无新增/删除入口；`Edit profile` 会禁用 `Featured` 标签 | ⛔ | 0.0 | — |
 | 34 | `MastodonFilterLanguageTask` | 20260829_040420（密集相邻行点击下移）→ 20260829_045355（通过） | 官方路径为已登录 Mastodon Web `Preferences` → `Other`；记录语言原生标签/顺序，并用无候选标记的完整屏幕 Grounding 将密集行点击稳定在目标文字中心 | ✅ | 1.0 | `bf8914dd`, `5cff9c38` |
 | 35 | `MastodonChangeLanguageTask` | 20260828_103118（原生 UI）→ 20260828_123131（Chrome Web workaround） | benchmark 定义：仅声明 Mastodon，但原生 `Posting language` 不改变 evaluator 检查的账号 locale；Chrome Web 路径不计正式通过 | ⛔ | 0.0（原生）；1.0（workaround，不计） | — |
+| 36 | `MastodonGetServerInfoTask` | 20260829_051512（误认 Web `@test`）→ 20260829_053846（State 协议失败）→ 20260829_061126（合并 native/Web 会话）→ 20260829_070401（空白 tab 循环）→ 20260829_072056（通过） | 官方路径为 native 长按 `Profile` 切换 `@owner`，再独立登录 Chrome Web owner；从 `Administration` → `Dashboard` → `Space usage` 的 `PostgreSQL` 行读取动态 MB 值，并由 owner 原样发布。接口知识分离两个会话事实；State 强制工具调用和有界 `surface` 避免协议失败 | ✅ | 1.0 | `b6e7ab71`, `a57bbf80` |
 | 39 | `MastodonExportFollowsTask` | 20260828_045025（原生路径失败）→ 20260829_005757（通过） | 官方标准路径为 Chrome 已登录 Web 导出 → Files 改名；修复无身份的框外 Grounding 覆盖正确视觉点，并对 State 当前帧 identity 做无模型有界化 | ✅ | 1.0 | `6d7764bb` |
 | 42 | `MastodonRevisePhotoAltTask` | 20260821_145832、20260828_070746（失败）→ 20260828_134532（通过） | Mastodon 原生编辑路径知识：帖子三点菜单 → `Edit post` → 附件小编辑按钮 → `Add alt text`；避开只读 ALT 弹层和全局发帖铅笔 | ✅ | 1.0 | —（知识修复待提交） |
 

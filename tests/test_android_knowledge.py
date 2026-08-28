@@ -327,6 +327,57 @@ def test_mastodon_filters_content_languages_in_web_preferences() -> None:
         assert required in context
 
 
+def test_mastodon_reads_server_size_only_from_owner_admin_dashboard() -> None:
+    knowledge = load_knowledge_for_app("Mastodon", "android")
+    assert knowledge is not None
+
+    context = " ".join(knowledge.worker_context().split())
+    for required in (
+        "Native and Web account sessions are independent",
+        "switching the native app to `@owner` does not change Chrome's Mastodon login",
+        "establish the required account identity independently on native and Web",
+        "evidence from one never establishes the other",
+        "`TEST (@test)` is an ordinary account",
+        "Regular Chrome tabs share one Web login",
+        "cannot hold different accounts",
+        "do not search or revisit the tab overview for owner",
+        "right-rail Settings gear",
+        "complete menu with `Logout` but no `Administration` proves",
+        "next observable account-switch state is the Mastodon sign-in form",
+        "logging out requires no credential",
+        "This is not blocked",
+        "supplied owner login establishes the `@owner` Web session",
+        "makes `Administration` available",
+        "exact owner handle is `@owner`",
+        "bottom `…` opens the instance `About` page",
+        "it is not an account menu and never exposes `Logout`",
+        "Even from `About`, use the separate right-rail Settings gear",
+        "Once a tab title or URL establishes `@test`",
+        "identity applies to every regular Mastodon tab",
+        "open `Appearance` rather than revisiting the profile",
+        "TEST profile is not an account switcher",
+        "reopening it never reaches the sign-in form",
+        "`Development` configures API applications",
+        "`Administration` → `Dashboard`",
+        "`Space usage` card's `PostgreSQL` row",
+        "Return via `Back to Mastodon`",
+        "only by long-pressing the whole bottom `Profile` tab",
+        "chevrons are a visual affordance, not a separate tap target",
+        "`OWNER` / `@owner`",
+        "do not long-press an account row",
+    ):
+        assert required in context
+
+    orchestrator = " ".join(knowledge.orchestrator_context(
+        "switch to owner, query the database size in the settings backend, and post it"
+    ).split())
+    assert "establish owner identity separately in both session domains" in orchestrator
+    assert "one does not satisfy the other" in orchestrator
+    assert "`Administration` → `Dashboard`" in orchestrator
+    assert "`Space usage`" in orchestrator
+    assert "`PostgreSQL`" in orchestrator
+
+
 def test_mastodon_export_uses_authenticated_web_session_and_files_rename() -> None:
     knowledge = load_knowledge_for_app("Mastodon", "android")
     assert knowledge is not None

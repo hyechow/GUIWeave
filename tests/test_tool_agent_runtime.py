@@ -34,6 +34,7 @@ from gui_agent.core.tool_agent.runtime import (
     _constrain_boundary_scroll_actions,
     _is_transient_model_error,
     _scroll_boundary_feedback,
+    _state_tool_choice,
     _state_target_binding_error,
     _update_traversal_boundaries,
     _target_verification_result,
@@ -47,6 +48,11 @@ from gui_agent.adapters.browser.control_grounding import ground_action_to_neares
 _TEST_IMAGE = BytesIO()
 Image.new("RGB", (4, 4), "white").save(_TEST_IMAGE, format="PNG")
 _TEST_PNG = _TEST_IMAGE.getvalue()
+
+
+def test_state_tool_choice_requires_qwen_calls_but_keeps_deepseek_compatibility() -> None:
+    assert _state_tool_choice(SimpleNamespace(model="qwen3.7-plus")) == "required"
+    assert _state_tool_choice(SimpleNamespace(model="deepseek-vl2")) == "auto"
 
 
 def _state() -> str:

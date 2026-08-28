@@ -84,6 +84,20 @@ def test_state_bounds_verbose_current_frame_identity_without_repair() -> None:
     assert batch.visible_targets[0].identity.endswith("...")
 
 
+def test_state_bounds_verbose_surface_without_repair() -> None:
+    batch = _batch(
+        mode="init",
+        frame_id="frame:1",
+        surface="Mastodon settings navigation menu " + "item " * 40,
+        visible_targets=[],
+        edits=[],
+    )
+
+    assert batch.surface is not None
+    assert len(batch.surface) == 120
+    assert batch.surface.endswith("...")
+
+
 def test_state_atomically_updates_facts_and_current_task_transition() -> None:
     state = reduce_worker_state(None, _update(
         mode="init",
