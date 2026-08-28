@@ -2275,6 +2275,8 @@ class ToolAgentRuntime:
                 ),
             )
             try:
+                target_ref = str(action_call.get("_state_target_ref") or "")
+                target = state.targets.get(target_ref)
                 result, terminal = self._execute_worker_tool(
                     spec,
                     actions,
@@ -2282,6 +2284,7 @@ class ToolAgentRuntime:
                     current_png,
                     frame,
                     worker_id=worker_id,
+                    target_control=(target.identity if target is not None else ""),
                 )
             except _WorkerActionRejected as exc:
                 result = _worker_action_error(exc)
@@ -2446,6 +2449,7 @@ class ToolAgentRuntime:
         frame: MaterializedFrame | None = None,
         *,
         worker_id: str = "",
+        target_control: str = "",
     ) -> tuple[dict[str, Any], str | None]:
         # Completion is resolved by the State stage (_resolve_worker_complete), never
         # through the Actor loop; a stray "complete" is an unknown tool below.
@@ -2621,7 +2625,10 @@ class ToolAgentRuntime:
             # Show it before dispatch, then mirror the original runtime contract
             # by updating once more if the executor records a DOM snap.
             self._show_action(decision.action)
-            executed = self._executor.execute(decision, png_bytes=png)
+            execute_kwargs: dict[str, Any] = {"png_bytes": png}
+            if target_control:
+                execute_kwargs["target_control"] = target_control
+            executed = self._executor.execute(decision, **execute_kwargs)
             if executed and has_snapped_point(decision):
                 self._show_action(decision.action)
             if (

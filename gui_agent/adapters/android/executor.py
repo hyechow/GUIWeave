@@ -12,12 +12,14 @@ the inherited ``_denorm`` (normalized 0-1000 -> ``viewport_size`` px) goes strai
 from __future__ import annotations
 
 import re
+import unicodedata
 from typing import Optional
 
 from gui_agent.adapters.android.actions import AndroidAction
 from gui_agent.adapters.android.accessibility import (
     form_controls_from_semantic_tree,
     semantic_tree_from_uiautomator,
+    visible_text_values_from_uiautomator,
 )
 from gui_agent.adapters.android.control_grounding import (
     ground_action_to_android_control,
@@ -43,8 +45,37 @@ _SLIDER_CONTROL = re.compile(
 _SLIDER_EDGE_THRESHOLD = 900.0
 
 
+def _verbatim_key(value: str) -> str:
+    return "".join(
+        char for char in unicodedata.normalize("NFKC", value)
+        if char.isalnum()
+    )
+
+
 class AndroidExecutor(VisionExecutor):
     """Execute normalized policy actions against the phone via AndroidDevice."""
+
+    def _remember_target_text(self, identity: str) -> None:
+        inspected = getattr(self, "_inspected_target_text", set())
+        if not identity or identity in inspected:
+            return
+        hierarchy = self._client().dump_ui_hierarchy()
+        if not hierarchy:
+            return
+        inspected.add(identity)
+        self._inspected_target_text = inspected
+        remembered = getattr(self, "_verbatim_text", {})
+        for value in visible_text_values_from_uiautomator(
+            hierarchy, viewport_size=self._client().viewport_size,
+        ):
+            key = _verbatim_key(value)
+            if key:
+                remembered.setdefault(key, set()).add(value)
+        self._verbatim_text = remembered
+
+    def _restore_target_text(self, value: str) -> str:
+        matches = getattr(self, "_verbatim_text", {}).get(_verbatim_key(value), set())
+        return next(iter(matches)) if len(matches) == 1 else value
 
     def refresh_controls(self) -> list[dict] | None:
         """Refresh UIAutomator controls for safe in-batch coordinate rebinding."""
@@ -99,6 +130,10 @@ class AndroidExecutor(VisionExecutor):
         target_control: str = "",
     ) -> bool:
         action = decision.action
+        if action.action_type in {"tap", "click", "long_press"} and target_control:
+            self._remember_target_text(target_control)
+        if action.action_type == "type" and action.text:
+            action.text = self._restore_target_text(action.text)
         if (
             action.action_type == "drag"
             and _SLIDER_CONTROL.search(f"{target_control} {action.description}")

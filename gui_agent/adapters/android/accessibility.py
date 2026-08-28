@@ -358,6 +358,34 @@ def semantic_tree_from_uiautomator(
     return result
 
 
+def visible_text_values_from_uiautomator(
+    xml_text: str | None,
+    *,
+    viewport_size: tuple[int, int],
+) -> list[str]:
+    """Return exact visible UI strings without normalizing their typography."""
+    if not str(xml_text or "").strip():
+        return []
+    try:
+        root = ET.fromstring(str(xml_text))
+    except ET.ParseError:
+        return []
+    width, height = viewport_size
+    values: list[str] = []
+    for node in root.iter("node"):
+        bounds = _raw_bounds(node)
+        if bounds is None or not (
+            bounds[2] > 0 and bounds[3] > 0
+            and bounds[0] < width and bounds[1] < height
+        ):
+            continue
+        for name in ("text", "content-desc"):
+            value = str(node.attrib.get(name) or "")
+            if value.strip() and value not in values:
+                values.append(value)
+    return values
+
+
 def screen_title_from_semantic_tree(
     nodes: list[dict[str, Any]] | None,
 ) -> str:
@@ -887,4 +915,5 @@ __all__ = [
     "collection_regions_from_uiautomator",
     "form_controls_from_semantic_tree",
     "semantic_tree_from_uiautomator",
+    "visible_text_values_from_uiautomator",
 ]
