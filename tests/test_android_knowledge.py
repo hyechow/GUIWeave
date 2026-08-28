@@ -212,3 +212,41 @@ def test_mastodon_knowledge_does_not_add_conditional_exclusions() -> None:
         assert "independent state dimensions" in context
         assert "absent from both saved sets" not in context
         assert "determine exclusion only" not in context
+
+
+def test_mastodon_distinguishes_posting_language_from_account_locale() -> None:
+    knowledge = load_knowledge_for_app("Mastodon", "android")
+    assert knowledge is not None
+
+    context = knowledge.worker_context()
+    for required in (
+        "top-right settings gear",
+        "exact account row",
+        "`Posting defaults` → `Posting language`",
+        "`Posting language: Chinese`",
+        "defaults for new posts",
+        "does not establish",
+        "account/interface locale",
+    ):
+        assert required in context
+
+    assert "settings/preferences/appearance" not in context
+
+
+def test_mastodon_featured_hashtags_are_not_profile_editor_fields() -> None:
+    knowledge = load_knowledge_for_app("Mastodon", "android")
+    assert knowledge is not None
+
+    context = " ".join(knowledge.worker_context().split())
+    for required in (
+        "`Featured` tab is a read-only summary",
+        "switches to `About`",
+        "disables all four",
+        "profile content tabs",
+        "Label/Value profile metadata",
+        "do not create featured hashtags",
+        "no control for adding or removing featured hashtags",
+    ):
+        assert required in context
+
+    assert "use its `Add`/featured-hashtag control" not in context

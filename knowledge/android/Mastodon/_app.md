@@ -12,9 +12,23 @@ source: manual_verified
 confidence: high
 sensitivity: internal
 ttl: session
-version: 11
+version: 13
 ---
 # Mastodon on Android
+
+- Native posting-language settings are under `Home` → top-right settings gear →
+  exact account row → `Posting defaults` → `Posting language`. The picker exposes a
+  `Chinese` row; selecting it returns to `Posting defaults` with
+  `Posting language: Chinese` displayed. The page banner says these are
+  defaults for new posts and can be edited per post, so this control does not establish
+  the account/interface locale.
+
+- The profile's `Featured` tab is a read-only summary of existing featured hashtags
+  and pinned posts. Entering `Edit profile` switches to `About` and disables all four
+  profile content tabs until the edit is saved or discarded, so tapping `Featured`
+  there cannot navigate. The `About` tab's `Add row` fields edit Label/Value profile
+  metadata; they do not create featured hashtags. This Android version exposes no
+  control for adding or removing featured hashtags.
 
 - Explore search matches an exact contiguous string, not AND-tokenized terms; a
   multi-word query combining an account handle with a topic almost always returns
