@@ -12,7 +12,7 @@ source: manual_verified
 confidence: high
 sensitivity: internal
 ttl: session
-version: 16
+version: 17
 ---
 # Mastodon on Android
 
@@ -32,6 +32,44 @@ version: 16
   The download is named `following_accounts.csv`; when the task requires another
   filename, rename that downloaded file in Files. A Chrome `No internet connection`
   banner does not invalidate an already loaded, interactive Mastodon settings page.
+
+- Account content-language filtering is a Mastodon Web preference; native
+  `Settings` → account → `Filters` only mutes words and cannot set it. Resume an
+  existing signed-in Mastodon Web tab when available, preferring a signed-in
+  profile tab from Chrome's tab switcher. Reuse an `Appearance` settings tab only
+  when its Mastodon page header/menu is actually visible. When an `Appearance`
+  form and Chrome's numbered tab-counter are visible but the Mastodon page
+  header/menu is not, the next action is to tap that tab-counter and resume the
+  signed-in profile tab; never scroll the form or guess a toolbar target. Open
+  that profile's right-side `Preferences` gear. Otherwise, without
+  typing a URL, tap a visible post's text body to open its single-post detail, verify
+  the title is `Post from <author>`, then use that detail's only three-dot control and
+  choose `Open in browser`. Do not use the Home toolbar overflow beside the settings
+  gear. The signed-in user's profile `Timeline` is a stable source of a post when none
+  is convenient on the current timeline. In the resulting signed-in
+  Mastodon custom tab, use the right-side `Preferences` gear; if it opens
+  `Appearance`, use the horizontal three-line page
+  menu and choose `Preferences` → `Other`. Under `PUBLIC TIMELINES`, `Filter
+  languages` is a checkbox list. For English, Japanese, and Chinese Simplified, the
+  actual checkbox labels are `English`, `日本語`, and `简体中文`. Leave exactly
+  the requested languages checked and clear any other checked language. The list is
+  ordered by each language's native label and script, not by the English translations:
+  the sequence around `English` is `Diné bizaad`, `eesti`, `Ekakairũ Naoero`,
+  `English`, `Español`. If `eesti` or a clipped `Ekakairũ Naoero` is at the
+  bottom while `Afaan Oromoo`/`Afaraf` are at the top, English is immediately
+  below: make a small downward adjustment, never an upward one. A viewport
+  beginning at `Français` has already passed English and needs a small upward
+  adjustment. `日本語` and
+  `简体中文` are together near the end after the Latin-, Cyrillic-, and
+  Arabic-script groups. Each
+  language's label text activates its own checkbox; in the dense list, activate the
+  visible glyphs of the exact text—not the small left-hand square or blank row area.
+  Do not batch adjacent language changes: activate one, observe and reconcile its new
+  checked state, then handle the next. The checked state changes immediately and
+  remains while scrolling; only `Save changes` persists that pending set to the
+  account. Do not revisit a target already observed checked unless later evidence
+  shows it changed. `Posting language` on this page is a different default and does
+  not set the content-language filter.
 
 - Native posting-language settings are under `Home` → top-right settings gear →
   exact account row → `Posting defaults` → `Posting language`. The picker exposes a
