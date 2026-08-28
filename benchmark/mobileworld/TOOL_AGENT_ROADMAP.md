@@ -1,6 +1,6 @@
 # Tool Agent MobileWorld GUI-only 攻关顺序
 
-更新日期：2026-08-28
+更新日期：2026-08-29
 
 ## 当前基线
 
@@ -99,9 +99,9 @@ MobileWorld 当前提供 117 个 GUI-only 任务。严格按以下条件从本�
 26. `MastodonNewPostTask`
 27. `MastodonCreateListTask`
 28. `MastodonManageMultiListTask`
-29. `MastodonUnfollowTask`
-30. `MastodonPinTootsTask`
-31. `MastodonReportTask`
+29. `MastodonUnfollowTask` — ✅ 通过：`20260828_232406`，official eval 1.0
+30. `MastodonPinTootsTask` — ✅ 通过：`20260828_033239`，official eval 1.0
+31. `MastodonReportTask` — ✅ 通过：`20260829_024321`，official eval 1.0
 32. `MastodonManageHashtagsTask`
 33. `MastodonAddFeaturedHashtagsTask` — ⛔ benchmark 定义阻塞：原生 Android 2.11.1
     只读取和展示 featured hashtags，编辑资料时还会禁用 `Featured` 标签；任务未声明
@@ -232,6 +232,9 @@ Worker 能在 50 turns 总预算内完成，失败恢复不会重复产生外部
 | 5 | `BidFileRenameTask` | 20260818_194441 | 验证器（36 期望）· 通配符 filter 丢失 · R2③ 定位 · 熔断跨元素 | ✅ | 1.0 | 6bf02cd3 |
 | 6 | `CheckConferenceDurationTask` | 20260818_215203 | 感知（月视图零提取）· 编译（DATE_SCOPE/try/while）· rows 兜底 | ✅ | 1.0 | 56efd57b |
 | 7 | `CheckPuchasedItem` | 20260818_221125 | —（一次通过） | ✅ | 1.0 | —（HEAD 无改动） |
+| 29 | `MastodonUnfollowTask` | 20260828_142050（终态后继续操作）→ 20260828_232406（通过） | 冻结首次完整 Following 列表的语义顺序；State 将连续事实更新与下一目标/完成结论原子化，终态帧不再进入 Actor | ✅ | 1.0 | `9cbcf20d` |
+| 30 | `MastodonPinTootsTask` | 20260821_131116（官方已成功但 Agent 跑满 50 turns）→ 20260828_033239（通过） | 在完整 profile 时间线中确定最早帖子；`Pin on profile` 为写穿提交，目标菜单闭合且无错误后由 State 终止，不再重复打开菜单 | ✅ | 1.0 | `f685c9d8` |
+| 31 | `MastodonReportTask` | 20260829_020152（引号被规范化）→ 20260829_024321（通过） | UIAutomator 保留已跟踪界面的原始 Unicode 文本，执行输入时按宽松键唯一恢复；同时修正 State 当前目标授权和 Mastodon 原生举报/拉黑路径 | ✅ | 1.0 | `4d67cc39`, `a94e4a5a`, `fd4b7a49` |
 | 33 | `MastodonAddFeaturedHashtagsTask` | 20260821_133216 | benchmark 定义：仅声明 Mastodon，但原生 Android 2.11.1 只有 featured hashtags 的只读展示，无新增/删除入口；`Edit profile` 会禁用 `Featured` 标签 | ⛔ | 0.0 | — |
 | 35 | `MastodonChangeLanguageTask` | 20260828_103118（原生 UI）→ 20260828_123131（Chrome Web workaround） | benchmark 定义：仅声明 Mastodon，但原生 `Posting language` 不改变 evaluator 检查的账号 locale；Chrome Web 路径不计正式通过 | ⛔ | 0.0（原生）；1.0（workaround，不计） | — |
 | 39 | `MastodonExportFollowsTask` | 20260828_045025（原生路径失败）→ 20260829_005757（通过） | 官方标准路径为 Chrome 已登录 Web 导出 → Files 改名；修复无身份的框外 Grounding 覆盖正确视觉点，并对 State 当前帧 identity 做无模型有界化 | ✅ | 1.0 | `6d7764bb` |

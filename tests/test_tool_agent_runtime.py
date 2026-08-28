@@ -1098,9 +1098,10 @@ def test_reflection_replacements_use_only_the_global_turn_budget() -> None:
 class _Executor:
     def __init__(self) -> None:
         self.actions = []
+        self.execute_kwargs = []
 
     def execute(self, decision, **kwargs):
-        del kwargs
+        self.execute_kwargs.append(kwargs)
         self.actions.append(decision.action)
         return True
 
@@ -2834,6 +2835,7 @@ def test_multi_action_validates_every_observed_target_before_dispatch(monkeypatc
     assert payload["executed_actions"] == 1
     assert "no observed target" in payload["reason"]
     assert len(runtime._executor.actions) == 1
+    assert runtime._executor.execute_kwargs[0]["target_control"] == "Open target"
 
 
 def test_runtime_recovers_missing_exposed_action_description(monkeypatch) -> None:

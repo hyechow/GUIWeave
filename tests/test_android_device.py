@@ -808,3 +808,31 @@ def test_type_stops_when_clear_fails_and_propagates_type_failure():
     type_ok, type_client = _execute_android(action, type_text="failed: IME unavailable")
     assert type_ok is False
     type_client.type_text.assert_called_once_with("hello")
+
+
+def test_executor_restores_verbatim_text_captured_from_a_tracked_target():
+    from gui_agent.adapters.android.actions import AndroidAction, AndroidActionDecision
+    from gui_agent.adapters.android.executor import AndroidExecutor
+
+    exact = "There’s a leak — they’re leaving."
+    client = Mock(viewport_size=(1080, 2400))
+    client.dump_ui_hierarchy.return_value = (
+        '<hierarchy><node class="android.widget.TextView" '
+        f'text="{exact}" bounds="[0,200][1080,500]"/></hierarchy>'
+    )
+    client.tap.return_value = client.clear_text.return_value = "OK"
+    client.type_text.return_value = "OK"
+    executor = AndroidExecutor(types.SimpleNamespace(client=client))
+
+    assert executor.execute(AndroidActionDecision(action=AndroidAction(
+        action_type="tap", x=500, y=200,
+        description="Open the tracked record",
+    )), target_control="Three-dot control owned by the tracked record")
+    assert executor.execute(AndroidActionDecision(action=AndroidAction(
+        action_type="type", x=500, y=500,
+        text="There\'s a leak — they\'re leaving.",
+        description="Enter the tracked record text",
+    )))
+
+    client.dump_ui_hierarchy.assert_called_once_with()
+    client.type_text.assert_called_once_with(exact)

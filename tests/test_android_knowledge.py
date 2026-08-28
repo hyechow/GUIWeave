@@ -272,6 +272,30 @@ def test_mastodon_revises_existing_alt_text_through_edit_post() -> None:
         assert required in context
 
 
+def test_mastodon_reports_a_post_before_blocking_its_author() -> None:
+    knowledge = load_knowledge_for_app("Mastodon", "android")
+    assert knowledge is not None
+
+    context = " ".join(knowledge.worker_context().split())
+    for required in (
+        "post's own three-dot overflow menu",
+        "`Report <author>`",
+        "scroll inside the open menu",
+        "instead of concluding that reporting is unavailable",
+        "profile `Timeline` is already that post's own menu",
+        "do not dismiss it or open the post detail",
+        "`It’s spam`",
+        "radio control is selected",
+        "already selects that post",
+        "`Additional comments` is the report comment field",
+        "success screen says the report was sent",
+        "`Block @<author>`",
+        "`Block user?` confirmation",
+        "Do not tap `Done`",
+    ):
+        assert required in context
+
+
 def test_mastodon_export_uses_authenticated_web_session_and_files_rename() -> None:
     knowledge = load_knowledge_for_app("Mastodon", "android")
     assert knowledge is not None

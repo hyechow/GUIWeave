@@ -5,6 +5,7 @@ from gui_agent.adapters.android.accessibility import (
     form_controls_from_semantic_tree,
     screen_title_from_semantic_tree,
     semantic_tree_from_uiautomator,
+    visible_text_values_from_uiautomator,
 )
 
 def test_android_screen_title_uses_navigation_outside_collection() -> None:
@@ -112,6 +113,15 @@ def test_uiautomator_failure_is_an_optional_sensor_miss() -> None:
     assert semantic_tree_from_uiautomator(None, viewport_size=(1080, 2400)) is None
     assert semantic_tree_from_uiautomator("<broken", viewport_size=(1080, 2400)) is None
     assert semantic_tree_from_uiautomator(XML, viewport_size=(0, 0)) is None
+
+
+def test_uiautomator_visible_text_preserves_unicode_typography() -> None:
+    xml = """<hierarchy><node class="android.widget.TextView"
+      text="there’s a leak — they’re leaving" bounds="[0,0][1080,200]"/></hierarchy>"""
+
+    assert visible_text_values_from_uiautomator(
+        xml, viewport_size=(1080, 2400),
+    ) == ["there’s a leak — they’re leaving"]
 
 
 def test_unlabeled_switch_uses_same_row_visible_text_as_its_label() -> None:
