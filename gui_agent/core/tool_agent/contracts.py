@@ -497,6 +497,13 @@ class WorkerStateEditBatch(StrictModel):
     )
     edits: list[WorkerStateMarkdownEdit] = Field(default_factory=list, max_length=12)
 
+    @field_validator("surface", mode="before")
+    @classmethod
+    def _bound_surface(cls, value: Any) -> Any:
+        if isinstance(value, str) and len(value) > 120:
+            return value[:117].rstrip() + "..."
+        return value
+
 
 class WorkerTaskTransition(StrictModel):
     """State's current semantic conclusion about how the task advances."""

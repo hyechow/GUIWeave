@@ -453,6 +453,11 @@ def _state_cfg(runtime: "ToolAgentRuntime") -> Any:
     return getattr(runtime, "state_cfg", None) or getattr(runtime, "worker_cfg", None)
 
 
+def _state_tool_choice(config: Any) -> str:
+    model = str(getattr(config, "model", "") or "").casefold()
+    return "auto" if "deepseek" in model else "required"
+
+
 class ToolAgentRuntime:
     """Run one reviewed Master program over autonomous visual Workers."""
 
@@ -1901,15 +1906,12 @@ class ToolAgentRuntime:
             getattr(_state_cfg(self), "model", None)
         )
         state_model = _state_model(self)
-        # The State role must call a tool, but the standard endpoint's DeepSeek
-        # vision model runs thinking always-on and rejects tool_choice="required"
-        # with "Thinking mode does not support this tool_choice". Bind with "auto"
-        # and rely on the one-tool-call repair loop below to converge if it does
-        # not emit a call.
+        # DeepSeek thinking rejects tool_choice="required"; other configured model
+        # families use the transport-level guarantee instead of spending a repair.
         bound_state = (
             state_model.bind_tools(
                 [_STATE_UPDATE_TOOL],
-                tool_choice="auto",
+                tool_choice=_state_tool_choice(_state_cfg(self)),
                 parallel_tool_calls=False,
                 max_tokens=1_800,
                 **request_kwargs,
