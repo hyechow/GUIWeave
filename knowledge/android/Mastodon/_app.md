@@ -12,7 +12,7 @@ source: manual_verified
 confidence: high
 sensitivity: internal
 ttl: session
-version: 13
+version: 14
 ---
 # Mastodon on Android
 
@@ -29,6 +29,18 @@ version: 13
   there cannot navigate. The `About` tab's `Add row` fields edit Label/Value profile
   metadata; they do not create featured hashtags. This Android version exposes no
   control for adding or removing featured hashtags.
+
+- An image's visible `ALT` badge opens a read-only `Alt text` sheet; scrolling that
+  sheet cannot reveal an edit control. To revise an existing image description on the
+  signed-in user's own post, open that post's detail view, use the post's top-right
+  three-dot overflow menu, and choose `Edit`. Verify that the composer title is `Edit
+  post`, then use the small edit control on the attachment card to open `Add alt text`.
+  That field contains the existing description. Preserve it when adding a requested
+  first line. Android Back returns the changed description to the edit composer (there
+  is no separate save button on the alt-text screen); the edit is committed only by
+  the composer's top-right submit arrow. The large floating pencil over a profile or
+  timeline is the global new-post control and opens `New post`; it never edits the
+  image beneath it.
 
 - Explore search matches an exact contiguous string, not AND-tokenized terms; a
   multi-word query combining an account handle with a topic almost always returns

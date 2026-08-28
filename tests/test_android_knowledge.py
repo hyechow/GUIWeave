@@ -250,3 +250,23 @@ def test_mastodon_featured_hashtags_are_not_profile_editor_fields() -> None:
         assert required in context
 
     assert "use its `Add`/featured-hashtag control" not in context
+
+
+def test_mastodon_revises_existing_alt_text_through_edit_post() -> None:
+    knowledge = load_knowledge_for_app("Mastodon", "android")
+    assert knowledge is not None
+
+    context = " ".join(knowledge.worker_context().split())
+    for required in (
+        "`ALT` badge opens a read-only `Alt text` sheet",
+        "top-right three-dot overflow menu",
+        "composer title is `Edit post`",
+        "small edit control on the attachment card",
+        "field contains the existing description",
+        "Android Back returns the changed description",
+        "no separate save button",
+        "top-right submit arrow",
+        "large floating pencil",
+        "opens `New post`",
+    ):
+        assert required in context
