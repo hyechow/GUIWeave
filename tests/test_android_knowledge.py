@@ -270,3 +270,23 @@ def test_mastodon_revises_existing_alt_text_through_edit_post() -> None:
         "opens `New post`",
     ):
         assert required in context
+
+
+def test_mastodon_export_uses_authenticated_web_session_and_files_rename() -> None:
+    knowledge = load_knowledge_for_app("Mastodon", "android")
+    assert knowledge is not None
+
+    goal = "export my follows in settings and save it as my_following.csv"
+    orchestrator = " ".join(knowledge.orchestrator_context(goal).split())
+    worker = " ".join(knowledge.worker_context().split())
+    for required in (
+        "Android client has no account data export control",
+        "existing authenticated Mastodon web tab",
+        "following_accounts.csv",
+        "renaming the downloaded file in Files",
+    ):
+        assert required in orchestrator
+    assert "horizontal three-line button" in worker
+    assert "vertical three-dot toolbar button" in worker
+    assert "inspect its tab switcher" in worker
+    assert "never a lower section of the Appearance form" in worker

@@ -95,6 +95,28 @@ def test_type_into_undetected_region_is_admitted_for_red_marker_verifier() -> No
     assert (grounded.action.x, grounded.action.y) == (500, 160)
 
 
+def test_unidentified_outside_tap_does_not_override_visual_point() -> None:
+    grounding = TargetGrounding(
+        target_found=True,
+        target_box=(400, 200, 500, 280),
+        control_type="button",
+        label="",
+        container_context="",
+        confidence="high",
+        reason="A nearby unlabeled icon may be the target.",
+    )
+
+    grounded, signal, inside, error = resolve_target_grounding(
+        _decision(action_type="tap", x=100, y=100), grounding
+    )
+
+    assert inside is False
+    assert signal is None
+    assert error == ""
+    assert (grounded.action.x, grounded.action.y) == (100, 100)
+    assert grounded.action.snap is None
+
+
 def test_candidate_crop_preserves_expected_local_region() -> None:
     image = Image.new("RGB", (360, 800), "white")
     output = io.BytesIO()

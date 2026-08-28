@@ -112,7 +112,7 @@ MobileWorld 当前提供 117 个 GUI-only 任务。严格按以下条件从本�
 36. `MastodonGetServerInfoTask`
 37. `MastodonOpenAutomatedDeletionTask`
 38. `MastodonImportMutedUsersTask`
-39. `MastodonExportFollowsTask`
+39. `MastodonExportFollowsTask` — ✅ 通过：`20260829_005757`，official eval 1.0
 40. `MastodonAdjustTootsTask`
 41. `MastodonRevisePollTask`
 42. `MastodonRevisePhotoAltTask` — ✅ 通过：`20260828_134532`，official eval 1.0
@@ -234,6 +234,7 @@ Worker 能在 50 turns 总预算内完成，失败恢复不会重复产生外部
 | 7 | `CheckPuchasedItem` | 20260818_221125 | —（一次通过） | ✅ | 1.0 | —（HEAD 无改动） |
 | 33 | `MastodonAddFeaturedHashtagsTask` | 20260821_133216 | benchmark 定义：仅声明 Mastodon，但原生 Android 2.11.1 只有 featured hashtags 的只读展示，无新增/删除入口；`Edit profile` 会禁用 `Featured` 标签 | ⛔ | 0.0 | — |
 | 35 | `MastodonChangeLanguageTask` | 20260828_103118（原生 UI）→ 20260828_123131（Chrome Web workaround） | benchmark 定义：仅声明 Mastodon，但原生 `Posting language` 不改变 evaluator 检查的账号 locale；Chrome Web 路径不计正式通过 | ⛔ | 0.0（原生）；1.0（workaround，不计） | — |
+| 39 | `MastodonExportFollowsTask` | 20260828_045025（原生路径失败）→ 20260829_005757（通过） | 官方标准路径为 Chrome 已登录 Web 导出 → Files 改名；修复无身份的框外 Grounding 覆盖正确视觉点，并对 State 当前帧 identity 做无模型有界化 | ✅ | 1.0 | `6d7764bb` |
 | 42 | `MastodonRevisePhotoAltTask` | 20260821_145832、20260828_070746（失败）→ 20260828_134532（通过） | Mastodon 原生编辑路径知识：帖子三点菜单 → `Edit post` → 附件小编辑按钮 → `Add alt text`；避开只读 ALT 弹层和全局发帖铅笔 | ✅ | 1.0 | —（知识修复待提交） |
 
 状态约定：`⬜` 未开始、`🟡` 正在回放修复、`⛔` benchmark 定义阻塞、`✅` 已通过。

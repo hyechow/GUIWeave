@@ -65,6 +65,25 @@ def test_state_initializes_open_markdown_with_current_bindings() -> None:
     assert "memory chars=" in state.summary
 
 
+def test_state_bounds_verbose_current_frame_identity_without_repair() -> None:
+    batch = _batch(
+        mode="init",
+        frame_id="frame:1",
+        surface="Record list",
+        visible_targets=[{
+            "target_ref": "stable_record",
+            "identity": "Stable visible record " + "detail " * 80,
+            "visibility": "full",
+            "owned_region_visibility": "unobscured",
+        }],
+        edits=[],
+    )
+
+    assert len(batch.visible_targets[0].identity) == 300
+    assert batch.visible_targets[0].identity.startswith("Stable visible record")
+    assert batch.visible_targets[0].identity.endswith("...")
+
+
 def test_state_atomically_updates_facts_and_current_task_transition() -> None:
     state = reduce_worker_state(None, _update(
         mode="init",
