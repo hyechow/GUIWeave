@@ -3,13 +3,10 @@ from __future__ import annotations
 import json
 from pathlib import Path
 
-import pytest
-
 from gui_agent.core.tool_agent.contracts import (
     MaterializedFrame,
     WorkerSpec,
 )
-from gui_agent.core.tool_agent.data_store import RuntimeDataStore
 from gui_agent.core.tool_agent.runtime import ToolAgentRuntime
 
 
@@ -63,24 +60,16 @@ def test_task193_turn3_does_not_gain_an_undeclared_recovery_action() -> None:
     tools = runtime._worker_tools_for_frame(spec, active_actions, frame)
     tool_names = {tool["function"]["name"] for tool in tools}
 
-    # ReAct collection: complete is always offered to a collector on a ready frame.
-    # The old mechanical gate withheld it here (the recorded run shows
-    # complete_available=False below); the new guard is that calling it with zero
-    # accumulated rows is rejected by the runtime with guidance.
-    assert tool_names == {"select_option", "report_blocked", "complete"}
+    # State owns completion, so Actor gets only actions justified on this frame.
+    # In particular, the stale-filter frame must not gain a completion action or
+    # an undeclared recovery action.
+    assert tool_names == {"select_option", "report_blocked"}
     assert any(control.get("label") == "Clear all" for control in frame.controls)
     assert frame.requirement_scopes["completed_orders"]["applied_filters"] == {
         "Purchase Date": "1/01/2023 - 5/31/2023",
         "Status": "Complete",
     }
     assert frame.collections == []
-
-    runtime.data_store = RuntimeDataStore()
-    with pytest.raises(ValueError, match="no accumulated rows"):
-        runtime._execute_worker_tool(
-            spec, active_actions, {"name": "complete", "args": {"evidence": []}},
-            b"png", frame,
-        )
 
     observed = case["observed_policy_replay"]
     assert observed["complete_available"] is False

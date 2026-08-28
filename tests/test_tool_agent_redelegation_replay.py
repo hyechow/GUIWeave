@@ -349,7 +349,7 @@ def test_strategy_stop_does_not_dispatch_another_worker() -> None:
 
 
 class _CompletingWorker:
-    """Worker policy that calls `complete` on the first policy turn."""
+    """State policy that atomically records facts and completes."""
 
     def __init__(self) -> None:
         self.calls = 0
@@ -384,6 +384,13 @@ class _CompletingWorker:
                             "- The requested collection is visible.",
                         ],
                     }],
+                    "status": "complete",
+                    "next_objective": "",
+                    "target_refs": [],
+                    "evidence": [
+                        "Filtered list fits the viewport with no clipped tail."
+                    ],
+                    "rows": [],
                 },
             }])
         self.calls += 1
@@ -438,12 +445,12 @@ def test_empty_collection_completes_only_through_a_worker_policy_call() -> None:
 
     outcome = runtime._run_worker(case["logical_worker_id"], spec)
 
-    # ReAct collection: no runtime auto-completion; the Worker policy is consulted
-    # and its explicit `complete` binds the accumulated (empty) collection.
+    # No runtime auto-completion: State's explicit terminal conclusion binds the
+    # accumulated (empty) collection without consulting Actor.
     assert outcome.phase == "completed"
     assert outcome.collection_ref is not None
     assert outcome.collection_ref.row_count == 0
-    assert runtime.worker.calls == 1
+    assert runtime.worker.calls == 0
     assert outcome.steps >= 1
     completed = [event for event in runtime.trace if event["event"] == "worker_complete"]
     assert completed and "completion_source" not in completed[0]
@@ -471,7 +478,7 @@ def test_collector_completion_binds_accumulated_collection_without_coverage_gate
     assert outcome.phase == "completed"
     assert outcome.collection_ref is not None
     assert outcome.collection_ref.row_count == 2
-    assert runtime.worker.calls == 1
+    assert runtime.worker.calls == 0
     assert outcome.steps >= 1
     completed = [event for event in runtime.trace if event["event"] == "worker_complete"]
     assert completed and "completion_source" not in completed[0]

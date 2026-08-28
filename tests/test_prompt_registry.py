@@ -130,8 +130,8 @@ def test_state_and_actor_prompts_have_disjoint_responsibilities() -> None:
     actor = load_prompt_text("task.tool_agent.actor")
 
     assert "Observe what is true now" in state
-    assert "judge whether the Goal Contract is established" in state
-    assert "`complete` is your declaration" in state
+    assert "conclude the current semantic task transition" in state
+    assert "atomically updates the Markdown fact memory" in state
     assert "edit_state_memory" in state
     assert "one open document" in state
     assert "there is no predefined semantic schema" in state
@@ -139,8 +139,8 @@ def test_state_and_actor_prompts_have_disjoint_responsibilities() -> None:
     assert "Never rewrite the full document" in state
     assert "Reuse exact refs from `previous_state.target_registry`" in state
     assert "same object keeps one ref across list/detail views" in state
-    assert "`observation_focus.goal_contract` names the success criteria" in state
-    assert "without deciding whether a target or the task satisfies" in state
+    assert "names the goal, success criteria, and completion facts" in state
+    assert "task conclusion only in the call's transition fields" in state
     assert "The envelope is not memory" in state
     assert "Current visibility belongs only in `visible_targets`" in state
     assert "`outcome.kind=no_effect` means no visual change" in state
@@ -148,28 +148,28 @@ def test_state_and_actor_prompts_have_disjoint_responsibilities() -> None:
     assert "empty edits are incorrect" in state
     assert "Write the object fact that is now true" in state
     assert "Never use status, progress, or completion as a field name" in state
-    assert "including nested child lines under its heading" in actor
+    assert "including nested child lines" in actor
     assert "including under a nested child" in actor
-    assert "Choose a different matching visible target" in actor
+    assert "another State-authorized visible target" in actor
     assert "Do not reopen a target to verify" in actor
     assert "Markdown is the confirmation" in actor
     assert "literal Markdown lines" in state
     assert "later navigation or absence never confirms" in state
     assert "Runtime records frame and receipt provenance outside" in state
-    assert "Choose what to do next" in actor
+    assert "Execute the State-provided current task objective" in actor
     assert "Never produce or revise facts" in actor
     assert "never emit `state`, memory, progress" in actor
     assert "never invent a lifecycle for a target" in actor
-    assert "Recompute the current goal difference" in actor
+    assert "Do not recompute the full goal difference" in actor
     assert "does not retract Markdown facts" in actor
     assert "do not reopen that target" in actor
     assert "later back or navigation receipt" in actor
-    assert "apply every applicable Goal Contract predicate" in actor
-    assert "An omitted field or child fact is unobserved" in actor
+    assert "confirm its authorized target" in actor
+    assert "An omitted field is unobserved" in actor
     assert "A value stated in the Goal Contract or Markdown is not missing" in actor
     assert "You never declare the Goal Contract complete" in actor
     assert "You choose the next atomic action" in actor
-    assert "must never be written into State memory" in actor
+    assert "never recompute the task plan" in actor
     assert "`owned_region_visibility=edge_fragment` is not safely actionable" in actor
     assert "target-oriented Markdown memory owns accumulated" in actor
     assert "state_property_ref" not in actor

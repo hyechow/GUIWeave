@@ -94,7 +94,28 @@ def _state_delta_args(mode: str, frame_id: str, events: list[dict]) -> dict:
         "edits": ([{
             "old_lines": [], "new_lines": markdown.splitlines(),
         }] if markdown else []),
+        "status": "advance",
+        "next_objective": "Advance the requested visible interaction.",
+        "target_refs": [target["target_ref"] for target in targets],
+        "evidence": [],
+        "rows": [],
     }
+
+
+def _state_complete_args(
+    mode: str,
+    frame_id: str,
+    evidence: list[str],
+    events: list[dict] | None = None,
+) -> dict:
+    args = _state_delta_args(mode, frame_id, events or [])
+    args.update({
+        "status": "complete",
+        "next_objective": "",
+        "target_refs": [],
+        "evidence": evidence,
+    })
+    return args
 
 
 def test_transient_model_error_detection_is_provider_neutral_and_narrow() -> None:
@@ -183,6 +204,16 @@ def test_state_target_binding_requires_current_unobscured_observed_ref() -> None
                 "visibility": "partial",
                 "owned_region_visibility": "unobscured",
             },
+            "unauthorized_target": {
+                "identity": "A visible but unrelated target",
+                "visibility": "full",
+                "owned_region_visibility": "unobscured",
+            },
+        },
+        "task_transition": {
+            "status": "advance",
+            "next_objective": "Advance only the authorized visible targets.",
+            "target_refs": ["observed_target", "edge_target", "ready_target"],
         },
     })
 
@@ -195,6 +226,9 @@ def test_state_target_binding_requires_current_unobscured_observed_ref() -> None
     assert not _state_target_binding_error(state, "tap", "ready_target")
     assert "no observed target" in _state_target_binding_error(
         state, "tap", "unknown_target",
+    )
+    assert "outside the State-authorized targets" in _state_target_binding_error(
+        state, "tap", "unauthorized_target",
     )
     assert not _state_target_binding_error(state, "scroll", None)
 
@@ -1447,8 +1481,11 @@ class _SplitEachWorker:
             if self.state_calls in {2, 4}:
                 return SimpleNamespace(content="", tool_calls=[{
                     "id": f"state-complete-{self.state_calls}",
-                    "name": "complete",
-                    "args": {"evidence": ["The current element is processed."]},
+                    "name": "edit_state_memory",
+                    "args": _state_complete_args(
+                        state_input["mode"], state_input["frame_id"],
+                        ["The current element is processed."],
+                    ),
                 }])
             events = ([{
                 "kind": "source_observed",
@@ -1712,12 +1749,14 @@ def test_append_state_context_uses_compact_previous_and_current_frame_pair() -> 
         "surface": "collection",
         "target_registry": {"stable_target": "One stable visible target"},
         "memory_markdown": "### stable_target\n- Requested state: false",
+        "previous_task_transition": None,
     }
     assert "goal_contract" in payload["observation_focus"]
     assert payload["observation_focus"] == {
         "visible_fields": [],
         "goal_contract": {
             "success_criteria": ["The target has the requested state."],
+            "goal": "Set the target to the requested state.",
             "completion_facts": [],
         },
     }
@@ -1773,18 +1812,49 @@ class _PrematureCompleteWorker(_SplitWorkerFixture):
     def invoke(self, messages):
         if self.mode == "state":
             self.state_calls += 1
+            state_input = json.loads(messages[-1].content[0]["text"])
             # The State role declares the operator established without doing work;
             # Runtime resolves it without semantically auditing the contract.
             return SimpleNamespace(content="", tool_calls=[{
                 "id": "state-complete-1",
-                "name": "complete",
-                "args": {"evidence": ["The visible Apply control was activated."]},
+                "name": "edit_state_memory",
+                "args": _state_complete_args(
+                    state_input["mode"], state_input["frame_id"],
+                    ["The visible Apply control was activated."],
+                ),
             }])
         self.calls += 1
         return SimpleNamespace(content="", tool_calls=[{
             "id": "complete-1", "name": "complete",
             "args": {"evidence": ["The visible Apply control was activated."]},
         }])
+
+
+class _AtomicFactCompleteWorker(_SplitWorkerFixture):
+    def __init__(self) -> None:
+        super().__init__()
+        self.actor_calls = 0
+
+    def invoke(self, messages):
+        if self.mode == "state":
+            self.state_calls += 1
+            state_input = json.loads(messages[-1].content[0]["text"])
+            return SimpleNamespace(content="", tool_calls=[{
+                "id": "state-atomic-complete",
+                "name": "edit_state_memory",
+                "args": _state_complete_args(
+                    state_input["mode"], state_input["frame_id"],
+                    ["The requested value is visibly true."],
+                    [{
+                        "kind": "property_observed",
+                        "target_ref": "record",
+                        "property_ref": "requested_value",
+                        "value": True,
+                    }],
+                ),
+            }])
+        self.actor_calls += 1
+        raise AssertionError("Actor must not run after atomic State completion")
 
 
 class _CompletionAuditExecutor(_Executor):
@@ -1824,6 +1894,23 @@ def test_operator_completion_is_not_runtime_semantically_audited(monkeypatch) ->
     assert not any(
         event["event"] == "worker_completion_recheck" for event in runtime.trace
     )
+
+
+def test_state_records_decisive_fact_and_completes_before_actor(monkeypatch) -> None:
+    worker = _AtomicFactCompleteWorker()
+    runtime = _run_fused_worker(
+        monkeypatch,
+        current_url="https://example.test/record",
+        worker=worker,
+        max_steps=1,
+    )
+
+    assert runtime.outcome.phase == "completed"
+    assert (worker.state_calls, worker.actor_calls) == (1, 0)
+    state = runtime._worker_state_snapshots["fused-worker"]
+    assert "requested_value: True" in state.markdown
+    assert state.task_transition is not None
+    assert state.task_transition.status == "complete"
 
 
 @pytest.mark.parametrize(
@@ -3965,10 +4052,13 @@ class _QueueWorker(_SplitWorkerFixture):
             self.state_calls += 1
             # Even State frames complete the current element and advance the plan.
             if self.state_calls % 2 == 0:
+                state_input = json.loads(messages[-1].content[0]["text"])
                 return SimpleNamespace(content="", tool_calls=[{
                     "id": f"state-complete-{self.state_calls}",
-                    "name": "complete",
-                    "args": {"evidence": ["renamed"]},
+                    "name": "edit_state_memory",
+                    "args": _state_complete_args(
+                        state_input["mode"], state_input["frame_id"], ["renamed"],
+                    ),
                 }])
             state_input = json.loads(messages[-1].content[0]["text"])
             events = ([{

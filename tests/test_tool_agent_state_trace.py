@@ -3,6 +3,7 @@ import pytest
 from gui_agent.core.tool_agent.contracts import (
     WorkerSpec,
     WorkerStateEditBatch,
+    WorkerStateUpdate,
     WorkerStrategy,
 )
 from gui_agent.core.tool_agent.state_trace import (
@@ -29,6 +30,19 @@ def _batch(**values) -> WorkerStateEditBatch:
     return WorkerStateEditBatch.model_validate(values)
 
 
+def _update(**values) -> WorkerStateUpdate:
+    return WorkerStateUpdate.model_validate({
+        "status": "advance",
+        "next_objective": "Set the visible target to the requested value.",
+        "target_refs": [],
+        "evidence": [],
+        "rows": [],
+        "surface": None,
+        "visible_targets": [],
+        **values,
+    })
+
+
 def test_state_initializes_open_markdown_with_current_bindings() -> None:
     state = reduce_worker_state(None, _batch(
         mode="init",
@@ -49,6 +63,78 @@ def test_state_initializes_open_markdown_with_current_bindings() -> None:
     assert state.markdown == "### stable_record\n- Visible value: 3"
     assert state.targets["stable_record"].visibility == "full"
     assert "memory chars=" in state.summary
+
+
+def test_state_atomically_updates_facts_and_current_task_transition() -> None:
+    state = reduce_worker_state(None, _update(
+        mode="init",
+        frame_id="frame:1",
+        surface="Record list",
+        visible_targets=[{
+            "target_ref": "pendingRecord",
+            "identity": "Pending record",
+            "visibility": "full",
+            "owned_region_visibility": "unobscured",
+        }],
+        edits=[{
+            "old_lines": [],
+            "new_lines": ["### pending_record", "- Requested value: false"],
+        }],
+        target_refs=["pendingRecord"],
+    ), spec=_spec())
+
+    assert "Requested value: false" in state.markdown
+    assert state.task_transition is not None
+    assert state.task_transition.status == "advance"
+    assert state.task_transition.target_refs == ["pendingRecord"]
+    assert state_continuation_payload(state)["previous_task_transition"] == {
+        "status": "advance",
+        "next_objective": "Set the visible target to the requested value.",
+        "target_refs": ["pendingRecord"],
+    }
+    projection = state_actor_markdown(state)
+    assert "## Current task objective" in projection
+    assert "`pendingRecord`" in projection
+
+
+def test_state_update_rejects_incoherent_or_unavailable_transition() -> None:
+    with pytest.raises(ValueError, match="advance requires"):
+        _update(
+            mode="init", frame_id="frame:1", edits=[], next_objective="",
+        )
+    with pytest.raises(ValueError, match="complete requires evidence"):
+        _update(
+            mode="init", frame_id="frame:1", edits=[], status="complete",
+            next_objective="", target_refs=[],
+        )
+    with pytest.raises(ValueError, match="must be visible"):
+        reduce_worker_state(None, _update(
+            mode="init", frame_id="frame:1", edits=[],
+            target_refs=["offscreen_record"],
+        ), spec=_spec())
+
+
+def test_state_can_record_decisive_fact_and_complete_in_one_update() -> None:
+    initial = reduce_worker_state(None, _batch(
+        mode="init", frame_id="frame:1",
+        edits=[{"old_lines": [], "new_lines": ["### record", "- Value: false"]}],
+    ), spec=_spec())
+    completed = reduce_worker_state(initial, _update(
+        mode="edit",
+        frame_id="frame:2",
+        edits=[{
+            "old_lines": ["- Value: false"],
+            "new_lines": ["- Value: true"],
+        }],
+        status="complete",
+        next_objective="",
+        target_refs=[],
+        evidence=["The requested value is visibly true."],
+    ), spec=_spec())
+
+    assert completed.markdown.endswith("- Value: true")
+    assert completed.task_transition is not None
+    assert completed.task_transition.status == "complete"
 
 
 def test_state_edits_one_document_and_reuses_target_ref() -> None:
@@ -97,7 +183,10 @@ def test_state_edit_requires_one_exact_old_lines_match() -> None:
     # An exact single-occurrence anchor is replaced in place.
     replaced = reduce_worker_state(initial, _batch(
         mode="edit", frame_id="frame:2",
-        edits=[{"old_lines": ["- Value: one"], "new_lines": ["- Value: changed"]}],
+        edits=[
+            {"old_lines": ["### record"], "new_lines": ["### record"]},
+            {"old_lines": ["- Value: one"], "new_lines": ["- Value: changed"]},
+        ],
     ), spec=_spec())
     assert "- Value: changed" in replaced.markdown
     assert "- Value: one" not in replaced.markdown
@@ -253,6 +342,9 @@ def test_state_observation_focus_withholds_filters_but_exposes_goal_contract() -
     assert focus["goal_contract"]["success_criteria"] == [
         "Set every target property to the requested value.",
     ]
+    assert focus["goal_contract"]["goal"] == (
+        "Set every target property to the requested value."
+    )
     assert focus["goal_contract"]["completion_facts"] == [{
         "property_ref": "commit_observed",
         "description": "The requested commit is visibly established.",

@@ -8,7 +8,7 @@ from types import SimpleNamespace
 import pytest
 from jsonschema import ValidationError, validate
 from langchain_core.messages import HumanMessage, SystemMessage
-from pydantic import ValidationError as PydanticValidationError
+from pydantic import BaseModel, ValidationError as PydanticValidationError
 from PIL import Image
 
 from gui_agent.core.tool_agent.contracts import (
@@ -463,6 +463,29 @@ def test_tool_call_accepts_json_encoded_argument_object() -> None:
     }]))
 
     assert call["args"] == {"x": 125, "y": 750}
+
+
+def test_tool_call_decodes_only_schema_declared_structured_fields() -> None:
+    class Arguments(BaseModel):
+        items: list[dict]
+        note: str
+
+    call = exactly_one_tool_call(
+        SimpleNamespace(tool_calls=[{
+            "id": "call-1",
+            "name": "update",
+            "args": {
+                "items": '[{"value": 1}]}]',
+                "note": "[keep as text]",
+            },
+        }]),
+        argument_model=Arguments,
+    )
+
+    assert call["args"] == {
+        "items": [{"value": 1}],
+        "note": "[keep as text]",
+    }
 
 
 def test_json_actor_protocol_preserves_dynamic_action_contract() -> None:
