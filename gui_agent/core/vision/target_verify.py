@@ -182,8 +182,12 @@ def resolve_target_grounding(
         "select_option": ("select", "combobox", "dropdown", "option"),
     }.get(action.action_type)
     compatible = not accepted_kinds or any(token in kind for token in accepted_kinds)
+    identity_supported = bool(
+        grounding.label.strip() or grounding.container_context.strip()
+    )
     correctable = bool(
         box and grounding.confidence == "high" and compatible
+        and (inside or identity_supported)
     )
     actual = grounding.label or grounding.control_type
     signal = None
@@ -224,7 +228,10 @@ def resolve_target_grounding(
     # the downstream red-marker verifier to confirm rather than being hard-rejected.
     reject = signal is None and grounding.target_found and (
         action.action_type == "type"
-        or grounding.confidence in {"high", "medium"}
+        or (
+            identity_supported
+            and grounding.confidence in {"high", "medium"}
+        )
     )
     detail = f" for {actual!r}" if actual else ""
     reason = f": {grounding.reason}" if grounding.reason else ""

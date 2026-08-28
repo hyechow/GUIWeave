@@ -12,9 +12,26 @@ source: manual_verified
 confidence: high
 sensitivity: internal
 ttl: session
-version: 14
+version: 15
 ---
 # Mastodon on Android
+
+- This Android client does not expose account data export controls. Follows are
+  exported from the authenticated Mastodon web interface instead: in Chrome,
+  resume an existing signed-in Mastodon tab when available. If Chrome initially
+  shows a blank new tab, inspect its tab switcher for that session instead of asking
+  for an instance URL. Open the web settings gear, then use the navigation menu's
+  `Import and export` section and download
+  the `Follows` CSV. On the settings page, Mastodon's menu is the horizontal
+  three-line button inside the page header below Chrome's toolbar; Chrome's vertical
+  three-dot toolbar button is a different menu and cannot reach Mastodon settings.
+  `Import and export` is a separate navigation destination, never a lower section of
+  the Appearance form. If Appearance resumes below its header, scroll up until the
+  Mastodon page header and horizontal three-line button are visible; do not scroll
+  down the form looking for `Import and export`.
+  The download is named `following_accounts.csv`; when the task requires another
+  filename, rename that downloaded file in Files. A Chrome `No internet connection`
+  banner does not invalidate an already loaded, interactive Mastodon settings page.
 
 - Native posting-language settings are under `Home` → top-right settings gear →
   exact account row → `Posting defaults` → `Posting language`. The picker exposes a

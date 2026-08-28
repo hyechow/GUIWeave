@@ -6,7 +6,7 @@ import re
 from copy import deepcopy
 from typing import Annotated, Any, Literal, TypeAlias, get_args
 
-from pydantic import BaseModel, ConfigDict, Field, model_validator
+from pydantic import BaseModel, ConfigDict, Field, field_validator, model_validator
 
 
 class StrictModel(BaseModel):
@@ -470,6 +470,13 @@ class WorkerStateVisibleTarget(StrictModel):
     identity: StateIdentity
     visibility: Literal["partial", "full"]
     owned_region_visibility: Literal["edge_fragment", "unobscured"]
+
+    @field_validator("identity", mode="before")
+    @classmethod
+    def _bound_identity(cls, value: Any) -> Any:
+        if isinstance(value, str) and len(value) > 300:
+            return value[:297].rstrip() + "..."
+        return value
 
 
 class WorkerStateMarkdownEdit(StrictModel):
