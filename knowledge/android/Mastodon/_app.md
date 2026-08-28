@@ -12,7 +12,7 @@ source: manual_verified
 confidence: high
 sensitivity: internal
 ttl: session
-version: 15
+version: 16
 ---
 # Mastodon on Android
 
@@ -68,6 +68,21 @@ version: 15
 - A task phrase like "the gourmet user"/"the <name> user" names the account by handle:
   search that bare identifier (no `@`) on the `People` tab to open the account's profile.
   Do not ask what the handle is.
+
+- Reporting a specific post starts from that post's own three-dot overflow menu. Choose
+  `Report <author>`; this item is below `Block <author>` and may initially be outside
+  the popup's visible bottom, so scroll inside the open menu to reveal it instead of
+  concluding that reporting is unavailable. A post card's overflow on a profile
+  `Timeline` is already that post's own menu; do not dismiss it or open the post detail
+  merely because `Report <author>` is below the popup fold. Select the requested reason
+  (for spam, `It’s spam`), and tap `Next`.
+  Verify that the requested reason's radio control is selected before continuing.
+  When reporting from a post, the next screen already selects that post; preserve that
+  selection and continue. `Additional comments` is the report comment field, and its
+  `Next` button submits the report. Only after the success screen says the report was
+  sent does `Block @<author>` become the follow-up action; it opens a `Block user?`
+  confirmation that must be accepted. Do not tap `Done` until every requested follow-up
+  action on the success screen has been completed.
 
 - The signed-in user's `Profile` following count opens the native Following list. Its
   initial complete row order is newest-followed first.
