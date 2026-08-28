@@ -12,9 +12,45 @@ source: manual_verified
 confidence: high
 sensitivity: internal
 ttl: session
-version: 17
+version: 18
 ---
 # Mastodon on Android
+
+- Native and Web account sessions are independent: switching the native app to
+  `@owner` does not change Chrome's Mastodon login. Regular Chrome tabs share one Web
+  login and cannot hold different accounts. A workflow that uses both surfaces must
+  establish the required account identity independently on native and Web; evidence
+  from one never establishes the other. `TEST (@test)` is an ordinary account, never
+  the owner; do not search or revisit the tab overview for owner. From its Web
+  profile, open the right-rail Settings gear and the page menu. A complete menu with
+  `Logout` but no `Administration` proves the Web session is non-owner. Its next
+  observable account-switch state is the Mastodon sign-in form, and `Logout` is the
+  control that reaches it; logging out requires no credential. This is not blocked:
+  use the owner access supplied by the deployment context without asking for
+  confirmation. Submitting that supplied owner login establishes the `@owner` Web
+  session and makes `Administration` available. The exact owner handle is `@owner`.
+  The right rail's bottom `…` opens the instance `About` page (`/about`); it is not an
+  account menu and never exposes `Logout`. Even from `About`, use the separate
+  right-rail Settings gear to reach account settings.
+  Once a tab title or URL establishes `@test`, that Web identity applies to every
+  regular Mastodon tab. If its profile body is blank but the tab overview contains a
+  loaded `Appearance` settings tab, open `Appearance` rather than revisiting the
+  profile. The TEST profile is not an account switcher and reopening it never reaches
+  the sign-in form; the loaded `Appearance` page menu is the `Logout` route. Reveal
+  its page header/menu when needed and use `Logout` there.
+
+- Server administration data is role-gated in the Mastodon Web interface. Establish
+  and verify the `@owner` Web session before looking for it. `Development` configures
+  API applications; it is not a server-information page. The owner navigation exposes
+  `Administration` → `Dashboard`. On that dashboard, the `Space usage` card's
+  `PostgreSQL` row is the database size; preserve its displayed number and MB unit
+  exactly. Return via `Back to Mastodon` and publish from the same owner Web session,
+  verifying `@owner` before posting.
+
+- The native active-account switcher opens only by long-pressing the whole bottom
+  `Profile` tab. Its small up/down chevrons are a visual affordance, not a separate
+  tap target. In the resulting account sheet, tap the row identified as `OWNER` /
+  `@owner` to switch; do not long-press an account row because that means log out.
 
 - This Android client does not expose account data export controls. Follows are
   exported from the authenticated Mastodon web interface instead: in Chrome,
