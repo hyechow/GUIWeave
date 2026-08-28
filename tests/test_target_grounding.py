@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import base64
 import io
 
 import pytest
@@ -10,10 +11,7 @@ from gui_agent.core.schemas import (
     BaseActionDecision,
     TargetGrounding,
 )
-from gui_agent.core.vision.target_verify import (
-    crop_target_region,
-    resolve_target_grounding,
-)
+from gui_agent.core.vision.target_verify import ground_target, resolve_target_grounding
 
 
 def _decision(*, action_type: str = "type", x: float = 500, y: float = 160):
@@ -37,11 +35,34 @@ def test_target_grounding_requires_valid_normalized_box() -> None:
         TargetGrounding(target_found=True, confidence="high")
 
 
+def test_target_grounding_uses_an_unmarked_full_frame(monkeypatch) -> None:
+    image = Image.new("RGB", (360, 800), "green")
+    output = io.BytesIO()
+    image.save(output, format="PNG")
+    captured = {}
+
+    def fake_invoke(_model, messages, *_args, **_kwargs):
+        captured["messages"] = messages
+        return TargetGrounding(target_found=False, confidence="low")
+
+    monkeypatch.setattr("gui_agent.core.vision.target_verify._vision_llm", object)
+    monkeypatch.setattr("gui_agent.core.vision.target_verify.invoke_structured", fake_invoke)
+
+    ground_target(output.getvalue(), "Tap the target", "tap")
+
+    content = captured["messages"][1].content
+    encoded = content[1]["image_url"]["url"].partition(",")[2]
+    sent = Image.open(io.BytesIO(base64.b64decode(encoded)))
+    assert sent.size == (900, 2000)
+    assert sent.getpixel((450, 1000)) == (0, 128, 0)
+    assert "完整屏幕" in content[0]["text"]
+
+
 @pytest.mark.parametrize(
     ("action_type", "point", "box", "kind", "confidence", "expected", "allowed"),
     [
         ("type", (500, 160), (200, 100, 800, 150), "text_input", "high", (500, 125), True),
-        ("tap", (450, 500), (400, 400, 600, 600), "button", "high", (450, 500), True),
+        ("tap", (450, 500), (400, 400, 600, 600), "button", "high", (500, 500), True),
         ("type", (500, 140), (400, 100, 600, 160), "button", "high", (500, 140), False),
         ("tap", (100, 100), (400, 200, 500, 280), "button", "high", (450, 240), True),
         ("tap", (100, 100), (400, 200, 500, 280), "button", "medium", (100, 100), False),
@@ -115,14 +136,3 @@ def test_unidentified_outside_tap_does_not_override_visual_point() -> None:
     assert error == ""
     assert (grounded.action.x, grounded.action.y) == (100, 100)
     assert grounded.action.snap is None
-
-
-def test_candidate_crop_preserves_expected_local_region() -> None:
-    image = Image.new("RGB", (360, 800), "white")
-    output = io.BytesIO()
-    image.save(output, format="PNG")
-
-    cropped, bounds = crop_target_region(output.getvalue(), 500, 160)
-    cropped_image = Image.open(io.BytesIO(cropped))
-    assert bounds == (100, 0, 900, 340)
-    assert cropped_image.size == (288, 272)

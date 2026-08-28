@@ -296,6 +296,37 @@ def test_mastodon_reports_a_post_before_blocking_its_author() -> None:
         assert required in context
 
 
+def test_mastodon_filters_content_languages_in_web_preferences() -> None:
+    knowledge = load_knowledge_for_app("Mastodon", "android")
+    assert knowledge is not None
+
+    context = " ".join(knowledge.worker_context().split())
+    for required in (
+        "Account content-language filtering is a Mastodon Web preference",
+        "native `Settings` → account → `Filters` only mutes words",
+        "preferring a signed-in profile tab",
+        "Chrome's numbered tab-counter are visible",
+        "the next action is to tap that tab-counter",
+        "never scroll the form or guess a toolbar target",
+        "without typing a URL",
+        "detail's only three-dot control",
+        "`Open in browser`",
+        "`Preferences` → `Other`",
+        "`Filter languages` is a checkbox list",
+        "`English`, `日本語`, and `简体中文`",
+        "clear any other checked language",
+        "`Diné bizaad`, `eesti`, `Ekakairũ Naoero`, `English`, `Español`",
+        "`Afaan Oromoo`/`Afaraf` are at the top",
+        "never an upward one",
+        "`日本語` and `简体中文` are together near the end",
+        "visible glyphs of the exact text",
+        "Do not batch adjacent language changes",
+        "`Save changes`",
+        "`Posting language` on this page is a different default",
+    ):
+        assert required in context
+
+
 def test_mastodon_export_uses_authenticated_web_session_and_files_rename() -> None:
     knowledge = load_knowledge_for_app("Mastodon", "android")
     assert knowledge is not None

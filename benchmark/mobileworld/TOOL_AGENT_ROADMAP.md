@@ -102,11 +102,11 @@ MobileWorld 当前提供 117 个 GUI-only 任务。严格按以下条件从本�
 29. `MastodonUnfollowTask` — ✅ 通过：`20260828_232406`，official eval 1.0
 30. `MastodonPinTootsTask` — ✅ 通过：`20260828_033239`，official eval 1.0
 31. `MastodonReportTask` — ✅ 通过：`20260829_024321`，official eval 1.0
-32. `MastodonManageHashtagsTask`
+32. `MastodonManageHashtagsTask` — ✅ 通过：`20260822_221712`，official eval 1.0
 33. `MastodonAddFeaturedHashtagsTask` — ⛔ benchmark 定义阻塞：原生 Android 2.11.1
     只读取和展示 featured hashtags，编辑资料时还会禁用 `Featured` 标签；任务未声明
     Chrome，Web/API 路径暂不计正式通过
-34. `MastodonFilterLanguageTask`
+34. `MastodonFilterLanguageTask` — ✅ 通过：`20260829_045355`，official eval 1.0
 35. `MastodonChangeLanguageTask` — ⛔ benchmark 定义阻塞：原生设置只改变发帖默认语言；
     Chrome Web 可改变 evaluator 字段，但任务未声明 Chrome，暂不计正式通过
 36. `MastodonGetServerInfoTask`
@@ -235,7 +235,9 @@ Worker 能在 50 turns 总预算内完成，失败恢复不会重复产生外部
 | 29 | `MastodonUnfollowTask` | 20260828_142050（终态后继续操作）→ 20260828_232406（通过） | 冻结首次完整 Following 列表的语义顺序；State 将连续事实更新与下一目标/完成结论原子化，终态帧不再进入 Actor | ✅ | 1.0 | `9cbcf20d` |
 | 30 | `MastodonPinTootsTask` | 20260821_131116（官方已成功但 Agent 跑满 50 turns）→ 20260828_033239（通过） | 在完整 profile 时间线中确定最早帖子；`Pin on profile` 为写穿提交，目标菜单闭合且无错误后由 State 终止，不再重复打开菜单 | ✅ | 1.0 | `f685c9d8` |
 | 31 | `MastodonReportTask` | 20260829_020152（引号被规范化）→ 20260829_024321（通过） | UIAutomator 保留已跟踪界面的原始 Unicode 文本，执行输入时按宽松键唯一恢复；同时修正 State 当前目标授权和 Mastodon 原生举报/拉黑路径 | ✅ | 1.0 | `4d67cc39`, `a94e4a5a`, `fd4b7a49` |
+| 32 | `MastodonManageHashtagsTask` | 20260821_132841（遗留 `dogs`）→ 20260822_221712（通过） | 完整遍历已关注 hashtag 集合，仅对动物相关项执行 unfollow，终态同时确认 `cats` 和 `dogs` 均已移除 | ✅ | 1.0 | —（历史 live，无新代码） |
 | 33 | `MastodonAddFeaturedHashtagsTask` | 20260821_133216 | benchmark 定义：仅声明 Mastodon，但原生 Android 2.11.1 只有 featured hashtags 的只读展示，无新增/删除入口；`Edit profile` 会禁用 `Featured` 标签 | ⛔ | 0.0 | — |
+| 34 | `MastodonFilterLanguageTask` | 20260829_040420（密集相邻行点击下移）→ 20260829_045355（通过） | 官方路径为已登录 Mastodon Web `Preferences` → `Other`；记录语言原生标签/顺序，并用无候选标记的完整屏幕 Grounding 将密集行点击稳定在目标文字中心 | ✅ | 1.0 | `bf8914dd`, `5cff9c38` |
 | 35 | `MastodonChangeLanguageTask` | 20260828_103118（原生 UI）→ 20260828_123131（Chrome Web workaround） | benchmark 定义：仅声明 Mastodon，但原生 `Posting language` 不改变 evaluator 检查的账号 locale；Chrome Web 路径不计正式通过 | ⛔ | 0.0（原生）；1.0（workaround，不计） | — |
 | 39 | `MastodonExportFollowsTask` | 20260828_045025（原生路径失败）→ 20260829_005757（通过） | 官方标准路径为 Chrome 已登录 Web 导出 → Files 改名；修复无身份的框外 Grounding 覆盖正确视觉点，并对 State 当前帧 identity 做无模型有界化 | ✅ | 1.0 | `6d7764bb` |
 | 42 | `MastodonRevisePhotoAltTask` | 20260821_145832、20260828_070746（失败）→ 20260828_134532（通过） | Mastodon 原生编辑路径知识：帖子三点菜单 → `Edit post` → 附件小编辑按钮 → `Add alt text`；避开只读 ALT 弹层和全局发帖铅笔 | ✅ | 1.0 | —（知识修复待提交） |
