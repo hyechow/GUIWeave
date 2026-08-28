@@ -2554,8 +2554,6 @@ class ToolAgentRuntime:
                 ground_future = ground_pool.submit(
                     ground_target,
                     png,
-                    float(executed_action.x),
-                    float(executed_action.y),
                     str(executed_action.description or ""),
                     str(executed_action.action_type or ""),
                 )
