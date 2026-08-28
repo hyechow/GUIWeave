@@ -10,6 +10,7 @@ from dataclasses import dataclass
 from copy import deepcopy
 from typing import Any
 
+from json_repair import loads as repair_json_loads
 from jsonschema import validate
 from langchain_core.messages import HumanMessage, SystemMessage
 from PIL import Image
@@ -493,7 +494,7 @@ def dynamic_action_tool(
     }:
         properties["state_target_ref"] = {
             "type": ["string", "null"],
-            "pattern": r"^[a-z][a-z0-9_]{0,79}$",
+            "pattern": r"^[A-Za-z][A-Za-z0-9_]{0,79}$",
             "description": (
                 "Copy the exact target_ref when this action spatially operates on a "
                 "currently visible tracked object, including when the action only opens "
@@ -831,7 +832,32 @@ def parse_json_object(content: Any) -> dict[str, Any]:
     return value
 
 
-def exactly_one_tool_call(response: Any) -> dict[str, Any]:
+def _normalize_structured_tool_arguments(
+    args: dict[str, Any],
+    argument_model: type[BaseModel],
+) -> dict[str, Any]:
+    """Decode provider-stringified array/object fields using the declared schema."""
+
+    properties = argument_model.model_json_schema().get("properties", {})
+    normalized = dict(args)
+    for name, value in args.items():
+        expected = properties.get(name, {}).get("type")
+        if expected not in ("array", "object") or not isinstance(value, str):
+            continue
+        stripped = value.strip()
+        if not stripped.startswith(("[", "{")):
+            continue
+        decoded = repair_json_loads(stripped)
+        if isinstance(decoded, list if expected == "array" else dict):
+            normalized[name] = decoded
+    return normalized
+
+
+def exactly_one_tool_call(
+    response: Any,
+    *,
+    argument_model: type[BaseModel] | None = None,
+) -> dict[str, Any]:
     calls = list(getattr(response, "tool_calls", None) or [])
     if len(calls) != 1:
         raise ProtocolError(f"expected exactly one tool call, got {len(calls)}")
@@ -844,6 +870,8 @@ def exactly_one_tool_call(response: Any) -> dict[str, Any]:
             raise ProtocolError(f"tool arguments are invalid JSON: {exc}") from exc
     if not isinstance(raw_args, dict):
         raise ProtocolError("tool arguments must be an object")
+    if argument_model is not None:
+        raw_args = _normalize_structured_tool_arguments(raw_args, argument_model)
     return {
         "id": str(call.get("id") or "tool-call"),
         "name": str(call.get("name") or ""),

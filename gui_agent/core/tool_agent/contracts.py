@@ -457,7 +457,7 @@ class WorkerSpec(StrictModel):
 
 
 StateTargetRef: TypeAlias = Annotated[
-    str, Field(pattern=r"^[a-z][a-z0-9_]{0,79}$"),
+    str, Field(pattern=r"^[A-Za-z][A-Za-z0-9_]{0,79}$"),
 ]
 StateIdentity: TypeAlias = Annotated[str, Field(min_length=1, max_length=300)]
 StateSurface: TypeAlias = Annotated[str, Field(min_length=1, max_length=120)]
@@ -491,6 +491,43 @@ class WorkerStateEditBatch(StrictModel):
     edits: list[WorkerStateMarkdownEdit] = Field(default_factory=list, max_length=12)
 
 
+class WorkerTaskTransition(StrictModel):
+    """State's current semantic conclusion about how the task advances."""
+
+    status: Literal["advance", "complete"]
+    next_objective: str = Field(max_length=600)
+    target_refs: list[StateTargetRef] = Field(max_length=32)
+
+    @model_validator(mode="after")
+    def _validate_transition(self) -> "WorkerTaskTransition":
+        self.next_objective = self.next_objective.strip()
+        if len(set(self.target_refs)) != len(self.target_refs):
+            raise ValueError("target_refs must not contain duplicates")
+        if self.status == "advance" and not self.next_objective:
+            raise ValueError("advance requires a non-empty next_objective")
+        if self.status == "complete" and (self.next_objective or self.target_refs):
+            raise ValueError("complete requires an empty objective and target_refs")
+        return self
+
+
+class WorkerStateUpdate(WorkerStateEditBatch, WorkerTaskTransition):
+    """One atomic fact-memory update and task-transition conclusion."""
+
+    surface: StateSurface | None
+    visible_targets: list[WorkerStateVisibleTarget] = Field(max_length=32)
+    edits: list[WorkerStateMarkdownEdit] = Field(max_length=12)
+    evidence: list[Annotated[str, Field(min_length=1, max_length=1_000)]] = Field(
+        max_length=32,
+    )
+    rows: list[dict[str, Any]]
+
+    @model_validator(mode="after")
+    def _validate_completion(self) -> "WorkerStateUpdate":
+        if self.status == "complete" and not self.evidence and not self.rows:
+            raise ValueError("complete requires evidence or rows")
+        return self
+
+
 class WorkerStateTarget(StrictModel):
     identity: StateIdentity
     visibility: Literal["not_visible", "partial", "full"] = "not_visible"
@@ -507,6 +544,7 @@ class WorkerStateSnapshot(StrictModel):
     surface: str | None = None
     targets: dict[str, WorkerStateTarget] = Field(default_factory=dict, max_length=32)
     markdown: str = Field(default="", max_length=48_000)
+    task_transition: WorkerTaskTransition | None = None
 
     @property
     def fact_statements(self) -> tuple[str, ...]:

@@ -9,6 +9,8 @@ from gui_agent.core.tool_agent.contracts import (
     WorkerStateEditBatch,
     WorkerStateSnapshot,
     WorkerStateTarget,
+    WorkerStateUpdate,
+    WorkerTaskTransition,
 )
 from gui_agent.core.tool_agent.worker_memory.journal import WorkerJournal
 
@@ -58,7 +60,7 @@ def _apply_markdown_edits(memory: str, batch: WorkerStateEditBatch) -> str:
         old_text = "\n".join(edit.old_lines)
         new_text = "\n".join(edit.new_lines)
         if old_text == new_text:
-            raise ValueError(f"State edit {index} does not change memory")
+            continue
         if not old_text:
             # Empty old_lines is an append: a fresh memory sets the body, a non-empty
             # memory gains the new observation at the end. The historical hard error
@@ -136,6 +138,20 @@ def reduce_worker_state(
         )
     }
 
+    if isinstance(batch, WorkerStateUpdate):
+        visible_refs = {item.target_ref for item in batch.visible_targets}
+        unavailable = set(batch.target_refs).difference(visible_refs)
+        if unavailable:
+            raise ValueError(
+                "task target_refs must be visible on the current frame: "
+                f"{sorted(unavailable)}"
+            )
+        state.task_transition = WorkerTaskTransition(
+            status=batch.status,
+            next_objective=batch.next_objective,
+            target_refs=batch.target_refs,
+        )
+
     state.summary = _summary(state)
     return state
 
@@ -149,6 +165,11 @@ def state_continuation_payload(state: WorkerStateSnapshot) -> dict[str, Any]:
             ref: target.identity for ref, target in state.targets.items()
         },
         "memory_markdown": state.markdown,
+        "previous_task_transition": (
+            state.task_transition.model_dump(mode="json")
+            if state.task_transition is not None
+            else None
+        ),
     }
 
 
@@ -183,6 +204,24 @@ def state_actor_markdown(state: WorkerStateSnapshot) -> str:
     ]
     lines = [
         f"Surface: `{state.surface or 'not observed'}`",
+        "",
+        "## Current task objective",
+        "",
+        *(
+            [
+                f"Status: `{state.task_transition.status}`",
+                f"Next objective: {state.task_transition.next_objective}",
+                "Authorized target refs: "
+                + (
+                    ", ".join(
+                        f"`{ref}`" for ref in state.task_transition.target_refs
+                    )
+                    or "None (use only untracked interface controls)"
+                ),
+            ]
+            if state.task_transition is not None
+            else ["No State transition has been concluded yet."]
+        ),
         "",
         "## Currently visible targets",
         "",
@@ -233,6 +272,7 @@ def state_observation_focus(spec: WorkerSpec) -> dict[str, Any]:
     return {
         "visible_fields": visible_fields,
         "goal_contract": {
+            "goal": spec.goal,
             "success_criteria": list(spec.success_criteria),
             "completion_facts": [
                 {

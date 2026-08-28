@@ -40,8 +40,8 @@ from gui_agent.core.tool_agent.contracts import (
     ToolAgentRun,
     WorkerOutcome,
     WorkerSpec,
-    WorkerStateEditBatch,
     WorkerStateSnapshot,
+    WorkerStateUpdate,
     WorkerStrategy,
 )
 from gui_agent.core.tool_agent.action_guard import (
@@ -113,17 +113,10 @@ from llm.provider_config import (
 _MASTER_SYSTEM = load_prompt_text("task.tool_agent.master")
 _STATE_SYSTEM = load_prompt_text("task.tool_agent.state")
 _ACTOR_SYSTEM = load_prompt_text("task.tool_agent.actor")
-_STATE_MEMORY_TOOL = model_tool(
+_STATE_UPDATE_TOOL = model_tool(
     "edit_state_memory",
-    "Edit the continuous Markdown fact memory and refresh current target bindings.",
-    WorkerStateEditBatch,
-)
-_STATE_COMPLETE_TOOL = model_tool(
-    "complete",
-    "Declare the Goal Contract established now. Use only when the accumulated observed "
-    "facts genuinely establish every success criterion and every declared completion fact's "
-    "expected value — never an intended, assumed, or future mutation.",
-    CompleteReadyWorkerArgs,
+    "Atomically update continuous factual memory and conclude the current task transition.",
+    WorkerStateUpdate,
 )
 _MAX_ACTION_GUARD_REPAIRS_PER_FRAME = 1
 _MAX_PREDISPATCH_REPAIRS_PER_FRAME = 1
@@ -309,6 +302,16 @@ def _state_target_binding_error(
         return ""
     if state_target_ref not in state.targets:
         return f"State has no observed target {state_target_ref!r}"
+    transition = state.task_transition
+    if (
+        transition is not None
+        and transition.status == "advance"
+        and state_target_ref not in transition.target_refs
+    ):
+        return (
+            f"state_target_ref {state_target_ref!r} is outside the State-authorized "
+            "targets for the current objective"
+        )
     target = visible.get(state_target_ref)
     if target is None:
         return f"state_target_ref {state_target_ref!r} is not visible on this frame"
@@ -1892,12 +1895,7 @@ class ToolAgentRuntime:
         messages: list[Any],
         context_reports: list[dict[str, Any]],
     ) -> tuple[WorkerStateSnapshot, dict | None]:
-        """Run one State stage; State owns the goal-establishment judgment.
-
-        State edits the Markdown fact memory, or calls ``complete`` when it declares
-        the Goal Contract established. Returns ``(state, completion_call)`` where
-        ``completion_call`` is the validated complete call, else ``None``.
-        """
+        """Atomically update State facts and conclude advance versus completion."""
 
         request_kwargs = chat_request_kwargs(
             getattr(_state_cfg(self), "model", None)
@@ -1910,10 +1908,10 @@ class ToolAgentRuntime:
         # not emit a call.
         bound_state = (
             state_model.bind_tools(
-                [_STATE_MEMORY_TOOL, _STATE_COMPLETE_TOOL],
+                [_STATE_UPDATE_TOOL],
                 tool_choice="auto",
                 parallel_tool_calls=False,
-                max_tokens=900,
+                max_tokens=1_800,
                 **request_kwargs,
             )
             if callable(getattr(state_model, "bind_tools", None))
@@ -1927,7 +1925,7 @@ class ToolAgentRuntime:
         previous = snapshots.get(journal.worker_id)
         prior_state = previous if isinstance(previous, WorkerStateSnapshot) else None
         completion: dict | None = None
-        batch: WorkerStateEditBatch | None = None
+        batch: WorkerStateUpdate | None = None
         state = prior_state
         for attempt in range(3):
             started_at = time.perf_counter()
@@ -1947,27 +1945,30 @@ class ToolAgentRuntime:
             llm_elapsed_s += time.perf_counter() - started_at
             token_usage = response_usage(response)
             try:
-                call = exactly_one_tool_call(response)
-                if call["name"] == "edit_state_memory":
-                    batch = WorkerStateEditBatch.model_validate(call["args"])
-                    if batch.frame_id != frame.frame_id:
-                        raise ValueError(
-                            f"expected frame_id {frame.frame_id!r}, got {batch.frame_id!r}"
-                        )
-                    state = reduce_worker_state(
-                        prior_state, batch, spec=spec,
-                    )
-                    completion = None
-                    break
-                if call["name"] == "complete":
-                    CompleteReadyWorkerArgs.model_validate(call["args"])
-                    completion = call
-                    state = prior_state
-                    break
-                raise ProtocolError(
-                    "State must call edit_state_memory or complete, got "
-                    f"{call['name']!r}"
+                call = exactly_one_tool_call(
+                    response,
+                    argument_model=WorkerStateUpdate,
                 )
+                if call["name"] != "edit_state_memory":
+                    raise ProtocolError(
+                        "State must call edit_state_memory, got "
+                        f"{call['name']!r}"
+                    )
+                batch = WorkerStateUpdate.model_validate(call["args"])
+                if batch.frame_id != frame.frame_id:
+                    raise ValueError(
+                        f"expected frame_id {frame.frame_id!r}, got {batch.frame_id!r}"
+                    )
+                state = reduce_worker_state(prior_state, batch, spec=spec)
+                completion = (
+                    {
+                        "name": "complete",
+                        "args": {"evidence": batch.evidence, "rows": batch.rows},
+                    }
+                    if batch.status == "complete"
+                    else None
+                )
+                break
             except Exception as exc:  # noqa: BLE001 - one same-frame tool repair
                 self._trace(
                     "worker_state_protocol_error",
@@ -1981,7 +1982,7 @@ class ToolAgentRuntime:
                         "tool_agent.state.protocol_repair",
                         active_messages,
                         response,
-                        schema="required tool call: edit_state_memory or complete",
+                        schema="required tool call: edit_state_memory",
                     ) + context_reports,
                 )
                 if attempt:
@@ -2001,37 +2002,37 @@ class ToolAgentRuntime:
                 repair_messages.append(HumanMessage(content=(
                     "State protocol repair on this SAME frame. No action was executed. "
                     f"The prior response was invalid: {exc}. Emit exactly one required "
-                    "edit_state_memory or complete tool call matching its schema."
+                    "edit_state_memory tool call matching its schema."
                 )))
                 active_messages = [
                     *active_messages,
                     *repair_messages,
                 ]
         assert response is not None
-        if completion is None:
-            assert batch is not None
-            self._trace(
-                "worker_state",
-                step=step,
-                frame_id=frame.frame_id,
-                mode=batch.mode,
-                memory_edits=[item.model_dump(mode="json") for item in batch.edits],
-                receipt_ref=(latest_runtime_receipt(journal) or {}).get("receipt_ref"),
-                state=state.model_dump(mode="json"),
-                llm_elapsed_s=round(llm_elapsed_s, 3),
-                token_usage=token_usage,
-                context_reports=[
-                    *context_reports,
-                    *diagnostic_prompt_reports(
-                        "tool_agent.state",
-                        active_messages,
-                        response,
-                        parsed=state.model_dump(mode="json"),
-                        schema="required tool call: edit_state_memory",
-                    ),
-                ],
-            )
-        else:
+        assert batch is not None
+        self._trace(
+            "worker_state",
+            step=step,
+            frame_id=frame.frame_id,
+            mode=batch.mode,
+            memory_edits=[item.model_dump(mode="json") for item in batch.edits],
+            task_transition=state.task_transition.model_dump(mode="json"),
+            receipt_ref=(latest_runtime_receipt(journal) or {}).get("receipt_ref"),
+            state=state.model_dump(mode="json"),
+            llm_elapsed_s=round(llm_elapsed_s, 3),
+            token_usage=token_usage,
+            context_reports=[
+                *context_reports,
+                *diagnostic_prompt_reports(
+                    "tool_agent.state",
+                    active_messages,
+                    response,
+                    parsed=state.model_dump(mode="json"),
+                    schema="required tool call: edit_state_memory",
+                ),
+            ],
+        )
+        if completion is not None:
             self._trace(
                 "worker_state_requested_complete",
                 step=step,
@@ -2046,8 +2047,11 @@ class ToolAgentRuntime:
                         "tool_agent.state",
                         active_messages,
                         response,
-                        parsed={"complete": completion["args"]},
-                        schema="required tool call: complete",
+                        parsed={
+                            "state": state.model_dump(mode="json"),
+                            "complete": completion["args"],
+                        },
+                        schema="required tool call: edit_state_memory",
                     ),
                 ],
             )

@@ -52,6 +52,15 @@ version: 14
   search that bare identifier (no `@`) on the `People` tab to open the account's profile.
   Do not ask what the handle is.
 
+- The signed-in user's `Profile` following count opens the native Following list. Its
+  initial complete row order is newest-followed first.
+- On a Following-list account row, `Following` means the account is currently followed
+  and tapping it is the write-through unfollow mutation; the row then shows `Follow`.
+  `Follow` means the account is currently not followed; tapping it follows the account
+  and the row then shows `Following`. The list can retain an unfollowed row and its header
+  count can remain stale on the same surface, so neither row disappearance nor the header
+  count alone reliably reflects the current relationship.
+
 - The Home timeline only shows recent posts from followed accounts; it cannot surface an
   arbitrary account's older or unscoped toot. To find a toot by a specific account (or
   about a specific topic), open the `Explore` tab, search the account handle or a
