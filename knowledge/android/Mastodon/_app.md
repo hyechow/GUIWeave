@@ -12,7 +12,7 @@ source: manual_verified
 confidence: high
 sensitivity: internal
 ttl: session
-version: 19
+version: 20
 ---
 # Mastodon on Android
 
@@ -79,6 +79,20 @@ version: 19
   The download is named `following_accounts.csv`; when the task requires another
   filename, rename that downloaded file in Files. A Chrome `No internet connection`
   banner does not invalidate an already loaded, interactive Mastodon settings page.
+
+- Account-list CSV import is also a Mastodon Web setting; native `Privacy and reach`
+  and `Filters` cannot import accounts. In the authenticated account's page menu,
+  choose `Import and export` → `Import`. For a muted-account file, select import type
+  `Muting list`, keep `Merge` unless replacement was explicitly requested, and use
+  the form's file control. The Android system picker then supplies the named file from
+  `Downloads`; selecting it returns to the Web form with its filename attached.
+  `Upload` is preparatory and opens a review page. Verify that review says it will mute
+  the expected number of accounts from the exact filename, then activate `Confirm`.
+  The returned upload-success notice only says processing is scheduled. Completion is
+  established by the matching `Recent imports` row showing `Finished` and the full
+  imported count, such as `1 / 1`. This table is static: if the row is still
+  processing, use Chrome's page reload; tapping the non-interactive row does not
+  refresh it.
 
 - Account content-language filtering is a Mastodon Web preference; native
   `Settings` → account → `Filters` only mutes words and cannot set it. Resume an

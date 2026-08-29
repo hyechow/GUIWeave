@@ -5,7 +5,7 @@ platform: android
 app: Mastodon
 scope:
   - orchestrator
-selector_when: export follows following CSV settings import download
+selector_when: export follows following CSV settings download
 source: mobileworld_official_trajectory
 confidence: high
 ttl: session
