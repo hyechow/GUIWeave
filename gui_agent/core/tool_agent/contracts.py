@@ -2,11 +2,19 @@
 
 from __future__ import annotations
 
+import json
 import re
 from copy import deepcopy
 from typing import Annotated, Any, Literal, TypeAlias, get_args
 
-from pydantic import BaseModel, ConfigDict, Field, field_validator, model_validator
+from pydantic import (
+    BaseModel,
+    ConfigDict,
+    Field,
+    JsonValue,
+    field_validator,
+    model_validator,
+)
 
 
 class StrictModel(BaseModel):
@@ -460,49 +468,9 @@ StateTargetRef: TypeAlias = Annotated[
     str, Field(pattern=r"^[A-Za-z][A-Za-z0-9_]{0,79}$"),
 ]
 StateIdentity: TypeAlias = Annotated[str, Field(min_length=1, max_length=300)]
-StateSurface: TypeAlias = Annotated[str, Field(min_length=1, max_length=120)]
-
-
-class WorkerStateVisibleTarget(StrictModel):
-    """One current-frame target retained only for Actor action binding."""
-
-    target_ref: StateTargetRef
-    identity: StateIdentity
-    visibility: Literal["partial", "full"]
-    owned_region_visibility: Literal["edge_fragment", "unobscured"]
-
-    @field_validator("identity", mode="before")
-    @classmethod
-    def _bound_identity(cls, value: Any) -> Any:
-        if isinstance(value, str) and len(value) > 300:
-            return value[:297].rstrip() + "..."
-        return value
-
-
-class WorkerStateMarkdownEdit(StrictModel):
-    """One exact, semantic-opaque edit to the continuous Markdown memory."""
-
-    old_lines: list[Annotated[str, Field(max_length=1_000)]] = Field(max_length=128)
-    new_lines: list[Annotated[str, Field(max_length=1_000)]] = Field(max_length=128)
-
-
-class WorkerStateEditBatch(StrictModel):
-    """One Markdown memory edit call plus a minimal current-frame envelope."""
-
-    mode: Literal["init", "edit"]
-    frame_id: str = Field(min_length=1, max_length=120)
-    surface: StateSurface | None = None
-    visible_targets: list[WorkerStateVisibleTarget] = Field(
-        default_factory=list, max_length=32,
-    )
-    edits: list[WorkerStateMarkdownEdit] = Field(default_factory=list, max_length=12)
-
-    @field_validator("surface", mode="before")
-    @classmethod
-    def _bound_surface(cls, value: Any) -> Any:
-        if isinstance(value, str) and len(value) > 120:
-            return value[:117].rstrip() + "..."
-        return value
+StateMemoryKey: TypeAlias = Annotated[
+    str, Field(pattern=r"^[a-z][a-z0-9_]{0,79}$"),
+]
 
 
 class WorkerTaskTransition(StrictModel):
@@ -524,19 +492,75 @@ class WorkerTaskTransition(StrictModel):
         return self
 
 
-class WorkerStateUpdate(WorkerStateEditBatch, WorkerTaskTransition):
-    """One atomic fact-memory update and task-transition conclusion."""
+class WorkerStateUpdate(StrictModel):
+    """One compact fact patch and semantic task-transition conclusion."""
 
-    surface: StateSurface | None
-    visible_targets: list[WorkerStateVisibleTarget] = Field(max_length=32)
-    edits: list[WorkerStateMarkdownEdit] = Field(max_length=12)
-    evidence: list[Annotated[str, Field(min_length=1, max_length=1_000)]] = Field(
-        max_length=32,
+    # Keep facts before conclusions in both the schema and serialized protocol. A
+    # lightweight State model can then finish its factual patch before it emits
+    # the next semantic transition.
+    memory: dict[StateMemoryKey, JsonValue | None] = Field(
+        default_factory=dict, max_length=16,
     )
-    rows: list[dict[str, Any]]
+    status: Literal["advance", "complete"]
+    objective: str = Field(default="", max_length=400)
+    targets: list[StateIdentity] = Field(default_factory=list, max_length=32)
+    evidence: list[Annotated[str, Field(min_length=1, max_length=1_000)]] = Field(
+        default_factory=list, max_length=8,
+    )
+    rows: list[dict[str, Any]] = Field(default_factory=list, max_length=32)
+
+    @field_validator("targets", mode="before")
+    @classmethod
+    def _bound_target_identities(cls, value: Any) -> Any:
+        if not isinstance(value, list):
+            return value
+        identities = [
+            item.get("identity") if isinstance(item, dict) else item
+            for item in value
+        ]
+        return [
+            item[:297].rstrip() + "..."
+            if isinstance(item, str) and len(item) > 300 else item
+            for item in identities
+        ]
+
+    @field_validator("memory", mode="before")
+    @classmethod
+    def _empty_memory(cls, value: Any) -> Any:
+        if value is None:
+            return {}
+        if not isinstance(value, dict):
+            return value
+        normalized: dict[str, Any] = {}
+        for key, item in value.items():
+            if not isinstance(key, str):
+                normalized[key] = item
+                continue
+            snake = re.sub(r"(?<=[a-z0-9])(?=[A-Z])", "_", key)
+            snake = re.sub(r"[^A-Za-z0-9_]+", "_", snake).strip("_").lower()
+            if snake in normalized and normalized[snake] != item:
+                raise ValueError(f"memory keys collide after normalization: {key!r}")
+            normalized[snake] = item
+        return normalized
+
+    @field_validator("evidence", mode="before")
+    @classmethod
+    def _normalize_evidence(cls, value: Any) -> Any:
+        if value in (None, ""):
+            return []
+        if isinstance(value, str):
+            return [value]
+        return value
 
     @model_validator(mode="after")
     def _validate_completion(self) -> "WorkerStateUpdate":
+        self.objective = self.objective.strip()
+        if len(set(self.targets)) != len(self.targets):
+            raise ValueError("targets must not contain duplicate identities")
+        if self.status == "advance" and not self.objective:
+            raise ValueError("advance requires a non-empty objective")
+        if self.status == "complete" and (self.objective or self.targets):
+            raise ValueError("complete requires an empty objective and targets")
         if self.status == "complete" and not self.evidence and not self.rows:
             raise ValueError("complete requires evidence or rows")
         return self
@@ -555,14 +579,17 @@ class WorkerStateSnapshot(StrictModel):
 
     summary: str = Field(min_length=1, max_length=600)
     frame_id: str = ""
-    surface: str | None = None
     targets: dict[str, WorkerStateTarget] = Field(default_factory=dict, max_length=32)
-    markdown: str = Field(default="", max_length=48_000)
+    memory: dict[StateMemoryKey, JsonValue] = Field(default_factory=dict, max_length=64)
     task_transition: WorkerTaskTransition | None = None
 
     @property
     def fact_statements(self) -> tuple[str, ...]:
-        return (self.summary, self.markdown)
+        return (
+            self.summary,
+            json.dumps(self.memory, ensure_ascii=False),
+            *(target.identity for target in self.targets.values()),
+        )
 
 
 class DataChunkRef(StrictModel):

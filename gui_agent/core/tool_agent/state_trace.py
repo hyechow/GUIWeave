@@ -1,34 +1,31 @@
-"""Pure text editing for continuous Worker State memory."""
+"""Compact continuous State memory and Actor projection."""
 
 from __future__ import annotations
 
+import hashlib
+import json
 from typing import Any
 
 from gui_agent.core.tool_agent.contracts import (
     WorkerSpec,
-    WorkerStateEditBatch,
     WorkerStateSnapshot,
     WorkerStateTarget,
     WorkerStateUpdate,
     WorkerTaskTransition,
 )
+
 from gui_agent.core.tool_agent.worker_memory.journal import WorkerJournal
 
 
-def initial_worker_state(spec: WorkerSpec) -> WorkerStateSnapshot:
-    del spec
+def initial_worker_state() -> WorkerStateSnapshot:
     return WorkerStateSnapshot(
         summary="No goal-relevant facts have been observed yet.",
     )
 
 
-def latest_runtime_receipt(journal: WorkerJournal) -> dict[str, Any] | None:
-    """Project the latest receipt as observation context, never as State."""
-
-    event = next((item for item in reversed(journal.events) if item.receipt), None)
-    if event is None or event.receipt is None:
-        return None
+def _project_receipt(event: Any) -> dict[str, Any]:
     receipt = event.receipt
+    assert receipt is not None
     outcome: dict[str, Any] = {
         "kind": receipt.outcome.kind,
         "action_type": receipt.outcome.action_type or None,
@@ -52,213 +49,140 @@ def latest_runtime_receipt(journal: WorkerJournal) -> dict[str, Any] | None:
     return projected
 
 
-def _apply_markdown_edits(memory: str, batch: WorkerStateEditBatch) -> str:
-    """Apply exact edits without interpreting the Markdown body."""
+def latest_runtime_receipts(journal: WorkerJournal) -> list[dict[str, Any]]:
+    """Project only the most recent atomic or multi-action receipt batch."""
 
-    updated = memory
-    for index, edit in enumerate(batch.edits, start=1):
-        old_text = "\n".join(edit.old_lines)
-        new_text = "\n".join(edit.new_lines)
-        if old_text == new_text:
-            continue
-        if not old_text:
-            # Empty old_lines is an append: a fresh memory sets the body, a non-empty
-            # memory gains the new observation at the end. The historical hard error
-            # ("empty old_lines for non-empty memory") aborted runs whenever the State
-            # appended rather than anchored-replaced; appending is the recoverable intent.
-            updated = (updated.rstrip() + "\n\n" + new_text) if updated else new_text
-        else:
-            occurrences = updated.count(old_text)
-            if occurrences != 1:
-                # The anchor block is missing (0, memory drifted / model mis-reproduced)
-                # or ambiguous (>1, the text appears more than once). In both cases the
-                # State's new observation is preserved by appending it instead of
-                # aborting the run; the exact-match replace applies only when the anchor
-                # occurs exactly once.
-                updated = updated.rstrip() + "\n\n" + new_text
-            else:
-                updated = updated.replace(old_text, new_text, 1)
-        if len(updated) > 48_000:
-            raise ValueError("State Markdown memory exceeds 48000 characters")
-    return updated.strip()
+    events = [event for event in journal.events if event.receipt is not None]
+    if not events:
+        return []
+    latest_step = events[-1].event_ref.split(":", 1)[-1].split(".", 1)[0]
+    batch = [
+        event for event in events
+        if event.event_ref.split(":", 1)[-1].split(".", 1)[0] == latest_step
+    ]
+    return [_project_receipt(event) for event in batch[-5:]]
+
+
+def latest_runtime_receipt(journal: WorkerJournal) -> dict[str, Any] | None:
+    """Project the latest receipt for call sites that need one action."""
+
+    receipts = latest_runtime_receipts(journal)
+    return receipts[-1] if receipts else None
+
+
+def state_target_ref(identity: str) -> str:
+    """Derive one stable opaque binding from a model-observed identity."""
+
+    digest = hashlib.sha256(identity.strip().casefold().encode()).hexdigest()[:16]
+    return f"target_{digest}"
 
 
 def _summary(state: WorkerStateSnapshot) -> str:
-    visible = sum(
-        target.visibility != "not_visible" for target in state.targets.values()
-    )
     return (
-        f"Surface={state.surface or 'not observed'}; "
-        f"tracked targets={len(state.targets)}; visible targets={visible}; "
-        f"memory chars={len(state.markdown)}."
+        f"Current targets={len(state.targets)}; "
+        f"durable facts={len(state.memory)}."
     )
 
 
 def reduce_worker_state(
     previous: WorkerStateSnapshot | None,
-    batch: WorkerStateEditBatch,
+    update: WorkerStateUpdate,
     *,
-    spec: WorkerSpec,
+    frame_id: str,
 ) -> WorkerStateSnapshot:
-    """Apply one generic Markdown edit and refresh current target bindings."""
+    """Merge one compact fact patch and derive Runtime-owned target refs."""
 
-    expected_mode = "init" if previous is None else "edit"
-    if batch.mode != expected_mode:
-        raise ValueError(f"expected State mode {expected_mode!r}, got {batch.mode!r}")
-    state = initial_worker_state(spec) if previous is None else previous.model_copy(deep=True)
-    state.frame_id = batch.frame_id
-    if batch.surface is not None:
-        state.surface = batch.surface
-    state.markdown = _apply_markdown_edits(state.markdown, batch)
+    state = initial_worker_state() if previous is None else previous.model_copy(deep=True)
+    state.frame_id = frame_id
+    for key, value in update.memory.items():
+        if value is None:
+            state.memory.pop(key, None)
+        else:
+            state.memory[key] = value
+    if len(json.dumps(state.memory, ensure_ascii=False)) > 16_000:
+        raise ValueError("State memory exceeds 16000 characters")
 
-    for target in state.targets.values():
-        target.visibility = "not_visible"
-        target.owned_region_visibility = "not_visible"
-    seen: set[str] = set()
-    for item in batch.visible_targets:
-        if item.target_ref in seen:
-            raise ValueError(f"duplicate visible target ref {item.target_ref!r}")
-        seen.add(item.target_ref)
-        target = state.targets.get(item.target_ref)
-        if target is None:
-            target = WorkerStateTarget(identity=item.identity)
-            state.targets[item.target_ref] = target
-        target.identity = item.identity
-        target.visibility = item.visibility
-        target.owned_region_visibility = item.owned_region_visibility
-
-    # Keep the current-frame bindings in State's observed order. Existing dict
-    # insertion order reflects first discovery and can misalign a textual binding
-    # with the current screenshot after navigation or list changes.
     state.targets = {
-        ref: state.targets[ref]
-        for ref in (
-            *(item.target_ref for item in batch.visible_targets),
-            *(ref for ref in state.targets if ref not in seen),
+        state_target_ref(identity): WorkerStateTarget(
+            identity=identity,
+            visibility="full",
+            owned_region_visibility="unobscured",
         )
+        for identity in update.targets
     }
-
-    if isinstance(batch, WorkerStateUpdate):
-        visible_refs = {item.target_ref for item in batch.visible_targets}
-        unavailable = set(batch.target_refs).difference(visible_refs)
-        if unavailable:
-            raise ValueError(
-                "task target_refs must be visible on the current frame: "
-                f"{sorted(unavailable)}"
-            )
-        state.task_transition = WorkerTaskTransition(
-            status=batch.status,
-            next_objective=batch.next_objective,
-            target_refs=batch.target_refs,
-        )
-
+    state.task_transition = WorkerTaskTransition(
+        status=update.status,
+        next_objective=update.objective,
+        target_refs=list(state.targets),
+    )
     state.summary = _summary(state)
     return state
 
 
 def state_continuation_payload(state: WorkerStateSnapshot) -> dict[str, Any]:
-    """Return the exact document and stable binding registry for the next edit."""
+    """Return only durable facts and the prior semantic conclusion."""
 
+    transition = state.task_transition
     return {
-        "surface": state.surface,
-        "target_registry": {
-            ref: target.identity for ref, target in state.targets.items()
-        },
-        "memory_markdown": state.markdown,
-        "previous_task_transition": (
-            state.task_transition.model_dump(mode="json")
-            if state.task_transition is not None
-            else None
+        "memory": state.memory,
+        "previous_transition": (
+            {
+                "status": transition.status,
+                "objective": transition.next_objective,
+                "targets": [
+                    state.targets[ref].identity
+                    for ref in transition.target_refs
+                    if ref in state.targets
+                ],
+            }
+            if transition is not None else None
         ),
     }
 
 
-def _markdown_section_body(markdown: str, target_ref: str) -> list[str]:
-    """Copy the heading body for a target_ref without interpreting the facts."""
-
-    heading = f"### {target_ref}"
-    collecting = False
-    body: list[str] = []
-    for line in markdown.splitlines():
-        if line.startswith("### "):
-            if collecting:
-                break
-            collecting = line.strip() == heading
-            continue
-        if collecting:
-            body.append(line)
-    while body and not body[0].strip():
-        body.pop(0)
-    while body and not body[-1].strip():
-        body.pop()
-    return [line for line in body if line.strip()]
-
-
 def state_actor_markdown(state: WorkerStateSnapshot) -> str:
-    """Render the model-owned document beside Runtime-owned current bindings."""
+    """Render the compact State conclusion for the action-only Actor."""
 
-    visible = [
-        (ref, target)
-        for ref, target in state.targets.items()
-        if target.visibility != "not_visible"
-    ]
+    transition = state.task_transition
     lines = [
-        f"Surface: `{state.surface or 'not observed'}`",
-        "",
         "## Current task objective",
         "",
         *(
             [
-                f"Status: `{state.task_transition.status}`",
-                f"Next objective: {state.task_transition.next_objective}",
+                f"Status: `{transition.status}`",
+                f"Next objective: {transition.next_objective}",
                 "Authorized target refs: "
                 + (
-                    ", ".join(
-                        f"`{ref}`" for ref in state.task_transition.target_refs
-                    )
+                    ", ".join(f"`{ref}`" for ref in transition.target_refs)
                     or "None (use only untracked interface controls)"
                 ),
             ]
-            if state.task_transition is not None
+            if transition is not None
             else ["No State transition has been concluded yet."]
         ),
         "",
-        "## Currently visible targets",
+        "## Authorized visible targets",
         "",
-        (
-            "Each backticked ID is the exact `state_target_ref` to copy when acting "
-            "on that visible target. Order has no spatial or priority meaning. Facts "
-            "omitted below are unobserved, not absent."
-        ),
     ]
-    if not visible:
+    if not state.targets:
         lines.append("- None")
     else:
-        for ref, target in visible:
-            lines.append(
-                f"- `{ref}` — {target.identity} "
-                f"({target.visibility}, {target.owned_region_visibility})"
-            )
-            lines.extend(
-                f"  {fact}"
-                for fact in _markdown_section_body(state.markdown, ref)
-            )
+        lines.extend(
+            f"- `{ref}` — {target.identity}"
+            for ref, target in state.targets.items()
+        )
     lines.extend([
         "",
-        "## Continuous target-oriented memory",
+        "## Continuous factual memory",
         "",
-        state.markdown or "(No durable facts recorded yet.)",
+        json.dumps(state.memory, ensure_ascii=False, sort_keys=True)
+        if state.memory else "{}",
     ])
     return "\n".join(lines)
 
 
 def state_observation_focus(spec: WorkerSpec) -> dict[str, Any]:
-    """Expose fact shapes and the goal contract to State.
-
-    State owns the goal-establishment judgment, so it receives the success criteria
-    and the declared completion facts (with expected values). It still does not
-    recommend actions — that remains the Actor's decision.
-    """
+    """Expose fact shapes and the full goal contract to State."""
 
     visible_fields = sorted({
         str(value)

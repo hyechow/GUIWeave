@@ -27,6 +27,7 @@ from gui_agent.core.tool_agent.contracts import (
 
 
 MAX_ORDERED_ACTIONS = 5
+STATE_MAX_OUTPUT_TOKENS = 700
 
 
 @dataclass(frozen=True)

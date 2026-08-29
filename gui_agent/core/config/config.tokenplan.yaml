@@ -61,11 +61,12 @@ llm:
       <<: *token_plan
       model: qwen3.7-plus
     state:
-      # State observation role. Uses the fast multimodal Qwen (same as the acting
-      # Agent): the earlier standard-endpoint DeepSeek vision model was too slow on
-      # the two-image frame-transition calls (measured ~85s vs ~5-20s for Qwen).
+      # Compact JSON State is latency-bounded independently from the acting Agent.
       <<: *token_plan
       model: qwen3.7-plus
+      image_scale: 0.8
+      timeout_s: 10
+      max_retries: 0
     perception:
       <<: *token_plan
       model: qwen3.7-plus
