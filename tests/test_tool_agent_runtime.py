@@ -34,12 +34,13 @@ from gui_agent.core.tool_agent.runtime import (
     _constrain_boundary_scroll_actions,
     _is_transient_model_error,
     _scroll_boundary_feedback,
-    _state_tool_choice,
+    _state_system_prompt_text,
     _state_target_binding_error,
     _update_traversal_boundaries,
     _target_verification_result,
 )
 from gui_agent.core.tool_agent.strategy import ReflectionResult, Reflector
+from gui_agent.core.tool_agent.state_trace import state_target_ref
 from gui_agent.core.schemas import TargetGrounding, TargetVerify
 from gui_agent.core.tool_agent.worker_memory import WorkerJournal
 from gui_agent.adapters.browser.control_grounding import ground_action_to_nearest_control
@@ -50,9 +51,15 @@ Image.new("RGB", (4, 4), "white").save(_TEST_IMAGE, format="PNG")
 _TEST_PNG = _TEST_IMAGE.getvalue()
 
 
-def test_state_tool_choice_requires_qwen_calls_but_keeps_deepseek_compatibility() -> None:
-    assert _state_tool_choice(SimpleNamespace(model="qwen3.7-plus")) == "required"
-    assert _state_tool_choice(SimpleNamespace(model="deepseek-vl2")) == "auto"
+def test_state_policy_follows_large_application_knowledge() -> None:
+    prompt = _state_system_prompt_text(
+        "State policy marker",
+        "Application mechanics marker",
+    )
+
+    assert prompt.index("Application mechanics marker") < prompt.index(
+        "State policy marker"
+    )
 
 
 def _state() -> str:
@@ -66,43 +73,25 @@ def _state() -> str:
 
 
 def _state_delta_args(mode: str, frame_id: str, events: list[dict]) -> dict:
-    """Encode readable fixtures through the Markdown edit contract."""
+    """Encode readable fixtures through the compact State contract."""
 
-    surface = None
-    targets = []
-    sections = []
+    del mode, frame_id
+    targets: list[str] = []
+    memory: dict[str, object] = {}
     for event in events:
         if event["kind"] == "source_observed":
-            sections.append(f"### observed_source\n- Source: {event['source_ref']}")
+            memory["observed_source"] = event["source_ref"]
         elif event["kind"] == "surface_observed":
-            surface = event["surface"]
+            memory["surface"] = event["surface"]
         elif event["kind"] == "target_observed":
-            targets.append({
-                "target_ref": event["target_ref"],
-                "identity": event["identity"],
-                "visibility": event["visibility"],
-                "owned_region_visibility": event["owned_region_visibility"],
-            })
-            sections.append(
-                f"### {event['target_ref']}\n- Identity: {event['identity']}"
-            )
+            targets.append(event["identity"])
         elif event["kind"] == "property_observed":
-            sections.append(
-                f"### {event['target_ref']}\n"
-                f"- {event['property_ref']}: {event['value']!r}"
-            )
-    markdown = "\n\n".join(sections)
+            memory[event["property_ref"]] = event["value"]
     return {
-        "mode": "init" if mode == "init" else "edit",
-        "frame_id": frame_id,
-        "surface": surface,
-        "visible_targets": targets,
-        "edits": ([{
-            "old_lines": [], "new_lines": markdown.splitlines(),
-        }] if markdown else []),
         "status": "advance",
-        "next_objective": "Advance the requested visible interaction.",
-        "target_refs": [target["target_ref"] for target in targets],
+        "objective": "The requested visible interaction is established.",
+        "targets": targets,
+        "memory": memory,
         "evidence": [],
         "rows": [],
     }
@@ -117,11 +106,15 @@ def _state_complete_args(
     args = _state_delta_args(mode, frame_id, events or [])
     args.update({
         "status": "complete",
-        "next_objective": "",
-        "target_refs": [],
+        "objective": "",
+        "targets": [],
         "evidence": evidence,
     })
     return args
+
+
+def _state_response(args: dict) -> SimpleNamespace:
+    return SimpleNamespace(content=json.dumps(args), tool_calls=[])
 
 
 def test_transient_model_error_detection_is_provider_neutral_and_narrow() -> None:
@@ -1179,13 +1172,9 @@ class _SplitWorkerFixture:
                 "source_ref": "test_surface",
                 "evidence": "The requested test surface is visible.",
             }] if state_input["mode"] == "init" else [])
-            return SimpleNamespace(content="", tool_calls=[{
-                "id": "state-delta",
-                "name": "edit_state_memory",
-                "args": _state_delta_args(
+            return _state_response(_state_delta_args(
                     state_input["mode"], state_input["frame_id"], events,
-                ),
-            }])
+                ))
         return self.actor_response(messages)
 
     def actor_response(self, messages):
@@ -1351,13 +1340,9 @@ class _MultiActionWorker(_SplitWorkerFixture):
                     })
                 events.extend(self.state_events)
             self.state_calls += 1
-            return SimpleNamespace(content="", tool_calls=[{
-                "id": "state-delta",
-                "name": "edit_state_memory",
-                "args": _state_delta_args(
+            return _state_response(_state_delta_args(
                     state_input["mode"], state_input["frame_id"], events,
-                ),
-            }])
+                ))
         self.messages = messages
         self.calls += 1
         actions = (
@@ -1418,10 +1403,7 @@ class _SplitRoleWorker:
         if self.mode == "state":
             self.state_calls += 1
             self.state_messages = messages
-            return SimpleNamespace(content="", tool_calls=[{
-                "id": "state-delta",
-                "name": "edit_state_memory",
-                "args": _state_delta_args("init", "frame:1", [
+            return _state_response(_state_delta_args("init", "frame:1", [
                         {
                             "kind": "source_observed",
                             "source_ref": "login_form",
@@ -1440,8 +1422,7 @@ class _SplitRoleWorker:
                             "owned_region_visibility": "unobscured",
                             "evidence": "The submit control is fully visible.",
                         },
-                    ]),
-            }])
+                    ]))
         self.actor_calls += 1
         self.actor_messages = messages
         return SimpleNamespace(content="", tool_calls=[{
@@ -1450,7 +1431,9 @@ class _SplitRoleWorker:
             "args": {"actions": [{
                 "name": "submit_login",
                 "args": {
-                    "state_target_ref": "login_submit",
+                    "state_target_ref": state_target_ref(
+                        "The visible enabled submit control"
+                    ),
                     "x": 500,
                     "y": 500,
                     "description": "Submit the visible login form",
@@ -1486,26 +1469,18 @@ class _SplitEachWorker:
             # Each element: record it, then after the element's action the State
             # advances the plan cursor with `complete`.
             if self.state_calls in {2, 4}:
-                return SimpleNamespace(content="", tool_calls=[{
-                    "id": f"state-complete-{self.state_calls}",
-                    "name": "edit_state_memory",
-                    "args": _state_complete_args(
+                return _state_response(_state_complete_args(
                         state_input["mode"], state_input["frame_id"],
                         ["The current element is processed."],
-                    ),
-                }])
+                    ))
             events = ([{
                 "kind": "source_observed",
                 "source_ref": "current_element",
                 "evidence": "The current element is visible.",
             }] if init else [])
-            return SimpleNamespace(content="", tool_calls=[{
-                "id": "state-delta",
-                "name": "edit_state_memory",
-                "args": _state_delta_args(
+            return _state_response(_state_delta_args(
                     state_input["mode"], state_input["frame_id"], events,
-                ),
-            }])
+                ))
         self.actor_calls += 1
         return SimpleNamespace(content="", tool_calls=[{
             "id": f"action-{self.actor_calls}",
@@ -1570,7 +1545,6 @@ def _run_fused_worker(
     runtime._status_cb = runtime.statuses.append
     runtime._each_cursors = {}
     runtime._worker_state_snapshots = {}
-    runtime._worker_state_frames = {}
     runtime._worker_last_frames = {}
     runtime.worker = worker or _MultiActionWorker()
     runtime._executor = executor or _Executor()
@@ -1699,7 +1673,7 @@ def test_same_frame_action_repair_reuses_state_snapshot(monkeypatch) -> None:
     )
 
 
-def test_append_state_context_uses_compact_previous_and_current_frame_pair() -> None:
+def test_append_state_context_uses_compact_previous_state_and_current_frame() -> None:
     runtime = object.__new__(ToolAgentRuntime)
     runtime._worker_explicit_cache = False
     runtime.worker_cfg = SimpleNamespace(image_scale=1.0)
@@ -1708,8 +1682,7 @@ def test_append_state_context_uses_compact_previous_and_current_frame_pair() -> 
     previous = WorkerStateSnapshot.model_validate({
         "summary": "One tracked target has an observed value.",
         "frame_id": "frame:1",
-        "surface": "collection",
-        "markdown": "### stable_target\n- Requested state: false",
+        "memory": {"requested_state": False},
         "targets": {
             "stable_target": {
                 "identity": "One stable visible target",
@@ -1718,14 +1691,9 @@ def test_append_state_context_uses_compact_previous_and_current_frame_pair() -> 
             },
         },
     })
-    previous_image = BytesIO()
     current_image = BytesIO()
-    Image.new("RGB", (400, 200), "red").save(previous_image, format="PNG")
     Image.new("RGB", (400, 200), "blue").save(current_image, format="PNG")
     runtime._worker_state_snapshots = {"worker": previous}
-    runtime._worker_state_frames = {
-        "worker": ("frame:1", previous_image.getvalue()),
-    }
     journal = WorkerJournal(worker_id="worker")
     spec = _worker_spec(
         goal="Set the target to the requested state.",
@@ -1742,21 +1710,13 @@ def test_append_state_context_uses_compact_previous_and_current_frame_pair() -> 
     )
 
     content = messages[1].content
-    assert [part["type"] for part in content] == [
-        "text", "text", "image_url", "text", "image_url",
-    ]
+    assert [part["type"] for part in content] == ["text", "image_url"]
     payload = json.loads(content[0]["text"])
     assert payload["mode"] == "edit"
-    assert payload["visual_transition"] == {
-        "previous_frame_id": "frame:1",
-        "current_frame_id": "frame:2",
-        "previous_frame_available": True,
-    }
+    assert "visual_transition" not in payload
     assert payload["previous_state"] == {
-        "surface": "collection",
-        "target_registry": {"stable_target": "One stable visible target"},
-        "memory_markdown": "### stable_target\n- Requested state: false",
-        "previous_task_transition": None,
+        "memory": {"requested_state": False},
+        "previous_transition": None,
     }
     assert "goal_contract" in payload["observation_focus"]
     assert payload["observation_focus"] == {
@@ -1770,9 +1730,9 @@ def test_append_state_context_uses_compact_previous_and_current_frame_pair() -> 
     assert "execution_scope" not in payload
     assert "latest_runtime_receipt" not in payload
     assert "same_frame_runtime_feedback" not in payload
-    assert reports[0]["strategy"] == "markdown_state_edit"
-    assert reports[0]["previous_frame"] is True
-    assert reports[0]["previous_frame_scale"] == 0.75
+    assert reports[0]["strategy"] == "compact_state_patch"
+    assert reports[0]["previous_frame"] is False
+    assert reports[0]["previous_frame_scale"] is None
 
 
 def test_split_state_reinitializes_after_each_element_advances(monkeypatch) -> None:
@@ -1822,14 +1782,10 @@ class _PrematureCompleteWorker(_SplitWorkerFixture):
             state_input = json.loads(messages[-1].content[0]["text"])
             # The State role declares the operator established without doing work;
             # Runtime resolves it without semantically auditing the contract.
-            return SimpleNamespace(content="", tool_calls=[{
-                "id": "state-complete-1",
-                "name": "edit_state_memory",
-                "args": _state_complete_args(
+            return _state_response(_state_complete_args(
                     state_input["mode"], state_input["frame_id"],
                     ["The visible Apply control was activated."],
-                ),
-            }])
+                ))
         self.calls += 1
         return SimpleNamespace(content="", tool_calls=[{
             "id": "complete-1", "name": "complete",
@@ -1846,10 +1802,7 @@ class _AtomicFactCompleteWorker(_SplitWorkerFixture):
         if self.mode == "state":
             self.state_calls += 1
             state_input = json.loads(messages[-1].content[0]["text"])
-            return SimpleNamespace(content="", tool_calls=[{
-                "id": "state-atomic-complete",
-                "name": "edit_state_memory",
-                "args": _state_complete_args(
+            return _state_response(_state_complete_args(
                     state_input["mode"], state_input["frame_id"],
                     ["The requested value is visibly true."],
                     [{
@@ -1858,8 +1811,7 @@ class _AtomicFactCompleteWorker(_SplitWorkerFixture):
                         "property_ref": "requested_value",
                         "value": True,
                     }],
-                ),
-            }])
+                ))
         self.actor_calls += 1
         raise AssertionError("Actor must not run after atomic State completion")
 
@@ -1915,7 +1867,7 @@ def test_state_records_decisive_fact_and_completes_before_actor(monkeypatch) -> 
     assert runtime.outcome.phase == "completed"
     assert (worker.state_calls, worker.actor_calls) == (1, 0)
     state = runtime._worker_state_snapshots["fused-worker"]
-    assert "requested_value: True" in state.markdown
+    assert state.memory["requested_value"] is True
     assert state.task_transition is not None
     assert state.task_transition.status == "complete"
 
@@ -2086,7 +2038,9 @@ def test_explicit_auth_fact_allows_code_entry_across_frames(
     journal = None
     if code == "757570":
         worker.state_target_identity = f"The visible verification code is {code}."
-        action["args"]["state_target_ref"] = "test_target"
+        action["args"]["state_target_ref"] = state_target_ref(
+            worker.state_target_identity
+        )
     else:
         journal = WorkerJournal(worker_id="fused-worker")
         journal.record_runtime_input(
@@ -2233,7 +2187,7 @@ def test_worker_rejects_invalid_state_trace_without_executing(monkeypatch) -> No
     assert len([
         event for event in runtime.trace
         if event["event"] == "worker_state_protocol_error"
-    ]) == 2
+    ]) == 1
 
 
 def test_replacement_reflection_starts_with_fresh_journal(monkeypatch) -> None:
@@ -2809,7 +2763,7 @@ def test_multi_action_validates_every_observed_target_before_dispatch(monkeypatc
                 "owned_region_visibility": "unobscured",
             },
         },
-        "markdown": "### done_target\n- Requested state: true",
+        "memory": {"requested_state": True},
     })
     calls = [
         {
@@ -4061,26 +4015,18 @@ class _QueueWorker(_SplitWorkerFixture):
             # Even State frames complete the current element and advance the plan.
             if self.state_calls % 2 == 0:
                 state_input = json.loads(messages[-1].content[0]["text"])
-                return SimpleNamespace(content="", tool_calls=[{
-                    "id": f"state-complete-{self.state_calls}",
-                    "name": "edit_state_memory",
-                    "args": _state_complete_args(
+                return _state_response(_state_complete_args(
                         state_input["mode"], state_input["frame_id"], ["renamed"],
-                    ),
-                }])
+                    ))
             state_input = json.loads(messages[-1].content[0]["text"])
             events = ([{
                 "kind": "source_observed",
                 "source_ref": "test_surface",
                 "evidence": "The requested test surface is visible.",
             }] if state_input["mode"] == "init" else [])
-            return SimpleNamespace(content="", tool_calls=[{
-                "id": f"state-delta-{self.state_calls}",
-                "name": "edit_state_memory",
-                "args": _state_delta_args(
+            return _state_response(_state_delta_args(
                     state_input["mode"], state_input["frame_id"], events,
-                ),
-            }])
+                ))
         self.actor_calls += 1
         return SimpleNamespace(content="", tool_calls=[{
             "id": f"tap-{self.actor_calls}",

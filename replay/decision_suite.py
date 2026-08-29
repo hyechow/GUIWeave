@@ -209,6 +209,9 @@ def score_decision_sample(sample: dict[str, Any], expected: dict[str, Any]) -> l
     )
     fact_text = "\n".join(str(item) for item in facts)
     fact_text += "\n" + str(state.get("markdown") or "")
+    fact_text += "\n" + json.dumps(
+        state.get("memory") or {}, ensure_ascii=False,
+    )
     for needle in expected.get("established_facts_contain") or []:
         if str(needle) not in fact_text:
             errors.append(f"established_facts: missing {needle!r}")

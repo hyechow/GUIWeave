@@ -5,6 +5,7 @@ from __future__ import annotations
 import argparse
 import ast
 import json
+import time
 from pathlib import Path
 from typing import Any
 
@@ -17,6 +18,7 @@ from gui_agent.core.tool_agent.contracts import (
     DynamicActionSpec,
     MaterializedFrame,
     WorkerStateSnapshot,
+    WorkerStateUpdate,
     WorkerSpec,
     approach_atomic_action_count,
     approach_is_procedural,
@@ -26,6 +28,7 @@ from gui_agent.core.tool_agent.orchestrator import (
 )
 from gui_agent.core.tool_agent.protocol import (
     MAX_ORDERED_ACTIONS,
+    STATE_MAX_OUTPUT_TOKENS,
     CompleteReadyWorkerArgs,
     bind_actor_decision_transport,
     decode_actor_action,
@@ -33,13 +36,18 @@ from gui_agent.core.tool_agent.protocol import (
     generic_action_spec,
     image_message,
     model_tool,
+    parse_json_object,
+    response_usage,
     worker_attempt_contract,
     worker_frame_tools,
     worker_profile_rules,
 )
-from gui_agent.core.tool_agent.runtime import ToolAgentRuntime
+from gui_agent.core.tool_agent.runtime import ToolAgentRuntime, _state_system_prompt_text
 from gui_agent.core.tool_agent.state_trace import (
+    reduce_worker_state,
     state_actor_markdown,
+    state_continuation_payload,
+    state_observation_focus,
 )
 from gui_agent.prompts import load_prompt_text
 from llm.provider_config import (
@@ -156,12 +164,12 @@ def _validated_recorded_state(
     value: Any,
 ) -> dict[str, Any]:
     raw = dict(value) if isinstance(value, dict) else {}
-    if "markdown" in raw:
+    if "memory" in raw:
         return WorkerStateSnapshot.model_validate(raw).model_dump(mode="json")
     if not str(raw.get("summary") or "").strip():
         raise ValueError("recorded State has no summary")
     targets: dict[str, Any] = {}
-    sections: list[str] = []
+    observations: list[str] = []
     for ref, target in (raw.get("targets") or {}).items():
         if not isinstance(target, dict):
             continue
@@ -178,7 +186,7 @@ def _validated_recorded_state(
                 if isinstance(item, dict)
             ],
         ]
-        sections.append(f"### {ref}\n" + "\n".join(facts))
+        observations.append(f"### {ref}\n" + "\n".join(facts))
     legacy_facts = [
         str(item)
         for item in (raw.get("established_facts") or [])
@@ -190,15 +198,23 @@ def _validated_recorded_state(
         if isinstance(item, dict) and str(item.get("statement") or "").strip()
     )
     if legacy_facts:
-        sections.append("### Recorded observations\n" + "\n".join(
+        observations.append("### Recorded observations\n" + "\n".join(
             f"- {statement}" for statement in legacy_facts
         ))
+    markdown = str(raw.get("markdown") or "").strip()
+    if markdown:
+        observations.append(markdown)
     factual = {
         "summary": str(raw.get("summary") or "Recorded observed facts."),
         "frame_id": str(raw.get("frame_id") or ""),
-        "surface": raw.get("surface"),
         "targets": targets,
-        "markdown": "\n\n".join(sections),
+        "memory": (
+            {"recorded_observations": "\n\n".join(observations)}
+            if observations else {}
+        ),
+        # A legacy transition was produced by the retired State protocol. Preserve
+        # its facts, but do not bias a replay of the current policy with that decision.
+        "task_transition": None,
     }
     return WorkerStateSnapshot.model_validate(factual).model_dump(mode="json")
 
@@ -323,6 +339,13 @@ def _master_shape(source: str, *, reviewed: bool = True) -> dict[str, Any]:
 
 
 def _mismatches(expected: Any, actual: Any, path: str = "$") -> list[str]:
+    if isinstance(expected, dict) and set(expected) == {"$lte"}:
+        limit = expected["$lte"]
+        if not isinstance(actual, (int, float)) or not isinstance(limit, (int, float)):
+            return [f"{path}: $lte requires numeric values"]
+        return [] if actual <= limit else [
+            f"{path}: expected <= {limit!r}, got {actual!r}"
+        ]
     if isinstance(expected, dict) and set(expected) == {"$contains_any"}:
         alternatives = expected["$contains_any"]
         if not isinstance(actual, str):
@@ -443,6 +466,248 @@ def _frame_number(value: str | int) -> int:
     if number < 1:
         raise ValueError("worker frame must be positive")
     return number
+
+
+def _state_input_payload(event: dict[str, Any]) -> dict[str, Any]:
+    for label in ("tool_agent.state", "tool_agent.state.protocol_repair"):
+        try:
+            report = _report(event, label)
+            break
+        except ValueError:
+            continue
+    else:
+        raise ValueError("recording has no State prompt snapshot")
+    human = next(role for role in report.get("roles", []) if role.get("role") == "human")
+    for part in human.get("parts", []):
+        if part.get("type") != "text":
+            continue
+        try:
+            payload = json.loads(str(part.get("text") or ""))
+        except json.JSONDecodeError:
+            continue
+        if isinstance(payload, dict) and payload.get("frame_id"):
+            return payload
+    raise ValueError("recording has no State input payload")
+
+
+def _recorded_latest_receipts(
+    events: list[dict[str, Any]],
+    selected: dict[str, Any],
+) -> list[dict[str, Any]]:
+    """Rebuild the preceding completed action batch for current State replay."""
+
+    decision = next((
+        event for event in reversed(events)
+        if event.get("event") == "worker_decision"
+        and event.get("worker_id") == selected.get("worker_id")
+        and int(event.get("index") or 0) < int(selected.get("index") or 0)
+    ), None)
+    if decision is None:
+        return []
+    actions = (decision.get("args") or {}).get("actions") or []
+    if not isinstance(actions, list) or not actions:
+        return []
+    completed = next((
+        event for event in events
+        if event.get("event") == "worker_multi_action_completed"
+        and event.get("worker_id") == selected.get("worker_id")
+        and event.get("step") == decision.get("step")
+        and int(decision.get("index") or 0) < int(event.get("index") or 0)
+        < int(selected.get("index") or 0)
+        and event.get("status") == "executed"
+    ), None)
+    if completed is None:
+        return []
+    executed = min(int(completed.get("executed_actions") or 0), len(actions), 5)
+    return [
+        {
+            "receipt_ref": f"step:{decision.get('step')}.{index}",
+            "tool": str(action.get("name") or ""),
+            "executed": True,
+            "outcome": {
+                "kind": "effect",
+                "action_type": str(action.get("name") or ""),
+            },
+            "state_target_ref": str(action.get("_state_target_ref") or ""),
+            "action_description": str(
+                (action.get("args") or {}).get("description") or ""
+            ),
+        }
+        for index, action in enumerate(actions[:executed], start=1)
+        if isinstance(action, dict)
+    ]
+
+
+def replay_state_decision(
+    run_dir: Path,
+    *,
+    frame: str | int,
+    samples: int = 1,
+    expectation: dict[str, Any] | None = None,
+    llm: Any = None,
+) -> dict[str, Any]:
+    """Re-sample current State policy over one recorded visual transition."""
+
+    if samples < 1:
+        raise ValueError("samples must be positive")
+    frame_no = _frame_number(frame)
+    events, context = _artifacts(run_dir)
+    selected = next((
+        event for event in reversed(events)
+        if event.get("event") == "worker_state"
+        and event.get("frame_id") == f"frame:{frame_no}"
+    ), None)
+    if selected is None:
+        selected = next((
+            event for event in events
+            if event.get("event") == "worker_state_protocol_error"
+            and event.get("frame_id") == f"frame:{frame_no}"
+            and int(event.get("attempt") or 1) == 1
+        ), None)
+    if selected is None:
+        raise ValueError(f"recording has no State decision input for frame:{frame_no}")
+    worker_event = next((
+        event for event in reversed(events)
+        if event.get("event") == "worker_decision"
+        and event.get("worker_id") == selected.get("worker_id")
+        and event.get("frame_id") == f"frame:{frame_no}"
+        and isinstance(event.get("replay_context"), dict)
+    ), None)
+    if worker_event is None:
+        worker_event = next((
+            event for event in reversed(events)
+            if event.get("event") == "worker_decision"
+            and event.get("worker_id") == selected.get("worker_id")
+            and int(event.get("index") or 0) < int(selected.get("index") or 0)
+            and isinstance(event.get("replay_context"), dict)
+        ), None)
+    if worker_event is None:
+        raise ValueError(f"recording has no Worker replay context for frame:{frame_no}")
+    replay_context = worker_event["replay_context"]
+    spec = WorkerSpec.model_validate(replay_context["worker_spec"], extra="ignore")
+    observation = json.loads(
+        (run_dir / f"observation_tool_agent_{frame_no}.json").read_text(encoding="utf-8")
+    )
+    payload = _state_input_payload(selected)
+    payload["observation_focus"] = state_observation_focus(spec)
+    receipts = _recorded_latest_receipts(events, selected)
+    if not receipts and isinstance(payload.get("latest_runtime_receipt"), dict):
+        receipts = [payload["latest_runtime_receipt"]]
+    payload.pop("latest_runtime_receipt", None)
+    if receipts:
+        payload["latest_runtime_receipts"] = receipts
+    previous_state_event = next((
+        event for event in reversed(events)
+        if event.get("event") == "worker_state"
+        and event.get("worker_id") == selected.get("worker_id")
+        and int(event.get("index") or 0) < int(selected.get("index") or 0)
+        and isinstance(event.get("state"), dict)
+    ), None)
+    previous_snapshot = (
+        WorkerStateSnapshot.model_validate(
+            _validated_recorded_state(previous_state_event["state"])
+        )
+        if previous_state_event is not None
+        else None
+    )
+    if previous_snapshot is not None:
+        payload["previous_state"] = state_continuation_payload(previous_snapshot)
+        for receipt in receipts:
+            target = previous_snapshot.targets.get(
+                str(receipt.get("state_target_ref") or "")
+            )
+            if target is not None:
+                receipt["state_target_identity"] = target.identity
+    payload.pop("visual_transition", None)
+    model, model_config, model_name = _selected_model("tool_agent.state", llm)
+    image_scale = float(getattr(model_config, "image_scale", 1.0))
+    state_input = json.dumps(payload, ensure_ascii=False)
+    current_png = _screenshot(run_dir, frame_no, observation)
+    state_message = image_message(state_input, current_png, scale=image_scale)
+    knowledge_text = "\n\n".join(
+        value.worker_context() for value in _current_app_knowledge(context)
+    )
+    system = _state_system_prompt_text(
+        load_prompt_text("task.tool_agent.state"),
+        knowledge_text,
+    )
+    request_model = getattr(model_config, "model", None)
+    if request_model is None:
+        request_model = getattr(model, "model_name", None) or getattr(model, "model", None)
+    request_kwargs = chat_request_kwargs(request_model)
+    bound = (
+        model.bind(
+            response_format={"type": "json_object"},
+            max_tokens=STATE_MAX_OUTPUT_TOKENS,
+            **request_kwargs,
+        )
+        if callable(getattr(model, "bind", None))
+        else model
+    )
+    expected = expectation or {
+        "status": str((selected.get("task_transition") or {}).get("status") or ""),
+        "llm_elapsed_s": {"$lte": 10},
+    }
+    results = []
+    for number in range(1, samples + 1):
+        messages = [SystemMessage(content=system), state_message]
+        started_at = time.perf_counter()
+        response = None
+        usage: dict[str, int] = {}
+        diagnostics: list[str] = []
+        try:
+            response = bound.invoke(messages)
+            llm_elapsed_s = time.perf_counter() - started_at
+            usage = response_usage(response)
+            update = WorkerStateUpdate.model_validate(
+                parse_json_object(response.content)
+            )
+            state = reduce_worker_state(
+                previous_snapshot,
+                update,
+                frame_id=f"frame:{frame_no}",
+            )
+            transition = state.task_transition
+            assert transition is not None
+            decision = {
+                "protocol": "state_json",
+                "status": transition.status,
+                "next_objective": transition.next_objective,
+                "targets": [
+                    state.targets[ref].identity for ref in transition.target_refs
+                ],
+                "memory_patch": update.memory,
+                "target_refs": list(transition.target_refs),
+                "llm_elapsed_s": round(llm_elapsed_s, 3),
+                "token_usage": usage,
+            }
+        except Exception as exc:  # noqa: BLE001 - replay verdict mirrors Runtime
+            llm_elapsed_s = time.perf_counter() - started_at
+            diagnostics.append(f"{type(exc).__name__}: {exc}")
+            decision = {
+                "protocol": "",
+                "status": "",
+                "next_objective": "",
+                "targets": [],
+                "target_refs": [],
+                "llm_elapsed_s": round(llm_elapsed_s, 3),
+                "token_usage": usage,
+            }
+        errors = _mismatches(expected, decision)
+        results.append({
+            "sample": number,
+            **decision,
+            "protocol_repairs": 0,
+            "protocol_repair_errors": diagnostics,
+            "passed": not errors,
+            "errors": errors,
+        })
+    return _result(
+        "state", model_name, expected, results,
+        frame_id=f"frame:{frame_no}",
+        worker_id=selected.get("worker_id"),
+        step=selected.get("step"),
+    )
 
 
 def _screenshot(run_dir: Path, frame: int, observation: dict) -> bytes:
@@ -791,6 +1056,7 @@ def main() -> int:
     mode = parser.add_mutually_exclusive_group(required=True)
     mode.add_argument("--master", action="store_true")
     mode.add_argument("--worker-frame", metavar="N")
+    mode.add_argument("--state-frame", metavar="N")
     parser.add_argument("--samples", type=int, default=1)
     parser.add_argument("--expect-json", default="")
     parser.add_argument("--visible-commit-control", default="")
@@ -803,6 +1069,11 @@ def main() -> int:
     if args.master:
         result = replay_master_decision(
             run_dir, samples=args.samples, expectation=expected,
+        )
+    elif args.state_frame:
+        result = replay_state_decision(
+            run_dir, frame=args.state_frame, samples=args.samples,
+            expectation=expected,
         )
     else:
         result = replay_worker_decision(

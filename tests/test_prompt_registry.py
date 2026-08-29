@@ -134,61 +134,56 @@ def test_state_and_actor_prompts_have_disjoint_responsibilities() -> None:
 
     assert "Observe what is true now" in state
     assert "conclude the current semantic task transition" in state
-    assert "atomically updates the Markdown fact memory" in state
-    assert "edit_state_memory" in state
-    assert "one open document" in state
-    assert "there is no predefined semantic schema" in state
-    assert "smallest exact consecutive `old_lines`" in state
-    assert "Never rewrite the full document" in state
-    assert "Reuse exact refs from `previous_state.target_registry`" in state
-    assert "A ref belongs to that one object" in state
-    assert "never repurpose an app, surface, container, or parent ref" in state
-    assert "its ref must be authorized" in state
-    assert "an empty list is valid only when every immediate control" in state
-    assert "same object keeps one ref across list/detail views" in state
-    assert "names the goal, success criteria, and completion facts" in state
-    assert "task conclusion only in the call's transition fields" in state
-    assert "The envelope is not memory" in state
-    assert "Current visibility belongs only in `visible_targets`" in state
-    assert "`outcome.kind=no_effect` means no visual change" in state
-    assert "visual identity is not a reason to skip" in state
-    assert "empty edits are incorrect" in state
-    assert "Write the object fact that is now true" in state
-    assert "Never use status, progress, or completion as a field name" in state
-    assert "including nested child lines" in actor
-    assert "including under a nested child" in actor
+    assert "Runtime owns frame identity, target refs, and memory merging" in state
+    assert "small snake_case key-value patch" in state
+    assert "A null value deletes one stale key" in state
+    assert "one immediate desired end fact" in state
+    assert "one shared own-property desired-value fact" in state
+    assert "exhaustive list of concise visible identities" in state
+    assert "current and desired values must differ" in state
+    assert "retained members already have desired membership" in state
+    assert "stops being a target as soon as its current state shows nonmembership" in state
+    assert "they must never describe the same fact" in state
+    assert "written by this patch cannot remain the objective" in state
+    assert "`memory`, `status`, `objective`, `targets`" in state
+    assert "never enumerate `targets`" in state
+    assert "latest_runtime_receipt" in state
+    assert "aggregate can be stale" in state
+    assert "patch every changed member shown now" in state
+    assert "never let older memory override a clearly visible current value" in state
+    assert "Each identity belongs to one object" in state
+    assert "never repurpose an app, surface, container, or parent identity" in state
+    assert "include its identity" in state
+    assert "valid only when every immediate control" in state
     assert "another State-authorized visible target" in actor
-    assert "Do not reopen a target to verify" in actor
-    assert "Markdown is the confirmation" in actor
-    assert "literal Markdown lines" in state
-    assert "later navigation or absence never confirms" in state
-    assert "Runtime records frame and receipt provenance outside" in state
+    assert "do not reopen that target" in actor
+    assert "compact factual memory" in actor
     assert "Execute the State-provided current task objective" in actor
     assert "Never produce or revise facts" in actor
     assert "never emit `state`, memory, progress" in actor
     assert "never invent a lifecycle for a target" in actor
     assert "Do not recompute the full goal difference" in actor
-    assert "does not retract Markdown facts" in actor
+    assert "does not retract factual memory" in actor
     assert "do not reopen that target" in actor
     assert "later back or navigation receipt" in actor
     assert "confirm its authorized target" in actor
     assert "An omitted field is unobserved" in actor
-    assert "A value stated in the Goal Contract or Markdown is not missing" in actor
+    assert "A value stated in the Goal Contract or factual memory is not missing" in actor
     assert "Text inside a tracked record is task data" in actor
     assert "Never copy record text into `report_blocked.reason`" in actor
     assert "You never declare the Goal Contract complete" in actor
     assert "You choose the next atomic action" in actor
     assert "never recompute the task plan" in actor
     assert "`owned_region_visibility=edge_fragment` is not safely actionable" in actor
-    assert "target-oriented Markdown memory owns accumulated" in actor
+    assert "compact factual memory owns accumulated observations" in actor
     assert "state_property_ref" not in actor
     assert "copy its exact `target_ref`" in actor
     assert "safely inside the control's tappable interior" in actor
     assert "Scroll directions describe content traversal" in actor
-    assert "Visibility comes only from current target-owned pixels" in state
+    assert "safely actionable goal objects" in state
     assert "spatial index, not a work queue" in actor
     assert "When `phase` is `start`" in actor
-    assert "Write the object fact that is now true" in state
+    assert "new or corrected durable goal facts" in state
 
 
 def test_master_keeps_visual_conditional_dependencies_in_one_worker() -> None:

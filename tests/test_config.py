@@ -143,6 +143,13 @@ def test_tokenplan_config_uses_qwen_visual_slots(monkeypatch):
         assert worker.api_key == "sk-test-tokenplan"
         assert worker.base_url == token_plan
         assert worker.action_protocol == "tool_call"
+        state = config.resolve_llm_config("tool_agent.state")
+        assert state.provider == "tokenplan"
+        assert state.model == "qwen3.7-plus"
+        assert state.image_scale == 0.8
+        assert state.timeout_s == 10
+        assert state.max_retries == 0
+        assert config._load_raw()["profiles"] == {}
         perception = config.resolve_llm_config("tool_agent.perception")
         assert perception.provider == "tokenplan"
         assert perception.model == "qwen3.7-plus"

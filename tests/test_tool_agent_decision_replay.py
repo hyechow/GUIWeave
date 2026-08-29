@@ -9,7 +9,11 @@ from langchain_core.messages import AIMessage
 from gui_agent.core.tool_agent.contracts import DynamicActionSpec, WorkerSpec
 from llm.provider_config import ChatProviderConfig
 import replay.decision as decision_module
-from replay.decision import replay_master_decision, replay_worker_decision
+from replay.decision import (
+    replay_master_decision,
+    replay_state_decision,
+    replay_worker_decision,
+)
 
 
 class _RecordedModel:
@@ -31,6 +35,13 @@ class _RecordedModel:
         if isinstance(response, Exception):
             raise response
         return response
+
+
+def test_replay_expectation_supports_latency_upper_bound() -> None:
+    assert decision_module._mismatches({"$lte": 8}, 7.9) == []
+    assert decision_module._mismatches({"$lte": 8}, 8.1) == [
+        "$: expected <= 8, got 8.1"
+    ]
 
 
 def _snapshot(label: str, *, image: bool = False) -> dict:
@@ -330,7 +341,7 @@ def test_worker_replay_rejects_actor_owned_state(tmp_path) -> None:
     assert result["status"] == "passed"
     assert sample["memory_repairs"] == 0
     assert sample["state_summary"] == "Replay decision"
-    assert sample["state"]["markdown"] == ""
+    assert sample["state"]["memory"] == {}
     assert sample["protocol_repairs"] == 1
     assert len(model.calls) == 2
 
@@ -476,6 +487,60 @@ def test_worker_replay_uses_current_application_knowledge(
     assert "current fact" not in human_text
     assert "stale human fact" not in human_text
     assert "Continuous observed fact memory" in human_text
+
+
+def test_state_replay_recovers_failed_state_input(tmp_path) -> None:
+    run_dir = _worker_run(
+        tmp_path,
+        recorded_tool="continue_with_actions",
+        recorded_actions=[{"name": "scroll", "args": {}}],
+    )
+    trace_path = run_dir / "tool_agent_trace.json"
+    trace = json.loads(trace_path.read_text(encoding="utf-8"))
+    report = _snapshot("tool_agent.state.protocol_repair", image=True)
+    report["roles"][1]["parts"][0]["text"] = json.dumps({
+        "mode": "init",
+        "frame_id": "frame:2",
+        "observation_focus": {},
+    })
+    trace["trace"].append({
+        "index": 4,
+        "event": "worker_state_protocol_error",
+        "worker_id": "worker",
+        "frame_id": "frame:2",
+        "step": 2,
+        "attempt": 1,
+        "context_reports": [report],
+    })
+    trace_path.write_text(json.dumps(trace), encoding="utf-8")
+    (tmp_path / "screenshot_tool_agent_2.png").write_bytes(b"png")
+    (tmp_path / "observation_tool_agent_2.json").write_text(json.dumps({
+        "frame_id": "frame:2",
+        "screenshot_path": str(tmp_path / "screenshot_tool_agent_2.png"),
+    }), encoding="utf-8")
+    valid_args = {
+        "status": "advance",
+        "objective": "The remaining requested records have the requested value.",
+        "targets": ["First record", "Second record"],
+        "memory": {},
+        "evidence": [],
+        "rows": [],
+    }
+    model = _RecordedModel(
+        AIMessage(content=json.dumps(valid_args)),
+    )
+
+    result = replay_state_decision(
+        run_dir,
+        frame=2,
+        llm=model,
+        expectation={"protocol": "state_json", "status": "advance"},
+    )
+
+    assert result["status"] == "passed"
+    assert result["frame_id"] == "frame:2"
+    assert result["samples"][0]["protocol_repairs"] == 0
+    assert len(model.calls) == 1
 
 
 def test_worker_replay_preserves_recorded_singleton_contract(tmp_path) -> None:
