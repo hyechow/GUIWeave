@@ -378,6 +378,30 @@ def test_mastodon_reads_server_size_only_from_owner_admin_dashboard() -> None:
     assert "`PostgreSQL`" in orchestrator
 
 
+def test_mastodon_configures_automated_deletion_in_one_web_form() -> None:
+    knowledge = load_knowledge_for_app("Mastodon", "android")
+    assert knowledge is not None
+
+    goal = "enable automated deletion, keep only pinned posts, and set thresholds"
+    orchestrator = " ".join(knowledge.orchestrator_context(goal).split())
+    worker = " ".join(knowledge.worker_context().split())
+    for required in (
+        "only in authenticated Mastodon Web settings",
+        "`keep_direct`, `keep_pinned`, `keep_self_fav`, `keep_self_bookmark`",
+        "`keep_pinned=true`",
+        "every other boolean exception listed above is `false`",
+        "one `Save changes` commit",
+    ):
+        assert required in orchestrator
+    for required in (
+        "not a native Android `Behavior` option",
+        "`1 week` is the 7-day age threshold",
+        "favorite and boost minimums are separate numeric inputs",
+        "returned saved confirmation commits the policy",
+    ):
+        assert required in worker
+
+
 def test_mastodon_export_uses_authenticated_web_session_and_files_rename() -> None:
     knowledge = load_knowledge_for_app("Mastodon", "android")
     assert knowledge is not None
