@@ -420,3 +420,32 @@ def test_mastodon_export_uses_authenticated_web_session_and_files_rename() -> No
     assert "vertical three-dot toolbar button" in worker
     assert "inspect its tab switcher" in worker
     assert "never a lower section of the Appearance form" in worker
+
+
+def test_mastodon_imports_muted_accounts_through_confirmed_web_upload() -> None:
+    knowledge = load_knowledge_for_app("Mastodon", "android")
+    assert knowledge is not None
+
+    goal = "import my muted list from muted_accounts.csv in Downloads"
+    assert knowledge.orchestrator_sections(goal) == ["DataImport_interface"]
+    orchestrator = " ".join(knowledge.orchestrator_context(goal).split())
+    worker = " ".join(knowledge.worker_context().split())
+    for required in (
+        "only in authenticated Mastodon Web settings",
+        "`Import and export` → `Import`",
+        "select the exact import type, file, and mode",
+        "`Upload`",
+        "activate `Confirm`",
+        "`Recent imports` row must reach `Finished`",
+    ):
+        assert required in orchestrator
+    for required in (
+        "native `Privacy and reach` and `Filters` cannot import accounts",
+        "select import type `Muting list`",
+        "named file from `Downloads`",
+        "upload-success notice only says processing is scheduled",
+        "full imported count",
+        "use Chrome's page reload",
+        "tapping the non-interactive row does not",
+    ):
+        assert required in worker

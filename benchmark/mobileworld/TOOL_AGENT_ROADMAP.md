@@ -111,7 +111,7 @@ MobileWorld 当前提供 117 个 GUI-only 任务。严格按以下条件从本�
     Chrome Web 可改变 evaluator 字段，但任务未声明 Chrome，暂不计正式通过
 36. `MastodonGetServerInfoTask` — ✅ 通过：`20260829_072056`，official eval 1.0
 37. `MastodonOpenAutomatedDeletionTask` — ✅ 通过：`20260829_075631`，official eval 1.0
-38. `MastodonImportMutedUsersTask`
+38. `MastodonImportMutedUsersTask` — ✅ 通过：`20260829_082253`，official eval 1.0
 39. `MastodonExportFollowsTask` — ✅ 通过：`20260829_005757`，official eval 1.0
 40. `MastodonAdjustTootsTask`
 41. `MastodonRevisePollTask`
@@ -241,6 +241,7 @@ Worker 能在 50 turns 总预算内完成，失败恢复不会重复产生外部
 | 35 | `MastodonChangeLanguageTask` | 20260828_103118（原生 UI）→ 20260828_123131（Chrome Web workaround） | benchmark 定义：仅声明 Mastodon，但原生 `Posting language` 不改变 evaluator 检查的账号 locale；Chrome Web 路径不计正式通过 | ⛔ | 0.0（原生）；1.0（workaround，不计） | — |
 | 36 | `MastodonGetServerInfoTask` | 20260829_051512（误认 Web `@test`）→ 20260829_053846（State 协议失败）→ 20260829_061126（合并 native/Web 会话）→ 20260829_070401（空白 tab 循环）→ 20260829_072056（通过） | 官方路径为 native 长按 `Profile` 切换 `@owner`，再独立登录 Chrome Web owner；从 `Administration` → `Dashboard` → `Space usage` 的 `PostgreSQL` 行读取动态 MB 值，并由 owner 原样发布。接口知识分离两个会话事实；State 强制工具调用和有界 `surface` 避免协议失败 | ✅ | 1.0 | `b6e7ab71`, `a57bbf80` |
 | 37 | `MastodonOpenAutomatedDeletionTask` | 20260821_140018（误入原生 `Behavior` 循环）→ 20260829_075631（通过） | 官方路径为已登录 `@test` 的 Mastodon Web 顶层 `Automated post deletion`；启用后设置 `1 week`，仅保留 pinned，关闭其余五个布尔例外，favorite/boost 均填 20，再由 `Save changes` 一次提交。接口知识将 Web-only 路径和精确例外集合编入 Master 合约 | ✅ | 1.0 | `cd609ce2` |
+| 38 | `MastodonImportMutedUsersTask` | 20260821_141036（误入原生 `Privacy and reach` / `Filters` 循环）→ 20260829_082253（通过） | 官方路径为已登录 Mastodon Web `Import and export` → `Import`；选择 `Muting list`、Downloads 中的 CSV 和 `Merge`，依次执行 `Upload`、复核、`Confirm`。`Recent imports` 是静态表格，处理中需重载 Chrome 页面，不能点击非交互行假刷新 | ✅ | 1.0 | `0a672537` |
 | 39 | `MastodonExportFollowsTask` | 20260828_045025（原生路径失败）→ 20260829_005757（通过） | 官方标准路径为 Chrome 已登录 Web 导出 → Files 改名；修复无身份的框外 Grounding 覆盖正确视觉点，并对 State 当前帧 identity 做无模型有界化 | ✅ | 1.0 | `6d7764bb` |
 | 42 | `MastodonRevisePhotoAltTask` | 20260821_145832、20260828_070746（失败）→ 20260828_134532（通过） | Mastodon 原生编辑路径知识：帖子三点菜单 → `Edit post` → 附件小编辑按钮 → `Add alt text`；避开只读 ALT 弹层和全局发帖铅笔 | ✅ | 1.0 | —（知识修复待提交） |
 
