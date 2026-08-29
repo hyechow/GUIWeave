@@ -12,7 +12,7 @@ source: manual_verified
 confidence: high
 sensitivity: internal
 ttl: session
-version: 18
+version: 19
 ---
 # Mastodon on Android
 
@@ -51,6 +51,17 @@ version: 18
   `Profile` tab. Its small up/down chevrons are a visual affordance, not a separate
   tap target. In the resulting account sheet, tap the row identified as `OWNER` /
   `@owner` to switch; do not long-press an account row because that means log out.
+
+- Automated post deletion is a server-side Mastodon Web setting, not a native
+  Android `Behavior` option. In the required account's Web session, open the settings
+  gear and the page menu, then choose the top-level `Automated post deletion` entry.
+  First enable `Automatically delete old posts`; this enables the remaining form.
+  `1 week` is the 7-day age threshold. The six boolean exceptions are independent:
+  “only pinned” means leave `Keep pinned posts` checked and clear `Keep direct
+  messages`, `Keep posts you favorited`, `Keep posts you bookmarked`, `Keep polls`,
+  and `Keep posts with media attachments`. The favorite and boost minimums are
+  separate numeric inputs. After reconciling the complete form, activate the page
+  header's `Save changes`; only the returned saved confirmation commits the policy.
 
 - This Android client does not expose account data export controls. Follows are
   exported from the authenticated Mastodon web interface instead: in Chrome,
